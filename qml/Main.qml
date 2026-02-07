@@ -33,10 +33,21 @@ App {
         if(isOnline) {
             logic.clearCache()
         }
+    }
 
-        // fetch todo list data
-        logic.fetchTodos()
-        logic.fetchDraftTodos()
+    FirebaseConfig {
+        id: firebaseConfig
+        projectId: "inventorymanager-48392"
+        // Get these values from your Firebase Console (Project Settings > General > Web App)
+        apiKey: "AIzaSyDvVhwCOsmAegpM_SyaEx91PadJOsEVRNI"
+        applicationId: "1:219471233608:web:d7452b8037080ba4e24e7d"
+    }
+
+    // Use the FirebaseAuth Item to register and log in/log out users
+    FirebaseAuth {
+        id: firebaseAuth
+
+        config: firebaseConfig
     }
 
     // business logic
@@ -50,9 +61,7 @@ App {
         dispatcher: logic // data model handles actions sent by logic
 
         // global error handling
-        onFetchTodosFailed:       error       => NativeUtils.displayMessageBox("Unable to load todos", error, 1)
-        onFetchTodoDetailsFailed: (id, error) => NativeUtils.displayMessageBox("Unable to load todo " + id, error, 1)
-        onStoreTodoFailed:      (todo, error) => NativeUtils.displayMessageBox("Failed to store " + viewHelper.formatTitle(todo))
+
     }
 
     // helper functions for view
@@ -70,12 +79,11 @@ App {
 
         // first tab
         NavigationItem {
-            title: qsTr("Todo List")
-            iconType: IconType.list
+            title: qsTr("Dashboard")
 
             NavigationStack {
                 splitView: tablet // use side-by-side view on tablets
-                initialPage: TodoListPage { }
+                // initialPage: DashboardPage { }
             }
         }
 
@@ -113,7 +121,7 @@ App {
     // It is hidden by default and will overlay the QML items above if shown
     PluginMainItem {
         id: pluginMainItem
-        visible: true // set this to true to show the plugin example
+        visible: false // set this to true to show the plugin example
         property alias firebasePage: firebasePage
 
         FirebasePage {

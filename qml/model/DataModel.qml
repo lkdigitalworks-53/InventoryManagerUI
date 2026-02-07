@@ -12,107 +12,23 @@ Item {
     // whether a user is logged in
     readonly property bool userLoggedIn: _.userLoggedIn
 
-    // model data properties
-    readonly property alias todos: _.todos
-    readonly property alias todoDetails: _.todoDetails
-
-    // action success signals
-    signal todoStored(var todo)
-
-    // action error signals
-    signal fetchTodosFailed(var error)
-    signal fetchTodoDetailsFailed(int id, var error)
-    signal storeTodoFailed(var todo, var error)
-
     // listen to actions from dispatcher
     Connections {
         id: logicConnection
 
-        // action 1 - fetchTodos
-        function onFetchTodos() {
-            // check cached value first
-            var cached = cache.getValue("todos")
-            if(cached)
-                _.todos = cached
-
-            // load from api
-            api.getTodos(
-                        function(data) {
-                            // cache data before updating model property
-                            cache.setValue("todos",data)
-                            _.todos = data
-                        },
-                        function(error) {
-                            // action failed if no cached data
-                            if(!cached)
-                                fetchTodosFailed(error)
-                        })
-        }
-
-        // action 2 - fetchTodoDetails
-        function onFetchTodoDetails(id) {
-            // check cached todo details first
-            var cached = cache.getValue("todo_"+id)
-            if(cached) {
-                _.todoDetails[id] = cached
-                todoDetailsChanged() // signal change within model to update UI
-            }
-
-            // load from api
-            api.getTodoById(id,
-                            function(data) {
-                                // cache data first
-                                cache.setValue("todo_"+id, data)
-                                _.todoDetails[id] = data
-                                todoDetailsChanged()
-                            },
-                            function(error) {
-                                // action failed if no cached data
-                                if(!cached) {
-                                    fetchTodoDetailsFailed(id, error)
-                                }
-                            })
-        }
-
-        // action 3 - storeTodo
-        function onStoreTodo(todo) {
-            // store with api
-            api.addTodo(todo,
-                        function(data) {
-                            // NOTE: Dummy REST API always returns 201 as id of new todo
-                            // To simulate a new todo, we set correct local id based on current model
-                            data.id = _.todos.length + 1
-
-                            // cache newly added item details
-                            cache.setValue("todo_"+data.id, data)
-
-                            // add new item to todos
-                            _.todos.unshift(data)
-
-                            // cache updated todo list
-                            cache.setValue("todos", _.todos)
-                            todosChanged()
-
-                            todoStored(data)
-                        },
-                        function(error) {
-                            storeTodoFailed(todo, error)
-                        })
-        }
-
-        // action 4 - clearCache
-        function onClearCache() {
-            cache.clearAll()
-        }
-
-        // action 5 - login
+        // action 1 - login
         function onLogin(username, password) {
             _.userLoggedIn = true
         }
 
-        // action 6 - logout
+        // action 62- logout
         function onLogout() {
             _.userLoggedIn = false
+        }
+
+        // action 3 - clearCache
+        function onClearCache() {
+            cache.clearAll()
         }
     }
 
@@ -133,10 +49,6 @@ Item {
     // private
     Item {
         id: _
-
-        // data properties
-        property var todos: []  // Array
-        property var todoDetails: ({}) // Map
 
         // auth
         property bool userLoggedIn: false
