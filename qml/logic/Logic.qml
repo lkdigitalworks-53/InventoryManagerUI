@@ -8,4 +8,7 @@ Item {
     signal logout()
 
     signal clearCache()
+
+    // Inventory Actions
+    signal addProduct(var productData)
 }

@@ -1,0 +1,29 @@
+import QtQuick
+import Felgo
+
+AppPage {
+    id: dashboard
+    title: "Dashboard"
+
+    Column {
+        id: dashboardContent
+
+        anchors.top: parent.top
+        anchors.topMargin: dp(20)
+        width: parent.width
+        height: dp(100)
+        spacing: dp(5)
+
+        AppPaper {
+            width: parent.width - dp(20)
+            height: dp(50)
+            radius: height/4
+            anchors.horizontalCenter: parent.horizontalCenter
+            
+            
+        }
+
+
+    }
+
+}

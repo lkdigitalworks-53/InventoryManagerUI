@@ -30,6 +30,22 @@ Item {
         function onClearCache() {
             cache.clearAll()
         }
+
+        // action 4 - add product data
+        onAddProduct: (productData) => {
+          let addProductLocalUrl = "http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct";
+
+          HttpRequest.post(addProductLocalUrl)
+           .set("Content-Type", "application/json")
+           .send({ "data": productData }) // Wrapped in "data" for Firebase onCall protocol
+           .then(function(res) {
+              NativeUtils.displayMessageBox("Success", "Product added successfully", 1);
+            })
+           .catch(function(err) {
+              console.error("API Error:", err.message);
+              NativeUtils.displayMessageBox("Error", "Failed to add product: " + err.message, 1);
+            });
+        }
     }
 
     // you can place getter functions here that do not modify the data

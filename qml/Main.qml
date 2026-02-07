@@ -35,20 +35,20 @@ App {
         }
     }
 
-    FirebaseConfig {
-        id: firebaseConfig
-        projectId: "inventorymanager-48392"
-        // Get these values from your Firebase Console (Project Settings > General > Web App)
-        apiKey: "AIzaSyDvVhwCOsmAegpM_SyaEx91PadJOsEVRNI"
-        applicationId: "1:219471233608:web:d7452b8037080ba4e24e7d"
-    }
+    // FirebaseConfig {
+    //     id: firebaseConfig
+    //     projectId: "inventorymanager-48392"
+    //     // Get these values from your Firebase Console (Project Settings > General > Web App)
+    //     apiKey: "AIzaSyDvVhwCOsmAegpM_SyaEx91PadJOsEVRNI"
+    //     applicationId: "1:219471233608:web:d7452b8037080ba4e24e7d"
+    // }
 
-    // Use the FirebaseAuth Item to register and log in/log out users
-    FirebaseAuth {
-        id: firebaseAuth
+    // // Use the FirebaseAuth Item to register and log in/log out users
+    // FirebaseAuth {
+    //     id: firebaseAuth
 
-        config: firebaseConfig
-    }
+    //     config: firebaseConfig
+    // }
 
     // business logic
     Logic {
@@ -75,22 +75,22 @@ App {
 
         // only enable if user is logged in
         // login page below overlays navigation then
-        enabled: dataModel.userLoggedIn
+        // enabled: dataModel.userLoggedIn
 
         // first tab
         NavigationItem {
             title: qsTr("Dashboard")
 
             NavigationStack {
-                splitView: tablet // use side-by-side view on tablets
-                // initialPage: DashboardPage { }
+                // splitView: tablet // use side-by-side view on tablets
+                initialPage: DashboardPage { }
             }
         }
 
         // second tab
         NavigationItem {
             title: qsTr("Profile") // use qsTr for strings you want to translate
-            iconType: IconType.circle
+            // iconType: IconType.circle
 
             NavigationStack {
                 initialPage: ProfilePage {
@@ -119,15 +119,15 @@ App {
 
     // This item contains example code for the chosen Felgo Plugins
     // It is hidden by default and will overlay the QML items above if shown
-    PluginMainItem {
-        id: pluginMainItem
-        visible: false // set this to true to show the plugin example
-        property alias firebasePage: firebasePage
+    // PluginMainItem {
+    //     id: pluginMainItem
+    //     visible: false // set this to true to show the plugin example
+    //     property alias firebasePage: firebasePage
 
-        FirebasePage {
-            id: firebasePage
-            visible: false
-            onPopped:  { firebasePage.parent = pluginMainItem; visible = false }
-        }
-    }
+    //     FirebasePage {
+    //         id: firebasePage
+    //         visible: false
+    //         onPopped:  { firebasePage.parent = pluginMainItem; visible = false }
+    //     }
+    // }
 }

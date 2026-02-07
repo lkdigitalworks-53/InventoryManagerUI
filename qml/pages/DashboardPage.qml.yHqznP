@@ -1,0 +1,63 @@
+import QtQuick
+import Felgo
+
+AppPage {
+    id: dashboard
+    title: "Dashboard"
+
+    Column {
+        id: dashboardContent
+
+        anchors.top: parent.top
+        anchors.topMargin: dp(20)
+        width: parent.width
+        height: dp(100)
+        spacing: dp(5)
+
+        AppPaper {
+            id: menuTab
+            width: parent.width - dp(20)
+            height: dp(50)
+            radius: height/4
+            anchors.horizontalCenter: parent.horizontalCenter
+
+            Row {
+                id: menuButtons
+                width: menuTab.width - dp(5)
+                height: menuTab.height - dp(5)
+                anchors.centerIn: menuTab
+
+                Repeater {
+                    model: 4
+                    delegate: AppPaper {
+                        width: (menuButtons.width/4)
+                        height: menuButtons.height
+                        radius: height/4
+                        background.border.color: '#FFA500'
+                        background.border.width: dp(2)
+                        background.color: '#FEE8D6'
+
+                        Row {
+                            width: parent.width - dp(2)
+                            height: parent.height - dp(2)
+                            anchors.centerIn: parent
+                            spacing: dp(3)
+                            AppImage {
+                                source: "" + ".png"
+                                fillMode: Image.PreserveAspectFit
+                            }
+                            AppText {
+                                text: "Orders"
+                                color: 'orange'
+
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+    }
+
+}
