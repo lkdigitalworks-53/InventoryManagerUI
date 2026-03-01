@@ -18,6 +18,7 @@ import "helper"
 /////////////////////////////////////*/
 
 App {
+    id: app
     // You get free licenseKeys from https://felgo.com/licenseKey
     // With a licenseKey you can:
     //  * Publish your games & apps for the app stores
@@ -33,6 +34,10 @@ App {
         if(isOnline) {
             logic.clearCache()
         }
+    }
+    // theming
+    CustomeTheme {
+        id: theme
     }
 
     // FirebaseConfig {
