@@ -53,7 +53,7 @@ Rectangle {
                 text: name
                 width: parent.textWidth
                 wrapMode: AppText.WordWrap
-                font.pixelSize: dp(12)
+                font.pixelSize: sp(12)
             }
             AppText {
                 x: parent.spacing
@@ -72,7 +72,7 @@ Rectangle {
         id: discosureText
         color: Theme.listItem.disclosureColor
         font.family: Theme.iconFont.name
-        font.pixelSize: dp(22)
+        font.pixelSize: sp(22)
         wrapMode: Text.WordWrap
         text: IconType.angleright
         anchors.verticalCenter: parent.verticalCenter

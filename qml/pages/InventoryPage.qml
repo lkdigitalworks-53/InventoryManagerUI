@@ -1,8 +1,13 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts 1.3
+import Qt.labs.qmlmodels
 import Felgo
 
 Item {
     id: inventoryPage
+    width: parent.width
+    height: inventoryDetails.height
 
     Column {
         id: inventoryDetails
@@ -19,7 +24,7 @@ Item {
                 id: infoTitle
                 text: "Inventory \nManagement"
                 color: 'black'
-                font.pixelSize: dp(16)
+                font.pixelSize: sp(16)
                 font.bold: true
                 anchors.left: parent.left
             }
@@ -27,7 +32,7 @@ Item {
                 id: infoDetails
                 text: "Track and manage product \ninventory"
                 color: 'black'
-                font.pixelSize: dp(12)
+                font.pixelSize: sp(12)
                 anchors.left: parent.left
                 anchors.top: infoTitle.bottom
             }
@@ -43,9 +48,16 @@ Item {
                 AppText {
                     text: "+ Add Product"
                     color: 'white'
-                    font.pixelSize: dp(12)
+                    font.pixelSize: sp(12)
                     font.bold: true
                     anchors.centerIn: parent
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        addProductPage.open()
+                    }
                 }
             }
         }
@@ -80,13 +92,13 @@ Item {
                                 id: name
                                 text: model.name
                                 color: model.borderColor
-                                font.pixelSize: dp(12)
+                                font.pixelSize: sp(12)
                             }
                             AppText {
                                 id: details
                                 text: model.details
                                 color: theme.darkTextColor
-                                font.pixelSize: dp(10)
+                                font.pixelSize: sp(10)
                                 anchors.top: name.bottom
                                 anchors.topMargin: dp(5)
                             }
@@ -104,7 +116,7 @@ Item {
                                 AppText {
                                     text: model.count
                                     color: model.borderColor
-                                    font.pixelSize: dp(10)
+                                    font.pixelSize: sp(10)
                                     anchors.left: icon.source === "" ? parent.left : icon.left
                                 }
                             }
@@ -117,11 +129,189 @@ Item {
         AppPaper {
             id: productInventoryInfo
             width: parent.width - dp(20)
-            height: dp(80)
-            radius: height/8
+            height: infoContent.height + dp(20)
+            radius: height/32
             anchors.horizontalCenter: parent.horizontalCenter
 
+            ColumnLayout {
+                id: infoContent
+                width: parent.width - dp(20)
+                anchors.top: parent.top
+                anchors.topMargin: dp(10)
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: dp(10)
+
+                Item {
+                    id: infoDetailsHeader
+                    width: parent.width
+                    height: childrenRect.height
+
+                    AppText {
+                        id: productInfoTitle
+                        text: "Product Inventory"
+                        color: 'black'
+                        font.pixelSize: sp(12)
+                    }
+                    AppText {
+                        id: productInfoDetails
+                        text: "All products and stock levels"
+                        color: theme.darkTextColor
+                        font.pixelSize: sp(10)
+                        anchors.top: productInfoTitle.bottom
+                        anchors.topMargin: dp(3)
+                    }
+                }
+
+                Rectangle {
+                    id: searchBar
+                    width: parent.width
+                    height: dp(25)
+                    color: theme.lightTextColor
+                    radius: height/4
+                    AppIcon {
+                        id: searchIcon
+                        iconType: IconType.search
+                        size: dp(10)
+                        color: theme.darkTextColor
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: dp(5)
+                        visible: searchInput.text === "" || searchInput.text === undefined
+                    }
+
+                    AppTextInput {
+                        id: searchInput
+                        width: parent.width - dp(10)
+                        anchors.left: searchInput.text === "" || searchInput.text === undefined ? searchIcon.right : parent.left
+                        anchors.leftMargin: dp(5)
+                        height: parent.height
+                        placeholderText: "Search Products..."
+                        placeholderColor: theme.darkTextColor
+                        fontSize: sp(7)
+                    }
+                }
+
+                Item {
+                    id: tableScroll
+                    width: parent.width
+                    height: dp(300)
+                    clip:true
+
+                    HorizontalHeaderView {
+                        id: header
+                        syncView: infoTable
+                        model: ["Company Name", "Info 1", "Info 2", "pas"]
+                        clip:true
+                        delegate: Rectangle {
+                            implicitWidth: parent.width / 4
+                            implicitHeight: dp(30)
+
+                            Text {
+                                text: modelData
+                                anchors.centerIn: parent
+                                font.bold: true
+                            }
+                            Rectangle {
+                                width: parent.width
+                                height: 1
+                                color: theme.lightTextColor
+                                anchors.bottom: parent.bottom
+                            }
+                        }
+                    }
+
+                    TableView {
+                        id: infoTable
+                        width: tableScroll.width
+                        height: tableScroll.height - header.height
+                        anchors.top: header.bottom
+                        clip: true
+                        model: tableModel
+
+                        delegate: Rectangle {
+                            implicitWidth: parent.width / 4
+                            implicitHeight: dp(30)
+
+                            Text {
+                                text: display
+                                anchors.centerIn: parent
+                            }
+                            Rectangle {
+                                width: parent.width
+                                height: 1
+                                color: theme.lightTextColor
+                                anchors.bottom: parent.bottom
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    AddProductPage {
+        id: addProductPage
+        anchors.centerIn: inventoryPage
+        pushBackContent: inventoryPage
+    }
+
+    TableModel {
+        id: tableModel
+        TableModelColumn { display: "name" }
+        TableModelColumn { display: "color" }
+        TableModelColumn { display: "id" }
+        TableModelColumn { display: "pas" }
+
+        rows: [
+            {
+                "name": "cat",
+                "color": "black",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "dog",
+                "color": "brown",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "bird",
+                "color": "white",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "bird",
+                "color": "white",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "bird",
+                "color": "white",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "bird",
+                "color": "white",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "bird",
+                "color": "white",
+                "id": "lkdw",
+                "pas": "12345678"
+            },
+            {
+                "name": "bird",
+                "color": "white",
+                "id": "lkdw",
+                "pas": "12345678"
+            }
+        ]
     }
     ListModel {
         id: middleInfoModel
