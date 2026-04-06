@@ -122,6 +122,7 @@ Item {
             var fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "orders/ordersDataJson.json")
             var success = FileUtils.writeFile(fileName, JSON.stringify(_orders.ordersDataJson))
             console.log("============= writing orders success: ", success)
+            logic.orderAdded(orderData)
 
         }
     }

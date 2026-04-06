@@ -11,14 +11,22 @@ Item {
 
     function appendRowToOrderTable(orderData) {
         var row = {
-
+            "order_id": orderData["order_id"],
+            "customer": orderData["customer"],
+            "items": orderData["items"],
+            "total_value": orderData["total_value"],
+            "status": orderData["status"],
+            "date": orderData["date"],
+            "actions": orderData["View"],
         }
         tableModel.appendRow(row)
     }
 
     Connections {
         target: logic
-
+        function onOrderAdded(orderData) {
+            appendRowToOrderTable(orderData)
+        }
     }
 
     Component.onCompleted: {
@@ -389,7 +397,7 @@ Item {
         TableModelColumn { display: "order_id" }
         TableModelColumn { display: "customer" }
         TableModelColumn { display: "items" }
-        TableModelColumn { display: "total" }
+        TableModelColumn { display: "total_value" }
         TableModelColumn { display: "status" }
         TableModelColumn { display: "date" }
         TableModelColumn { display: "actions" }
