@@ -9,6 +9,19 @@ AppModal {
     closeOnBackgroundClick: false
     modalHeight: dp(400)
 
+    Component.onCompleted: {
+        if (listModel.count > 0) {
+            var productInfo = {
+                "product_id": listModel.get(0)["product_id"],
+                "product_name": listModel.get(0)["name"],
+                "price": listModel.get(0)["price"],
+                "items": 1,
+            }
+            console.log(" ########## adding selected products: ", JSON.stringify(productInfo))
+            selectProductRepeater.selectedProductsInfo.push(productInfo)
+        }
+    }
+
     AppFlickable {
         id: flickableModal
         anchors.fill: parent
@@ -412,7 +425,7 @@ AppModal {
                 border.color: theme.lightTextColor
                 border.width: dp(1)
 
-                property int count: 0
+                property int count: 1
 
                 AppText {
                     id: decreasebutton
@@ -424,7 +437,7 @@ AppModal {
                     anchors.left: parent.left
                     width: parent.width / 3
                     horizontalAlignment: Text.AlignHCenter
-                    enabled: noOfItemsButton.count > 0
+                    enabled: noOfItemsButton.count > 1
 
                     MouseArea {
                         id: decreaseMA

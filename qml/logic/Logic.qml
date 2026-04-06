@@ -11,7 +11,7 @@ Item {
 
     signal loadData()
 
-    signal dataLoaded(var inventoryDataJson)
+    signal dataLoaded(var inventoryDataJson, var ordersDataJson)
 
     // Inventory Actions
     signal addProduct(var productData)

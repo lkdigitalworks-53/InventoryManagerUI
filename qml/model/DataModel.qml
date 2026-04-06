@@ -65,7 +65,7 @@ Item {
                 console.log("============= ")
             }
 
-            // logic.dataLoaded(_inventory.inventoryDataJson, _orders.ordersDataJson)
+            logic.dataLoaded(_inventory.inventoryDataJson, _orders.ordersDataJson)
         }
 
         // action 4 - add product data

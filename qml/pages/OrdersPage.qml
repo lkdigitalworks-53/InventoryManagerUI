@@ -27,6 +27,12 @@ Item {
         function onOrderAdded(orderData) {
             appendRowToOrderTable(orderData)
         }
+        function onDataLoaded(inventoryDataJson, ordersDataJson) {
+            console.log(" ---------- ordersDataJson:  ", ordersDataJson.length)
+            for (var i = 0; i < ordersDataJson.length; ++i) {
+                appendRowToOrderTable(ordersDataJson[i])
+            }
+        }
     }
 
     Component.onCompleted: {
@@ -87,7 +93,8 @@ Item {
                     id: addProductButtonMA
                     anchors.fill: parent
                     onClicked: {
-                        addOrderPage.open()
+                        addOrderLoader.sourceComponent = addOrderComponent
+                        addOrderLoader.item.open()
                     }
                 }
             }
@@ -386,11 +393,26 @@ Item {
         }
     }
 
-    AddNewOrderPage {
-        id: addOrderPage
-        anchors.centerIn: ordersPage
-        pushBackContent: ordersPage
+    Loader {
+       id: addOrderLoader
+       width: parent.width
+       height: childrenRect.height
     }
+
+    Component {
+        id: addOrderComponent
+
+        AddNewOrderPage {
+            id: addOrderPage
+            anchors.centerIn: ordersPage
+            pushBackContent: ordersPage
+
+            onClosed: {
+                addOrderLoader.sourceComponent = null
+            }
+        }
+    }
+
 
     TableModel {
         id: tableModel

@@ -89,7 +89,8 @@ Item {
                     id: addProductButtonMA
                     anchors.fill: parent
                     onClicked: {
-                        addProductPage.open()
+                        addProductLoader.sourceComponent = addProductComponent
+                        addProductLoader.item.open()
                     }
                 }
             }
@@ -439,10 +440,26 @@ Item {
         }
     }
 
-    AddProductPage {
-        id: addProductPage
-        anchors.centerIn: inventoryPage
-        pushBackContent: inventoryPage
+
+
+    Loader {
+       id: addProductLoader
+       width: parent.width
+       height: childrenRect.height
+    }
+
+    Component {
+        id: addProductComponent
+
+        AddProductPage {
+            id: addProductPage
+            anchors.centerIn: inventoryPage
+            pushBackContent: inventoryPage
+
+            onClosed: {
+                addProductLoader.sourceComponent = null
+            }
+        }
     }
 
     TableModel {
