@@ -17,7 +17,7 @@ Item {
             "category": productData["category"],
             "stock": productData["currentStock"],
             "in_stock_status": (productData["currentStock"] > productData["minimumStock"] ? 1 : 0),
-            "price": productData["price"],
+            "price": "₹" + productData["price"],
             "actions": "Restock",
         }
         tableModel.appendRow(row)
@@ -296,7 +296,7 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                text: dataModel.totalValue
+                                text: "₹" + dataModel.totalValue
                                 color: "#8F00FF"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon4.source === "" ? parent.left : icon4.left

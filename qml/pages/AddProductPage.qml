@@ -245,7 +245,7 @@ AppModal {
 
       AppText {
         id: priceFeildHeader
-        text: "Price *"
+        text: "Price (₹) *"
         color: 'black'
         font.pixelSize: sp(12)
       }
@@ -289,7 +289,7 @@ AppModal {
           height: parent.height
           anchors.left: parent.left
           anchors.leftMargin: dp(5)
-          placeholderText: "Units pcs"
+          placeholderText: "Units (pcs)"
           placeholderColor: theme.darkTextColor
           fontSize: sp(8)
         }
