@@ -13,6 +13,11 @@ Item {
     readonly property bool userLoggedIn: _.userLoggedIn
 
     readonly property alias inventoryDataJson: _.inventoryDataJson
+    property int totalProducts: _.inventoryDataJson !== undefined ? _.inventoryDataJson.length : 0
+    property int totalItems: _.inventoryDataJson !== undefined ? _.getTotalItems() : 0
+    property int totalValue: _.inventoryDataJson !== undefined ? _.getTotalValue() : 0
+    property int totalItemsInLowStockState: _.inventoryDataJson !== undefined ? _.getTotalItemsInLowStockState() : 0
+
 
     // listen to actions from dispatcher
     Connections {
@@ -48,37 +53,42 @@ Item {
 
         // action 4 - add product data
         function onAddProduct(productData) {
-                          if (_.inventoryDataJson === undefined) {
-                              _.inventoryDataJson = []
-                          }
-                          productData["product_id"] = _.inventoryDataJson.length + 1
-                          _.inventoryDataJson.push(productData)
+            if (_.inventoryDataJson === undefined) {
+                _.inventoryDataJson = []
+            }
+            productData["product_id"] = _.inventoryDataJson.length + 1
+            _.inventoryDataJson.push(productData)
 
-                          console.log("============= writing data: ")
-                          console.log("JSON.stringify(_.inventoryDataJson): ", JSON.stringify(_.inventoryDataJson))
-                          console.log("_.inventoryDataJson size: ", _.inventoryDataJson.length)
+            totalProducts = _.inventoryDataJson !== undefined ? _.inventoryDataJson.length : 0
+            totalItems = _.inventoryDataJson !== undefined ? _.getTotalItems() : 0
+            totalValue = _.inventoryDataJson !== undefined ? _.getTotalValue() : 0
+            totalItemsInLowStockState = _.inventoryDataJson !== undefined ? _.getTotalItemsInLowStockState() : 0
 
-                          // Saving all json response in file, which can be added as a resource file.
-                          var fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "inventory/inventoryDataJson.json")
-                          var success = FileUtils.writeFile(fileName, JSON.stringify(_.inventoryDataJson))
-                          console.log("============= writing success: ", success)
+            console.log("============= writing data: ")
+            console.log("JSON.stringify(_.inventoryDataJson): ", JSON.stringify(_.inventoryDataJson))
+            console.log("_.inventoryDataJson size: ", _.inventoryDataJson.length)
+
+            // Saving all json response in file, which can be added as a resource file.
+            var fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "inventory/inventoryDataJson.json")
+            var success = FileUtils.writeFile(fileName, JSON.stringify(_.inventoryDataJson))
+            console.log("============= writing success: ", success)
 
 
-                          let addProductLocalUrl = "http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct";
+            let addProductLocalUrl = "http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct";
 
-                          HttpRequest.post(addProductLocalUrl)
-                          .set("Content-Type", "application/json")
-                          .send({ "data": productData }) // Wrapped in "data" for Firebase onCall protocol
-                          .then(function(res) {
-                              NativeUtils.displayMessageBox("Success", "Product added successfully", 1);
-                          })
-                          .catch(function(err) {
-                              console.error("API Error:", err.message);
-                              NativeUtils.displayMessageBox("Error", "Failed to add product: " + err.message, 1);
-                          });
+            HttpRequest.post(addProductLocalUrl)
+            .set("Content-Type", "application/json")
+            .send({ "data": productData }) // Wrapped in "data" for Firebase onCall protocol
+            .then(function(res) {
+                NativeUtils.displayMessageBox("Success", "Product added successfully", 1);
+            })
+            .catch(function(err) {
+                console.error("API Error:", err.message);
+                NativeUtils.displayMessageBox("Error", "Failed to add product: " + err.message, 1);
+            });
 
-                          logic.productAdded(productData)
-                      }
+            logic.productAdded(productData)
+        }
     }
 
     // you can place getter functions here that do not modify the data
@@ -103,5 +113,29 @@ Item {
         property bool userLoggedIn: false
         property var inventoryDataJson: undefined
 
+        function getTotalItems() {
+            console.log(" ******** inventoryDataJson.length: ", inventoryDataJson.length)
+            var totalItems = 0
+            for(var i = 0; i < inventoryDataJson.length; ++i) {
+                totalItems += inventoryDataJson[i]["currentStock"]
+            }
+            return totalItems
+        }
+
+        function getTotalValue() {
+            var totalValue = 0
+            for(var i = 0; i < inventoryDataJson.length; ++i) {
+                totalValue += inventoryDataJson[i]["currentStock"] * inventoryDataJson[i]["price"]
+            }
+            return totalValue
+        }
+
+        function getTotalItemsInLowStockState() {
+            var totalItemsInLowStock = 0
+            for(var i = 0; i < inventoryDataJson.length; ++i) {
+                totalItemsInLowStock += inventoryDataJson[i]["currentStock"] <= inventoryDataJson[i]["minimumStock"]
+            }
+            return totalItemsInLowStock
+        }
     }
 }

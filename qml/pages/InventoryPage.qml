@@ -16,7 +16,7 @@ Item {
             "sku": productData["sku"],
             "category": productData["category"],
             "stock": productData["currentStock"],
-            "in_stock_status": productData["currentStock"] > (productData["minimumStock"] ? 1 : 0),
+            "in_stock_status": (productData["currentStock"] > productData["minimumStock"] ? 1 : 0),
             "price": productData["price"],
             "actions": "Restock",
         }
@@ -104,54 +104,202 @@ Item {
                 width: parent.width
                 height: implicitHeight
                 spacing: dp(10)
-                Repeater {
-                    model: middleInfoModel
-                    delegate: Rectangle {
-                        id: delegateItem
-                        width: middleInfoColumn.width
-                        height: dp(100)
-                        radius: height/8
-                        color: model.color
-                        border.color: model.borderColor
-                        border.width: dp(1)
+
+                Rectangle {
+                    id: totalproducts
+                    width: middleInfoColumn.width
+                    height: dp(100)
+                    radius: height/8
+                    color: "#A8E4A0"
+                    border.color: "#3F704D"
+                    border.width: dp(1)
+                    Item {
+                        width: parent.width/2
+                        height: parent.height - dp(40)
+                        anchors.left: parent.left
+                        anchors.leftMargin: dp(15)
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        AppText {
+                            id: name
+                            text: "Total Products"
+                            color: "#3F704D"
+                            font.pixelSize: sp(12)
+                        }
+                        AppText {
+                            id: details
+                            text: "In inventory"
+                            color: theme.darkTextColor
+                            font.pixelSize: sp(10)
+                            anchors.top: name.bottom
+                            anchors.topMargin: dp(5)
+                        }
                         Item {
-                            width: parent.width/2
-                            height: parent.height - dp(40)
-                            anchors.left: parent.left
-                            anchors.leftMargin: dp(15)
-                            anchors.verticalCenter: parent.verticalCenter
+                            width: dp(10)
+                            height: dp(10)
+                            anchors.bottom: parent.bottom
 
-                            AppText {
-                                id: name
-                                text: model.name
-                                color: model.borderColor
-                                font.pixelSize: sp(12)
+                            AppImage {
+                                id: icon
+                                fillMode: Image.PreserveAspectFit
+                                source: ""
+                                anchors.left: parent.left
                             }
                             AppText {
-                                id: details
-                                text: model.details
-                                color: theme.darkTextColor
+                                text: dataModel.totalProducts
+                                color: "#3F704D"
                                 font.pixelSize: sp(10)
-                                anchors.top: name.bottom
-                                anchors.topMargin: dp(5)
+                                anchors.left: icon.source === "" ? parent.left : icon.left
                             }
-                            Item {
-                                width: dp(10)
-                                height: dp(10)
-                                anchors.bottom: parent.bottom
+                        }
+                    }
+                }
 
-                                AppImage {
-                                    id: icon
-                                    fillMode: Image.PreserveAspectFit
-                                    source: model.icon
-                                    anchors.left: parent.left
-                                }
-                                AppText {
-                                    text: model.count
-                                    color: model.borderColor
-                                    font.pixelSize: sp(10)
-                                    anchors.left: icon.source === "" ? parent.left : icon.left
-                                }
+                Rectangle {
+                    id: lowStocks
+                    width: middleInfoColumn.width
+                    height: dp(100)
+                    radius: height/8
+                    color: "#FEE8D6"
+                    border.color: "#CC5500"
+                    border.width: dp(1)
+                    Item {
+                        width: parent.width/2
+                        height: parent.height - dp(40)
+                        anchors.left: parent.left
+                        anchors.leftMargin: dp(15)
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        AppText {
+                            id: name2
+                            text: "Low Stock"
+                            color: "#CC5500"
+                            font.pixelSize: sp(12)
+                        }
+                        AppText {
+                            id: details2
+                            text: "Needs reorder"
+                            color: theme.darkTextColor
+                            font.pixelSize: sp(10)
+                            anchors.top: name2.bottom
+                            anchors.topMargin: dp(5)
+                        }
+                        Item {
+                            width: dp(10)
+                            height: dp(10)
+                            anchors.bottom: parent.bottom
+
+                            AppImage {
+                                id: icon2
+                                fillMode: Image.PreserveAspectFit
+                                source: ""
+                                anchors.left: parent.left
+                            }
+                            AppText {
+                                text: dataModel.totalItemsInLowStockState
+                                color: "#CC5500"
+                                font.pixelSize: sp(10)
+                                anchors.left: icon2.source === "" ? parent.left : icon2.left
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: totalItems
+                    width: middleInfoColumn.width
+                    height: dp(100)
+                    radius: height/8
+                    color: "#ADDFFF"
+                    border.color: "#4169E1"
+                    border.width: dp(1)
+                    Item {
+                        width: parent.width/2
+                        height: parent.height - dp(40)
+                        anchors.left: parent.left
+                        anchors.leftMargin: dp(15)
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        AppText {
+                            id: name3
+                            text: "Total Items"
+                            color: "#4169E1"
+                            font.pixelSize: sp(12)
+                        }
+                        AppText {
+                            id: details3
+                            text: "In stock"
+                            color: theme.darkTextColor
+                            font.pixelSize: sp(10)
+                            anchors.top: name3.bottom
+                            anchors.topMargin: dp(5)
+                        }
+                        Item {
+                            width: dp(10)
+                            height: dp(10)
+                            anchors.bottom: parent.bottom
+
+                            AppImage {
+                                id: icon3
+                                fillMode: Image.PreserveAspectFit
+                                source: ""
+                                anchors.left: parent.left
+                            }
+                            AppText {
+                                text: dataModel.totalItems
+                                color: "#4169E1"
+                                font.pixelSize: sp(10)
+                                anchors.left: icon3.source === "" ? parent.left : icon3.left
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: totalValue
+                    width: middleInfoColumn.width
+                    height: dp(100)
+                    radius: height/8
+                    color: "#E0B0FF"
+                    border.color: "#8F00FF"
+                    border.width: dp(1)
+                    Item {
+                        width: parent.width/2
+                        height: parent.height - dp(40)
+                        anchors.left: parent.left
+                        anchors.leftMargin: dp(15)
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        AppText {
+                            id: name4
+                            text: "Total Value"
+                            color: "#8F00FF"
+                            font.pixelSize: sp(12)
+                        }
+                        AppText {
+                            id: details4
+                            text: "Inventory worth"
+                            color: theme.darkTextColor
+                            font.pixelSize: sp(10)
+                            anchors.top: name4.bottom
+                            anchors.topMargin: dp(5)
+                        }
+                        Item {
+                            width: dp(10)
+                            height: dp(10)
+                            anchors.bottom: parent.bottom
+
+                            AppImage {
+                                id: icon4
+                                fillMode: Image.PreserveAspectFit
+                                source: ""
+                                anchors.left: parent.left
+                            }
+                            AppText {
+                                text: dataModel.totalValue
+                                color: "#8F00FF"
+                                font.pixelSize: sp(10)
+                                anchors.left: icon4.source === "" ? parent.left : icon4.left
                             }
                         }
                     }
@@ -307,44 +455,6 @@ Item {
         TableModelColumn { display: "in_stock_status" }
         TableModelColumn { display: "price" }
         TableModelColumn { display: "actions" }
-    }
-
-    ListModel {
-        id: middleInfoModel
-
-        ListElement {
-            name: "Total Products"
-            details: "In inventory"
-            count: 0
-            icon: ""
-            color: "#A8E4A0"
-            borderColor: "#3F704D"
-        }
-        ListElement {
-            name: "Low Stock"
-            details: "Needs reorder"
-            count: 0
-            icon: ""
-            color: "#FEE8D6"
-            borderColor: "#CC5500"
-
-        }
-        ListElement {
-            name: "Total Items"
-            details: "In stock"
-            count: 0
-            icon: ""
-            color: "#ADDFFF"
-            borderColor: "#4169E1"
-        }
-        ListElement {
-            name: "Total Value"
-            details: "Inventory worth"
-            count: 0
-            icon: ""
-            color: "#E0B0FF"
-            borderColor: "#8F00FF"
-        }
     }
 }
 

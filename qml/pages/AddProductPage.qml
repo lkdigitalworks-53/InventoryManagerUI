@@ -381,10 +381,10 @@ AppModal {
                 "sku": skuInput.text,
                 "category": categoryInput.text,
                 "description": descriptionInput.text,
-                "price": parseFloat(priceInput.text),
+                "price": (priceInput.text !== "" ? parseFloat(priceInput.text) : 0),
                 "measurementUnit": measurementInput.text,
-                "currentStock": parseInt(currentStockInput.text),
-                "minimumStock": parseInt(minimumStockInput.text)
+                "currentStock": (currentStockInput.text !== "" ? parseInt(currentStockInput.text) : 0),
+                "minimumStock": (minimumStockInput.text !== "" ? parseInt(minimumStockInput.text) : 0)
               };
               console.log("product: ", JSON.stringify(product))
               console.log("====== ")
