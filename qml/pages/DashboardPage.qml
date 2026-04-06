@@ -107,6 +107,7 @@ FlickablePage {
        height: childrenRect.height//parent.height - menuTab.height - dp(10)
        anchors.top: menuTab.bottom
        anchors.topMargin: dp(15)
+       sourceComponent: ordersPageComponent
     }
 
     Component {

@@ -1,5 +1,6 @@
 import Felgo
 import QtQuick
+import QtQuick.Controls 2.15
 
 AppModal {
     id: addNewOrderPage
@@ -190,22 +191,155 @@ AppModal {
                 font.pixelSize: sp(12)
             }
 
-            Rectangle {
-                id: selectProductFeild
-                width: parent.width
+            Row {
+                id: selectProductFeildRow
+                spacing: dp(5)
                 height: dp(25)
-                color: theme.lightTextColor
-                radius: height/8
+                width: parent.width
 
-                AppTextInput {
-                    id: selectProductInput
-                    width: parent.width - dp(10)
+                Rectangle {
+                    id: addProductRowButton
                     height: parent.height
-                    anchors.left: parent.left
-                    anchors.leftMargin: dp(5)
-                    placeholderText: "Select Product from the list"
-                    placeholderColor: theme.darkTextColor
-                    fontSize: sp(8)
+                    width: height
+                    radius: height/4
+                    color: addRowButtonMA.pressed ? '#AAFF4500' : '#FF4500'
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    AppText {
+                        text: "+"
+                        color: 'white'
+                        font.pixelSize: sp(12)
+                        font.bold: true
+                        anchors.centerIn: parent
+                    }
+
+                    MouseArea {
+                        id: addRowButtonMA
+                        anchors.fill: parent
+                        onClicked: {
+                        }
+                    }
+                }
+
+                ComboBox {
+                    id: selectProductMenu
+                    width: parent.width - addProductRowButton.width - noOfItemsButton.width - selectProductFeildRow.spacing
+                    height: parent.height
+                    model: listModel
+                    displayText: currentIndex === -1 ? "Select Product from the list" : getDisplayText(currentIndex)
+
+                    function getDisplayText(index) {
+                        return listModel.get(index)["name"] + " - ₹" + listModel.get(index)["price"]
+                    }
+
+                    indicator: AppIcon {
+                        id: downIcon
+                        iconType: IconType.caretdown
+                        size: dp(10)
+                        color: theme.darkTextColor
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right
+                        anchors.rightMargin: dp(5)
+                    }
+                    background: Rectangle {
+                        id: background
+                        width: parent.width
+                        height: parent.height
+                        color: theme.lightTextColor
+                        radius: height/8
+                    }
+                    delegate: Rectangle {
+                        id: delegate
+                        width: selectProductMenu.width
+                        height: selectProductMenu.height
+                        color: 'white'
+                        radius: height/8
+
+                        AppText {
+                            id: selectProductText
+                            width: parent.width - dp(10)
+                            height: parent.height
+                            anchors.left: parent.left
+                            anchors.leftMargin: dp(5)
+                            color: 'black'
+                            fontSize: sp(8)
+                            text: selectProductMenu.getDisplayText(index)
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+
+                            onClicked: {
+                                selectProductMenu.currentIndex = index
+                                selectProductMenu.popup.close()
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: noOfItemsButton
+                    height: parent.height
+                    width: height * 3
+                    radius: height/4
+                    color: (decreaseMA.pressed || increaseMA.pressed) ? theme.lightTextColor : 'white'
+                    anchors.verticalCenter: parent.verticalCenter
+                    border.color: theme.lightTextColor
+                    border.width: dp(1)
+
+                    property int count: 0
+
+                    AppText {
+                        id: decreasebutton
+                        text: "-"
+                        color: 'black'
+                        font.pixelSize: sp(16)
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        width: parent.width / 3
+                        horizontalAlignment: Text.AlignHCenter
+                        enabled: noOfItemsButton.count > 0
+
+                        MouseArea {
+                            id: decreaseMA
+                            anchors.fill: parent
+                            onClicked: {
+                                noOfItemsButton.count--
+                            }
+                        }
+                    }
+
+                    AppText {
+                        id: noOfItemsText
+                        text: noOfItemsButton.count
+                        color: 'black'
+                        font.pixelSize: sp(12)
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: decreasebutton.right
+                        width: parent.width / 3
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    AppText {
+                        text: "+"
+                        color: 'black'
+                        font.pixelSize: sp(16)
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: noOfItemsText.right
+                        width: parent.width / 3
+                        horizontalAlignment: Text.AlignHCenter
+
+                        MouseArea {
+                            id: increaseMA
+                            anchors.fill: parent
+                            onClicked: {
+                                noOfItemsButton.count++
+                            }
+                        }
+                    }
                 }
             }
 
@@ -279,5 +413,11 @@ AppModal {
                 }
             }
         }
+    }
+
+    JsonListModel {
+        id: listModel
+        // keyField: "product_id"
+        source: dataModel.inventoryDataJson
     }
 }

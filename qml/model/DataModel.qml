@@ -112,7 +112,7 @@ Item {
                 _orders.ordersDataJson = []
             }
             orderData["order_id"] = _orders.ordersDataJson.length + 1
-            _orders.ordersDataJson.push(productData)
+            _orders.ordersDataJson.push(orderData)
 
             console.log("============= writing orders data: ")
             console.log("JSON.stringify(_orders.ordersDataJson): ", JSON.stringify(_orders.ordersDataJson))
