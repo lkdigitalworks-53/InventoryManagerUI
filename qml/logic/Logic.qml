@@ -17,4 +17,8 @@ Item {
     signal addProduct(var productData)
 
     signal productAdded(var productData)
+
+    signal addOrder(var orderData)
+
+    signal orderAdded(var orderData)
 }

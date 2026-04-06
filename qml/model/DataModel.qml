@@ -12,11 +12,15 @@ Item {
     // whether a user is logged in
     readonly property bool userLoggedIn: _.userLoggedIn
 
-    readonly property alias inventoryDataJson: _.inventoryDataJson
-    property int totalProducts: _.inventoryDataJson !== undefined ? _.inventoryDataJson.length : 0
-    property int totalItems: _.inventoryDataJson !== undefined ? _.getTotalItems() : 0
-    property int totalValue: _.inventoryDataJson !== undefined ? _.getTotalValue() : 0
-    property int totalItemsInLowStockState: _.inventoryDataJson !== undefined ? _.getTotalItemsInLowStockState() : 0
+    // Inventory related data
+    readonly property alias inventoryDataJson: _inventory.inventoryDataJson
+    property int totalProducts: _inventory.inventoryDataJson !== undefined ? _inventory.inventoryDataJson.length : 0
+    property int totalItems: _inventory.inventoryDataJson !== undefined ? _inventory.getTotalItems() : 0
+    property int totalValue: _inventory.inventoryDataJson !== undefined ? _inventory.getTotalValue() : 0
+    property int totalItemsInLowStockState: _inventory.inventoryDataJson !== undefined ? _inventory.getTotalItemsInLowStockState() : 0
+
+    // Orders related data
+    readonly property alias ordersDataJson: _orders.ordersDataJson
 
 
     // listen to actions from dispatcher
@@ -39,39 +43,52 @@ Item {
         }
 
         function onLoadData() {
-            // Saving all json response in file, which can be added as a resource file.
+            // readin inventory data.
             var fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "inventory/inventoryDataJson.json")
             var inventoryDataStr = FileUtils.readFile(fileName)
-            _.inventoryDataJson = JSON.parse(inventoryDataStr)
-            console.log("============= reading data: ")
-            console.log("inventoryDataStr: ", inventoryDataStr)
-            console.log("_.inventoryDataJson: ", JSON.stringify(_.inventoryDataJson))
-            console.log("============= ")
+            if (inventoryDataStr !== "") {
+                _inventory.inventoryDataJson = JSON.parse(inventoryDataStr)
+                console.log("============= reading data: ")
+                console.log("inventoryDataStr: ", inventoryDataStr)
+                console.log("_inventory.inventoryDataJson: ", JSON.stringify(_inventory.inventoryDataJson))
+                console.log("============= ")
+            }
 
-            logic.dataLoaded(_.inventoryDataJson)
+            // readin orders data.
+            fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "orders/ordersDataJson.json")
+            var ordersDataStr = FileUtils.readFile(fileName)
+            if (ordersDataStr !== "") {
+                _orders.ordersDataJson = JSON.parse(ordersDataStr)
+                console.log("============= reading orders data: ")
+                console.log("ordersDataStr: ", ordersDataStr)
+                console.log("_inventory.inventoryDataJson: ", JSON.stringify(_orders.ordersDataJson))
+                console.log("============= ")
+            }
+
+            // logic.dataLoaded(_inventory.inventoryDataJson, _orders.ordersDataJson)
         }
 
         // action 4 - add product data
         function onAddProduct(productData) {
-            if (_.inventoryDataJson === undefined) {
-                _.inventoryDataJson = []
+            if (_inventory.inventoryDataJson === undefined) {
+                _inventory.inventoryDataJson = []
             }
-            productData["product_id"] = _.inventoryDataJson.length + 1
-            _.inventoryDataJson.push(productData)
+            productData["product_id"] = _inventory.inventoryDataJson.length + 1
+            _inventory.inventoryDataJson.push(productData)
 
-            totalProducts = _.inventoryDataJson !== undefined ? _.inventoryDataJson.length : 0
-            totalItems = _.inventoryDataJson !== undefined ? _.getTotalItems() : 0
-            totalValue = _.inventoryDataJson !== undefined ? _.getTotalValue() : 0
-            totalItemsInLowStockState = _.inventoryDataJson !== undefined ? _.getTotalItemsInLowStockState() : 0
+            totalProducts = _inventory.inventoryDataJson !== undefined ? _inventory.inventoryDataJson.length : 0
+            totalItems = _inventory.inventoryDataJson !== undefined ? _inventory.getTotalItems() : 0
+            totalValue = _inventory.inventoryDataJson !== undefined ? _inventory.getTotalValue() : 0
+            totalItemsInLowStockState = _inventory.inventoryDataJson !== undefined ? _inventory.getTotalItemsInLowStockState() : 0
 
-            console.log("============= writing data: ")
-            console.log("JSON.stringify(_.inventoryDataJson): ", JSON.stringify(_.inventoryDataJson))
-            console.log("_.inventoryDataJson size: ", _.inventoryDataJson.length)
+            console.log("============= writing inventory data: ")
+            console.log("JSON.stringify(_inventory.inventoryDataJson): ", JSON.stringify(_inventory.inventoryDataJson))
+            console.log("_inventory.inventoryDataJson size: ", _inventory.inventoryDataJson.length)
 
             // Saving all json response in file, which can be added as a resource file.
             var fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "inventory/inventoryDataJson.json")
-            var success = FileUtils.writeFile(fileName, JSON.stringify(_.inventoryDataJson))
-            console.log("============= writing success: ", success)
+            var success = FileUtils.writeFile(fileName, JSON.stringify(_inventory.inventoryDataJson))
+            console.log("============= writing inventory success: ", success)
 
 
             let addProductLocalUrl = "http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct";
@@ -88,6 +105,24 @@ Item {
             });
 
             logic.productAdded(productData)
+        }
+
+        function onAddOrder(orderData) {
+            if (_orders.ordersDataJson === undefined) {
+                _orders.ordersDataJson = []
+            }
+            orderData["order_id"] = _orders.ordersDataJson.length + 1
+            _orders.ordersDataJson.push(productData)
+
+            console.log("============= writing orders data: ")
+            console.log("JSON.stringify(_orders.ordersDataJson): ", JSON.stringify(_orders.ordersDataJson))
+            console.log("_orders.ordersDataJson size: ", _orders.ordersDataJson.length)
+
+            // Saving all json response in file, which can be added as a resource file.
+            var fileName = FileUtils.storageLocation(FileUtils.AppDataLocation, "orders/ordersDataJson.json")
+            var success = FileUtils.writeFile(fileName, JSON.stringify(_orders.ordersDataJson))
+            console.log("============= writing orders success: ", success)
+
         }
     }
 
@@ -106,15 +141,19 @@ Item {
     }
 
     // private
+
     Item {
         id: _
-
         // auth
         property bool userLoggedIn: false
+    }
+
+    Item {
+        id: _inventory
+
         property var inventoryDataJson: undefined
 
         function getTotalItems() {
-            console.log(" ******** inventoryDataJson.length: ", inventoryDataJson.length)
             var totalItems = 0
             for(var i = 0; i < inventoryDataJson.length; ++i) {
                 totalItems += inventoryDataJson[i]["currentStock"]
@@ -137,5 +176,11 @@ Item {
             }
             return totalItemsInLowStock
         }
+    }
+
+    Item {
+        id: _orders
+
+        property var ordersDataJson: undefined
     }
 }

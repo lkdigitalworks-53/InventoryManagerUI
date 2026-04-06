@@ -84,10 +84,16 @@ FlickablePage {
                         anchors.fill: parent
                         onClicked: {
                             menuButtons.selectedIndex = (index === menuButtons.selectedIndex) ? -1 : index
-                            if (menuButtons.selectedIndex == 1) {
+                            switch (menuButtons.selectedIndex) {
+                            case 0:
+                                menuPage.sourceComponent = ordersPageComponent
+                                return
+                            case 1:
                                 menuPage.sourceComponent = inventoryPageComponent
-                            } else {
+                                return
+                            default:
                                 menuPage.sourceComponent = null
+                                return
                             }
                         }
                     }
@@ -107,6 +113,12 @@ FlickablePage {
         id: inventoryPageComponent
         InventoryPage {
             id: inventoryPage
+        }
+    }
+    Component {
+        id: ordersPageComponent
+        OrdersPage {
+            id: ordersPage
         }
     }
 }

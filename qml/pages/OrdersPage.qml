@@ -5,20 +5,13 @@ import Qt.labs.qmlmodels
 import Felgo
 
 Item {
-    id: inventoryPage
+    id: ordersPage
     width: parent.width
-    height: inventoryDetails.height
+    height: orderDetails.height
 
-    function appendRowToInventoryTable(productData) {
+    function appendRowToOrderTable(orderData) {
         var row = {
-            "product_id": productData["product_id"],
-            "name": productData["name"],
-            "sku": productData["sku"],
-            "category": productData["category"],
-            "stock": productData["currentStock"],
-            "in_stock_status": (productData["currentStock"] > productData["minimumStock"] ? 1 : 0),
-            "price": "₹" + productData["price"],
-            "actions": "Restock",
+
         }
         tableModel.appendRow(row)
     }
@@ -26,23 +19,20 @@ Item {
     Connections {
         target: logic
 
-        function onProductAdded(productData) {
-            appendRowToInventoryTable(productData)
-        }
     }
 
     Component.onCompleted: {
-        if (dataModel.inventoryDataJson !== undefined && dataModel.inventoryDataJson.length > 0) {
-            console.log(" %%%%%%%%%%%%%%%% inventoryDataJson size: ", dataModel.inventoryDataJson.length)
-            for(var i = 0; i < dataModel.inventoryDataJson.length; ++i) {
-                // console.log("%%%%%%%%%%%%%%%% row: ", JSON.stringify(dataModel.inventoryDataJson[i]))
-                appendRowToInventoryTable(dataModel.inventoryDataJson[i])
+        if (dataModel.ordersDataJson !== undefined && dataModel.ordersDataJson.length > 0) {
+            console.log(" %%%%%%%%%%%%%%%% ordersDataJson size: ", dataModel.ordersDataJson.length)
+            for(var i = 0; i < dataModel.ordersDataJson.length; ++i) {
+                // console.log("%%%%%%%%%%%%%%%% row: ", JSON.stringify(dataModel.ordersDataJson[i]))
+                appendRowToOrderTable(dataModel.ordersDataJson[i])
             }
         }
     }
 
     Column {
-        id: inventoryDetails
+        id: orderDetails
         width: parent.width
         height: implicitHeight
         spacing: dp(15)
@@ -54,7 +44,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             AppText {
                 id: infoTitle
-                text: "Inventory \nManagement"
+                text: "Order Management"
                 color: 'black'
                 font.pixelSize: sp(16)
                 font.bold: true
@@ -62,7 +52,7 @@ Item {
             }
             AppText {
                 id: infoDetails
-                text: "Track and manage product \ninventory"
+                text: "Manage and track \ncustomer orders"
                 color: 'black'
                 font.pixelSize: sp(12)
                 anchors.left: parent.left
@@ -73,12 +63,12 @@ Item {
                 height: dp(30)
                 width: height * 4
                 radius: height/4
-                color: addProductButtonMA.pressed ? 'lightGreen' : 'green'
+                color: addProductButtonMA.pressed ? '#AAFF4500' : '#FF4500'
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
 
                 AppText {
-                    text: "+ Add Product"
+                    text: "+ New Order"
                     color: 'white'
                     font.pixelSize: sp(12)
                     font.bold: true
@@ -89,7 +79,7 @@ Item {
                     id: addProductButtonMA
                     anchors.fill: parent
                     onClicked: {
-                        addProductPage.open()
+                        addOrderPage.open()
                     }
                 }
             }
@@ -106,12 +96,12 @@ Item {
                 spacing: dp(10)
 
                 Rectangle {
-                    id: totalProducts
+                    id: totalOrders
                     width: middleInfoColumn.width
                     height: dp(100)
                     radius: height/8
-                    color: "#A8E4A0"
-                    border.color: "#3F704D"
+                    color: "#FEE8D6"
+                    border.color: "#CC5500"
                     border.width: dp(1)
                     Item {
                         width: parent.width/2
@@ -122,13 +112,13 @@ Item {
 
                         AppText {
                             id: name
-                            text: "Total Products"
-                            color: "#3F704D"
+                            text: "Total Orders"
+                            color: "#CC5500"
                             font.pixelSize: sp(12)
                         }
                         AppText {
                             id: details
-                            text: "In inventory"
+                            text: "All time"
                             color: theme.darkTextColor
                             font.pixelSize: sp(10)
                             anchors.top: name.bottom
@@ -146,8 +136,8 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                text: dataModel.totalProducts
-                                color: "#3F704D"
+                                // text: dataModel.Orders
+                                color: "#CC5500"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon.source === "" ? parent.left : icon.left
                             }
@@ -156,12 +146,12 @@ Item {
                 }
 
                 Rectangle {
-                    id: lowStocks
+                    id: pendingOrders
                     width: middleInfoColumn.width
                     height: dp(100)
                     radius: height/8
-                    color: "#FEE8D6"
-                    border.color: "#CC5500"
+                    color: "#FFFD74"
+                    border.color: "#D19033"
                     border.width: dp(1)
                     Item {
                         width: parent.width/2
@@ -172,13 +162,13 @@ Item {
 
                         AppText {
                             id: name2
-                            text: "Low Stock"
-                            color: "#CC5500"
+                            text: "Pending"
+                            color: "#D19033"
                             font.pixelSize: sp(12)
                         }
                         AppText {
                             id: details2
-                            text: "Needs reorder"
+                            text: "Awaiting processing"
                             color: theme.darkTextColor
                             font.pixelSize: sp(10)
                             anchors.top: name2.bottom
@@ -196,8 +186,8 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                text: dataModel.totalItemsInLowStockState
-                                color: "#CC5500"
+                                // text: dataModel.totalPendingOrders
+                                color: "#D19033"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon2.source === "" ? parent.left : icon2.left
                             }
@@ -206,12 +196,12 @@ Item {
                 }
 
                 Rectangle {
-                    id: totalItems
+                    id: completedOrders
                     width: middleInfoColumn.width
                     height: dp(100)
                     radius: height/8
-                    color: "#ADDFFF"
-                    border.color: "#4169E1"
+                    color: "#A8E4A0"
+                    border.color: "#3F704D"
                     border.width: dp(1)
                     Item {
                         width: parent.width/2
@@ -222,13 +212,13 @@ Item {
 
                         AppText {
                             id: name3
-                            text: "Total Items"
-                            color: "#4169E1"
+                            text: "Completed"
+                            color: "#3F704D"
                             font.pixelSize: sp(12)
                         }
                         AppText {
                             id: details3
-                            text: "In stock"
+                            text: "This month"
                             color: theme.darkTextColor
                             font.pixelSize: sp(10)
                             anchors.top: name3.bottom
@@ -246,60 +236,10 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                text: dataModel.totalItems
-                                color: "#4169E1"
+                                // text: dataModel.totalCompletedOrdersInMonth
+                                color: "#3F704D"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon3.source === "" ? parent.left : icon3.left
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    id: totalValue
-                    width: middleInfoColumn.width
-                    height: dp(100)
-                    radius: height/8
-                    color: "#E0B0FF"
-                    border.color: "#8F00FF"
-                    border.width: dp(1)
-                    Item {
-                        width: parent.width/2
-                        height: parent.height - dp(40)
-                        anchors.left: parent.left
-                        anchors.leftMargin: dp(15)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        AppText {
-                            id: name4
-                            text: "Total Value"
-                            color: "#8F00FF"
-                            font.pixelSize: sp(12)
-                        }
-                        AppText {
-                            id: details4
-                            text: "Inventory worth"
-                            color: theme.darkTextColor
-                            font.pixelSize: sp(10)
-                            anchors.top: name4.bottom
-                            anchors.topMargin: dp(5)
-                        }
-                        Item {
-                            width: dp(10)
-                            height: dp(10)
-                            anchors.bottom: parent.bottom
-
-                            AppImage {
-                                id: icon4
-                                fillMode: Image.PreserveAspectFit
-                                source: ""
-                                anchors.left: parent.left
-                            }
-                            AppText {
-                                text: "₹" + dataModel.totalValue
-                                color: "#8F00FF"
-                                font.pixelSize: sp(10)
-                                anchors.left: icon4.source === "" ? parent.left : icon4.left
                             }
                         }
                     }
@@ -308,7 +248,7 @@ Item {
         }
 
         AppPaper {
-            id: productInventoryInfo
+            id: recentOrderInfo
             width: parent.width - dp(20)
             height: infoContent.height + dp(20)
             radius: height/32
@@ -328,17 +268,17 @@ Item {
                     height: childrenRect.height
 
                     AppText {
-                        id: productInfoTitle
-                        text: "Product Inventory"
+                        id: recentOrdersTitle
+                        text: "Recent Orders"
                         color: 'black'
                         font.pixelSize: sp(12)
                     }
                     AppText {
-                        id: productInfoDetails
-                        text: "All products and stock levels"
+                        id: recentOrdersDetails
+                        text: "Latest customer orders"
                         color: theme.darkTextColor
                         font.pixelSize: sp(10)
-                        anchors.top: productInfoTitle.bottom
+                        anchors.top: recentOrdersTitle.bottom
                         anchors.topMargin: dp(3)
                     }
                 }
@@ -366,7 +306,7 @@ Item {
                         anchors.left: searchInput.text === "" || searchInput.text === undefined ? searchIcon.right : parent.left
                         anchors.leftMargin: dp(5)
                         height: parent.height
-                        placeholderText: "Search Products..."
+                        placeholderText: "Search Orders..."
                         placeholderColor: theme.darkTextColor
                         fontSize: sp(7)
                     }
@@ -381,7 +321,7 @@ Item {
                     HorizontalHeaderView {
                         id: header
                         syncView: infoTable
-                        model: ["Product ID", "Name", "SKU", "Category", "Stock", "Status", "Price", "Actions"]
+                        model: ["Order ID", "Customer", "Items", "Total", "Status", "Date", "Actions"]
                         clip:true
                         movableColumns: false
 
@@ -410,7 +350,6 @@ Item {
                         anchors.top: header.bottom
                         clip: true
                         model: tableModel
-                        // columnSpacing: dp(5)
                         contentWidth: dp(100)
                         contentHeight: infoTable.height / 8
                         resizableColumns: false
@@ -439,21 +378,20 @@ Item {
         }
     }
 
-    AddProductPage {
-        id: addProductPage
-        anchors.centerIn: inventoryPage
-        pushBackContent: inventoryPage
+    AddNewOrderPage {
+        id: addOrderPage
+        anchors.centerIn: ordersPage
+        pushBackContent: ordersPage
     }
 
     TableModel {
         id: tableModel
-        TableModelColumn { display: "product_id" }
-        TableModelColumn { display: "name" }
-        TableModelColumn { display: "sku" }
-        TableModelColumn { display: "category" }
-        TableModelColumn { display: "stock" }
-        TableModelColumn { display: "in_stock_status" }
-        TableModelColumn { display: "price" }
+        TableModelColumn { display: "order_id" }
+        TableModelColumn { display: "customer" }
+        TableModelColumn { display: "items" }
+        TableModelColumn { display: "total" }
+        TableModelColumn { display: "status" }
+        TableModelColumn { display: "date" }
         TableModelColumn { display: "actions" }
     }
 }
