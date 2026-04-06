@@ -359,7 +359,7 @@ AppModal {
           height: dp(30)
           width: height * 4
           radius: height/4
-          color: 'green'
+          color: addButtonMA.pressed? 'lightGreen' : 'green'
           anchors.verticalCenter: parent.verticalCenter
 
           AppText {
@@ -371,6 +371,7 @@ AppModal {
           }
 
           MouseArea {
+            id: addButtonMA
             anchors.fill: parent
             onClicked: {
               console.log("====== ")
@@ -385,6 +386,8 @@ AppModal {
                 "currentStock": parseInt(currentStockInput.text),
                 "minimumStock": parseInt(minimumStockInput.text)
               };
+              console.log("product: ", JSON.stringify(product))
+              console.log("====== ")
 
               // Trigger the logic action
               logic.addProduct(product);
@@ -398,7 +401,7 @@ AppModal {
           height: dp(30)
           width: height * 3
           radius: height/4
-          color: 'white'
+          color: cancelButtonMA.pressed ? theme.lightTextColor : 'white'
           anchors.verticalCenter: parent.verticalCenter
           border.color: theme.lightTextColor
           border.width: dp(1)
@@ -412,6 +415,7 @@ AppModal {
           }
 
           MouseArea {
+            id: cancelButtonMA
             anchors.fill: parent
             onClicked: {
               addNewProductPage.close()

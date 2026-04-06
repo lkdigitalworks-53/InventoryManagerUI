@@ -9,6 +9,38 @@ Item {
     width: parent.width
     height: inventoryDetails.height
 
+    function appendRowToInventoryTable(productData) {
+        var row = {
+            "product_id": productData["product_id"],
+            "name": productData["name"],
+            "sku": productData["sku"],
+            "category": productData["category"],
+            "stock": productData["currentStock"],
+            "in_stock_status": productData["currentStock"] > (productData["minimumStock"] ? 1 : 0),
+            "price": productData["price"],
+            "actions": "Restock",
+        }
+        tableModel.appendRow(row)
+    }
+
+    Connections {
+        target: logic
+
+        function onProductAdded(productData) {
+            appendRowToInventoryTable(productData)
+        }
+    }
+
+    Component.onCompleted: {
+        if (dataModel.inventoryDataJson !== undefined && dataModel.inventoryDataJson.length > 0) {
+            console.log(" %%%%%%%%%%%%%%%% inventoryDataJson size: ", dataModel.inventoryDataJson.length)
+            for(var i = 0; i < dataModel.inventoryDataJson.length; ++i) {
+                // console.log("%%%%%%%%%%%%%%%% row: ", JSON.stringify(dataModel.inventoryDataJson[i]))
+                appendRowToInventoryTable(dataModel.inventoryDataJson[i])
+            }
+        }
+    }
+
     Column {
         id: inventoryDetails
         width: parent.width
@@ -41,7 +73,7 @@ Item {
                 height: dp(30)
                 width: height * 4
                 radius: height/4
-                color: 'green'
+                color: addProductButtonMA.pressed ? 'lightGreen' : 'green'
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
 
@@ -54,6 +86,7 @@ Item {
                 }
 
                 MouseArea {
+                    id: addProductButtonMA
                     anchors.fill: parent
                     onClicked: {
                         addProductPage.open()
@@ -200,10 +233,12 @@ Item {
                     HorizontalHeaderView {
                         id: header
                         syncView: infoTable
-                        model: ["Company Name", "Info 1", "Info 2", "pas"]
+                        model: ["Product ID", "Name", "SKU", "Category", "Stock", "Status", "Price", "Actions"]
                         clip:true
+                        movableColumns: false
+
                         delegate: Rectangle {
-                            implicitWidth: parent.width / 4
+                            implicitWidth: dp(100)
                             implicitHeight: dp(30)
 
                             Text {
@@ -213,7 +248,7 @@ Item {
                             }
                             Rectangle {
                                 width: parent.width
-                                height: 1
+                                height: dp(1)
                                 color: theme.lightTextColor
                                 anchors.bottom: parent.bottom
                             }
@@ -227,14 +262,21 @@ Item {
                         anchors.top: header.bottom
                         clip: true
                         model: tableModel
+                        // columnSpacing: dp(5)
+                        contentWidth: dp(100)
+                        contentHeight: infoTable.height / 8
+                        resizableColumns: false
+                        resizableRows: false
+                        syncDirection: Qt.Horizontal
 
                         delegate: Rectangle {
-                            implicitWidth: parent.width / 4
+                            implicitWidth: dp(100)
                             implicitHeight: dp(30)
 
                             Text {
                                 text: display
                                 anchors.centerIn: parent
+                                elide: Text.ElideRight
                             }
                             Rectangle {
                                 width: parent.width
@@ -257,62 +299,16 @@ Item {
 
     TableModel {
         id: tableModel
+        TableModelColumn { display: "product_id" }
         TableModelColumn { display: "name" }
-        TableModelColumn { display: "color" }
-        TableModelColumn { display: "id" }
-        TableModelColumn { display: "pas" }
-
-        rows: [
-            {
-                "name": "cat",
-                "color": "black",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "dog",
-                "color": "brown",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "bird",
-                "color": "white",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "bird",
-                "color": "white",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "bird",
-                "color": "white",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "bird",
-                "color": "white",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "bird",
-                "color": "white",
-                "id": "lkdw",
-                "pas": "12345678"
-            },
-            {
-                "name": "bird",
-                "color": "white",
-                "id": "lkdw",
-                "pas": "12345678"
-            }
-        ]
+        TableModelColumn { display: "sku" }
+        TableModelColumn { display: "category" }
+        TableModelColumn { display: "stock" }
+        TableModelColumn { display: "in_stock_status" }
+        TableModelColumn { display: "price" }
+        TableModelColumn { display: "actions" }
     }
+
     ListModel {
         id: middleInfoModel
 

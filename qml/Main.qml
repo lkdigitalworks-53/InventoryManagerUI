@@ -34,6 +34,8 @@ App {
         if(isOnline) {
             logic.clearCache()
         }
+
+        logic.loadData()
     }
     // theming
     CustomeTheme {
