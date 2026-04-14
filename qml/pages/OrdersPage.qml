@@ -151,7 +151,7 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                // text: dataModel.Orders
+                                text: dataModel.totalOrders
                                 color: "#CC5500"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon.source === "" ? parent.left : icon.left
@@ -201,7 +201,7 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                // text: dataModel.totalPendingOrders
+                                text: dataModel.totalPendingOrders
                                 color: "#D19033"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon2.source === "" ? parent.left : icon2.left
@@ -251,7 +251,7 @@ Item {
                                 anchors.left: parent.left
                             }
                             AppText {
-                                // text: dataModel.totalCompletedOrdersInMonth
+                                text: dataModel.totalCompletedOrders
                                 color: "#3F704D"
                                 font.pixelSize: sp(10)
                                 anchors.left: icon3.source === "" ? parent.left : icon3.left
@@ -404,7 +404,7 @@ Item {
 
         AddNewOrderPage {
             id: addOrderPage
-            anchors.centerIn: ordersPage
+            // anchors.centerIn: ordersPage
             pushBackContent: ordersPage
 
             onClosed: {

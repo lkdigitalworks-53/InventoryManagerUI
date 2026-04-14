@@ -21,6 +21,10 @@ Item {
 
     // Orders related data
     readonly property alias ordersDataJson: _orders.ordersDataJson
+    property int totalOrders: _orders.ordersDataJson !== undefined ? _orders.ordersDataJson.length : 0
+    property int totalPendingOrders: _orders.ordersDataJson !== undefined ? _orders.getTotalPendingOrders() : 0
+    property int totalCompletedOrders: _orders.ordersDataJson !== undefined ? _orders.getTotalCompletedOrders() : 0
+
 
 
     // listen to actions from dispatcher
@@ -114,6 +118,10 @@ Item {
             orderData["order_id"] = _orders.ordersDataJson.length + 1
             _orders.ordersDataJson.push(orderData)
 
+            totalOrders = _orders.ordersDataJson !== undefined ? _orders.ordersDataJson.length : 0
+            totalPendingOrders = _orders.ordersDataJson !== undefined ? _orders.getTotalPendingOrders() : 0
+            totalCompletedOrders = _orders.ordersDataJson !== undefined ? _orders.getTotalCompletedOrders() : 0
+
             console.log("============= writing orders data: ")
             console.log("JSON.stringify(_orders.ordersDataJson): ", JSON.stringify(_orders.ordersDataJson))
             console.log("_orders.ordersDataJson size: ", _orders.ordersDataJson.length)
@@ -183,5 +191,20 @@ Item {
         id: _orders
 
         property var ordersDataJson: undefined
+
+        function getTotalPendingOrders() {
+            var totalPendingOrders = 0
+            for(var i = 0; i < ordersDataJson.length; ++i) {
+                totalPendingOrders += ordersDataJson[i]["status"] === "pending"
+            }
+            return totalPendingOrders
+        }
+        function getTotalCompletedOrders() {
+            var totalCompletedOrders = 0
+            for(var i = 0; i < ordersDataJson.length; ++i) {
+                totalCompletedOrders += ordersDataJson[i]["status"] === "completed"
+            }
+            return totalCompletedOrders
+        }
     }
 }

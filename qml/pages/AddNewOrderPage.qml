@@ -18,7 +18,7 @@ AppModal {
                 "items": 1,
             }
             console.log(" ########## adding selected products: ", JSON.stringify(productInfo))
-            selectProductRepeater.selectedProductsInfo.push(productInfo)
+            selectProductModel.append(productInfo)
         }
     }
 
@@ -209,12 +209,9 @@ AppModal {
                 spacing: dp(5)
                 width: parent.width
 
-                property int rowCount: 1
-                property var selectedProductsInfo: []
-
                 Repeater {
                     id: repeater
-                    model: selectProductRepeater.rowCount
+                    model: selectProductModel
                     delegate: selectProductComponent
                 }
             }
@@ -236,15 +233,15 @@ AppModal {
 
                     function getTotalItems() {
                         var items = 0
-                        for (var i = 0; i < selectProductRepeater.selectedProductsInfo.length; ++i) {
-                            items += selectProductRepeater.selectedProductsInfo[i]["items"]
+                        for (var i = 0; i < selectProductModel.count; ++i) {
+                            items += selectProductModel.get(i)["items"]
                         }
                         return items
                     }
                     function getTotalValue() {
                         var value = 0
-                        for (var i = 0; i < selectProductRepeater.selectedProductsInfo.length; ++i) {
-                            value += selectProductRepeater.selectedProductsInfo[i]["price"] * selectProductRepeater.selectedProductsInfo[i]["items"]
+                        for (var i = 0; i < selectProductModel.count; ++i) {
+                            value += selectProductModel.get(i)["price"] * selectProductModel.get(i)["items"]
                         }
                         return value
                     }
@@ -265,7 +262,7 @@ AppModal {
                             // Prepare the payload for the Logic layer
                             let order = {
                                 "customer": nameInput.text,
-                                "selected_products_info": selectProductRepeater.selectedProductsInfo,
+                                "selected_products_info": selectProductModel.source,
                                 "items": addOrderButton.getTotalItems(),
                                 "total_value": addOrderButton.getTotalValue(),
                                 "status": "pending",
@@ -276,8 +273,7 @@ AppModal {
 
                             // Trigger the logic action
                             logic.addOrder(order);
-                            selectProductRepeater.selectedProductsInfo = []
-                            selectProductRepeater.rowCount = 1
+                            selectProductModel.clear()
                             addNewOrderPage.close()
                         }
                     }
@@ -321,6 +317,9 @@ AppModal {
             spacing: dp(5)
             height: dp(25)
             width: parent.width
+            
+            // Capture the repeater index to use in nested delegates
+            property int repeaterIndex: index
 
             Rectangle {
                 id: addProductRowButton
@@ -342,7 +341,13 @@ AppModal {
                     id: addRowButtonMA
                     anchors.fill: parent
                     onClicked: {
-                        selectProductRepeater.rowCount++
+                        // Add a new empty product entry to the array
+                        selectProductModel.append({
+                            "product_id": "",
+                            "product_name": "",
+                            "price": 0,
+                            "items": 1
+                        })
                     }
                 }
             }
@@ -403,12 +408,8 @@ AppModal {
                                 "items": noOfItemsButton.count,
                             }
                             console.log(" ########## adding selected products: ", JSON.stringify(productInfo))
-                            if (selectProductRepeater.selectedProductsInfo[index] === undefined) {
-                                selectProductRepeater.selectedProductsInfo.push(productInfo)
-                            } else {
-                                selectProductRepeater.selectedProductsInfo[index] = productInfo
-                            }
-
+                            // Update the correct row in the array using repeater index
+                            selectProductModel.set(selectProductFeildRow.repeaterIndex, productInfo)
                             selectProductMenu.popup.close()
                         }
                     }
@@ -444,6 +445,12 @@ AppModal {
                         anchors.fill: parent
                         onClicked: {
                             noOfItemsButton.count--
+                            // Update the array with new count
+                            if (selectProductModel.get(selectProductFeildRow.repeaterIndex)) {
+                                var product = selectProductModel.get(selectProductFeildRow.repeaterIndex)
+                                product["items"] = noOfItemsButton.count
+                                selectProductModel.set(selectProductFeildRow.repeaterIndex, product)
+                            }
                         }
                     }
                 }
@@ -475,6 +482,12 @@ AppModal {
                         anchors.fill: parent
                         onClicked: {
                             noOfItemsButton.count++
+                            // Update the array with new count
+                            if (selectProductModel.get(selectProductFeildRow.repeaterIndex)) {
+                                var product = selectProductModel.get(selectProductFeildRow.repeaterIndex)
+                                product["items"] = noOfItemsButton.count
+                                selectProductModel.set(selectProductFeildRow.repeaterIndex, product)
+                            }
                         }
                     }
                 }
@@ -486,5 +499,10 @@ AppModal {
         id: listModel
         // keyField: "product_id"
         source: dataModel.inventoryDataJson
+    }
+    JsonListModel {
+        id: selectProductModel
+        // keyField: "product_id"
+        source: []
     }
 }
