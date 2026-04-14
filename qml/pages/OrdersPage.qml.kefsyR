@@ -372,52 +372,13 @@ Item {
                         syncDirection: Qt.Horizontal
 
                         delegate: Rectangle {
-                            id: delegate
                             implicitWidth: dp(100)
                             implicitHeight: dp(30)
-                            function getBackgroundColor(column, text) {
-                                if (column !== 4) {
-                                    return ""
-                                }
-                                if (text === "pending") {
-                                    return "#FFFD74"
-                                } else if (text === "completed") {
-                                    return "#A8E4A0"
-                                } else if (text === "processing") {
-                                    return "#ADDFFF"
-                                }
-                            }
-
-                            function getTextColor(column, text) {
-                                if (column !== 4) {
-                                    return "black"
-                                }
-                                if (text === "pending") {
-                                    return "#D19033"
-                                } else if (text === "completed") {
-                                    return "#3F704D"
-                                } else if (text === "processing") {
-                                    return "#4169E1"
-                                }
-                            }
-
-                            Rectangle {
-                                id: highlightItem
-                                width: modelText.paintedWidth + dp(10)
-                                height: modelText.paintedHeight + dp(10)
-                                color: delegate.getBackgroundColor(column, display)
-                                radius: height/2
-                                anchors.centerIn: modelText
-                                visible: column === 4
-                            }
 
                             Text {
-                                id: modelText
                                 text: display
                                 anchors.centerIn: parent
                                 elide: Text.ElideRight
-                                color: delegate.getTextColor(column, display)
-                                font.bold: column === 4
                             }
                             Rectangle {
                                 width: parent.width

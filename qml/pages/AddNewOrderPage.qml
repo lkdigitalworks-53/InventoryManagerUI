@@ -265,7 +265,7 @@ AppModal {
                                 "selected_products_info": selectProductModel.source,
                                 "items": addOrderButton.getTotalItems(),
                                 "total_value": addOrderButton.getTotalValue(),
-                                "status": "pending",
+                                "status": "processing",
                                 "date": new Date().toLocaleString()
                             };
                             console.log("order: ", JSON.stringify(order))
