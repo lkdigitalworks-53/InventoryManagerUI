@@ -270,6 +270,32 @@ AppModal {
       }
 
       AppText {
+        id: sellingPriceFeildHeader
+        text: "Selling Price (₹) *"
+        color: 'black'
+        font.pixelSize: sp(12)
+      }
+
+      Rectangle {
+        id: sellingPriceFeild
+        width: parent.width
+        height: dp(25)
+        color: theme.lightTextColor
+        radius: height/8
+
+        AppTextInput {
+          id: sellingPriceInput
+          width: parent.width - dp(10)
+          height: parent.height
+          anchors.left: parent.left
+          anchors.leftMargin: dp(5)
+          placeholderText: "0.00"
+          placeholderColor: theme.darkTextColor
+          fontSize: sp(8)
+        }
+      }
+
+      AppText {
         id: measurementFeildHeader
         text: "Measurement Unit"
         color: 'black'
@@ -382,6 +408,7 @@ AppModal {
                 "category": categoryInput.text,
                 "description": descriptionInput.text,
                 "price": (priceInput.text !== "" ? parseFloat(priceInput.text) : 0),
+                "sellingPrice": (sellingPriceInput.text !== "" ? parseFloat(sellingPriceInput.text) : 0),
                 "measurementUnit": measurementInput.text,
                 "currentStock": (currentStockInput.text !== "" ? parseInt(currentStockInput.text) : 0),
                 "minimumStock": (minimumStockInput.text !== "" ? parseInt(minimumStockInput.text) : 0)

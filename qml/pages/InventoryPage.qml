@@ -16,8 +16,9 @@ Item {
             "sku": productData["sku"],
             "category": productData["category"],
             "stock": productData["currentStock"],
-            "in_stock_status": (productData["currentStock"] > productData["minimumStock"] ? 1 : 0),
+            "in_stock_status": (productData["currentStock"] > productData["minimumStock"] ? "In Stock" : "Low Stock"),
             "price": "₹" + productData["price"],
+            "sellingPrice": "₹" + productData["sellingPrice"],
             "actions": "Restock",
         }
         tableModel.appendRow(row)
@@ -382,7 +383,7 @@ Item {
                     HorizontalHeaderView {
                         id: header
                         syncView: infoTable
-                        model: ["Product ID", "Name", "SKU", "Category", "Stock", "Status", "Price", "Actions"]
+                        model: ["Product ID", "Name", "SKU", "Category", "Stock", "Status", "Price", "Selling Price", "Actions"]
                         clip:true
                         movableColumns: false
 
@@ -411,7 +412,6 @@ Item {
                         anchors.top: header.bottom
                         clip: true
                         model: tableModel
-                        // columnSpacing: dp(5)
                         contentWidth: dp(100)
                         contentHeight: infoTable.height / 8
                         resizableColumns: false
@@ -419,13 +419,49 @@ Item {
                         syncDirection: Qt.Horizontal
 
                         delegate: Rectangle {
+                            id: delegate
                             implicitWidth: dp(100)
                             implicitHeight: dp(30)
 
+                            function getBackgroundColor(column, text) {
+                                if (column !== 5) {
+                                    return ""
+                                }
+                                if (text === "In Stock") {
+                                    return "#A8E4A0"
+                                } else {
+                                    return "#FF8A8A"
+                                }
+                            }
+
+                            function getTextColor(column, text) {
+                                if (column !== 5) {
+                                    return "black"
+                                }
+                                if (text === "In Stock") {
+                                    return "#3F704D"
+                                } else {
+                                    return "#990F02"
+                                }
+                            }
+
+                            Rectangle {
+                                id: highlightItem
+                                width: displayText.paintedWidth + dp(10)
+                                height: displayText.paintedHeight + dp(10)
+                                color: delegate.getBackgroundColor(column, display)
+                                radius: height/2
+                                anchors.centerIn: displayText
+                                visible: column === 5
+                            }
+
                             Text {
+                                id: displayText
                                 text: display
                                 anchors.centerIn: parent
                                 elide: Text.ElideRight
+                                color: delegate.getTextColor(column, display)
+                                font.bold: column === 5
                             }
                             Rectangle {
                                 width: parent.width
@@ -471,6 +507,7 @@ Item {
         TableModelColumn { display: "stock" }
         TableModelColumn { display: "in_stock_status" }
         TableModelColumn { display: "price" }
+        TableModelColumn { display: "sellingPrice" }
         TableModelColumn { display: "actions" }
     }
 }

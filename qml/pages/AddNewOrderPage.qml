@@ -14,7 +14,7 @@ AppModal {
             var productInfo = {
                 "product_id": listModel.get(0)["product_id"],
                 "product_name": listModel.get(0)["name"],
-                "price": listModel.get(0)["price"],
+                "sellingPrice": listModel.get(0)["sellingPrice"],
                 "items": 1,
             }
             console.log(" ########## adding selected products: ", JSON.stringify(productInfo))
@@ -241,7 +241,7 @@ AppModal {
                     function getTotalValue() {
                         var value = 0
                         for (var i = 0; i < selectProductModel.count; ++i) {
-                            value += selectProductModel.get(i)["price"] * selectProductModel.get(i)["items"]
+                            value += selectProductModel.get(i)["sellingPrice"] * selectProductModel.get(i)["items"]
                         }
                         return value
                     }
@@ -265,7 +265,7 @@ AppModal {
                                 "selected_products_info": selectProductModel.source,
                                 "items": addOrderButton.getTotalItems(),
                                 "total_value": addOrderButton.getTotalValue(),
-                                "status": "processing",
+                                "status": "pending",
                                 "date": new Date().toLocaleString()
                             };
                             console.log("order: ", JSON.stringify(order))
@@ -345,7 +345,7 @@ AppModal {
                         selectProductModel.append({
                             "product_id": "",
                             "product_name": "",
-                            "price": 0,
+                            "sellingPrice": 0,
                             "items": 1
                         })
                     }
@@ -360,7 +360,7 @@ AppModal {
                 displayText: currentIndex === -1 ? "Select Product from the list" : getDisplayText(currentIndex)
 
                 function getDisplayText(index) {
-                    return listModel.get(index)["name"] + " - ₹" + listModel.get(index)["price"]
+                    return listModel.get(index)["name"] + " - ₹" + listModel.get(index)["sellingPrice"]
                 }
 
                 indicator: AppIcon {
@@ -404,7 +404,7 @@ AppModal {
                             var productInfo = {
                                 "product_id": listModel.get(index)["product_id"],
                                 "product_name": listModel.get(index)["name"],
-                                "price": listModel.get(index)["price"],
+                                "sellingPrice": listModel.get(index)["sellingPrice"],
                                 "items": noOfItemsButton.count,
                             }
                             console.log(" ########## adding selected products: ", JSON.stringify(productInfo))
