@@ -53,13 +53,13 @@ Rectangle {
                 text: name
                 width: parent.textWidth
                 wrapMode: AppText.WordWrap
-                font.pixelSize: sp(12)
+                font.pixelSize: sp(14)
             }
             AppText {
                 x: parent.spacing
                 width: parent.textWidth
                 wrapMode: AppText.WrapAtWordBoundaryOrAnywhere
-                font.pixelSize: sp(10)
+                font.pixelSize: sp(12)
                 color: Theme.secondaryTextColor
                 text: detailText || ""
             }

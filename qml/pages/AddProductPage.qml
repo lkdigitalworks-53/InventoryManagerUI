@@ -6,7 +6,7 @@ AppModal {
 
   fullscreen: false
   closeOnBackgroundClick: false
-  modalHeight: dp(400)
+  modalHeight: dp(800)
 
   AppFlickable {
     id: flickableModal
@@ -65,7 +65,7 @@ AppModal {
           width: parent.width
           text: "Add New Product"
           color: 'black'
-          font.pixelSize: sp(12)
+          font.pixelSize: sp(22)
           font.bold: true
           anchors.top: infoDetailsHeader.top
           horizontalAlignment: Text.AlignHCenter
@@ -74,7 +74,7 @@ AppModal {
         AppIcon {
             id: crossIcon
             iconType: IconType.close
-            size: dp(12)
+            size: dp(20)
             color: theme.darkTextColor
             anchors.right: parent.right
             anchors.verticalCenter: productInfoTitle.verticalCenter
@@ -90,7 +90,7 @@ AppModal {
           width: parent.width
           text: "Add a new product to your inventory with details and stock information"
           color: theme.darkTextColor
-          font.pixelSize: sp(10)
+          font.pixelSize: sp(18)
           anchors.top: productInfoTitle.bottom
           anchors.topMargin: dp(3)
           horizontalAlignment: Text.AlignHCenter
@@ -101,36 +101,42 @@ AppModal {
         id: productInfoHeader
         text: "Product Information"
         color: theme.darkTextColor
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(20)
         font.bold: true
       }
 
       Rectangle {
         width: parent.width
-        height: dp(1)
+        height: dp(2)
         color: theme.darkTextColor
         opacity: 0.6
       }
 
-      AppText {
-        id: productNameFeildHeader
-        text: "Product Name *"
-        color: 'black'
-        font.pixelSize: sp(12)
+      Item {
+          width: parent.width
+          height: dp(5)
       }
 
       AppText {
         id: nameError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(nameInput)
       }
+
+      AppText {
+        id: productNameFeildHeader
+        text: "Product Name *"
+        color: 'black'
+        font.pixelSize: sp(18)
+      }
+
 
       Rectangle {
         id: nameFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/4
 
@@ -142,7 +148,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "Enter product name"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
@@ -150,7 +156,7 @@ AppModal {
         id: skuError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(skuInput)
       }
 
@@ -158,19 +164,19 @@ AppModal {
         id: skuFeildHeader
         text: "SKU *"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Row {
         id: skuFeildRow
         spacing: dp(5)
-        height: dp(25)
+        height: dp(40)
         width: parent.width
 
         Rectangle {
           id: skuFeild
           width: parent.width - generateSKUButton.width
-          height: dp(25)
+          height: dp(40)
           color: theme.lightTextColor
           anchors.verticalCenter: parent.verticalCenter
           radius: height/4
@@ -183,13 +189,13 @@ AppModal {
             anchors.leftMargin: dp(5)
             placeholderText: "Product SKU"
             placeholderColor: theme.darkTextColor
-            fontSize: sp(8)
+            fontSize: sp(18)
           }
         }
 
         Rectangle {
           id: generateSKUButton
-          height: dp(25)
+          height: dp(40)
           width: height * 3
           radius: height/4
           color: 'white'
@@ -200,7 +206,7 @@ AppModal {
           AppText {
             text: "Generate"
             color: 'black'
-            font.pixelSize: sp(10)
+            font.pixelSize: sp(18)
             font.bold: true
             anchors.centerIn: parent
           }
@@ -217,7 +223,7 @@ AppModal {
         id: categoryError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(categoryInput)
       }
 
@@ -225,13 +231,13 @@ AppModal {
         id: categoryFeildHeader
         text: "Category *"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: categoryFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/4
 
@@ -243,7 +249,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "Select category"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
@@ -251,13 +257,13 @@ AppModal {
         id: descriptionFeildHeader
         text: "Description"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: descriptionFeild
         width: parent.width
-        height: dp(75)
+        height: dp(100)
         color: theme.lightTextColor
         radius: height/8
 
@@ -269,35 +275,40 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "Enter product description"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
       Item {
         width: parent.width
-        height: dp(5)
+        height: dp(20)
       }
 
       AppText {
         id: stockInfoHeader
         text: "Product Information"
         color: theme.darkTextColor
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
         font.bold: true
       }
 
       Rectangle {
         width: parent.width
-        height: dp(1)
+        height: dp(2)
         color: theme.darkTextColor
         opacity: 0.6
+      }
+
+      Item {
+          width: parent.width
+          height: dp(5)
       }
 
       AppText {
         id: priceError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(priceInput)
       }
 
@@ -305,7 +316,7 @@ AppModal {
         id: priceFormatError
         text: "Enter a valid non-negative number"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: flickableModal._isNotEmpty(priceInput) && !flickableModal._isValidPrice(priceInput)
       }
 
@@ -313,13 +324,13 @@ AppModal {
         id: priceFeildHeader
         text: "Price (₹) *"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: priceFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/8
 
@@ -331,7 +342,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "0.00"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
@@ -339,7 +350,7 @@ AppModal {
         id: sellingPriceError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(sellingPriceInput)
       }
 
@@ -347,7 +358,7 @@ AppModal {
         id: sellingPriceFormatError
         text: "Enter a valid non-negative number"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: flickableModal._isNotEmpty(sellingPriceInput) && !flickableModal._isValidPrice(sellingPriceInput)
       }
 
@@ -355,13 +366,13 @@ AppModal {
         id: sellingPriceFeildHeader
         text: "Selling Price (₹) *"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: sellingPriceFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/8
 
@@ -373,7 +384,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "0.00"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
@@ -381,13 +392,13 @@ AppModal {
         id: measurementFeildHeader
         text: "Measurement Unit"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: measurementFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/8
 
@@ -399,7 +410,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "Units (pcs)"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
@@ -407,7 +418,7 @@ AppModal {
         id: currentStockError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(currentStockInput)
       }
 
@@ -415,7 +426,7 @@ AppModal {
         id: currentStockFormatError
         text: "Enter a non-negative integer"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: flickableModal._isNotEmpty(currentStockInput) && !flickableModal._isValidStock(currentStockInput)
       }
 
@@ -423,13 +434,13 @@ AppModal {
         id: currentStockFeildHeader
         text: "Current Stock *"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: currentStockFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/8
 
@@ -441,7 +452,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "0"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
         }
       }
 
@@ -449,7 +460,7 @@ AppModal {
         id: minStockError
         text: "Required"
         color: 'red'
-        font.pixelSize: sp(8)
+        font.pixelSize: sp(18)
         visible: !flickableModal._isNotEmpty(minimumStockInput)
       }
 
@@ -457,13 +468,13 @@ AppModal {
         id: minimumStockFeildHeader
         text: "Minimum Stock Level *"
         color: 'black'
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(18)
       }
 
       Rectangle {
         id: minimumStockFeild
         width: parent.width
-        height: dp(25)
+        height: dp(40)
         color: theme.lightTextColor
         radius: height/8
 
@@ -475,7 +486,7 @@ AppModal {
           anchors.leftMargin: dp(5)
           placeholderText: "1"
           placeholderColor: theme.darkTextColor
-          fontSize: sp(8)
+          fontSize: sp(18)
           text: "1"
         }
       }
@@ -483,13 +494,13 @@ AppModal {
       Row {
         id: actionButtonFeildRow
         spacing: dp(5)
-        height: dp(30)
+        height: dp(50)
         width: parent.width
         layoutDirection: Qt.RightToLeft
 
         Rectangle {
           id: addProductButton
-          height: dp(30)
+          height: dp(50)
           width: height * 4
           radius: height/4
           color: flickableModal.canAddProduct ? (addButtonMA.pressed ? 'lightGreen' : 'green') : theme.lightTextColor
@@ -499,7 +510,7 @@ AppModal {
           AppText {
             text: "Add Product"
             color: flickableModal.canAddProduct ? 'white' : theme.darkTextColor
-            font.pixelSize: sp(12)
+            font.pixelSize: sp(20)
             font.bold: true
             anchors.centerIn: parent
           }
@@ -534,7 +545,7 @@ AppModal {
 
         Rectangle {
           id: cancelButton
-          height: dp(30)
+          height: dp(50)
           width: height * 3
           radius: height/4
           color: cancelButtonMA.pressed ? theme.lightTextColor : 'white'
@@ -545,7 +556,7 @@ AppModal {
           AppText {
             text: "Cancel"
             color: 'black'
-            font.pixelSize: sp(12)
+            font.pixelSize: sp(20)
             font.bold: true
             anchors.centerIn: parent
           }

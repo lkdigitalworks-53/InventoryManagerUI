@@ -40,7 +40,7 @@ Rectangle {
             id: appText
             anchors.verticalCenter: parent.verticalCenter
             color: Theme.backgroundColor
-            font.pixelSize: iconRect.visible ? sp(16) : dp(14)
+            font.pixelSize: iconRect.visible ? sp(18) : dp(14)
             font.bold: true
         }
 

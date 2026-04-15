@@ -14,7 +14,7 @@ FlickablePage {
     AppPaper {
         id: menuTab
         width: parent.width - dp(20)
-        height: dp(40)
+        height: dp(80)
         anchors.top: parent.top
         anchors.topMargin: dp(20)
         radius: height/4
@@ -69,14 +69,17 @@ FlickablePage {
                         height: parent.height/2
                         anchors.centerIn: parent
                         spacing: dp(3)
-                        AppImage {
-                            // source: "" + ".png"
-                            fillMode: Image.PreserveAspectFit
-                        }
+                        // AppImage {
+                        //     // source: "" + ".png"
+                        //     fillMode: Image.PreserveAspectFit
+                        //     visible: false
+                        // }
                         AppText {
                             text: name
                             color: (index === menuButtons.selectedIndex) ? model.borderColor : 'black'
-                            font.pixelSize: sp(10)
+                            font.pixelSize: sp(18)
+                            horizontalAlignment: Text.AlignHCenter
+                            anchors.centerIn: parent
                         }
                     }
 

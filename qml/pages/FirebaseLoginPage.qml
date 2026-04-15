@@ -129,14 +129,14 @@ AppPage {
         // email text and field
         AppText {
             text: qsTr("E-mail")
-            font.pixelSize: sp(12)
+            font.pixelSize: sp(14)
         }
 
         AppTextField {
             id: txtUsername
             Layout.preferredWidth: dp(200)
             showClearButton: true
-            font.pixelSize: sp(14)
+            font.pixelSize: sp(16)
             borderColor: Theme.tintColor
             borderWidth: !Theme.isAndroid ? dp(2) : 0
         }
@@ -144,14 +144,14 @@ AppPage {
         // password text and field
         AppText {
             text: qsTr("Password")
-            font.pixelSize: sp(12)
+            font.pixelSize: sp(14)
         }
 
         AppTextField {
             id: txtPassword
             Layout.preferredWidth: dp(200)
             showClearButton: true
-            font.pixelSize: sp(14)
+            font.pixelSize: sp(16)
             borderColor: Theme.tintColor
             borderWidth: !Theme.isAndroid ? dp(2) : 0
             echoMode: TextInput.Password

@@ -15,6 +15,6 @@ Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
         horizontalAlignment: Text.AlignHCenter
         color: Theme.secondaryTextColor
-        font.pixelSize: sp(12)
+        font.pixelSize: sp(14)
     }
 }
