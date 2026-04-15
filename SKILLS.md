@@ -28,6 +28,8 @@ cmake --build build --target clean
 - `CMakeLists.txt` (root project - Felgo-based)
 - `App_UI/CMakeLists.txt` (BusinessManagement - Qt6-based)
 - `android/CMakeLists.txt` configuration patterns if exists
+ - Note: The root `CMakeLists.txt` can set Android Gradle SDK versions via a target property, for example:
+     `set_target_properties(appInventoryManagerUI PROPERTIES QT_ANDROID_TARGET_SDK_VERSION 35 QT_ANDROID_COMPILE_SDK_VERSION 35)`
 
 **Tools & Dependencies**:
 - CMake 3.16+
@@ -263,6 +265,7 @@ FirebaseDatabase {
 - `android/AndroidManifest.xml`
 - `android/build.gradle`
 - `android/res/` (resources)
+ - Note: Ensure `android/AndroidManifest.xml` contains a `<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35"/>` entry and prefer numeric Gradle properties (avoid `.toInteger()` conversions in `android/build.gradle`).
 
 ### iOS Development
 **Required for**: Platform-Specific Agent, Deployment & Publishing Agent

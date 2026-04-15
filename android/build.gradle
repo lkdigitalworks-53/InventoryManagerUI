@@ -6,8 +6,7 @@ buildscript {
 
     dependencies {
         classpath "com.android.tools.build:gradle:${androidGradleToolsVersion}"
-        // TODO: uncomment below to use google services (e.g. for Firebase/GCM/AdMob)
-        // classpath 'com.google.gms:google-services:4.4.2'
+        //classpath 'com.google.gms:google-services:4.4.2'
     }
 }
 
@@ -46,7 +45,7 @@ android {
 
     namespace            androidPackageName
     
-    compileSdkVersion    androidCompileSdkVersion.toInteger()
+    compileSdkVersion    34
     buildToolsVersion    androidBuildToolsVersion
 
     compileOptions {
@@ -56,9 +55,9 @@ android {
 
     defaultConfig {
       multiDexEnabled true
-      targetSdkVersion   androidCompileSdkVersion.toInteger()
+      targetSdkVersion   34
       applicationId    = productIdentifier
-      versionCode      = productVersionCode.toInteger()
+      versionCode      = productVersionCode
       versionName      = productVersionName
       minSdkVersion    = project.hasProperty("qtMinSdkVersion") ? qtMinSdkVersion.toInteger() : 23
 
@@ -93,5 +92,4 @@ android {
     }
 }
 
-// TODO: uncomment below to use google services (e.g. for Firebase/GCM)
-// apply plugin: 'com.google.gms.google-services'
+//apply plugin: 'com.google.gms.google-services'

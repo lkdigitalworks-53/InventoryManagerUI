@@ -55,6 +55,14 @@ qt_add_qml_module(appInventoryManagerUI
     NO_RESOURCE_TARGET_PATH
 )
 
+# Add or modify the target properties block
+set_target_properties(appInventoryManagerUI PROPERTIES
+    # Add this line to control the Target SDK Version in Gradle
+    QT_ANDROID_TARGET_SDK_VERSION 34
+    # Ensure the Compile SDK is also set high for compatibility
+    # QT_ANDROID_COMPILE_SDK_VERSION 34
+)
+
 # NOTE: for PUBLISHING, perform the following steps:
 # 1. comment the deploy_resources line above, to avoid shipping your qml files with the application (instead they get compiled to the app binary)
 # 2. uncomment the QML_FILES and RESOURCES above; this compiles your qml files and js files to the app binary and protects your source code

@@ -17,6 +17,7 @@ This file defines specialized agents and their roles for the InventoryManagerUI 
 - Platform-specific build configurations (Android, iOS, Desktop)
 - Development vs. publishing build modes
 - Dependency verification (CMake, Ninja, Qt, Felgo)
+ - Ensure Android Gradle properties are numeric and avoid using `.toInteger()` in Gradle files; prefer setting `QT_ANDROID_TARGET_SDK_VERSION` / `QT_ANDROID_COMPILE_SDK_VERSION` via CMake `set_target_properties()` for the `appInventoryManagerUI` target.
 
 **Key Files**:
 - `CMakeLists.txt` (root)
@@ -194,6 +195,7 @@ Navigation (root)
 - Manage Android build configuration (`android/`)
 - Handle iOS deployment (`ios/`)
 - Configure macOS app bundle (`macx/`)
+ - Ensure `android/AndroidManifest.xml` includes a `<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35"/>` entry and avoid `.toInteger()` calls in `android/build.gradle` that can break the Gradle build.
 - Set Windows-specific resources (`win/app_icon.rc`)
 - Platform-specific QML code paths
 - Handle platform lifecycle events
