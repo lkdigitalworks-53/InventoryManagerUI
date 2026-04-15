@@ -8,12 +8,12 @@ This file defines the skills, tools, and knowledge domains required for effectiv
 ## Core Build Skills
 
 ### CMake & Build System
-**Required for**: Build & Infrastructure Agent, Deployment & Publishing Agent
+**Required for**: Build & Infrastructure Agent, Deployment & Publishing Agent   
 **Knowledge Areas**:
 - CMake 3.16+ syntax and commands
 - Target configuration (qt_add_executable, qt_add_qml_module)
 - Mobile-specific build configurations (Android, iOS)
-- Felgo CMake extensions (`felgo_configure_executable`, `deploy_resources`)
+- Felgo CMake extensions (`felgo_configure_executable`, `deploy_resources`)     
 - Qt6 CMake integration
 - Platform detection and conditional compilation
 
@@ -59,7 +59,7 @@ Rectangle {
     anchors { /* positioning */ }
     property type propName: defaultValue
     signal mySignal(var data)
-    
+
     MouseArea { onClicked: mySignal(data) }
 }
 
@@ -142,8 +142,8 @@ StackLayout {
 // DataModel.qml - centralized state
 Item {
     readonly property bool isBusy: api.busy
-    readonly property alias inventoryDataJson: _inventory.inventoryDataJson
-    
+    readonly property alias inventoryDataJson: _inventory.inventoryDataJson     
+
     Connections {
         target: logicConnection
         function onDataLoaded(inventory, orders) {
@@ -155,7 +155,7 @@ Item {
 ```
 
 ### REST API & Networking
-**Required for**: Core Data Model Agent, Firebase & Authentication Agent
+**Required for**: Core Data Model Agent, Firebase & Authentication Agent        
 **Knowledge Areas**:
 - HTTP methods (GET, POST, PUT, DELETE)
 - JSON payload construction
@@ -175,7 +175,7 @@ HttpRequest.get(url)
 ```
 
 ### Signal/Slot Architecture
-**Required for**: Felgo Plugin & Architecture Agent, Core Data Model Agent
+**Required for**: Felgo Plugin & Architecture Agent, Core Data Model Agent      
 **Knowledge Areas**:
 - Signal definition and emission
 - Slot (signal handler) implementation
@@ -217,7 +217,7 @@ Connections {
 - Firebase documentation: https://felgo.com/doc/plugin-firebase/
 
 ### Firebase Realtime Database
-**Required for**: Firebase & Authentication Agent, Core Data Model Agent
+**Required for**: Firebase & Authentication Agent, Core Data Model Agent        
 **Knowledge Areas**:
 - Database structure design
 - CRUD operations (Create, Read, Update, Delete)
@@ -252,7 +252,7 @@ FirebaseDatabase {
 ## Platform & Deployment Skills
 
 ### Android Development
-**Required for**: Platform-Specific Agent, Deployment & Publishing Agent
+**Required for**: Platform-Specific Agent, Deployment & Publishing Agent        
 **Knowledge Areas**:
 - AndroidManifest.xml configuration
 - Android permissions handling
@@ -265,10 +265,11 @@ FirebaseDatabase {
 - `android/AndroidManifest.xml`
 - `android/build.gradle`
 - `android/res/` (resources)
- - Note: Ensure `android/AndroidManifest.xml` contains a `<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35"/>` entry and prefer numeric Gradle properties (avoid `.toInteger()` conversions in `android/build.gradle`).
+ - Note: Ensure `android/AndroidManifest.xml` contains a `<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35"/>` entry and prefer numeric Gradle 
+properties (avoid `.toInteger()` conversions in `android/build.gradle`).        
 
 ### iOS Development
-**Required for**: Platform-Specific Agent, Deployment & Publishing Agent
+**Required for**: Platform-Specific Agent, Deployment & Publishing Agent        
 **Knowledge Areas**:
 - iOS app configuration (Info.plist)
 - Xcode project management
@@ -329,7 +330,7 @@ set(PRODUCT_STAGE "test")  # or "publish"
 - Animation debugging
 
 ### Network Debugging
-**Required for**: Firebase & Authentication Agent, Core Data Model Agent
+**Required for**: Firebase & Authentication Agent, Core Data Model Agent        
 **Knowledge Areas**:
 - HTTP request/response inspection
 - Firebase Console monitoring
@@ -406,7 +407,7 @@ Cloud/Firebase
 
 - **Felgo Documentation**: https://felgo.com/doc/
 - **Qt Documentation**: https://doc.qt.io/
-- **Qt Quick Controls 2**: https://doc.qt.io/qt-6/qtquickcontrols2-index.html
+- **Qt Quick Controls 2**: https://doc.qt.io/qt-6/qtquickcontrols2-index.html   
 - **Firebase Documentation**: https://firebase.google.com/docs/
 - **CMake Documentation**: https://cmake.org/documentation/
 - **Android Development**: https://developer.android.com/

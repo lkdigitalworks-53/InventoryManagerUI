@@ -1,14 +1,15 @@
 # AGENTS.md
 
 ## Overview
-This file defines specialized agents and their roles for the InventoryManagerUI project. Each agent is designed to handle specific domains and modules, enabling efficient development through agentic workflows.
+This file defines specialized agents and their roles for the InventoryManagerUI 
+project. Each agent is designed to handle specific domains and modules, enabling efficient development through agentic workflows.
 
 ---
 
 ## Core Building Blocks
 
 ### 1. Build & Infrastructure Agent
-**Purpose**: Manages CMake configuration, compilation, and build optimization.
+**Purpose**: Manages CMake configuration, compilation, and build optimization.  
 **Scope**: Entire project (root + App_UI)
 **Responsibilities**:
 - Configure CMake: `cmake -S . -B build -G "Ninja"`
@@ -35,7 +36,7 @@ This file defines specialized agents and their roles for the InventoryManagerUI 
 **Purpose**: Manages the Felgo-based application structure, plugin system, and navigation.
 **Scope**: Root `qml/` directory
 **Responsibilities**:
-- Maintain Felgo App architecture (Navigation, NavigationItem, NavigationStack)
+- Maintain Felgo App architecture (Navigation, NavigationItem, NavigationStack) 
 - Manage page navigation and plugin system
 - Configure Firebase plugins
 - Handle cross-platform lifecycle (Android lifecycle management)
@@ -233,8 +234,7 @@ Navigation (root)
 - Stage: `test` or `publish`
 
 **Build Mode Differences**:
-- **Development**: `deploy_resources()` - fast iteration, QML files not compiled
-- **Publishing**: Compiled QML, protected source code, load from `qrc:/`
+- **Development**: `deploy_resources()` - fast iteration, QML files not compiled- **Publishing**: Compiled QML, protected source code, load from `qrc:/`        
 
 **Example Prompts**:
 - "Switch to publishing build mode"
