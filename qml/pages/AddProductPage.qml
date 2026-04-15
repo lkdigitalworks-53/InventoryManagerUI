@@ -16,6 +16,33 @@ AppModal {
     contentHeight: newProductDetails.height + dp(50)
     boundsBehavior: Flickable.StopAtBounds
 
+    // Validation helpers for Add Product
+    function _isNotEmpty(input) {
+      return input && input.text !== undefined && input.text.trim() !== "";
+    }
+
+    function _isValidPrice(input) {
+      if (!input || input.text === undefined) return false;
+      var v = parseFloat(input.text);
+      return !isNaN(v) && v >= 0;
+    }
+
+    function _isValidStock(input) {
+      if (!input || input.text === undefined) return false;
+      var v = parseFloat(input.text);
+      return !isNaN(v) && v >= 0 && Math.floor(v) === v;
+    }
+
+    property bool canAddProduct: flickableModal._isNotEmpty(nameInput) &&
+                                flickableModal._isNotEmpty(skuInput) &&
+                                flickableModal._isNotEmpty(categoryInput) &&
+                                flickableModal._isNotEmpty(priceInput) &&
+                                flickableModal._isNotEmpty(sellingPriceInput) &&
+                                flickableModal._isNotEmpty(currentStockInput) &&
+                                flickableModal._isValidPrice(priceInput) &&
+                                flickableModal._isValidPrice(sellingPriceInput) &&
+                                flickableModal._isValidStock(currentStockInput)
+
     Column {
       id: newProductDetails
       width: parent.width - dp(20)
@@ -92,6 +119,14 @@ AppModal {
         font.pixelSize: sp(12)
       }
 
+      AppText {
+        id: nameError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(nameInput)
+      }
+
       Rectangle {
         id: nameFeild
         width: parent.width
@@ -109,6 +144,14 @@ AppModal {
           placeholderColor: theme.darkTextColor
           fontSize: sp(8)
         }
+      }
+
+      AppText {
+        id: skuError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(skuInput)
       }
 
       AppText {
@@ -169,6 +212,13 @@ AppModal {
             }
           }
         }
+      }
+      AppText {
+        id: categoryError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(categoryInput)
       }
 
       AppText {
@@ -244,6 +294,22 @@ AppModal {
       }
 
       AppText {
+        id: priceError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(priceInput)
+      }
+
+      AppText {
+        id: priceFormatError
+        text: "Enter a valid non-negative number"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: flickableModal._isNotEmpty(priceInput) && !flickableModal._isValidPrice(priceInput)
+      }
+
+      AppText {
         id: priceFeildHeader
         text: "Price (₹) *"
         color: 'black'
@@ -267,6 +333,22 @@ AppModal {
           placeholderColor: theme.darkTextColor
           fontSize: sp(8)
         }
+      }
+
+      AppText {
+        id: sellingPriceError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(sellingPriceInput)
+      }
+
+      AppText {
+        id: sellingPriceFormatError
+        text: "Enter a valid non-negative number"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: flickableModal._isNotEmpty(sellingPriceInput) && !flickableModal._isValidPrice(sellingPriceInput)
       }
 
       AppText {
@@ -322,6 +404,22 @@ AppModal {
       }
 
       AppText {
+        id: currentStockError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(currentStockInput)
+      }
+
+      AppText {
+        id: currentStockFormatError
+        text: "Enter a non-negative integer"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: flickableModal._isNotEmpty(currentStockInput) && !flickableModal._isValidStock(currentStockInput)
+      }
+
+      AppText {
         id: currentStockFeildHeader
         text: "Current Stock *"
         color: 'black'
@@ -348,6 +446,14 @@ AppModal {
       }
 
       AppText {
+        id: minStockError
+        text: "Required"
+        color: 'red'
+        font.pixelSize: sp(8)
+        visible: !flickableModal._isNotEmpty(minimumStockInput)
+      }
+
+      AppText {
         id: minimumStockFeildHeader
         text: "Minimum Stock Level *"
         color: 'black'
@@ -367,9 +473,10 @@ AppModal {
           height: parent.height
           anchors.left: parent.left
           anchors.leftMargin: dp(5)
-          placeholderText: "0"
+          placeholderText: "1"
           placeholderColor: theme.darkTextColor
           fontSize: sp(8)
+          text: "1"
         }
       }
 
@@ -385,12 +492,13 @@ AppModal {
           height: dp(30)
           width: height * 4
           radius: height/4
-          color: addButtonMA.pressed? 'lightGreen' : 'green'
+          color: flickableModal.canAddProduct ? (addButtonMA.pressed ? 'lightGreen' : 'green') : theme.lightTextColor
+          opacity: flickableModal.canAddProduct ? 1.0 : 0.6
           anchors.verticalCenter: parent.verticalCenter
 
           AppText {
             text: "Add Product"
-            color: 'white'
+            color: flickableModal.canAddProduct ? 'white' : theme.darkTextColor
             font.pixelSize: sp(12)
             font.bold: true
             anchors.centerIn: parent
@@ -399,6 +507,7 @@ AppModal {
           MouseArea {
             id: addButtonMA
             anchors.fill: parent
+            enabled: flickableModal.canAddProduct
             onClicked: {
               console.log("====== ")
               // Prepare the payload for the Logic layer

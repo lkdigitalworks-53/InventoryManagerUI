@@ -30,6 +30,21 @@ AppModal {
         contentHeight: newOrderDetails.height + dp(50)
         boundsBehavior: Flickable.StopAtBounds
 
+        // Validation helpers for Add Product
+        function _isNotEmpty(input) {
+            return input && input.text !== undefined && input.text.trim() !== "";
+        }
+        function _isValidPhoneNumber(input) {
+            if (!input || input.text === undefined) return false;
+            if (input.text.length !== 10) return false
+            var v = parseInt(input.text);
+            return !isNaN(v) && v >= 0;
+        }
+
+        property bool canAddProduct: flickableModal._isNotEmpty(nameInput) &&
+                                     flickableModal._isNotEmpty(phoneInput) &&
+                                     flickableModal._isValidPhoneNumber(phoneInput)
+
         Column {
             id: newOrderDetails
             width: parent.width - dp(20)
@@ -100,6 +115,14 @@ AppModal {
             }
 
             AppText {
+                id: customerNameError
+                text: "Required"
+                color: 'red'
+                font.pixelSize: sp(8)
+                visible: !flickableModal._isNotEmpty(nameInput)
+            }
+
+            AppText {
                 id: customerNameFeildHeader
                 text: "Customer Name *"
                 color: 'black'
@@ -149,6 +172,22 @@ AppModal {
                     placeholderColor: theme.darkTextColor
                     fontSize: sp(8)
                 }
+            }
+
+            AppText {
+                id: phoneError
+                text: "Required"
+                color: 'red'
+                font.pixelSize: sp(8)
+                visible: !flickableModal._isNotEmpty(phoneInput)
+            }
+
+            AppText {
+              id: phoneFormatError
+              text: "Enter a valid phone number"
+              color: 'red'
+              font.pixelSize: sp(8)
+              visible: flickableModal._isNotEmpty(phoneInput) && !flickableModal._isValidPhoneNumber(phoneInput)
             }
 
             AppText {
@@ -228,7 +267,8 @@ AppModal {
                     height: dp(30)
                     width: height * 4
                     radius: height/4
-                    color: addButtonMA.pressed ? '#AAFF4500' : '#FF4500'
+                    color: flickableModal.canAddProduct ? (addButtonMA.pressed ? '#AAFF4500' : '#FF4500') : theme.lightTextColor
+                    opacity: flickableModal.canAddProduct ? 1.0 : 0.6
                     anchors.verticalCenter: parent.verticalCenter
 
                     function getTotalItems() {
@@ -248,7 +288,7 @@ AppModal {
 
                     AppText {
                         text: "Add Order"
-                        color: 'white'
+                        color: flickableModal.canAddProduct ? 'white' : theme.darkTextColor
                         font.pixelSize: sp(12)
                         font.bold: true
                         anchors.centerIn: parent
@@ -257,6 +297,7 @@ AppModal {
                     MouseArea {
                         id: addButtonMA
                         anchors.fill: parent
+                        enabled: flickableModal.canAddProduct
                         onClicked: {
                             console.log("====== ")
                             // Prepare the payload for the Logic layer
@@ -343,11 +384,11 @@ AppModal {
                     onClicked: {
                         // Add a new empty product entry to the array
                         selectProductModel.append({
-                            "product_id": "",
-                            "product_name": "",
-                            "sellingPrice": 0,
-                            "items": 1
-                        })
+                                                      "product_id": "",
+                                                      "product_name": "",
+                                                      "sellingPrice": 0,
+                                                      "items": 1
+                                                  })
                     }
                 }
             }
