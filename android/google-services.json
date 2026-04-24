@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "219471233608",
+    "project_id": "inventorymanager-48392",
+    "storage_bucket": "inventorymanager-48392.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:219471233608:android:9691b11222183348e24e7d",
+        "android_client_info": {
+          "package_name": "com.lkdigitalworks.inventory.management.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAeA5Mb6ZmtKLOb3Oxw_n-dh62_qY0r4mA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
