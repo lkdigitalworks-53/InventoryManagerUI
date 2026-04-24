@@ -68,12 +68,14 @@ Item {
         }
 
         function onLoadData() {
-            // 1. Load local file cache immediately → UI is populated in < 1 ms
-            _localStore.loadAll()
-
-            // 2. Start Firebase real-time listeners → updates arrive async.
-            //    With persistenceEnabled the SDK also returns cached data first.
-            _startFirebaseListeners()
+            if (firebaseDb.isFirebaseReady && app.isOnline) {
+                // Start Firebase real-time listeners → updates arrive async.
+                //  With persistenceEnabled the SDK also returns cached data first.
+                _startFirebaseListeners()
+            } else {
+                // Load local file cache immediately → UI is populated in < 1 ms
+                _localStore.loadAll()
+            }
         }
 
         function onRefreshData() {
@@ -162,20 +164,15 @@ Item {
     FirebaseDatabase {
         id: firebaseDb
         config: firebaseConfig      // id defined in Main.qml, resolved via QML dynamic scope
-        persistenceEnabled: false
-
-        // ── Real-time listener ───────────────────────────────────────────────
-        // onListenEvent: function(success, value, path) {
-        //     if (!success) {
-        //         console.warn("[Firebase] listenEvent failed  path:", path, " value:", value)
-        //         return
-        //     }
-        //     console.log("[Firebase] listenEvent  path:", path)
-        //     _applyFirebaseData(path, value)
-        // }
+        persistenceEnabled: true
+        property bool isFirebaseReady: false
 
         onFirebaseReady: {
             console.log("firbase ready for use")
+            isFirebaseReady = true
+            if (app.isOnline) {
+                _startFirebaseListeners()
+            }
         }
         onRealtimeValueChanged: function(success, key, value) {
             console.log("firbase onRealtimeValueChanged success: " + success + " key: " + key + " value: " + value)
@@ -197,14 +194,6 @@ Item {
             console.log("[Firebase] writeCompleted  path:", path)
             _sync.onWriteAck(path)
         }
-
-        // ── Error handler ────────────────────────────────────────────────────
-        // onErrorOccurred: function(errorType, errorString, path) {
-        //     console.error("[Firebase] error  type:", errorType,
-        //                   " msg:", errorString, " path:", path)
-        //     _sync.onWriteError(path)
-        //     logic.errorOccurred("Firebase[" + path + "]", errorString)
-        // }
     }
 
     // ── Network watcher ───────────────────────────────────────────────────────
@@ -433,7 +422,7 @@ Item {
             var arr = records.slice()
             var idx = -1
             for (var i = 0; i < arr.length; i++) {
-                if (arr[i].product_id == record.product_id) { idx = i; break }
+                if (arr[i].product_id === record.product_id) { idx = i; break }
             }
             if (idx >= 0) arr[idx] = record
             else          arr.push(record)
@@ -517,15 +506,28 @@ Item {
     // Start (or re-attach) Firebase real-time listeners.
     // Falls back to one-shot getValue if listenForValueChange is unavailable.
     function _startFirebaseListeners() {
-        try {
-            firebaseDb.listenForValueChange("inventory")
-            firebaseDb.listenForValueChange("orders")
-            console.log("[Firebase] Real-time listeners attached")
-        } catch (e) {
-            console.warn("[Firebase] listenForValueChange unavailable – falling back to getValue:", e)
-            firebaseDb.getValue("inventory")
-            firebaseDb.getValue("orders")
-        }
+        console.warn("[Firebase] getting values from firebase store")
+        firebaseDb.getValue("inventory", "", function(success, key, value) {
+            console.log("callback for get value in to firbase")
+            if(success) {
+                _inv.records = _toArray(value)
+                console.log("successfully read objects from DB with size: " + _inv.records.length)
+                _localStore.saveInventory()
+            } else {
+                console.error("DB get error:", message)
+            }
+        })
+        firebaseDb.getValue("orders", "", function(success, key, value) {
+            console.log("callback for get value in to firbase")
+            if(success) {
+                _ord.records = _toArray(value)
+                console.log("successfully read object from DB with size: " + _ord.records.length)
+                _localStore.saveOrders()
+            } else {
+                console.error("DB get error:", message)
+            }
+        })
+        logic.dataLoaded(_inv.records, _ord.records)
     }
 
     // Route a write through Firebase (online) or the offline queue (offline).
@@ -536,11 +538,11 @@ Item {
             firebaseDb.setValue(path, data, function(success, message) {
                 console.log("callback for writing in to firbase")
                 if(success) {
-                  console.log("successfully written object to DB")
+                    console.log("successfully written object to DB")
                 } else {
-                  console.log("DB write error:", message)
+                    console.log("DB write error:", message)
                 }
-              })
+            })
         } else {
             console.log("[DataModel] Offline – queuing write for", path)
             _sync.enqueue("set", path, data)
