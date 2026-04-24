@@ -1,6 +1,6 @@
 {
     "title": "InventoryManagerUI",
-    "identifier": "com.yourcompany.wizardEVAP.InventoryManagerUI",
+    "identifier": "com.lkdigitalworks.inventory.management.app",
     "orientation": "auto",
     "versioncode": 1,
     "versionname": "1.0.0",
