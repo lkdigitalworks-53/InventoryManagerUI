@@ -421,7 +421,7 @@ Item {
                         anchors.top: header.bottom
                         clip: true
                         model: tableModel
-                        contentWidth: dp(150)
+                        contentWidth: delegate.width
                         contentHeight: infoTable.height / 8
                         resizableColumns: false
                         resizableRows: false
