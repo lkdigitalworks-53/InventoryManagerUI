@@ -24,7 +24,7 @@ App {
     //  * Publish your games & apps for the app stores
     //  * Remove the Felgo Splash Screen or set a custom one (available with the Pro Licenses)
     //  * Add plugins to monetize, analyze & improve your apps (available with the Pro Licenses)
-    licenseKey: "5D1369F7CEE60AF989BF82F0438EAFCCBC5CFB6DF74E512BD24E2EE6B417A99555E0D5FD528584CAC30874367A99D444ABD79672BF88F8ABE2E7176FAC92EBB0DC762D4FAF1AB1C0862C443F3F887F75B866C769C7DE8C6B73731CF2D0706ACD9840443125C4AC731C8F30738D96726F8FA8CD0861EA3B2FDA559A3820C3845E449BE0EE973A4145758765310C28F3198E7DBB0A1E31F7DFA0427C7F5C15048D5A277F64ACBB59B0BDF4EAE117773C6FB71082F7D5FF3924E082B4FDAE69E1217649E149470C6C3D4166D983196A1D9AFEF8262BA801FC5F61A9CB640462ECB60A02FFC029D910BE075801951D5DED021CCC7ADF0C128265A7982B6F36BC73E47FA728F1E3416846DF5B9BAE5CB735121F66FE9787E343ED9EF5D8D2FB838B77876A86F21B5167DBFF204E9B22EC599B64CCD42BAAEF15EEE6407B397494772A"
+    licenseKey: "3F3506BFF764D512407759CE7C931A6C77E48DA3278D3AF6B2DB7D966F71336AC3B65A1A2071AD04DBDDEADE75498FA8DAB000F286994F014C551A8DCD0A73F94A393BBAF93E96885BD905C1672DE5A3433F21555EF65B2D71C7AD5EB3D61D215C7EFA75FB1F88CCA38B49B429DA14BEFF579766A21876288320A2035BAFE8C7183916C77118B8B6F88591F14D1490B29D274678CD96A687681A2D0FF1C35C0918C5C0D8BC5BD7DBE1E7A64371F1D17E9AEF7715D77BB0A859F515C0DE9A085092043CEE4028E2B9E387B913296F5F53468FA473D5A4E31BFA890038B73E37CD673D0AB5F96DD360724E07ED359F03FC526DDFA79BD1E13FEAA0C753632875C110263AA58AC49AD42E9E70D5048797EBCB08F42AB4F165D70E0C2D52F255BA55E4F55CC7DE591730E18694CAEC0D8E8FD7C5CA2EF07A14023AACAACC004F0A3E"
 
     // app initialization
     Component.onCompleted: {
@@ -33,6 +33,8 @@ App {
         // e.g. to only clear the items that aren't required regularly
         if(isOnline) {
             logic.clearCache()
+            console.log("======== logging in")
+            firebaseAuth.loginUserAnonymously()
         }
 
         logic.loadData()
@@ -42,20 +44,22 @@ App {
         id: theme
     }
 
-    // FirebaseConfig {
-    //     id: firebaseConfig
-    //     projectId: "inventorymanager-48392"
-    //     // Get these values from your Firebase Console (Project Settings > General > Web App)
-    //     apiKey: "AIzaSyDvVhwCOsmAegpM_SyaEx91PadJOsEVRNI"
-    //     applicationId: "1:219471233608:web:d7452b8037080ba4e24e7d"
-    // }
+    FirebaseConfig {
+        id: firebaseConfig
+        projectId: "inventorymanager-48392"
+        // Get these values from your Firebase Console (Project Settings > General > Web App)
+        apiKey: "AIzaSyAeA5Mb6ZmtKLOb3Oxw_n-dh62_qY0r4mA"
+        applicationId: "1:219471233608:android:9691b11222183348e24e7d"
+        databaseUrl: "https://inventorymanager-48392-default-rtdb.asia-southeast1.firebasedatabase.app"
+    }
 
-    // // Use the FirebaseAuth Item to register and log in/log out users
-    // FirebaseAuth {
-    //     id: firebaseAuth
-
-    //     config: firebaseConfig
-    // }
+    // Use the FirebaseAuth Item to register and log in/log out users
+    FirebaseAuth {
+        id: firebaseAuth
+        config: firebaseConfig
+        onFirebaseReady: console.log("firbase auth is ready")
+        onLoggedIn: console.log("firbase logged in")
+    }
 
     // business logic
     Logic {
@@ -122,19 +126,4 @@ App {
 
         Behavior on opacity { NumberAnimation { duration: 250 } } // page fade in/out
     }
-
-
-    // This item contains example code for the chosen Felgo Plugins
-    // It is hidden by default and will overlay the QML items above if shown
-    // PluginMainItem {
-    //     id: pluginMainItem
-    //     visible: false // set this to true to show the plugin example
-    //     property alias firebasePage: firebasePage
-
-    //     FirebasePage {
-    //         id: firebasePage
-    //         visible: false
-    //         onPopped:  { firebasePage.parent = pluginMainItem; visible = false }
-    //     }
-    // }
 }

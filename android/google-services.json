@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "219471233608",
+    "firebase_url": "https://inventorymanager-48392-default-rtdb.asia-southeast1.firebasedatabase.app",
     "project_id": "inventorymanager-48392",
     "storage_bucket": "inventorymanager-48392.firebasestorage.app"
   },
@@ -12,7 +13,12 @@
           "package_name": "com.lkdigitalworks.inventory.management.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "219471233608-hmdnvfkntl7e5cqv5rdg2f544bupsto4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAeA5Mb6ZmtKLOb3Oxw_n-dh62_qY0r4mA"
@@ -20,7 +26,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "219471233608-hmdnvfkntl7e5cqv5rdg2f544bupsto4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

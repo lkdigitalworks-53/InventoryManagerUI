@@ -2,7 +2,7 @@
     "title": "InventoryManagerUI",
     "identifier": "com.lkdigitalworks.inventory.management.app",
     "orientation": "auto",
-    "versioncode": 1,
+    "versioncode": 2,
     "versionname": "1.0.0",
     "stage": "test"
 }
