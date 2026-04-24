@@ -79,15 +79,23 @@ Navigation (root)
 - Cloud Functions integration (local: `http://127.0.0.1:5001/...`)
 
 **Key Files**:
-- `qml/helper/Constants.qml` (API endpoints, Firebase config)
-- `qml/model/RestAPI.qml` (network requests)
-- `qml/pages/FirebaseLoginPage.qml` / `FirebasePage.qml` (if used)
-- `qml/pages/LoginPage.qml`
+**Key Files**:
+- `qml/pages/FirebaseLoginPage.qml` (contains `FirebaseConfig` with `projectId`, `apiKey`, `applicationId`)
+- `qml/pages/FirebasePage.qml` (uses `FirebaseDatabase` for `setValue` / `getValue` with completion handlers)
+- `qml/helper/Constants.qml` (local Cloud Function URLs, e.g. `addProductLocalUrl`)
+- `qml/model/RestAPI.qml` (network helper utilities)
+- `qml/pages/LoginPage.qml` (alternate login UI)
 - `android/build.gradle` (Firebase Android config, if applicable)
+
+Runtime QML components used:
+- `FirebaseConfig`, `FirebaseAuth`, `FirebaseDatabase`
 
 **Firebase Project**:
 - Project ID: `inventorymanager-48392`
-- Local Cloud Function URL: `http://127.0.0.1:5001/inventorymanager-48392/us-central1/`
+- FirebaseConfig location: `qml/pages/FirebaseLoginPage.qml` (properties: `projectId`, `apiKey`, `applicationId`)
+- Local Cloud Function URL property: `qml/helper/Constants.qml` → `addProductLocalUrl` (example value: `http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct`)
+
+Note: The project currently initializes Firebase in `FirebaseLoginPage.qml` and the app uses `FirebaseDatabase` in `FirebasePage.qml` to perform simple read/write operations guarded by authentication.
 
 **Example Prompts**:
 - "Verify Firebase API keys are correct"
@@ -137,6 +145,7 @@ Navigation (root)
 - Create data presentation components (OrderRow, CardKPI, StatusBadge)
 - Handle responsive design for desktop and mobile
 - Manage Orders store (OrdersStore.qml)
+- Ensure TableView horizontal scrolling and column sizing (bind `contentWidth` to delegate's width)
 
 **Key Files**:
 - `App_UI/qml/Main.qml` (ApplicationWindow, header, navigation)
