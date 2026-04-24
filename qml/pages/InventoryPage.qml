@@ -501,7 +501,7 @@ Item {
 
         AddProductPage {
             id: addProductPage
-            anchors.centerIn: inventoryPage
+            anchors.centerIn: parent
             pushBackContent: inventoryPage
 
             onClosed: {

@@ -454,7 +454,7 @@ Item {
 
         AddNewOrderPage {
             id: addOrderPage
-            // anchors.centerIn: ordersPage
+            anchors.centerIn: parent
             pushBackContent: ordersPage
 
             onClosed: {
