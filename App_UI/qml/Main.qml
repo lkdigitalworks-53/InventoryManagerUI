@@ -14,6 +14,56 @@ ApplicationWindow {
     // ── Orders ListModel for guaranteed reactivity ──
     ListModel { id: ordersModel }
 
+    // ── Stock error popup ──
+    property string stockErrorMsg: ""
+    Dialog {
+        id: stockErrorDlg; modal: true; title: "Insufficient Inventory"
+        anchors.centerIn: parent; width: 420; height: stockErrCol.height + 120
+        standardButtons: Dialog.Ok
+        Column {
+            id: stockErrCol; width: parent.width; spacing: 8
+            Text { text: "Cannot complete order — insufficient stock:"; font.pixelSize: 13; font.bold: true; color: "#991b1b"; wrapMode: Text.Wrap; width: parent.width }
+            Text { text: app.stockErrorMsg; font.pixelSize: 12; color: "#ef4444"; wrapMode: Text.Wrap; width: parent.width }
+        }
+    }
+
+    // Check stock and complete a single order; returns true if success
+    function tryCompleteOrder(orderId) {
+        var o = OrdersStore.getById(orderId);
+        if (!o) return false;
+        if (o.status === "completed") return true; // already done
+        var errs = [];
+        if (o.products && o.products.length > 0) {
+            for (var i = 0; i < o.products.length; ++i) {
+                var p = o.products[i];
+                var qty = p.quantity !== undefined ? p.quantity : (p.qty || 0);
+                var inv = InventoryStore.findByName(p.name);
+                if (!inv) { errs.push(p.name + ": not found in inventory"); continue; }
+                if (qty > inv.stock) errs.push(p.name + ": need " + qty + ", only " + inv.stock + " in stock");
+            }
+        }
+        if (errs.length > 0) {
+            // Mark order as "out of stock"
+            OrdersStore.updateOrder(orderId, { status: "out of stock" });
+            app.stockErrorMsg = errs.join("\n");
+            stockErrorDlg.open();
+            return false;
+        }
+        // Deduct stock
+        if (o.products && o.products.length > 0) {
+            for (var j = 0; j < o.products.length; ++j) {
+                var pp = o.products[j];
+                var qqty = pp.quantity !== undefined ? pp.quantity : (pp.qty || 0);
+                var invP = InventoryStore.findByName(pp.name);
+                if (invP) InventoryStore.deductStock(invP.productId, qqty);
+            }
+        }
+        // Mark completed
+        OrdersStore.updateOrder(orderId, { status: "completed" });
+        SalesStore.recordSale(o.total, o.items);
+        return true;
+    }
+
     function syncOrdersModel() {
         ordersModel.clear();
         for (var i = 0; i < OrdersStore.orders.length; ++i) {
@@ -186,7 +236,22 @@ ApplicationWindow {
                                 id: approveAllBtn
                                 text: "✓ Approve All Pending  " + OrdersStore.pendingOrderCount
                                 enabled: OrdersStore.pendingOrderCount > 0
-                                onClicked: { OrdersStore.approveAllPending(); app.syncOrdersModel(); }
+                                onClicked: {
+                                    // Approve all pending one by one, checking stock for each
+                                    var allOrders = OrdersStore.orders;
+                                    var failed = [];
+                                    for (var i = 0; i < allOrders.length; ++i) {
+                                        if (allOrders[i].status === "pending") {
+                                            if (!app.tryCompleteOrder(allOrders[i].orderId))
+                                                failed.push(allOrders[i].orderId);
+                                        }
+                                    }
+                                    app.syncOrdersModel();
+                                    if (failed.length > 0) {
+                                        app.stockErrorMsg = "Could not approve: " + failed.join(", ") + " (insufficient stock)";
+                                        stockErrorDlg.open();
+                                    }
+                                }
                                 background: Rectangle { radius: 20; color: approveAllBtn.enabled ? "#22c55e" : "#d1d5db" }
                                 contentItem: Row {
                                     spacing: 6
@@ -267,7 +332,11 @@ ApplicationWindow {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: model.status; status: model.status; showDropdown: true
                                                 onStatusChangeRequested: function(s) {
-                                                    OrdersStore.updateOrder(model.orderId, { status: s });
+                                                    if (s === "completed") {
+                                                        app.tryCompleteOrder(model.orderId);
+                                                    } else {
+                                                        OrdersStore.updateOrder(model.orderId, { status: s });
+                                                    }
                                                     app.updateOrderInModel(model.orderId);
                                                 }
                                             }
@@ -280,13 +349,13 @@ ApplicationWindow {
                                             x: cw(0)+cw(1)+cw(2)+cw(3)+cw(4)+cw(5); width: cw(6); height: parent.height; spacing: 4
                                             Button {
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                visible: model.status === "pending"
+                                                visible: model.status === "pending" || model.status === "out of stock"
                                                 width: 28; height: 28; padding: 0
                                                 background: Rectangle { radius: 6; color: "#dcfce7"; border.color: "#22c55e" }
                                                 contentItem: Text { text: "\u2713"; color: "#22c55e"; font.pixelSize: 14; font.bold: true
                                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                                 onClicked: {
-                                                    OrdersStore.updateOrder(model.orderId, { status: "completed" });
+                                                    app.tryCompleteOrder(model.orderId);
                                                     app.updateOrderInModel(model.orderId);
                                                 }
                                                 ToolTip.visible: hovered; ToolTip.text: "Approve"
@@ -341,14 +410,6 @@ ApplicationWindow {
             OrdersStore.addOrder(order.customer, order.items, order.total,
                 order.status, order.date, order.email, order.phone, order.products)
             app.syncOrdersModel();
-            // Deduct stock from inventory for each ordered product
-            if (order.products) {
-                for (var i = 0; i < order.products.length; ++i) {
-                    InventoryStore.deductStock(order.products[i].productId, order.products[i].qty);
-                }
-            }
-            // Update sales live totals
-            SalesStore.recordSale(order.total, order.items)
         }
     }
     OrderDetailDialog {

@@ -22,8 +22,10 @@ Dialog {
     onOpened: {
         // Rebuild product list from InventoryStore each time dialog opens
         var names = [];
-        for (var i = 0; i < InventoryStore.products.length; ++i)
-            names.push(InventoryStore.products[i].name + " - " + InventoryStore.formatCurrency(InventoryStore.products[i].price));
+        for (var i = 0; i < InventoryStore.products.length; ++i) {
+            var p = InventoryStore.products[i];
+            names.push(p.name + " - " + InventoryStore.formatCurrency(p.price) + " (Stock: " + p.stock + ")");
+        }
         productNames = names;
         productCombo.currentIndex = 0;
     }
@@ -32,6 +34,14 @@ Dialog {
         var errs = [];
         if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name");
         if (selectedProducts.length === 0) errs.push("Add at least one product");
+        // Validate stock availability
+        for (var k = 0; k < selectedProducts.length; ++k) {
+            var sp = selectedProducts[k];
+            var inv = InventoryStore.getById(sp.productId);
+            if (inv && sp.qty > inv.stock) {
+                errs.push(sp.name + ": only " + inv.stock + " in stock, ordered " + sp.qty);
+            }
+        }
         if (errs.length > 0) { errorLabel.text = errs.join(" · "); errorLabel.visible = true; return; }
         errorLabel.visible = false;
 
@@ -55,12 +65,18 @@ Dialog {
         var idx = productCombo.currentIndex;
         if (idx < 0 || idx >= InventoryStore.products.length) return;
         var p = InventoryStore.products[idx];
+        if (p.stock <= 0) return; // out of stock
         var arr = [];
         for (var i = 0; i < selectedProducts.length; ++i)
             arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty, price: selectedProducts[i].price, productId: selectedProducts[i].productId });
-        // check duplicate
+        // check duplicate — cap at available stock
         for (var j = 0; j < arr.length; ++j) {
-            if (arr[j].productId === p.productId) { arr[j].qty++; selectedProducts = arr; return; }
+            if (arr[j].productId === p.productId) {
+                if (arr[j].qty >= p.stock) return; // already at max
+                arr[j].qty++;
+                selectedProducts = arr;
+                return;
+            }
         }
         arr.push({ name: p.name, qty: 1, price: p.price, productId: p.productId });
         selectedProducts = arr;
@@ -140,8 +156,8 @@ Dialog {
                 Rectangle {
                     width: formCol.width; height: 36; radius: 6; color: "#fff7ed"; border.color: "#fdba74"
                     Row { x: 8; anchors.verticalCenter: parent.verticalCenter; spacing: 8; width: parent.width - 16
-                        Label { text: modelData.name; font.pixelSize: 12; color: "#374151"; width: parent.width - 130 }
-                        Label { text: "x" + modelData.qty; font.pixelSize: 12; font.bold: true; color: "#b45309" }
+                        Label { text: modelData.name; font.pixelSize: 12; color: "#374151"; width: parent.width - 180; elide: Text.ElideRight }
+                        Label { text: "x" + modelData.qty + "/" + (InventoryStore.getById(modelData.productId) ? InventoryStore.getById(modelData.productId).stock : "?"); font.pixelSize: 12; font.bold: true; color: modelData.qty > (InventoryStore.getById(modelData.productId) ? InventoryStore.getById(modelData.productId).stock : 999) ? "#ef4444" : "#b45309" }
                         Label { text: InventoryStore.formatCurrency(modelData.qty * modelData.price); font.pixelSize: 12; color: "#374151" }
                         Text {
                             text: "✕"; font.pixelSize: 14; color: "#ef4444"

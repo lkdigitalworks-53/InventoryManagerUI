@@ -34,6 +34,10 @@ Dialog {
         for (var i = 0; i < products.count; ++i)
             s += products.get(i).price * products.get(i).quantity;
         _subtotal = s;
+        // refresh available stock in dropdown while preserving selection
+        var savedIdx = productCombo.currentIndex;
+        _rebuildCatalog();
+        productCombo.currentIndex = savedIdx;
     }
 
     function _rebuildCatalog() {
@@ -41,11 +45,24 @@ Dialog {
         var names = [];
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i];
+            var avail = _availableStock(p.name);
             cat.push({ name: p.name, price: p.price, productId: p.productId });
-            names.push(p.name + " - " + InventoryStore.formatCurrency(p.price));
+            names.push(p.name + " - " + InventoryStore.formatCurrency(p.price) + " (Avail: " + avail + ")");
         }
         catalog = cat;
         catalogNames = names;
+    }
+
+    // Returns how many more of this product can be added (live stock minus already in order)
+    function _availableStock(productName) {
+        var inv = InventoryStore.findByName(productName);
+        if (!inv) return 0;
+        var used = 0;
+        for (var i = 0; i < products.count; ++i) {
+            if (products.get(i).name === productName)
+                used = products.get(i).quantity;
+        }
+        return Math.max(0, inv.stock - used);
     }
 
     function openFor(id) {
@@ -197,6 +214,8 @@ Dialog {
                         var idx = productCombo.currentIndex;
                         if (idx < 0 || idx >= dlg.catalog.length) return;
                         var p = dlg.catalog[idx];
+                        var avail = dlg._availableStock(p.name);
+                        if (avail <= 0) return; // no more available
                         for (var i = 0; i < products.count; ++i) {
                             if (products.get(i).name === p.name) {
                                 products.setProperty(i, "quantity", products.get(i).quantity + 1);
@@ -262,6 +281,9 @@ Dialog {
                                             onEditingFinished: {
                                                 var val = parseInt(text);
                                                 if (!isNaN(val) && val > 0) {
+                                                    // Cap at available stock
+                                                    var inv = InventoryStore.findByName(model.name);
+                                                    if (inv && val > inv.stock) val = inv.stock;
                                                     products.setProperty(prodRow.rowIdx, "quantity", val);
                                                     dlg.recomputeSubtotal();
                                                 }
@@ -291,6 +313,14 @@ Dialog {
                 width: mainCol.width; spacing: 4
                 Text { text: "Order Summary"; color: "#c17817"; font.pixelSize: 15; font.bold: true }
                 Rectangle { width: parent.width; height: 2; color: "#e8a050" }
+            }
+
+            // Stock error message
+            Label {
+                id: stockErrorLabel; visible: false; color: "#ef4444"; font.pixelSize: 12
+                wrapMode: Text.Wrap; width: mainCol.width
+                background: Rectangle { radius: 6; color: "#fef2f2"; border.color: "#fecaca" }
+                padding: 8
             }
 
             Rectangle {
@@ -342,11 +372,21 @@ Dialog {
                 onClicked: {
                     var itemCount = 0;
                     var prods = [];
+                    var stockErrors = [];
                     for (var i = 0; i < products.count; ++i) {
                         var p = products.get(i);
                         itemCount += p.quantity;
                         prods.push({ name: p.name, price: p.price, quantity: p.quantity });
+                        var inv = InventoryStore.findByName(p.name);
+                        if (inv && p.quantity > inv.stock)
+                            stockErrors.push(p.name + ": only " + inv.stock + " in stock, ordered " + p.quantity);
                     }
+                    if (stockErrors.length > 0) {
+                        stockErrorLabel.text = stockErrors.join("\n");
+                        stockErrorLabel.visible = true;
+                        return;
+                    }
+                    stockErrorLabel.visible = false;
                     OrdersStore.updateOrder(dlg.orderId, {
                         customer: customerField.text,
                         email: emailField.text,

@@ -41,16 +41,19 @@ QtObject {
     property int revision: 0
     property int pendingOrderCount: 2
     property int completedOrderCount: 0
+    property int outOfStockCount: 0
     readonly property int count: orders.length
 
     function _refreshCounts() {
-        var p = 0; var c = 0;
+        var p = 0; var c = 0; var oos = 0;
         for (var i = 0; i < orders.length; ++i) {
             if (orders[i].status === "pending") p++;
             if (orders[i].status === "completed") c++;
+            if (orders[i].status === "out of stock") oos++;
         }
         pendingOrderCount = p;
         completedOrderCount = c;
+        outOfStockCount = oos;
     }
 
     function _commit(arr) {
