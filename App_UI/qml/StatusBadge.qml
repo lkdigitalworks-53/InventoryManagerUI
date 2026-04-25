@@ -1,14 +1,18 @@
 
 import QtQuick 6.5
+import QtQuick.Controls 6.5
 
 Rectangle {
     id: badge
     property string text: "status"
     property string status: "pending"   // "completed" | "processing" | "pending"
+    property bool showDropdown: false
+
+    signal statusChangeRequested(string newStatus)
 
     radius: 12
     height: 24
-    width: content.width + 16
+    implicitWidth: content.implicitWidth + dropIcon.implicitWidth + (showDropdown ? 28 : 16)
 
     // Colors chosen per status
     property color fill:   status === "completed"  ? "#dcfce7"
@@ -20,12 +24,36 @@ Rectangle {
     color: fill
     border.color: stroke
 
-    Text {
-        id: content
-        text: badge.text
-        color: badge.stroke
+    Row {
         anchors.centerIn: parent
-        font.pixelSize: 12
-        font.bold: true
+        spacing: 4
+        Text {
+            id: content
+            text: badge.text
+            color: badge.stroke
+            font.pixelSize: 12
+            font.bold: true
+        }
+        Text {
+            id: dropIcon
+            visible: badge.showDropdown
+            text: "\u25BE"
+            color: badge.stroke
+            font.pixelSize: 10
+        }
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        visible: badge.showDropdown
+        cursorShape: Qt.PointingHandCursor
+        onClicked: statusMenu.open()
+    }
+
+    Menu {
+        id: statusMenu
+        MenuItem { text: "Pending";    onTriggered: badge.statusChangeRequested("pending") }
+        MenuItem { text: "Processing"; onTriggered: badge.statusChangeRequested("processing") }
+        MenuItem { text: "Completed";  onTriggered: badge.statusChangeRequested("completed") }
     }
 }

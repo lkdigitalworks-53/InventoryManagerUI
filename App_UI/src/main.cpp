@@ -1,14 +1,16 @@
 
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
-#include <QQuickWindow>
+#include <QQuickStyle>
 using namespace Qt::StringLiterals;
 int main(int argc, char *argv[]) {
-    QGuiApplication app(argc, argv);
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    QQuickStyle::setStyle(u"Basic"_s);
+    QApplication app(argc, argv);
+    app.setOrganizationName(u"BusinessApp"_s);
+    app.setApplicationName(u"BusinessManagement"_s);
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [](){ QCoreApplication::exit(-1); }, Qt::QueuedConnection);
-    engine.loadFromModule(u"BusinessApp"_qs, u"Main"_qs);
+    engine.loadFromModule(u"BusinessApp"_s, u"Main"_s);
     return app.exec();
 }

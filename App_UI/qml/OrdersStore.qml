@@ -1,56 +1,173 @@
 
 pragma Singleton
 import QtQuick 6.5
+import QtCore
 
-ListModel {
-    id: store
-    property string currentSortRole: "date"
-    property bool currentSortAscending: false
+QtObject {
+    id: root
 
-    ListElement { orderId: "ORD-001"; customer: "John Smith"; items: 5; total: 20495; status: "pending";   date: "2025-11-28"; notes: "" }
-    ListElement { orderId: "ORD-002"; customer: "Sarah Johnson"; items: 3; total: 15791; status: "completed"; date: "2025-11-28"; notes: "" }
-    ListElement { orderId: "ORD-003"; customer: "Michael Brown"; items: 7; total: 47303; status: "processing"; date: "2025-11-29"; notes: "" }
-    ListElement { orderId: "ORD-004"; customer: "Anita Rao"; items: 2; total: 8250;  status: "pending";   date: "2025-11-30"; notes: "" }
-    ListElement { orderId: "ORD-005"; customer: "Alex Chen"; items: 4; total: 18960; status: "completed"; date: "2025-12-01"; notes: "" }
+    readonly property var _seedOrders: [
+        { orderId: "ORD-001", customer: "John Smith",      items: 5, total: 20495, status: "pending",    date: "2025-11-28", notes: "", email: "john@example.com",      phone: "+91 98765 43210", products: [] },
+        { orderId: "ORD-002", customer: "Sarah Johnson",   items: 3, total: 15791, status: "completed",  date: "2025-11-28", notes: "", email: "sarah@example.com",     phone: "+91 99887 76543", products: [] },
+        { orderId: "ORD-003", customer: "Michael Brown",   items: 7, total: 47303, status: "processing", date: "2025-11-29", notes: "", email: "michael@example.com",   phone: "+91 98123 45678", products: [] },
+        { orderId: "ORD-004", customer: "Emily Davis",     items: 2, total: 8332,  status: "completed",  date: "2025-11-29", notes: "", email: "emily@example.com",     phone: "+91 97654 32109", products: [] },
+        { orderId: "ORD-005", customer: "David Wilson",    items: 4, total: 26067, status: "pending",    date: "2025-11-30", notes: "", email: "david@example.com",     phone: "+91 96543 21098", products: [] },
+        { orderId: "ORD-006", customer: "Lisa Anderson",   items: 6, total: 37147, status: "processing", date: "2025-11-30", notes: "", email: "lisa@example.com",      phone: "+91 95432 10987", products: [] }
+    ]
 
-    function pendingCount() { var c = 0; for (var i=0;i<store.count;++i) if (store.get(i).status === "pending") c++; return c; }
-    function completedThisMonth() {
-        var now = new Date(); var m = now.getMonth(); var y = now.getFullYear(); var c = 0;
-        for (var i=0;i<store.count;++i) { var d = new Date(store.get(i).date); if (store.get(i).status === "completed" && d.getMonth()===m && d.getFullYear()===y) c++; }
-        return c;
+    property var orders: []
+
+    property Settings _settings: Settings {
+        category: "OrdersStore"
+        property string ordersJson: ""
     }
 
-    function nextOrderId() { var max=0; for (var i=0;i<store.count;++i) { var num=parseInt(String(store.get(i).orderId).split('-')[1]); if (!isNaN(num) && num>max) max=num; } return 'ORD-'+String(max+1).padStart(3,'0'); }
-    function parseCurrency(str) { if (typeof str==='number') return str; if (!str) return 0; var s=String(str).replace(/[^0-9.]/g,''); var n=parseFloat(s); return isNaN(n)?0:n; }
-    function formatCurrency(val) { var n=parseCurrency(val); try { return new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n); } catch(e){ return 'INR '+Math.round(n).toString(); } }
+    Component.onCompleted: _load()
 
-    function addOrder(customer, items, total, status, date) {
-        var id = nextOrderId(); var iso = Qt.formatDate(date, 'yyyy-MM-dd');
-        store.append({ orderId: id, customer: customer, items: items, total: total, status: status, date: iso, notes: "" });
-        sortBy(currentSortRole, currentSortAscending);
+    function _load() {
+        if (_settings.ordersJson && _settings.ordersJson.length > 2) {
+            try { orders = JSON.parse(_settings.ordersJson); } catch(e) { orders = _seedOrders.slice(); }
+        } else {
+            orders = _seedOrders.slice();
+        }
+        _refreshCounts();
     }
 
-    function findIndexById(orderId) { for (var i=0;i<store.count;++i) if (store.get(i).orderId===orderId) return i; return -1; }
-    function getById(orderId) { var idx = findIndexById(orderId); return idx>=0 ? store.get(idx) : null; }
+    function _save() {
+        _settings.ordersJson = JSON.stringify(orders);
+    }
+
+    // Reactive properties – UI binds directly to these
+    property int revision: 0
+    property int pendingOrderCount: 2
+    property int completedOrderCount: 0
+    readonly property int count: orders.length
+
+    function _refreshCounts() {
+        var p = 0; var c = 0;
+        for (var i = 0; i < orders.length; ++i) {
+            if (orders[i].status === "pending") p++;
+            if (orders[i].status === "completed") c++;
+        }
+        pendingOrderCount = p;
+        completedOrderCount = c;
+    }
+
+    function _commit(arr) {
+        orders = arr;
+        revision++;
+        _refreshCounts();
+        _save();
+    }
+
+    function _clone() {
+        var a = [];
+        for (var i = 0; i < orders.length; ++i) {
+            var o = orders[i];
+            var prods = [];
+            if (o.products) {
+                for (var j = 0; j < o.products.length; ++j) {
+                    var p = o.products[j];
+                    prods.push({ name: p.name, price: p.price, quantity: p.quantity });
+                }
+            }
+            a.push({ orderId: o.orderId, customer: o.customer, items: o.items,
+                      total: o.total, status: o.status, date: o.date,
+                      notes: o.notes, email: o.email, phone: o.phone, products: prods });
+        }
+        return a;
+    }
+
+    function pendingCount() { return pendingOrderCount; }
+    function completedThisMonth() { return completedOrderCount; }
+
+    function nextOrderId() {
+        var max = 0;
+        for (var i = 0; i < orders.length; ++i) {
+            var num = parseInt(String(orders[i].orderId).split('-')[1]);
+            if (!isNaN(num) && num > max) max = num;
+        }
+        return 'ORD-' + String(max + 1).padStart(3, '0');
+    }
+
+    function parseCurrency(str) {
+        if (typeof str === 'number') return str;
+        if (!str) return 0;
+        var s = String(str).replace(/[^0-9.]/g, '');
+        var n = parseFloat(s);
+        return isNaN(n) ? 0 : n;
+    }
+
+    function formatCurrency(val) {
+        var n = parseCurrency(val);
+        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n); }
+        catch(e) { return 'INR ' + Math.round(n).toString(); }
+    }
+
+    function findIndexById(orderId) {
+        for (var i = 0; i < orders.length; ++i)
+            if (orders[i].orderId === orderId) return i;
+        return -1;
+    }
+
+    function get(idx) { return idx >= 0 && idx < orders.length ? orders[idx] : null; }
+    function getById(orderId) { var idx = findIndexById(orderId); return idx >= 0 ? orders[idx] : null; }
 
     function updateOrder(orderId, fields) {
-        var idx = findIndexById(orderId); if (idx<0) return; var obj = store.get(idx);
-        for (var k in fields) obj[k] = (k==='total') ? formatCurrency(fields[k]) : fields[k];
-        store.set(idx, obj); sortBy(currentSortRole, currentSortAscending);
+        var idx = findIndexById(orderId);
+        if (idx < 0) return;
+        var arr = _clone();
+        var o = arr[idx];
+        if (fields.status   !== undefined) o.status   = fields.status;
+        if (fields.customer !== undefined) o.customer = fields.customer;
+        if (fields.email    !== undefined) o.email    = fields.email;
+        if (fields.phone    !== undefined) o.phone    = fields.phone;
+        if (fields.items    !== undefined) o.items    = fields.items;
+        if (fields.total    !== undefined) o.total    = parseCurrency(fields.total);
+        if (fields.notes    !== undefined) o.notes    = fields.notes;
+        if (fields.products !== undefined) o.products = fields.products;
+        _commit(arr);
     }
 
-    function comparator(role) {
-        if (role==='items') return function(a,b){ return a.items-b.items; };
-        if (role==='total') return function(a,b){ return parseCurrency(a.total)-parseCurrency(b.total); };
-        if (role==='date')  return function(a,b){ return (new Date(a.date))-(new Date(b.date)); };
-        if (role==='orderId') return function(a,b){ var ai=parseInt(String(a.orderId).split('-')[1]); var bi=parseInt(String(b.orderId).split('-')[1]); return ai-bi; };
-        return function(a,b){ return String(a[role]).localeCompare(String(b[role])); };
+    function approveAllPending() {
+        var arr = _clone();
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].status === "pending")
+                arr[i].status = "completed";
+        }
+        _commit(arr);
     }
 
-    function sortBy(role, ascending) {
-        currentSortRole = role; currentSortAscending = ascending;
-        var arr=[]; for (var i=0;i<store.count;++i) arr.push(store.get(i));
-        var cmp = comparator(role); arr.sort(cmp); if (!ascending) arr.reverse();
-        store.clear(); for (var j=0;j<arr.length;++j) store.append(arr[j]);
+    function addOrder(customer, items, total, status, date, email, phone, orderProducts) {
+        var id = nextOrderId();
+        var iso = Qt.formatDate(date, 'yyyy-MM-dd');
+        var arr = _clone();
+        var prods = [];
+        if (orderProducts) {
+            for (var k = 0; k < orderProducts.length; ++k) {
+                var pp = orderProducts[k];
+                prods.push({ name: pp.name, price: pp.price, quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0) });
+            }
+        }
+        arr.push({ orderId: id, customer: customer, items: items, total: total,
+                   status: status, date: iso, notes: "",
+                   email: email || "", phone: phone || "",
+                   products: prods });
+        _commit(arr);
+    }
+
+    function totalRevenue() {
+        var t = 0;
+        for (var i = 0; i < orders.length; ++i)
+            if (orders[i].status === "completed")
+                t += orders[i].total;
+        return t;
+    }
+
+    function processingCount() {
+        var c = 0;
+        for (var i = 0; i < orders.length; ++i)
+            if (orders[i].status === "processing") c++;
+        return c;
     }
 }

@@ -1,4 +1,3 @@
-
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
@@ -8,180 +7,355 @@ ApplicationWindow {
     id: app
     width: 1024; height: 640; visible: true
     title: "Business Management"
+    color: "#f0f2f5"
 
-    // Keep graphics/scene graph around across Android lifecycle transitions
-    persistentSceneGraph: true
-    persistentGraphics: true
+    property bool compact: width < 520
 
-    // Helper: only recalc 'compact' while the app is active to avoid delegate churn during stop
-    function updateCompact() { page.compact = page.width < 480 }
+    // ── Orders ListModel for guaranteed reactivity ──
+    ListModel { id: ordersModel }
 
+    function syncOrdersModel() {
+        ordersModel.clear();
+        for (var i = 0; i < OrdersStore.orders.length; ++i) {
+            var o = OrdersStore.orders[i];
+            ordersModel.append({ orderId: o.orderId, customer: o.customer, items: o.items,
+                total: o.total, status: o.status, date: o.date });
+        }
+    }
+
+    function updateOrderInModel(orderId) {
+        var o = OrdersStore.getById(orderId);
+        if (!o) return;
+        for (var i = 0; i < ordersModel.count; ++i) {
+            if (ordersModel.get(i).orderId === orderId) {
+                ordersModel.set(i, { orderId: o.orderId, customer: o.customer, items: o.items,
+                    total: o.total, status: o.status, date: o.date });
+                break;
+            }
+        }
+    }
+
+    Component.onCompleted: syncOrdersModel()
+
+    // ── Header ──
     Rectangle {
         id: header
-        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-        height: 120
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: 80
         gradient: Gradient {
             GradientStop { position: 0.0; color: "#3158ff" }
             GradientStop { position: 1.0; color: "#6b41ff" }
         }
-        ColumnLayout {
-            anchors.fill: parent; anchors.margins: 16; spacing: 8
-            ColumnLayout { spacing: 4
-                Label { text: "Business Management"; color: "#ffffff"; font.bold: true; font.pixelSize: 18 }
-                Label { text: "Manage your business operations efficiently"; color: "#dbeafe"; font.pixelSize: 12 }
-            }
-            SegmentedNav {
-                id: nav
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: Math.min(800, app.width - 32)
-                model: [
-                    { label: "Orders",    icon: "" },
-                    { label: "Inventory", icon: "" },
-                    { label: "Sales",     icon: "" },
-                    { label: "Staff",     icon: "" }
-                ]
-                currentIndex: 0
-                onCurrentIndexChanged: stack.currentIndex = currentIndex
-            }
+        Column {
+            anchors.centerIn: parent; spacing: 4
+            Label { text: "Business Management"; color: "#ffffff"; font.bold: true; font.pixelSize: 18; anchors.horizontalCenter: parent.horizontalCenter }
+            Label { text: "Manage your business operations efficiently"; color: "#dbeafe"; font.pixelSize: 12; anchors.horizontalCenter: parent.horizontalCenter }
         }
     }
 
-    Button {
-        id: newOrder
-        text: "+  New Order"
-        anchors.top: header.bottom; anchors.topMargin: 12
-        anchors.right: parent.right; anchors.rightMargin: 16
-        padding: 10
-        background: Rectangle { radius: 8; color: "#ff7a00" }
-        contentItem: Text { text: newOrder.text; color: "white"; font.bold: true; font.pixelSize: 12
-            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-        onClicked: dlg.open()
+    // ── Segmented Nav ──
+    SegmentedNav {
+        id: nav
+        anchors { top: header.bottom; topMargin: 12; horizontalCenter: parent.horizontalCenter }
+        width: Math.min(800, app.width - 32)
+        model: [
+            { label: "Orders",    icon: "🛒", activeColor: "#ea580c" },
+            { label: "Inventory", icon: "📦", activeColor: "#16a34a" },
+            { label: "Sales",     icon: "$",  activeColor: "#2563eb" },
+            { label: "Staff",     icon: "👥", activeColor: "#2563eb" }
+        ]
+        currentIndex: 0
     }
 
-    Flickable {
-        id: page
-        anchors.top: newOrder.bottom
-        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        contentWidth: width
-        contentHeight: contentCol.implicitHeight
-        clip: true
-        ScrollBar.vertical: ScrollBar {}
-        property bool compact: false
+    // ── Content ──
+    Item {
+        id: content
+        anchors { top: nav.bottom; topMargin: 12; left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 16; rightMargin: 16 }
 
-        // Recompute compact only while active
-        onWidthChanged: if (Qt.application.state === Qt.ApplicationActive) app.updateCompact()
-        Component.onCompleted: app.updateCompact()
-        Connections {
-            target: Qt.application
-            function onStateChanged() {
-                if (Qt.application.state === Qt.ApplicationActive) app.updateCompact()
-                // Freeze interaction during stop to avoid work while surface is going away
-                table.interactive = (Qt.application.state === Qt.ApplicationActive)
-            }
-        }
+        // ── Orders View (index 0) ──
+        Flickable {
+            anchors.fill: parent
+            visible: nav.currentIndex === 0
+            contentHeight: col.height
+            clip: true
+            flickableDirection: Flickable.VerticalFlick
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        Column { id: contentCol; width: page.width; spacing: 16
-            Column { spacing: 4
-                Label { text: "Order Management"; color: "#111827"; font.bold: true; font.pixelSize: 18 }
-                Label { text: "Manage and track customer orders"; color: "#6b7280"; font.pixelSize: 12 }
-            }
-
-            RowLayout {
+            Column {
+                id: col
+                width: content.width
                 spacing: 16
-                Layout.fillWidth: true
-                width: page.width
-                CardKPI { title: "Total Orders"; subtitle: "All time"; value: String(typeof OrdersStore.count === 'number' ? OrdersStore.count : 0) }
-                CardKPI { title: "Pending"; subtitle: "Awaiting processing"; value: String(OrdersStore.pendingCount()) }
-                CardKPI { title: "Completed"; subtitle: "This month"; value: String(OrdersStore.completedThisMonth()) }
-                Item { Layout.fillWidth: true }
-            }
 
-            Rectangle {
-                id: tableCard
-                radius: 12; color: "#ffffff"; border.color: "#e5e7eb"
-                anchors.left: parent.left; anchors.right: parent.right
-                width: parent.width
+                // ── Title + New Order + Auto-Approval ──
+                RowLayout {
+                    width: col.width; spacing: 8
+                    Column { spacing: 4; Layout.fillWidth: true
+                        Label { text: "Order Management"; color: "#111827"; font.bold: true; font.pixelSize: 18 }
+                        Label { text: "Manage and track customer orders"; color: "#6b7280"; font.pixelSize: 12 }
+                    }
+                    Button {
+                        id: autoApprovalBtn; text: "⚙ Auto-Approval"
+                        background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
+                        contentItem: Text { text: autoApprovalBtn.text; color: "#374151"; font.pixelSize: 12
+                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        id: newOrderBtn; text: "+  New Order"
+                        onClicked: dlg.open()
+                        background: Rectangle { radius: 8; color: "#ff7a00" }
+                        contentItem: Text { text: newOrderBtn.text; color: "white"; font.bold: true; font.pixelSize: 12
+                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                }
 
-                Column {
-                    anchors.fill: parent; anchors.margins: 16; spacing: 12
-                    Label { text: "Recent Orders"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                    Label { text: "Latest customer orders"; font.pixelSize: 11; color: "#6b7280" }
-                    TextField { id: search; placeholderText: "Search orders..."; font.pixelSize: 12
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#e5e7eb" } }
+                // ── KPI Cards (gradient) ──
+                Row {
+                    width: col.width; spacing: 12
+                    // Total Orders - orange gradient
+                    Rectangle {
+                        width: (col.width - 24) / 3; height: 130; radius: 16
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "#f97316" }
+                            GradientStop { position: 1.0; color: "#fb923c" }
+                        }
+                        Column { x: 20; y: 16; spacing: 4
+                            Row { spacing: 6
+                                Text { text: "🛒"; font.pixelSize: 16 }
+                                Text { text: "Total Orders"; font.pixelSize: 14; font.bold: true; color: "#ffffff" }
+                            }
+                            Text { text: "All time"; font.pixelSize: 12; color: "#fed7aa" }
+                            Item { width: 1; height: 8 }
+                            Text { text: String(ordersModel.count); font.pixelSize: 36; font.bold: true; color: "#ffffff" }
+                        }
+                    }
+                    // Pending - amber gradient
+                    Rectangle {
+                        width: (col.width - 24) / 3; height: 130; radius: 16
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "#eab308" }
+                            GradientStop { position: 1.0; color: "#facc15" }
+                        }
+                        Column { x: 20; y: 16; spacing: 4
+                            Row { spacing: 6
+                                Text { text: "●"; font.pixelSize: 12; color: "#ffffff" }
+                                Text { text: "Pending"; font.pixelSize: 14; font.bold: true; color: "#ffffff" }
+                            }
+                            Text { text: "Awaiting processing"; font.pixelSize: 12; color: "#fef9c3" }
+                            Item { width: 1; height: 8 }
+                            Text { text: String(OrdersStore.pendingOrderCount); font.pixelSize: 36; font.bold: true; color: "#ffffff" }
+                        }
+                    }
+                    // Completed - green gradient
+                    Rectangle {
+                        width: (col.width - 24) / 3; height: 130; radius: 16
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "#16a34a" }
+                            GradientStop { position: 1.0; color: "#4ade80" }
+                        }
+                        Column { x: 20; y: 16; spacing: 4
+                            Row { spacing: 6
+                                Text { text: "✓"; font.pixelSize: 16; color: "#ffffff"; font.bold: true }
+                                Text { text: "Completed"; font.pixelSize: 14; font.bold: true; color: "#ffffff" }
+                            }
+                            Text { text: "This month"; font.pixelSize: 12; color: "#bbf7d0" }
+                            Item { width: 1; height: 8 }
+                            Text { text: String(OrdersStore.completedOrderCount); font.pixelSize: 36; font.bold: true; color: "#ffffff" }
+                        }
+                    }
+                }
 
-                    // Full header always exists; we only toggle visibility
-                    Row {
-                        id: headerRowFull
-                        visible: !page.compact
-                        spacing: 0; height: 32
-                        property var roles:    ["Order ID","Customer","Items","Total","Status","Date","Actions"]
-                        property var roleKeys: ["orderId","customer","items","total","status","date","actions"]
-                        property var widths:   [0.14,0.24,0.10,0.14,0.14,0.14,0.10]
-                        Repeater {
-                            model: headerRowFull.roles
-                            delegate: Button {
-                                width: page.width * headerRowFull.widths[index]
-                                height: parent.height
-                                enabled: index < 6
-                                background: Rectangle { color: "#ffffff" }
+                // ── Orders Table ──
+                Rectangle {
+                    width: col.width; height: ordersCol.height + 32
+                    radius: 12; color: "#ffffff"; border.color: "#e5e7eb"
+
+                    Column {
+                        id: ordersCol
+                        x: 16; y: 16; width: parent.width - 32; spacing: 12
+
+                        RowLayout {
+                            width: ordersCol.width; spacing: 8
+                            Column { spacing: 2; Layout.fillWidth: true
+                                Label { text: "Recent Orders"; font.pixelSize: 14; font.bold: true; color: "#111827" }
+                                Label { text: "Latest customer orders"; font.pixelSize: 11; color: "#6b7280" }
+                            }
+                            Button {
+                                id: approveAllBtn
+                                text: "✓ Approve All Pending  " + OrdersStore.pendingOrderCount
+                                enabled: OrdersStore.pendingOrderCount > 0
+                                onClicked: { OrdersStore.approveAllPending(); app.syncOrdersModel(); }
+                                background: Rectangle { radius: 20; color: approveAllBtn.enabled ? "#22c55e" : "#d1d5db" }
                                 contentItem: Row {
-                                    spacing: 4; anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 8
-                                    Text { text: modelData; color: "#6b7280"; font.pixelSize: 12; font.bold: true }
-                                    Text { visible: index < 6 && OrdersStore.currentSortRole === headerRowFull.roleKeys[index]
-                                          ; text: OrdersStore.currentSortAscending ? "▲" : "▼"; color: "#9ca3af"; font.pixelSize: 10 }
-                                }
-                                onClicked: {
-                                    var role = headerRowFull.roleKeys[index]
-                                    var asc  = OrdersStore.currentSortRole === role ? !OrdersStore.currentSortAscending : true
-                                    OrdersStore.sortBy(role, asc)
+                                    spacing: 6
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    Text { text: "✓ Approve All Pending"; color: "white"; font.bold: true; font.pixelSize: 12
+                                        verticalAlignment: Text.AlignVCenter; anchors.verticalCenter: parent.verticalCenter }
+                                    Rectangle {
+                                        width: 22; height: 22; radius: 11; color: "#ffffff30"
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Text { text: String(OrdersStore.pendingOrderCount); color: "white"; font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Compact header also always exists; just toggle visibility
-                    Row {
-                        id: headerRowCompact
-                        visible: page.compact
-                        spacing: 0; height: 28
-                        property var roles:    ["Order","Customer","Amt","Status"]
-                        property var widths:   [0.40,0.30,0.15,0.15]
-                        Repeater {
-                            model: headerRowCompact.roles
-                            delegate: Rectangle {
-                                width: page.width * headerRowCompact.widths[index]
-                                height: parent.height
-                                color: "#ffffff"
-                                Text { anchors.centerIn: parent; text: modelData; color: "#6b7280"; font.pixelSize: 12; font.bold: true }
+                        TextField {
+                            id: search; width: ordersCol.width
+                            placeholderText: "\uD83D\uDD0D  Search orders..."
+                            font.pixelSize: 12
+                            background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#e5e7eb" }
+                        }
+
+                        // Header row
+                        Row {
+                            id: headerRow
+                            visible: !app.compact; width: ordersCol.width; height: 32; spacing: 0
+                            property var labels: ["Order ID","Customer","Items","Total","Status","Date","Actions"]
+                            property var ws:     [0.14,0.24,0.10,0.14,0.14,0.14,0.10]
+                            Repeater {
+                                model: headerRow.labels
+                                Rectangle {
+                                    width: ordersCol.width * headerRow.ws[index]; height: 32; color: "transparent"
+                                    Text { text: modelData; color: "#6b7280"; font.pixelSize: 12; font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                }
                             }
                         }
-                    }
 
-                    Rectangle { height: 1; color: "#e5e7eb"; width: parent.width }
+                        Rectangle { width: ordersCol.width; height: 1; color: "#e5e7eb" }
 
-                    ListView {
-                        id: table
-                        model: OrdersStore
-                        clip: true
-                        spacing: 0
-                        boundsBehavior: Flickable.StopAtBounds
-                        height: Math.max(240, Math.min(page.height * 0.6, 480))
-                        cacheBuffer: 200
-                        delegate: OrderRow {
-                            width: parent.width
-                            compact: page.compact
-                            widths: page.compact ? headerRowCompact.widths : headerRowFull.widths
-                            orderId: orderId; customer: customer; items: items; total: total; status: status; date: date
-                            onViewClicked: detail.openFor(orderId)
-                            visible: search.text === "" || (String(orderId).toLowerCase() + String(customer).toLowerCase() + String(status).toLowerCase()).indexOf(search.text.toLowerCase()) >= 0
-                            height: visible ? implicitHeight : 0
+                        Flickable {
+                            id: tableFlick; width: ordersCol.width; height: 360
+                            clip: true; flickableDirection: Flickable.VerticalFlick
+                            contentHeight: tableCol.height
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                            Column {
+                                id: tableCol; width: tableFlick.width; spacing: 0
+                                Repeater {
+                                    id: ordersRepeater
+                                    model: ordersModel
+                                    delegate: Rectangle {
+                                        id: rowDel
+                                        width: tableCol.width; height: rowVisible ? 44 : 0; color: "#ffffff"
+                                        property bool rowVisible: search.text === "" || (model.orderId + model.customer + model.status).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
+                                        visible: rowVisible
+
+                                        property var ws: [0.14,0.24,0.10,0.14,0.14,0.14,0.10]
+                                        function cw(i) { return rowDel.width * rowDel.ws[i]; }
+
+                                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#f1f5f9" }
+
+                                        // Order ID
+                                        Text { x: 0; width: cw(0); text: model.orderId; color: "#111827"; font.pixelSize: 12
+                                            verticalAlignment: Text.AlignVCenter; height: parent.height; leftPadding: 8 }
+                                        // Customer
+                                        Text { x: cw(0); width: cw(1); text: model.customer; color: "#111827"; font.pixelSize: 12
+                                            verticalAlignment: Text.AlignVCenter; height: parent.height; leftPadding: 4 }
+                                        // Items
+                                        Text { x: cw(0)+cw(1); width: cw(2); text: String(model.items); color: "#111827"; font.pixelSize: 12
+                                            verticalAlignment: Text.AlignVCenter; height: parent.height; leftPadding: 4 }
+                                        // Total
+                                        Text { x: cw(0)+cw(1)+cw(2); width: cw(3); text: OrdersStore.formatCurrency(model.total); color: "#111827"; font.pixelSize: 12
+                                            verticalAlignment: Text.AlignVCenter; height: parent.height; leftPadding: 4 }
+                                        // Status badge
+                                        Item {
+                                            x: cw(0)+cw(1)+cw(2)+cw(3); width: cw(4); height: parent.height
+                                            StatusBadge {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: model.status; status: model.status; showDropdown: true
+                                                onStatusChangeRequested: function(s) {
+                                                    OrdersStore.updateOrder(model.orderId, { status: s });
+                                                    app.updateOrderInModel(model.orderId);
+                                                }
+                                            }
+                                        }
+                                        // Date
+                                        Text { x: cw(0)+cw(1)+cw(2)+cw(3)+cw(4); width: cw(5); text: model.date; color: "#6b7280"; font.pixelSize: 12
+                                            verticalAlignment: Text.AlignVCenter; height: parent.height; leftPadding: 4 }
+                                        // Actions
+                                        Row {
+                                            x: cw(0)+cw(1)+cw(2)+cw(3)+cw(4)+cw(5); width: cw(6); height: parent.height; spacing: 4
+                                            Button {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: model.status === "pending"
+                                                width: 28; height: 28; padding: 0
+                                                background: Rectangle { radius: 6; color: "#dcfce7"; border.color: "#22c55e" }
+                                                contentItem: Text { text: "\u2713"; color: "#22c55e"; font.pixelSize: 14; font.bold: true
+                                                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                onClicked: {
+                                                    OrdersStore.updateOrder(model.orderId, { status: "completed" });
+                                                    app.updateOrderInModel(model.orderId);
+                                                }
+                                                ToolTip.visible: hovered; ToolTip.text: "Approve"
+                                            }
+                                            Button {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                width: 28; height: 28; padding: 0
+                                                background: Rectangle { radius: 6; color: "#f3f4f6"; border.color: "#e5e7eb" }
+                                                contentItem: Text { text: "\u270E"; color: "#6b7280"; font.pixelSize: 14
+                                                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                onClicked: detail.openFor(model.orderId)
+                                                ToolTip.visible: hovered; ToolTip.text: "Edit"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        ScrollBar.vertical: ScrollBar {}
                     }
                 }
             }
         }
+
+        // ── Inventory View (index 1) ──
+        InventoryPage {
+            anchors.fill: parent
+            visible: nav.currentIndex === 1
+            compact: app.compact
+            onAddProductClicked: addProductDlg.open()
+            onRestockClicked: function(pid) { restockDlg.openFor(pid) }
+        }
+
+        // ── Sales View (index 2) ──
+        SalesPage {
+            anchors.fill: parent
+            visible: nav.currentIndex === 2
+            compact: app.compact
+        }
+
+        // ── Staff View (index 3) ──
+        StaffPage {
+            anchors.fill: parent
+            visible: nav.currentIndex === 3
+            compact: app.compact
+            onAddStaffClicked: addStaffDlg.open()
+        }
     }
 
-    NewOrderDialog { id: dlg; parent: app.contentItem }
+    NewOrderDialog {
+        id: dlg; parent: app.contentItem
+        onOrderCreated: function(order) {
+            OrdersStore.addOrder(order.customer, order.items, order.total,
+                order.status, order.date, order.email, order.phone, order.products)
+            app.syncOrdersModel();
+            // Deduct stock from inventory for each ordered product
+            if (order.products) {
+                for (var i = 0; i < order.products.length; ++i) {
+                    InventoryStore.deductStock(order.products[i].productId, order.products[i].qty);
+                }
+            }
+            // Update sales live totals
+            SalesStore.recordSale(order.total, order.items)
+        }
+    }
+    OrderDetailDialog {
+        id: detail; parent: app.contentItem
+        onOrderUpdated: function(oid) { app.updateOrderInModel(oid); }
+    }
+    AddProductDialog { id: addProductDlg; parent: app.contentItem }
+    AddStaffDialog { id: addStaffDlg; parent: app.contentItem }
+    RestockDialog { id: restockDlg; parent: app.contentItem }
 }

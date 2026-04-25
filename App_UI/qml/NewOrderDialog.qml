@@ -6,59 +6,181 @@ import BusinessApp 1.0
 
 Dialog {
     id: dlg
-    title: "New Order"
+    title: "Create New Order"
     modal: true
-    width: Math.min(420, parent ? parent.width - 24 : 420)
-    height: Math.min(parent ? parent.height - 24 : 640, contentItem.implicitHeight)
-    standardButtons: Dialog.Ok | Dialog.Cancel
-
-    property alias customer: customerField.text
-    property int items: itemsField.value
-    property alias total: totalField.text
-    property string status: statusCombo.currentText
-    property date date: picker.date
+    width: Math.min(520, parent ? parent.width - 24 : 520)
+    height: Math.min(580, parent ? parent.height - 40 : 580)
+    anchors.centerIn: parent
+    padding: 0
+    standardButtons: Dialog.NoButton
 
     signal orderCreated(var order)
 
-    function isFuture(d) {
-        var today = new Date(); today.setHours(0,0,0,0);
-        var dd = new Date(d); dd.setHours(0,0,0,0);
-        return dd.getTime() > today.getTime();
+    property var selectedProducts: []
+    property var productNames: []
+
+    onOpened: {
+        // Rebuild product list from InventoryStore each time dialog opens
+        var names = [];
+        for (var i = 0; i < InventoryStore.products.length; ++i)
+            names.push(InventoryStore.products[i].name + " - " + InventoryStore.formatCurrency(InventoryStore.products[i].price));
+        productNames = names;
+        productCombo.currentIndex = 0;
     }
 
-    contentItem: ScrollView {
-        clip: true
-        ScrollBar.vertical: ScrollBar {}
-        ColumnLayout {
-            id: form
-            width: parent.availableWidth
-            spacing: 10; padding: 0
-            anchors.margins: 16
+    function trySubmit() {
+        var errs = [];
+        if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name");
+        if (selectedProducts.length === 0) errs.push("Add at least one product");
+        if (errs.length > 0) { errorLabel.text = errs.join(" · "); errorLabel.visible = true; return; }
+        errorLabel.visible = false;
 
-            TextField { id: customerField; Layout.fillWidth: true; placeholderText: "Customer name" }
-            SpinBox   { id: itemsField;    Layout.fillWidth: true; from: 1; to: 1000; value: 1 }
-            TextField { id: totalField;    Layout.fillWidth: true; placeholderText: "Total (amount)" }
-            ComboBox  { id: statusCombo;   Layout.fillWidth: true; model: ["pending", "processing", "completed"] }
-            RowLayout {
-                Layout.fillWidth: true; spacing: 6
-                TextField { id: dateFieldInput; Layout.fillWidth: true; readOnly: true; placeholderText: "Date"; text: Qt.formatDate(picker.date, "yyyy-MM-dd") }
-                Button { text: "Pick"; onClicked: picker.open() }
-                InlineDatePicker { id: picker; onAccepted: function(d){ dateFieldInput.text = Qt.formatDate(d, "yyyy-MM-dd"); } }
+        var totalItems = 0; var totalAmount = 0;
+        var prods = [];
+        for (var i = 0; i < selectedProducts.length; ++i) {
+            totalItems += selectedProducts[i].qty;
+            totalAmount += selectedProducts[i].qty * selectedProducts[i].price;
+            prods.push({ productId: selectedProducts[i].productId, name: selectedProducts[i].name,
+                         qty: selectedProducts[i].qty, price: selectedProducts[i].price });
+        }
+
+        orderCreated({ customer: customerField.text, items: totalItems, total: totalAmount, status: "pending", date: new Date(),
+            email: emailField.text, phone: phoneField.text, products: prods });
+        customerField.text = ""; emailField.text = ""; phoneField.text = "";
+        selectedProducts = []; productCombo.currentIndex = 0;
+        dlg.close();
+    }
+
+    function addSelectedProduct() {
+        var idx = productCombo.currentIndex;
+        if (idx < 0 || idx >= InventoryStore.products.length) return;
+        var p = InventoryStore.products[idx];
+        var arr = [];
+        for (var i = 0; i < selectedProducts.length; ++i)
+            arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty, price: selectedProducts[i].price, productId: selectedProducts[i].productId });
+        // check duplicate
+        for (var j = 0; j < arr.length; ++j) {
+            if (arr[j].productId === p.productId) { arr[j].qty++; selectedProducts = arr; return; }
+        }
+        arr.push({ name: p.name, qty: 1, price: p.price, productId: p.productId });
+        selectedProducts = arr;
+    }
+
+    function removeProduct(idx) {
+        var arr = [];
+        for (var i = 0; i < selectedProducts.length; ++i)
+            if (i !== idx) arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty, price: selectedProducts[i].price, productId: selectedProducts[i].productId });
+        selectedProducts = arr;
+    }
+
+    contentItem: Flickable {
+        clip: true
+        contentHeight: formCol.height + 32
+        flickableDirection: Flickable.VerticalFlick
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+            id: formCol
+            x: 24; y: 16; width: parent.width - 48; spacing: 8
+
+            Label { text: "Create New Order"; font.pixelSize: 18; font.bold: true; color: "#111827" }
+            Label { text: "Add customer details and select products to create a new order"; font.pixelSize: 12; color: "#6b7280" }
+            Item { width: 1; height: 8 }
+
+            // Section: Customer Information
+            Label { text: "Customer Information"; font.pixelSize: 14; font.bold: true; color: "#b45309" }
+            Rectangle { width: formCol.width; height: 2; color: "#fdba74" }
+            Item { width: 1; height: 4 }
+
+            Row { spacing: 12; width: formCol.width
+                Column { width: (formCol.width - 12) / 2; spacing: 4
+                    Label { text: "Customer Name *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
+                    TextField { id: customerField; width: parent.width; placeholderText: "Enter customer name"; font.pixelSize: 13
+                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
+                }
+                Column { width: (formCol.width - 12) / 2; spacing: 4
+                    Label { text: "Email"; font.pixelSize: 12; font.bold: true; color: "#374151" }
+                    TextField { id: emailField; width: parent.width; placeholderText: "customer@example.com"; font.pixelSize: 13
+                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
+                }
             }
-            Label { id: errorLabel; visible: false; color: "#ef4444"; text: "" }
+
+            Column { spacing: 4
+                Label { text: "Phone Number"; font.pixelSize: 12; font.bold: true; color: "#374151" }
+                TextField { id: phoneField; width: (formCol.width - 12) / 2; placeholderText: "+91 XXXXX XXXXX"; font.pixelSize: 13
+                    background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
+            }
+
+            Item { width: 1; height: 8 }
+
+            // Section: Add Products
+            Label { text: "Add Products"; font.pixelSize: 14; font.bold: true; color: "#b45309" }
+            Rectangle { width: formCol.width; height: 2; color: "#fdba74" }
+            Item { width: 1; height: 4 }
+
+            Row { spacing: 8; width: formCol.width
+                ComboBox {
+                    id: productCombo; width: parent.width - 52
+                    model: dlg.productNames
+                    font.pixelSize: 13
+                    background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" }
+                }
+                Button {
+                    width: 44; height: 36
+                    onClicked: dlg.addSelectedProduct()
+                    background: Rectangle { radius: 22; color: "#f97316" }
+                    contentItem: Text { text: "+"; font.pixelSize: 20; font.bold: true; color: "white"
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+            }
+
+            // Selected products list
+            Repeater {
+                model: dlg.selectedProducts
+                Rectangle {
+                    width: formCol.width; height: 36; radius: 6; color: "#fff7ed"; border.color: "#fdba74"
+                    Row { x: 8; anchors.verticalCenter: parent.verticalCenter; spacing: 8; width: parent.width - 16
+                        Label { text: modelData.name; font.pixelSize: 12; color: "#374151"; width: parent.width - 130 }
+                        Label { text: "x" + modelData.qty; font.pixelSize: 12; font.bold: true; color: "#b45309" }
+                        Label { text: InventoryStore.formatCurrency(modelData.qty * modelData.price); font.pixelSize: 12; color: "#374151" }
+                        Text {
+                            text: "✕"; font.pixelSize: 14; color: "#ef4444"
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: dlg.removeProduct(index) }
+                        }
+                    }
+                }
+            }
+
+            Label { id: errorLabel; visible: false; color: "#ef4444"; text: ""; wrapMode: Text.Wrap; width: formCol.width }
+            Item { width: 1; height: 8 }
         }
     }
 
-    onAccepted: {
-        var errs = []
-        if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name")
-        if (itemsField.value < 1) errs.push("Items must be ≥ 1")
-        var amount = OrdersStore.parseCurrency(totalField.text)
-        if (amount <= 0) errs.push("Enter a valid total amount")
-        if (isFuture(picker.date)) errs.push("Date cannot be in the future")
-        if (errs.length > 0) { errorLabel.text = errs.join(" · "); errorLabel.visible = true; return }
-        errorLabel.visible = false
-        orderCreated({ customer: customerField.text, items: itemsField.value, total: amount, status: statusCombo.currentText, date: picker.date })
-        customerField.text = ""; itemsField.value = 1; totalField.text = ""; statusCombo.currentIndex = 0; picker.date = new Date();
+    footer: Item {
+        implicitHeight: 52
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 2; color: "#fdba74"
+        }
+        Row {
+            anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
+            spacing: 12
+            Button {
+                height: 36; padding: 12
+                background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
+                contentItem: Text { text: "Cancel"; font.pixelSize: 13; color: "#374151"
+                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                onClicked: dlg.close()
+            }
+            Button {
+                height: 36; padding: 12
+                background: Rectangle { radius: 8; color: "#f97316" }
+                contentItem: Text { text: "Create Order"; font.pixelSize: 13; font.bold: true; color: "#ffffff"
+                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                onClicked: dlg.trySubmit()
+            }
+        }
     }
 }
