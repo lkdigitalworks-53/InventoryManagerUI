@@ -137,7 +137,7 @@ Item {
                                     id: prodRow
                                     width: rowsCol.width
                                     color: index % 2 === 0 ? "#ffffff" : "#f9fafb"
-                                    visible: search.text === "" || (modelData.productId + modelData.name + modelData.sku + modelData.category).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
+                                    visible: search.text === "" || ((modelData.productId || "") + (modelData.name || "") + (modelData.sku || "") + (modelData.category || "")).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
                                     height: visible ? 56 : 0
 
                                     property var ws: [0.11,0.16,0.14,0.12,0.12,0.10,0.12,0.13]
@@ -153,7 +153,7 @@ Item {
                                         }
                                         // SKU
                                         Item { width: prodRow.width * prodRow.ws[2]; height: 40
-                                            Text { text: modelData.sku; color: "#6b7280"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                            Text { text: modelData.sku || ""; color: "#6b7280"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
                                         }
                                         // Category
                                         Item { width: prodRow.width * prodRow.ws[3]; height: 40

@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick 6.5
 import QtCore
+import BusinessApp 1.0
 
 QtObject {
     id: root
@@ -21,6 +22,7 @@ QtObject {
     Component.onCompleted: _load()
 
     function _load() {
+        // Layer 1: load from local Settings (instant)
         if (_settings.salesJson && _settings.salesJson.length > 2) {
             try {
                 var d = JSON.parse(_settings.salesJson);
@@ -29,11 +31,32 @@ QtObject {
                 activeCustomers = d.activeCustomers;
             } catch(e) {}
         }
+        // Layer 2: fetch from Firebase (async)
+        _fetchFromFirebase();
     }
 
     function _save() {
         _settings.salesJson = JSON.stringify({ totalRevenue: totalRevenue, totalOrders: totalOrders, activeCustomers: activeCustomers });
+        _pushToFirebase();
     }
+
+    function _fetchFromFirebase() {
+        FirebaseService.get("sales", function(ok, data) {
+            if (ok && data) {
+                if (data.totalRevenue !== undefined) totalRevenue = data.totalRevenue;
+                if (data.totalOrders !== undefined) totalOrders = data.totalOrders;
+                if (data.activeCustomers !== undefined) activeCustomers = data.activeCustomers;
+                _settings.salesJson = JSON.stringify({ totalRevenue: totalRevenue, totalOrders: totalOrders, activeCustomers: activeCustomers });
+                console.log("[SalesStore] Synced from Firebase");
+            }
+        });
+    }
+
+    function _pushToFirebase() {
+        FirebaseService.put("sales", { totalRevenue: totalRevenue, totalOrders: totalOrders, activeCustomers: activeCustomers });
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase(); }
 
     function recordSale(amount, itemCount) {
         totalRevenue += amount;

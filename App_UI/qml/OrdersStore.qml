@@ -2,6 +2,7 @@
 pragma Singleton
 import QtQuick 6.5
 import QtCore
+import BusinessApp 1.0
 
 QtObject {
     id: root
@@ -25,17 +26,61 @@ QtObject {
     Component.onCompleted: _load()
 
     function _load() {
+        // Layer 1: load from local Settings (instant)
         if (_settings.ordersJson && _settings.ordersJson.length > 2) {
             try { orders = JSON.parse(_settings.ordersJson); } catch(e) { orders = _seedOrders.slice(); }
         } else {
             orders = _seedOrders.slice();
         }
         _refreshCounts();
+        // Layer 2: fetch from Firebase (async, overwrites local)
+        _fetchFromFirebase();
     }
 
     function _save() {
         _settings.ordersJson = JSON.stringify(orders);
     }
+
+    function _fetchFromFirebase() {
+        FirebaseService.get("orders", function(ok, data) {
+            if (ok && data) {
+                var arr = FirebaseService.toArray(data);
+                if (arr.length > 0) {
+                    // Normalize Firebase field names to local schema
+                    for (var i = 0; i < arr.length; ++i) {
+                        var o = arr[i];
+                        if (o.order_id && !o.orderId) o.orderId = o.order_id;
+                        if (!o.customer) o.customer = "";
+                        if (o.items === undefined) o.items = 0;
+                        if (o.total === undefined) o.total = 0;
+                        if (!o.status) o.status = "pending";
+                        if (!o.date) o.date = o.created_at || "";
+                        if (!o.notes) o.notes = "";
+                        if (!o.email) o.email = "";
+                        if (!o.phone) o.phone = "";
+                        if (!o.products) o.products = [];
+                    }
+                    orders = arr;
+                    _refreshCounts();
+                    _save();
+                    console.log("[OrdersStore] Synced", arr.length, "orders from Firebase");
+                }
+            }
+        });
+    }
+
+    function _pushToFirebase(order) {
+        FirebaseService.put("orders/" + order.orderId, order);
+    }
+
+    function _pushAllToFirebase() {
+        var obj = {};
+        for (var i = 0; i < orders.length; ++i)
+            obj[orders[i].orderId] = orders[i];
+        FirebaseService.put("orders", obj);
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase(); }
 
     // Reactive properties – UI binds directly to these
     property int revision: 0
@@ -61,6 +106,7 @@ QtObject {
         revision++;
         _refreshCounts();
         _save();
+        _pushAllToFirebase();
     }
 
     function _clone() {

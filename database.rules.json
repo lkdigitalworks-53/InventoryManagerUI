@@ -1,0 +1,20 @@
+{
+  "rules": {
+    "inventory": {
+      ".read": true,
+      ".write": true
+    },
+    "orders": {
+      ".read": true,
+      ".write": true
+    },
+    "sales": {
+      ".read": true,
+      ".write": true
+    },
+    "staff": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
