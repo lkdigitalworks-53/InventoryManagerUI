@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick 6.5
 import QtCore
+import BusinessApp 1.0
 
 QtObject {
     id: root
@@ -24,20 +25,57 @@ QtObject {
     Component.onCompleted: _load()
 
     function _load() {
+        // Layer 1: load from local Settings (instant)
         if (_settings.productsJson && _settings.productsJson.length > 2) {
             try { products = JSON.parse(_settings.productsJson); } catch(e) { products = _seedProducts.slice(); }
         } else {
             products = _seedProducts.slice();
         }
+        // Layer 2: fetch from Firebase (async, overwrites local)
+        _fetchFromFirebase();
     }
 
     function _save() {
         _settings.productsJson = JSON.stringify(products);
     }
 
+    function _fetchFromFirebase() {
+        FirebaseService.get("inventory", function(ok, data) {
+            if (ok && data) {
+                var arr = FirebaseService.toArray(data);
+                if (arr.length > 0) {
+                    // Normalize Firebase field names to local schema
+                    for (var i = 0; i < arr.length; ++i) {
+                        var p = arr[i];
+                        if (p.product_id && !p.productId) p.productId = p.product_id;
+                        if (p.currentStock !== undefined && p.stock === undefined) p.stock = p.currentStock;
+                        if (p.minimumStock !== undefined && p.minStock === undefined) p.minStock = p.minimumStock;
+                        if (!p.sku) p.sku = "";
+                        if (!p.category) p.category = "";
+                        if (!p.unit) p.unit = "pcs";
+                        if (!p.description) p.description = "";
+                    }
+                    products = arr;
+                    _save();
+                    console.log("[InventoryStore] Synced", arr.length, "products from Firebase");
+                }
+            }
+        });
+    }
+
+    function _pushAllToFirebase() {
+        var obj = {};
+        for (var i = 0; i < products.length; ++i)
+            obj[products[i].productId] = products[i];
+        FirebaseService.put("inventory", obj);
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase(); }
+
     function _commit(arr) {
         products = arr;
         _save();
+        _pushAllToFirebase();
     }
 
     function _clone() {

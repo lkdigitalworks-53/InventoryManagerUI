@@ -13,6 +13,7 @@ set_source_files_properties(qml/OrdersStore.qml PROPERTIES QT_QML_SINGLETON_TYPE
 set_source_files_properties(qml/InventoryStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/StaffStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/SalesStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/FirebaseService.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(appBusinessManagement
     URI BusinessApp
@@ -38,6 +39,7 @@ qt_add_qml_module(appBusinessManagement
         qml/StaffPage.qml
         qml/AddStaffDialog.qml
         qml/RestockDialog.qml
+        qml/FirebaseService.qml
 )
 
 set_target_properties(appBusinessManagement PROPERTIES

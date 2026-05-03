@@ -68,8 +68,8 @@ ApplicationWindow {
         ordersModel.clear();
         for (var i = 0; i < OrdersStore.orders.length; ++i) {
             var o = OrdersStore.orders[i];
-            ordersModel.append({ orderId: o.orderId, customer: o.customer, items: o.items,
-                total: o.total, status: o.status, date: o.date });
+            ordersModel.append({ orderId: o.orderId || "", customer: o.customer || "", items: o.items || 0,
+                total: o.total || 0, status: o.status || "", date: o.date || "" });
         }
     }
 
@@ -78,11 +78,17 @@ ApplicationWindow {
         if (!o) return;
         for (var i = 0; i < ordersModel.count; ++i) {
             if (ordersModel.get(i).orderId === orderId) {
-                ordersModel.set(i, { orderId: o.orderId, customer: o.customer, items: o.items,
-                    total: o.total, status: o.status, date: o.date });
+                ordersModel.set(i, { orderId: o.orderId || "", customer: o.customer || "", items: o.items || 0,
+                    total: o.total || 0, status: o.status || "", date: o.date || "" });
                 break;
             }
         }
+    }
+
+    // Auto-resync ordersModel when OrdersStore revision changes (e.g. Firebase fetch)
+    Connections {
+        target: OrdersStore
+        function onRevisionChanged() { app.syncOrdersModel(); }
     }
 
     Component.onCompleted: syncOrdersModel()
@@ -100,6 +106,24 @@ ApplicationWindow {
             anchors.centerIn: parent; spacing: 4
             Label { text: "Business Management"; color: "#ffffff"; font.bold: true; font.pixelSize: 18; anchors.horizontalCenter: parent.horizontalCenter }
             Label { text: "Manage your business operations efficiently"; color: "#dbeafe"; font.pixelSize: 12; anchors.horizontalCenter: parent.horizontalCenter }
+        }
+        Row {
+            anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
+            spacing: 8
+            Button {
+                id: syncBtn; width: 36; height: 36; padding: 0
+                background: Rectangle { radius: 18; color: syncBtn.hovered ? "#ffffff30" : "transparent" }
+                contentItem: Text { text: FirebaseService.syncing ? "⏳" : "🔄"; font.pixelSize: 16
+                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                onClicked: {
+                    OrdersStore.syncFromFirebase();
+                    InventoryStore.syncFromFirebase();
+                    SalesStore.syncFromFirebase();
+                    StaffStore.syncFromFirebase();
+                    syncOrdersModel();
+                }
+                ToolTip.visible: hovered; ToolTip.text: FirebaseService.syncing ? "Syncing..." : "Sync with server"
+            }
         }
     }
 
@@ -305,7 +329,7 @@ ApplicationWindow {
                                     delegate: Rectangle {
                                         id: rowDel
                                         width: tableCol.width; height: rowVisible ? 44 : 0; color: "#ffffff"
-                                        property bool rowVisible: search.text === "" || (model.orderId + model.customer + model.status).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
+                                        property bool rowVisible: search.text === "" || ((model.orderId || "") + (model.customer || "") + (model.status || "")).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
                                         visible: rowVisible
 
                                         property var ws: [0.14,0.24,0.10,0.14,0.14,0.14,0.10]
@@ -314,7 +338,7 @@ ApplicationWindow {
                                         Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#f1f5f9" }
 
                                         // Order ID
-                                        Text { x: 0; width: cw(0); text: model.orderId; color: "#111827"; font.pixelSize: 12
+                                        Text { x: 0; width: cw(0); text: model.orderId || ""; color: "#111827"; font.pixelSize: 12
                                             verticalAlignment: Text.AlignVCenter; height: parent.height; leftPadding: 8 }
                                         // Customer
                                         Text { x: cw(0); width: cw(1); text: model.customer; color: "#111827"; font.pixelSize: 12

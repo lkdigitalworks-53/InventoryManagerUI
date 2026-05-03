@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick 6.5
+import BusinessApp 1.0
 
 QtObject {
     id: root
@@ -91,6 +92,7 @@ QtObject {
         arr.push({ staffId: id, name: name, role: role, department: department,
                    email: email, phone: phone, joinDate: iso, status: status, salary: salary });
         staff = arr;
+        _pushAllToFirebase();
 
         var acts = [];
         for (var i = 0; i < activities.length; ++i)
@@ -98,4 +100,28 @@ QtObject {
         acts.unshift({ text: name + " joined " + department + " department", time: "Just now", color: "#22c55e" });
         activities = acts;
     }
+
+    // ── Firebase sync ──
+    Component.onCompleted: _fetchFromFirebase()
+
+    function _fetchFromFirebase() {
+        FirebaseService.get("staff", function(ok, data) {
+            if (ok && data) {
+                var arr = FirebaseService.toArray(data);
+                if (arr.length > 0) {
+                    staff = arr;
+                    console.log("[StaffStore] Synced", arr.length, "staff from Firebase");
+                }
+            }
+        });
+    }
+
+    function _pushAllToFirebase() {
+        var obj = {};
+        for (var i = 0; i < staff.length; ++i)
+            obj[staff[i].staffId] = staff[i];
+        FirebaseService.put("staff", obj);
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase(); }
 }
