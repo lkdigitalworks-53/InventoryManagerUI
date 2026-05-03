@@ -2,12 +2,17 @@
 cmake_minimum_required(VERSION 3.21)
 project(BusinessManagement VERSION 0.1 LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Qml QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Qml QuickControls2 Widgets)
 qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(appBusinessManagement
     src/main.cpp
 )
+
+set_source_files_properties(qml/OrdersStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/InventoryStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/StaffStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/SalesStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(appBusinessManagement
     URI BusinessApp
@@ -21,9 +26,18 @@ qt_add_qml_module(appBusinessManagement
         qml/StatusBadge.qml
         qml/PlaceholderPage.qml
         qml/NewOrderDialog.qml
-        qml/OrdersStore.qml
         qml/OrderDetailDialog.qml
         qml/InlineDatePicker.qml
+        qml/OrdersStore.qml
+        qml/InventoryStore.qml
+        qml/InventoryPage.qml
+        qml/AddProductDialog.qml
+        qml/SalesStore.qml
+        qml/SalesPage.qml
+        qml/StaffStore.qml
+        qml/StaffPage.qml
+        qml/AddStaffDialog.qml
+        qml/RestockDialog.qml
 )
 
 set_target_properties(appBusinessManagement PROPERTIES
@@ -31,7 +45,7 @@ set_target_properties(appBusinessManagement PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
-target_link_libraries(appBusinessManagement PRIVATE Qt6::Quick Qt6::Qml Qt6::QuickControls2)
+target_link_libraries(appBusinessManagement PRIVATE Qt6::Quick Qt6::Qml Qt6::QuickControls2 Qt6::Widgets)
 
 if(ANDROID)
     message(STATUS "Android build: skipping install() (packaging handled by androiddeployqt)")

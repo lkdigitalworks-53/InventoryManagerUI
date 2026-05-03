@@ -8,6 +8,7 @@ Rectangle {
     property string title: ""
     property string subtitle: ""
     property string value: ""
+    property string icon: ""
 
     radius: 12
     color: "#ffffff"
@@ -19,9 +20,18 @@ Rectangle {
 
     Rectangle { anchors.fill: parent; anchors.margins: 12; radius: 12; color: "#f3f4f6"; border.color: "#e5e7eb"; border.width: 1 }
 
-    Column { anchors.fill: parent; anchors.margins: 20; spacing: 6
-        Label { text: title; font.pixelSize: 13; font.bold: true; color: "#1f2937" }
-        Label { text: subtitle; font.pixelSize: 11; color: "#6b7280" }
-        Label { text: value; font.pixelSize: 16; color: "#ef4444" }
+    RowLayout {
+        anchors.fill: parent; anchors.margins: 20; spacing: 12
+        Text {
+            visible: icon !== ""
+            text: icon
+            font.pixelSize: 24
+            Layout.alignment: Qt.AlignVCenter
+        }
+        Column { spacing: 6; Layout.fillWidth: true
+            Label { text: title; font.pixelSize: 13; font.bold: true; color: "#1f2937" }
+            Label { text: subtitle; font.pixelSize: 11; color: "#6b7280" }
+            Label { text: value; font.pixelSize: 16; color: "#ef4444" }
+        }
     }
 }

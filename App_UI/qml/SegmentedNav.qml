@@ -25,15 +25,16 @@ Item {
             Repeater {
                 id: rep
                 delegate: Button {
-                    width: Math.min(160, Math.max(96, (bar.width - (rep.count-1)*8) / Math.max(1, rep.count)))
+                    width: Math.min(200, Math.max(96, (bar.width - (rep.count-1)*8) / Math.max(1, rep.count)))
                     height: bar.height - 2
                     checkable: true
                     checked: index === root.currentIndex
-                    background: Rectangle { radius: 10; color: checked ? "#ffe8d6" : "#ffffff";
-                                             border.color: checked ? "#ff7a00" : "#e5e7eb"; border.width: checked ? 2 : 1 }
+                    property color activeColor: modelData.activeColor || "#3b82f6"
+                    background: Rectangle { radius: 10; color: checked ? activeColor : "#ffffff";
+                                             border.color: checked ? activeColor : "transparent"; border.width: 0 }
                     contentItem: Row { spacing: 6; anchors.centerIn: parent
-                        Text { text: modelData.icon; font.family: "Segoe MDL2 Assets"; font.pixelSize: 14; color: checked ? "#ff7a00" : "#6b7280" }
-                        Text { text: modelData.label; font.pixelSize: 13; color: checked ? "#1f2937" : "#4b5563"; font.bold: checked }
+                        Text { text: modelData.icon; font.pixelSize: 14; color: checked ? "#ffffff" : "#6b7280" }
+                        Text { text: modelData.label; font.pixelSize: 13; color: checked ? "#ffffff" : "#4b5563"; font.bold: checked }
                     }
                     onClicked: root.currentIndex = index
                 }
