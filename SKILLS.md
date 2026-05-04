@@ -119,6 +119,8 @@ StackLayout {
 - Dialog (modal windows)
 - Button, CheckBox, ComboBox
 - ScrollView and ListView
+ - ScrollView and ListView
+ - TableView horizontal scrolling: bind `contentWidth` to the delegate's width `delegate.width` to enable smooth horizontal flicking (e.g. `contentWidth: delegate.width`).
 - Label styling and text properties
 - Control palette and colors
 - Custom palettes
@@ -212,8 +214,10 @@ Connections {
 - Logout/cleanup
 
 **Project Files**:
-- `qml/pages/LoginPage.qml` (login UI)
-- `qml/helper/Constants.qml` (Firebase config)
+**Project Files**:
+- `qml/pages/FirebaseLoginPage.qml` (contains `FirebaseConfig` and handles registration/login via `FirebaseAuth`)
+- `qml/pages/FirebasePage.qml` (demonstrates `FirebaseDatabase` usage: `setValue` / `getValue` guarded by authentication)
+- `qml/helper/Constants.qml` (local Cloud Function URL properties, e.g. `addProductLocalUrl`)
 - Firebase documentation: https://felgo.com/doc/plugin-firebase/
 
 ### Firebase Realtime Database
@@ -234,6 +238,18 @@ FirebaseDatabase {
 }
 ```
 
+Usage pattern in this project:
+```qml
+// write and read simple values (requires auth)
+db.setValue("testKey", "value")
+db.getValue("testKey")
+
+FirebaseDatabase {
+    onReadCompleted: { if(success) { /* value available as 'value' */ } }
+    onWriteCompleted: { if(success) { /* write confirmation in 'message' */ } }
+}
+```
+
 ### Cloud Functions
 **Required for**: Firebase & Authentication Agent
 **Knowledge Areas**:
@@ -243,9 +259,6 @@ FirebaseDatabase {
 - Firebase SDK integration
 - Local emulation (http://127.0.0.1:5001/...)
 - Debugging and logging
-
-**Project Cloud Function**:
-- Endpoint: `http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct`
 
 ---
 

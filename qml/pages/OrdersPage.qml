@@ -29,6 +29,7 @@ Item {
         }
         function onDataLoaded(inventoryDataJson, ordersDataJson) {
             console.log(" ---------- ordersDataJson:  ", ordersDataJson.length)
+            tableModel.clear()
             for (var i = 0; i < ordersDataJson.length; ++i) {
                 appendRowToOrderTable(ordersDataJson[i])
             }
@@ -373,7 +374,7 @@ Item {
                         anchors.top: header.bottom
                         clip: true
                         model: tableModel
-                        contentWidth: dp(150)
+                        contentWidth: delegate.width
                         contentHeight: infoTable.height / 8
                         resizableColumns: false
                         resizableRows: false
@@ -454,7 +455,7 @@ Item {
 
         AddNewOrderPage {
             id: addOrderPage
-            // anchors.centerIn: ordersPage
+            anchors.centerIn: parent
             pushBackContent: ordersPage
 
             onClosed: {

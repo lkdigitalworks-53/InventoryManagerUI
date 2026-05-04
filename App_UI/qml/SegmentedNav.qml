@@ -40,6 +40,6 @@ Item {
                 }
             }
         }
-        ScrollBar.horizontal: ScrollBar { }
+        // ScrollBar.horizontal: ScrollBar { }
     }
 }
