@@ -1,0 +1,274 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Felgo: Configure (Debug)",
+      "type": "shell",
+      "command": "C:/Felgo/Tools/CMake_64/bin/cmake.exe",
+      "args": [
+        "--preset",
+        "felgo-mingw-debug"
+      ],
+      "group": "build",
+      "options": {
+        "env": {
+          "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Build (Debug)",
+      "type": "shell",
+      "command": "C:/Felgo/Tools/CMake_64/bin/cmake.exe",
+      "args": [
+        "--build",
+        "--preset",
+        "felgo-mingw-debug"
+      ],
+      "group": "build",
+      "dependsOn": "Felgo: Configure (Debug)",
+      "options": {
+        "env": {
+          "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Clean (Debug)",
+      "type": "shell",
+      "command": "C:/Felgo/Tools/CMake_64/bin/cmake.exe",
+      "args": [
+        "--build",
+        "--preset",
+        "felgo-mingw-debug",
+        "--target",
+        "clean"
+      ],
+      "group": "build",
+      "dependsOn": "Felgo: Configure (Debug)",
+      "options": {
+        "env": {
+          "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Clean Build (Debug)",
+      "dependsOn": [
+        "Felgo: Clean (Debug)",
+        "Felgo: Deploy Runtime (Debug)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Deploy Runtime (Debug)",
+      "dependsOn": [
+        "Felgo: Stop Running App (Debug)",
+        "Felgo: Deploy windeployqt (Debug)",
+        "Felgo: Deploy Felgo extras (Debug)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Stop Running App (Debug)",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "taskkill /F /IM appBusinessManagement.exe >nul 2>nul & exit /b 0"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Deploy windeployqt (Debug)",
+      "type": "shell",
+      "command": "C:/Felgo/Felgo/mingw_64/bin/windeployqt.exe",
+      "args": [
+        "--qmldir",
+        "qml",
+        "--dir",
+        "build/felgo-mingw-debug",
+        "build/felgo-mingw-debug/appBusinessManagement.exe"
+      ],
+      "dependsOn": "Felgo: Build (Debug)",
+      "options": {
+        "env": {
+          "PATH": "C:/Felgo/Felgo/mingw_64/bin;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Deploy Felgo extras (Debug)",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "(xcopy /E /I /Y \"C:/Felgo/Felgo/mingw_64/qml/Qt5Compat\" \"build/felgo-mingw-debug/qml/Qt5Compat\" || echo [warn] Qt5Compat copy had non-fatal errors) & (xcopy /E /I /Y \"C:/Felgo/Felgo/mingw_64/qml/QtQuick/LocalStorage\" \"build/felgo-mingw-debug/qml/QtQuick/LocalStorage\" || echo [warn] LocalStorage copy had non-fatal errors) & (copy /Y \"C:\\Felgo\\Felgo\\mingw_64\\bin\\Qt6ShaderTools.dll\" \"build\\felgo-mingw-debug\\\" || echo [warn] Qt6ShaderTools.dll copy had non-fatal errors) & (copy /Y \"C:\\Felgo\\Felgo\\mingw_64\\bin\\Qt6Sql.dll\" \"build\\felgo-mingw-debug\\\" || echo [warn] Qt6Sql.dll copy had non-fatal errors) & (copy /Y \"C:\\Felgo\\Felgo\\mingw_64\\bin\\Qt6QmlLocalStorage.dll\" \"build\\felgo-mingw-debug\\\" || echo [warn] Qt6QmlLocalStorage.dll copy had non-fatal errors) & (xcopy /E /I /Y \"C:/Felgo/Felgo/mingw_64/plugins/sqldrivers\" \"build/felgo-mingw-debug/sqldrivers\" || echo [warn] sqldrivers copy had non-fatal errors) & exit /b 0"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Run (Debug)",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/felgo-mingw-debug/appBusinessManagement.exe",
+      "dependsOn": "Felgo: Deploy Runtime (Debug)",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Run Clean Build (Debug)",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/felgo-mingw-debug/appBusinessManagement.exe",
+      "dependsOn": "Felgo: Clean Build (Debug)",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Run (Debug, No Build)",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/felgo-mingw-debug/appBusinessManagement.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Felgo: Run (Debug, Log To File)",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "set PATH=${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;%PATH% && \"${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe\" > \"${workspaceFolder}\\runtime.log\" 2>&1"
+      ],
+      "dependsOn": "Felgo: Deploy Runtime (Debug)",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Qt Skills: Review Changed QML",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".vscode/process/review-changed-qml.ps1"
+      ],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Qt Skills: Review Staged QML",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".vscode/process/review-changed-qml.ps1",
+        "-StagedOnly"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Qt Skills: Review Unstaged QML",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".vscode/process/review-changed-qml.ps1",
+        "-UnstagedOnly"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

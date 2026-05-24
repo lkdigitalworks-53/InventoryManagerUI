@@ -8,40 +8,72 @@ import QtQuick
 // ─────────────────────────────────────────────────────────────────────────────
 Item {
 
-    // ── Auth ──────────────────────────────────────────────────────────────────
-    signal login(string username, string password)
-    signal logout()
-
     // ── App lifecycle ─────────────────────────────────────────────────────────
-    signal clearCache()
     signal loadData()
-    signal refreshData()          // force pull from Firebase
-    signal syncOfflineQueue()     // retry pending offline writes
+    signal refreshData()
+    signal syncAllStores()
 
-    // ── Data-ready events (DataModel → UI) ────────────────────────────────────
-    signal dataLoaded(var inventoryDataJson, var ordersDataJson)
+    // ── Authentication ────────────────────────────────────────────────────────
+    signal signInWithEmail(string email, string password)
+    signal signUpWithEmail(string email, string password, string displayName)
+    signal signInWithGoogleToken(string idToken)
+    signal sendPasswordResetEmail(string email)
+    signal signOutRequested()
+    signal refreshAuthToken()
+    signal setTenantContext(string tenantId, string tenantName, string role)
+    signal inviteMember(string uid, string email, string displayName, string role)
 
-    // ── Inventory CRUD ────────────────────────────────────────────────────────
-    signal addProduct(var productData)
-    signal updateProduct(var productData)   // productData must contain product_id
-    signal deleteProduct(var productId)
+    // ── Authentication feedback ───────────────────────────────────────────────
+    signal authLoginSucceeded()
+    signal authSignupSucceeded()
+    signal authSignedOut()
+    signal authTokenRefreshed()
+    signal authFailed(string reason)
+    signal authPasswordResetSent(string email)
+    signal memberInvited(string uid)
+    signal memberInviteFailed(string reason)
 
-    // ── Inventory feedback (DataModel → UI) ───────────────────────────────────
-    signal productAdded(var productData)
-    signal productUpdated(var productData)
-    signal productDeleted(var productId)
-
-    // ── Orders CRUD ───────────────────────────────────────────────────────────
-    signal addOrder(var orderData)
-    signal updateOrder(var orderData)       // orderData must contain order_id
-    signal deleteOrder(var orderId)
+    // ── Orders ────────────────────────────────────────────────────────────────
+    signal addOrder(var customer, int items, var total, string status, var date,
+                    string email, string phone, var products)
+    signal updateOrder(string orderId, var fields)
+    signal completeOrder(string orderId)
+    signal approveAllPending()
+    signal deleteOrder(string orderId)
 
     // ── Orders feedback (DataModel → UI) ─────────────────────────────────────
-    signal orderAdded(var orderData)
-    signal orderUpdated(var orderData)
-    signal orderDeleted(var orderId)
+    signal orderAdded(string orderId)
+    signal orderUpdated(string orderId)
+    signal orderDeleted(string orderId)
+    signal orderCompletionFailed(string orderId, string errorMessage)
 
-    // ── Sync feedback (DataModel → UI) ────────────────────────────────────────
-    signal syncQueueChanged(int pendingCount)   // UI can show a badge
+    // ── Inventory ─────────────────────────────────────────────────────────────
+    signal addProduct(string name, string sku, string category, string description,
+                      var price, string unit, int stock, int minStock, var sellingPrice)
+    signal updateProduct(string productId, var fields)
+    signal restockProduct(string productId, int amount)
+    signal deleteProduct(string productId)
+
+    // ── Inventory feedback ────────────────────────────────────────────────────
+    signal productAdded(string productId)
+    signal productUpdated(string productId)
+    signal productRestocked(string productId)
+    signal productDeleted(string productId)
+
+    // ── Sales ─────────────────────────────────────────────────────────────────
+    signal recordSale(var amount, int itemCount)
+
+    // ── Staff ─────────────────────────────────────────────────────────────────
+    signal addStaff(string name, string email, string phone, string role,
+                    string department, var joinDate, string status, var salary)
+    signal updateStaff(string staffId, var fields)
+    signal deleteStaff(string staffId)
+
+    // ── Staff feedback ────────────────────────────────────────────────────────
+    signal staffAdded(string staffId)
+    signal staffUpdated(string staffId)
+    signal staffDeleted(string staffId)
+
+    // ── Error feedback ────────────────────────────────────────────────────────
     signal errorOccurred(string context, string message)
 }

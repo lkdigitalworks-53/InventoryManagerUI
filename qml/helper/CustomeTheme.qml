@@ -1,26 +1,26 @@
-// pragma Singleton
 import QtQuick
 import Felgo
 
 Item {
+    id: theme
 
-    id: item
+    // Header gradient colors
+    property color headerGradientStart: "#3158ff"
+    property color headerGradientEnd: "#6b41ff"
 
-    property color lightOrangeColor: "#FEE8D6"
-    property color darkOrangeColor: "#CC5500"
-    property color lightGreenColor: "#A8E4A0"
-    property color darkGreenColor: "#3F704D"
-    property color lightBlueColor: "#ADDFFF"
-    property color darkBlueColor: "#4169E1"
-    property color lightPurpleColor: "#E0B0FF"
-    property color darkPurpleColor: "#8F00FF"
+    // Navigation tab colors
+    property color ordersTabColor: "#ea580c"
+    property color inventoryTabColor: "#16a34a"
+    property color salesTabColor: "#2563eb"
+    property color staffTabColor: "#2563eb"
 
-    property color lightBgColor: "#323360"
-    property color darkBgColor: "#020330" //blue
+    // Text colors
+    property color darkTextColor: "#111827"
+    property color mediumTextColor: "#6b7280"
+    property color lightTextColor: "#ffffff"
 
-    property color darkTextColor: "#707070"
-    property color mediumDarkTextColor: "#b1b1b1"
-    property color lightTextColor: "#dfdfdf"
-
-
+    // Card styling
+    property color cardBackground: "#ffffff"
+    property color cardBorder: "#e5e7eb"
+    property int cardRadius: 12
 }

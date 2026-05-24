@@ -1,10 +1,10 @@
 #include <QApplication>
 #include <FelgoApplication>
-
 #include <QQmlApplicationEngine>
-
-// Uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
-//#include <FelgoHotReload>
+#include <QQmlContext>
+#include "src/OAuthServer.h"
+#include "src/ImageProcessor.h"
+#include "src/XlsxService.h"
 
 int main(int argc, char *argv[])
 {
@@ -15,25 +15,31 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     felgo.initialize(&engine);
 
+    // Register local OAuth callback server as a QML singleton context property.
+    auto *oauthServer = new OAuthServer(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("OAuthServer"), oauthServer);
+
+    // Register image compression helper (used by the photo picker pipeline).
+    auto *imageProcessor = new ImageProcessor(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("ImageProcessor"), imageProcessor);
+
+    // Register XLSX read/write helper (used by the import/export pipeline).
+    auto *xlsxService = new XlsxService(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("XlsxService"), xlsxService);
+
     // Set an optional license key from project file
-    // This does not work if using Felgo Developer App, only for Felgo Cloud Builds and local builds
     felgo.setLicenseKey(PRODUCT_LICENSE_KEY);
 
     // use this during development
     // for PUBLISHING, use the entry point below
     felgo.setMainQmlFileName(QStringLiteral("qml/Main.qml"));
 
-    // use this instead of the above call to avoid deployment of the qml files and compile them into the binary with qt's resource system qrc
-    // this is the preferred deployment option for publishing apps to the app stores, because then your qml files and js files are protected
-    // to avoid deployment of your qml files and images, also comment the deploy_resources command in the CMakeLists file
-    // also see the CMakeLists.txt file for more details
+    // use this instead of the above call to avoid deployment of the qml files
+    // and compile them into the binary with qt's resource system qrc
+    // this is the preferred deployment option for publishing apps to the app stores
     //felgo.setMainQmlFileName(QStringLiteral("qrc:/qml/Main.qml"));
 
     engine.load(QUrl(felgo.mainQmlFileName()));
-
-    // to start your project with Felgo Hot Reload, comment (remove) the lines "felgo.setMainQmlFileName ..." & "engine.load ...",
-    // and uncomment the line below
-    //FelgoHotReload felgoHotReload(&engine);
 
     return app.exec();
 }

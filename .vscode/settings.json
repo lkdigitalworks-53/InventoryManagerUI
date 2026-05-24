@@ -2,5 +2,22 @@
     "chat.tools.terminal.autoApprove": {
         "cmake": true,
         "./build/App_UI/appBusinessManagement.app/Contents/MacOS/appBusinessManagement": true
-    }
+    },
+    "cmake.cmakePath": "C:/Felgo/Tools/CMake_64/bin/cmake.exe",
+    "cmake.configureOnOpen": true,
+    "cmake.useCMakePresets": "always",
+    "cmake.generator": "Ninja",
+    "cmake.configureSettings": {
+        "CMAKE_PREFIX_PATH": "C:/Felgo/Felgo/mingw_64",
+        "CMAKE_C_COMPILER": "C:/Felgo/Tools/mingw1310_64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/Felgo/Tools/mingw1310_64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/Felgo/Tools/Ninja/ninja.exe"
+    },
+    "cmake.configureEnvironment": {
+        "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;${env:PATH}"
+    },
+    "cmake.buildEnvironment": {
+        "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;${env:PATH}"
+    },
+    "cmake.buildDirectory": "${workspaceFolder}/build/felgo-mingw-debug"
 }

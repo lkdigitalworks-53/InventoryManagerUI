@@ -1,0 +1,54 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 16,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "felgo-mingw-debug",
+      "displayName": "Felgo MinGW Debug",
+      "description": "Configure using Felgo Qt package with Felgo Tools MinGW and Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/felgo-mingw-debug",
+      "environment": {
+        "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;$penv{PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "C:/Felgo/Felgo/mingw_64",
+        "CMAKE_C_COMPILER": "C:/Felgo/Tools/mingw1310_64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/Felgo/Tools/mingw1310_64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/Felgo/Tools/Ninja/ninja.exe"
+      }
+    },
+    {
+      "name": "felgo-mingw-release",
+      "displayName": "Felgo MinGW Release",
+      "description": "Release build with Felgo MinGW toolchain",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/felgo-mingw-release",
+      "environment": {
+        "PATH": "C:/Felgo/Tools/mingw1310_64/bin;C:/Felgo/Tools/Ninja;$penv{PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "C:/Felgo/Felgo/mingw_64",
+        "CMAKE_C_COMPILER": "C:/Felgo/Tools/mingw1310_64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/Felgo/Tools/mingw1310_64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/Felgo/Tools/Ninja/ninja.exe"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "felgo-mingw-debug",
+      "configurePreset": "felgo-mingw-debug"
+    },
+    {
+      "name": "felgo-mingw-release",
+      "configurePreset": "felgo-mingw-release"
+    }
+  ]
+}
