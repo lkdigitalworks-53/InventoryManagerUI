@@ -1,526 +1,289 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts 1.3
-import Qt.labs.qmlmodels
-import Felgo
+import QtQuick.Layouts
+import "../model"
+import "../helper"
 
 Item {
-    id: inventoryPage
-    width: parent.width
-    height: inventoryDetails.height
+    id: root
+    property bool compact: false
+    property bool canManageInventory: true
 
-    function appendRowToInventoryTable(productData) {
-        var row = {
-            "product_id": productData["product_id"],
-            "name": productData["name"],
-            "sku": productData["sku"],
-            "category": productData["category"],
-            "stock": productData["currentStock"],
-            "in_stock_status": (productData["currentStock"] > productData["minimumStock"] ? "In Stock" : "Low Stock"),
-            "price": "₹" + productData["price"],
-            "sellingPrice": "₹" + productData["sellingPrice"],
-            "actions": "Restock",
-        }
-        tableModel.appendRow(row)
-    }
+    signal addProductClicked()
+    signal restockClicked(string productId)
+    signal viewProductClicked(string productId)
+    signal editProductClicked(string productId)
+    signal deleteProductClicked(string productId)
+    signal exportRequested()
+    signal importRequested()
 
-    Connections {
-        target: logic
+    Flickable {
+        anchors.fill: parent
+        contentHeight: col.height
+        clip: true
+        flickableDirection: Flickable.VerticalFlick
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        function onProductAdded(productData) {
-            appendRowToInventoryTable(productData)
-        }
-    }
+        Column {
+            id: col
+            width: root.width
+            spacing: 16
 
-    Component.onCompleted: {
-        if (dataModel.inventoryDataJson !== undefined && dataModel.inventoryDataJson.length > 0) {
-            console.log(" %%%%%%%%%%%%%%%% inventoryDataJson size: ", dataModel.inventoryDataJson.length)
-            for(var i = 0; i < dataModel.inventoryDataJson.length; ++i) {
-                // console.log("%%%%%%%%%%%%%%%% row: ", JSON.stringify(dataModel.inventoryDataJson[i]))
-                appendRowToInventoryTable(dataModel.inventoryDataJson[i])
+            // ── Title + Add Product ──
+            RowLayout {
+                width: col.width; spacing: 8
+                Column { spacing: 4; Layout.fillWidth: true
+                    Label { text: "Inventory Management"; color: "#111827"; font.bold: true; font.pixelSize: 18 }
+                    Label { text: "Track and manage product inventory"; color: "#6b7280"; font.pixelSize: 12 }
+                }
+                Button {
+                    id: importBtn; text: "📥  Import"
+                    onClicked: root.importRequested()
+                    background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
+                    contentItem: Text { text: importBtn.text; color: "#374151"; font.bold: true; font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+                Button {
+                    id: exportBtn; text: "📤  Export"
+                    onClicked: root.exportRequested()
+                    background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
+                    contentItem: Text { text: exportBtn.text; color: "#374151"; font.bold: true; font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+                Button {
+                    id: addBtn; text: "+  Add Product"
+                    visible: root.canManageInventory
+                    onClicked: root.addProductClicked()
+                    background: Rectangle { radius: 8; color: "#3158ff" }
+                    contentItem: Text { text: addBtn.text; color: "white"; font.bold: true; font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
             }
-        }
-    }
 
-    Column {
-        id: inventoryDetails
-        width: parent.width
-        height: implicitHeight
-        spacing: dp(15)
+            // ── KPI Cards ──
+            Row {
+                width: col.width; spacing: 12
+                Rectangle {
+                    width: (col.width - 36) / 4; height: 110; radius: 12
+                    border.color: "#f97316"; border.width: 2; color: "#fff7ed"
+                    Column { x: 16; y: 14; spacing: 4
+                        Label { text: "Total Products"; font.pixelSize: 13; font.bold: true; color: "#f97316" }
+                        Label { text: "In inventory"; font.pixelSize: 11; color: "#6b7280" }
+                        Item { width: 1; height: 8 }
+                        Label { text: String(InventoryStore.totalProducts()); font.pixelSize: 22; font.bold: true; color: "#111827" }
+                    }
+                }
+                Rectangle {
+                    width: (col.width - 36) / 4; height: 110; radius: 12
+                    border.color: "#ef4444"; border.width: 2; color: "#fef2f2"
+                    Column { x: 16; y: 14; spacing: 4
+                        Label { text: "Low Stock"; font.pixelSize: 13; font.bold: true; color: "#ef4444" }
+                        Label { text: "Needs reorder"; font.pixelSize: 11; color: "#6b7280" }
+                        Item { width: 1; height: 8 }
+                        Row { spacing: 6
+                            Label { text: "⚠"; font.pixelSize: 18; color: "#ef4444" }
+                            Label { text: String(InventoryStore.lowStockCount()); font.pixelSize: 22; font.bold: true; color: "#ef4444" }
+                        }
+                    }
+                }
+                Rectangle {
+                    width: (col.width - 36) / 4; height: 110; radius: 12
+                    border.color: "#22c55e"; border.width: 2; color: "#f0fdf4"
+                    Column { x: 16; y: 14; spacing: 4
+                        Label { text: "Total Items"; font.pixelSize: 13; font.bold: true; color: "#22c55e" }
+                        Label { text: "In stock"; font.pixelSize: 11; color: "#6b7280" }
+                        Item { width: 1; height: 8 }
+                        Label { text: String(InventoryStore.totalItems()); font.pixelSize: 22; font.bold: true; color: "#111827" }
+                    }
+                }
+                Rectangle {
+                    width: (col.width - 36) / 4; height: 110; radius: 12
+                    border.color: "#8b5cf6"; border.width: 2; color: "#f5f3ff"
+                    Column { x: 16; y: 14; spacing: 4
+                        Label { text: "Avg Markup"; font.pixelSize: 13; font.bold: true; color: "#8b5cf6" }
+                        Label { text: "Above cost"; font.pixelSize: 11; color: "#6b7280" }
+                        Item { width: 1; height: 8 }
+                        Label { text: InventoryStore.averageMarkupPercent() + "%"; font.pixelSize: 22; font.bold: true; color: "#8b5cf6" }
+                    }
+                }
+            }
 
-        Item {
-            id: topInfo
-            width: parent.width - dp(20)
-            height: dp(120)
-            anchors.horizontalCenter: parent.horizontalCenter
-            AppText {
-                id: infoTitle
-                text: "Inventory \nManagement"
-                color: 'black'
-                font.pixelSize: sp(24)
-                font.bold: true
-                anchors.left: parent.left
-            }
-            AppText {
-                id: infoDetails
-                text: "Track and manage \nproduct inventory"
-                color: 'black'
-                font.pixelSize: sp(18)
-                anchors.left: parent.left
-                anchors.top: infoTitle.bottom
-            }
+            // ── Product Table ──
             Rectangle {
-                id: addProductButton
-                height: dp(50)
-                width: height * 4
-                radius: height/4
-                color: addProductButtonMA.pressed ? 'lightGreen' : 'green'
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
+                width: col.width; height: tableCol.height + 32
+                radius: 12; color: "#ffffff"; border.color: "#e5e7eb"
 
-                AppText {
-                    text: "+ Add Product"
-                    color: 'white'
-                    font.pixelSize: sp(18)
-                    font.bold: true
-                    anchors.centerIn: parent
-                }
+                Column {
+                    id: tableCol
+                    x: 16; y: 16; width: parent.width - 32; spacing: 12
 
-                MouseArea {
-                    id: addProductButtonMA
-                    anchors.fill: parent
-                    onClicked: {
-                        addProductLoader.sourceComponent = addProductComponent
-                        addProductLoader.item.open()
-                    }
-                }
-            }
-        }
-        Item {
-            id: middleInfo
-            width: parent.width - dp(20)
-            height: middleInfoColumn.height
-            anchors.horizontalCenter: parent.horizontalCenter
-            Column {
-                id: middleInfoColumn
-                width: parent.width
-                height: implicitHeight
-                spacing: dp(10)
-
-                Rectangle {
-                    id: totalProducts
-                    width: middleInfoColumn.width
-                    height: dp(150)
-                    radius: height/8
-                    color: "#A8E4A0"
-                    border.color: "#3F704D"
-                    border.width: dp(1)
-                    Item {
-                        width: parent.width/2
-                        height: parent.height - dp(40)
-                        anchors.left: parent.left
-                        anchors.leftMargin: dp(15)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        AppText {
-                            id: name
-                            text: "Total Products"
-                            color: "#3F704D"
-                            font.pixelSize: sp(20)
-                        }
-                        AppText {
-                            id: details
-                            text: "In inventory"
-                            color: theme.darkTextColor
-                            font.pixelSize: sp(18)
-                            anchors.top: name.bottom
-                            anchors.topMargin: dp(5)
-                        }
-                        Item {
-                            width: dp(30)
-                            height: dp(30)
-                            anchors.bottom: parent.bottom
-
-                            AppImage {
-                                id: icon
-                                fillMode: Image.PreserveAspectFit
-                                source: ""
-                                anchors.left: parent.left
-                            }
-                            AppText {
-                                text: dataModel.totalProducts
-                                color: "#3F704D"
-                                font.pixelSize: sp(18)
-                                anchors.left: icon.source === "" ? parent.left : icon.left
-                                font.bold: true
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    id: lowStocks
-                    width: middleInfoColumn.width
-                    height: dp(150)
-                    radius: height/8
-                    color: "#FEE8D6"
-                    border.color: "#CC5500"
-                    border.width: dp(1)
-                    Item {
-                        width: parent.width/2
-                        height: parent.height - dp(40)
-                        anchors.left: parent.left
-                        anchors.leftMargin: dp(15)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        AppText {
-                            id: name2
-                            text: "Low Stock"
-                            color: "#CC5500"
-                            font.pixelSize: sp(20)
-                        }
-                        AppText {
-                            id: details2
-                            text: "Needs reorder"
-                            color: theme.darkTextColor
-                            font.pixelSize: sp(18)
-                            anchors.top: name2.bottom
-                            anchors.topMargin: dp(5)
-                        }
-                        Item {
-                            width: dp(30)
-                            height: dp(30)
-                            anchors.bottom: parent.bottom
-
-                            AppImage {
-                                id: icon2
-                                fillMode: Image.PreserveAspectFit
-                                source: ""
-                                anchors.left: parent.left
-                            }
-                            AppText {
-                                text: dataModel.totalItemsInLowStockState
-                                color: "#CC5500"
-                                font.pixelSize: sp(18)
-                                anchors.left: icon2.source === "" ? parent.left : icon2.left
-                                anchors.bottom: parent.bottom
-                                font.bold: true
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    id: totalItems
-                    width: middleInfoColumn.width
-                    height: dp(150)
-                    radius: height/8
-                    color: "#ADDFFF"
-                    border.color: "#4169E1"
-                    border.width: dp(1)
-                    Item {
-                        width: parent.width/2
-                        height: parent.height - dp(40)
-                        anchors.left: parent.left
-                        anchors.leftMargin: dp(15)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        AppText {
-                            id: name3
-                            text: "Total Items"
-                            color: "#4169E1"
-                            font.pixelSize: sp(20)
-                        }
-                        AppText {
-                            id: details3
-                            text: "In stock"
-                            color: theme.darkTextColor
-                            font.pixelSize: sp(18)
-                            anchors.top: name3.bottom
-                            anchors.topMargin: dp(5)
-                        }
-                        Item {
-                            width: dp(30)
-                            height: dp(30)
-                            anchors.bottom: parent.bottom
-
-                            AppImage {
-                                id: icon3
-                                fillMode: Image.PreserveAspectFit
-                                source: ""
-                                anchors.left: parent.left
-                            }
-                            AppText {
-                                text: dataModel.totalItems
-                                color: "#4169E1"
-                                font.pixelSize: sp(18)
-                                anchors.left: icon3.source === "" ? parent.left : icon3.left
-                                anchors.bottom: parent.bottom
-                                font.bold: true
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    id: totalValue
-                    width: middleInfoColumn.width
-                    height: dp(150)
-                    radius: height/8
-                    color: "#E0B0FF"
-                    border.color: "#8F00FF"
-                    border.width: dp(1)
-                    Item {
-                        width: parent.width/2
-                        height: parent.height - dp(40)
-                        anchors.left: parent.left
-                        anchors.leftMargin: dp(15)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        AppText {
-                            id: name4
-                            text: "Total Value"
-                            color: "#8F00FF"
-                            font.pixelSize: sp(20)
-                        }
-                        AppText {
-                            id: details4
-                            text: "Inventory worth"
-                            color: theme.darkTextColor
-                            font.pixelSize: sp(18)
-                            anchors.top: name4.bottom
-                            anchors.topMargin: dp(5)
-                        }
-                        Item {
-                            width: dp(30)
-                            height: dp(30)
-                            anchors.bottom: parent.bottom
-
-                            AppImage {
-                                id: icon4
-                                fillMode: Image.PreserveAspectFit
-                                source: ""
-                                anchors.left: parent.left
-                            }
-                            AppText {
-                                text: "₹" + dataModel.totalValue
-                                color: "#8F00FF"
-                                font.pixelSize: sp(18)
-                                anchors.left: icon4.source === "" ? parent.left : icon4.left
-                                font.bold: true
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        AppPaper {
-            id: productInventoryInfo
-            width: parent.width - dp(20)
-            height: infoContent.height + dp(20)
-            radius: height/32
-            anchors.horizontalCenter: parent.horizontalCenter
-
-            ColumnLayout {
-                id: infoContent
-                width: parent.width - dp(40)
-                anchors.top: parent.top
-                anchors.topMargin: dp(20)
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: dp(20)
-
-                Item {
-                    id: infoDetailsHeader
-                    width: parent.width
-                    height: childrenRect.height
-
-                    AppText {
-                        id: productInfoTitle
-                        text: "Product Inventory"
-                        color: 'black'
-                        font.pixelSize: sp(22)
-                    }
-                    AppText {
-                        id: productInfoDetails
-                        text: "All products and stock levels"
-                        color: theme.darkTextColor
-                        font.pixelSize: sp(18)
-                        anchors.top: productInfoTitle.bottom
-                        anchors.topMargin: dp(3)
-                    }
-                }
-
-                Rectangle {
-                    id: searchBar
-                    width: parent.width
-                    height: dp(40)
-                    color: theme.lightTextColor
-                    radius: height/4
-                    AppIcon {
-                        id: searchIcon
-                        iconType: IconType.search
-                        size: dp(20)
-                        color: theme.darkTextColor
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.left: parent.left
-                        anchors.leftMargin: dp(5)
-                        visible: searchInput.text === "" || searchInput.text === undefined
+                    Column { spacing: 2
+                        Label { text: "Product Inventory"; font.pixelSize: 14; font.bold: true; color: "#111827" }
+                        Label { text: "All products and stock levels"; font.pixelSize: 11; color: "#6b7280" }
                     }
 
-                    AppTextInput {
-                        id: searchInput
-                        width: parent.width - dp(10)
-                        anchors.left: searchInput.text === "" || searchInput.text === undefined ? searchIcon.right : parent.left
-                        anchors.leftMargin: dp(5)
-                        height: parent.height
-                        placeholderText: "Search Products..."
-                        placeholderColor: theme.darkTextColor
-                        fontSize: sp(20)
+                    TextField {
+                        id: search; width: tableCol.width
+                        placeholderText: "🔍  Search products..."
+                        font.pixelSize: 12
+                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#e5e7eb" }
                     }
-                }
 
-                Item {
-                    id: tableScroll
-                    width: parent.width
-                    height: dp(400)
-                    clip:true
-
-                    HorizontalHeaderView {
-                        id: header
-                        syncView: infoTable
-                        model: ["Product ID", "Name", "SKU", "Category", "Stock", "Status", "Price", "Selling Price", "Actions"]
-                        clip:true
-                        movableColumns: false
-
-                        delegate: Rectangle {
-                            implicitWidth: dp(150)
-                            implicitHeight: dp(50)
-
-                            Text {
-                                text: modelData
-                                anchors.centerIn: parent
-                                font.bold: true
-                                font.pixelSize: sp(18)
-                                width: parent.width
-                                horizontalAlignment: Text.AlignHCenter
-                            }
+                    // Header
+                    Row {
+                        visible: !root.compact; width: tableCol.width; height: 32; spacing: 0
+                        property var labels: ["Photo","Product ID","Name","SKU","Category","Stock","Status","Cost","Sell","Markup","Actions"]
+                        property var ws: [0.05,0.08,0.13,0.10,0.09,0.09,0.08,0.07,0.07,0.07,0.17]
+                        Repeater {
+                            model: parent.labels
                             Rectangle {
-                                width: parent.width
-                                height: dp(2)
-                                color: theme.lightTextColor
-                                anchors.bottom: parent.bottom
+                                width: tableCol.width * parent.ws[index]; height: 32; color: "transparent"
+                                Text { text: modelData; color: "#6b7280"; font.pixelSize: 12; font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
                             }
                         }
                     }
+                    Rectangle { width: tableCol.width; height: 1; color: "#e5e7eb" }
 
-                    TableView {
-                        id: infoTable
-                        width: tableScroll.width
-                        height: tableScroll.height - header.height
-                        anchors.top: header.bottom
-                        clip: true
-                        model: tableModel
-                        contentWidth: delegate.width
-                        contentHeight: infoTable.height / 8
-                        resizableColumns: false
-                        resizableRows: false
-                        syncDirection: Qt.Horizontal
+                    // Rows
+                    Flickable {
+                        width: tableCol.width; height: 320
+                        clip: true; flickableDirection: Flickable.VerticalFlick
+                        contentHeight: rowsCol.height
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        Column {
+                            id: rowsCol; width: parent.width; spacing: 0
+                            Repeater {
+                                model: InventoryStore.products
+                                Rectangle {
+                                    id: prodRow
+                                    width: rowsCol.width
+                                    color: index % 2 === 0 ? "#ffffff" : "#f9fafb"
+                                    visible: search.text === "" || ((modelData.productId || "") + (modelData.name || "") + (modelData.sku || "") + (modelData.category || "")).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
+                                    height: visible ? 56 : 0
 
-                        delegate: Rectangle {
-                            id: delegate
-                            implicitWidth: dp(150)
-                            implicitHeight: dp(50)
-
-                            function getBackgroundColor(column, text) {
-                                if (column !== 5) {
-                                    return ""
+                                    property var ws: [0.05,0.08,0.13,0.10,0.09,0.09,0.08,0.07,0.07,0.07,0.17]
+                                    Row {
+                                        anchors.verticalCenter: parent.verticalCenter; width: parent.width; spacing: 0
+                                        // Photo
+                                        Item { width: prodRow.width * prodRow.ws[0]; height: 48
+                                            Rectangle {
+                                                anchors.centerIn: parent
+                                                width: 36; height: 36; radius: 6
+                                                color: "#f3f4f6"; border.color: "#e5e7eb"
+                                                clip: true
+                                                Image {
+                                                    anchors.fill: parent; anchors.margins: 1
+                                                    source: modelData.photoUrl || ""
+                                                    sourceSize.width: 72
+                                                    sourceSize.height: 72
+                                                    fillMode: Image.PreserveAspectCrop
+                                                    cache: true
+                                                    visible: source != ""
+                                                }
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "📦"; font.pixelSize: 16
+                                                    visible: !modelData.photoUrl || modelData.photoUrl.length === 0
+                                                }
+                                            }
+                                        }
+                                        // Product ID
+                                        Item { width: prodRow.width * prodRow.ws[1]; height: 40
+                                            Text { text: modelData.productId; color: "#374151"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                        }
+                                        // Name
+                                        Item { width: prodRow.width * prodRow.ws[2]; height: 40
+                                            Text { text: modelData.name; color: "#111827"; font.pixelSize: 12; font.bold: true; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                        }
+                                        // SKU
+                                        Item { width: prodRow.width * prodRow.ws[3]; height: 40
+                                            Text { text: modelData.sku || ""; color: "#6b7280"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                        }
+                                        // Category
+                                        Item { width: prodRow.width * prodRow.ws[4]; height: 40
+                                            Text { text: modelData.category; color: "#374151"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                        }
+                                        // Stock (number + progress bar)
+                                        Item { width: prodRow.width * prodRow.ws[5]; height: 40
+                                            Column { anchors.verticalCenter: parent.verticalCenter; leftPadding: 8; spacing: 4
+                                                Text { text: String(modelData.stock); color: modelData.stock <= modelData.minStock ? "#ef4444" : "#22c55e"; font.pixelSize: 13; font.bold: true }
+                                                Rectangle {
+                                                    width: prodRow.width * prodRow.ws[5] - 20; height: 4; radius: 2; color: "#e5e7eb"
+                                                    Rectangle {
+                                                        width: parent.width * InventoryStore.stockPercent(modelData); height: 4; radius: 2
+                                                        color: modelData.stock <= modelData.minStock ? "#ef4444" : "#3b82f6"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Status
+                                        Item { width: prodRow.width * prodRow.ws[6]; height: 40
+                                            Rectangle {
+                                                anchors.verticalCenter: parent.verticalCenter; x: 8
+                                                width: statusTxt.implicitWidth + 16; height: 24; radius: 12
+                                                color: InventoryStore.stockStatus(modelData) === "In Stock" ? "#dcfce7" : "#fef2f2"
+                                                border.color: InventoryStore.stockStatus(modelData) === "In Stock" ? "#22c55e" : "#ef4444"
+                                                Text { id: statusTxt; text: InventoryStore.stockStatus(modelData); color: InventoryStore.stockStatus(modelData) === "In Stock" ? "#16a34a" : "#dc2626"
+                                                    font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
+                                            }
+                                        }
+                                        // Cost price
+                                        Item { width: prodRow.width * prodRow.ws[7]; height: 40
+                                            Text { text: InventoryStore.formatCurrency(modelData.price); color: "#6b7280"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                        }
+                                        // Selling price
+                                        Item { width: prodRow.width * prodRow.ws[8]; height: 40
+                                            Text { text: InventoryStore.formatCurrency(modelData.sellingPrice !== undefined ? modelData.sellingPrice : modelData.price); color: "#111827"; font.pixelSize: 12; font.bold: true; anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                                        }
+                                        // Margin %
+                                        Item { width: prodRow.width * prodRow.ws[9]; height: 40
+                                            Text {
+                                                text: InventoryStore.markupPercentFor(modelData) + "%"
+                                                color: InventoryStore.markupPercentFor(modelData) > 0 ? "#16a34a" : "#9ca3af"
+                                                font.pixelSize: 12; font.bold: true
+                                                anchors.verticalCenter: parent.verticalCenter; leftPadding: 8
+                                            }
+                                        }
+                                        Item { width: prodRow.width * prodRow.ws[10]; height: 40
+                                            Row {
+                                                anchors.verticalCenter: parent.verticalCenter; x: 8; spacing: 4
+                                                Button {
+                                                    width: 28; height: 28; padding: 0
+                                                    background: Rectangle { radius: 6; color: "#ffffff"; border.color: "#d1d5db" }
+                                                    contentItem: Text { text: "✎"; color: "#374151"; font.pixelSize: 13
+                                                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                    onClicked: root.viewProductClicked(modelData.productId)
+                                                    ToolTip.visible: hovered; ToolTip.text: "View / Edit"
+                                                }
+                                                Button {
+                                                    text: "⟲"
+                                                    visible: root.canManageInventory
+                                                    width: 28; height: 28; padding: 0
+                                                    onClicked: root.restockClicked(modelData.productId)
+                                                    background: Rectangle { radius: 6; color: "#f3f4f6"; border.color: "#d1d5db" }
+                                                    contentItem: Text { text: "⟲"; color: "#374151"; font.pixelSize: 14
+                                                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                    ToolTip.visible: hovered; ToolTip.text: "Restock"
+                                                }
+                                                Button {
+                                                    visible: root.canManageInventory
+                                                    width: 28; height: 28; padding: 0
+                                                    background: Rectangle { radius: 6; color: "#fef2f2"; border.color: "#ef4444" }
+                                                    contentItem: Text { text: "\u2715"; color: "#ef4444"; font.pixelSize: 13; font.bold: true
+                                                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                    onClicked: root.deleteProductClicked(modelData.productId)
+                                                    ToolTip.visible: hovered; ToolTip.text: "Delete"
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                                if (text === "In Stock") {
-                                    return "#A8E4A0"
-                                } else {
-                                    return "#FF8A8A"
-                                }
-                            }
-
-                            function getTextColor(column, text) {
-                                if (column !== 5) {
-                                    return "black"
-                                }
-                                if (text === "In Stock") {
-                                    return "#3F704D"
-                                } else {
-                                    return "#990F02"
-                                }
-                            }
-
-                            Rectangle {
-                                id: highlightItem
-                                width: displayText.paintedWidth + dp(20)
-                                height: displayText.paintedHeight + dp(20)
-                                color: delegate.getBackgroundColor(column, display)
-                                radius: height/3
-                                anchors.centerIn: displayText
-                                visible: column === 5
-                            }
-
-                            Text {
-                                id: displayText
-                                text: display
-                                anchors.centerIn: parent
-                                elide: Text.ElideRight
-                                color: delegate.getTextColor(column, display)
-                                font.bold: column === 5
-                                font.pixelSize: sp(18)
-                                width: parent.width
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-                            Rectangle {
-                                width: parent.width
-                                height: 2
-                                color: theme.lightTextColor
-                                anchors.bottom: parent.bottom
                             }
                         }
                     }
                 }
             }
         }
-    }
-
-
-
-    Loader {
-       id: addProductLoader
-       width: parent.width
-       height: childrenRect.height
-    }
-
-    Component {
-        id: addProductComponent
-
-        AddProductPage {
-            id: addProductPage
-            anchors.centerIn: parent
-            pushBackContent: inventoryPage
-
-            onClosed: {
-                addProductLoader.sourceComponent = null
-            }
-        }
-    }
-
-    TableModel {
-        id: tableModel
-        TableModelColumn { display: "product_id" }
-        TableModelColumn { display: "name" }
-        TableModelColumn { display: "sku" }
-        TableModelColumn { display: "category" }
-        TableModelColumn { display: "stock" }
-        TableModelColumn { display: "in_stock_status" }
-        TableModelColumn { display: "price" }
-        TableModelColumn { display: "sellingPrice" }
-        TableModelColumn { display: "actions" }
     }
 }
-

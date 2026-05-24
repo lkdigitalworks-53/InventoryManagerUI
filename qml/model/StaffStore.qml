@@ -1,0 +1,242 @@
+pragma Singleton
+import QtQuick
+
+QtObject {
+    id: root
+
+    property var staff: []
+    property var activities: []
+
+    function _daysAgoText(dateStr) {
+        var d = new Date(dateStr)
+        if (isNaN(d.getTime()))
+            return "recently"
+        var now = new Date()
+        var diffMs = now.getTime() - d.getTime()
+        var days = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
+        if (days === 0) return "today"
+        if (days === 1) return "1 day ago"
+        if (days < 30) return days + " days ago"
+        var months = Math.floor(days / 30)
+        if (months === 1) return "1 month ago"
+        return months + " months ago"
+    }
+
+    function _rebuildActivities() {
+        try {
+        var arr = []
+        for (var i = 0; i < staff.length; ++i) {
+            var s = staff[i]
+            arr.push({
+                text: s.name + " joined " + s.department + " department",
+                time: _daysAgoText(s.joinDate),
+                color: "#22c55e",
+                _sortDate: s.joinDate
+            })
+            if (s.status === "on_leave" || s.status === "suspended") {
+                arr.push({
+                    text: s.name + " is " + (s.status === "on_leave" ? "on leave" : "suspended"),
+                    time: "current",
+                    color: "#f59e0b",
+                    _sortDate: "9999-12-31"
+                })
+            }
+        }
+
+        arr.sort(function(a, b) {
+            var da = new Date(a._sortDate)
+            var db = new Date(b._sortDate)
+            return db.getTime() - da.getTime()
+        })
+
+        var finalArr = []
+        for (var k = 0; k < arr.length && k < 8; ++k)
+            finalArr.push({ text: arr[k].text, time: arr[k].time, color: arr[k].color })
+        activities = finalArr
+        } catch (e) {
+            console.warn("[StaffStore] _rebuildActivities failed:", e)
+            activities = []
+        }
+    }
+
+    function _clone() {
+        var a = [];
+        for (var i = 0; i < staff.length; ++i) {
+            var s = staff[i];
+            a.push({ staffId: s.staffId, name: s.name, role: s.role, department: s.department,
+                      email: s.email, phone: s.phone, joinDate: s.joinDate, status: s.status, salary: s.salary });
+        }
+        return a;
+    }
+
+    function totalStaff() { return staff.length; }
+
+    function activeCount() {
+        var c = 0;
+        for (var i = 0; i < staff.length; ++i)
+            if (staff[i].status === "active") c++;
+        return c;
+    }
+
+    function onLeaveCount() {
+        var c = 0;
+        for (var i = 0; i < staff.length; ++i)
+            if (staff[i].status === "on_leave") c++;
+        return c;
+    }
+
+    function departments() {
+        var deps = {};
+        for (var i = 0; i < staff.length; ++i)
+            deps[staff[i].department] = (deps[staff[i].department] || 0) + 1;
+        return deps;
+    }
+
+    function departmentCount() {
+        return Object.keys(departments()).length;
+    }
+
+    function departmentList() {
+        var deps = departments();
+        var arr = [];
+        var keys = Object.keys(deps);
+        for (var i = 0; i < keys.length; ++i)
+            arr.push({ name: keys[i], count: deps[keys[i]] });
+        return arr;
+    }
+
+    function initials(name) {
+        if (!name) return "";
+        var parts = name.trim().split(/\s+/);
+        var result = "";
+        for (var i = 0; i < Math.min(parts.length, 2); ++i)
+            result += parts[i].charAt(0).toUpperCase();
+        return result;
+    }
+
+    function nextStaffId() {
+        var max = 0;
+        for (var i = 0; i < staff.length; ++i) {
+            var num = parseInt(String(staff[i].staffId).split('-')[1]);
+            if (!isNaN(num) && num > max) max = num;
+        }
+        return 'STF-' + String(max + 1).padStart(3, '0');
+    }
+
+    function addStaff(name, email, phone, role, department, joinDate, status, salary) {
+        var id = nextStaffId();
+        var iso = Qt.formatDate(joinDate, 'yyyy-MM-dd');
+        var arr = _clone();
+        arr.push({ staffId: id, name: name, role: role, department: department,
+                   email: email, phone: phone, joinDate: iso, status: status, salary: salary });
+        staff = arr;
+        _pushAllToFirebase();
+        _rebuildActivities();
+    }
+
+    function deleteStaff(staffId) {
+        var removed = null
+        var arr = _clone();
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].staffId === staffId) { removed = arr[i]; arr.splice(i, 1); break; }
+        }
+        staff = arr;
+        _rebuildActivities();
+        if (!removed) return
+
+        // Per-doc DELETE — bulk PUT (commit/update) never removes documents.
+        FirebaseService.remove("staff/" + staffId, function(ok) {
+            if (!ok) console.warn("[StaffStore] Firestore delete failed for", staffId)
+        })
+
+        // Cascade cleanup if this staff had app-login credentials.
+        if (removed.appUid && removed.appUid.length > 0)
+            AuthService.cleanupStaffAuthDocs(removed.appUid)
+    }
+
+    function findIndexById(staffId) {
+        for (var i = 0; i < staff.length; ++i)
+            if (staff[i].staffId === staffId) return i
+        return -1
+    }
+
+    function getById(staffId) {
+        var idx = findIndexById(staffId)
+        return idx >= 0 ? staff[idx] : null
+    }
+
+    function updateStaff(staffId, fields) {
+        var idx = findIndexById(staffId)
+        if (idx < 0) return
+        var arr = _clone()
+        var s = arr[idx]
+        if (fields.name       !== undefined) s.name = fields.name
+        if (fields.email      !== undefined) s.email = fields.email
+        if (fields.phone      !== undefined) s.phone = fields.phone
+        if (fields.role       !== undefined) s.role = fields.role
+        if (fields.department !== undefined) s.department = fields.department
+        if (fields.status     !== undefined) s.status = fields.status
+        if (fields.salary     !== undefined) s.salary = fields.salary
+        if (fields.joinDate   !== undefined) s.joinDate = fields.joinDate
+        staff = arr
+        _rebuildActivities()
+        // Single-doc PATCH correctly upserts; avoids the broken bulk-PUT path.
+        FirebaseService.put("staff/" + staffId, s, function(ok) {
+            if (!ok) console.warn("[StaffStore] Firestore update failed for", staffId)
+        })
+    }
+
+    // Stamp the Firebase Auth uid onto a staff record so deleteStaff can
+    // cascade to users/{uid} + tenants/{t}/members/{uid}.
+    function setAppUid(staffId, appUid) {
+        var idx = findIndexById(staffId)
+        if (idx < 0) return
+        var arr = _clone()
+        arr[idx].appUid = appUid
+        staff = arr
+        FirebaseService.put("staff/" + staffId, arr[idx], function(ok) {
+            if (!ok) console.warn("[StaffStore] Failed to persist appUid for", staffId)
+        })
+    }
+
+    function clear() {
+        staff = []
+        activities = []
+    }
+
+    // ── Firebase sync ──
+    Component.onCompleted: _load()
+
+    function _load() {
+        staff = []
+        activities = []
+        _fetchFromFirebase()
+    }
+
+    function _fetchFromFirebase() {
+        FirebaseService.get("staff", function(ok, data) {
+            if (ok) {
+                var arr = FirebaseService.toArray(data);
+                staff = arr;
+                _rebuildActivities();
+                console.log("[StaffStore] Synced", arr.length, "staff from Firestore");
+            } else {
+                console.warn("[StaffStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+            }
+        });
+    }
+
+    function _pushAllToFirebase() {
+        var obj = {};
+        for (var i = 0; i < staff.length; ++i)
+            obj[staff[i].staffId] = staff[i];
+        FirebaseService.put("staff", obj, function(ok) {
+            if (!ok)
+                console.warn("[StaffStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+            else
+                console.log("[StaffStore] Firestore bulk write ok, documents:", staff.length)
+        });
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase(); }
+}

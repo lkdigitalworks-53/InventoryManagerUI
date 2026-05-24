@@ -1,285 +1,297 @@
 # AGENTS.md
 
 ## Overview
-This file defines specialized agents and their roles for the InventoryManagerUI 
-project. Each agent is designed to handle specific domains and modules, enabling efficient development through agentic workflows.
+
+This file defines specialized agents and their roles for the **BusinessManagement** App_UI project — a cross-platform inventory and business management app built with Felgo QML for Android and iOS.
+
+Each agent is scoped to a specific domain, enabling efficient parallel development and agentic workflows.
+
+---
+
+## Current Feature Status
+
+| Feature | Status |
+|---|---|
+| Multi-tenant Firebase Auth (email + Google) | ✅ Done |
+| 4-role RBAC (owner / admin / manager / staff) | ✅ Done |
+| Tenant workspace creation & member invitation | ✅ Done |
+| Orders CRUD + delete + auto-approve | ✅ Done |
+| Inventory CRUD + delete | ✅ Done |
+| Staff CRUD + delete + credential provisioning | ✅ Done |
+| Sales analytics from live completed orders | ✅ Done |
+| Staff activities from real data | ✅ Done |
+| Profile Settings dialog | ✅ Done |
+| Member management dialog | ✅ Done |
+| Empty-state UI for Sales page | ✅ Done |
+| Success toast for key operations | ✅ Done |
 
 ---
 
 ## Core Building Blocks
 
 ### 1. Build & Infrastructure Agent
-**Purpose**: Manages CMake configuration, compilation, and build optimization.  
-**Scope**: Entire project (root + App_UI)
+
+**Purpose**: Manages CMake configuration, Felgo build pipeline, and deployment packaging.  
+**Scope**: Project root (`CMakeLists.txt`, `main.cpp`)
+
 **Responsibilities**:
-- Configure CMake: `cmake -S . -B build -G "Ninja"`
-- Build projects: `cmake --build build`
-- Manage build artifacts and caching
-- Platform-specific build configurations (Android, iOS, Desktop)
-- Development vs. publishing build modes
-- Dependency verification (CMake, Ninja, Qt, Felgo)
- - Ensure Android Gradle properties are numeric and avoid using `.toInteger()` in Gradle files; prefer setting `QT_ANDROID_TARGET_SDK_VERSION` / `QT_ANDROID_COMPILE_SDK_VERSION` via CMake `set_target_properties()` for the `appInventoryManagerUI` target.
+- Configure Felgo build: `cmake -S . -B build -G "Ninja"`
+- Compile project: `cmake --build build`
+- Toggle between development mode (`deploy_resources`) and publishing mode (QRC compilation)
+- Manage `PRODUCT_IDENTIFIER`, `PRODUCT_VERSION_NAME`, `PRODUCT_VERSION_CODE`
+- Set Android target/compile SDK versions via `set_target_properties`
+- Configure `FELGO_LICENSE_KEY` for local and Cloud builds
+- Enable/disable Felgo Hot Reload in `CMakeLists.txt` and `main.cpp`
 
 **Key Files**:
-- `CMakeLists.txt` (root)
-- `App_UI/CMakeLists.txt`
-- `android/CMakeLists.txt` (if exists)
+- `CMakeLists.txt`
+- `main.cpp`
 
 **Example Prompts**:
-- "Build the InventoryManagerUI project"
 - "Switch to publishing build mode"
-- "Fix build errors for Android"
+- "Enable Felgo Hot Reload"
+- "Update the Android target SDK to 35"
+- "Build the app for Android"
 
 ---
 
-### 2. Felgo Plugin & Architecture Agent
-**Purpose**: Manages the Felgo-based application structure, plugin system, and navigation.
-**Scope**: Root `qml/` directory
-**Responsibilities**:
-- Maintain Felgo App architecture (Navigation, NavigationItem, NavigationStack) 
-- Manage page navigation and plugin system
-- Configure Firebase plugins
-- Handle cross-platform lifecycle (Android lifecycle management)
-- Manage theming with CustomeTheme
-- Hot Reload setup and configuration
+### 2. App Architecture & Navigation Agent
 
-**Key Files**:
-- `qml/Main.qml` (root application)
-- `qml/pages/` (all pages: Dashboard, Orders, Inventory, Profile, etc.)
-- `qml/logic/Logic.qml` (signal definitions)
-- `qml/helper/CustomeTheme.qml`
-- `main.cpp` (Felgo initialization)
+**Purpose**: Manages the Felgo App root, layer ordering, and Navigation structure.  
+**Scope**: `qml/Main.qml`
+
+**Responsibilities**:
+- Maintain the Felgo App object hierarchy: Theme → Logic → DataModel → ViewHelper → Navigation
+- Add or remove `NavigationItem` / `NavigationStack` tabs
+- Wire top-level dialog instances (`NewOrderDialog`, `AddProductDialog`, etc.)
+- Handle app-level signals and connections (e.g. `onOrderCompletionFailed`)
+- Manage the `compact` responsive breakpoint property
+- Connect `Logic` signals to stock error dialogs
 
 **Architecture Pattern**:
 ```
-Navigation (root)
-├── NavigationItem (Dashboard)
-│   └── NavigationStack
-│       └── Page
-├── NavigationItem (Profile)
-└── ...
+App (Main.qml)
+├── CustomeTheme
+├── Logic              (signal bus)
+├── DataModel          (orchestrator, dispatcher: logic)
+├── ViewHelper
+├── Dialogs            (stockErrorDlg, profileDlg, inviteMemberDlg, memberMgmtDlg, etc.)
+├── LoginPage          (z:100, visible when unauthenticated or profile unresolved)
+├── TenantSetupPage    (z:101, visible only for new owner onboarding)
+└── Navigation
+    ├── NavigationItem "Orders"    → NavigationStack → AppPage → OrdersPage
+    ├── NavigationItem "Inventory" → NavigationStack → AppPage → InventoryPage
+    ├── NavigationItem "Sales"     → visible: AuthStore.canViewSales
+    └── NavigationItem "Staff"     → visible: AuthStore.canViewStaff
 ```
 
+**Key Files**:
+- `qml/Main.qml`
+
 **Example Prompts**:
-- "Add a new page to the navigation"
-- "Enable Felgo Hot Reload for development"
-- "Debug page navigation issues"
+- "Add a new Dashboard tab to the navigation"
+- "Change the navigation tab order"
+- "Wire a new top-level dialog into Main.qml"
 
 ---
 
-### 3. Firebase & Authentication Agent
-**Purpose**: Handles Firebase integration, authentication, and real-time database operations.
-**Scope**: Firebase configuration and API integration
+### 3. Logic & Signal Bus Agent
+
+**Purpose**: Manages the signal dispatcher and view helper utilities.  
+**Scope**: `qml/logic/`
+
 **Responsibilities**:
-- Verify Firebase credentials (API keys, project ID)
-- Configure authentication (login, logout, session management)
-- Manage real-time database operations (read, write, listen)
-- Debug network requests and API failures
-- Handle Firebase permission and security rules
-- Cloud Functions integration (local: `http://127.0.0.1:5001/...`)
+- Define and maintain signals in `Logic.qml` (all user actions and feedback events)
+- Keep signal signatures consistent with how pages emit and DataModel handles them
+- Add new domain signals following the UI→DataModel / DataModel→UI split convention
+- Maintain `ViewHelper.qml` formatting utilities (`formatCurrency`, `formatNumber`)
+
+**Signal Convention**:
+- UI→DataModel commands: `addOrder(...)`, `completeOrder(...)`, `addProduct(...)`, `addStaff(...)`
+- DataModel→UI feedback: `orderAdded(...)`, `orderCompletionFailed(...)`, `productAdded(...)`, `staffAdded(...)`
+- App lifecycle: `loadData()`, `refreshData()`, `syncAllStores()`
 
 **Key Files**:
-**Key Files**:
-- `qml/pages/FirebaseLoginPage.qml` (contains `FirebaseConfig` with `projectId`, `apiKey`, `applicationId`)
-- `qml/pages/FirebasePage.qml` (uses `FirebaseDatabase` for `setValue` / `getValue` with completion handlers)
-- `qml/helper/Constants.qml` (local Cloud Function URLs, e.g. `addProductLocalUrl`)
-- `qml/model/RestAPI.qml` (network helper utilities)
-- `qml/pages/LoginPage.qml` (alternate login UI)
-- `android/build.gradle` (Firebase Android config, if applicable)
-
-Runtime QML components used:
-- `FirebaseConfig`, `FirebaseAuth`, `FirebaseDatabase`
-
-**Firebase Project**:
-- Project ID: `inventorymanager-48392`
-- FirebaseConfig location: `qml/pages/FirebaseLoginPage.qml` (properties: `projectId`, `apiKey`, `applicationId`)
-- Local Cloud Function URL property: `qml/helper/Constants.qml` → `addProductLocalUrl` (example value: `http://127.0.0.1:5001/inventorymanager-48392/us-central1/addProduct`)
-
-Note: The project currently initializes Firebase in `FirebaseLoginPage.qml` and the app uses `FirebaseDatabase` in `FirebasePage.qml` to perform simple read/write operations guarded by authentication.
+- `qml/logic/Logic.qml`
+- `qml/logic/ViewHelper.qml`
 
 **Example Prompts**:
-- "Verify Firebase API keys are correct"
-- "Debug authentication failures"
-- "Set up Firebase Cloud Functions"
-- "Test database read/write operations"
+- "Add a signal for deleting an order"
+- "Add a deleteProduct signal and its feedback signal"
+- "Add a formatDate helper function to ViewHelper"
 
 ---
 
-### 4. Core Data Model Agent
-**Purpose**: Manages data models, state, and REST API interactions.
-**Scope**: `qml/model/` and related logic
+### 4. Data Model & Orchestration Agent
+
+**Purpose**: Manages state orchestration, cross-store logic, and the orders model.  
+**Scope**: `qml/model/DataModel.qml`
+
 **Responsibilities**:
-- Maintain DataModel.qml (centralized state management)
-- Implement REST API calls (RestAPI.qml)
-- Manage inventory, orders, and product data
-- Handle API response processing
-- Implement data caching with Storage
-- Error handling and network state management
+- Maintain the `Connections` block that handles all `Logic` signals
+- Orchestrate cross-store operations (e.g. `tryCompleteOrder`: stock check → deduct → mark complete → record sale)
+- Keep `ordersModel` (ListModel) in sync with `OrdersStore.orders`
+- Expose public methods: `tryCompleteOrder()`, `syncOrdersModel()`, `updateOrderInModel()`
+- Handle `stockErrorMsg` for the stock error dialog in `Main.qml`
+- Wire new store delegates when adding a new domain
 
 **Key Files**:
-- `qml/model/DataModel.qml` (main data state)
-- `qml/model/RestAPI.qml` (HTTP requests)
-- `qml/logic/Logic.qml` (action signals)
-- `qml/logic/ViewHelper.qml` (view utilities)
-
-**Data Structures**:
-- Inventory: `_inventory.inventoryDataJson`
-- Orders: `_orders.ordersDataJson`
-- Auth: `_.userLoggedIn`
+- `qml/model/DataModel.qml`
 
 **Example Prompts**:
-- "Add a new data model for products"
-- "Debug API response parsing"
-- "Implement data caching for inventory"
+- "Add handling for the deleteOrder signal in DataModel"
+- "Add a new store integration for a Suppliers domain"
+- "Fix the order completion flow to also update sales analytics"
 
 ---
 
-### 5. Business Management UI Agent (App_UI)
-**Purpose**: Manages the business management frontend (Qt6-based, shared module).
-**Scope**: `App_UI/` directory
+### 5. Store & Firebase Agent
+
+**Purpose**: Manages per-domain data stores and Firebase REST integration.  
+**Scope**: `qml/model/` (stores + FirebaseService)
+
 **Responsibilities**:
-- Develop and maintain Order Management UI
-- Create responsive layouts (compact/full variants)
-- Implement SegmentedNav for tab-like navigation
-- Build dialogs (NewOrderDialog, OrderDetailDialog)
-- Create data presentation components (OrderRow, CardKPI, StatusBadge)
-- Handle responsive design for desktop and mobile
-- Manage Orders store (OrdersStore.qml)
-- Ensure TableView horizontal scrolling and column sizing (bind `contentWidth` to delegate's width)
+- Maintain `OrdersStore`, `InventoryStore`, `SalesStore`, `StaffStore`
+- Keep local persistence via `QtCore.Settings` working correctly
+- Maintain Firebase REST sync (`_fetchFromFirebase`, `_pushAllToFirebase`, `syncFromFirebase`)
+- Handle field normalization between Firebase schema and local schema
+- Add new store files for new domains following the singleton pattern
+- Register new stores in `qml/model/qmldir`
+- Keep `FirebaseService` REST helpers (`get`, `put`, `patch`, `remove`, `toArray`) up to date
+
+**Store Pattern**:
+```qml
+pragma Singleton
+import QtQuick
+import QtCore   // for Settings (OrdersStore, InventoryStore, SalesStore)
+
+QtObject {
+    property var data: []
+    property Settings _settings: Settings { category: "StoreName"; property string json: "" }
+    Component.onCompleted: _load()
+    function _load() { /* local Settings → Firebase fallback */ }
+    function _save() { /* persist to Settings */ }
+    function _fetchFromFirebase() { FirebaseService.get("path", callback) }
+    function _commit(arr) { data = arr; _save(); _pushAllToFirebase() }
+}
+```
 
 **Key Files**:
-- `App_UI/qml/Main.qml` (ApplicationWindow, header, navigation)
-- `App_UI/qml/OrdersPage.qml` (orders list and management)
-- `App_UI/qml/OrdersStore.qml` (order data store)
-- `App_UI/qml/OrderRow.qml` (responsive order row component)
-- `App_UI/qml/SegmentedNav.qml` (navigation tabs)
-- `App_UI/qml/CardKPI.qml` (metric cards)
-- `App_UI/qml/NewOrderDialog.qml`, `OrderDetailDialog.qml` (dialogs)
-- `App_UI/src/main.cpp`
+- `qml/model/OrdersStore.qml`
+- `qml/model/InventoryStore.qml`
+- `qml/model/SalesStore.qml`
+- `qml/model/StaffStore.qml`
+- `qml/model/AuthService.qml`
+- `qml/model/AuthStore.qml`
+- `qml/model/FirebaseService.qml`
+- `qml/model/qmldir`
 
-**Module Info**:
-- Module URI: `BusinessApp`
-- Version: 1.0
-- Imported as: `import BusinessApp 1.0`
+**Example Prompts**:
+- "Add a Suppliers store for vendor management"
+- "Fix the Firebase sync for orders to handle pagination"
+- "Add a deleteOrder function to OrdersStore"
+
+---
+
+### 6. Pages & Dialogs Agent
+
+**Purpose**: Develops and maintains all feature pages and dialogs.  
+**Scope**: `qml/pages/`
+
+**Responsibilities**:
+- Maintain all four feature pages (Orders, Inventory, Sales, Staff)
+- Build and update all dialogs (New Order, Order Detail, Add Product, Add Staff, Restock, ProfileSettings, InviteMember, MemberManagement)
+- Implement responsive layouts using `compact: width < 520`
+- Expose `canManage*` / `canDelete*` boolean properties on pages; never import AuthStore directly inside pages — bind from Main.qml
+- Wire delete signals: `onDeleteOrderClicked`, `onDeleteProductClicked`, `onDeleteStaffClicked` → `logic.deleteX(id)`
+- Wire dialog signals back to `logic` signals: e.g. `onOrderCreated: logic.addOrder(...)`
+- Maintain KPI card layouts, table rows, search fields, and action buttons
 
 **Responsive Design**:
-- Compact mode: `width < 480`
-- Full mode: wider layouts
-- Dynamic margin and padding calculations
-
-**Example Prompts**:
-- "Add a new column to the orders table"
-- "Create a responsive card component"
-- "Fix the order dialog layout"
-- "Implement order filtering"
-
----
-
-### 6. C++ Integration Agent
-**Purpose**: Manages C++ backend code and Felgo/Qt integration.
-**Scope**: `main.cpp`, `src/`, and C++ class definitions
-**Responsibilities**:
-- Manage application lifecycle (FelgoApplication)
-- Expose C++ models to QML if needed
-- Handle native platform APIs
-- Optimize performance-critical code
-- Manage QML hot reload configuration
-- Handle application initialization
+- `compact = true` when `width < 520` — 2-line compact card/row layouts
+- `compact = false` — full table/multi-column layouts
 
 **Key Files**:
-- `main.cpp` (root Felgo app)
-- `App_UI/src/main.cpp` (BusinessApp Qt app)
-- `productinfotablemodel.hpp`, `.cpp` (if used)
+- `qml/pages/OrdersPage.qml`
+- `qml/pages/InventoryPage.qml`
+- `qml/pages/SalesPage.qml`
+- `qml/pages/StaffPage.qml`
+- `qml/pages/LoginPage.qml`
+- `qml/pages/TenantSetupPage.qml`
+- `qml/pages/NewOrderDialog.qml`
+- `qml/pages/OrderDetailDialog.qml`
+- `qml/pages/AddProductDialog.qml`
+- `qml/pages/AddStaffDialog.qml`
+- `qml/pages/RestockDialog.qml`
+- `qml/pages/ProfileSettingsDialog.qml`
+- `qml/pages/InviteMemberDialog.qml`
+- `qml/pages/MemberManagementDialog.qml`
 
 **Example Prompts**:
-- "Add a C++ model for database operations"
-- "Expose a C++ function to QML"
-- "Fix initialization issues"
+- "Add a delete button to order rows in OrdersPage"
+- "Create a new SupplierPage for vendor management"
+- "Fix the date picker in AddStaffDialog for mobile"
+- "Add a filter dropdown to InventoryPage"
 
 ---
 
-### 7. Platform-Specific Agent
-**Purpose**: Handles platform-specific configurations and deployment.
-**Scope**: Platform directories and configuration files
+### 7. Shared Components Agent
+
+**Purpose**: Manages reusable UI components, theming, and constants.  
+**Scope**: `qml/helper/`
+
 **Responsibilities**:
-- Manage Android build configuration (`android/`)
-- Handle iOS deployment (`ios/`)
-- Configure macOS app bundle (`macx/`)
- - Ensure `android/AndroidManifest.xml` includes a `<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35"/>` entry and avoid `.toInteger()` calls in `android/build.gradle` that can break the Gradle build.
-- Set Windows-specific resources (`win/app_icon.rc`)
-- Platform-specific QML code paths
-- Handle platform lifecycle events
+- Maintain `Constants.qml` (singleton: colors, breakpoints, Firebase URL)
+- Maintain `CustomeTheme.qml` (Felgo theme color tokens)
+- Develop and maintain reusable components: `CardKPI`, `StatusBadge`, `OrderRow`, `SegmentedNav`, `InlineDatePicker`, `PlaceholderPage`
+- Register new singleton helpers in `qml/helper/qmldir`
+- Ensure components import only what they need (`"../model"` for store access)
 
 **Key Files**:
-- `android/AndroidManifest.xml`
-- `android/build.gradle`
-- `ios/Project-Info.plist`
-- `ios/Launch Screen.storyboard`
-- `macx/` (macOS bundle resources)
-- `win/app_icon.rc` (Windows icon)
+- `qml/helper/Constants.qml`
+- `qml/helper/CustomeTheme.qml`
+- `qml/helper/CardKPI.qml`
+- `qml/helper/StatusBadge.qml`
+- `qml/helper/OrderRow.qml`
+- `qml/helper/SegmentedNav.qml`
+- `qml/helper/InlineDatePicker.qml`
+- `qml/helper/PlaceholderPage.qml`
+- `qml/helper/qmldir`
 
 **Example Prompts**:
-- "Configure Android permissions"
-- "Build for iOS"
-- "Set app icon for all platforms"
-
----
-
-### 8. Deployment & Publishing Agent
-**Purpose**: Manages the publishing pipeline and production builds.
-**Scope**: Build configuration, QML compilation, packaging
-**Responsibilities**:
-- Switch to publishing build mode
-- Compile QML into binary (resource bundling)
-- Configure license keys
-- Manage version numbers (PRODUCT_VERSION_NAME, PRODUCT_VERSION_CODE)
-- Generate deployment packages
-- Handle signing and code protection
-- Test on target platforms
-
-**Key Configuration**:
-- Product ID: `com.yourcompany.wizardEVAP.InventoryManagerUI`
-- Version: `1.0.0` (version name), `1` (version code)
-- Stage: `test` or `publish`
-
-**Build Mode Differences**:
-- **Development**: `deploy_resources()` - fast iteration, QML files not compiled- **Publishing**: Compiled QML, protected source code, load from `qrc:/`        
-
-**Example Prompts**:
-- "Switch to publishing build mode"
-- "Package for Android App Store"
-- "Generate iOS build for App Store"
+- "Add a new ToastNotification component for success/error feedback"
+- "Update CardKPI to support a trend indicator"
+- "Add a new color to CustomeTheme for danger/warning states"
+- "Create a SearchBar reusable component"
 
 ---
 
 ## Agent Usage Patterns
 
-### For New Feature Development
-1. **QML Development Agent** → Create new page/dialog
-2. **Core Data Model Agent** → Connect to DataModel
-3. **Felgo Plugin & Architecture Agent** → Add navigation route
-4. **Business Management UI Agent** → If visual component, style it
+### Adding a New Domain (e.g. Suppliers)
 
-### For Bug Fixes
-1. **Build & Infrastructure Agent** → Rebuild
-2. **Identify affected agent** → Apply fix
-3. **Firebase & Authentication Agent** → If network-related
-4. **Platform-Specific Agent** → If platform-specific issue
+1. **Store & Firebase Agent** → Create `qml/model/SuppliersStore.qml`, register in `qmldir`
+2. **Logic & Signal Bus Agent** → Add `addSupplier(...)`, `supplierAdded(...)` signals to `Logic.qml`
+3. **Data Model Agent** → Add `onAddSupplier` handler in `DataModel.qml`
+4. **Pages & Dialogs Agent** → Create `qml/pages/SuppliersPage.qml` and dialog(s)
+5. **App Architecture Agent** → Add `NavigationItem` for Suppliers in `Main.qml`, wire dialog
 
-### For Deployment
-1. **Deployment & Publishing Agent** → Configure publishing mode
-2. **Build & Infrastructure Agent** → Build for target platform
-3. **Platform-Specific Agent** → Platform-specific packaging
-4. **Testing**: Verify on actual devices
+### Fixing a Data Bug
 
----
+1. **Store & Firebase Agent** → Check store logic and Firebase sync
+2. **Data Model Agent** → Check DataModel orchestration
+3. **Logic Agent** → Verify signal signatures match
 
-## Example Prompts for Agent Mode
-- "Build and run the InventoryManagerUI project"
-- "Add a new page for product management"
-- "Debug Firebase authentication in the login flow"
-- "Create a responsive card component for inventory metrics"
-- "Package the app for Android release"
-- "Add a new data model for warehouse locations"
-- "Fix the orders page layout for mobile devices"
-- "Configure iOS deployment with proper certificates"
+### Adding a UI Feature
+
+1. **Shared Components Agent** → Build reusable component if needed
+2. **Pages & Dialogs Agent** → Integrate into the relevant page
+3. **Logic Agent** → Add signals if new user actions are introduced
+4. **Data Model Agent** → Wire handlers
+
+### Publishing to Stores
+
+1. **Build Agent** → Switch to publishing mode (comment `deploy_resources`, uncomment `QML_FILES`)
+2. **Build Agent** → Set `PRODUCT_LICENSE_KEY` and `PRODUCT_STAGE "publish"`
+3. **Build Agent** → Update `main.cpp` to use `qrc:/qml/Main.qml`
+4. **Build Agent** → Build for target platform and run packaging

@@ -1,1 +1,2 @@
 singleton Constants 1.0 Constants.qml
+singleton FormValidator 1.0 FormValidator.qml

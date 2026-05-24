@@ -1,439 +1,553 @@
 # SKILLS.md
 
 ## Overview
-This file defines the skills, tools, and knowledge domains required for effective development and agentic workflows on the InventoryManagerUI project. Skills are organized by domain and mapped to the agents defined in AGENTS.md.
+
+This file documents reusable component patterns, signal conventions, and domain-specific knowledge for the **BusinessManagement** App_UI Felgo QML project. Use these skills as reference when building or modifying features.
 
 ---
 
-## Core Build Skills
+## Skill 1: Using CardKPI
 
-### CMake & Build System
-**Required for**: Build & Infrastructure Agent, Deployment & Publishing Agent   
-**Knowledge Areas**:
-- CMake 3.16+ syntax and commands
-- Target configuration (qt_add_executable, qt_add_qml_module)
-- Mobile-specific build configurations (Android, iOS)
-- Felgo CMake extensions (`felgo_configure_executable`, `deploy_resources`)     
-- Qt6 CMake integration
-- Platform detection and conditional compilation
+**File**: `qml/helper/CardKPI.qml`  
+**Purpose**: Displays a metric card with a gradient background, label, and value.
 
-**Key Commands**:
-```bash
-cmake -S . -B build -G "Ninja"
-cmake --build build
-cmake --build build --target clean
+```qml
+CardKPI {
+    label: "Total Revenue"
+    value: viewHelper.formatCurrency(salesStore.totalRevenue)
+    gradient: Gradient {
+        GradientStop { position: 0.0; color: Constants.primaryBlue }
+        GradientStop { position: 1.0; color: "#1565C0" }
+    }
+}
 ```
 
-**Critical Files to Understand**:
-- `CMakeLists.txt` (root project - Felgo-based)
-- `App_UI/CMakeLists.txt` (BusinessManagement - Qt6-based)
-- `android/CMakeLists.txt` configuration patterns if exists
- - Note: The root `CMakeLists.txt` can set Android Gradle SDK versions via a target property, for example:
-     `set_target_properties(appInventoryManagerUI PROPERTIES QT_ANDROID_TARGET_SDK_VERSION 35 QT_ANDROID_COMPILE_SDK_VERSION 35)`
-
-**Tools & Dependencies**:
-- CMake 3.16+
-- Ninja (build tool)
-- Qt 6.5 / 6.8
-- Felgo SDK
+**Common Properties**:
+- `label`: string — displayed above the value
+- `value`: string — the main metric value (format with `viewHelper.formatCurrency` or `viewHelper.formatNumber`)
+- `gradient`: Gradient — background gradient; use color tokens from `Constants`
+- `compact`: bool — set from parent to switch to compact layout
 
 ---
 
-## QML & Frontend Skills
+## Skill 2: Using StatusBadge
 
-### QML Language & Syntax
-**Required for**: Felgo Plugin & Architecture Agent, Business Management UI Agent, Core Data Model Agent
-**Knowledge Areas**:
-- QML type system (Item, Rectangle, Text, etc.)
-- Property binding and reactive programming
-- Signals and slots architecture
-- QML import system
-- Component composition and reusability
-- Qt Quick Controls 2 (buttons, dialogs, layouts)
-- Qt Quick Layouts (ColumnLayout, RowLayout, GridLayout)
+**File**: `qml/helper/StatusBadge.qml`  
+**Purpose**: Renders a color-coded pill badge for order/item status.
 
-**Key Patterns in Project**:
 ```qml
-// Component definition
-Rectangle {
-    anchors { /* positioning */ }
-    property type propName: defaultValue
-    signal mySignal(var data)
-
-    MouseArea { onClicked: mySignal(data) }
-}
-
-// Data binding
-Text { text: dataModel.value }
-
-// Signal connections
-Connections {
-    target: logic
-    function onSignal(data) { /* handle */ }
+StatusBadge {
+    status: "Pending"     // "Pending" | "Approved" | "Completed" | "Cancelled"
 }
 ```
 
-### Responsive Design
-**Required for**: Business Management UI Agent
-**Knowledge Areas**:
-- Responsive layouts (compress for mobile, expand for desktop)
-- StackLayout for variant switching
-- Property-based responsive states
-- Margin, padding, and spacing calculations
-- Width constraints and bounded sizing
-
-**Project Example**:
-```qml
-// OrderRow.qml - compact vs full layout
-StackLayout {
-    currentIndex: compact ? 1 : 0
-    // Layout 0: Full 7-column row
-    Row { /* full version */ }
-    // Layout 1: Compact 2-column row
-    Row { /* compact version */ }
-}
-```
-
-### Felgo-Specific Skills
-**Required for**: Felgo Plugin & Architecture Agent
-**Knowledge Areas**:
-- Felgo App framework (networking, analytics, purchases)
-- Navigation system (NavigationStack, NavigationItem)
-- Theme management (Felgo.Theme)
-- Plugin system architecture
-- Felgo lifecycle management
-- Hot Reload setup and debugging
-- Firebase plugin integration
-
-**Key Felgo Components**:
-- `App` (root application container)
-- `Navigation` (tab-based navigation)
-- `NavigationStack` (page stack navigation)
-- `ListPage` (list view pages)
-- `AppText`, `AppIcon`, `ScaledImage`
-- `Theme` (color, size, spacing)
-
-### Qt Quick Controls & Styling
-**Required for**: Business Management UI Agent
-**Knowledge Areas**:
-- Dialog (modal windows)
-- Button, CheckBox, ComboBox
-- ScrollView and ListView
- - ScrollView and ListView
- - TableView horizontal scrolling: bind `contentWidth` to the delegate's width `delegate.width` to enable smooth horizontal flicking (e.g. `contentWidth: delegate.width`).
-- Label styling and text properties
-- Control palette and colors
-- Custom palettes
+**Status → Color Mapping** (defined internally):
+- `"Pending"` → amber/orange
+- `"Approved"` → blue
+- `"Completed"` → green
+- `"Cancelled"` → red
 
 ---
 
-## Data & State Management Skills
+## Skill 3: Using OrderRow
 
-### QML Data Models
-**Required for**: Core Data Model Agent
-**Knowledge Areas**:
-- ListModel and ListElement patterns
-- Property binding in models
-- Model updates and refresh patterns
-- Caching strategies
-- Data transformation and filtering
-- JSON data handling (`JSON.parse`, `JSON.stringify`)
+**File**: `qml/helper/OrderRow.qml`  
+**Purpose**: Renders one row in the orders list — responsive between compact and full layout.
 
-**Project Pattern**:
 ```qml
-// DataModel.qml - centralized state
-Item {
-    readonly property bool isBusy: api.busy
-    readonly property alias inventoryDataJson: _inventory.inventoryDataJson     
+OrderRow {
+    order: modelData            // single order object from OrdersStore.orders
+    compact: root.width < 520   // responsive mode
+    onApprove:  logic.updateOrder(order.id, "Approved")
+    onComplete: dataModel.tryCompleteOrder(order.id)
+    onEdit:     orderDetailDlg.open(order)
+}
+```
 
-    Connections {
-        target: logicConnection
-        function onDataLoaded(inventory, orders) {
-            _inventory.inventoryDataJson = inventory
-            _orders.ordersDataJson = orders
+---
+
+## Skill 4: Using SegmentedNav
+
+**File**: `qml/helper/SegmentedNav.qml`  
+**Purpose**: Renders a row of segmented tab buttons — useful for sub-navigation within a page.
+
+```qml
+SegmentedNav {
+    id: nav
+    tabs: ["All", "Pending", "Completed"]
+    onTabSelected: function(index) {
+        filterIndex = index
+    }
+}
+```
+
+**Properties**:
+- `tabs`: `var` (array of strings)
+- `currentIndex`: int — bind to local filter state
+- Signal `tabSelected(int index)`
+
+---
+
+## Skill 5: Using InlineDatePicker
+
+**File**: `qml/helper/InlineDatePicker.qml`  
+**Purpose**: An inline date selection control that works on mobile and desktop.
+
+```qml
+InlineDatePicker {
+    id: datePicker
+    label: "Order Date"
+    onDateSelected: function(dateStr) {
+        orderDate = dateStr   // ISO string "YYYY-MM-DD"
+    }
+}
+```
+
+---
+
+## Skill 6: Emitting Logic Signals
+
+**Pattern**: Pages and dialogs **never** call store functions directly. All actions go through `Logic.qml` signals. DataModel listens and delegates.
+
+```qml
+// CORRECT: emit a Logic signal
+logic.addOrder(orderId, customerName, product, qty, total, date, status)
+
+// WRONG: call store directly from a page
+OrdersStore.addOrder(...)
+```
+
+**Signal call reference**:
+```qml
+// Orders
+logic.addOrder(id, customer, product, qty, total, date, status)
+logic.updateOrder(orderId, newStatus)
+logic.completeOrder(orderId)
+logic.approveAllPending()
+
+// Inventory
+logic.addProduct(id, name, category, qty, reorderLevel, unitCost, unitPrice)
+logic.restockProduct(productId, qty)
+
+// Sales
+logic.recordSale(orderId, productName, qty, revenue, date, customer)
+
+// Staff
+logic.addStaff(id, name, role, email, phone, department, startDate, salary, status)
+
+// Lifecycle
+logic.loadData()
+logic.refreshData()
+logic.syncAllStores()
+```
+
+---
+
+## Skill 7: Singleton Store Access
+
+All stores are registered as QML singletons via `qml/model/qmldir`. Access them by ID directly — **no import statement needed** when you already import `"../model"` or `"model"`.
+
+```qml
+import "../model"
+
+// These IDs are globally available within any file that imports "../model":
+OrdersStore.orders          // var (array)
+InventoryStore.products     // var (array)
+SalesStore.totalRevenue     // real
+StaffStore.staff            // var (array)
+FirebaseService.get(path, callback)
+```
+
+**DataModel is NOT a singleton** — it is instantiated as `id: dataModel` in `Main.qml` and accessed via QML dynamic scoping from child pages.
+
+---
+
+## Skill 8: Accessing DataModel from Pages
+
+`DataModel` is instantiated in `Main.qml` as `id: dataModel`. Pages nested under `NavigationStack → AppPage` can access it via QML dynamic scoping without any import.
+
+```qml
+// In any page file:
+ListView {
+    model: dataModel.ordersModel    // ListModel maintained by DataModel
+}
+
+// Trigger cross-store action:
+Button {
+    onClicked: dataModel.tryCompleteOrder(orderId)
+}
+```
+
+---
+
+## Skill 9: Accessing ViewHelper from Pages
+
+`ViewHelper` is instantiated in `Main.qml` as `id: viewHelper`. Access directly:
+
+```qml
+Text {
+    text: viewHelper.formatCurrency(1234.5)    // → "$1,234.50"
+    text: viewHelper.formatNumber(9500)         // → "9,500"
+}
+```
+
+---
+
+## Skill 10: Adding a New Tab/Page
+
+1. Create a new page file: `qml/pages/MyNewPage.qml`
+2. Add a `NavigationItem` to `Main.qml`:
+
+```qml
+NavigationItem {
+    title: "My Tab"
+    iconType: IconType.star   // see Felgo IconType for all icons
+
+    NavigationStack {
+        AppPage {
+            title: "My Tab"
+            MyNewPage {}
         }
     }
 }
 ```
 
-### REST API & Networking
-**Required for**: Core Data Model Agent, Firebase & Authentication Agent        
-**Knowledge Areas**:
-- HTTP methods (GET, POST, PUT, DELETE)
-- JSON payload construction
-- Error handling and timeouts
-- Request/response parsing
-- Authentication tokens (if applicable)
-- Felgo HttpRequest API
-- Debugging network issues
+3. Add signals to `Logic.qml` if the page introduces new user actions.
+4. Add signal handlers in `DataModel.qml` under the `Connections` block.
 
-**Project Implementation**:
+---
+
+## Skill 11: Adding a New Store
+
+1. Create `qml/model/NewDomainStore.qml`:
+
 ```qml
-// RestAPI.qml pattern
-HttpRequest.get(url)
-    .timeout(maxRequestTimeout)
-    .then(success)
-    .catch(error)
+pragma Singleton
+import QtQuick
+import QtCore
+
+QtObject {
+    id: root
+    property var items: []
+
+    property Settings _settings: Settings {
+        category: "NewDomainStore"
+        property string json: ""
+    }
+
+    Component.onCompleted: _load()
+
+    function _load() {
+        var saved = _settings.json
+        if (saved && saved !== "") {
+            try { items = JSON.parse(saved) } catch(e) {}
+        }
+        if (items.length === 0) _fetchFromFirebase()
+    }
+
+    function _save() { _settings.json = JSON.stringify(items) }
+
+    function _fetchFromFirebase() {
+        FirebaseService.get("newdomain", function(data) {
+            if (data) items = FirebaseService.toArray(data)
+        })
+    }
+
+    function addItem(item) {
+        var arr = items.slice()
+        arr.push(item)
+        items = arr
+        _save()
+        FirebaseService.put("newdomain/" + item.id, item, null)
+    }
+}
 ```
 
-### Signal/Slot Architecture
-**Required for**: Felgo Plugin & Architecture Agent, Core Data Model Agent      
-**Knowledge Areas**:
-- Signal definition and emission
-- Slot (signal handler) implementation
-- Signal connections and disconnections
-- Avoiding signal loops
-- Proper cleanup in Component.onDestruction
+2. Register in `qml/model/qmldir`:
 
-**Project Pattern**:
+```
+singleton NewDomainStore 1.0 NewDomainStore.qml
+```
+
+3. Add signals in `qml/logic/Logic.qml`:
+
 ```qml
-// Logic.qml - signal definitions
-signal login(string username, string password)
-signal addProduct(var productData)
+signal addNewDomainItem(var item)
+signal newDomainItemAdded(var item)
+```
 
-// DataModel.qml - signal handlers
+4. Add handler in `qml/model/DataModel.qml`:
+
+```qml
+onAddNewDomainItem: function(item) {
+    NewDomainStore.addItem(item)
+    logic.newDomainItemAdded(item)
+}
+```
+
+---
+
+## Skill 12: Firebase REST Pattern
+
+**File**: `qml/model/FirebaseService.qml`  
+**Base URL**: `Constants.firebaseDatabaseUrl` → `https://inventorymanager-48392-default-rtdb.asia-southeast1.firebasedatabase.app`
+
+```qml
+// GET
+FirebaseService.get("orders", function(data) {
+    var arr = FirebaseService.toArray(data)
+})
+
+// PUT (full overwrite of a node)
+FirebaseService.put("orders/" + order.id, order, function(result) {
+    console.log("saved", JSON.stringify(result))
+})
+
+// PATCH (partial update)
+FirebaseService.patch("orders/" + id, { status: "Completed" }, null)
+
+// DELETE
+FirebaseService.remove("orders/" + id, null)
+```
+
+**`toArray(obj)`**: Converts Firebase `{"-key1": {…}, "-key2": {…}}` to a flat JS array with an `id` field added from each key.
+
+---
+
+## Skill 13: Responsive Layout Pattern
+
+Pages use a `compact` property bound to page width:
+
+```qml
+AppPage {
+    id: root
+    property bool compact: width < Constants.compactBreakpoint  // 520
+
+    // Compact column layout vs. full row layout:
+    Flow {
+        width: parent.width
+        spacing: compact ? 8 : 16
+
+        CardKPI {
+            width: compact ? root.width : (root.width - 48) / 4
+        }
+    }
+}
+```
+
+---
+
+## Skill 14: PlaceholderPage
+
+**File**: `qml/helper/PlaceholderPage.qml`  
+**Purpose**: Shows a label and an icon for pages under construction.
+
+```qml
+PlaceholderPage {
+    title: "Reports"
+    message: "Coming soon"
+    iconType: IconType.piechart
+}
+```
+
+---
+
+## Skill 15: Constants Color Tokens
+
+All color values live in `Constants.qml` (singleton). Use these in components instead of hardcoded hex values:
+
+| Token | Purpose |
+|---|---|
+| `Constants.primaryBlue` | Primary brand blue |
+| `Constants.ordersTab` | Orders tab accent |
+| `Constants.inventoryTab` | Inventory tab accent |
+| `Constants.salesTab` | Sales tab accent |
+| `Constants.staffTab` | Staff tab accent |
+| `Constants.pageBg` | Page/scaffold background |
+| `Constants.cardBg` | Card background |
+| `Constants.borderColor` | Border and divider |
+| `Constants.compactBreakpoint` | `520` — responsive breakpoint |
+| `Constants.firebaseDatabaseUrl` | Firebase DB root URL |
+
+---
+
+## Skill 16: Auth & Session (AuthStore / AuthService)
+
+**Files**: `qml/model/AuthStore.qml`, `qml/model/AuthService.qml`  
+**Both are `pragma Singleton`** — access by name anywhere.
+
+### Reading session state
+
+```qml
+AuthStore.isAuthenticated    // bool
+AuthStore.uid                // string — Firebase UID
+AuthStore.email              // string
+AuthStore.displayName        // string
+AuthStore.role               // "owner" | "admin" | "manager" | "staff"
+AuthStore.tenantId           // string
+AuthStore.tenantName         // string
+```
+
+### RBAC permission flags (all `readonly bool`)
+
+```qml
+AuthStore.canManageInventory  // owner | admin
+AuthStore.canManageStaff      // owner | admin
+AuthStore.canDeleteOrders     // owner | admin | manager
+AuthStore.canApproveAll       // owner | admin | manager
+AuthStore.canViewSales        // owner | admin | manager
+AuthStore.canViewStaff        // owner | admin | manager
+AuthStore.canInviteMembers    // owner | admin
+```
+
+### Triggering auth actions
+
+Auth actions are triggered via `logic` signals handled by DataModel, which delegates to AuthService:
+
+```qml
+logic.signInWithEmail(email, password)
+logic.signUpWithEmail(email, password, displayName)
+logic.signInWithGoogleToken(googleIdToken)
+logic.signOutRequested()
+logic.inviteMember(uid, email, displayName, role)
+```
+
+### Listening to auth feedback signals (in Main.qml Connections)
+
+```qml
 Connections {
     target: logic
-    function onLogin(username, password) { /* process */ }
-    function onAddProduct(data) { /* process */ }
+    function onAuthLoginSucceeded()  { /* navigate */ }
+    function onAuthFailed(reason)    { authErrorMessage = reason }
+    function onAuthSignedOut()       { /* clear UI */ }
 }
 ```
 
----
+### Gating UI by role
 
-## Firebase & Backend Skills
-
-### Firebase Authentication
-**Required for**: Firebase & Authentication Agent
-**Knowledge Areas**:
-- Firebase authentication flow (email, social, anonymous)
-- Session management
-- Token handling
-- User profile management
-- Authentication state listeners
-- Logout/cleanup
-
-**Project Files**:
-**Project Files**:
-- `qml/pages/FirebaseLoginPage.qml` (contains `FirebaseConfig` and handles registration/login via `FirebaseAuth`)
-- `qml/pages/FirebasePage.qml` (demonstrates `FirebaseDatabase` usage: `setValue` / `getValue` guarded by authentication)
-- `qml/helper/Constants.qml` (local Cloud Function URL properties, e.g. `addProductLocalUrl`)
-- Firebase documentation: https://felgo.com/doc/plugin-firebase/
-
-### Firebase Realtime Database
-**Required for**: Firebase & Authentication Agent, Core Data Model Agent        
-**Knowledge Areas**:
-- Database structure design
-- CRUD operations (Create, Read, Update, Delete)
-- Real-time listeners
-- Data validation and permissions
-- Offline caching
-- Conflict resolution
-
-**Project Example**:
 ```qml
-FirebaseDatabase {
-    onReadCompleted: { /* handle result */ }
-    onWriteCompleted: { /* handle result */ }
+// Tab visibility
+NavigationItem {
+    visible: AuthStore.canViewSales
+    ...
+}
+
+// Button visibility
+Button {
+    visible: AuthStore.canManageInventory
+    onClicked: logic.addProduct(...)
 }
 ```
 
-Usage pattern in this project:
+---
+
+## Skill 17: RBAC-Gated Pages — Property Pattern
+
+Each page that has role-restricted actions exposes `canManage*` boolean properties. The parent (`Main.qml`) binds `AuthStore` flags to them.
+
 ```qml
-// write and read simple values (requires auth)
-db.setValue("testKey", "value")
-db.getValue("testKey")
+// In the page file:
+Item {
+    property bool canManageInventory: false  // default off
+    property bool canDeleteOrders: false
+    signal deleteOrderClicked(string orderId)
+    ...
+    Button {
+        visible: canDeleteOrders
+        onClicked: deleteOrderClicked(model.orderId)
+    }
+}
 
-FirebaseDatabase {
-    onReadCompleted: { if(success) { /* value available as 'value' */ } }
-    onWriteCompleted: { if(success) { /* write confirmation in 'message' */ } }
+// In Main.qml:
+InventoryPage {
+    canManageInventory: AuthStore.canManageInventory
+    onDeleteProductClicked: function(pid) { logic.deleteProduct(pid) }
 }
 ```
 
-### Cloud Functions
-**Required for**: Firebase & Authentication Agent
-**Knowledge Areas**:
-- Cloud Function deployment and management
-- HTTP triggers
-- Request/response handling
-- Firebase SDK integration
-- Local emulation (http://127.0.0.1:5001/...)
-- Debugging and logging
+This keeps pages dumb (no direct AuthStore import) and makes permissions testable.
 
 ---
 
-## Platform & Deployment Skills
+## Skill 18: Delete Operations Pattern
 
-### Android Development
-**Required for**: Platform-Specific Agent, Deployment & Publishing Agent        
-**Knowledge Areas**:
-- AndroidManifest.xml configuration
-- Android permissions handling
-- Gradle build system (build.gradle)
-- App signing and keystore management
-- Android lifecycle events in QML
-- Google Play Store submission
+The delete flow for any domain follows:
 
-**Project Files**:
-- `android/AndroidManifest.xml`
-- `android/build.gradle`
-- `android/res/` (resources)
- - Note: Ensure `android/AndroidManifest.xml` contains a `<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35"/>` entry and prefer numeric Gradle 
-properties (avoid `.toInteger()` conversions in `android/build.gradle`).        
+1. **Logic signal** → `logic.deleteOrder(orderId)` / `logic.deleteProduct(productId)` / `logic.deleteStaff(staffId)`
+2. **DataModel handler** → validates RBAC role, calls store `deleteX()`, emits feedback signal
+3. **Store function** → filters the array, calls `_commit()` or `_pushAllToFirebase()`
+4. **UI** → reactive `model` or `Repeater` binding auto-refreshes
 
-### iOS Development
-**Required for**: Platform-Specific Agent, Deployment & Publishing Agent        
-**Knowledge Areas**:
-- iOS app configuration (Info.plist)
-- Xcode project management
-- iOS entitlements and capabilities
-- Code signing and provisioning profiles
-- App Store submission
-- iOS lifecycle in QML
-- Certificate management
+```qml
+// Store pattern (OrdersStore example):
+function deleteOrder(orderId) {
+    var arr = _clone()
+    for (var i = 0; i < arr.length; ++i) {
+        if (arr[i].orderId === orderId) { arr.splice(i, 1); break }
+    }
+    _commit(arr)
+}
 
-**Project Files**:
-- `ios/Project-Info.plist`
-- `ios/Launch Screen.storyboard`
-- `ios/Assets.xcassets/`
-
-### macOS & Desktop
-**Required for**: Platform-Specific Agent
-**Knowledge Areas**:
-- macOS bundle configuration
-- App code signing
-- Gatekeeper and notarization
-- Windows resource compilation (.rc files)
-- Desktop app distribution
-
-**Project Files**:
-- `macx/` (macOS resources)
-- `win/app_icon.rc` (Windows icon)
-
-### Publishing & Distribution
-**Required for**: Deployment & Publishing Agent
-**Knowledge Areas**:
-- App Store / Play Store submission process
-- Version management (PRODUCT_VERSION_NAME, PRODUCT_VERSION_CODE)
-- License key management
-- QML to resource bundling (qrc)
-- Release build optimization
-- Testing on real devices
-- Beta distribution (TestFlight, Google Play Beta)
-
-**Project Configuration**:
-```cmake
-set(PRODUCT_VERSION_NAME "1.0.0")
-set(PRODUCT_VERSION_CODE 1)
-set(PRODUCT_STAGE "test")  # or "publish"
+// DataModel (RBAC guard + delegation):
+function onDeleteOrder(orderId) {
+    if (!_hasAnyRole(["owner", "admin", "manager"])) {
+        logic.errorOccurred("auth", "Permission denied")
+        return
+    }
+    OrdersStore.deleteOrder(orderId)
+    _syncOrdersModel()
+    logic.orderDeleted(orderId)
+}
 ```
 
 ---
 
-## Debugging & Troubleshooting Skills
+## Skill 19: Profile Settings
 
-### QML Debugging
-**Required for**: All agents
-**Knowledge Areas**:
-- console.log() usage
-- Qt Creator debugging
-- Component inspection
-- Performance profiling
-- Memory leak detection
-- Animation debugging
+**File**: `qml/pages/ProfileSettingsDialog.qml`  
+**Purpose**: View/edit the current user's contact details. Reaches `AuthService.updateUserProfile()`.
 
-### Network Debugging
-**Required for**: Firebase & Authentication Agent, Core Data Model Agent        
-**Knowledge Areas**:
-- HTTP request/response inspection
-- Firebase Console monitoring
-- Request timeout diagnosis
-- Server error handling
-- Local emulation testing
-- Network proxy usage
+```qml
+ProfileSettingsDialog {
+    id: profileDlg
+    onProfileSaved: {
+        successMessage = "Profile updated"
+        successToastTimer.restart()
+    }
+}
 
-### Build Troubleshooting
-**Required for**: Build & Infrastructure Agent
-**Knowledge Areas**:
-- CMake error interpretation
-- Compiler error diagnosis
-- Linker issues
-- Mobile SDK configuration issues
-- Plugin loading problems
-- Resource compilation errors
-
----
-
-## Project-Specific Knowledge
-
-### InventoryManagerUI (Root) Architecture
-**Required for**: Felgo Plugin & Architecture Agent
-- Entry: `main.cpp` with FelgoApplication
-- Root QML: `qml/Main.qml` with App root and Navigation
-- Pages located in `qml/pages/`
-- Models in `qml/model/`
-- Logic in `qml/logic/`
-- Helpers in `qml/helper/`
-
-### BusinessManagement (App_UI) Architecture
-**Required for**: Business Management UI Agent
-- Separate Qt6 application (BusinessApp module)
-- Entry: `App_UI/src/main.cpp` with QGuiApplication
-- Root: `App_UI/qml/Main.qml` with ApplicationWindow
-- Feature: Orders management with responsive design
-- Components: OrderRow, OrdersPage, OrdersStore, CardKPI, etc.
-
-### Data Flow Pattern
-**Required for**: Core Data Model Agent
-```
-UI (Pages)
-  ↓ (signals)
-Logic.qml
-  ↓ (signal handlers)
-DataModel.qml
-  ↓ (API calls)
-RestAPI.qml
-  ↓ (HTTP requests)
-Cloud/Firebase
+// Open from anywhere:
+Button { onClicked: profileDlg.open() }
 ```
 
----
-
-## Tool Proficiency Matrix
-
-| Tool | Agents | Proficiency Level |
-|------|--------|-------------------|
-| CMake | Build, Deployment | Expert |
-| QML | All Frontend | Expert |
-| Qt Creator | All | Advanced |
-| Felgo SDK | Architecture, Platform | Advanced |
-| Firebase Console | Firebase, Data | Intermediate |
-| Git/Version Control | All | Advanced |
-| Terminal/PowerShell | Build, Deployment | Advanced |
-| Xcode | iOS Platform | Advanced |
-| Android Studio | Android Platform | Intermediate |
-| Qt Quick Designer | QML Development | Intermediate |
+The dialog auto-populates from `AuthStore` on `onOpened`, and writes back via `AuthService.updateUserProfile(phone, address, city, country, postalCode)`.
 
 ---
 
-## Continuous Learning Resources
+## Skill 20: Connections in Singletons (Critical Constraint)
 
-- **Felgo Documentation**: https://felgo.com/doc/
-- **Qt Documentation**: https://doc.qt.io/
-- **Qt Quick Controls 2**: https://doc.qt.io/qt-6/qtquickcontrols2-index.html   
-- **Firebase Documentation**: https://firebase.google.com/docs/
-- **CMake Documentation**: https://cmake.org/documentation/
-- **Android Development**: https://developer.android.com/
-- **iOS Development**: https://developer.apple.com/ios/
+**`Connections {}` cannot be used inside a `pragma Singleton` `QtObject` root.** This causes a runtime `Cannot assign to non-existent default property` error, which crashes the entire singleton chain.
 
----
+**WRONG (crashes)**:
+```qml
+// SalesStore.qml
+pragma Singleton
+QtObject {
+    Connections {   // ← INVALID in QtObject
+        target: OrdersStore
+        function onRevisionChanged() { _rebuildData() }
+    }
+}
+```
 
-## Example Prompts for Skill Application
-- "Update the Orders page layout to use a new card design"
-- "Add a new data field to the inventory model"
-- "Configure Firebase authentication for email/password"
-- "Implement responsive design for tablet screens"
-- "Fix the Android build configuration for NDK"
-- "Create a REST API endpoint connector for a new service"
-- "Debug why the navigation doesn't update after data changes"
-- "Package the app for iOS App Store submission"
+**CORRECT (property binding watcher)**:
+```qml
+pragma Singleton
+QtObject {
+    property int _ordersWatcher: OrdersStore.revision
+    on_OrdersWatcherChanged: _rebuildData()
+}
+```
+
+`Timer {}`, `Rectangle {}`, and other visual/non-visual Item types also cannot be used as children of `QtObject`. Only other `QtObject`-derived non-visual types and plain property/signal/function declarations are valid.
+

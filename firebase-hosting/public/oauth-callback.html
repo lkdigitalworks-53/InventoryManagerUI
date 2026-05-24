@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign-in Complete</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f9ff; padding: 24px; }
+    h2 { color: #1e40af; }
+    p { color: #374151; }
+    textarea {
+      width: 100%; height: 120px; font-size: 11px; font-family: monospace;
+      padding: 8px; border: 1px solid #93c5fd; border-radius: 6px;
+      background: #fff; resize: none; cursor: pointer;
+    }
+    .copied { color: #16a34a; font-weight: bold; display: none; }
+    button {
+      margin-top: 12px; padding: 10px 20px; background: #1e40af; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
+    }
+    .error { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <script>
+    var fragment = window.location.hash.substring(1);
+    var params = {};
+    fragment.split('&').forEach(function(p) {
+      var kv = p.split('=');
+      params[kv[0]] = decodeURIComponent((kv[1] || '').replace(/\+/g, ' '));
+    });
+
+    if (params.id_token) {
+      document.write(
+        '<h2>✅ Sign-in Successful</h2>' +
+        '<p>Copy the ID Token below and paste it back in the app:</p>' +
+        '<textarea id="token" onclick="this.select()">' + params.id_token + '</textarea>' +
+        '<br><button onclick="copyToken()">Copy Token</button>' +
+        '<p class="copied" id="copied">✓ Copied to clipboard!</p>' +
+        '<p>Return to the app and paste the token in the field provided.</p>'
+      );
+    } else if (params.error) {
+      document.write('<h2 class="error">❌ Sign-in Failed</h2><p>' + params.error_description + '</p>');
+    } else {
+      document.write('<h2 class="error">No token received.</h2><p>Please try again from the app.</p>');
+    }
+
+    function copyToken() {
+      var ta = document.getElementById('token');
+      if (ta) {
+        ta.select();
+        document.execCommand('copy');
+        var c = document.getElementById('copied');
+        if (c) { c.style.display = 'block'; setTimeout(function(){c.style.display='none';}, 2000); }
+      }
+    }
+  </script>
+</body>
+</html>
