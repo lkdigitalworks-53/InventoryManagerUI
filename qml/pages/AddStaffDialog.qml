@@ -1,37 +1,215 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
-import "../model"
-import "../helper"
 
-Dialog {
+import "../components"
+import "../helper"
+import "../model"
+
+// Add Staff bottom sheet — preserves Job Information, Join Date, optional
+// app-login provisioning. Public contract: signal staffCreated(payload).
+BottomSheet {
     id: dlg
-    title: "Add New Staff Member"
-    modal: true
-    width: Math.min(520, parent ? parent.width - 24 : 520)
-    height: Math.min(600, parent ? parent.height - 40 : 600)
-    anchors.centerIn: parent
-    padding: 0
-    standardButtons: Dialog.NoButton
+
+    sheetTitle: "Add staff member"
+    primaryAction: "Save"
+    secondaryAction: "Cancel"
+    primaryPalette: ({ start: Constants.brand2, end: Constants.brand3 })
 
     signal staffCreated(var payload)
 
+    onOpened: {
+        nameField.text = ""; emailField.text = ""; phoneField.text = ""
+        roleField.text = ""; salaryField.text = "50000"
+        loginPasswordField.text = ""; createLoginCheck.checked = false
+        appRoleCombo.currentIndex = 0; deptCombo.currentIndex = 0; statusCombo.currentIndex = 0
+        joinPicker.date = new Date()
+    }
+
+    onPrimaryClicked: trySubmit()
+
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
+
+        AuthTextField {
+            id: nameField
+            Layout.fillWidth: true
+            label: "Full name"
+            placeholderText: "Alex Chen"
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: emailField
+                Layout.fillWidth: true
+                label: "Email"
+                placeholderText: "person@company.com"
+                inputMethodHints: Qt.ImhEmailCharactersOnly
+            }
+            AuthTextField {
+                id: phoneField
+                Layout.fillWidth: true
+                label: "Phone"
+                placeholderText: "+91 98765 43210"
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(4)
+                Text { text: "Role"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                AuthTextField {
+                    id: roleField
+                    Layout.fillWidth: true
+                    placeholderText: "e.g. Sales Manager"
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(4)
+                Text { text: "Department"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                AppComboBox {
+                    id: deptCombo
+                    Layout.fillWidth: true
+                    model: ["Operations", "Sales", "Warehouse", "Support", "Finance", "Marketing"]
+                    font.pixelSize: sp(Constants.fsBody)
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(4)
+                Text { text: "Joined"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                RowLayout {
+                    Layout.fillWidth: true
+                    AuthTextField {
+                        id: joinDateField
+                        Layout.fillWidth: true
+                        readOnly: true
+                        text: Qt.formatDate(joinPicker.date, "dd/MM/yyyy")
+                    }
+                    IconActionButton {
+                        text: "📅"
+                        onClicked: joinPicker.open()
+                    }
+                    InlineDatePicker { id: joinPicker; onAccepted: function(d) { joinDateField.text = Qt.formatDate(d, "dd/MM/yyyy") } }
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(4)
+                Text { text: "Status"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                AppComboBox {
+                    id: statusCombo
+                    Layout.fillWidth: true
+                    model: ["Active", "On Leave"]
+                    font.pixelSize: sp(Constants.fsBody)
+                }
+            }
+        }
+
+        AuthTextField {
+            id: salaryField
+            Layout.fillWidth: true
+            label: "Salary (₹)"
+            placeholderText: "50000"
+            text: "50000"
+            inputMethodHints: Qt.ImhFormattedNumbersOnly
+        }
+
+        // Login provisioning toggle + role selector
+        Rectangle {
+            Layout.fillWidth: true
+            radius: dp(Constants.radius)
+            color: Constants.subtleBg
+            border.color: Constants.borderColor
+            border.width: 1
+            Layout.preferredHeight: loginCol.implicitHeight + dp(24)
+            clip: true
+
+            ColumnLayout {
+                id: loginCol
+                anchors.fill: parent
+                anchors.margins: dp(Constants.space3)
+                spacing: dp(Constants.space2)
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    QQC.CheckBox {
+                        id: createLoginCheck
+                        text: "Create app login for this teammate"
+                        checked: false
+                    }
+                }
+
+                ColumnLayout {
+                    visible: createLoginCheck.checked
+                    Layout.fillWidth: true
+                    spacing: dp(Constants.space2)
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: dp(Constants.space2)
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: dp(4)
+                            Text { text: "App role"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                            AppComboBox {
+                                id: appRoleCombo
+                                Layout.fillWidth: true
+                                model: ["Staff", "Manager", "Admin"]
+                                font.pixelSize: sp(Constants.fsBody)
+                            }
+                        }
+                    }
+
+                    AuthPasswordField {
+                        id: loginPasswordField
+                        Layout.fillWidth: true
+                        label: "Temporary password"
+                        placeholderText: "min 6 characters"
+                    }
+                }
+            }
+        }
+
+        Text {
+            id: errorLabel
+            Layout.fillWidth: true
+            visible: text.length > 0
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
+            wrapMode: Text.Wrap
+        }
+    }
+
     function trySubmit() {
-        var errs = [];
-        if (!nameField.text || nameField.text.length < 2) errs.push("Enter a valid name");
-        if (!emailField.text || emailField.text.indexOf("@") < 0) errs.push("Enter a valid email");
-        if (!phoneField.text) errs.push("Enter a phone number");
-        if (!roleField.text) errs.push("Enter a job role");
-        if (deptCombo.currentIndex < 0) errs.push("Select a department");
+        var errs = []
+        if (!nameField.text || nameField.text.length < 2) errs.push("Enter a valid name")
+        if (!emailField.text || emailField.text.indexOf("@") < 0) errs.push("Enter a valid email")
+        if (!phoneField.text) errs.push("Enter a phone number")
+        if (!roleField.text) errs.push("Enter a role")
+        if (deptCombo.currentIndex < 0) errs.push("Select a department")
         if (createLoginCheck.checked) {
             if (!loginPasswordField.text || loginPasswordField.text.length < 6)
-                errs.push("Enter login password with at least 6 characters");
+                errs.push("Login password ≥ 6 chars")
         }
-        if (errs.length > 0) { errorLabel.text = errs.join(" · "); errorLabel.visible = true; return; }
-        errorLabel.visible = false;
+        if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
+        errorLabel.text = ""
 
-        var sal = parseInt(salaryField.text);
-        if (isNaN(sal)) sal = 0;
+        var sal = parseInt(salaryField.text)
+        if (isNaN(sal)) sal = 0
 
         var payload = {
             name: nameField.text,
@@ -47,162 +225,8 @@ Dialog {
             appRole: appRoleCombo.currentText.toLowerCase()
         }
 
-        nameField.text = ""; emailField.text = ""; phoneField.text = "";
-        roleField.text = ""; salaryField.text = "50000";
-        loginPasswordField.text = ""; createLoginCheck.checked = false; appRoleCombo.currentIndex = 0;
-        deptCombo.currentIndex = 0; statusCombo.currentIndex = 0;
-        joinPicker.date = new Date();
-        staffCreated(payload);
-        dlg.close();
-    }
-
-    contentItem: Flickable {
-        clip: true
-        contentHeight: formCol.height + 32
-        flickableDirection: Flickable.VerticalFlick
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        Column {
-            id: formCol
-            x: 24; y: 16; width: parent.width - 48; spacing: 8
-
-            Label { text: "Add New Staff Member"; font.pixelSize: 18; font.bold: true; color: "#111827" }
-            Label { text: "Add a new team member to your organization"; font.pixelSize: 12; color: "#6b7280" }
-            Item { width: 1; height: 8 }
-
-            // Section: Personal Information
-            Label { text: "Personal Information"; font.pixelSize: 14; font.bold: true; color: "#7c3aed" }
-            Rectangle { width: formCol.width; height: 2; color: "#c4b5fd" }
-            Item { width: 1; height: 4 }
-
-            Label { text: "Full Name *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-            TextField { id: nameField; width: formCol.width; placeholderText: "Enter full name"; font.pixelSize: 13
-                background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-
-            Row { spacing: 12; width: formCol.width
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Email Address *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    TextField { id: emailField; width: parent.width; placeholderText: "employee@company.com"; font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Phone Number *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    TextField { id: phoneField; width: parent.width; placeholderText: "+91 98765 43210"; font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
-            }
-
-            Item { width: 1; height: 8 }
-
-            // Section: Job Information
-            Label { text: "Job Information"; font.pixelSize: 14; font.bold: true; color: "#7c3aed" }
-            Rectangle { width: formCol.width; height: 2; color: "#c4b5fd" }
-            Item { width: 1; height: 4 }
-
-            Row { spacing: 12; width: formCol.width
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Job Role *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    TextField { id: roleField; width: parent.width; placeholderText: "e.g., Sales Manager"; font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Department *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    ComboBox { id: deptCombo; width: parent.width; model: ["Operations", "Sales", "Warehouse", "Support", "Finance", "Marketing"]
-                        font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
-            }
-
-            Row { spacing: 12; width: formCol.width
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Join Date *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    Row { spacing: 6; width: parent.width
-                        TextField { id: joinDateField; width: parent.width - 46; readOnly: true; font.pixelSize: 13
-                            text: Qt.formatDate(joinPicker.date, "dd/MM/yyyy")
-                            background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                        Button { text: "📅"; width: 40; height: 36; onClicked: joinPicker.open()
-                            background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                        InlineDatePicker { id: joinPicker; onAccepted: function(d) { joinDateField.text = Qt.formatDate(d, "dd/MM/yyyy"); } }
-                    }
-                }
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Employment Status *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    ComboBox { id: statusCombo; width: parent.width; model: ["Active", "On Leave"]
-                        font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
-            }
-
-            Label { text: "Salary (₹)"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-            TextField { id: salaryField; width: formCol.width; text: "50000"; font.pixelSize: 13
-                background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-
-            Item { width: 1; height: 8 }
-
-            Label { text: "App Login Credentials"; font.pixelSize: 14; font.bold: true; color: "#7c3aed" }
-            Rectangle { width: formCol.width; height: 2; color: "#c4b5fd" }
-            Item { width: 1; height: 4 }
-
-            CheckBox {
-                id: createLoginCheck
-                text: "Create login credentials for this staff member"
-                checked: false
-            }
-
-            Row { spacing: 12; width: formCol.width; visible: createLoginCheck.checked
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "App Role *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    ComboBox {
-                        id: appRoleCombo
-                        width: parent.width
-                        model: ["Staff", "Manager", "Admin"]
-                        font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" }
-                    }
-                }
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Temporary Password *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    TextField {
-                        id: loginPasswordField
-                        width: parent.width
-                        placeholderText: "Min 6 characters"
-                        echoMode: TextInput.Password
-                        font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" }
-                    }
-                }
-            }
-
-            Label { id: errorLabel; visible: false; color: "#ef4444"; text: ""; wrapMode: Text.Wrap; width: formCol.width }
-            Item { width: 1; height: 8 }
-        }
-    }
-
-    footer: Item {
-        implicitHeight: 52
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: 2; color: "#c4b5fd"
-        }
-        Row {
-            anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
-            spacing: 12
-            Button {
-                height: 36; padding: 12
-                background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
-                contentItem: Text { text: "Cancel"; font.pixelSize: 13; color: "#374151"
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                onClicked: dlg.close()
-            }
-            Button {
-                height: 36; padding: 12
-                background: Rectangle { radius: 8; color: "#8b5cf6" }
-                contentItem: Text { text: "Add Staff Member"; font.pixelSize: 13; font.bold: true; color: "#ffffff"
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                onClicked: dlg.trySubmit()
-            }
-        }
+        Toast.show("Teammate added")
+        staffCreated(payload)
+        dlg.close()
     }
 }

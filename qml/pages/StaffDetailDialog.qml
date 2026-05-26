@@ -2,19 +2,24 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
-import "../model"
+import "../components"
 import "../helper"
+import "../model"
 
-QQC.Dialog {
+// Staff detail / edit — bottom sheet. Public contract preserved:
+//   signal staffUpdateRequested(staffId, fields)
+//   function openFor(id, startInEdit)
+//   property string staffId
+//   property bool editMode
+BottomSheet {
     id: root
 
-    signal staffUpdateRequested(string staffId, var fields)
+    sheetTitle: editMode ? "Edit staff member" : "Staff profile"
+    primaryAction: editMode ? "Save changes" : (AuthStore.canManageStaff ? "Edit" : "")
+    secondaryAction: editMode ? "Cancel" : "Close"
+    primaryPalette: editMode ? Constants.gradHero : ({ start: Constants.brand1, end: Constants.brand2 })
 
-    modal: true
-    title: editMode ? "Edit Staff Member" : "Staff Profile"
-    anchors.centerIn: parent
-    width: Math.min(parent ? parent.width - 40 : 540, 540)
-    padding: 20
+    signal staffUpdateRequested(string staffId, var fields)
 
     property string staffId: ""
     property bool editMode: false
@@ -40,180 +45,164 @@ QQC.Dialog {
         open()
     }
 
-    background: Rectangle {
-        radius: 12
-        color: "#ffffff"
-        border.color: Constants.borderColor
+    onPrimaryClicked: {
+        if (!editMode) editMode = true
+        else _submit()
+    }
+    onSecondaryClicked: {
+        if (editMode) {
+            // Discard edits — repopulate from store and switch out of edit mode.
+            openFor(staffId, false)
+        }
     }
 
-    contentItem: ColumnLayout {
-        spacing: 12
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
 
-        // Header strip with avatar + name
+        // Header card with avatar + name + role
         Rectangle {
             Layout.fillWidth: true
-            radius: 10
-            color: "#f9fafb"
-            border.color: "#e5e7eb"
-            implicitHeight: hdr.implicitHeight + 20
+            radius: dp(Constants.radius)
+            color: Qt.rgba(0.39, 0.40, 0.95, 0.06)
+            border.color: Constants.borderColor
+            border.width: 1
+            Layout.preferredHeight: hdr.implicitHeight + dp(Constants.space4 * 2)
 
             RowLayout {
                 id: hdr
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 12
+                anchors.margins: dp(Constants.space3)
+                spacing: dp(Constants.space3)
 
-                Rectangle {
-                    width: 48; height: 48; radius: 24
-                    color: "#ede9fe"
-                    QQC.Label {
-                        anchors.centerIn: parent
-                        text: StaffStore.initials(nameField.text)
-                        color: "#7c3aed"
-                        font.pixelSize: 16
-                        font.bold: true
-                    }
+                AvatarBadge {
+                    size: "lg"
+                    label: StaffStore.initials(nameField.text)
+                    palette: Constants.grad2
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
-                    QQC.Label {
+                    spacing: dp(2)
+                    Text {
                         text: nameField.text || "(unnamed)"
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBodyLg)
                         font.bold: true
-                        font.pixelSize: 14
-                        color: "#111827"
                     }
-                    QQC.Label {
-                        text: (roleField.text || "—") + " • " + (deptField.text || "—")
-                        font.pixelSize: 11
-                        color: "#6b7280"
+                    Text {
+                        text: (roleField.text || "—") + " · " + (deptField.text || "—")
+                        color: Constants.textSecondary
+                        font.pixelSize: sp(Constants.fsCaption)
                     }
-                    QQC.Label {
+                    Text {
                         text: "ID: " + root.staffId
-                        font.pixelSize: 10
-                        color: "#9ca3af"
+                        color: Constants.textMuted
+                        font.pixelSize: sp(Constants.fsCaption)
                     }
                 }
             }
         }
 
         // Personal
-        QQC.Label { text: "Personal Information"; font.bold: true; font.pixelSize: 13; color: "#374151"; Layout.topMargin: 4 }
+        Text {
+            text: "Personal"
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
 
-        RowLayout {
+        AuthTextField {
+            id: nameField
             Layout.fillWidth: true
-            QQC.Label { text: "Full Name"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: nameField; Layout.fillWidth: true; readOnly: !root.editMode }
+            label: "Full name"
+            readOnly: !root.editMode
         }
-        RowLayout {
+        AuthTextField {
+            id: emailField
             Layout.fillWidth: true
-            QQC.Label { text: "Email"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: emailField; Layout.fillWidth: true; readOnly: !root.editMode }
+            label: "Email"
+            readOnly: !root.editMode
+            inputMethodHints: Qt.ImhEmailCharactersOnly
         }
-        RowLayout {
+        AuthTextField {
+            id: phoneField
             Layout.fillWidth: true
-            QQC.Label { text: "Phone"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: phoneField; Layout.fillWidth: true; readOnly: !root.editMode }
+            label: "Phone"
+            readOnly: !root.editMode
         }
 
         // Job
-        QQC.Label { text: "Job Information"; font.bold: true; font.pixelSize: 13; color: "#374151"; Layout.topMargin: 8 }
+        Text {
+            text: "Job"
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
 
         RowLayout {
             Layout.fillWidth: true
-            QQC.Label { text: "Role"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: roleField; Layout.fillWidth: true; readOnly: !root.editMode }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Department"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: deptField; Layout.fillWidth: true; readOnly: !root.editMode }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Join Date"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: joinField; Layout.fillWidth: true; readOnly: true; opacity: 0.7; placeholderText: "yyyy-MM-dd" }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Salary (₹)"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.TextField { id: salaryField; Layout.fillWidth: true; readOnly: !root.editMode; inputMethodHints: Qt.ImhDigitsOnly }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Status"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-            QQC.ComboBox {
-                id: statusCombo
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: roleField
                 Layout.fillWidth: true
-                model: ["Active", "On Leave", "Suspended"]
-                enabled: root.editMode
+                label: "Role"
+                readOnly: !root.editMode
+            }
+            AuthTextField {
+                id: deptField
+                Layout.fillWidth: true
+                label: "Department"
+                readOnly: !root.editMode
             }
         }
 
-        QQC.Label {
+        AuthTextField {
+            id: joinField
+            Layout.fillWidth: true
+            label: "Joined"
+            readOnly: true
+            placeholderText: "yyyy-MM-dd"
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: salaryField
+                Layout.fillWidth: true
+                label: "Salary (₹)"
+                readOnly: !root.editMode
+                inputMethodHints: Qt.ImhDigitsOnly
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(4)
+                Text {
+                    text: "Status"
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsSmall)
+                    font.bold: true
+                }
+                AppComboBox {
+                    id: statusCombo
+                    Layout.fillWidth: true
+                    model: ["Active", "On Leave", "Suspended"]
+                    enabled: root.editMode
+                    font.pixelSize: sp(Constants.fsBody)
+                }
+            }
+        }
+
+        Text {
             id: errorText
             Layout.fillWidth: true
             visible: text.length > 0
-            color: "#b91c1c"
-            font.pixelSize: 12
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
             wrapMode: Text.Wrap
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 4
-            spacing: 8
-
-            QQC.Button {
-                text: "Close"
-                visible: !root.editMode
-                Layout.fillWidth: true
-                onClicked: root.close()
-            }
-
-            QQC.Button {
-                text: "Edit"
-                visible: !root.editMode && AuthStore.canManageStaff
-                Layout.fillWidth: true
-                background: Rectangle { radius: 8; color: Constants.primaryBlue }
-                contentItem: Text {
-                    text: "Edit"
-                    color: "#ffffff"
-                    font.bold: true
-                    font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: root.editMode = true
-            }
-
-            QQC.Button {
-                text: "Cancel"
-                visible: root.editMode
-                Layout.fillWidth: true
-                onClicked: {
-                    // Re-pull values from store (discard edits)
-                    root.openFor(root.staffId, false)
-                    root.editMode = false
-                }
-            }
-
-            QQC.Button {
-                text: "Save"
-                visible: root.editMode
-                Layout.fillWidth: true
-                background: Rectangle { radius: 8; color: Constants.primaryBlue }
-                contentItem: Text {
-                    text: "Save"
-                    color: "#ffffff"
-                    font.bold: true
-                    font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: root._submit()
-            }
         }
     }
 
@@ -244,7 +233,7 @@ QQC.Dialog {
             status: statusVal
         })
         errorText.text = ""
-        root.editMode = false
-        root.close()
+        editMode = false
+        close()
     }
 }

@@ -2,26 +2,29 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
-import "../model"
-import "../helper"
 import "../components"
+import "../helper"
+import "../model"
 
-QQC.Dialog {
+// Product detail / edit — bottom sheet. Public contract preserved:
+//   signal productUpdateRequested(productId, fields)
+//   function openFor(id, startInEdit)
+//   property string productId
+//   property bool editMode
+//   property string photoUrl
+BottomSheet {
     id: root
+
+    sheetTitle: editMode ? "Edit product" : "Product details"
+    primaryAction: editMode ? "Save changes" : (AuthStore.canManageInventory ? "Edit" : "")
+    secondaryAction: editMode ? "Cancel" : "Close"
 
     signal productUpdateRequested(string productId, var fields)
 
-    modal: true
-    title: editMode ? "Edit Product" : "Product Details"
-    anchors.centerIn: parent
-    padding: 20
-    width: Math.min(parent ? parent.width - 40 : 540, 540)
-    height: Math.min(parent ? parent.height - 40 : 600, 600)
-
     property string productId: ""
     property bool editMode: false
-
     property string photoUrl: ""
+    property bool photoBusy: false
 
     function openFor(id, startInEdit) {
         productId = id
@@ -39,7 +42,6 @@ QQC.Dialog {
             minStockField.text = (p.minStock !== undefined) ? String(p.minStock) : "0"
             photoUrl = p.photoUrl || ""
 
-            // Match category against CategoryStore list, fall back to first option
             var cats = CategoryStore.categories
             var idx = 0
             for (var i = 0; i < cats.length; ++i)
@@ -57,7 +59,13 @@ QQC.Dialog {
         open()
     }
 
-    property bool photoBusy: false
+    onPrimaryClicked: {
+        if (!editMode) editMode = true
+        else _submit()
+    }
+    onSecondaryClicked: {
+        if (editMode) openFor(productId, false)
+    }
 
     PhotoSourceSheet {
         id: photoSheet
@@ -84,244 +92,234 @@ QQC.Dialog {
         }
     }
 
-    background: Rectangle {
-        radius: 12
-        color: "#ffffff"
-        border.color: Constants.borderColor
-    }
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
 
-    contentItem: QQC.ScrollView {
-        clip: true
-        ColumnLayout {
-            width: root.width - 40
-            spacing: 12
+        // Header card with name + ID + SKU
+        Rectangle {
+            Layout.fillWidth: true
+            radius: dp(Constants.radius)
+            color: Qt.rgba(0.39, 0.40, 0.95, 0.06)
+            border.color: Constants.borderColor
+            border.width: 1
+            Layout.preferredHeight: hdrCol.implicitHeight + dp(Constants.space4 * 2)
 
-            // Header strip
+            ColumnLayout {
+                id: hdrCol
+                anchors.fill: parent
+                anchors.margins: dp(Constants.space3)
+                spacing: dp(2)
+                Text {
+                    text: nameField.text || "(unnamed product)"
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(Constants.fsBodyLg)
+                    font.bold: true
+                }
+                Text {
+                    text: "ID: " + root.productId + (skuField.text ? "   ·   SKU: " + skuField.text : "")
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsCaption)
+                }
+            }
+        }
+
+        // Photo block
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space3)
+
             Rectangle {
-                Layout.fillWidth: true
-                radius: 10
-                color: "#f9fafb"
-                border.color: "#e5e7eb"
-                implicitHeight: hdrCol.implicitHeight + 16
+                Layout.preferredWidth: dp(80)
+                Layout.preferredHeight: dp(80)
+                radius: dp(Constants.radius)
+                color: Constants.subtleBg
+                border.color: Constants.borderColor
+                border.width: 1
+                clip: true
 
-                ColumnLayout {
-                    id: hdrCol
+                Image {
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 2
-
-                    QQC.Label {
-                        text: nameField.text || "(unnamed product)"
-                        font.bold: true
-                        font.pixelSize: 14
-                        color: "#111827"
-                    }
-                    QQC.Label {
-                        text: "ID: " + root.productId + (skuField.text ? "    SKU: " + skuField.text : "")
-                        font.pixelSize: 11
-                        color: "#6b7280"
-                    }
+                    anchors.margins: dp(2)
+                    source: root.photoUrl
+                    sourceSize.width: 160
+                    sourceSize.height: 160
+                    fillMode: Image.PreserveAspectCrop
+                    cache: true
+                    visible: root.photoUrl.length > 0
+                }
+                Text {
+                    anchors.centerIn: parent
+                    text: "📦"
+                    font.pixelSize: sp(32)
+                    visible: root.photoUrl.length === 0
+                }
+                QQC.BusyIndicator {
+                    anchors.centerIn: parent
+                    running: root.photoBusy
+                    visible: root.photoBusy
                 }
             }
 
-            // ── Photo panel ──
-            RowLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 12
+                spacing: dp(4)
 
-                Rectangle {
-                    Layout.preferredWidth: 80
-                    Layout.preferredHeight: 80
-                    radius: 10
-                    color: "#f3f4f6"
-                    border.color: Constants.borderColor
-
-                    Image {
-                        anchors.fill: parent
-                        anchors.margins: 2
-                        source: root.photoUrl
-                        sourceSize.width: 160
-                        sourceSize.height: 160
-                        fillMode: Image.PreserveAspectCrop
-                        cache: true
-                        visible: root.photoUrl.length > 0
-                    }
-                    Text {
-                        anchors.centerIn: parent
-                        text: "📦"
-                        font.pixelSize: 32
-                        visible: root.photoUrl.length === 0
-                    }
-                    QQC.BusyIndicator {
-                        anchors.centerIn: parent
-                        running: root.photoBusy
-                        visible: root.photoBusy
-                    }
+                Text {
+                    text: "Product photo"
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(Constants.fsBodyLg)
+                    font.bold: true
                 }
-
-                ColumnLayout {
+                Text {
+                    text: root.photoUrl.length > 0
+                        ? "Tap “Change photo” to replace the current image."
+                        : "Add a photo so customers recognise the product."
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsCaption)
                     Layout.fillWidth: true
-                    spacing: 4
-
-                    QQC.Label {
-                        text: "Product photo"
-                        font.bold: true
-                        font.pixelSize: 13
-                        color: "#374151"
-                    }
-                    QQC.Label {
-                        text: root.photoUrl.length > 0
-                            ? "Tap “Change photo” to replace the current image."
-                            : "Add a photo so customers can recognise the product faster."
-                        font.pixelSize: 11
-                        color: "#6b7280"
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                    }
-                    QQC.Button {
-                        Layout.preferredWidth: 160
-                        text: root.photoUrl.length > 0 ? "Change photo" : "Add photo"
-                        enabled: root.editMode && !root.photoBusy
-                        onClicked: photoSheet.open()
-                    }
+                    wrapMode: Text.Wrap
+                }
+                GhostButton {
+                    Layout.preferredWidth: dp(160)
+                    implicitHeight: dp(36)
+                    text: root.photoUrl.length > 0 ? "Change photo" : "Add photo"
+                    enabled: root.editMode && !root.photoBusy
+                    onClicked: photoSheet.open()
                 }
             }
+        }
 
-            // Product info
-            QQC.Label { text: "Product Information"; font.bold: true; font.pixelSize: 13; color: "#374151"; Layout.topMargin: 4 }
+        Text {
+            text: "Product info"
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
 
-            RowLayout {
+        AuthTextField {
+            id: nameField
+            Layout.fillWidth: true
+            label: "Name"
+            readOnly: !root.editMode
+        }
+        AuthTextField {
+            id: skuField
+            Layout.fillWidth: true
+            label: "SKU"
+            readOnly: !root.editMode
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+
+            ColumnLayout {
                 Layout.fillWidth: true
-                QQC.Label { text: "Name"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField { id: nameField; Layout.fillWidth: true; readOnly: !root.editMode }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "SKU"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField { id: skuField; Layout.fillWidth: true; readOnly: !root.editMode }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Category"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.ComboBox {
+                spacing: dp(4)
+                Text { text: "Category"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                AppComboBox {
                     id: categoryCombo
                     Layout.fillWidth: true
                     model: CategoryStore.categories
                     enabled: root.editMode
+                    font.pixelSize: sp(Constants.fsBody)
                 }
             }
-            RowLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
-                QQC.Label { text: "Unit"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.ComboBox {
+                spacing: dp(4)
+                Text { text: "Unit"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                AppComboBox {
                     id: unitCombo
                     Layout.fillWidth: true
                     model: ["Units (pcs)", "Kg", "Litres", "Metres"]
                     enabled: root.editMode
+                    font.pixelSize: sp(Constants.fsBody)
                 }
             }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Description"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField { id: descField; Layout.fillWidth: true; readOnly: !root.editMode }
-            }
+        }
 
-            // Pricing & stock
-            QQC.Label { text: "Pricing & Stock"; font.bold: true; font.pixelSize: 13; color: "#374151"; Layout.topMargin: 8 }
+        AuthTextField {
+            id: descField
+            Layout.fillWidth: true
+            label: "Description"
+            readOnly: !root.editMode
+        }
 
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Cost (₹)"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField {
-                    id: costField; Layout.fillWidth: true; readOnly: !root.editMode
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Selling (₹)"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField {
-                    id: sellField; Layout.fillWidth: true; readOnly: !root.editMode
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Markup"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-                    radius: 6
-                    color: "#f0fdf4"; border.color: "#86efac"
-                    Text {
-                        anchors.centerIn: parent
-                        font.pixelSize: 12; font.bold: true; color: "#16a34a"
-                        text: {
-                            var c = parseFloat(costField.text)
-                            var s = parseFloat(sellField.text)
-                            if (isNaN(c) || isNaN(s) || c <= 0) return "—"
-                            return Math.round(((s - c) / c) * 100) + "%   (₹" + (s - c).toFixed(2) + " profit/unit)"
-                        }
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Stock"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField { id: stockField; Layout.fillWidth: true; readOnly: !root.editMode; inputMethodHints: Qt.ImhDigitsOnly }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                QQC.Label { text: "Min Stock"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 110 }
-                QQC.TextField { id: minStockField; Layout.fillWidth: true; readOnly: !root.editMode; inputMethodHints: Qt.ImhDigitsOnly }
-            }
+        Text {
+            text: "Pricing & stock"
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
 
-            QQC.Label {
-                id: errorLabel
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: costField
                 Layout.fillWidth: true
-                visible: text.length > 0
-                color: "#b91c1c"
-                font.pixelSize: 12
-                wrapMode: Text.Wrap
+                label: "Cost (₹)"
+                readOnly: !root.editMode
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
             }
-
-            RowLayout {
+            AuthTextField {
+                id: sellField
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 8
+                label: "Selling (₹)"
+                readOnly: !root.editMode
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
+            }
+        }
 
-                QQC.Button {
-                    text: "Close"
-                    visible: !root.editMode
-                    Layout.fillWidth: true
-                    onClicked: root.close()
-                }
-                QQC.Button {
-                    text: "Edit"
-                    visible: !root.editMode && AuthStore.canManageInventory
-                    Layout.fillWidth: true
-                    background: Rectangle { radius: 8; color: Constants.primaryBlue }
-                    contentItem: Text { text: "Edit"; color: "#ffffff"; font.bold: true; font.pixelSize: 13
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: root.editMode = true
-                }
-                QQC.Button {
-                    text: "Cancel"
-                    visible: root.editMode
-                    Layout.fillWidth: true
-                    onClicked: root.openFor(root.productId, false)
-                }
-                QQC.Button {
-                    text: "Save"
-                    visible: root.editMode
-                    Layout.fillWidth: true
-                    background: Rectangle { radius: 8; color: Constants.primaryBlue }
-                    contentItem: Text { text: "Save"; color: "#ffffff"; font.bold: true; font.pixelSize: 13
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: root._submit()
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: dp(36)
+            radius: dp(12)
+            color: Qt.rgba(0.06, 0.72, 0.51, 0.10)
+            Text {
+                anchors.centerIn: parent
+                color: Constants.success
+                font.pixelSize: sp(Constants.fsSmall)
+                font.bold: true
+                text: {
+                    var c = parseFloat(costField.text)
+                    var s = parseFloat(sellField.text)
+                    if (isNaN(c) || isNaN(s) || c <= 0) return "Markup —"
+                    return "Markup " + Math.round(((s - c) / c) * 100) + "%   ·   profit ₹" + (s - c).toFixed(2)
                 }
             }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: stockField
+                Layout.fillWidth: true
+                label: "Stock"
+                readOnly: !root.editMode
+                inputMethodHints: Qt.ImhDigitsOnly
+            }
+            AuthTextField {
+                id: minStockField
+                Layout.fillWidth: true
+                label: "Min stock"
+                readOnly: !root.editMode
+                inputMethodHints: Qt.ImhDigitsOnly
+            }
+        }
+
+        Text {
+            id: errorLabel
+            Layout.fillWidth: true
+            visible: text.length > 0
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
+            wrapMode: Text.Wrap
         }
     }
 
@@ -354,7 +352,7 @@ QQC.Dialog {
             minStock: ms
         })
         errorLabel.text = ""
-        root.editMode = false
-        root.close()
+        editMode = false
+        close()
     }
 }

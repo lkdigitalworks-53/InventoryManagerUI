@@ -2,140 +2,144 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
-import "../model"
+import "../components"
 import "../helper"
+import "../model"
 
-QQC.Dialog {
+// Categories editor — bottom sheet. No public signals; mutates CategoryStore
+// directly. Opened from AddProductDialog → "Manage categories".
+BottomSheet {
     id: root
-    modal: true
-    title: "Manage Categories"
-    anchors.centerIn: parent
-    padding: 20
-    width: Math.min(parent ? parent.width - 40 : 460, 460)
 
-    background: Rectangle {
-        radius: 12
-        color: "#ffffff"
-        border.color: Constants.borderColor
-    }
+    sheetTitle: "Categories"
+    primaryAction: ""
+    secondaryAction: "Done"
 
-    contentItem: ColumnLayout {
-        spacing: 12
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
 
-        QQC.Label {
+        Text {
             Layout.fillWidth: true
             text: "Add or remove product categories. Categories you add are saved on this device for next time."
-            color: "#6b7280"
-            font.pixelSize: 12
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
             wrapMode: Text.Wrap
         }
 
+        // Add row
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
-            QQC.TextField {
+            spacing: dp(Constants.space2)
+
+            AuthTextField {
                 id: addField
                 Layout.fillWidth: true
                 placeholderText: "New category name"
                 onAccepted: root._addNew()
             }
-            QQC.Button {
+
+            PrimaryButton {
                 text: "Add"
-                background: Rectangle { radius: 6; color: Constants.primaryBlue }
-                contentItem: Text {
-                    text: "Add"; color: "#ffffff"; font.bold: true; font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                }
+                implicitHeight: dp(48)
+                implicitWidth: dp(80)
                 onClicked: root._addNew()
             }
         }
 
-        QQC.Label {
+        Text {
             id: addError
             Layout.fillWidth: true
             visible: text.length > 0
-            color: "#b91c1c"
-            font.pixelSize: 11
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsCaption)
             wrapMode: Text.Wrap
         }
 
-        Rectangle {
+        // Existing categories
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 240
-            radius: 8
-            color: "#f9fafb"
-            border.color: "#e5e7eb"
+            spacing: dp(Constants.space2)
 
-            Flickable {
-                anchors.fill: parent
-                anchors.margins: 6
-                clip: true
-                contentHeight: catCol.height
+            Repeater {
+                model: CategoryStore.categories
+                delegate: ListCard {
+                    Layout.fillWidth: true
+                    title: modelData
+                    subtitle: modelData === CategoryStore.lastUsed ? "Default category" : ""
 
-                Column {
-                    id: catCol
-                    width: parent.width
-                    spacing: 4
-                    Repeater {
-                        model: CategoryStore.categories
-                        delegate: Rectangle {
-                            width: catCol.width
-                            height: 36
-                            radius: 6
-                            color: "#ffffff"
-                            border.color: "#e5e7eb"
+                    leading: AvatarBadge {
+                        size: "md"
+                        label: (modelData || "?").charAt(0).toUpperCase()
+                        palette: index % 4 === 0 ? Constants.grad1
+                               : index % 4 === 1 ? Constants.grad2
+                               : index % 4 === 2 ? Constants.grad3
+                               :                   Constants.grad4
+                    }
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 6
-                                spacing: 6
+                    RowLayout {
+                        spacing: dp(Constants.space2)
+                        Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
 
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: modelData
-                                    color: "#111827"
-                                    font.pixelSize: 13
-                                    elide: Text.ElideRight
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                Text {
-                                    visible: modelData === CategoryStore.lastUsed
-                                    text: "default"
-                                    color: "#16a34a"
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                }
-                                QQC.Button {
-                                    text: "Set default"
-                                    height: 26
-                                    visible: modelData !== CategoryStore.lastUsed
-                                    onClicked: CategoryStore.setLastUsed(modelData)
-                                    contentItem: Text { text: "Set default"; color: "#374151"; font.pixelSize: 10
-                                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { radius: 4; color: "#ffffff"; border.color: "#d1d5db" }
-                                }
-                                QQC.Button {
-                                    text: "Remove"
-                                    height: 26
-                                    enabled: CategoryStore.categories.length > 1
-                                    onClicked: CategoryStore.removeCategory(modelData)
-                                    contentItem: Text { text: "Remove"; color: "#dc2626"; font.pixelSize: 10
-                                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { radius: 4; color: "#fef2f2"; border.color: "#fecaca" }
-                                }
+                        QQC.AbstractButton {
+                            visible: modelData !== CategoryStore.lastUsed
+                            implicitHeight: dp(28)
+                            implicitWidth: starTxt.implicitWidth + dp(20)
+                            background: Rectangle {
+                                radius: dp(Constants.radiusPill)
+                                color: Constants.subtleBg
+                                border.color: Constants.borderColor
+                                border.width: 1
                             }
+                            contentItem: Text {
+                                id: starTxt
+                                anchors.centerIn: parent
+                                text: "★ Default"
+                                color: Constants.textSecondary
+                                font.pixelSize: sp(Constants.fsCaption)
+                                font.bold: true
+                            }
+                            onClicked: CategoryStore.setLastUsed(modelData)
+                        }
+
+                        QQC.AbstractButton {
+                            enabled: CategoryStore.categories.length > 1
+                            implicitHeight: dp(28)
+                            implicitWidth: removeTxt.implicitWidth + dp(20)
+                            background: Rectangle {
+                                radius: dp(Constants.radiusPill)
+                                color: Qt.rgba(0.93, 0.27, 0.27, 0.10)
+                                border.color: Qt.rgba(0.93, 0.27, 0.27, 0.25)
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                id: removeTxt
+                                anchors.centerIn: parent
+                                text: "Remove"
+                                color: Constants.danger
+                                font.pixelSize: sp(Constants.fsCaption)
+                                font.bold: true
+                            }
+                            onClicked: root._confirmRemove(modelData)
                         }
                     }
                 }
             }
         }
+    }
 
-        QQC.Button {
-            Layout.alignment: Qt.AlignRight
-            text: "Done"
-            onClicked: root.close()
-        }
+    // Inline confirm dialog so removal is reversible (= cancellable). The
+    // global confirmDlg in Main.qml is reachable but using a local one
+    // avoids a layered-popup glitch where the outer sheet hides the modal.
+    ConfirmDialog { id: removeConfirm }
+
+    function _confirmRemove(name) {
+        removeConfirm.ask({
+            title: "Remove category?",
+            message: "“" + name + "” will be removed from the category list. Existing products keep their assignment but new products won't be able to use it.",
+            confirmLabel: "Remove",
+            onConfirm: function() { CategoryStore.removeCategory(name) }
+        })
     }
 
     function _addNew() {

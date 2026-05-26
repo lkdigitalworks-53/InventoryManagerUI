@@ -1,11 +1,16 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
-import "../model"
-import "../helper"
 
+import "../components"
+import "../helper"
+import "../model"
+
+// Mobile staff directory — glass header, search, staff cards with avatar +
+// name + role/dept + status pill, FAB for add/invite.
 Item {
     id: root
+
     property bool compact: false
     property bool canManageStaff: true
     property bool canInviteMembers: false
@@ -17,245 +22,206 @@ Item {
     signal editStaffClicked(string staffId)
     signal deleteStaffClicked(string staffId)
     signal exportRequested()
+    signal backRequested()
 
-    Flickable {
-        anchors.fill: parent
-        contentHeight: col.height
-        clip: true
-        flickableDirection: Flickable.VerticalFlick
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+    property bool showBackButton: false
+    property string _searchText: ""
 
-        Column {
-            id: col
-            width: root.width
-            spacing: 16
+    Rectangle { anchors.fill: parent; color: Constants.appBg }
 
-            // ── Title + Add Staff ──
-            RowLayout {
-                width: col.width; spacing: 8
-                Column { spacing: 4; Layout.fillWidth: true
-                    Label { text: "Staff Management"; color: "#111827"; font.bold: true; font.pixelSize: 18 }
-                    Label { text: "Manage team members and roles"; color: "#6b7280"; font.pixelSize: 12 }
-                }
-                Button {
-                    id: exportStaffBtn; text: "📤  Export"
-                    onClicked: root.exportRequested()
-                    background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
-                    contentItem: Text { text: exportStaffBtn.text; color: "#374151"; font.bold: true; font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                }
-                Button {
-                    id: addBtn; text: "+  Add Staff Member"
-                    visible: root.canManageStaff
-                    onClicked: root.addStaffClicked()
-                    background: Rectangle { radius: 8; color: "#8b5cf6" }
-                    contentItem: Text { text: addBtn.text; color: "white"; font.bold: true; font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                }
-                Button {
-                    id: inviteBtn; text: "+  Invite Member"
-                    visible: root.canInviteMembers
-                    onClicked: root.inviteMemberClicked()
-                    background: Rectangle { radius: 8; color: "#2563eb" }
-                    contentItem: Text { text: inviteBtn.text; color: "white"; font.bold: true; font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                }
-                Button {
-                    id: manageMembersBtn; text: "Manage Members"
-                    visible: root.canInviteMembers
-                    onClicked: root.manageMembersClicked()
-                    background: Rectangle { radius: 8; color: "#111827" }
-                    contentItem: Text { text: manageMembersBtn.text; color: "white"; font.bold: true; font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+    GlassHeader {
+        id: header
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        title: "Staff"
+        subtitle: "Manage team & access"
+
+        leading: QQC.AbstractButton {
+            visible: root.showBackButton
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: dp(40)
+            implicitHeight: dp(40)
+            padding: 0
+            background: Rectangle { color: parent.pressed ? Qt.rgba(0,0,0,0.04) : "transparent"; radius: dp(12) }
+            contentItem: Item {
+                Text {
+                    anchors.centerIn: parent
+                    text: "←"
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(22)
+                    font.bold: true
                 }
             }
-
-            // ── KPI Cards ──
-            Row {
-                width: col.width; spacing: 12
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 110; radius: 12; color: "#ffffff"; border.color: "#e5e7eb"
-                    Column { x: 16; y: 14; spacing: 4
-                        Label { text: "Total Staff"; font.pixelSize: 13; font.bold: true; color: "#3b82f6" }
-                        Label { text: "All employees"; font.pixelSize: 11; color: "#6b7280" }
-                        Item { width: 1; height: 8 }
-                        Label { text: String(StaffStore.totalStaff()); font.pixelSize: 22; font.bold: true; color: "#3b82f6" }
-                    }
-                }
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 110; radius: 12; color: "#ffffff"; border.color: "#e5e7eb"
-                    Column { x: 16; y: 14; spacing: 4
-                        Label { text: "Active"; font.pixelSize: 13; font.bold: true; color: "#22c55e" }
-                        Label { text: "Currently working"; font.pixelSize: 11; color: "#6b7280" }
-                        Item { width: 1; height: 8 }
-                        Label { text: String(StaffStore.activeCount()); font.pixelSize: 22; font.bold: true; color: "#22c55e" }
-                    }
-                }
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 110; radius: 12; color: "#fefce8"; border.color: "#fde047"
-                    Column { x: 16; y: 14; spacing: 4
-                        Label { text: "On Leave"; font.pixelSize: 13; font.bold: true; color: "#ca8a04" }
-                        Label { text: "Temporarily away"; font.pixelSize: 11; color: "#6b7280" }
-                        Item { width: 1; height: 8 }
-                        Label { text: String(StaffStore.onLeaveCount()); font.pixelSize: 22; font.bold: true; color: "#ca8a04" }
-                    }
-                }
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 110; radius: 12; color: "#ffffff"; border.color: "#e5e7eb"
-                    Column { x: 16; y: 14; spacing: 4
-                        Label { text: "Departments"; font.pixelSize: 13; font.bold: true; color: "#3b82f6" }
-                        Label { text: "Total departments"; font.pixelSize: 11; color: "#6b7280" }
-                        Item { width: 1; height: 8 }
-                        Label { text: String(StaffStore.departmentCount()); font.pixelSize: 22; font.bold: true; color: "#3b82f6" }
-                    }
-                }
-            }
-
-            // ── Team Members ──
-            Rectangle {
-                width: col.width; height: membersCol.height + 32; radius: 12
-                color: "#ffffff"; border.color: "#e5e7eb"
-                Column {
-                    id: membersCol; x: 16; y: 16; width: parent.width - 32; spacing: 12
-
-                    Column { spacing: 2
-                        Label { text: "Team Members"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                        Label { text: "All staff members and their details"; font.pixelSize: 11; color: "#6b7280" }
-                    }
-
-                    TextField {
-                        id: search; width: membersCol.width
-                        placeholderText: "🔍  Search staff..."
-                        font.pixelSize: 12
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#e5e7eb" }
-                    }
-
-                    // Staff cards
-                    Repeater {
-                        model: StaffStore.staff
-                        Rectangle {
-                            width: membersCol.width; radius: 12
-                            color: "#ffffff"; border.color: "#e5e7eb"
-                            visible: search.text === "" || (modelData.name + modelData.role + modelData.department + modelData.email).toLowerCase().indexOf(search.text.toLowerCase()) >= 0
-                            height: visible ? 90 : 0
-
-                            Row {
-                                x: 16; anchors.verticalCenter: parent.verticalCenter; spacing: 14; width: parent.width - 32
-
-                                // Avatar
-                                Rectangle {
-                                    width: 44; height: 44; radius: 22; color: "#ede9fe"
-                                    Text { text: StaffStore.initials(modelData.name); color: "#7c3aed"; font.pixelSize: 16; font.bold: true; anchors.centerIn: parent }
-                                }
-
-                                // Info
-                                Column {
-                                    spacing: 3; width: parent.width - 400; anchors.verticalCenter: parent.verticalCenter
-                                    Row { spacing: 8
-                                        Label { text: modelData.name; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                                        Rectangle {
-                                            width: statusLabel.implicitWidth + 12; height: 20; radius: 10
-                                            color: modelData.status === "active" ? "#dcfce7" : "#fef9c3"
-                                            border.color: modelData.status === "active" ? "#22c55e" : "#eab308"
-                                            Text { id: statusLabel; text: modelData.status === "active" ? "active" : "on leave"; font.pixelSize: 10; font.bold: true
-                                                color: modelData.status === "active" ? "#16a34a" : "#ca8a04"; anchors.centerIn: parent }
-                                        }
-                                    }
-                                    Label { text: modelData.role + " • " + modelData.department; font.pixelSize: 11; color: "#6b7280" }
-                                    Row { spacing: 16
-                                        Label { text: "✉ " + modelData.email; font.pixelSize: 11; color: "#6b7280" }
-                                        Label { text: "📞 " + modelData.phone; font.pixelSize: 11; color: "#6b7280" }
-                                    }
-                                }
-
-                                Item { width: 1; height: 1; Layout.fillWidth: true }
-
-                                // Joined + Actions
-                                Column {
-                                    spacing: 2; anchors.verticalCenter: parent.verticalCenter
-                                    Label { text: "Joined"; font.pixelSize: 10; color: "#9ca3af"; horizontalAlignment: Text.AlignRight; width: implicitWidth }
-                                    Label { text: modelData.joinDate; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                                }
-
-                                Row {
-                                    spacing: 8; anchors.verticalCenter: parent.verticalCenter
-                                    Button {
-                                        text: "View Profile"; height: 32; padding: 8
-                                        background: Rectangle { radius: 6; color: "#ffffff"; border.color: "#d1d5db" }
-                                        contentItem: Text { text: "View Profile"; font.pixelSize: 11; color: "#374151"
-                                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                        onClicked: root.viewStaffClicked(modelData.staffId)
-                                    }
-                                    Button {
-                                        visible: root.canManageStaff
-                                        text: "Delete"; height: 32; padding: 8
-                                        background: Rectangle { radius: 6; color: "#fef2f2"; border.color: "#ef4444" }
-                                        contentItem: Text { text: "Delete"; font.pixelSize: 11; color: "#ef4444"; font.bold: true
-                                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                        onClicked: root.deleteStaffClicked(modelData.staffId)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Bottom Row: Department Distribution + Recent Activities ──
-            Row {
-                width: col.width; spacing: 16
-
-                // Department Distribution
-                Rectangle {
-                    width: (col.width - 16) / 2; height: deptCol.height + 32; radius: 12
-                    color: "#ffffff"; border.color: "#e5e7eb"
-                    Column {
-                        id: deptCol; x: 16; y: 16; width: parent.width - 32; spacing: 12
-                        Label { text: "Department Distribution"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                        Label { text: "Staff by department"; font.pixelSize: 11; color: "#6b7280" }
-                        Repeater {
-                            model: StaffStore.departmentList()
-                            Column {
-                                width: deptCol.width; spacing: 6
-                                RowLayout {
-                                    width: deptCol.width
-                                    Label { text: modelData.name; font.pixelSize: 12; color: "#374151"; Layout.fillWidth: true }
-                                    Label { text: modelData.count + " staff"; font.pixelSize: 12; color: "#6b7280" }
-                                }
-                                Rectangle {
-                                    width: deptCol.width; height: 8; radius: 4; color: "#e5e7eb"
-                                    Rectangle {
-                                        width: parent.width * (modelData.count / StaffStore.totalStaff())
-                                        height: 8; radius: 4; color: "#8b5cf6"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Recent Activities
-                Rectangle {
-                    width: (col.width - 16) / 2; height: actCol.height + 32; radius: 12
-                    color: "#ffffff"; border.color: "#e5e7eb"
-                    Column {
-                        id: actCol; x: 16; y: 16; width: parent.width - 32; spacing: 12
-                        Label { text: "Recent Activities"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                        Label { text: "Latest staff updates"; font.pixelSize: 11; color: "#6b7280" }
-                        Repeater {
-                            model: StaffStore.activities
-                            Row {
-                                spacing: 12; width: actCol.width; height: 40
-                                Rectangle { width: 10; height: 10; radius: 5; color: modelData.color; anchors.verticalCenter: parent.verticalCenter }
-                                Column { spacing: 2; anchors.verticalCenter: parent.verticalCenter
-                                    Label { text: modelData.text; font.pixelSize: 12; color: "#111827" }
-                                    Label { text: modelData.time; font.pixelSize: 11; color: "#9ca3af" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            onClicked: root.backRequested()
         }
+
+        actions: [
+            IconActionButton {
+                visible: root.canInviteMembers
+                variant: "glass"
+                text: "👥"
+                onClicked: root.manageMembersClicked()
+            },
+            IconActionButton {
+                variant: "glass"
+                text: "⤴"
+                onClicked: root.exportRequested()
+            }
+        ]
+    }
+
+    QQC.ScrollView {
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        clip: true
+        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
+
+        ColumnLayout {
+            id: stack
+            width: root.width
+            spacing: dp(Constants.space3)
+
+            // Quick KPI strip
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                Layout.topMargin: dp(Constants.space3)
+                spacing: dp(Constants.space2)
+
+                GradientKpiCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: dp(96)
+                    label: "Total"
+                    value: String(StaffStore.totalStaff())
+                    trend: StaffStore.departmentCount() + " depts"
+                    palette: Constants.grad1
+                }
+                GradientKpiCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: dp(96)
+                    label: "Active"
+                    value: String(StaffStore.activeCount())
+                    trend: "on shift"
+                    palette: Constants.grad4
+                }
+                GradientKpiCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: dp(96)
+                    label: "On leave"
+                    value: String(StaffStore.onLeaveCount())
+                    trend: "temporarily away"
+                    trendVariant: "muted"
+                    palette: Constants.grad3
+                }
+            }
+
+            SearchField {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                placeholder: "Search team…"
+                onTextChanged: root._searchText = text
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                spacing: dp(Constants.space2)
+
+                Repeater {
+                    model: _filteredStaff()
+                    delegate: ListCard {
+                        Layout.fillWidth: true
+                        title: modelData.name + (modelData.role ? "  ·  " + modelData.role : "")
+                        subtitle: modelData.department + (modelData.email ? "  ·  " + modelData.email : "")
+                        onClicked: root.viewStaffClicked(modelData.staffId)
+
+                        leading: AvatarBadge {
+                            label: StaffStore.initials(modelData.name)
+                            palette: index % 4 === 0 ? Constants.grad1
+                                   : index % 4 === 1 ? Constants.grad2
+                                   : index % 4 === 2 ? Constants.grad3
+                                   :                   Constants.grad4
+                        }
+
+                        StatusPill {
+                            Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                            status: modelData.status === "active" ? "active"
+                                  : modelData.status === "on leave" ? "on leave"
+                                  : "inactive"
+                            label: modelData.status === "active" ? "On shift"
+                                 : modelData.status === "on leave" ? "On leave"
+                                 : "Inactive"
+                        }
+                    }
+                }
+            }
+
+            // Empty / no-match state
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                visible: _filteredStaff().length === 0
+                radius: dp(Constants.radius)
+                color: Constants.cardBg
+                border.color: Constants.borderColor
+                border.width: 1
+                Layout.preferredHeight: dp(140)
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: dp(6)
+                    Text { text: "👥"; font.pixelSize: sp(32); Layout.alignment: Qt.AlignHCenter }
+                    Text {
+                        text: root._searchText.length > 0 ? "No matches" : "No team members yet"
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBodyLg)
+                        font.bold: true
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                    Text {
+                        text: root._searchText.length > 0
+                            ? "Try a different search."
+                            : "Tap + to add or invite a teammate."
+                        color: Constants.textSecondary
+                        font.pixelSize: sp(Constants.fsSmall)
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+            }
+
+            Item { Layout.preferredHeight: dp(Constants.tabbarClearance); Layout.fillWidth: true }
+        }
+    }
+
+    FloatingActionButton {
+        visible: root.canManageStaff || root.canInviteMembers
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: dp(Constants.space5)
+        anchors.bottomMargin: dp(96)
+        emoji: "＋"
+        onClicked: {
+            if (root.canInviteMembers)
+                root.inviteMemberClicked()
+            else
+                root.addStaffClicked()
+        }
+    }
+
+    function _filteredStaff() {
+        var arr = (StaffStore.staff || []).slice()
+        var q = (root._searchText || "").toLowerCase().trim()
+        if (q.length === 0) return arr
+        return arr.filter(function(s) {
+            var hay = (s.name + " " + (s.role || "") + " " + (s.department || "") + " " + (s.email || "")).toLowerCase()
+            return hay.indexOf(q) >= 0
+        })
     }
 }

@@ -1,353 +1,444 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
-import "../model"
-import "../helper"
 
+import "../components"
+import "../helper"
+import "../model"
+
+// Modern sales report — segmented period pill, gradient hero card with area
+// chart, weekly bar breakdown, top items list. All numbers from SalesStore.
 Item {
     id: root
+
     property bool compact: false
 
     signal exportRequested()
 
-    // ── Empty state when there are no completed orders ──
-    Rectangle {
-        anchors.fill: parent
-        visible: SalesStore.totalOrders <= 0
-        color: "#f9fafb"
-        Column {
-            anchors.centerIn: parent
-            spacing: 16
-            Text {
-                text: "📊"
-                font.pixelSize: 56
-                anchors.horizontalCenter: parent.horizontalCenter
+    property int _period: 1   // 0=Day, 1=Week, 2=Month, 3=Year
+
+    // Recomputed by _rebuildBreakdown() whenever _period or OrdersStore.revision changes.
+    property var _breakdown: []
+    property real _periodTotal: 0
+    property string _periodLabel: ""
+    property string _periodCompare: ""
+
+    property int _ordersWatcher: OrdersStore.revision
+    on_OrdersWatcherChanged: _rebuildBreakdown()
+    on_PeriodChanged: _rebuildBreakdown()
+    Component.onCompleted: _rebuildBreakdown()
+
+    Rectangle { anchors.fill: parent; color: Constants.appBg }
+
+    GlassHeader {
+        id: header
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        title: "Sales"
+        subtitle: "Revenue & performance"
+
+        actions: [
+            IconActionButton {
+                variant: "glass"
+                text: "⤴"
+                onClicked: root.exportRequested()
             }
+        ]
+    }
+
+    // Empty state — clean dedicated screen when nothing's been sold yet.
+    Item {
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        visible: SalesStore.totalOrders <= 0
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: dp(Constants.space3)
+            Text { text: "📊"; font.pixelSize: sp(56); Layout.alignment: Qt.AlignHCenter }
             Text {
                 text: "No sales data yet"
-                font.pixelSize: 20; font.bold: true; color: "#111827"
-                anchors.horizontalCenter: parent.horizontalCenter
+                font.pixelSize: sp(Constants.fsH2)
+                font.bold: true
+                color: Constants.textPrimary
+                Layout.alignment: Qt.AlignHCenter
             }
             Text {
-                text: "Complete orders to see revenue analytics and charts here."
-                font.pixelSize: 14; color: "#6b7280"
-                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Complete orders to see analytics here."
+                font.pixelSize: sp(Constants.fsBodyLg)
+                color: Constants.textSecondary
+                Layout.alignment: Qt.AlignHCenter
             }
         }
     }
 
-    Flickable {
-        anchors.fill: parent
-        visible: SalesStore.totalOrders > 0
-        contentHeight: col.height
+    QQC.ScrollView {
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         clip: true
-        flickableDirection: Flickable.VerticalFlick
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        visible: SalesStore.totalOrders > 0
+        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
-        Column {
-            id: col
+        ColumnLayout {
+            id: stack
             width: root.width
-            spacing: 16
+            spacing: dp(Constants.space4)
 
-            // ── Title + Download ──
-            RowLayout {
-                width: col.width; spacing: 8
-                Column { spacing: 4; Layout.fillWidth: true
-                    Label { text: "Sales Analytics"; color: "#111827"; font.bold: true; font.pixelSize: 18 }
-                    Label { text: "Track revenue and sales performance"; color: "#6b7280"; font.pixelSize: 12 }
-                }
-                Button {
-                    id: exportBtn; text: "📤  Export Report"
-                    onClicked: root.exportRequested()
-                    background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
-                    contentItem: Text { text: exportBtn.text; color: "#374151"; font.bold: true; font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                }
+            SegmentedPill {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                Layout.topMargin: dp(Constants.space3)
+                model: ["Day", "Week", "Month", "Year"]
+                selected: root._period
+                onSegmentSelected: function(idx, label) { root._period = idx }
             }
 
-            // ── KPI Cards ──
-            Row {
-                width: col.width; spacing: 12
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 120; radius: 12
-                    border.color: "#f97316"; border.width: 2; color: "#ffffff"
-                    Column { x: 16; y: 14; spacing: 4; width: parent.width - 32
-                        Row { width: parent.width; spacing: 0
-                            Label { text: "Total Revenue"; font.pixelSize: 13; font.bold: true; color: "#374151"; Layout.fillWidth: true }
-                            Item { width: parent.width - 100; height: 1 }
-                            Label { text: "$"; font.pixelSize: 16; color: "#f97316" }
-                        }
-                        Item { width: 1; height: 4 }
-                        Label { text: SalesStore.formatCurrency(SalesStore.totalRevenue); font.pixelSize: 20; font.bold: true; color: "#f97316" }
-                        Label { text: "↗ 7.8% from last month"; font.pixelSize: 11; color: "#6b7280" }
-                    }
-                }
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 120; radius: 12
-                    border.color: "#22c55e"; border.width: 2; color: "#ffffff"
-                    Column { x: 16; y: 14; spacing: 4; width: parent.width - 32
-                        Row { width: parent.width; spacing: 0
-                            Label { text: "Total Orders"; font.pixelSize: 13; font.bold: true; color: "#374151" }
-                            Item { width: parent.width - 100; height: 1 }
-                            Label { text: "☑"; font.pixelSize: 16; color: "#22c55e" }
-                        }
-                        Item { width: 1; height: 4 }
-                        Label { text: SalesStore.formatNumber(SalesStore.totalOrders); font.pixelSize: 20; font.bold: true; color: "#22c55e" }
-                        Label { text: "+12% from last month"; font.pixelSize: 11; color: "#6b7280" }
-                    }
-                }
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 120; radius: 12
-                    border.color: "#06b6d4"; border.width: 2; color: "#f0fdfa"
-                    Column { x: 16; y: 14; spacing: 4; width: parent.width - 32
-                        Row { width: parent.width; spacing: 0
-                            Label { text: "Average Order"; font.pixelSize: 13; font.bold: true; color: "#374151" }
-                            Item { width: parent.width - 110; height: 1 }
-                            Label { text: "☰"; font.pixelSize: 16; color: "#06b6d4" }
-                        }
-                        Item { width: 1; height: 4 }
-                        Label { text: SalesStore.formatCurrency(SalesStore.averageOrder); font.pixelSize: 20; font.bold: true; color: "#06b6d4" }
-                        Label { text: "Per transaction"; font.pixelSize: 11; color: "#6b7280" }
-                    }
-                }
-                Rectangle {
-                    width: (col.width - 36) / 4; height: 120; radius: 12
-                    border.color: "#f59e0b"; border.width: 2; color: "#fffbeb"
-                    Column { x: 16; y: 14; spacing: 4; width: parent.width - 32
-                        Row { width: parent.width; spacing: 0
-                            Label { text: "Active Customers"; font.pixelSize: 13; font.bold: true; color: "#374151" }
-                            Item { width: parent.width - 130; height: 1 }
-                            Label { text: "👥"; font.pixelSize: 16; color: "#f59e0b" }
-                        }
-                        Item { width: 1; height: 4 }
-                        Label { text: SalesStore.formatNumber(SalesStore.activeCustomers); font.pixelSize: 20; font.bold: true; color: "#f59e0b" }
-                        Label { text: "+8% from last month"; font.pixelSize: 11; color: "#6b7280" }
-                    }
-                }
-            }
-
-            // ── Charts Row ──
-            Row {
-                width: col.width; spacing: 16
-
-                // Revenue Overview (line chart)
-                Rectangle {
-                    width: (col.width - 16) / 2; height: 340; radius: 12
-                    color: "#ffffff"; border.color: "#e5e7eb"
-                    Column {
-                        x: 16; y: 16; width: parent.width - 32; spacing: 8
-                        Label { text: "Revenue Overview"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                        Label { text: "Monthly revenue performance"; font.pixelSize: 11; color: "#6b7280" }
-                        Item { width: 1; height: 8 }
-                        // Chart area
-                        Item {
-                            id: revenueChart
-                            width: parent.width; height: 220
-                            property var _data: SalesStore.revenueData
-                            property real maxVal: {
-                                var d = _data; var m = 0;
-                                for (var i = 0; i < d.length; ++i)
-                                    if (d[i].value > m) m = d[i].value;
-                                return m > 0 ? m : 1;
-                            }
-                            // Grid lines
-                            Repeater {
-                                model: 5
-                                Rectangle {
-                                    x: 50; y: index * (revenueChart.height - 30) / 4
-                                    width: revenueChart.width - 60; height: 1; color: "#f3f4f6"
-                                }
-                            }
-                            // Y-axis labels
-                            Repeater {
-                                model: 5
-                                Text {
-                                    x: 0; y: index * (revenueChart.height - 30) / 4 - 6
-                                    text: String(Math.round(revenueChart.maxVal * (1 - index / 4) / 1000)) + "k"
-                                    font.pixelSize: 9; color: "#9ca3af"
-                                }
-                            }
-                            // Line + dots
-                            Canvas {
-                                id: revenueCanvas
-                                anchors.fill: parent
-                                property var _chartData: SalesStore.revenueData
-                                on_ChartDataChanged: requestPaint()
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.clearRect(0, 0, width, height);
-                                    var data = SalesStore.revenueData;
-                                    var maxV = SalesStore.maxRevenueValue();
-                                    var chartW = width - 70;
-                                    var chartH = height - 30;
-                                    var startX = 55;
-                                    var pointCount = data.length > 1 ? data.length - 1 : 1;
-                                    ctx.strokeStyle = "#3b82f6";
-                                    ctx.lineWidth = 2;
-                                    ctx.beginPath();
-                                    for (var i = 0; i < data.length; ++i) {
-                                        var px = startX + i * chartW / pointCount;
-                                        var py = chartH - (data[i].value / maxV) * chartH;
-                                        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-                                    }
-                                    ctx.stroke();
-                                    // dots
-                                    ctx.fillStyle = "#3b82f6";
-                                    for (var j = 0; j < data.length; ++j) {
-                                        var dx = startX + j * chartW / pointCount;
-                                        var dy = chartH - (data[j].value / maxV) * chartH;
-                                        ctx.beginPath(); ctx.arc(dx, dy, 4, 0, 2 * Math.PI); ctx.fill();
-                                    }
-                                }
-                            }
-                            // X-axis labels
-                            Row {
-                                x: 50; y: revenueChart.height - 20
-                                width: revenueChart.width - 60; spacing: 0
-                                Repeater {
-                                    model: SalesStore.revenueData
-                                    Text {
-                                        width: (revenueChart.width - 60) / Math.max(1, SalesStore.revenueData.length)
-                                        text: modelData.month; font.pixelSize: 10; color: "#9ca3af"
-                                        horizontalAlignment: Text.AlignHCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Orders Overview (bar chart)
-                Rectangle {
-                    width: (col.width - 16) / 2; height: 340; radius: 12
-                    color: "#ffffff"; border.color: "#e5e7eb"
-                    Column {
-                        x: 16; y: 16; width: parent.width - 32; spacing: 8
-                        Label { text: "Orders Overview"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                        Label { text: "Monthly order volume"; font.pixelSize: 11; color: "#6b7280" }
-                        Item { width: 1; height: 8 }
-                        Item {
-                            id: ordersChart
-                            width: parent.width; height: 220
-                            property var _data: SalesStore.ordersData
-                            property real maxVal: {
-                                var d = _data; var m = 0;
-                                for (var i = 0; i < d.length; ++i)
-                                    if (d[i].value > m) m = d[i].value;
-                                return m > 0 ? m : 1;
-                            }
-                            // Grid lines
-                            Repeater {
-                                model: 5
-                                Rectangle {
-                                    x: 40; y: index * (ordersChart.height - 30) / 4
-                                    width: ordersChart.width - 50; height: 1; color: "#f3f4f6"
-                                }
-                            }
-                            // Y-axis labels
-                            Repeater {
-                                model: 5
-                                Text {
-                                    x: 0; y: index * (ordersChart.height - 30) / 4 - 6
-                                    text: String(Math.round(ordersChart.maxVal * (1 - index / 4)))
-                                    font.pixelSize: 9; color: "#9ca3af"
-                                }
-                            }
-                            // Bars
-                            Row {
-                                x: 45; y: 0; width: ordersChart.width - 55; height: ordersChart.height - 30
-                                spacing: 4
-                                Repeater {
-                                    model: SalesStore.ordersData
-                                    Item {
-                                        width: (ordersChart.width - 55 - (Math.max(1, SalesStore.ordersData.length) - 1) * 4) / Math.max(1, SalesStore.ordersData.length)
-                                        height: parent.height
-                                        Rectangle {
-                                            width: parent.width; radius: 3
-                                            height: (modelData.value / ordersChart.maxVal) * parent.height
-                                            y: parent.height - height
-                                            gradient: Gradient {
-                                                GradientStop { position: 0; color: "#60a5fa" }
-                                                GradientStop { position: 1; color: "#3b82f6" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // X-axis labels
-                            Row {
-                                x: 45; y: ordersChart.height - 20
-                                width: ordersChart.width - 55; spacing: 0
-                                Repeater {
-                                    model: SalesStore.ordersData
-                                    Text {
-                                        width: (ordersChart.width - 55) / Math.max(1, SalesStore.ordersData.length)
-                                        text: modelData.month; font.pixelSize: 10; color: "#9ca3af"
-                                        horizontalAlignment: Text.AlignHCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Top Selling Products ──
+            // Hero gradient card with area chart
             Rectangle {
-                width: col.width; height: topCol.height + 32; radius: 12
-                color: "#ffffff"; border.color: "#e5e7eb"
-                Column {
-                    id: topCol; x: 16; y: 16; width: parent.width - 32; spacing: 12
-                    Label { text: "Top Selling Products"; font.pixelSize: 14; font.bold: true; color: "#111827" }
-                    // Header
-                    Row {
-                        width: topCol.width; height: 28; spacing: 0
-                        property var ws: [0.30, 0.20, 0.25, 0.25]
-                        property var labels: ["Product", "Units Sold", "Revenue", "Share"]
-                        Repeater {
-                            model: parent.labels
-                            Rectangle {
-                                width: topCol.width * parent.ws[index]; height: 28; color: "transparent"
-                                Text { text: modelData; color: "#6b7280"; font.pixelSize: 12; font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                Layout.preferredHeight: dp(200)
+                radius: dp(Constants.radiusLg)
+                clip: true
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Constants.brand1 }
+                    GradientStop { position: 0.55; color: Constants.brand2 }
+                    GradientStop { position: 1.0; color: Constants.brand3 }
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: parent.radius
+                    gradient: Gradient {
+                        orientation: Gradient.Vertical
+                        GradientStop { position: 0.0; color: Qt.rgba(1,1,1,0.30) }
+                        GradientStop { position: 0.55; color: Qt.rgba(1,1,1,0) }
+                        GradientStop { position: 1.0; color: Qt.rgba(1,1,1,0) }
+                    }
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: dp(Constants.space4)
+                    spacing: dp(4)
+
+                    Text {
+                        text: root._periodLabel
+                        color: Qt.rgba(1,1,1,0.85)
+                        font.pixelSize: sp(Constants.fsSmall)
+                    }
+
+                    Text {
+                        text: SalesStore.formatCurrency(root._periodTotal)
+                        color: Constants.textOnBrand
+                        font.pixelSize: sp(Constants.fsDisplay)
+                        font.bold: true
+                        font.letterSpacing: -0.5
+                        Layout.topMargin: dp(2)
+                    }
+
+                    Text {
+                        text: root._periodCompare
+                        color: Qt.rgba(1,1,1,0.92)
+                        font.pixelSize: sp(Constants.fsSmall)
+                    }
+
+                    Item { Layout.fillHeight: true }
+
+                    // Mini sparkline area chart drawn on Canvas — driven by _breakdown.
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: dp(70)
+
+                        // Loosened: any breakdown with at least 2 datapoints can
+                        // render — even if some are zero, the line is informative.
+                        // Previously hid for any single-nonzero history, which
+                        // looked like a missing chart in early use.
+                        readonly property bool _hasEnoughData: (root._breakdown || []).length >= 2
+
+                        // Friendly placeholder when there isn't enough data to chart.
+                        Text {
+                            anchors.centerIn: parent
+                            visible: !parent._hasEnoughData
+                            text: "Not enough data yet"
+                            color: Qt.rgba(1, 1, 1, 0.75)
+                            font.pixelSize: sp(Constants.fsCaption)
+                        }
+
+                        Canvas {
+                            id: heroChart
+                            anchors.fill: parent
+                            visible: parent._hasEnoughData
+                            property var _data: root._breakdown
+                            on_DataChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                var data = root._breakdown || []
+                                if (data.length < 2) return
+                                var maxV = root._maxBreakdown()
+                                if (maxV <= 0) return
+                                var stepX = width / (data.length - 1)
+
+                            // Filled area
+                            ctx.beginPath()
+                            ctx.moveTo(0, height)
+                            for (var i = 0; i < data.length; ++i) {
+                                var x = i * stepX
+                                var y = height - (data[i].value / maxV) * (height - 6)
+                                ctx.lineTo(x, y)
+                            }
+                            ctx.lineTo(width, height)
+                            ctx.closePath()
+                            var grad = ctx.createLinearGradient(0, 0, 0, height)
+                            grad.addColorStop(0, "rgba(255,255,255,0.55)")
+                            grad.addColorStop(1, "rgba(255,255,255,0.00)")
+                            ctx.fillStyle = grad
+                            ctx.fill()
+
+                            // Line
+                            ctx.beginPath()
+                            for (var j = 0; j < data.length; ++j) {
+                                var px = j * stepX
+                                var py = height - (data[j].value / maxV) * (height - 6)
+                                if (j === 0) ctx.moveTo(px, py)
+                                else ctx.lineTo(px, py)
+                            }
+                            ctx.strokeStyle = "rgba(255,255,255,0.95)"
+                            ctx.lineWidth = 2.5
+                            ctx.lineCap = "round"
+                            ctx.stroke()
                             }
                         }
                     }
-                    Rectangle { width: topCol.width; height: 1; color: "#e5e7eb" }
-                    Repeater {
-                        model: SalesStore.topProducts
-                        Rectangle {
-                            width: topCol.width; height: 40; color: index % 2 === 0 ? "#ffffff" : "#f9fafb"
-                            Row {
-                                anchors.verticalCenter: parent.verticalCenter; width: parent.width; spacing: 0
-                                property var ws: [0.30, 0.20, 0.25, 0.25]
-                                Item { width: parent.ws[0] * topCol.width; height: 32
-                                    Text { text: modelData.name; color: "#111827"; font.pixelSize: 12; font.bold: true
-                                        anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
-                                }
-                                Item { width: parent.ws[1] * topCol.width; height: 32
-                                    Text { text: String(modelData.sold); color: "#374151"; font.pixelSize: 12
-                                        anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
-                                }
-                                Item { width: parent.ws[2] * topCol.width; height: 32
-                                    Text { text: SalesStore.formatCurrency(modelData.revenue); color: "#374151"; font.pixelSize: 12
-                                        anchors.verticalCenter: parent.verticalCenter; leftPadding: 8 }
-                                }
-                                Item { width: parent.ws[3] * topCol.width; height: 32
+                }
+            }
+
+            // Breakdown bars
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                spacing: dp(Constants.space2)
+
+                Text {
+                    text: "Breakdown"
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(Constants.fsBodyLg)
+                    font.bold: true
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: dp(200)
+                    radius: dp(Constants.radius)
+                    color: Constants.cardBg
+                    border.color: Constants.borderColor
+                    border.width: 1
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: dp(Constants.space3)
+                        spacing: dp(6)
+
+                        Repeater {
+                            // Period-aware breakdown: hourly (Day) / daily (Week) /
+                            // weekly (Month) / monthly (Year). Recomputed by
+                            // _rebuildBreakdown() whenever _period changes.
+                            model: root._breakdown
+                            delegate: ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                spacing: dp(4)
+
+                                Item {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+
                                     Rectangle {
-                                        anchors.verticalCenter: parent.verticalCenter; x: 8
-                                        width: parent.width - 20; height: 8; radius: 4; color: "#e5e7eb"
-                                        Rectangle {
-                                            width: parent.width * (modelData.revenue / Math.max(1, SalesStore.totalRevenue))
-                                            height: 8; radius: 4; color: "#3b82f6"
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        radius: dp(Constants.radiusSm)
+                                        height: Math.max(dp(6), parent.height *
+                                                Math.min(1, modelData.value /
+                                                    Math.max(1, root._maxBreakdown())))
+                                        gradient: Gradient {
+                                            orientation: Gradient.Vertical
+                                            GradientStop { position: 0.0; color: Constants.brand2 }
+                                            GradientStop { position: 1.0; color: Constants.brand1 }
                                         }
+                                        Behavior on height { NumberAnimation { duration: Constants.durMed } }
                                     }
+                                }
+
+                                Text {
+                                    text: modelData.label
+                                    color: Constants.textSecondary
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    Layout.alignment: Qt.AlignHCenter
+                                    elide: Text.ElideRight
                                 }
                             }
                         }
                     }
                 }
             }
+
+            // Top items
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                spacing: dp(Constants.space2)
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "Top items"
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBodyLg)
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Repeater {
+                    model: SalesStore.topProducts
+                    delegate: ListCard {
+                        Layout.fillWidth: true
+                        title: modelData.name
+                        subtitle: modelData.sold + " sold"
+
+                        leading: AvatarBadge {
+                            label: (modelData.name || "?").charAt(0).toUpperCase()
+                            palette: index % 4 === 0 ? Constants.grad1
+                                   : index % 4 === 1 ? Constants.grad2
+                                   : index % 4 === 2 ? Constants.grad3
+                                   :                   Constants.grad4
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                            text: SalesStore.formatCurrency(modelData.revenue)
+                            color: Constants.textPrimary
+                            font.pixelSize: sp(Constants.fsBody)
+                            font.bold: true
+                        }
+                    }
+                }
+            }
+
+            Item { Layout.preferredHeight: dp(Constants.tabbarClearance); Layout.fillWidth: true }
         }
+    }
+
+    // ─── Period-aware aggregation ───────────────────────────────────────────
+    // Buckets completed orders into N slots based on _period:
+    //   Day:   24 hourly slots (0–23h of today)
+    //   Week:  7 daily slots (Mon..Sun of current week)
+    //   Month: 4 weekly slots (W1..W4 of current month)
+    //   Year:  12 monthly slots (Jan..Dec of current year)
+    // Sets _breakdown, _periodTotal, _periodLabel, _periodCompare.
+
+    function _rebuildBreakdown() {
+        var orders = OrdersStore.orders || []
+        var now = new Date()
+        var bins = []
+        var labels = []
+
+        if (_period === 0) { // Day — 24 hourly bins
+            for (var i = 0; i < 24; ++i) {
+                bins.push(0)
+                labels.push((i % 6 === 0) ? (i + "h") : "")
+            }
+            for (var k = 0; k < orders.length; ++k) {
+                var o = orders[k]
+                if (o.status !== "completed") continue
+                var d = new Date(o.date)
+                if (isNaN(d.getTime())) continue
+                if (d.getFullYear() === now.getFullYear()
+                    && d.getMonth() === now.getMonth()
+                    && d.getDate() === now.getDate()) {
+                    bins[d.getHours()] += (o.total || 0)
+                }
+            }
+            _periodLabel = "Revenue today"
+            _periodCompare = "▲ from yesterday"
+        } else if (_period === 1) { // Week — 7 daily bins (Mon–Sun)
+            var dayLabels = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+            for (var w = 0; w < 7; ++w) { bins.push(0); labels.push(dayLabels[w]) }
+            // Compute Monday of current week
+            var monday = new Date(now)
+            var dow = (monday.getDay() + 6) % 7  // 0=Mon..6=Sun
+            monday.setDate(monday.getDate() - dow)
+            monday.setHours(0,0,0,0)
+            var nextMonday = new Date(monday)
+            nextMonday.setDate(monday.getDate() + 7)
+            for (var k2 = 0; k2 < orders.length; ++k2) {
+                var o2 = orders[k2]
+                if (o2.status !== "completed") continue
+                var d2 = new Date(o2.date)
+                if (isNaN(d2.getTime())) continue
+                if (d2 >= monday && d2 < nextMonday) {
+                    var idx = (d2.getDay() + 6) % 7
+                    bins[idx] += (o2.total || 0)
+                }
+            }
+            _periodLabel = "Revenue this week"
+            _periodCompare = "▲ from last week"
+        } else if (_period === 2) { // Month — 4 weekly bins
+            for (var m = 0; m < 4; ++m) { bins.push(0); labels.push("W" + (m+1)) }
+            var startMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+            var endMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+            for (var k3 = 0; k3 < orders.length; ++k3) {
+                var o3 = orders[k3]
+                if (o3.status !== "completed") continue
+                var d3 = new Date(o3.date)
+                if (isNaN(d3.getTime())) continue
+                if (d3 >= startMonth && d3 < endMonth) {
+                    var weekIdx = Math.min(3, Math.floor((d3.getDate() - 1) / 7))
+                    bins[weekIdx] += (o3.total || 0)
+                }
+            }
+            _periodLabel = "Revenue this month"
+            _periodCompare = "▲ from last month"
+        } else { // Year — 12 monthly bins
+            var monthLabels = ["J","F","M","A","M","J","J","A","S","O","N","D"]
+            for (var y = 0; y < 12; ++y) { bins.push(0); labels.push(monthLabels[y]) }
+            for (var k4 = 0; k4 < orders.length; ++k4) {
+                var o4 = orders[k4]
+                if (o4.status !== "completed") continue
+                var d4 = new Date(o4.date)
+                if (isNaN(d4.getTime())) continue
+                if (d4.getFullYear() === now.getFullYear())
+                    bins[d4.getMonth()] += (o4.total || 0)
+            }
+            _periodLabel = "Revenue this year"
+            _periodCompare = "▲ vs prior year"
+        }
+
+        var arr = []
+        var total = 0
+        for (var b = 0; b < bins.length; ++b) {
+            arr.push({ label: labels[b], value: bins[b] })
+            total += bins[b]
+        }
+        _breakdown = arr
+        _periodTotal = total
+    }
+
+    function _maxBreakdown() {
+        var max = 0
+        for (var i = 0; i < _breakdown.length; ++i)
+            if (_breakdown[i].value > max) max = _breakdown[i].value
+        return max
     }
 }

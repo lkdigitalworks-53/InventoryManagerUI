@@ -1,26 +1,29 @@
 import QtQuick
 import Felgo
 
+// Theme is intentionally a thin pass-through to Constants.qml so we have ONE
+// source of truth. Existing call sites (e.g. theme.headerGradientStart) keep
+// working — they now resolve through the brand tokens.
 Item {
     id: theme
 
-    // Header gradient colors
-    property color headerGradientStart: "#3158ff"
-    property color headerGradientEnd: "#6b41ff"
+    // ── Header / hero gradient ──
+    property color headerGradientStart: Constants.brand1
+    property color headerGradientEnd:   Constants.brand2
 
-    // Navigation tab colors
-    property color ordersTabColor: "#ea580c"
-    property color inventoryTabColor: "#16a34a"
-    property color salesTabColor: "#2563eb"
-    property color staffTabColor: "#2563eb"
+    // ── Per-tab accents (legacy — not used by the new tabbar) ──
+    property color ordersTabColor:    Constants.brand3
+    property color inventoryTabColor: Constants.brand4
+    property color salesTabColor:     Constants.brand1
+    property color staffTabColor:     Constants.brand2
 
-    // Text colors
-    property color darkTextColor: "#111827"
-    property color mediumTextColor: "#6b7280"
-    property color lightTextColor: "#ffffff"
+    // ── Text ──
+    property color darkTextColor:   Constants.textPrimary
+    property color mediumTextColor: Constants.textSecondary
+    property color lightTextColor:  Constants.textOnBrand
 
-    // Card styling
-    property color cardBackground: "#ffffff"
-    property color cardBorder: "#e5e7eb"
-    property int cardRadius: 12
+    // ── Cards ──
+    property color cardBackground: Constants.cardBg
+    property color cardBorder:     Constants.borderColor
+    property int   cardRadius:     Constants.radius
 }

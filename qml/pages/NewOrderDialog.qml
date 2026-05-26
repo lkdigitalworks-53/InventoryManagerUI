@@ -1,19 +1,19 @@
-
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
-import "../model"
-import "../helper"
 
-Dialog {
+import "../components"
+import "../helper"
+import "../model"
+
+// Mobile-first New Order sheet — bottom sheet with customer fields and a
+// product picker. Public contract preserved: signal `orderCreated(order)`.
+BottomSheet {
     id: dlg
-    title: "Create New Order"
-    modal: true
-    width: Math.min(520, parent ? parent.width - 24 : 520)
-    height: Math.min(580, parent ? parent.height - 40 : 580)
-    anchors.centerIn: parent
-    padding: 0
-    standardButtons: Dialog.NoButton
+
+    sheetTitle: "New order"
+    primaryAction: "Place order"
+    secondaryAction: "Cancel"
 
     signal orderCreated(var order)
 
@@ -21,207 +21,254 @@ Dialog {
     property var productNames: []
 
     onOpened: {
-        // Rebuild product list from InventoryStore each time dialog opens.
-        // Show SKU + selling price so the user can pick by code or name.
-        var names = [];
+        var names = []
         for (var i = 0; i < InventoryStore.products.length; ++i) {
-            var p = InventoryStore.products[i];
-            var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price;
-            var sku = p.sku ? "[" + p.sku + "] " : "";
-            names.push(sku + p.name + " - " + InventoryStore.formatCurrency(sp) + " (Stock: " + p.stock + ")");
+            var p = InventoryStore.products[i]
+            var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
+            var sku = p.sku ? "[" + p.sku + "] " : ""
+            names.push(sku + p.name + " — " + InventoryStore.formatCurrency(sp) + " · " + p.stock + " left")
         }
-        productNames = names;
-        productCombo.currentIndex = 0;
+        productNames = names
+        productCombo.currentIndex = 0
+        customerField.text = ""
+        emailField.text = ""
+        phoneField.text = ""
+        selectedProducts = []
+        errorLabel.text = ""
     }
 
-    function trySubmit() {
-        var errs = [];
-        if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name");
-        if (selectedProducts.length === 0) errs.push("Add at least one product");
-        // Validate stock availability
-        for (var k = 0; k < selectedProducts.length; ++k) {
-            var sp = selectedProducts[k];
-            var inv = InventoryStore.getById(sp.productId);
-            if (inv && sp.qty > inv.stock) {
-                errs.push(sp.name + ": only " + inv.stock + " in stock, ordered " + sp.qty);
-            }
-        }
-        if (errs.length > 0) { errorLabel.text = errs.join(" · "); errorLabel.visible = true; return; }
-        errorLabel.visible = false;
+    onPrimaryClicked: trySubmit()
 
-        var totalItems = 0; var totalAmount = 0;
-        var prods = [];
-        for (var i = 0; i < selectedProducts.length; ++i) {
-            totalItems += selectedProducts[i].qty;
-            totalAmount += selectedProducts[i].qty * selectedProducts[i].price;
-            prods.push({ productId: selectedProducts[i].productId, name: selectedProducts[i].name,
-                         qty: selectedProducts[i].qty, price: selectedProducts[i].price });
+    // Sheet body — title row + form
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
+
+        AuthTextField {
+            id: customerField
+            Layout.fillWidth: true
+            label: "Customer"
+            placeholderText: "Search or add customer"
         }
 
-        orderCreated({ customer: customerField.text, items: totalItems, total: totalAmount, status: "pending", date: new Date(),
-            email: emailField.text, phone: phoneField.text, products: prods });
-        customerField.text = ""; emailField.text = ""; phoneField.text = "";
-        selectedProducts = []; productCombo.currentIndex = 0;
-        dlg.close();
-    }
-
-    function addSelectedProduct() {
-        var idx = productCombo.currentIndex;
-        if (idx < 0 || idx >= InventoryStore.products.length) return;
-        var p = InventoryStore.products[idx];
-        if (p.stock <= 0) return; // out of stock
-        var arr = [];
-        for (var i = 0; i < selectedProducts.length; ++i)
-            arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty, price: selectedProducts[i].price, productId: selectedProducts[i].productId });
-        // check duplicate — cap at available stock
-        for (var j = 0; j < arr.length; ++j) {
-            if (arr[j].productId === p.productId) {
-                if (arr[j].qty >= p.stock) return; // already at max
-                arr[j].qty++;
-                selectedProducts = arr;
-                return;
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: emailField
+                Layout.fillWidth: true
+                label: "Email (optional)"
+                placeholderText: "customer@example.com"
+                inputMethodHints: Qt.ImhEmailCharactersOnly
+            }
+            AuthTextField {
+                id: phoneField
+                Layout.fillWidth: true
+                label: "Phone (optional)"
+                placeholderText: "+91 XXXXX"
             }
         }
-        var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price;
-        arr.push({ name: p.name, qty: 1, price: sp, productId: p.productId });
-        selectedProducts = arr;
-    }
 
-    function removeProduct(idx) {
-        var arr = [];
-        for (var i = 0; i < selectedProducts.length; ++i)
-            if (i !== idx) arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty, price: selectedProducts[i].price, productId: selectedProducts[i].productId });
-        selectedProducts = arr;
-    }
+        // Product picker
+        Text {
+            text: "Items"
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
 
-    contentItem: Flickable {
-        clip: true
-        contentHeight: formCol.height + 32
-        flickableDirection: Flickable.VerticalFlick
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
 
-        Column {
-            id: formCol
-            x: 24; y: 16; width: parent.width - 48; spacing: 8
-
-            Label { text: "Create New Order"; font.pixelSize: 18; font.bold: true; color: "#111827" }
-            Label { text: "Add customer details and select products to create a new order"; font.pixelSize: 12; color: "#6b7280" }
-            Item { width: 1; height: 8 }
-
-            // Section: Customer Information
-            Label { text: "Customer Information"; font.pixelSize: 14; font.bold: true; color: "#b45309" }
-            Rectangle { width: formCol.width; height: 2; color: "#fdba74" }
-            Item { width: 1; height: 4 }
-
-            Row { spacing: 12; width: formCol.width
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Customer Name *"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    TextField { id: customerField; width: parent.width; placeholderText: "Enter customer name"; font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
-                Column { width: (formCol.width - 12) / 2; spacing: 4
-                    Label { text: "Email"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                    TextField { id: emailField; width: parent.width; placeholderText: "customer@example.com"; font.pixelSize: 13
-                        background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
-                }
+            AppComboBox {
+                id: productCombo
+                Layout.fillWidth: true
+                model: dlg.productNames
+                font.pixelSize: sp(Constants.fsBody)
             }
 
-            Column { spacing: 4
-                Label { text: "Phone Number"; font.pixelSize: 12; font.bold: true; color: "#374151" }
-                TextField { id: phoneField; width: (formCol.width - 12) / 2; placeholderText: "+91 XXXXX XXXXX"; font.pixelSize: 13
-                    background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" } }
+            IconActionButton {
+                variant: "default"
+                text: "＋"
+                onClicked: dlg.addSelectedProduct()
             }
+        }
 
-            Item { width: 1; height: 8 }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
 
-            // Section: Add Products
-            Label { text: "Add Products"; font.pixelSize: 14; font.bold: true; color: "#b45309" }
-            Rectangle { width: formCol.width; height: 2; color: "#fdba74" }
-            Item { width: 1; height: 4 }
-
-            Row { spacing: 8; width: formCol.width
-                ComboBox {
-                    id: productCombo; width: parent.width - 52
-                    model: dlg.productNames
-                    font.pixelSize: 13
-                    background: Rectangle { radius: 8; color: "#f3f4f6"; border.color: "#d1d5db" }
-                }
-                Button {
-                    width: 44; height: 36
-                    onClicked: dlg.addSelectedProduct()
-                    background: Rectangle { radius: 22; color: "#f97316" }
-                    contentItem: Text { text: "+"; font.pixelSize: 20; font.bold: true; color: "white"
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                }
-            }
-
-            // Selected products list
             Repeater {
                 model: dlg.selectedProducts
-                Rectangle {
-                    width: formCol.width; height: 50; radius: 6; color: "#fff7ed"; border.color: "#fdba74"
-                    Row {
-                        x: 8; anchors.verticalCenter: parent.verticalCenter; spacing: 8
-                        width: parent.width - 16
+                delegate: ListCard {
+                    Layout.fillWidth: true
+                    title: modelData.name
+                    subtitle: InventoryStore.formatCurrency(modelData.price) + " · qty " + modelData.qty
 
-                        Column {
-                            width: parent.width - 220
-                            spacing: 2
-                            Label {
-                                text: modelData.name
-                                font.pixelSize: 12; font.bold: true; color: "#374151"
-                                elide: Text.ElideRight; width: parent.width
-                            }
-                            Label {
-                                text: {
-                                    var inv = InventoryStore.getById(modelData.productId)
-                                    return inv && inv.sku ? "SKU " + inv.sku : ""
+                    leading: AvatarBadge {
+                        label: (modelData.name || "?").charAt(0).toUpperCase()
+                        palette: Constants.grad2
+                    }
+
+                    RowLayout {
+                        spacing: dp(4)
+                        Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+
+                        QQC.AbstractButton {
+                            implicitWidth: dp(28); implicitHeight: dp(28)
+                            padding: 0
+                            background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
+                            contentItem: Item {
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "−"
+                                    font.pixelSize: sp(16)
+                                    font.bold: true
+                                    color: Constants.textPrimary
                                 }
-                                visible: text.length > 0
-                                font.pixelSize: 10; color: "#9ca3af"
                             }
+                            onClicked: dlg.changeQty(index, -1)
                         }
-                        Label { text: "x" + modelData.qty + "/" + (InventoryStore.getById(modelData.productId) ? InventoryStore.getById(modelData.productId).stock : "?"); font.pixelSize: 12; font.bold: true; color: modelData.qty > (InventoryStore.getById(modelData.productId) ? InventoryStore.getById(modelData.productId).stock : 999) ? "#ef4444" : "#b45309"; anchors.verticalCenter: parent.verticalCenter }
-                        Label { text: InventoryStore.formatCurrency(modelData.qty * modelData.price); font.pixelSize: 12; color: "#374151"; anchors.verticalCenter: parent.verticalCenter }
                         Text {
-                            text: "✕"; font.pixelSize: 14; color: "#ef4444"
-                            anchors.verticalCenter: parent.verticalCenter
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: dlg.removeProduct(index) }
+                            text: String(modelData.qty)
+                            color: Constants.textPrimary
+                            font.pixelSize: sp(Constants.fsBody)
+                            font.bold: true
+                            Layout.preferredWidth: dp(22)
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                        QQC.AbstractButton {
+                            implicitWidth: dp(28); implicitHeight: dp(28)
+                            padding: 0
+                            background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
+                            contentItem: Item {
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "+"
+                                    font.pixelSize: sp(16)
+                                    font.bold: true
+                                    color: Constants.textPrimary
+                                }
+                            }
+                            onClicked: dlg.changeQty(index, +1)
                         }
                     }
                 }
             }
+        }
 
-            Label { id: errorLabel; visible: false; color: "#ef4444"; text: ""; wrapMode: Text.Wrap; width: formCol.width }
-            Item { width: 1; height: 8 }
+        // Totals
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: totalsCol.implicitHeight + dp(20)
+            Layout.topMargin: dp(Constants.space2)
+            radius: dp(Constants.radius)
+            color: Constants.subtleBg
+            visible: dlg.selectedProducts.length > 0
+
+            ColumnLayout {
+                id: totalsCol
+                anchors.fill: parent
+                anchors.margins: dp(Constants.space3)
+                spacing: dp(4)
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "Subtotal"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsBody); Layout.fillWidth: true }
+                    Text { text: InventoryStore.formatCurrency(dlg._subtotal()); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBody) }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "Total"; color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true; Layout.fillWidth: true }
+                    Text { text: InventoryStore.formatCurrency(dlg._subtotal()); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                }
+            }
+        }
+
+        Text {
+            id: errorLabel
+            Layout.fillWidth: true
+            visible: text.length > 0
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
+            wrapMode: Text.Wrap
         }
     }
 
-    footer: Item {
-        implicitHeight: 52
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: 2; color: "#fdba74"
-        }
-        Row {
-            anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
-            spacing: 12
-            Button {
-                height: 36; padding: 12
-                background: Rectangle { radius: 8; color: "#ffffff"; border.color: "#d1d5db" }
-                contentItem: Text { text: "Cancel"; font.pixelSize: 13; color: "#374151"
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                onClicked: dlg.close()
-            }
-            Button {
-                height: 36; padding: 12
-                background: Rectangle { radius: 8; color: "#f97316" }
-                contentItem: Text { text: "Create Order"; font.pixelSize: 13; font.bold: true; color: "#ffffff"
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                onClicked: dlg.trySubmit()
+    // ── Helpers ──
+    function _subtotal() {
+        var s = 0
+        for (var i = 0; i < selectedProducts.length; ++i)
+            s += selectedProducts[i].qty * selectedProducts[i].price
+        return s
+    }
+
+    function changeQty(idx, delta) {
+        var arr = []
+        for (var i = 0; i < selectedProducts.length; ++i) {
+            var sp = selectedProducts[i]
+            if (i === idx) {
+                var inv = InventoryStore.getById(sp.productId)
+                var maxQ = inv ? inv.stock : sp.qty
+                var newQ = Math.max(0, Math.min(maxQ, sp.qty + delta))
+                if (newQ === 0) continue   // remove on hitting 0
+                arr.push({ name: sp.name, qty: newQ, price: sp.price, productId: sp.productId })
+            } else {
+                arr.push({ name: sp.name, qty: sp.qty, price: sp.price, productId: sp.productId })
             }
         }
+        selectedProducts = arr
+    }
+
+    function addSelectedProduct() {
+        var idx = productCombo.currentIndex
+        if (idx < 0 || idx >= InventoryStore.products.length) return
+        var p = InventoryStore.products[idx]
+        if (p.stock <= 0) return
+        var arr = []
+        for (var i = 0; i < selectedProducts.length; ++i)
+            arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty,
+                       price: selectedProducts[i].price, productId: selectedProducts[i].productId })
+        for (var j = 0; j < arr.length; ++j) {
+            if (arr[j].productId === p.productId) {
+                if (arr[j].qty >= p.stock) return
+                arr[j].qty++
+                selectedProducts = arr
+                return
+            }
+        }
+        var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
+        arr.push({ name: p.name, qty: 1, price: sp, productId: p.productId })
+        selectedProducts = arr
+    }
+
+    function trySubmit() {
+        var errs = []
+        if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name")
+        if (selectedProducts.length === 0) errs.push("Add at least one product")
+        for (var k = 0; k < selectedProducts.length; ++k) {
+            var sp = selectedProducts[k]
+            var inv = InventoryStore.getById(sp.productId)
+            if (inv && sp.qty > inv.stock)
+                errs.push(sp.name + ": only " + inv.stock + " in stock")
+        }
+        if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
+        errorLabel.text = ""
+
+        var totalItems = 0; var totalAmount = 0
+        var prods = []
+        for (var i = 0; i < selectedProducts.length; ++i) {
+            totalItems += selectedProducts[i].qty
+            totalAmount += selectedProducts[i].qty * selectedProducts[i].price
+            prods.push({ productId: selectedProducts[i].productId, name: selectedProducts[i].name,
+                         qty: selectedProducts[i].qty, price: selectedProducts[i].price })
+        }
+
+        orderCreated({ customer: customerField.text, items: totalItems, total: totalAmount,
+                       status: "pending", date: new Date(),
+                       email: emailField.text, phone: phoneField.text, products: prods })
+        dlg.close()
     }
 }

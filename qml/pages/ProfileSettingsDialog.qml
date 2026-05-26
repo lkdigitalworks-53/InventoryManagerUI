@@ -1,29 +1,27 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
+
+import "../components"
+import "../helper"
 import "../model"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ProfileSettingsDialog.qml
-//
-// Displays and allows editing of the current user's profile details.
-// Calls AuthService.updateUserProfile() on save.
-// ─────────────────────────────────────────────────────────────────────────────
-QQC.Dialog {
+// Profile editor — bottom sheet. Read-only Account section + editable Contact
+// section. Public contract preserved: signal profileSaved(), property bool busy,
+// property string errorMessage.
+BottomSheet {
     id: root
+
+    sheetTitle: "Profile settings"
+    primaryAction: "Save"
+    secondaryAction: "Cancel"
+    busy: AuthService.busy
 
     signal profileSaved()
 
-    modal: true
-    title: "Profile Settings"
-    anchors.centerIn: parent
-    width: 500
-    standardButtons: QQC.Dialog.Save | QQC.Dialog.Cancel
-
-    property bool busy: false
     property string errorMessage: ""
 
-    // Pre-populate fields every time dialog opens
+    // Pre-populate fields every time sheet opens.
     onOpened: {
         displayNameField.text = AuthStore.displayName
         emailDisplay.text     = AuthStore.email
@@ -32,12 +30,11 @@ QQC.Dialog {
         cityField.text        = AuthStore.city
         countryField.text     = AuthStore.country
         postalField.text      = AuthStore.postalCode
-        errorText.text        = ""
+        errorMessage = ""
     }
 
-    onAccepted: {
+    onPrimaryClicked: {
         if (!busy) {
-            busy = true
             AuthService.updateUserProfile(
                 phoneField.text.trim(),
                 addressField.text.trim(),
@@ -51,103 +48,135 @@ QQC.Dialog {
     Connections {
         target: AuthService
         function onProfileUpdated() {
-            busy = false
             root.profileSaved()
-        }
-        function onBusyChanged() {
-            if (!AuthService.busy) busy = false
+            root.close()
         }
     }
 
     ColumnLayout {
-        width: parent.width
-        spacing: 12
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
 
-        // ── Read-only account section ──
+        // ── Read-only Account card ──
         Rectangle {
             Layout.fillWidth: true
-            height: accountCol.height + 20
-            radius: 10
-            color: "#f9fafb"
-            border.color: "#e5e7eb"
+            radius: dp(Constants.radius)
+            color: Constants.subtleBg
+            border.color: Constants.borderColor
+            border.width: 1
+            Layout.preferredHeight: accountCol.implicitHeight + dp(Constants.space4 * 2)
 
-            Column {
+            ColumnLayout {
                 id: accountCol
-                x: 14; y: 10; width: parent.width - 28; spacing: 8
+                anchors.fill: parent
+                anchors.margins: dp(Constants.space4)
+                spacing: dp(Constants.space2)
 
-                QQC.Label { text: "Account"; font.bold: true; font.pixelSize: 13; color: "#374151" }
+                Text {
+                    text: "Account"
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(Constants.fsBodyLg)
+                    font.bold: true
+                }
 
                 RowLayout {
-                    width: parent.width
-                    QQC.Label { text: "Display Name"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-                    QQC.TextField {
+                    Layout.fillWidth: true
+                    Text { text: "Name"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); Layout.preferredWidth: dp(96) }
+                    Text {
                         id: displayNameField
                         Layout.fillWidth: true
-                        placeholderText: "Your name"
-                        readOnly: true       // name set at signup; update via separate flow
-                        opacity: 0.7
+                        text: AuthStore.displayName || "—"
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBody)
+                        elide: Text.ElideRight
                     }
                 }
                 RowLayout {
-                    width: parent.width
-                    QQC.Label { text: "Email"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-                    QQC.Label { id: emailDisplay; color: "#374151"; font.pixelSize: 12; Layout.fillWidth: true }
-                }
-                RowLayout {
-                    width: parent.width
-                    QQC.Label { text: "Role"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-                    Rectangle {
-                        width: roleLabel.implicitWidth + 16; height: 22; radius: 11
-                        color: "#dbeafe"; border.color: "#93c5fd"
-                        QQC.Label { id: roleLabel; text: AuthStore.role; color: "#1d4ed8"; font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
+                    Layout.fillWidth: true
+                    Text { text: "Email"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); Layout.preferredWidth: dp(96) }
+                    Text {
+                        id: emailDisplay
+                        Layout.fillWidth: true
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBody)
+                        elide: Text.ElideRight
                     }
                 }
                 RowLayout {
-                    width: parent.width
-                    QQC.Label { text: "Workspace"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-                    QQC.Label { text: AuthStore.tenantName || "(none)"; color: "#374151"; font.pixelSize: 12; Layout.fillWidth: true }
+                    Layout.fillWidth: true
+                    Text { text: "Role"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); Layout.preferredWidth: dp(96) }
+                    StatusPill {
+                        Layout.alignment: Qt.AlignVCenter
+                        status: "processing"
+                        label: AuthStore.role || "—"
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "Workspace"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); Layout.preferredWidth: dp(96) }
+                    Text {
+                        text: AuthStore.tenantName || "(none)"
+                        Layout.fillWidth: true
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBody)
+                        elide: Text.ElideRight
+                    }
                 }
             }
         }
 
         // ── Editable contact section ──
-        QQC.Label { text: "Contact Details"; font.bold: true; font.pixelSize: 13; color: "#374151" }
-
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Phone"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-            QQC.TextField { id: phoneField; Layout.fillWidth: true; placeholderText: "+1 555 000 0000" }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Address"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-            QQC.TextField { id: addressField; Layout.fillWidth: true; placeholderText: "Street address" }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "City"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-            QQC.TextField { id: cityField; Layout.fillWidth: true; placeholderText: "City" }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Country"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-            QQC.TextField { id: countryField; Layout.fillWidth: true; placeholderText: "Country" }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            QQC.Label { text: "Postal Code"; color: "#6b7280"; font.pixelSize: 12; Layout.preferredWidth: 120 }
-            QQC.TextField { id: postalField; Layout.fillWidth: true; placeholderText: "Postal / ZIP" }
+        Text {
+            text: "Contact details"
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
         }
 
-        QQC.BusyIndicator { running: busy; visible: busy; Layout.alignment: Qt.AlignHCenter }
-
-        QQC.Label {
-            id: errorText
-            visible: text.length > 0
-            color: "#b91c1c"
-            font.pixelSize: 12
+        AuthTextField {
+            id: phoneField
             Layout.fillWidth: true
+            label: "Phone"
+            placeholderText: "+1 555 000 0000"
+        }
+        AuthTextField {
+            id: addressField
+            Layout.fillWidth: true
+            label: "Address"
+            placeholderText: "Street address"
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                id: cityField
+                Layout.fillWidth: true
+                label: "City"
+                placeholderText: "City"
+            }
+            AuthTextField {
+                id: postalField
+                Layout.fillWidth: true
+                label: "Postal"
+                placeholderText: "ZIP"
+            }
+        }
+        AuthTextField {
+            id: countryField
+            Layout.fillWidth: true
+            label: "Country"
+            placeholderText: "Country"
+        }
+
+        Text {
+            visible: root.errorMessage.length > 0
+            text: root.errorMessage
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
             wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
     }
 }

@@ -2,8 +2,19 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
-QQC.Dialog {
+import "../components"
+import "../helper"
+
+// Member management — bottom sheet. Public contract preserved:
+//   signals: roleUpdateRequested, statusUpdateRequested,
+//            removeMemberRequested, refreshRequested
+//   properties: members, busy, errorMessage, searchText, filterRole
+BottomSheet {
     id: root
+
+    sheetTitle: "Team members"
+    primaryAction: ""
+    secondaryAction: "Close"
 
     signal roleUpdateRequested(string uid, string role)
     signal statusUpdateRequested(string uid, string status)
@@ -44,125 +55,148 @@ QQC.Dialog {
         confirmDlg.open()
     }
 
-    modal: true
-    title: "Manage Members"
-    anchors.centerIn: parent
-    width: 760
-    height: 520
-    standardButtons: QQC.Dialog.Close
-
     ColumnLayout {
-        anchors.fill: parent
-        spacing: 10
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
+
+        // Search + role filter row
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+
+            SearchField {
+                Layout.fillWidth: true
+                placeholder: "Search by name, email, or UID"
+                onTextChanged: root.searchText = text
+            }
+            AppComboBox {
+                Layout.preferredWidth: dp(120)
+                model: ["all", "owner", "admin", "manager", "staff"]
+                currentIndex: 0
+                font.pixelSize: sp(Constants.fsBody)
+                onCurrentTextChanged: root.filterRole = currentText
+            }
+        }
 
         RowLayout {
             Layout.fillWidth: true
-            QQC.TextField {
-                Layout.fillWidth: true
-                placeholderText: "Search by name, email, or UID"
-                text: root.searchText
-                onTextChanged: root.searchText = text
-            }
-            QQC.ComboBox {
-                Layout.preferredWidth: 130
-                model: ["all", "owner", "admin", "manager", "staff"]
-                currentIndex: 0
-                onCurrentTextChanged: root.filterRole = currentText
-            }
+            spacing: dp(Constants.space2)
+
             Text {
-                text: "Tenant membership and roles"
-                font.pixelSize: 12
-                color: "#6b7280"
+                text: "Workspace membership and roles"
+                color: Constants.textSecondary
+                font.pixelSize: sp(Constants.fsCaption)
+                Layout.fillWidth: true
             }
-            QQC.Button {
-                text: busy ? "Loading..." : "Refresh"
-                enabled: !busy
-                onClicked: refreshRequested()
+            GhostButton {
+                text: root.busy ? "Loading…" : "Refresh"
+                implicitHeight: dp(36)
+                Layout.preferredWidth: dp(110)
+                enabled: !root.busy
+                onClicked: root.refreshRequested()
             }
         }
 
         Text {
-            visible: errorMessage.length > 0
-            text: errorMessage
-            color: "#b91c1c"
-            font.pixelSize: 12
+            visible: root.errorMessage.length > 0
+            text: root.errorMessage
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
             Layout.fillWidth: true
             wrapMode: Text.Wrap
         }
 
-        Rectangle {
+        // Member cards
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            radius: 10
-            border.color: "#e5e7eb"
-            color: "#ffffff"
+            spacing: dp(Constants.space2)
 
-            Flickable {
-                anchors.fill: parent
-                clip: true
-                contentHeight: membersCol.implicitHeight + 16
+            Repeater {
+                model: root.members
+                delegate: ListCard {
+                    Layout.fillWidth: true
+                    visible: root._matchesFilter(modelData)
+                    title: modelData.displayName || "(No name)"
+                    subtitle: (modelData.email || "") + (modelData.uid ? "  ·  UID: " + modelData.uid : "")
+                    implicitHeight: dp(96)
 
-                Column {
-                    id: membersCol
-                    width: parent.width
-                    spacing: 6
-                    anchors.margins: 8
+                    leading: AvatarBadge {
+                        size: "lg"
+                        label: ((modelData.displayName || modelData.email || "?").charAt(0) || "?").toUpperCase()
+                        palette: index % 4 === 0 ? Constants.grad1
+                               : index % 4 === 1 ? Constants.grad2
+                               : index % 4 === 2 ? Constants.grad3
+                               :                   Constants.grad4
+                    }
 
-                    Repeater {
-                        model: root.members
-                        delegate: Rectangle {
-                            visible: root._matchesFilter(modelData)
-                            width: membersCol.width - 16
-                            x: 8
-                            height: visible ? 78 : 0
-                            radius: 8
-                            color: "#f9fafb"
-                            border.color: "#e5e7eb"
+                    RowLayout {
+                        spacing: dp(Constants.space2)
+                        Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 10
+                        AppComboBox {
+                            id: roleBox
+                            Layout.preferredWidth: dp(96)
+                            Layout.preferredHeight: dp(32)
+                            model: ["owner", "admin", "manager", "staff"]
+                            font.pixelSize: sp(Constants.fsCaption)
+                            currentIndex: {
+                                var r = modelData.role || "staff"
+                                if (r === "owner") return 0
+                                if (r === "admin") return 1
+                                if (r === "manager") return 2
+                                return 3
+                            }
+                            onActivated: root._openConfirm("role", modelData.uid || "", currentText, "")
+                        }
 
-                                Column {
-                                    Layout.preferredWidth: 220
-                                    spacing: 3
-                                    Text { text: modelData.displayName || "(No Name)"; color: "#111827"; font.bold: true; font.pixelSize: 13 }
-                                    Text { text: modelData.email || ""; color: "#6b7280"; font.pixelSize: 11 }
-                                    Text { text: "UID: " + (modelData.uid || ""); color: "#6b7280"; font.pixelSize: 10 }
-                                }
-
-                                QQC.ComboBox {
-                                    id: roleBox
-                                    Layout.preferredWidth: 120
-                                    model: ["owner", "admin", "manager", "staff"]
-                                    currentIndex: {
-                                        var r = modelData.role || "staff"
-                                        if (r === "owner") return 0
-                                        if (r === "admin") return 1
-                                        if (r === "manager") return 2
-                                        return 3
-                                    }
-                                }
-
-                                QQC.Button {
-                                    text: "Set Role"
-                                    enabled: !root.busy
-                                    onClicked: root._openConfirm("role", modelData.uid || "", roleBox.currentText, "")
-                                }
-
-                                QQC.Button {
-                                    text: (modelData.status === "suspended") ? "Activate" : "Suspend"
-                                    enabled: !root.busy
-                                    onClicked: root._openConfirm("status", modelData.uid || "", "", modelData.status === "suspended" ? "active" : "suspended")
-                                }
-
-                                QQC.Button {
-                                    text: "Remove"
-                                    enabled: !root.busy
-                                    onClicked: root._openConfirm("remove", modelData.uid || "", "", "")
+                        // Compact icon-only Suspend/Activate (eye toggle) so the
+                        // row fits inside a phone-width card without clipping.
+                        QQC.AbstractButton {
+                            Layout.preferredWidth: dp(32)
+                            Layout.preferredHeight: dp(32)
+                            enabled: !root.busy
+                            background: Rectangle {
+                                radius: dp(Constants.radiusPill)
+                                color: Constants.subtleBg
+                                border.color: Constants.borderColor
+                                border.width: 1
+                            }
+                            contentItem: Item {
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: (modelData.status === "suspended") ? "✓" : "⏸"
+                                    color: Constants.textSecondary
+                                    font.pixelSize: sp(14)
+                                    font.bold: true
                                 }
                             }
+                            QQC.ToolTip.visible: hovered
+                            QQC.ToolTip.text: (modelData.status === "suspended") ? "Activate" : "Suspend"
+                            onClicked: root._openConfirm("status", modelData.uid || "", "", modelData.status === "suspended" ? "active" : "suspended")
+                        }
+
+                        QQC.AbstractButton {
+                            Layout.preferredWidth: dp(32)
+                            Layout.preferredHeight: dp(32)
+                            enabled: !root.busy
+                            background: Rectangle {
+                                radius: dp(Constants.radiusPill)
+                                color: Qt.rgba(0.93, 0.27, 0.27, 0.10)
+                                border.color: Qt.rgba(0.93, 0.27, 0.27, 0.25)
+                                border.width: 1
+                            }
+                            contentItem: Item {
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: Constants.danger
+                                    font.pixelSize: sp(14)
+                                    font.bold: true
+                                }
+                            }
+                            QQC.ToolTip.visible: hovered
+                            QQC.ToolTip.text: "Remove member"
+                            onClicked: root._openConfirm("remove", modelData.uid || "", "", "")
                         }
                     }
                 }
@@ -170,13 +204,22 @@ QQC.Dialog {
         }
     }
 
+    // Inner confirm dialog — kept centred (legacy QQC.Dialog) since it overlays
+    // on top of the BottomSheet which is already at the screen edge.
     QQC.Dialog {
         id: confirmDlg
         modal: true
-        title: "Confirm Action"
+        title: "Confirm action"
         anchors.centerIn: parent
-        width: 420
+        width: dp(420)
         standardButtons: QQC.Dialog.Yes | QQC.Dialog.No
+
+        background: Rectangle {
+            radius: dp(Constants.radius)
+            color: Constants.cardBg
+            border.color: Constants.borderColor
+        }
+
         onAccepted: {
             if (root.confirmAction === "role")
                 root.roleUpdateRequested(root.confirmUid, root.confirmRole)
@@ -189,9 +232,9 @@ QQC.Dialog {
         contentItem: Text {
             text: root.confirmMessage
             wrapMode: Text.Wrap
-            color: "#111827"
-            font.pixelSize: 12
-            padding: 10
+            color: Constants.textPrimary
+            font.pixelSize: sp(Constants.fsBody)
+            padding: dp(10)
         }
     }
 }

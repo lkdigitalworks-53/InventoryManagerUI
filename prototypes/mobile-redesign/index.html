@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Business Mgmt — Mobile Redesign Prototype</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="platform-ios theme-light">
+
+<!-- Stage: holds the phone frame on desktop, edge-to-edge on mobile -->
+<div class="stage">
+
+  <!-- Top toolbar: switch platform, theme, jump to flow -->
+  <header class="stage-toolbar" aria-label="Prototype controls">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-title">Helix Business</div>
+        <div class="brand-sub">Mobile UX redesign · interactive prototype</div>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <div class="seg" role="tablist" aria-label="Platform">
+        <button class="seg-btn is-on" data-platform="ios">iOS</button>
+        <button class="seg-btn" data-platform="android">Android</button>
+      </div>
+      <div class="seg" role="tablist" aria-label="Theme">
+        <button class="seg-btn is-on" data-theme="light">Light</button>
+        <button class="seg-btn" data-theme="dark">Dark</button>
+      </div>
+      <select class="jump" aria-label="Jump to flow">
+        <option value="">Jump to flow…</option>
+        <optgroup label="Onboarding">
+          <option value="splash">Splash</option>
+          <option value="login">Sign in</option>
+          <option value="signup">Sign up</option>
+          <option value="forgot">Forgot password</option>
+          <option value="workspace">Create workspace</option>
+        </optgroup>
+        <optgroup label="Core">
+          <option value="dashboard">Dashboard</option>
+          <option value="orders">Orders</option>
+          <option value="inventory">Inventory</option>
+          <option value="sales">Sales report</option>
+          <option value="staff">Staff</option>
+          <option value="profile">Profile</option>
+        </optgroup>
+      </select>
+    </div>
+  </header>
+
+  <!-- Phone -->
+  <main class="phone" id="phone" aria-label="Phone preview">
+    <div class="phone-notch" aria-hidden="true"></div>
+    <div class="phone-screen" id="screen">
+
+      <!-- Status bar -->
+      <div class="statusbar" id="statusbar">
+        <span class="sb-time">9:41</span>
+        <span class="sb-icons">
+          <span class="sb-dot"></span><span class="sb-dot"></span><span class="sb-dot active"></span><span class="sb-dot active"></span>
+          <span class="sb-wifi">􀙇</span>
+          <span class="sb-batt"><i></i></span>
+        </span>
+      </div>
+
+      <!-- Screens stack -->
+      <section class="screens">
+
+        <!-- ───────────── Splash ───────────── -->
+        <article class="screen is-active" data-screen="splash">
+          <div class="bg-blob b-1"></div><div class="bg-blob b-2"></div><div class="bg-blob b-3"></div>
+          <div class="splash">
+            <div class="logo-mark big"></div>
+            <h1 class="splash-title">Helix</h1>
+            <p class="splash-sub">Run your business from your pocket.</p>
+            <div class="splash-cta">
+              <button class="btn btn-primary" data-go="login">Get started</button>
+              <button class="btn btn-ghost" data-go="signup">Create account</button>
+            </div>
+            <div class="splash-foot">
+              <span class="dot-row"><i></i><i></i><i class="on"></i></span>
+              <span class="muted">v3.0 · Redesigned</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- ───────────── Login ───────────── -->
+        <article class="screen" data-screen="login">
+          <div class="bg-blob b-1 soft"></div><div class="bg-blob b-2 soft"></div>
+          <header class="auth-head">
+            <button class="icon-btn ghost" data-go="splash" aria-label="Back">‹</button>
+            <h2>Welcome back</h2>
+            <p class="muted">Sign in to your workspace.</p>
+          </header>
+
+          <form class="auth-form" data-form="login" novalidate>
+            <label class="field">
+              <span class="field-lbl">Email</span>
+              <input type="email" required placeholder="you@company.com" autocomplete="email" />
+            </label>
+            <label class="field">
+              <span class="field-lbl">Password</span>
+              <span class="field-grp">
+                <input type="password" required placeholder="••••••••" autocomplete="current-password" />
+                <button type="button" class="reveal" aria-label="Show password">👁</button>
+              </span>
+            </label>
+            <div class="row-between">
+              <label class="check"><input type="checkbox" checked /><span>Remember me</span></label>
+              <button type="button" class="link" data-go="forgot">Forgot?</button>
+            </div>
+            <button class="btn btn-primary" type="submit">Sign in</button>
+            <div class="divider"><span>or continue with</span></div>
+            <div class="oauth-row">
+              <button type="button" class="btn btn-oauth"><span class="g-mark">G</span>Google</button>
+              <button type="button" class="btn btn-oauth"> Apple</button>
+            </div>
+            <p class="auth-foot">New here? <button type="button" class="link strong" data-go="signup">Create an account</button></p>
+          </form>
+        </article>
+
+        <!-- ───────────── Signup ───────────── -->
+        <article class="screen" data-screen="signup">
+          <div class="bg-blob b-1 soft"></div><div class="bg-blob b-3 soft"></div>
+          <header class="auth-head">
+            <button class="icon-btn ghost" data-go="login" aria-label="Back">‹</button>
+            <h2>Create account</h2>
+            <p class="muted">Start your 14-day free trial. No card needed.</p>
+          </header>
+          <form class="auth-form" data-form="signup" novalidate>
+            <label class="field">
+              <span class="field-lbl">Full name</span>
+              <input required placeholder="Alex Chen" />
+            </label>
+            <label class="field">
+              <span class="field-lbl">Email</span>
+              <input type="email" required placeholder="you@company.com" />
+            </label>
+            <label class="field">
+              <span class="field-lbl">Password</span>
+              <input type="password" required placeholder="At least 8 characters" />
+              <span class="strength" data-level="2"><i></i><i></i><i></i><i></i><span class="lbl">Good</span></span>
+            </label>
+            <label class="check small"><input type="checkbox" required /><span>I agree to the Terms & Privacy Policy.</span></label>
+            <button class="btn btn-primary" type="submit">Create account</button>
+            <p class="auth-foot">Already have one? <button type="button" class="link strong" data-go="login">Sign in</button></p>
+          </form>
+        </article>
+
+        <!-- ───────────── Forgot password ───────────── -->
+        <article class="screen" data-screen="forgot">
+          <header class="auth-head">
+            <button class="icon-btn ghost" data-go="login" aria-label="Back">‹</button>
+            <h2>Reset password</h2>
+            <p class="muted">We’ll email you a secure reset link.</p>
+          </header>
+          <form class="auth-form" data-form="forgot" novalidate>
+            <label class="field">
+              <span class="field-lbl">Email</span>
+              <input type="email" required placeholder="you@company.com" />
+            </label>
+            <button class="btn btn-primary" type="submit">Send reset link</button>
+            <button type="button" class="btn btn-ghost" data-go="login">Back to sign in</button>
+          </form>
+        </article>
+
+        <!-- ───────────── Workspace setup ───────────── -->
+        <article class="screen" data-screen="workspace">
+          <header class="auth-head">
+            <h2>Create your workspace</h2>
+            <p class="muted">One workspace per business. You can invite teammates later.</p>
+          </header>
+          <form class="auth-form" data-form="workspace" novalidate>
+            <label class="field">
+              <span class="field-lbl">Business name</span>
+              <input required placeholder="e.g. Aurora Coffee Co." />
+            </label>
+            <div class="chip-row">
+              <span class="chip selectable on">Retail</span>
+              <span class="chip selectable">Hospitality</span>
+              <span class="chip selectable">Services</span>
+              <span class="chip selectable">Wholesale</span>
+              <span class="chip selectable">Other</span>
+            </div>
+            <button class="btn btn-primary" type="submit" data-go="dashboard">Continue</button>
+          </form>
+        </article>
+
+        <!-- ───────────── Dashboard ───────────── -->
+        <article class="screen has-tabs" data-screen="dashboard">
+          <div class="bg-wash"></div>
+          <header class="page-head glass">
+            <div>
+              <p class="hi">Good morning,</p>
+              <h2 class="who">Alex 👋</h2>
+            </div>
+            <div class="head-actions">
+              <button class="icon-btn glass-btn" data-sheet="notifications" aria-label="Notifications">
+                <span class="bell">🔔</span><i class="badge">3</i>
+              </button>
+              <button class="icon-btn glass-btn" data-go="profile" aria-label="Profile">A</button>
+            </div>
+          </header>
+
+          <div class="scroll">
+
+            <!-- KPI cards -->
+            <section class="kpi-grid">
+              <div class="kpi-card grad-1">
+                <span class="kpi-label">Today’s sales</span>
+                <span class="kpi-value">$4,820</span>
+                <span class="kpi-trend up">▲ 12.4%</span>
+                <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+                  <path d="M0,22 L12,18 L24,20 L36,12 L48,16 L60,8 L72,10 L84,5 L100,6" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div class="kpi-card grad-2">
+                <span class="kpi-label">Orders</span>
+                <span class="kpi-value">38</span>
+                <span class="kpi-trend up">▲ 4</span>
+                <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+                  <path d="M0,18 L20,14 L40,17 L60,10 L80,12 L100,4" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div class="kpi-card grad-3">
+                <span class="kpi-label">Low stock</span>
+                <span class="kpi-value">7</span>
+                <span class="kpi-trend down">▼ items</span>
+              </div>
+              <div class="kpi-card grad-4">
+                <span class="kpi-label">Active staff</span>
+                <span class="kpi-value">12</span>
+                <span class="kpi-trend muted">on shift</span>
+              </div>
+            </section>
+
+            <!-- Quick actions -->
+            <section class="section">
+              <div class="section-head">
+                <h3>Quick actions</h3>
+              </div>
+              <div class="action-row">
+                <button class="action-tile" data-go="orders" data-sheet="newOrder"><span class="ico">🧾</span><span>New order</span></button>
+                <button class="action-tile" data-go="inventory" data-sheet="addProduct"><span class="ico">📦</span><span>Add product</span></button>
+                <button class="action-tile" data-go="staff" data-sheet="invite"><span class="ico">👥</span><span>Invite staff</span></button>
+                <button class="action-tile" data-go="sales"><span class="ico">📈</span><span>View report</span></button>
+              </div>
+            </section>
+
+            <!-- Recent activity -->
+            <section class="section">
+              <div class="section-head">
+                <h3>Recent activity</h3>
+                <button class="link" data-go="orders">See all ›</button>
+              </div>
+              <ul class="list">
+                <li class="list-item">
+                  <span class="avatar grad-1">SM</span>
+                  <div class="li-body">
+                    <div class="li-title">Order #ORD-1042</div>
+                    <div class="li-sub muted">Sarah M. · 3 items · $128.00</div>
+                  </div>
+                  <span class="status pending">Pending</span>
+                </li>
+                <li class="list-item">
+                  <span class="avatar grad-2">JT</span>
+                  <div class="li-body">
+                    <div class="li-title">Order #ORD-1041</div>
+                    <div class="li-sub muted">James T. · 1 item · $42.00</div>
+                  </div>
+                  <span class="status processing">Processing</span>
+                </li>
+                <li class="list-item">
+                  <span class="avatar grad-3">EN</span>
+                  <div class="li-body">
+                    <div class="li-title">Restock — Espresso beans</div>
+                    <div class="li-sub muted">+24kg · Emily N.</div>
+                  </div>
+                  <span class="status completed">Done</span>
+                </li>
+              </ul>
+            </section>
+
+            <div class="bottom-spacer"></div>
+          </div>
+        </article>
+
+        <!-- ───────────── Orders ───────────── -->
+        <article class="screen has-tabs" data-screen="orders">
+          <header class="page-head glass">
+            <h2>Orders</h2>
+            <div class="head-actions">
+              <button class="icon-btn glass-btn" data-sheet="filters" aria-label="Filters">⚙︎</button>
+              <button class="icon-btn glass-btn" data-sheet="search" aria-label="Search">🔍</button>
+            </div>
+          </header>
+          <div class="scroll">
+            <div class="search-bar pad-x">
+              <span class="ico">🔍</span>
+              <input placeholder="Search orders, customers…" />
+            </div>
+            <div class="chip-scroller">
+              <span class="chip on">All · 38</span>
+              <span class="chip">Pending · 5</span>
+              <span class="chip">Processing · 11</span>
+              <span class="chip">Completed · 19</span>
+              <span class="chip">Cancelled · 3</span>
+            </div>
+            <ul class="list cards" id="ordersList"><!-- JS injects --></ul>
+            <div class="bottom-spacer"></div>
+          </div>
+          <button class="fab" data-sheet="newOrder" aria-label="New order">＋</button>
+        </article>
+
+        <!-- ───────────── Inventory ───────────── -->
+        <article class="screen has-tabs" data-screen="inventory">
+          <header class="page-head glass">
+            <h2>Inventory</h2>
+            <div class="head-actions">
+              <button class="icon-btn glass-btn" data-sheet="import" aria-label="Import">⤓</button>
+              <button class="icon-btn glass-btn" data-sheet="search" aria-label="Search">🔍</button>
+            </div>
+          </header>
+          <div class="scroll">
+            <div class="chip-scroller pad-x">
+              <span class="chip on">All</span>
+              <span class="chip">Beverages</span>
+              <span class="chip">Pastries</span>
+              <span class="chip">Merch</span>
+              <span class="chip">Low stock · 7</span>
+            </div>
+            <ul class="list cards" id="inventoryList"></ul>
+            <div class="bottom-spacer"></div>
+          </div>
+          <button class="fab" data-sheet="addProduct" aria-label="Add product">＋</button>
+        </article>
+
+        <!-- ───────────── Sales ───────────── -->
+        <article class="screen has-tabs" data-screen="sales">
+          <header class="page-head glass">
+            <h2>Sales</h2>
+            <div class="head-actions">
+              <button class="icon-btn glass-btn" data-sheet="export" aria-label="Export">⤴</button>
+            </div>
+          </header>
+          <div class="scroll">
+            <div class="seg-pill pad-x">
+              <button class="on">Day</button><button>Week</button><button>Month</button><button>Year</button>
+            </div>
+
+            <section class="section pad-x">
+              <div class="hero-card grad-hero">
+                <div>
+                  <p class="hero-label">Revenue this week</p>
+                  <p class="hero-value">$28,420</p>
+                  <p class="hero-trend up">▲ 18.2% vs last week</p>
+                </div>
+                <svg class="hero-chart" viewBox="0 0 300 110" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="gFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="white" stop-opacity=".55"/>
+                      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+                    </linearGradient>
+                  </defs>
+                  <path d="M0,90 C30,70 50,80 80,55 S140,40 170,50 220,30 250,38 290,18 300,22 L300,110 L0,110 Z" fill="url(#gFill)"/>
+                  <path d="M0,90 C30,70 50,80 80,55 S140,40 170,50 220,30 250,38 290,18 300,22" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>
+              </div>
+            </section>
+
+            <section class="section pad-x">
+              <div class="section-head"><h3>Breakdown</h3></div>
+              <div class="bars">
+                <div class="bar"><span class="bar-lbl">Mon</span><i style="--p:48%"></i><span class="bar-v">$3.2k</span></div>
+                <div class="bar"><span class="bar-lbl">Tue</span><i style="--p:62%"></i><span class="bar-v">$4.1k</span></div>
+                <div class="bar"><span class="bar-lbl">Wed</span><i style="--p:55%"></i><span class="bar-v">$3.6k</span></div>
+                <div class="bar"><span class="bar-lbl">Thu</span><i style="--p:80%"></i><span class="bar-v">$5.3k</span></div>
+                <div class="bar"><span class="bar-lbl">Fri</span><i style="--p:92%"></i><span class="bar-v">$6.1k</span></div>
+                <div class="bar"><span class="bar-lbl">Sat</span><i style="--p:70%"></i><span class="bar-v">$4.6k</span></div>
+                <div class="bar"><span class="bar-lbl">Sun</span><i style="--p:25%"></i><span class="bar-v">$1.5k</span></div>
+              </div>
+            </section>
+
+            <section class="section pad-x">
+              <div class="section-head"><h3>Top items</h3><button class="link">All ›</button></div>
+              <ul class="list">
+                <li class="list-item"><span class="avatar grad-1">☕</span><div class="li-body"><div class="li-title">Flat White</div><div class="li-sub muted">128 sold</div></div><span class="amt">$640</span></li>
+                <li class="list-item"><span class="avatar grad-2">🥐</span><div class="li-body"><div class="li-title">Almond Croissant</div><div class="li-sub muted">96 sold</div></div><span class="amt">$432</span></li>
+                <li class="list-item"><span class="avatar grad-3">🧊</span><div class="li-body"><div class="li-title">Cold Brew</div><div class="li-sub muted">74 sold</div></div><span class="amt">$370</span></li>
+              </ul>
+            </section>
+
+            <div class="bottom-spacer"></div>
+          </div>
+        </article>
+
+        <!-- ───────────── Staff ───────────── -->
+        <article class="screen has-tabs" data-screen="staff">
+          <header class="page-head glass">
+            <h2>Staff</h2>
+            <div class="head-actions">
+              <button class="icon-btn glass-btn" data-sheet="invite" aria-label="Invite">＋</button>
+            </div>
+          </header>
+          <div class="scroll">
+            <div class="search-bar pad-x">
+              <span class="ico">🔍</span>
+              <input placeholder="Search team…" />
+            </div>
+            <ul class="list cards" id="staffList"></ul>
+            <div class="bottom-spacer"></div>
+          </div>
+          <button class="fab" data-sheet="invite" aria-label="Invite member">＋</button>
+        </article>
+
+        <!-- ───────────── Profile ───────────── -->
+        <article class="screen has-tabs" data-screen="profile">
+          <header class="page-head glass">
+            <button class="icon-btn ghost" data-go="dashboard" aria-label="Back">‹</button>
+            <h2>Profile</h2>
+            <span></span>
+          </header>
+          <div class="scroll">
+            <section class="profile-card">
+              <div class="avatar xl grad-1">A</div>
+              <h3>Alex Chen</h3>
+              <p class="muted">Owner · Aurora Coffee Co.</p>
+              <div class="profile-stats">
+                <div><strong>248</strong><span class="muted">Orders</span></div>
+                <div><strong>$28k</strong><span class="muted">Revenue</span></div>
+                <div><strong>12</strong><span class="muted">Team</span></div>
+              </div>
+            </section>
+
+            <section class="section pad-x">
+              <div class="section-head"><h3>Account</h3></div>
+              <ul class="settings">
+                <li><span>👤</span>Edit profile<i>›</i></li>
+                <li><span>🏢</span>Workspace settings<i>›</i></li>
+                <li><span>🔐</span>Security & passkeys<i>›</i></li>
+                <li><span>🔔</span>Notifications<i>›</i></li>
+              </ul>
+            </section>
+            <section class="section pad-x">
+              <div class="section-head"><h3>Preferences</h3></div>
+              <ul class="settings">
+                <li><span>🎨</span>Appearance<i class="muted">System</i></li>
+                <li><span>🌐</span>Language<i class="muted">English</i></li>
+                <li><span>💱</span>Currency<i class="muted">USD</i></li>
+              </ul>
+            </section>
+            <section class="section pad-x">
+              <button class="btn btn-danger" data-go="splash">Sign out</button>
+            </section>
+            <div class="bottom-spacer"></div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- Bottom thumb-zone navigation (only shown on tab screens) -->
+      <nav class="tabbar glass" id="tabbar" aria-label="Primary">
+        <button class="tab" data-go="dashboard"><span class="ti">⌂</span><span>Home</span></button>
+        <button class="tab" data-go="orders"><span class="ti">🧾</span><span>Orders</span></button>
+        <button class="tab tab-fab" data-sheet="quickAdd" aria-label="Quick add"><span class="fab-inner">＋</span></button>
+        <button class="tab" data-go="inventory"><span class="ti">📦</span><span>Stock</span></button>
+        <button class="tab" data-go="sales"><span class="ti">📈</span><span>Sales</span></button>
+      </nav>
+
+      <!-- ───────────── Bottom sheets ───────────── -->
+      <div class="sheet-scrim" id="scrim" hidden></div>
+
+      <aside class="sheet" data-sheet="newOrder" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>New order</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <label class="field"><span class="field-lbl">Customer</span><input placeholder="Search or add customer" /></label>
+          <div class="section-head sm"><h4>Items</h4><button class="link">+ Add</button></div>
+          <ul class="list">
+            <li class="list-item">
+              <span class="avatar grad-2">☕</span>
+              <div class="li-body"><div class="li-title">Flat White</div><div class="li-sub muted">$5.00 · 2 × cups</div></div>
+              <div class="qty"><button>−</button><span>2</span><button>+</button></div>
+            </li>
+            <li class="list-item">
+              <span class="avatar grad-3">🥐</span>
+              <div class="li-body"><div class="li-title">Croissant</div><div class="li-sub muted">$4.50</div></div>
+              <div class="qty"><button>−</button><span>1</span><button>+</button></div>
+            </li>
+          </ul>
+          <div class="totals">
+            <div><span>Subtotal</span><span>$14.50</span></div>
+            <div><span>Tax</span><span>$1.16</span></div>
+            <div class="big"><span>Total</span><span>$15.66</span></div>
+          </div>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button class="btn btn-primary" data-toast="Order #ORD-1043 created">Place order</button>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="addProduct" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Add product</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <div class="upload">
+            <div class="upload-thumb">📷</div>
+            <button class="btn btn-ghost sm">Add photo</button>
+          </div>
+          <label class="field"><span class="field-lbl">Name</span><input placeholder="e.g. Cappuccino" /></label>
+          <div class="grid-2">
+            <label class="field"><span class="field-lbl">Cost</span><input placeholder="$0.00" /></label>
+            <label class="field"><span class="field-lbl">Price</span><input placeholder="$0.00" /></label>
+          </div>
+          <details class="disclose">
+            <summary>Advanced</summary>
+            <label class="field"><span class="field-lbl">SKU</span><input placeholder="Auto-generated" /></label>
+            <label class="field"><span class="field-lbl">Initial stock</span><input placeholder="0" /></label>
+            <label class="field"><span class="field-lbl">Reorder point</span><input placeholder="10" /></label>
+          </details>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button class="btn btn-primary" data-toast="Product saved">Save</button>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="restock" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Restock</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <div class="restock-card">
+            <div class="avatar grad-2 lg">☕</div>
+            <div>
+              <div class="li-title">Espresso beans</div>
+              <div class="li-sub muted">Current: 18 kg · Reorder at 10kg</div>
+            </div>
+          </div>
+          <label class="field"><span class="field-lbl">Add quantity</span><input value="24" /></label>
+          <label class="field"><span class="field-lbl">Note</span><input placeholder="Optional" /></label>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button class="btn btn-primary" data-toast="Restocked +24 kg">Confirm</button>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="invite" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Invite teammate</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <label class="field"><span class="field-lbl">Email</span><input type="email" placeholder="name@company.com" /></label>
+          <span class="field-lbl">Role</span>
+          <div class="role-row">
+            <label class="role"><input type="radio" name="role" /><div><strong>Owner</strong><small>Full access</small></div></label>
+            <label class="role on"><input type="radio" name="role" checked /><div><strong>Manager</strong><small>Operations & staff</small></div></label>
+            <label class="role"><input type="radio" name="role" /><div><strong>Cashier</strong><small>Orders only</small></div></label>
+          </div>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button class="btn btn-primary" data-toast="Invitation sent">Send invite</button>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="orderDetail" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3 id="odTitle">Order #ORD-1042</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <div class="status-pill processing">Processing</div>
+          <div class="grid-2">
+            <div><div class="muted small">Customer</div><div>Sarah Mendel</div></div>
+            <div><div class="muted small">Placed</div><div>9:14 AM</div></div>
+          </div>
+          <div class="section-head sm"><h4>Items</h4></div>
+          <ul class="list compact">
+            <li class="list-item"><span class="avatar grad-2">☕</span><div class="li-body"><div class="li-title">Flat White × 2</div></div><span class="amt">$10.00</span></li>
+            <li class="list-item"><span class="avatar grad-3">🥐</span><div class="li-body"><div class="li-title">Croissant × 1</div></div><span class="amt">$4.50</span></li>
+          </ul>
+          <div class="totals">
+            <div><span>Subtotal</span><span>$14.50</span></div>
+            <div><span>Tax</span><span>$1.16</span></div>
+            <div class="big"><span>Total</span><span>$15.66</span></div>
+          </div>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn btn-ghost" data-close>Close</button>
+          <button class="btn btn-primary" data-toast="Order marked complete">Mark complete</button>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="quickAdd" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Quick add</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <div class="quick-grid">
+            <button class="quick-tile" data-sheet="newOrder"><span class="ico">🧾</span>New order</button>
+            <button class="quick-tile" data-sheet="addProduct"><span class="ico">📦</span>Product</button>
+            <button class="quick-tile" data-sheet="invite"><span class="ico">👥</span>Teammate</button>
+            <button class="quick-tile" data-sheet="restock"><span class="ico">🔁</span>Restock</button>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="filters" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Filters</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <span class="field-lbl">Status</span>
+          <div class="chip-row">
+            <span class="chip selectable on">All</span>
+            <span class="chip selectable">Pending</span>
+            <span class="chip selectable">Processing</span>
+            <span class="chip selectable">Completed</span>
+            <span class="chip selectable">Cancelled</span>
+          </div>
+          <span class="field-lbl">Date</span>
+          <div class="chip-row">
+            <span class="chip selectable on">Today</span>
+            <span class="chip selectable">7 days</span>
+            <span class="chip selectable">30 days</span>
+            <span class="chip selectable">Custom</span>
+          </div>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn btn-ghost" data-close>Reset</button>
+          <button class="btn btn-primary" data-close>Apply</button>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="search" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Search</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <div class="search-bar"><span class="ico">🔍</span><input placeholder="Type to search…" autofocus /></div>
+          <p class="muted small">Recent</p>
+          <div class="chip-row">
+            <span class="chip">Cold brew</span>
+            <span class="chip">Sarah</span>
+            <span class="chip">Pending today</span>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="export" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Export</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <ul class="settings">
+            <li data-toast="Exported as XLSX"><span>📊</span>Excel (.xlsx)<i>›</i></li>
+            <li data-toast="Exported as CSV"><span>📄</span>CSV<i>›</i></li>
+            <li data-toast="Exported as PDF"><span>📑</span>PDF report<i>›</i></li>
+          </ul>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="import" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Import inventory</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <div class="dropzone">
+            <div class="dz-ico">⬆︎</div>
+            <p>Drop your spreadsheet here</p>
+            <p class="muted small">.xlsx or .csv · up to 10 MB</p>
+            <button class="btn btn-ghost sm" data-toast="Select file via your OS dialog">Choose file</button>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="sheet" data-sheet="notifications" hidden>
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h3>Notifications</h3><button class="icon-btn ghost" data-close>✕</button></div>
+        <div class="sheet-body">
+          <ul class="list">
+            <li class="list-item"><span class="avatar grad-3">!</span><div class="li-body"><div class="li-title">Low stock: Espresso beans</div><div class="li-sub muted">Only 8 kg left · 2m ago</div></div></li>
+            <li class="list-item"><span class="avatar grad-2">★</span><div class="li-body"><div class="li-title">Daily target reached</div><div class="li-sub muted">$5,000 in sales · 1h ago</div></div></li>
+            <li class="list-item"><span class="avatar grad-1">+</span><div class="li-body"><div class="li-title">New teammate joined</div><div class="li-sub muted">Jamie accepted invite · 3h ago</div></div></li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- Toast -->
+      <div class="toast" id="toast" hidden></div>
+    </div>
+  </main>
+
+  <footer class="stage-foot">
+    <span class="muted">Click any element. Open bottom sheets via FAB or quick actions.</span>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

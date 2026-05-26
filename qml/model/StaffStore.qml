@@ -132,6 +132,10 @@ QtObject {
         staff = arr;
         _pushAllToFirebase();
         _rebuildActivities();
+        ActivityLog.record("staff_added",
+                           "Teammate added: " + name,
+                           (role ? role : "") + (department ? " · " + department : ""),
+                           id);
     }
 
     function deleteStaff(staffId) {
@@ -180,6 +184,10 @@ QtObject {
         if (fields.joinDate   !== undefined) s.joinDate = fields.joinDate
         staff = arr
         _rebuildActivities()
+        ActivityLog.record("staff_updated",
+                           "Teammate updated: " + s.name,
+                           (s.role ? s.role : "") + (s.status ? " · " + s.status : ""),
+                           staffId)
         // Single-doc PATCH correctly upserts; avoids the broken bulk-PUT path.
         FirebaseService.put("staff/" + staffId, s, function(ok) {
             if (!ok) console.warn("[StaffStore] Firestore update failed for", staffId)

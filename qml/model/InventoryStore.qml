@@ -6,6 +6,13 @@ QtObject {
 
     property var products: []
 
+    // Bumped whenever `products` is reassigned. Consumers (DashboardPage,
+    // InventoryPage) bind a watcher property to this to trigger their own
+    // recomputation — Repeater/ColumnLayout sometimes lags on a bare
+    // products-change signal, but a numeric revision flips reliably.
+    property int revision: 0
+    onProductsChanged: revision++
+
     Component.onCompleted: _load()
 
     function _load() {
@@ -138,6 +145,10 @@ QtObject {
                    unit: unit, description: description || "",
                    photoUrl: "", photoUpdatedAt: "" });
         _commit(arr);
+        ActivityLog.record("product_added",
+                           "Product added: " + name,
+                           (sku ? sku + " · " : "") + "stock " + stock,
+                           id);
         return id;
     }
 
@@ -311,15 +322,20 @@ QtObject {
     function restock(productId, amount) {
         var arr = _clone();
         var changed = null;
+        var addedQty = amount || 10;
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].productId === productId) {
-                arr[i].stock += (amount || 10);
+                arr[i].stock += addedQty;
                 changed = arr[i];
                 break;
             }
         }
         products = arr;
         if (!changed) return
+        ActivityLog.record("product_restocked",
+                           "Restocked: " + changed.name,
+                           "+" + addedQty + " · now " + changed.stock + " in stock",
+                           productId);
         FirebaseService.put("inventory/" + productId, changed, function(ok) {
             if (!ok)
                 console.warn("[InventoryStore] Firestore restock failed for", productId,
@@ -384,6 +400,10 @@ QtObject {
         if (fields.stock        !== undefined) p.stock = fields.stock
         if (fields.minStock     !== undefined) p.minStock = fields.minStock
         products = arr
+        ActivityLog.record("product_updated",
+                           "Product updated: " + p.name,
+                           (p.sku ? p.sku + " · " : "") + "stock " + p.stock,
+                           productId)
         // Per-doc PATCH bypasses the broken bulk-PUT path used by _commit.
         FirebaseService.put("inventory/" + productId, p, function(ok) {
             if (!ok) console.warn("[InventoryStore] Firestore update failed for", productId)

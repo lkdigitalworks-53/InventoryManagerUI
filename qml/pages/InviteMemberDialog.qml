@@ -2,66 +2,85 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
-QQC.Dialog {
+import "../components"
+import "../helper"
+
+// Invite team member by UID — bottom sheet. Public contract preserved:
+// signal memberInviteRequested(uid, email, displayName, role),
+// property alias errorMessage.
+BottomSheet {
     id: root
+
+    sheetTitle: "Invite team member"
+    primaryAction: "Send invite"
+    secondaryAction: "Cancel"
 
     signal memberInviteRequested(string uid, string email, string displayName, string role)
 
-    modal: true
-    title: "Invite Team Member"
-    anchors.centerIn: parent
-    width: 460
-    standardButtons: QQC.Dialog.Ok | QQC.Dialog.Cancel
-
     property alias errorMessage: errorText.text
 
-    onAccepted: {
+    onPrimaryClicked: {
         memberInviteRequested(uidField.text, emailField.text, nameField.text, roleBox.currentText)
     }
 
     ColumnLayout {
-        width: parent.width
-        spacing: 10
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
 
         Text {
-            text: "Invite an existing authenticated user by UID."
-            color: "#4b5563"
-            font.pixelSize: 12
+            text: "Invite an existing authenticated user by their UID. They'll receive workspace access immediately."
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsBody)
             Layout.fillWidth: true
             wrapMode: Text.Wrap
         }
 
-        QQC.TextField {
+        AuthTextField {
             id: uidField
-            placeholderText: "User UID (required)"
             Layout.fillWidth: true
+            label: "User UID"
+            placeholderText: "Required"
         }
 
-        QQC.TextField {
+        AuthTextField {
             id: nameField
-            placeholderText: "Display Name"
             Layout.fillWidth: true
+            label: "Display name"
+            placeholderText: "Visible to teammates"
         }
 
-        QQC.TextField {
+        AuthTextField {
             id: emailField
-            placeholderText: "Email"
             Layout.fillWidth: true
+            label: "Email"
+            placeholderText: "person@company.com"
+            inputMethodHints: Qt.ImhEmailCharactersOnly
         }
 
-        QQC.ComboBox {
-            id: roleBox
+        ColumnLayout {
             Layout.fillWidth: true
-            model: ["staff", "manager", "admin"]
-            currentIndex: 0
+            spacing: dp(4)
+            Text {
+                text: "Role"
+                color: Constants.textSecondary
+                font.pixelSize: sp(Constants.fsSmall)
+                font.bold: true
+            }
+            AppComboBox {
+                id: roleBox
+                Layout.fillWidth: true
+                model: ["staff", "manager", "admin"]
+                currentIndex: 0
+                font.pixelSize: sp(Constants.fsBody)
+            }
         }
 
         Text {
             id: errorText
             text: ""
             visible: text.length > 0
-            color: "#b91c1c"
-            font.pixelSize: 12
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
             Layout.fillWidth: true
             wrapMode: Text.Wrap
         }

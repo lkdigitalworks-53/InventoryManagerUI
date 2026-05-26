@@ -2,34 +2,36 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
-import "../model"
-import "../helper"
 import "../components"
+import "../helper"
+import "../model"
 
-// Generic import preview for products or orders. Caller picks the kind via
-// `mode` ("products" | "orders"). On open() we ask the user to pick a file,
-// parse it, validate, then show a preview with per-row conflict resolution.
-QQC.Dialog {
+// Generic import preview — bottom sheet. Caller picks the kind via `mode`
+// ("products" | "orders"). Stage 1: file summary + Ready/Issues tabs with
+// per-row conflict resolution. Public contract preserved:
+//   property string mode
+//   property var _readyRows, _issueRows
+//   property string _fileName
+//   signal pathPromptRequested()
+//   signal importCompleted(message)
+//   function pickAndStart(), importFromUserPath(rawPath)
+BottomSheet {
     id: root
-    modal: true
-    anchors.centerIn: parent
-    padding: 20
-    width: Math.min(parent ? parent.width - 32 : 720, 720)
-    height: Math.min(parent ? parent.height - 80 : 560, 560)
-    title: mode === "products" ? "Import products" : "Import orders"
+
+    sheetTitle: mode === "products" ? "Import products" : "Import orders"
+    primaryAction: "Import " + _effectiveCount() + " row" + (_effectiveCount() === 1 ? "" : "s")
+    primaryEnabled: _effectiveCount() > 0
+    secondaryAction: "Cancel"
 
     property string mode: "products"
 
     // Internal state
-    property var _readyRows: []        // [{ row, _conflictPolicy, _conflictWith, ...fields }]
-    property var _issueRows: []        // [{ row, message, raw }]
+    property var _readyRows: []
+    property var _issueRows: []
     property string _fileName: ""
 
-    // Caller (Main.qml) opens its own path-prompt dialog and hands the typed
-    // string to importWith(). Keeping the prompt outside this Dialog avoids a
-    // QQC.Dialog-inside-QQC.Dialog parenting glitch where the inner one never
-    // shows.
     signal pathPromptRequested()
+    signal importCompleted(string message)
 
     function pickAndStart() {
         _readyRows = []; _issueRows = []; _fileName = ""
@@ -43,249 +45,238 @@ QQC.Dialog {
         _loadFile(url)
     }
 
-    // Auto-prefix file:/// when the user gave us a plain local path. Leave
-    // http(s):// and file:// URLs alone.
     function _toFileUrl(raw) {
         var s = String(raw).trim()
         var lower = s.toLowerCase()
         if (lower.indexOf("http://") === 0 || lower.indexOf("https://") === 0) return s
         if (lower.indexOf("file:") === 0) return s
-        if (lower.indexOf("content://") === 0) return s   // Android share intent
-        // Local path — normalize backslashes and prepend file:///
+        if (lower.indexOf("content://") === 0) return s
         var norm = s.replace(/\\/g, "/")
-        if (norm.indexOf("/") !== 0) norm = "/" + norm    // Windows "C:/..." -> "/C:/..."
+        if (norm.indexOf("/") !== 0) norm = "/" + norm
         return "file://" + norm
     }
 
-    background: Rectangle {
-        radius: 12
-        color: "#ffffff"
-        border.color: Constants.borderColor
-    }
+    onPrimaryClicked: _apply()
 
-    contentItem: ColumnLayout {
-        spacing: 12
+    property int _activeTab: 0   // 0 = Ready, 1 = Issues
 
-        // Header summary chips
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
+
+        // File header + summary chips
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: dp(Constants.space2)
 
-            QQC.Label {
+            Text {
                 text: root._fileName.length > 0 ? "📄  " + root._fileName : "Loading…"
-                font.pixelSize: 13
-                color: "#111827"
+                font.pixelSize: sp(Constants.fsBody)
+                color: Constants.textPrimary
                 Layout.fillWidth: true
                 elide: Text.ElideMiddle
             }
-
-            Rectangle {
-                radius: 12; height: 24
-                color: "#dcfce7"; border.color: "#22c55e"
-                width: readyChipText.implicitWidth + 16
-                Text { id: readyChipText; anchors.centerIn: parent
-                    text: root._readyRows.length + " ready"
-                    color: "#15803d"; font.pixelSize: 11; font.bold: true }
+            StatusPill {
+                status: "completed"
+                label: root._readyRows.length + " ready"
             }
-            Rectangle {
-                radius: 12; height: 24
+            StatusPill {
                 visible: root._issueRows.length > 0
-                color: "#fef3c7"; border.color: "#f59e0b"
-                width: issueChipText.implicitWidth + 16
-                Text { id: issueChipText; anchors.centerIn: parent
-                    text: root._issueRows.length + " issue" + (root._issueRows.length === 1 ? "" : "s")
-                    color: "#92400e"; font.pixelSize: 11; font.bold: true }
+                status: "pending"
+                label: root._issueRows.length + " issue" + (root._issueRows.length === 1 ? "" : "s")
             }
         }
 
-        // Bulk actions
-        RowLayout {
+        // Bulk-resolution chips for conflicts
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 8
             visible: root._readyRows.length > 0
+            spacing: dp(Constants.space2)
 
-            QQC.Label { text: "Conflicts:"; color: "#6b7280"; font.pixelSize: 12 }
-            QQC.Button {
-                text: "Skip all"
-                onClicked: root._setAllPolicy("skip")
+            Text {
+                text: "Conflicts"
+                color: Constants.textSecondary
+                font.pixelSize: sp(Constants.fsSmall)
+                font.bold: true
             }
-            QQC.Button {
-                text: "Overwrite all"
-                onClicked: root._setAllPolicy("overwrite")
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: dp(Constants.space2)
+
+                GhostButton {
+                    Layout.fillWidth: true
+                    implicitHeight: dp(36)
+                    text: "Skip all"
+                    onClicked: root._setAllPolicy("skip")
+                }
+                GhostButton {
+                    Layout.fillWidth: true
+                    implicitHeight: dp(36)
+                    text: "Overwrite all"
+                    onClicked: root._setAllPolicy("overwrite")
+                }
+                GhostButton {
+                    Layout.fillWidth: true
+                    implicitHeight: dp(36)
+                    text: "Add as new"
+                    onClicked: root._setAllPolicy("rename")
+                }
             }
-            QQC.Button {
-                text: "Add as new"
-                onClicked: root._setAllPolicy("rename")
-            }
-            Item { Layout.fillWidth: true }
         }
 
-        // Tabbed body — Ready / Issues
-        QQC.TabBar {
-            id: tabBar
+        // Tab segmented pill
+        SegmentedPill {
             Layout.fillWidth: true
-            QQC.TabButton { text: "Ready (" + root._readyRows.length + ")" }
-            QQC.TabButton { text: "Issues (" + root._issueRows.length + ")" }
+            model: ["Ready (" + root._readyRows.length + ")", "Issues (" + root._issueRows.length + ")"]
+            selected: root._activeTab
+            onSegmentSelected: function(idx, label) { root._activeTab = idx }
         }
 
+        // Tab body
         StackLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            currentIndex: tabBar.currentIndex
+            currentIndex: root._activeTab
 
             // Ready tab
-            QQC.ScrollView {
-                clip: true
-                ColumnLayout {
-                    width: root.width - 60
-                    spacing: 4
-                    Repeater {
-                        model: root._readyRows
-                        delegate: Rectangle {
-                            Layout.fillWidth: true
-                            radius: 6
-                            color: index % 2 === 0 ? "#ffffff" : "#f9fafb"
-                            border.color: Constants.borderColor
-                            implicitHeight: rowCol.implicitHeight + 14
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(Constants.space2)
 
-                            ColumnLayout {
-                                id: rowCol
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                spacing: 4
+                Repeater {
+                    model: root._readyRows
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        radius: dp(Constants.radius)
+                        color: Constants.cardBg
+                        border.color: Constants.borderColor
+                        border.width: 1
+                        Layout.preferredHeight: rowCol.implicitHeight + dp(Constants.space3 * 2)
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 8
+                        ColumnLayout {
+                            id: rowCol
+                            anchors.fill: parent
+                            anchors.margins: dp(Constants.space3)
+                            spacing: dp(4)
 
-                                    QQC.Label {
-                                        text: "Row " + (modelData.row || (index + 2))
-                                        color: "#6b7280"
-                                        font.pixelSize: 10
-                                        Layout.preferredWidth: 50
-                                    }
-                                    QQC.Label {
-                                        text: root.mode === "products"
-                                            ? (modelData.name || "(no name)") + (modelData.sku ? "  ·  " + modelData.sku : "")
-                                            : (modelData.customer || "(no customer)") + (modelData.orderId ? "  ·  " + modelData.orderId : "")
-                                        font.pixelSize: 12
-                                        font.bold: true
-                                        color: "#111827"
-                                        Layout.fillWidth: true
-                                        elide: Text.ElideRight
-                                    }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: dp(Constants.space2)
 
-                                    // Conflict chip + per-row action
-                                    Item {
-                                        visible: modelData._conflictWith && modelData._conflictWith.length > 0
-                                        Layout.preferredWidth: 220
-                                        Layout.preferredHeight: 26
-                                        Row {
-                                            anchors.fill: parent
-                                            spacing: 4
-                                            Rectangle {
-                                                width: cWith.implicitWidth + 12; height: 22; radius: 11
-                                                color: "#fef3c7"; border.color: "#f59e0b"
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                Text { id: cWith; anchors.centerIn: parent
-                                                    text: "conflict"
-                                                    color: "#92400e"; font.pixelSize: 10; font.bold: true }
-                                            }
-                                            QQC.ComboBox {
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                width: 140; height: 26
-                                                model: ["skip", "overwrite", "rename"]
-                                                currentIndex: ["skip", "overwrite", "rename"].indexOf(modelData._conflictPolicy || "skip")
-                                                onActivated: root._setRowPolicy(index, currentText)
-                                            }
-                                        }
-                                    }
+                                Text {
+                                    text: "Row " + (modelData.row || (index + 2))
+                                    color: Constants.textMuted
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    Layout.preferredWidth: dp(50)
                                 }
-
-                                // Secondary line — quick summary of fields
-                                QQC.Label {
+                                Text {
+                                    text: root.mode === "products"
+                                        ? (modelData.name || "(no name)") + (modelData.sku ? "  ·  " + modelData.sku : "")
+                                        : (modelData.customer || "(no customer)") + (modelData.orderId ? "  ·  " + modelData.orderId : "")
+                                    font.pixelSize: sp(Constants.fsBody)
+                                    font.bold: true
+                                    color: Constants.textPrimary
                                     Layout.fillWidth: true
-                                    visible: text.length > 0
-                                    text: root._summarize(modelData)
-                                    color: "#6b7280"
-                                    font.pixelSize: 11
                                     elide: Text.ElideRight
                                 }
                             }
+
+                            // Conflict resolution row
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: modelData._conflictWith && modelData._conflictWith.length > 0
+                                spacing: dp(Constants.space2)
+
+                                StatusPill {
+                                    status: "pending"
+                                    label: "Conflict"
+                                }
+                                Text {
+                                    text: "→ " + (modelData._conflictWith || "")
+                                    color: Constants.textSecondary
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                                AppComboBox {
+                                    Layout.preferredWidth: dp(140)
+                                    model: ["skip", "overwrite", "rename"]
+                                    currentIndex: ["skip", "overwrite", "rename"].indexOf(modelData._conflictPolicy || "skip")
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    onActivated: root._setRowPolicy(index, currentText)
+                                }
+                            }
+
+                            // Summary line
+                            Text {
+                                Layout.fillWidth: true
+                                text: root._summarize(modelData)
+                                color: Constants.textSecondary
+                                font.pixelSize: sp(Constants.fsCaption)
+                                elide: Text.ElideRight
+                            }
                         }
                     }
-                    Item { Layout.fillWidth: true; Layout.preferredHeight: 4 }
+                }
+
+                Text {
+                    visible: root._readyRows.length === 0
+                    text: "No rows to import."
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsBody)
+                    Layout.fillWidth: true
+                    Layout.topMargin: dp(Constants.space3)
+                    horizontalAlignment: Text.AlignHCenter
                 }
             }
 
             // Issues tab
-            QQC.ScrollView {
-                clip: true
-                ColumnLayout {
-                    width: root.width - 60
-                    spacing: 4
-                    Repeater {
-                        model: root._issueRows
-                        delegate: Rectangle {
-                            Layout.fillWidth: true
-                            radius: 6
-                            color: "#fff7ed"
-                            border.color: "#fdba74"
-                            implicitHeight: issTxt.implicitHeight + 14
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(Constants.space2)
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                spacing: 8
-                                QQC.Label {
-                                    text: "Row " + modelData.row
-                                    color: "#9a3412"
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                    Layout.preferredWidth: 50
-                                }
-                                QQC.Label {
-                                    id: issTxt
-                                    text: modelData.message
-                                    color: "#9a3412"
-                                    font.pixelSize: 12
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.Wrap
-                                }
+                Repeater {
+                    model: root._issueRows
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        radius: dp(Constants.radius)
+                        color: Constants.pendingFill
+                        border.color: Qt.rgba(0.96, 0.62, 0.04, 0.35)
+                        border.width: 1
+                        Layout.preferredHeight: issTxt.implicitHeight + dp(Constants.space3 * 2)
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: dp(Constants.space3)
+                            spacing: dp(Constants.space2)
+
+                            Text {
+                                text: "Row " + modelData.row
+                                color: Constants.pendingText
+                                font.pixelSize: sp(Constants.fsCaption)
+                                font.bold: true
+                                Layout.preferredWidth: dp(50)
+                            }
+                            Text {
+                                id: issTxt
+                                text: modelData.message
+                                color: Constants.pendingText
+                                font.pixelSize: sp(Constants.fsBody)
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
                             }
                         }
                     }
-                    QQC.Label {
-                        visible: root._issueRows.length === 0
-                        text: "No issues — all rows look good."
-                        color: "#16a34a"
-                        font.pixelSize: 12
-                        Layout.fillWidth: true
-                        Layout.topMargin: 12
-                    }
                 }
-            }
-        }
 
-        // Footer
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            QQC.Button {
-                text: "Cancel"
-                onClicked: root.close()
-            }
-            Item { Layout.fillWidth: true }
-            QQC.Button {
-                text: "Import " + root._effectiveCount() + " row" + (root._effectiveCount() === 1 ? "" : "s")
-                enabled: root._effectiveCount() > 0
-                background: Rectangle { radius: 8; color: parent.enabled ? Constants.primaryBlue : "#cbd5e1" }
-                contentItem: Text {
-                    text: parent.text; color: "#ffffff"; font.bold: true; font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                Text {
+                    visible: root._issueRows.length === 0
+                    text: "No issues — all rows look good."
+                    color: Constants.success
+                    font.pixelSize: sp(Constants.fsBody)
+                    Layout.fillWidth: true
+                    Layout.topMargin: dp(Constants.space3)
+                    horizontalAlignment: Text.AlignHCenter
                 }
-                onClicked: root._apply()
             }
         }
     }
@@ -323,7 +314,7 @@ QQC.Dialog {
 
         for (var k = 0; k < rows.length; ++k) {
             var r = rows[k]
-            var row = k + 2  // header is row 1
+            var row = k + 2
             var name = (r["Name"] || "").toString().trim()
             if (!name || name.length < 2) {
                 issues.push({ row: row, message: "Missing or too-short Name" })
@@ -357,7 +348,6 @@ QQC.Dialog {
                 photoUrl: (r["Photo URL"] || "").toString().trim(),
                 _conflictPolicy: "skip"
             }
-            // Detect conflict
             var hit = null
             if (rec.productId && existingById[rec.productId]) hit = existingById[rec.productId]
             else if (rec.sku && existingBySku[rec.sku.toLowerCase()]) hit = existingBySku[rec.sku.toLowerCase()]
@@ -375,7 +365,6 @@ QQC.Dialog {
         for (var i = 0; i < OrdersStore.orders.length; ++i)
             existingById[OrdersStore.orders[i].orderId] = OrdersStore.orders[i]
 
-        // Build SKU/name lookup for line-item resolution
         var skuToProduct = {}
         for (var ip = 0; ip < InventoryStore.products.length; ++ip) {
             var p = InventoryStore.products[ip]
@@ -396,7 +385,6 @@ QQC.Dialog {
                 issues.push({ row: row, message: "Invalid Status: " + status })
                 continue
             }
-            // Parse Products cell
             var prods = []
             var raw = (r["Products"] || "").toString()
             if (raw.length > 0) {
@@ -497,6 +485,4 @@ QQC.Dialog {
         importCompleted(msg)
         close()
     }
-
-    signal importCompleted(string message)
 }
