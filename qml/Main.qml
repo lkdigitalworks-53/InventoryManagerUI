@@ -17,7 +17,7 @@ App {
     // You get free licenseKeys from https://felgo.com/licenseKey
     licenseKey: ""
 
-    property bool compact: width < 520
+    property bool compact: width < dp(Constants.compactBreakpoint)
     property string authErrorMessage: ""
     property string permissionErrorMessage: ""
     property string memberErrorMessage: ""
@@ -213,12 +213,12 @@ App {
 
     QQC.Dialog {
         id: stockErrorDlg; modal: true; title: "Insufficient Inventory"
-        anchors.centerIn: parent; width: 420; height: stockErrCol.height + 120
+        anchors.centerIn: parent; width: dp(420); height: stockErrCol.height + dp(120)
         standardButtons: QQC.Dialog.Ok
         Column {
-            id: stockErrCol; width: parent.width; spacing: 8
-            Text { text: "Cannot complete order — insufficient stock:"; font.pixelSize: 13; font.bold: true; color: "#991b1b"; wrapMode: Text.Wrap; width: parent.width }
-            Text { text: dataModel.stockErrorMsg; font.pixelSize: 12; color: "#ef4444"; wrapMode: Text.Wrap; width: parent.width }
+            id: stockErrCol; width: parent.width; spacing: dp(8)
+            Text { text: "Cannot complete order — insufficient stock:"; font.pixelSize: sp(13); font.bold: true; color: "#991b1b"; wrapMode: Text.Wrap; width: parent.width }
+            Text { text: dataModel.stockErrorMsg; font.pixelSize: sp(12); color: "#ef4444"; wrapMode: Text.Wrap; width: parent.width }
         }
     }
 
@@ -227,14 +227,14 @@ App {
         modal: true
         title: "Permission Denied"
         anchors.centerIn: parent
-        width: 420
+        width: dp(420)
         standardButtons: QQC.Dialog.Ok
         Column {
             width: parent.width
-            spacing: 8
+            spacing: dp(8)
             Text {
                 text: permissionErrorMessage
-                font.pixelSize: 12
+                font.pixelSize: sp(12)
                 color: "#b91c1c"
                 wrapMode: Text.Wrap
                 width: parent.width
@@ -242,139 +242,61 @@ App {
         }
     }
 
-    Rectangle {
-        visible: successMessage.length > 0
+    // Toast layer. Use Toast.show("...") from anywhere to drive it.
+    ToastHost {
+        id: toastHost
+        anchors.fill: parent
         z: 999
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 20
-        radius: 8
-        color: "#16a34a"
-        border.color: "#14532d"
-        width: Math.min(520, successText.implicitWidth + 28)
-        height: 42
-        Text {
-            id: successText
-            anchors.centerIn: parent
-            color: "#ffffff"
-            font.pixelSize: 12
-            text: successMessage
-        }
     }
+    // Bridge legacy `successMessage` writes through Toast for one source of truth.
+    onSuccessMessageChanged: if (successMessage.length > 0) Toast.show(successMessage)
 
     // ── Layer 5: Navigation ───────────────────────────────────────────────────
+    // Force bottom-tab navigation (no swipe drawer). Per prototype the bottom
+    // bar is always visible on every screen size — Felgo's default would swap
+    // to a drawer in portrait, which is wrong for our mobile-first design.
     Navigation {
         id: navigation
         visible: AuthStore.isAuthenticated && AuthStore.tenantId.length > 0
+        // No built-in tabs — our FloatingTabbar is the only nav UI. Felgo's
+        // TabControl tabs were stacking under the floating pill.
+        navigationMode: navigationModeNone
 
-        // ── Header (overlaid above navigation content) ──
-        headerView: Rectangle {
-            id: header
-            width: parent.width
-            height: 80
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: theme.headerGradientStart }
-                GradientStop { position: 1.0; color: theme.headerGradientEnd }
-            }
-            Column {
-                anchors.centerIn: parent; spacing: 4
-                Text {
-                    text: {
-                        if (AuthStore.tenantName && AuthStore.tenantName.length > 0)
-                            return "🏢  " + AuthStore.tenantName
-                        if (AuthStore.isAuthenticated)
-                            return "Workspace loading…"
-                        return "Business Management"
-                    }
-                    color: "#ffffff"; font.bold: true; font.pixelSize: 18
-                    anchors.horizontalCenter: parent.horizontalCenter
-                }
-                Text {
-                    text: AuthStore.tenantName && AuthStore.tenantName.length > 0
-                        ? "Business Management · Manage your operations"
-                        : "Manage your business operations efficiently"
-                    color: "#dbeafe"; font.pixelSize: 12
-                    anchors.horizontalCenter: parent.horizontalCenter
-                }
-            }
-            Row {
-                anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
-                spacing: 8
-                Rectangle {
-                    radius: 10
-                    height: 22
-                    width: Math.min(250, authTxt.width + 14)
-                    color: AuthStore.isAuthenticated ? "#dcfce7" : "#fee2e2"
-                    border.color: AuthStore.isAuthenticated ? "#16a34a" : "#ef4444"
-                    Text {
-                        id: authTxt
-                        anchors.centerIn: parent
-                        text: {
-                            if (!AuthStore.isAuthenticated) return "Guest"
-                            var who = AuthStore.email || "Signed In"
-                            return AuthStore.role
-                                ? who + " · " + AuthStore.role
-                                : who
+        // Hide Felgo's framework header — pages render their own GlassHeader.
+        headerView: Item { width: 1; height: 0 }
+        // Hide Felgo's framework footer too (belt-and-suspenders).
+        footerView: Item { width: 1; height: 0 }
+
+        // ── Tab: Dashboard ──
+        NavigationItem {
+            title: qsTr("Home")
+            iconType: IconType.home
+            visible: AuthStore.isAuthenticated
+
+            NavigationStack {
+                initialPage: AppPage {
+                    title: qsTr("Home")
+                    navigationBarHidden: true
+
+                    DashboardPage {
+                        anchors.fill: parent
+                        compact: app.compact
+                        onNewOrderRequested: newOrderDlg.open()
+                        onAddProductRequested: addProductDlg.open()
+                        onInviteStaffRequested: {
+                            if (AuthStore.canInviteMembers) inviteMemberDlg.open()
+                            else addStaffDlg.open()
                         }
-                        color: AuthStore.isAuthenticated ? "#14532d" : "#7f1d1d"
-                        font.pixelSize: 10
-                        elide: Text.ElideRight
-                        width: Math.min(220, implicitWidth)
-                    }
-                }
-                Rectangle {
-                    width: 36; height: 36; radius: 18; color: "transparent"
-                    Text {
-                        text: FirebaseService.syncing ? "⏳" : "🔄"; font.pixelSize: 16
-                        anchors.centerIn: parent
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: logic.syncAllStores()
-                    }
-                }
-                Rectangle {
-                    width: 36; height: 36; radius: 18; color: "transparent"
-                    Text {
-                        text: "⎋"; font.pixelSize: 16
-                        anchors.centerIn: parent
-                        color: "#ffffff"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: logic.signOutRequested()
-                    }
-                }
-                Rectangle {
-                    width: 36; height: 36; radius: 18; color: "transparent"
-                    visible: AuthStore.canInviteMembers
-                    Text {
-                        text: "👥"; font.pixelSize: 16
-                        anchors.centerIn: parent
-                        color: "#ffffff"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: {
-                            AuthService.loadTenantMembers()
-                            memberMgmtDlg.open()
+                        onNavigateToOrders:    navigation.currentIndex = 1
+                        onNavigateToInventory: navigation.currentIndex = 2
+                        onNavigateToSales:     navigation.currentIndex = 3
+                        onNavigateToStaff:     staffPageOverlay.open()
+                        onNavigateToProfile:   profilePage.open()
+                        onShowNotificationsRequested: notificationsSheet.open()
+                        onActivityItemClicked: function(kind, entityId) {
+                            app._routeActivity(kind, entityId)
                         }
                     }
-                }
-                Rectangle {
-                    width: 36; height: 36; radius: 18; color: "transparent"
-                    Text {
-                        text: "👤"; font.pixelSize: 16
-                        anchors.centerIn: parent
-                        color: "#ffffff"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: profileDlg.open()
-                    }
-                    ToolTip.visible: profileHover.containsMouse
-                    ToolTip.text: "Profile Settings"
-                    HoverHandler { id: profileHover }
                 }
             }
         }
@@ -392,7 +314,6 @@ App {
 
                     OrdersPage {
                         anchors.fill: parent
-                        anchors.margins: 16
                         compact: app.compact
                         canApproveAll: AuthStore.canApproveAll
                         canDeleteOrders: AuthStore.canDeleteOrders
@@ -406,11 +327,12 @@ App {
                                 onConfirm: function() { logic.deleteOrder(orderId) }
                             })
                         }
-                        onExportRequested: app._exportOrders()
+                        onExportRequested: { exportSheet.kind = "orders"; exportSheet.open() }
                         onImportRequested: {
                             importDlg.mode = "orders"
                             importDlg.pickAndStart()
                         }
+                        onFiltersRequested: filterSheet.open()
                     }
                 }
             }
@@ -418,7 +340,7 @@ App {
 
         // ── Tab: Inventory ──
         NavigationItem {
-            title: qsTr("Inventory")
+            title: qsTr("Stock")
             iconType: IconType.archive
             visible: AuthStore.isAuthenticated
 
@@ -429,7 +351,6 @@ App {
 
                     InventoryPage {
                         anchors.fill: parent
-                        anchors.margins: 16
                         compact: app.compact
                         canManageInventory: AuthStore.canManageInventory
                         onAddProductClicked: addProductDlg.open()
@@ -446,7 +367,7 @@ App {
                                 onConfirm: function() { logic.deleteProduct(pid) }
                             })
                         }
-                        onExportRequested: app._exportProducts()
+                        onExportRequested: { exportSheet.kind = "products"; exportSheet.open() }
                         onImportRequested: {
                             importDlg.mode = "products"
                             importDlg.pickAndStart()
@@ -469,57 +390,45 @@ App {
 
                     SalesPage {
                         anchors.fill: parent
-                        anchors.margins: 16
                         compact: app.compact
-                        onExportRequested: app._exportSalesReport()
+                        onExportRequested: { exportSheet.kind = "sales"; exportSheet.open() }
                     }
                 }
             }
         }
 
-        // ── Tab: Staff ──
-        NavigationItem {
-            title: qsTr("Staff")
-            iconType: IconType.users
-            visible: AuthStore.canViewStaff
+        // Staff tab removed — the prototype's bottom bar has 4 slots
+        // (Home / Orders / Stock / Sales). Staff lives as a full-screen
+        // overlay reached from the Dashboard "Invite staff" tile and the
+        // Profile page's "Team members" row.
+    }
 
-            NavigationStack {
-                initialPage: AppPage {
-                    title: qsTr("Staff")
-                    navigationBarHidden: true
-
-                    StaffPage {
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        compact: app.compact
-                        canManageStaff: AuthStore.canManageStaff
-                        canInviteMembers: AuthStore.canInviteMembers
-                        onAddStaffClicked: addStaffDlg.open()
-                        onExportRequested: app._exportStaff()
-                        onViewStaffClicked: function(sid) { staffDetailDlg.openFor(sid, false) }
-                        onEditStaffClicked: function(sid) { staffDetailDlg.openFor(sid, true) }
-                        onDeleteStaffClicked: function(sid) {
-                            var s = StaffStore.getById(sid)
-                            var nm = s ? s.name : sid
-                            confirmDlg.ask({
-                                title: "Delete staff member?",
-                                message: "“" + nm + "” will be removed. If they had login credentials, their workspace access is also revoked.",
-                                confirmLabel: "Delete staff",
-                                onConfirm: function() { logic.deleteStaff(sid) }
-                            })
-                        }
-                        onInviteMemberClicked: {
-                            inviteMemberDlg.errorMessage = ""
-                            inviteMemberDlg.open()
-                        }
-                        onManageMembersClicked: {
-                            memberErrorMessage = ""
-                            AuthService.loadTenantMembers()
-                            memberMgmtDlg.open()
-                        }
-                    }
-                }
-            }
+    // ── Floating glass tabbar ───────────────────────────────────────────────
+    // Sits on top of Navigation. Felgo's default tabbar visuals are hidden via
+    // footerView; this overlay drives navigation.currentIndex and matches the
+    // prototype's `.tabbar` styling exactly.
+    FloatingTabbar {
+        id: floatingTabbar
+        visible: navigation.visible
+                 && !profilePage.visible
+                 && !staffPageOverlay.visible
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: dp(12)
+        anchors.rightMargin: dp(12)
+        anchors.bottomMargin: dp(14)
+        z: 50
+        currentIndex: navigation.currentIndex
+        tabs: [
+            { icon: "⌂", label: "Home" },
+            { icon: "🧾", label: "Orders" },
+            { icon: "📦", label: "Stock" },
+            { icon: "📈", label: "Sales" }
+        ]
+        onTabChanged: function(idx) {
+            if (navigation.currentIndex !== idx)
+                navigation.currentIndex = idx
         }
     }
 
@@ -663,17 +572,17 @@ App {
         modal: true
         anchors.centerIn: parent
         title: importDlg.mode === "products" ? "Open products .xlsx" : "Open orders .xlsx"
-        width: Math.min(parent ? parent.width - 40 : 480, 480)
+        width: Math.min(parent ? parent.width - dp(40) : dp(480), dp(480))
         standardButtons: QQC.Dialog.Ok | QQC.Dialog.Cancel
 
         contentItem: ColumnLayout {
-            spacing: 8
+            spacing: dp(8)
             QQC.Label {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 text: "Paste the full path of the .xlsx file (or a https URL). On mobile, share the sheet into this app from Files / Drive / Sheets."
                 color: "#6b7280"
-                font.pixelSize: 12
+                font.pixelSize: sp(12)
             }
             QQC.TextField {
                 id: importPathField
@@ -689,6 +598,26 @@ App {
             }
         }
         onRejected: importPathField.text = ""
+    }
+
+    // Routes a click on a recent-activity / notification entry to the right
+    // page + detail dialog. `kind` matches ActivityLog kinds plus "order"
+    // for the order-row case and "low_stock" for low-stock notifications.
+    function _routeActivity(kind, entityId) {
+        if (!kind) return
+        if (kind === "order") {
+            navigation.currentIndex = 1   // Orders tab
+            if (entityId) Qt.callLater(function() { orderDetail.openFor(entityId) })
+        } else if (kind === "product_added"
+                || kind === "product_updated"
+                || kind === "product_restocked"
+                || kind === "low_stock") {
+            navigation.currentIndex = 2   // Stock tab
+            if (entityId) Qt.callLater(function() { editProductDlg.openFor(entityId, false) })
+        } else if (kind === "staff_added" || kind === "staff_updated") {
+            staffPageOverlay.open()
+            if (entityId) Qt.callLater(function() { staffDetailDlg.openFor(entityId, false) })
+        }
     }
 
     function _exportProducts() {
@@ -760,4 +689,125 @@ App {
         }
     }
     RestockDialog { id: restockDlg }
+
+    // ── Profile overlay ─────────────────────────────────────────────────────
+    // Slides over the tab content as a full-screen page. Reusable across tabs.
+    ProfilePage {
+        id: profilePage
+        anchors.fill: parent
+        z: 200
+        visible: false
+        function open() { visible = true }
+        function close() { visible = false }
+
+        onBackRequested: close()
+        // Don't close the profile page first — the dialog is modal and its
+        // overlay covers the page. Closing first briefly reveals the dashboard.
+        onEditProfileRequested: profileDlg.open()
+        onManageMembersRequested: {
+            close()
+            staffPageOverlay.open()
+        }
+        onSignOutRequested: {
+            // Confirm before signing out — destructive action that drops the
+            // workspace context and clears local store caches.
+            confirmDlg.ask({
+                title: "Sign out?",
+                message: "You'll need to sign in again to access this workspace.",
+                confirmLabel: "Sign out",
+                onConfirm: function() {
+                    profilePage.close()
+                    logic.signOutRequested()
+                }
+            })
+        }
+    }
+
+    // ── Staff overlay ───────────────────────────────────────────────────────
+    // Reached from Dashboard "Invite staff" tile and Profile "Team members"
+    // row. Same overlay pattern as profilePage.
+    Item {
+        id: staffPageOverlay
+        anchors.fill: parent
+        z: 200
+        visible: false
+        function open() { visible = true }
+        function close() { visible = false }
+
+        StaffPage {
+            anchors.fill: parent
+            compact: app.compact
+            showBackButton: true
+            canManageStaff: AuthStore.canManageStaff
+            canInviteMembers: AuthStore.canInviteMembers
+            onBackRequested: staffPageOverlay.close()
+            onAddStaffClicked: addStaffDlg.open()
+            onExportRequested: { exportSheet.kind = "staff"; exportSheet.open() }
+            onViewStaffClicked: function(sid) { staffDetailDlg.openFor(sid, false) }
+            onEditStaffClicked: function(sid) { staffDetailDlg.openFor(sid, true) }
+            onDeleteStaffClicked: function(sid) {
+                var s = StaffStore.getById(sid)
+                var nm = s ? s.name : sid
+                confirmDlg.ask({
+                    title: "Delete staff member?",
+                    message: "“" + nm + "” will be removed. If they had login credentials, their workspace access is also revoked.",
+                    confirmLabel: "Delete staff",
+                    onConfirm: function() { logic.deleteStaff(sid) }
+                })
+            }
+            onInviteMemberClicked: {
+                inviteMemberDlg.errorMessage = ""
+                inviteMemberDlg.open()
+            }
+            onManageMembersClicked: {
+                memberErrorMessage = ""
+                AuthService.loadTenantMembers()
+                memberMgmtDlg.open()
+            }
+        }
+
+        // Tap-outside-to-close — only on the bottommost area covered by tabbar.
+        // Easier: a small floating "Done" button anchored top-left through
+        // GlassHeader's leading slot. For now keep the close via tab switch
+        // (when user taps Home/Orders/Stock/Sales the overlay closes).
+        Connections {
+            target: navigation
+            function onCurrentIndexChanged() { staffPageOverlay.close() }
+        }
+    }
+
+    // ── Utility sheets (notifications / filters / export) ───────────────────
+    NotificationsSheet {
+        id: notificationsSheet
+        onNotificationItemClicked: function(kind, entityId) {
+            app._routeActivity(kind, entityId)
+        }
+    }
+
+    FilterSheet {
+        id: filterSheet
+        onFiltersApplied: function(status, range) {
+            // Filter state belongs to the page — emit a signal back through
+            // the dispatcher so OrdersPage picks it up. For now Apply just
+            // closes; the page already drives its own chip-based filter.
+            Toast.show("Filter applied")
+        }
+    }
+
+    ExportSheet {
+        id: exportSheet
+        // `kind` is set by the caller before open(): "orders" | "products" | "sales" | "staff".
+        property string kind: "orders"
+        onFormatSelected: function(format) {
+            // Today XlsxService writes .xlsx natively. CSV / PDF reuse it for
+            // now and surface a toast — proper exporters land in a follow-up.
+            switch (kind) {
+                case "products": app._exportProducts(); break
+                case "orders":   app._exportOrders();   break
+                case "sales":    app._exportSalesReport(); break
+                case "staff":    app._exportStaff();    break
+            }
+            if (format !== "xlsx") Toast.show("Format converted to .xlsx (CSV/PDF coming soon)")
+        }
+    }
 }

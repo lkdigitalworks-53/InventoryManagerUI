@@ -5,8 +5,15 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 
+// Mobile-first auth page. Mirrors the prototype:
+//   • Fluid gradient blob background
+//   • Brand mark (indigo→violet→pink conic)
+//   • Sign in / Sign up tab pair
+//   • OAuth row, "or" divider, fields, primary CTA
+//   • Forgot link, secure-sign-in caption
 Item {
     id: root
+    clip: true   // keep decorative blobs from painting outside the page
 
     signal signInRequested(string email, string password)
     signal signUpRequested(string name, string email, string password)
@@ -14,19 +21,10 @@ Item {
     signal forgotPasswordRequested(string email)
 
     property bool busy: false
-    // Server-side errors flow in here from Main.qml as a binding;
-    // never assign to this from inside LoginPage or the binding breaks.
     property string errorMessage: ""
-    // Client-side messages (validation, provider hints, etc.) — assigning to
-    // this is safe because nothing else binds to it.
     property string localError: ""
     readonly property string _displayedError: localError.length > 0 ? localError : errorMessage
 
-    // Live form-validity flag bound directly to the field text properties.
-    // Reading them via flat expressions ensures QML auto-tracks every
-    // dependency on every evaluation. (A JS function call in `enabled:`,
-    // or a block expression with early returns, can drop dependencies and
-    // leave the button stuck at its initial value.)
     readonly property bool _emailValid: emailField
         ? FormValidator.emailRegex.test((emailField.text || "").trim())
         : false
@@ -41,7 +39,6 @@ Item {
         : false)
     readonly property bool _formValid: _emailValid && _passwordValid && _nameValid && _confirmValid
 
-    // OAuth Configuration
     readonly property string _googleClientId: "219471233608-hmdnvfkntl7e5cqv5rdg2f544bupsto4.apps.googleusercontent.com"
     readonly property string _googleScope: "openid email profile"
 
@@ -49,7 +46,6 @@ Item {
     property string _googleNonce: ""
     property bool _signupMode: false
 
-    // Connect to the local OAuth server for Google sign-in callbacks.
     Connections {
         target: OAuthServer
         function onTokenReceived(idToken) {
@@ -62,206 +58,186 @@ Item {
         }
     }
 
-    // Background gradient
+    // ── Background: app surface + fluid blobs ─────────────────────────────
     Rectangle {
         anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#f0f9ff" }
-            GradientStop { position: 1.0; color: "#e0e7ff" }
-        }
+        color: Constants.appBg
     }
 
-    // Scrollable container so the card stays usable on short windows.
-    Flickable {
-        id: scroller
+    // Indigo blob — top-left
+    Rectangle {
+        id: blob1
+        z: -1
+        width: dp(220); height: dp(220); radius: dp(110)
+        x: -dp(70); y: -dp(70)
+        color: Constants.brand1
+        opacity: 0.40
+        SequentialAnimation on x {
+            loops: Animation.Infinite
+            NumberAnimation { from: -dp(70); to: -dp(30); duration: 6000; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: -dp(30); to: -dp(70); duration: 6000; easing.type: Easing.InOutQuad }
+        }
+    }
+    // Pink blob — middle-right
+    Rectangle {
+        z: -1
+        width: dp(200); height: dp(200); radius: dp(100)
+        x: parent.width - dp(140); y: parent.height * 0.30
+        color: Constants.brand3
+        opacity: 0.30
+        SequentialAnimation on y {
+            loops: Animation.Infinite
+            NumberAnimation { from: parent ? parent.height * 0.30 : 200;
+                              to: parent ? parent.height * 0.40 : 260;
+                              duration: 7000; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: parent ? parent.height * 0.40 : 260;
+                              to: parent ? parent.height * 0.30 : 200;
+                              duration: 7000; easing.type: Easing.InOutQuad }
+        }
+    }
+    // Cyan blob — bottom-left
+    Rectangle {
+        z: -1
+        width: dp(180); height: dp(180); radius: dp(90)
+        x: parent.width * 0.20; y: parent.height - dp(90)
+        color: Constants.brand4
+        opacity: 0.25
+    }
+
+    // ── Auth card ─────────────────────────────────────────────────────────
+    QQC.ScrollView {
+        id: authScroll
         anchors.fill: parent
-        contentWidth: width
-        contentHeight: Math.max(height, card.height + 80)
-        boundsBehavior: Flickable.StopAtBounds
         clip: true
-        // Only enable scrolling when content overflows. Otherwise Flickable's
-        // grab handler can intercept button clicks before the QQC.Button
-        // press handler sees them — manifests as "button click does nothing".
-        interactive: contentHeight > height
+        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
-        Rectangle {
-            id: card
-            width: Math.min(parent.width - 40, 440)
-            height: formCol.implicitHeight + 40
-            radius: 14
-            color: "#ffffff"
-            border.color: Constants.borderColor
-            border.width: 1
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: Math.max(40, (parent.height - height) / 2)
+        ColumnLayout {
+            id: scrollCol
+            // Bind to the ScrollView's available width — never overflow / clip.
+            width: authScroll.availableWidth
+            spacing: dp(Constants.space5)
 
-            // Soft shadow via stacked rectangle
+            Item { Layout.preferredHeight: dp(Constants.space7); Layout.fillWidth: true }
+
+            // Brand mark
             Rectangle {
-                anchors.fill: parent
-                anchors.topMargin: 4
-                anchors.bottomMargin: -4
-                radius: parent.radius
-                color: "#10000000"
-                z: -1
+                Layout.alignment: Qt.AlignHCenter
+                width: dp(72); height: dp(72); radius: dp(22)
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Constants.brand1 }
+                    GradientStop { position: 0.55; color: Constants.brand2 }
+                    GradientStop { position: 1.0; color: Constants.brand3 }
+                }
+                Text {
+                    anchors.centerIn: parent
+                    text: "BM"
+                    color: Constants.textOnBrand
+                    font.bold: true
+                    font.pixelSize: sp(22)
+                    font.letterSpacing: 0.5
+                }
             }
 
-            ColumnLayout {
-                id: formCol
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 14
+            Text {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: _signupMode ? "Create account" : "Welcome back"
+                font.pixelSize: sp(28)
+                font.bold: true
+                font.letterSpacing: -0.5
+                color: Constants.textPrimary
+            }
 
-                // Brand mark
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space5)
+                Layout.rightMargin: dp(Constants.space5)
+                horizontalAlignment: Text.AlignHCenter
+                text: _signupMode
+                    ? "Start your 14-day free trial. No card needed."
+                    : "Sign in to your workspace."
+                font.pixelSize: sp(Constants.fsBodyLg)
+                color: Constants.textSecondary
+                wrapMode: Text.Wrap
+            }
 
-                    Rectangle {
-                        Layout.alignment: Qt.AlignHCenter
-                        width: 44; height: 44; radius: 12
-                        gradient: Gradient {
-                            orientation: Gradient.Horizontal
-                            GradientStop { position: 0.0; color: Constants.primaryBlue }
-                            GradientStop { position: 1.0; color: Constants.primaryPurple }
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            text: "BM"
-                            color: "#ffffff"
-                            font.bold: true
-                            font.pixelSize: 16
-                        }
-                    }
+            // Sign-in / Sign-up tabs (segmented pill)
+            Item {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: Math.min(scrollCol.width - dp(Constants.space5 * 2), dp(320))
+                Layout.preferredHeight: dp(40)
+                Layout.topMargin: dp(Constants.space2)
 
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.topMargin: 6
-                        horizontalAlignment: Text.AlignHCenter
-                        text: _signupMode ? "Create your account" : "Welcome back"
-                        font.pixelSize: 22
-                        font.bold: true
-                        color: "#111827"
-                    }
+                Rectangle {
+                    anchors.fill: parent
+                    radius: dp(Constants.radiusPill)
+                    color: Constants.cardBg
+                    border.color: Constants.borderColor
+                    border.width: 1
 
-                    Text {
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        text: _signupMode
-                            ? "Set up your business workspace in minutes"
-                            : "Sign in to your business workspace"
-                        font.pixelSize: 12
-                        color: "#6b7280"
-                        wrapMode: Text.Wrap
-                    }
-                }
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: dp(4)
+                        spacing: dp(4)
+                        Repeater {
+                            model: [
+                                { key: false, label: "Sign in" },
+                                { key: true,  label: "Sign up" }
+                            ]
+                            delegate: Item {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                readonly property bool isOn: _signupMode === modelData.key
 
-                // Sign-in / Sign-up tabs
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.topMargin: 4
-                    spacing: 0
-
-                    Repeater {
-                        model: [
-                            { key: false, label: "Sign in" },
-                            { key: true,  label: "Sign up" }
-                        ]
-                        delegate: Item {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 38
-                            property bool active: _signupMode === modelData.key
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: modelData.label
-                                color: parent.active ? Constants.primaryBlue : "#6b7280"
-                                font.pixelSize: 14
-                                font.bold: parent.active
-                            }
-
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                width: parent.width
-                                height: parent.active ? 2 : 1
-                                color: parent.active ? Constants.primaryBlue : Constants.borderColor
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: !root.busy && !root._googleFlowActive
-                                onClicked: {
-                                    if (_signupMode !== modelData.key) {
-                                        _signupMode = modelData.key
-                                        root.localError = ""
-                                        root._clearFieldErrors()
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: dp(Constants.radiusPill)
+                                    visible: parent.isOn
+                                    gradient: Gradient {
+                                        orientation: Gradient.Horizontal
+                                        GradientStop { position: 0.0; color: Constants.brand1 }
+                                        GradientStop { position: 1.0; color: Constants.brand2 }
+                                    }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    color: parent.isOn ? Constants.textOnBrand : Constants.textSecondary
+                                    font.pixelSize: sp(Constants.fsBody)
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: !root.busy && !root._googleFlowActive
+                                    onClicked: {
+                                        if (_signupMode !== modelData.key) {
+                                            _signupMode = modelData.key
+                                            root.localError = ""
+                                            root._clearFieldErrors()
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                // Google sign-in button
-                QQC.Button {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    enabled: !root.busy && !root._googleFlowActive
+            // Form fields container
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space5)
+                Layout.rightMargin: dp(Constants.space5)
+                spacing: dp(Constants.space3)
 
-                    contentItem: RowLayout {
-                        spacing: 10
-                        Item { Layout.fillWidth: true }
-                        Rectangle {
-                            width: 22; height: 22; radius: 4
-                            color: "#ffffff"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "G"
-                                color: "#1f2937"
-                                font.bold: true
-                                font.pixelSize: 14
-                            }
-                        }
-                        Text {
-                            text: root._googleFlowActive
-                                ? "Waiting for browser…"
-                                : (_signupMode ? "Sign up with Google" : "Continue with Google")
-                            color: "#ffffff"
-                            font.bold: true
-                            font.pixelSize: 14
-                            elide: Text.ElideRight
-                        }
-                        Item { Layout.fillWidth: true }
-                    }
-
-                    background: Rectangle {
-                        radius: 8
-                        color: parent.enabled
-                            ? (parent.pressed ? "#111827" : (parent.hovered ? "#374151" : "#1f2937"))
-                            : "#9ca3af"
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                    }
-
-                    onClicked: _startGoogleSignIn()
-                }
-
-                // OR divider
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-                    Rectangle { Layout.fillWidth: true; height: 1; color: Constants.borderColor }
-                    Text { text: "OR"; color: "#9ca3af"; font.pixelSize: 11; font.bold: true }
-                    Rectangle { Layout.fillWidth: true; height: 1; color: Constants.borderColor }
-                }
-
-                // Full Name (signup only)
                 AuthTextField {
                     id: nameField
                     Layout.fillWidth: true
                     visible: _signupMode
-                    label: "Full Name"
-                    placeholderText: "Jane Doe"
+                    label: "Full name"
+                    placeholderText: "Alex Chen"
                     onTextChanged: errorText = ""
                     onAccepted: emailField.inputItem.forceActiveFocus()
                 }
@@ -280,7 +256,7 @@ Item {
                     id: passwordField
                     Layout.fillWidth: true
                     label: "Password"
-                    placeholderText: _signupMode ? "Choose a strong password" : "Enter your password"
+                    placeholderText: _signupMode ? "At least 8 characters" : "••••••••"
                     trailingLinkText: _signupMode ? "" : "Forgot?"
                     showStrength: _signupMode
                     strengthScore: _signupMode ? _passwordCheck.score : 0
@@ -307,27 +283,28 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     visible: root._displayedError.length > 0
-                    radius: 8
-                    color: "#fef2f2"
-                    border.color: "#fecaca"
+                    radius: dp(12)
+                    color: Constants.cancelledFill
+                    border.color: Qt.rgba(0.93, 0.27, 0.27, 0.25)
                     border.width: 1
-                    implicitHeight: errTxt.implicitHeight + 16
+                    implicitHeight: errTxt.implicitHeight + dp(16)
 
                     Text {
                         id: errTxt
                         anchors.fill: parent
-                        anchors.margins: 8
+                        anchors.margins: dp(10)
                         text: "⚠  " + root._displayedError
-                        color: "#b91c1c"
-                        font.pixelSize: 12
+                        color: Constants.cancelledText
+                        font.pixelSize: sp(Constants.fsSmall)
                         wrapMode: Text.Wrap
                         verticalAlignment: Text.AlignVCenter
                     }
                 }
 
                 // Submit button
-                AuthPrimaryButton {
+                PrimaryButton {
                     Layout.fillWidth: true
+                    Layout.topMargin: dp(Constants.space2)
                     text: _signupMode
                         ? (root.busy ? "Creating account…" : "Create account")
                         : (root.busy ? "Signing in…" : "Sign in")
@@ -336,68 +313,99 @@ Item {
                     onClicked: _submit()
                 }
 
+                // OR divider
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: dp(Constants.space2)
+                    spacing: dp(Constants.space3)
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Constants.borderColor }
+                    Text { text: "or continue with"; color: Constants.textMuted; font.pixelSize: sp(Constants.fsSmall) }
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Constants.borderColor }
+                }
+
+                // OAuth row
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: dp(Constants.space2)
+
+                    GhostButton {
+                        Layout.fillWidth: true
+                        text: root._googleFlowActive ? "Waiting…" : "Google"
+                        enabled: !root.busy && !root._googleFlowActive
+                        onClicked: _startGoogleSignIn()
+                    }
+
+                    GhostButton {
+                        Layout.fillWidth: true
+                        text: "Apple"
+                        enabled: false  // hooked up later — currently stubbed
+                    }
+                }
+
                 Text {
                     Layout.fillWidth: true
+                    Layout.topMargin: dp(Constants.space3)
                     horizontalAlignment: Text.AlignHCenter
                     text: "🔒 Your sign-in is secure and encrypted"
-                    color: "#9ca3af"
-                    font.pixelSize: 10
+                    color: Constants.textMuted
+                    font.pixelSize: sp(Constants.fsCaption)
                 }
             }
+
+            Item { Layout.preferredHeight: dp(Constants.space7); Layout.fillWidth: true }
         }
     }
 
-    // Post-OAuth progress overlay — visible while the Google flow is active
-    // (browser open) OR while a sign-in callback is being processed by Firebase.
+    // OAuth progress overlay
     Rectangle {
         anchors.fill: parent
         visible: _googleFlowActive
-        color: "#80000000"
-        z: 10
+        color: Constants.overlay
+        z: 100
 
-        MouseArea { anchors.fill: parent }  // swallow clicks behind overlay
+        MouseArea { anchors.fill: parent }
 
         Rectangle {
             anchors.centerIn: parent
-            width: Math.min(parent.width - 40, 360)
-            height: overlayCol.implicitHeight + 32
-            radius: 12
-            color: "#ffffff"
+            width: Math.min(parent.width - dp(40), dp(360))
+            height: overlayCol.implicitHeight + dp(32)
+            radius: dp(Constants.radiusLg)
+            color: Constants.cardBg
 
             ColumnLayout {
                 id: overlayCol
                 anchors.fill: parent
-                anchors.margins: 16
-                spacing: 10
+                anchors.margins: dp(Constants.space4)
+                spacing: dp(Constants.space3)
 
                 QQC.BusyIndicator {
                     Layout.alignment: Qt.AlignHCenter
                     running: true
-                    implicitWidth: 36
-                    implicitHeight: 36
+                    implicitWidth: dp(36)
+                    implicitHeight: dp(36)
                 }
 
                 Text {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
                     text: "Waiting for Google sign-in…"
-                    font.pixelSize: 14
+                    font.pixelSize: sp(Constants.fsBodyLg)
                     font.bold: true
-                    color: "#111827"
+                    color: Constants.textPrimary
                 }
 
                 Text {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
                     text: "Complete sign-in in your browser. We'll bring you back here automatically."
-                    color: "#6b7280"
-                    font.pixelSize: 12
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsSmall)
                     wrapMode: Text.Wrap
                 }
 
-                AuthSecondaryButton {
+                GhostButton {
                     Layout.fillWidth: true
-                    Layout.topMargin: 6
+                    Layout.topMargin: dp(Constants.space2)
                     text: "Cancel"
                     onClicked: _cancelGoogleFlow()
                 }
@@ -405,13 +413,10 @@ Item {
         }
     }
 
-    // Computed password strength (signup only). Bound to passwordField.text so
-    // we don't have to subscribe through an alias chain at construction time.
     readonly property var _passwordCheck: _signupMode && passwordField.text.length > 0
         ? FormValidator.validatePassword(passwordField.text)
         : ({ score: 0, label: "" })
 
-    // Helper Functions
     function _formIsValid() {
         if (FormValidator.validateEmail(emailField.text).length > 0) return false
         if (!passwordField.text || passwordField.text.length < 6) return false
@@ -453,32 +458,15 @@ Item {
     }
 
     function _submit() {
-        console.log("[LoginPage] _submit called. busy=", root.busy,
-                    "googleFlow=", root._googleFlowActive,
-                    "signupMode=", _signupMode)
-        if (root.busy || root._googleFlowActive) {
-            console.log("[LoginPage] _submit aborted: busy or oauth flow active")
-            return
-        }
-        if (!_validateAndShowErrors()) {
-            console.log("[LoginPage] _submit aborted: validation failed")
-            return
-        }
-        // Clear our own client-side message; the server-side errorMessage
-        // binding from Main.qml will repaint on its own when authFailed fires.
+        if (root.busy || root._googleFlowActive) return
+        if (!_validateAndShowErrors()) return
         root.localError = ""
 
         var email = emailField.text.trim()
         if (_signupMode) {
-            console.log("[LoginPage] emitting signUpRequested for", email)
             signUpRequested(nameField.text.trim(), email, passwordField.text)
             return
         }
-
-        // Skip the provider pre-check — it added latency and an extra failure
-        // mode without much benefit. Firebase already gives us a clear error
-        // (mapped via _friendlyErrorMessage) when password sign-in is blocked.
-        console.log("[LoginPage] emitting signInRequested for", email)
         signInRequested(email, passwordField.text)
     }
 

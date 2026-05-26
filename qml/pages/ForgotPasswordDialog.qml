@@ -1,20 +1,20 @@
 import QtQuick
-import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
 import "../components"
 import "../helper"
 
-QQC.Dialog {
+// Forgot password — converted to bottom sheet. Public contract:
+//   property string prefillEmail
+//   signal resetRequested(email)
+BottomSheet {
     id: root
-    modal: true
-    title: "Reset your password"
-    anchors.centerIn: parent
-    width: Math.min(parent ? parent.width - 40 : 400, 420)
-    padding: 20
+
+    sheetTitle: "Reset password"
+    primaryAction: "Send reset link"
+    secondaryAction: "Cancel"
 
     property string prefillEmail: ""
-    property bool busy: false
     property string errorMessage: ""
 
     signal resetRequested(string email)
@@ -25,21 +25,18 @@ QQC.Dialog {
         emailField.errorText = ""
     }
 
-    background: Rectangle {
-        radius: 12
-        color: "#ffffff"
-        border.color: Constants.borderColor
-    }
+    onPrimaryClicked: _submit()
 
-    contentItem: ColumnLayout {
-        spacing: 12
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: dp(Constants.space3)
 
         Text {
-            Layout.fillWidth: true
-            text: "Enter the email address associated with your account and we'll send you a link to reset your password."
-            color: "#6b7280"
-            font.pixelSize: 12
+            text: "Enter the email associated with your account and we'll send a secure reset link."
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsBody)
             wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
 
         AuthTextField {
@@ -48,38 +45,17 @@ QQC.Dialog {
             label: "Email"
             placeholderText: "you@company.com"
             inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
-            onAccepted: root._submit()
             onTextChanged: { errorText = ""; root.errorMessage = "" }
+            onAccepted: root._submit()
         }
 
         Text {
-            Layout.fillWidth: true
             visible: root.errorMessage.length > 0
             text: root.errorMessage
-            color: "#b91c1c"
-            font.pixelSize: 12
+            color: Constants.danger
+            font.pixelSize: sp(Constants.fsSmall)
             wrapMode: Text.Wrap
-        }
-
-        RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 4
-            spacing: 8
-
-            AuthSecondaryButton {
-                Layout.fillWidth: true
-                text: "Cancel"
-                enabled: !root.busy
-                onClicked: root.reject()
-            }
-
-            AuthPrimaryButton {
-                Layout.fillWidth: true
-                text: "Send reset link"
-                loading: root.busy
-                enabled: !root.busy
-                onClicked: root._submit()
-            }
         }
     }
 

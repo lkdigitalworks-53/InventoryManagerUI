@@ -5,8 +5,11 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 
+// Workspace setup. Mirrors prototype: clean centered card, business name +
+// optional industry chip selector, gradient primary CTA.
 Item {
     id: root
+    clip: true   // keep decorative blobs from painting outside the page
 
     signal createTenantRequested(string tenantName)
     signal signOutRequested()
@@ -15,124 +18,168 @@ Item {
     property string errorMessage: ""
     property string userEmail: ""
 
-    Rectangle {
+    Rectangle { anchors.fill: parent; color: Constants.appBg }
+
+    // Background blobs to keep visual continuity with LoginPage.
+    Rectangle { z: -1; width: dp(220); height: dp(220); radius: dp(110); x: -dp(70); y: -dp(70); color: Constants.brand1; opacity: 0.40 }
+    Rectangle { z: -1; width: dp(180); height: dp(180); radius: dp(90); x: parent.width - dp(140); y: parent.height - dp(180); color: Constants.brand4; opacity: 0.30 }
+
+    QQC.ScrollView {
+        id: tenantScroll
         anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#f0f9ff" }
-            GradientStop { position: 1.0; color: "#e0e7ff" }
-        }
-    }
-
-    Rectangle {
-        id: card
-        width: Math.min(parent.width - 40, 460)
-        height: setupCol.implicitHeight + 40
-        radius: 14
-        color: "#ffffff"
-        border.color: Constants.borderColor
-        border.width: 1
-        anchors.centerIn: parent
-
-        Rectangle {
-            anchors.fill: parent
-            anchors.topMargin: 4
-            anchors.bottomMargin: -4
-            radius: parent.radius
-            color: "#10000000"
-            z: -1
-        }
+        clip: true
 
         ColumnLayout {
-            id: setupCol
-            anchors.fill: parent
-            anchors.margins: 20
-            spacing: 14
+            id: col
+            width: tenantScroll.availableWidth
+            spacing: dp(Constants.space5)
+
+            Item { Layout.preferredHeight: dp(Constants.space7); Layout.fillWidth: true }
+
+            // Brand mark
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                width: dp(72); height: dp(72); radius: dp(22)
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Constants.brand1 }
+                    GradientStop { position: 0.55; color: Constants.brand2 }
+                    GradientStop { position: 1.0; color: Constants.brand3 }
+                }
+                Text { anchors.centerIn: parent; text: "🏢"; font.pixelSize: sp(30) }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: "Create your workspace"
+                font.pixelSize: sp(28)
+                font.bold: true
+                font.letterSpacing: -0.5
+                color: Constants.textPrimary
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space5)
+                Layout.rightMargin: dp(Constants.space5)
+                horizontalAlignment: Text.AlignHCenter
+                text: userEmail.length > 0
+                    ? "Signed in as " + userEmail
+                    : "One workspace per business. You can invite teammates later."
+                font.pixelSize: sp(Constants.fsBodyLg)
+                color: Constants.textSecondary
+                wrapMode: Text.Wrap
+            }
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                Layout.leftMargin: dp(Constants.space5)
+                Layout.rightMargin: dp(Constants.space5)
+                spacing: dp(Constants.space3)
+
+                AuthTextField {
+                    id: tenantNameField
+                    Layout.fillWidth: true
+                    label: "Business name"
+                    placeholderText: "e.g. Aurora Coffee Co."
+                    helperText: "This is the name of your workspace."
+                    onTextChanged: { errorText = ""; root.errorMessage = "" }
+                    onAccepted: _submit()
+                }
+
+                // Industry chip row — picks default theme; informational for now.
+                Text {
+                    text: "Business type"
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsSmall)
+                    font.bold: true
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: dp(Constants.space2)
+
+                    property int selected: 0
+                    Repeater {
+                        model: ["Retail", "Hospitality", "Services", "Wholesale", "Other"]
+                        delegate: Rectangle {
+                            id: typeChip
+                            readonly property bool isOn: index === parent.selected
+                            height: dp(32)
+                            width: chipTxt.implicitWidth + dp(24)
+                            radius: dp(Constants.radiusPill)
+                            color: isOn ? Constants.brand2 : Constants.cardBg
+                            border.color: isOn ? "transparent" : Constants.borderColor
+                            border.width: 1
+
+                            Rectangle {
+                                visible: typeChip.isOn
+                                anchors.fill: parent
+                                radius: parent.radius
+                                gradient: Gradient {
+                                    orientation: Gradient.Horizontal
+                                    GradientStop { position: 0.0; color: Constants.brand1 }
+                                    GradientStop { position: 1.0; color: Constants.brand2 }
+                                }
+                            }
+
+                            Text {
+                                id: chipTxt
+                                z: 1
+                                anchors.centerIn: parent
+                                text: modelData
+                                color: typeChip.isOn ? Constants.textOnBrand : Constants.textSecondary
+                                font.pixelSize: sp(Constants.fsSmall)
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: parent.parent.selected = index
+                            }
+                        }
+                    }
+                }
 
                 Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 44; height: 44; radius: 12
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: Constants.primaryBlue }
-                        GradientStop { position: 1.0; color: Constants.primaryPurple }
-                    }
+                    Layout.fillWidth: true
+                    visible: root.errorMessage.length > 0
+                    radius: dp(12)
+                    color: Constants.cancelledFill
+                    border.color: Qt.rgba(0.93, 0.27, 0.27, 0.25)
+                    border.width: 1
+                    implicitHeight: errTxt.implicitHeight + dp(16)
+
                     Text {
-                        anchors.centerIn: parent
-                        text: "🏢"
-                        font.pixelSize: 22
+                        id: errTxt
+                        anchors.fill: parent
+                        anchors.margins: dp(10)
+                        text: "⚠  " + root.errorMessage
+                        color: Constants.cancelledText
+                        font.pixelSize: sp(Constants.fsSmall)
+                        wrapMode: Text.Wrap
+                        verticalAlignment: Text.AlignVCenter
                     }
                 }
 
-                Text {
+                PrimaryButton {
                     Layout.fillWidth: true
-                    Layout.topMargin: 6
-                    horizontalAlignment: Text.AlignHCenter
-                    text: "Set up your workspace"
-                    font.pixelSize: 22
-                    font.bold: true
-                    color: "#111827"
+                    Layout.topMargin: dp(Constants.space2)
+                    text: root.busy ? "Creating workspace…" : "Continue"
+                    loading: root.busy
+                    enabled: !root.busy
+                    onClicked: _submit()
                 }
 
-                Text {
+                GhostButton {
                     Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: userEmail.length > 0 ? ("Signed in as " + userEmail) : "Almost there!"
-                    font.pixelSize: 12
-                    color: "#6b7280"
-                    wrapMode: Text.Wrap
+                    text: "Sign out"
+                    enabled: !root.busy
+                    onClicked: signOutRequested()
                 }
             }
 
-            AuthTextField {
-                id: tenantNameField
-                Layout.fillWidth: true
-                Layout.topMargin: 6
-                label: "Business Name"
-                placeholderText: "Acme Inc."
-                helperText: "This will be the name of your workspace."
-                onTextChanged: { errorText = ""; root.errorMessage = "" }
-                onAccepted: _submit()
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                visible: root.errorMessage.length > 0
-                radius: 8
-                color: "#fef2f2"
-                border.color: "#fecaca"
-                border.width: 1
-                implicitHeight: errTxt.implicitHeight + 16
-
-                Text {
-                    id: errTxt
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    text: "⚠  " + root.errorMessage
-                    color: "#b91c1c"
-                    font.pixelSize: 12
-                    wrapMode: Text.Wrap
-                    verticalAlignment: Text.AlignVCenter
-                }
-            }
-
-            AuthPrimaryButton {
-                Layout.fillWidth: true
-                text: root.busy ? "Creating workspace…" : "Create workspace"
-                loading: root.busy
-                enabled: !root.busy
-                onClicked: _submit()
-            }
-
-            AuthSecondaryButton {
-                Layout.fillWidth: true
-                text: "Sign out"
-                enabled: !root.busy
-                onClicked: signOutRequested()
-            }
+            Item { Layout.preferredHeight: dp(Constants.space7); Layout.fillWidth: true }
         }
     }
 

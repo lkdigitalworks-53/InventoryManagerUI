@@ -24,17 +24,17 @@ ColumnLayout {
     signal trailingLinkClicked()
     signal accepted()
 
-    spacing: 4
+    spacing: dp(4)
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: dp(8)
         visible: root.label.length > 0 || root.trailingLinkText.length > 0 || root.trailingText.length > 0
 
         Text {
             text: root.label
             color: "#374151"
-            font.pixelSize: 12
+            font.pixelSize: sp(12)
             font.bold: true
             Layout.fillWidth: true
             visible: root.label.length > 0
@@ -44,14 +44,14 @@ ColumnLayout {
             visible: root.trailingText.length > 0 && root.trailingLinkText.length === 0
             text: root.trailingText
             color: "#6b7280"
-            font.pixelSize: 11
+            font.pixelSize: sp(11)
         }
 
         Text {
             visible: root.trailingLinkText.length > 0
             text: root.trailingLinkText
             color: Constants.primaryBlue
-            font.pixelSize: 11
+            font.pixelSize: sp(11)
             font.bold: true
 
             MouseArea {
@@ -65,16 +65,16 @@ ColumnLayout {
     QQC.TextField {
         id: input
         Layout.fillWidth: true
-        font.pixelSize: 13
-        leftPadding: 12
-        rightPadding: 12
-        topPadding: 10
-        bottomPadding: 10
+        font.pixelSize: sp(13)
+        leftPadding: dp(12)
+        rightPadding: dp(12)
+        topPadding: dp(10)
+        bottomPadding: dp(10)
         selectByMouse: true
         onAccepted: root.accepted()
 
         background: Rectangle {
-            radius: 8
+            radius: dp(8)
             color: input.enabled ? "#ffffff" : "#f9fafb"
             border.color: root.errorText.length > 0
                 ? "#dc2626"
@@ -88,7 +88,7 @@ ColumnLayout {
         visible: root.errorText.length > 0 || root.helperText.length > 0
         text: root.errorText.length > 0 ? root.errorText : root.helperText
         color: root.errorText.length > 0 ? "#b91c1c" : "#6b7280"
-        font.pixelSize: 11
+        font.pixelSize: sp(11)
         wrapMode: Text.Wrap
     }
 }

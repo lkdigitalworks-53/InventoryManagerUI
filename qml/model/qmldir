@@ -7,3 +7,4 @@ singleton AuthStore 1.0 AuthStore.qml
 singleton AuthService 1.0 AuthService.qml
 singleton CategoryStore 1.0 CategoryStore.qml
 singleton StorageService 1.0 StorageService.qml
+singleton ActivityLog 1.0 ActivityLog.qml
