@@ -8,3 +8,9 @@ singleton AuthService 1.0 AuthService.qml
 singleton CategoryStore 1.0 CategoryStore.qml
 singleton StorageService 1.0 StorageService.qml
 singleton ActivityLog 1.0 ActivityLog.qml
+singleton TransactionStore 1.0 TransactionStore.qml
+singleton PartyStore 1.0 PartyStore.qml
+singleton SupplierStore 1.0 SupplierStore.qml
+singleton StockBatchStore 1.0 StockBatchStore.qml
+singleton MigrationService 1.0 MigrationService.qml
+singleton OrderChannelStore 1.0 OrderChannelStore.qml

@@ -46,14 +46,27 @@ BottomSheet {
         confirmUid = uid || ""
         confirmRole = role || ""
         confirmStatus = status || ""
+
+        if (action === "remove") {
+            // Destructive — use the shared bottom-sheet ConfirmDialog so the
+            // user sees the standard delete UX (red CTA, slide-up sheet).
+            removeMemberConfirm.ask({
+                title: qsTr("Remove member?"),
+                message: qsTr("“%1” will lose access to this workspace. This cannot be undone.").arg(confirmUid),
+                confirmLabel: qsTr("Remove"),
+                onConfirm: function() { root.removeMemberRequested(confirmUid) }
+            })
+            return
+        }
+
         if (action === "role")
             confirmMessage = "Set role for " + confirmUid + " to '" + confirmRole + "'?"
         else if (action === "status")
             confirmMessage = "Change status for " + confirmUid + " to '" + confirmStatus + "'?"
-        else
-            confirmMessage = "Remove member " + confirmUid + " from this tenant?"
         confirmDlg.open()
     }
+
+    ConfirmDialog { id: removeMemberConfirm }
 
     ColumnLayout {
         Layout.fillWidth: true
@@ -225,8 +238,6 @@ BottomSheet {
                 root.roleUpdateRequested(root.confirmUid, root.confirmRole)
             else if (root.confirmAction === "status")
                 root.statusUpdateRequested(root.confirmUid, root.confirmStatus)
-            else if (root.confirmAction === "remove")
-                root.removeMemberRequested(root.confirmUid)
         }
 
         contentItem: Text {

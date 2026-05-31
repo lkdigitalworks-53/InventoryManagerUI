@@ -57,6 +57,22 @@ QtObject {
         revision++
     }
 
+    // Remove a single entry by its id. Adjusts unreadCount if the removed
+    // entry was unread. Used by NotificationsSheet's swipe / click-to-dismiss.
+    function remove(id) {
+        if (!id) return
+        var arr = []
+        var dropped = null
+        for (var i = 0; i < entries.length; ++i) {
+            if (entries[i].id === id) { dropped = entries[i]; continue }
+            arr.push(entries[i])
+        }
+        if (!dropped) return
+        if (!dropped.read && unreadCount > 0) unreadCount--
+        entries = arr
+        revision++
+    }
+
     // Friendly relative-time label for an ISO timestamp.
     function timeAgo(ts) {
         if (!ts) return ""

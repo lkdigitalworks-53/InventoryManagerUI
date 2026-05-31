@@ -26,6 +26,32 @@ BottomSheet {
     property string photoUrl: ""
     property bool photoBusy: false
 
+    // Supplier banner state — `_currentSupplierId` resolves to the most
+    // recent purchase/created event's supplier; the display name is looked
+    // up via SupplierStore so a supplier rename reflects everywhere without
+    // touching historical batch docs. The binding depends on TransactionStore
+    // and SupplierStore revisions so both add-batch and rename refresh it.
+    property string _currentSupplierId: {
+        var tx = TransactionStore.revision
+        return root.productId.length > 0
+                ? TransactionStore.lastSupplierFor(root.productId) || ""
+                : ""
+    }
+    property string _currentSupplierName: {
+        var sup = SupplierStore.revision
+        return root._currentSupplierId
+                ? SupplierStore.nameOf(root._currentSupplierId) || qsTr("(removed supplier)")
+                : ""
+    }
+    // Per-batch list (oldest first) for the View-mode batch table.
+    property var _productBatches: {
+        var bRev = StockBatchStore.revision
+        return root.productId.length > 0
+                ? StockBatchStore.forProduct(root.productId)
+                : []
+    }
+    property bool _renaming: false
+
     function openFor(id, startInEdit) {
         productId = id
         editMode = !!startInEdit
@@ -40,6 +66,8 @@ BottomSheet {
                 : (p.price !== undefined ? String(p.price) : "0")
             stockField.text = (p.stock !== undefined) ? String(p.stock) : "0"
             minStockField.text = (p.minStock !== undefined) ? String(p.minStock) : "0"
+            taxableCombo.currentIndex = p.taxable ? 1 : 0
+            taxPercentField.text = (p.taxPercent !== undefined && p.taxPercent !== null) ? String(p.taxPercent) : "0"
             photoUrl = p.photoUrl || ""
 
             var cats = CategoryStore.categories
@@ -56,7 +84,34 @@ BottomSheet {
         }
         errorLabel.text = ""
         photoBusy = false
+        // Supplier picker — refresh the model from SupplierStore and select
+        // by id rather than by combobox string (the underlying list sorts
+        // alphabetically, so positions shift on every add).
+        root._refreshSupplierPicker(TransactionStore.lastSupplierFor(id) || "")
+        root._renaming = false
+        renameField.text = ""
         open()
+    }
+
+    // Mirror of SupplierStore (id ↔ label arrays kept in sync). Used by
+    // editPartyCombo for the edit-mode picker.
+    property var _supplierIds: [""]
+    property var _supplierLabels: [qsTr("Select a supplier")]
+
+    function _refreshSupplierPicker(preferredId) {
+        var ids = [""]
+        var labels = [qsTr("Select a supplier")]
+        var src = SupplierStore.suppliers || []
+        for (var i = 0; i < src.length; ++i) {
+            ids.push(src[i].supplierId)
+            labels.push(src[i].name)
+        }
+        _supplierIds = ids
+        _supplierLabels = labels
+        if (typeof editPartyCombo !== "undefined") {
+            editPartyCombo.model = labels
+            editPartyCombo.currentIndex = preferredId ? Math.max(0, ids.indexOf(preferredId)) : 0
+        }
     }
 
     onPrimaryClicked: {
@@ -300,16 +355,268 @@ BottomSheet {
             AuthTextField {
                 id: stockField
                 Layout.fillWidth: true
-                label: "Stock"
+                label: qsTr("Stock")
                 readOnly: !root.editMode
                 inputMethodHints: Qt.ImhDigitsOnly
             }
             AuthTextField {
                 id: minStockField
                 Layout.fillWidth: true
-                label: "Min stock"
+                label: qsTr("Min stock")
                 readOnly: !root.editMode
                 inputMethodHints: Qt.ImhDigitsOnly
+            }
+        }
+
+        Text {
+            text: qsTr("Tax")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: dp(4)
+                Text { text: qsTr("Status"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                AppComboBox {
+                    id: taxableCombo
+                    Layout.fillWidth: true
+                    model: [qsTr("Not taxable"), qsTr("Taxable")]
+                    enabled: root.editMode
+                    font.pixelSize: sp(Constants.fsBody)
+                }
+            }
+            AuthTextField {
+                id: taxPercentField
+                Layout.fillWidth: true
+                label: qsTr("Tax %")
+                readOnly: !root.editMode || taxableCombo.currentIndex === 0
+                enabled: taxableCombo.currentIndex === 1
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
+            }
+        }
+
+        // ── Supplier ───────────────────────────────────────────────────────
+        // Read-only banner in view mode, picker + inline rename in edit mode.
+        // The "supplier" is derived from the most recent purchase event for
+        // this product (TransactionStore.lastPartyFor) — rather than living
+        // on the product itself, which keeps every restock as the source of
+        // truth. Editing here renames the party globally (i.e. across every
+        // event that references it).
+        Text {
+            text: qsTr("Supplier")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+
+        // View mode: banner + per-batch list. The banner shows the most
+        // recent supplier (resolved via SupplierStore so a rename takes
+        // effect everywhere), and the batch list breaks current stock down
+        // by receipt event so the user can see which batch came from whom.
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: !root.editMode
+            spacing: dp(Constants.space2)
+
+            Rectangle {
+                Layout.fillWidth: true
+                radius: dp(Constants.radius)
+                color: Constants.subtleBg
+                border.color: Constants.borderColor
+                border.width: 1
+                Layout.preferredHeight: dp(48)
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: dp(Constants.space3)
+                    anchors.rightMargin: dp(Constants.space3)
+                    spacing: dp(Constants.space2)
+                    Text {
+                        text: "🏷️"
+                        font.pixelSize: sp(16)
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root._currentSupplierName.length > 0
+                                ? qsTr("Latest from %1").arg(root._currentSupplierName)
+                                : qsTr("No supplier on record")
+                        color: root._currentSupplierName.length > 0
+                                ? Constants.textPrimary
+                                : Constants.textMuted
+                        font.pixelSize: sp(Constants.fsBody)
+                        font.bold: root._currentSupplierName.length > 0
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        text: root._productBatches.length > 0
+                                ? qsTr("%1 batches").arg(root._productBatches.length)
+                                : ""
+                        color: Constants.textMuted
+                        font.pixelSize: sp(Constants.fsSmall)
+                    }
+                }
+            }
+
+            // Per-batch list. Compact rows: date · supplier · qty
+            // remaining/received · unit cost. Hidden when there are no
+            // batches yet (e.g. legacy product whose stock predates FIFO).
+            Repeater {
+                model: root._productBatches
+                delegate: Rectangle {
+                    id: batchRow
+                    required property var modelData
+                    required property int index
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: dp(44)
+                    radius: dp(Constants.radiusSm)
+                    color: Constants.cardBg
+                    border.color: Constants.borderColor
+                    border.width: 1
+
+                    readonly property string supplierLabel: {
+                        var sRev = SupplierStore.revision
+                        var sid = batchRow.modelData.supplierId
+                        return sid
+                                ? (SupplierStore.nameOf(sid) || qsTr("(removed supplier)"))
+                                : qsTr("(no supplier)")
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: dp(Constants.space3)
+                        anchors.rightMargin: dp(Constants.space3)
+                        spacing: dp(Constants.space2)
+                        Text {
+                            // Date only (chop the timestamp tail).
+                            text: (batchRow.modelData.receivedDate || "").substring(0, 10)
+                            color: Constants.textSecondary
+                            font.pixelSize: sp(Constants.fsCaption)
+                            Layout.preferredWidth: dp(80)
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: batchRow.supplierLabel
+                            color: Constants.textPrimary
+                            font.pixelSize: sp(Constants.fsBody)
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: (batchRow.modelData.qtyRemaining || 0)
+                                    + " / " + (batchRow.modelData.qtyReceived || 0)
+                            color: (batchRow.modelData.qtyRemaining || 0) === 0
+                                    ? Constants.textMuted
+                                    : Constants.textPrimary
+                            font.pixelSize: sp(Constants.fsCaption)
+                        }
+                        Text {
+                            text: InventoryStore.formatCurrency(batchRow.modelData.unitCost || 0)
+                            color: Constants.textSecondary
+                            font.pixelSize: sp(Constants.fsCaption)
+                            Layout.preferredWidth: dp(64)
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                }
+            }
+        }
+
+        // Edit mode: picker for the *next* restock's default supplier. We
+        // intentionally don't rewrite historical batches when the picker
+        // changes — that would corrupt FIFO lineage. Renaming a supplier
+        // (which propagates to every batch via SupplierStore.updateSupplier)
+        // is the correct way to fix a typo.
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: root.editMode
+            spacing: dp(Constants.space2)
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: dp(Constants.space2)
+                AppComboBox {
+                    id: editPartyCombo
+                    Layout.fillWidth: true
+                    model: root._supplierLabels
+                    font.pixelSize: sp(Constants.fsBody)
+                    displayText: currentIndex > 0
+                            ? currentText
+                            : qsTr("Select a supplier")
+                }
+                QQC.AbstractButton {
+                    id: renamePartyToggle
+                    Layout.preferredWidth: dp(44)
+                    Layout.preferredHeight: dp(44)
+                    implicitWidth: dp(44)
+                    implicitHeight: dp(44)
+                    padding: 0
+                    topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
+                    enabled: editPartyCombo.currentIndex > 0
+                    background: Rectangle {
+                        anchors.fill: parent
+                        radius: dp(14)
+                        color: renamePartyToggle.pressed ? Constants.borderColor : Constants.subtleBg
+                        border.color: Constants.borderColor
+                        border.width: 1
+                        opacity: renamePartyToggle.enabled ? 1 : 0.5
+                        Behavior on color { ColorAnimation { duration: Constants.durFast } }
+                    }
+                    contentItem: Text {
+                        text: root._renaming ? "✕" : "✎"
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(16)
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        root._renaming = !root._renaming
+                        if (root._renaming) {
+                            renameField.text = editPartyCombo.currentText
+                            renameField.forceActiveFocus()
+                        }
+                    }
+                }
+            }
+
+            // Inline rename — updates the SupplierStore record in-place; all
+            // batches/transactions that reference the supplierId follow
+            // automatically because they only store the id, never the name.
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: dp(Constants.space2)
+                visible: root._renaming
+
+                AuthTextField {
+                    id: renameField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("New supplier name")
+                    onAccepted: renameSaveBtn.clicked()
+                }
+                PrimaryButton {
+                    id: renameSaveBtn
+                    text: qsTr("Save")
+                    implicitHeight: dp(44)
+                    implicitWidth: dp(80)
+                    onClicked: {
+                        var idx = editPartyCombo.currentIndex
+                        if (idx <= 0) { root._renaming = false; return }
+                        var sid = root._supplierIds[idx]
+                        var newName = (renameField.text || "").trim()
+                        if (!sid || !newName) { root._renaming = false; return }
+                        SupplierStore.updateSupplier(sid, { name: newName })
+                        // Refresh model + restore selection by id (the new
+                        // name reshuffles the alphabetical sort order).
+                        root._refreshSupplierPicker(sid)
+                        root._renaming = false
+                        renameField.text = ""
+                    }
+                }
             }
         }
 
@@ -320,6 +627,253 @@ BottomSheet {
             color: Constants.danger
             font.pixelSize: sp(Constants.fsSmall)
             wrapMode: Text.Wrap
+        }
+
+        // ── History ────────────────────────────────────────────────────────
+        // Per-product transaction trail: restocks, sales, edits. Keep this
+        // header at the same emphasis as the dialog's other sections
+        // ("Product info", "Pricing & stock") so it doesn't blend into the
+        // empty-state caption when the product has no transactions yet.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: dp(Constants.space4)
+            visible: !root.editMode
+            spacing: dp(Constants.space2)
+
+            Text {
+                text: "📜"
+                font.pixelSize: sp(16)
+            }
+            Text {
+                text: qsTr("History")
+                color: Constants.textPrimary
+                font.pixelSize: sp(Constants.fsBodyLg)
+                font.bold: true
+                Layout.fillWidth: true
+            }
+            Text {
+                text: historySection._history.length > 0
+                        ? qsTr("%1 events").arg(historySection._history.length)
+                        : ""
+                color: Constants.textMuted
+                font.pixelSize: sp(Constants.fsCaption)
+            }
+        }
+
+        ColumnLayout {
+            id: historySection
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            visible: !root.editMode
+
+            // Binding (NOT imperative assignment): re-evaluates when either
+            // the active product changes or a new transaction is appended.
+            // The previous on_TxWatcherChanged handler stomped this binding
+            // and left the list stuck on whichever product was active when
+            // the first revision++ fired — causing other products' rows to
+            // leak into every subsequent dialog open.
+            property var _history: {
+                var w = TransactionStore.revision   // dependency for refresh
+                return root.productId.length > 0
+                    ? TransactionStore.forProduct(root.productId)
+                    : []
+            }
+
+            Repeater {
+                model: historySection._history
+                delegate: Rectangle {
+                    id: histRow
+                    Layout.fillWidth: true
+                    radius: dp(Constants.radius)
+                    color: Constants.cardBg
+                    border.color: Constants.borderColor
+                    border.width: 1
+                    Layout.preferredHeight: histCol.implicitHeight + dp(Constants.space3 * 2)
+
+                    // Effective kind — collapses two legacy patterns into the
+                    // new vocabulary so old Firestore docs still render right.
+                    readonly property string _kind: {
+                        if (modelData.kind === "purchase"
+                            && modelData.note === "Initial stock") return "created"
+                        if (modelData.kind === "update") return "legacy_update"
+                        return modelData.kind || "field_change"
+                    }
+
+                    readonly property string _icon: {
+                        switch (_kind) {
+                        case "created":          return "🆕"
+                        case "purchase":         return "📥"
+                        case "sale":             return "📤"
+                        case "stock_adjustment": return "🧮"
+                        case "field_change":     return "✏️"
+                        case "photo_change":     return "🖼"
+                        case "legacy_update":    return "✏️"
+                        default:                  return "•"
+                        }
+                    }
+
+                    readonly property string _title: historySection._titleFor(modelData, _kind)
+                    readonly property string _detail: historySection._detailFor(modelData, _kind)
+
+                    ColumnLayout {
+                        id: histCol
+                        anchors.fill: parent
+                        anchors.margins: dp(Constants.space3)
+                        spacing: dp(2)
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: dp(Constants.space2)
+                            Text {
+                                // Reach the delegate Rectangle directly via id —
+                                // `parent.parent` lands on histCol (one level
+                                // short) and silently resolves to undefined,
+                                // which is why the icon + title row was blank.
+                                text: histRow._icon
+                                font.pixelSize: sp(16)
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: histRow._title
+                                color: Constants.textPrimary
+                                font.pixelSize: sp(Constants.fsBody)
+                                font.bold: true
+                                elide: Text.ElideRight
+                                wrapMode: Text.Wrap
+                            }
+                            Text {
+                                text: ActivityLog.timeAgo(modelData.timestamp)
+                                color: Constants.textMuted
+                                font.pixelSize: sp(Constants.fsCaption)
+                            }
+                        }
+                        Text {
+                            visible: histRow._detail.length > 0
+                            text: histRow._detail
+                            color: Constants.textSecondary
+                            font.pixelSize: sp(Constants.fsCaption)
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+            }
+
+            Text {
+                visible: historySection._history.length === 0
+                text: qsTr("No history yet for this product.")
+                color: Constants.textMuted
+                font.pixelSize: sp(Constants.fsSmall)
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            // ── Per-kind formatters ────────────────────────────────────────
+            // Field-name → user-facing label + value formatter. Kept at the
+            // section level so both title and detail can reuse it without
+            // duplicating the switch.
+            function _fieldLabel(field) {
+                switch (field) {
+                case "name":         return qsTr("Name")
+                case "sku":          return qsTr("SKU")
+                case "category":     return qsTr("Category")
+                case "description":  return qsTr("Description")
+                case "unit":         return qsTr("Unit")
+                case "price":        return qsTr("Cost")
+                case "sellingPrice": return qsTr("Selling")
+                case "taxable":      return qsTr("Taxable")
+                case "taxPercent":   return qsTr("Tax %")
+                case "minStock":     return qsTr("Min stock")
+                default:              return field || qsTr("Field")
+                }
+            }
+
+            function _fieldFormat(field, v) {
+                if (field === "price" || field === "sellingPrice")
+                    return InventoryStore.formatCurrency(v || 0)
+                if (field === "taxable") return v ? qsTr("On") : qsTr("Off")
+                if (field === "taxPercent") return (v || 0) + "%"
+                if (typeof v === "string" && v.length === 0) return qsTr("(empty)")
+                return String(v === undefined || v === null ? "" : v)
+            }
+
+            // Best-effort party label for created/purchase rows. Stored on
+            // the document; legacy purchase docs may keep it inside the
+            // (now-deprecated) snapshot field.
+            function _partyOf(d) {
+                if (d.party) return d.party
+                if (d.snapshot && d.snapshot.party) return d.snapshot.party
+                return ""
+            }
+
+            function _titleFor(d, k) {
+                switch (k) {
+                case "created":
+                    var pCreated = _partyOf(d)
+                    var headCreated = d.quantity > 0
+                        ? qsTr("Created with %1 in stock").arg(d.quantity)
+                        : qsTr("Created")
+                    return pCreated ? headCreated + qsTr(" · from %1").arg(pCreated) : headCreated
+                case "purchase":
+                    var pPurchase = _partyOf(d)
+                    var headPurchase = qsTr("Restocked +%1").arg(d.quantity || 0)
+                    return pPurchase ? headPurchase + qsTr(" · from %1").arg(pPurchase) : headPurchase
+                case "sale":
+                    return d.orderId
+                        ? qsTr("Sold %1 · #%2").arg(d.quantity || 0).arg(d.orderId)
+                        : qsTr("Sold %1").arg(d.quantity || 0)
+                case "stock_adjustment":
+                    var delta = (d.delta !== undefined) ? d.delta : ((d.after || 0) - (d.before || 0))
+                    var sign = delta > 0 ? "+" : ""
+                    return qsTr("Stock adjusted: %1 → %2 (Δ %3%4)")
+                            .arg(d.before).arg(d.after).arg(sign).arg(delta)
+                case "field_change":
+                    return _fieldLabel(d.field) + ": "
+                            + _fieldFormat(d.field, d.before) + " → "
+                            + _fieldFormat(d.field, d.after)
+                case "photo_change":
+                    var hadBefore = d.before && d.before.length > 0
+                    var hasAfter = d.after && d.after.length > 0
+                    if (hadBefore && hasAfter) return qsTr("Photo replaced")
+                    if (!hadBefore && hasAfter) return qsTr("Photo added")
+                    if (hadBefore && !hasAfter) return qsTr("Photo removed")
+                    return qsTr("Photo updated")
+                case "legacy_update":
+                    return qsTr("Updated")
+                }
+                return qsTr("Activity")
+            }
+
+            function _detailFor(d, k) {
+                switch (k) {
+                case "created":
+                    var snap = d.snapshot || {}
+                    var bits = []
+                    if (snap.sku) bits.push(qsTr("SKU ") + snap.sku)
+                    if (snap.category) bits.push(snap.category)
+                    if (snap.sellingPrice !== undefined)
+                        bits.push(qsTr("Selling ") + InventoryStore.formatCurrency(snap.sellingPrice))
+                    if (d.unitCost > 0)
+                        bits.push(qsTr("Cost ") + InventoryStore.formatCurrency(d.unitCost) + qsTr(" each"))
+                    return bits.join(" · ")
+                case "purchase":
+                    if (d.unitCost > 0)
+                        return qsTr("@ %1 each · total %2")
+                                .arg(InventoryStore.formatCurrency(d.unitCost))
+                                .arg(InventoryStore.formatCurrency(d.total || 0))
+                    return ""
+                case "sale":
+                    if (d.unitPrice > 0)
+                        return qsTr("%1 × %2 = %3")
+                                .arg(d.quantity || 0)
+                                .arg(InventoryStore.formatCurrency(d.unitPrice))
+                                .arg(InventoryStore.formatCurrency(d.total || 0))
+                    return ""
+                case "legacy_update":
+                    return d.note || ""
+                }
+                return ""
+            }
         }
     }
 
@@ -336,6 +890,13 @@ BottomSheet {
         if (isNaN(stk) || stk < 0) errs.push("Enter valid stock")
         var ms = parseInt(minStockField.text)
         if (isNaN(ms) || ms < 0) errs.push("Enter valid minimum stock")
+        var taxable = taxableCombo.currentIndex === 1
+        var taxPercent = 0
+        if (taxable) {
+            taxPercent = parseFloat(taxPercentField.text)
+            if (isNaN(taxPercent) || taxPercent < 0 || taxPercent > 100)
+                errs.push("Enter a valid tax % (0–100)")
+        }
         if (errs.length > 0) {
             errorLabel.text = errs.join(" · ")
             return
@@ -348,6 +909,8 @@ BottomSheet {
             unit: unitCombo.currentText,
             price: cost,
             sellingPrice: sell,
+            taxable: taxable,
+            taxPercent: taxable ? taxPercent : 0,
             stock: stk,
             minStock: ms
         })

@@ -366,67 +366,105 @@ BottomSheet {
             existingById[OrdersStore.orders[i].orderId] = OrdersStore.orders[i]
 
         var skuToProduct = {}
+        var idToProduct = {}
         for (var ip = 0; ip < InventoryStore.products.length; ++ip) {
             var p = InventoryStore.products[ip]
             if (p.sku) skuToProduct[p.sku.toLowerCase()] = p
+            idToProduct[p.productId] = p
         }
 
+        // Group consecutive rows by Order ID. Rows missing an Order ID are
+        // grouped with the previous row's order, so a multi-line order can
+        // safely leave the order-header columns blank on continuation lines.
+        var groups = []
+        var currentKey = null
         for (var k = 0; k < rows.length; ++k) {
-            var r = rows[k]
-            var row = k + 2
-            var customer = (r["Customer"] || "").toString().trim()
+            var rRaw = rows[k]
+            var rowNum = k + 2
+            var oid = (rRaw["Order ID"] || "").toString().trim()
+            // Synthetic key for orders without an ID — falls back to row index
+            // so each unkeyed row becomes its own order.
+            var key = oid || (currentKey && (rRaw["Customer"] || "").toString().trim() === ""
+                              ? currentKey
+                              : "_anon_" + rowNum)
+            if (!groups.length || groups[groups.length - 1].key !== key) {
+                groups.push({ key: key, rows: [], firstRow: rowNum })
+            }
+            groups[groups.length - 1].rows.push({ row: rowNum, raw: rRaw })
+            currentKey = key
+        }
+
+        var allowed = ["pending", "processing", "completed", "out of stock"]
+        for (var g = 0; g < groups.length; ++g) {
+            var grp = groups[g]
+            // The first row of a group carries the order-level columns. Later
+            // rows may leave them blank — fall back to the first row.
+            var head = grp.rows[0].raw
+            var customer = (head["Customer"] || "").toString().trim()
             if (!customer) {
-                issues.push({ row: row, message: "Missing Customer" })
+                issues.push({ row: grp.firstRow, message: "Missing Customer" })
                 continue
             }
-            var status = (r["Status"] || "").toString().trim().toLowerCase() || "pending"
-            var allowed = ["pending", "processing", "completed", "out of stock"]
+            var status = (head["Status"] || "").toString().trim().toLowerCase() || "pending"
             if (allowed.indexOf(status) < 0) {
-                issues.push({ row: row, message: "Invalid Status: " + status })
+                issues.push({ row: grp.firstRow, message: "Invalid Status: " + status })
                 continue
-            }
-            var prods = []
-            var raw = (r["Products"] || "").toString()
-            if (raw.length > 0) {
-                var parts = raw.split("|")
-                var unresolved = []
-                for (var pi = 0; pi < parts.length; ++pi) {
-                    var seg = parts[pi].trim()
-                    if (!seg) continue
-                    var bits = seg.split(":")
-                    var tag = bits[0].trim()
-                    var qty = parseInt(bits[1]) || 0
-                    var price = bits.length > 2 ? parseFloat(bits[2]) : NaN
-                    var inv = skuToProduct[tag.toLowerCase()] || null
-                    if (!inv && tag.indexOf("PRD-") === 0) {
-                        for (var ip2 = 0; ip2 < InventoryStore.products.length; ++ip2)
-                            if (InventoryStore.products[ip2].productId === tag) { inv = InventoryStore.products[ip2]; break }
-                    }
-                    if (!inv) { unresolved.push(tag); continue }
-                    prods.push({
-                        productId: inv.productId,
-                        name: inv.name,
-                        price: !isNaN(price) ? price : (inv.sellingPrice || inv.price || 0),
-                        quantity: qty
-                    })
-                }
-                if (unresolved.length > 0) {
-                    issues.push({ row: row, message: "Unknown product SKUs: " + unresolved.join(", ") })
-                    continue
-                }
             }
 
+            var prods = []
+            var unresolved = []
+            for (var rr = 0; rr < grp.rows.length; ++rr) {
+                var lineSrc = grp.rows[rr].raw
+                var lineRow = grp.rows[rr].row
+                var pid = (lineSrc["Product ID"] || "").toString().trim()
+                var sku = (lineSrc["SKU"] || "").toString().trim()
+                var qty = parseInt(lineSrc["Quantity"]) || 0
+                if (!pid && !sku && !qty) continue   // empty line — order has no items
+
+                var inv = null
+                if (pid && idToProduct[pid]) inv = idToProduct[pid]
+                else if (sku && skuToProduct[sku.toLowerCase()]) inv = skuToProduct[sku.toLowerCase()]
+                if (!inv) {
+                    unresolved.push("row " + lineRow + ": " + (pid || sku || "(no id)"))
+                    continue
+                }
+                var unitPriceRaw = lineSrc["Unit Price"]
+                var unitPrice = parseFloat(unitPriceRaw)
+                if (isNaN(unitPrice)) unitPrice = inv.sellingPrice || inv.price || 0
+                var taxPctRaw = lineSrc["Tax %"]
+                var taxPct = parseFloat(taxPctRaw)
+                if (isNaN(taxPct)) taxPct = inv.taxable ? Number(inv.taxPercent || 0) : 0
+                var taxable = taxPct > 0 || !!inv.taxable
+                prods.push({
+                    productId: inv.productId,
+                    name: inv.name,
+                    price: unitPrice,
+                    quantity: qty,
+                    taxable: taxable,
+                    taxPercent: taxPct
+                })
+            }
+            if (unresolved.length > 0) {
+                issues.push({ row: grp.firstRow, message: "Unknown product(s): " + unresolved.join("; ") })
+                continue
+            }
+
+            var dt = (head["Discount Type"] || "flat").toString().trim().toLowerCase()
+            if (dt !== "percent") dt = "flat"
+            var dv = parseFloat(head["Discount Value"])
+            if (isNaN(dv)) dv = 0
+
             var rec = {
-                row: row,
-                orderId: (r["Order ID"] || "").toString().trim(),
+                row: grp.firstRow,
+                orderId: grp.key.indexOf("_anon_") === 0 ? "" : grp.key,
                 customer: customer,
-                email: (r["Email"] || "").toString().trim(),
-                phone: (r["Phone"] || "").toString().trim(),
+                email: (head["Email"] || "").toString().trim(),
+                phone: (head["Phone"] || "").toString().trim(),
                 status: status,
-                date: (r["Date"] || "").toString().trim(),
-                items: parseInt(r["Items"]) || 0,
-                total: parseFloat(r["Total"]) || 0,
-                notes: (r["Notes"] || "").toString(),
+                date: (head["Date"] || "").toString().trim(),
+                notes: (head["Notes"] || "").toString(),
+                discountType: dt,
+                discountValue: dv,
                 products: prods,
                 _conflictPolicy: "skip"
             }

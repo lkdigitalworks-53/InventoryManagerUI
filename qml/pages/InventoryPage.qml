@@ -230,18 +230,14 @@ Item {
                     ? Constants.grad3 : Constants.grad4
         }
 
-        // Trailing column — stock counter on top, progress bar below.
-        // Tightened width so progress bar (64dp) + counter no longer bleeds
-        // off the right edge of the card on phone widths.
+        // Trailing column — stock counter on top, progress bar below, then a
+        // "Restock" button when the user can manage inventory. Width bumped
+        // to fit the inline button without crowding the card.
         ColumnLayout {
             spacing: dp(4)
             Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
-            Layout.preferredWidth: dp(80)
+            Layout.preferredWidth: dp(96)
 
-            // Stock count + unit. Earlier rendered as "X / minStock*3" but
-            // the denominator was meaningless (we have no max-capacity
-            // field — minStock×3 is just a visual scale for the progress
-            // bar). Show the actual stock + unit instead.
             Text {
                 Layout.alignment: Qt.AlignRight
                 Layout.fillWidth: true
@@ -267,6 +263,46 @@ Item {
                 visible: card.product && card.product.stock <= card.product.minStock
                 status: "low"
                 label: "Low"
+            }
+            // Pill-shaped restock affordance. We deliberately use a Rectangle
+            // + MouseArea instead of nesting another AbstractButton inside
+            // the parent ListCard — when AbstractButtons are nested, both
+            // outer (view) and inner (restock) `clicked` handlers can fire,
+            // which manifested as the dialog never opening (or opening the
+            // detail dialog instead).
+            Rectangle {
+                id: restockBtn
+                Layout.alignment: Qt.AlignRight
+                Layout.preferredHeight: dp(28)
+                Layout.preferredWidth: restockLbl.implicitWidth + dp(20)
+                visible: card.canManage
+                radius: dp(Constants.radiusPill)
+                color: restockArea.pressed
+                        ? Qt.rgba(0.06, 0.72, 0.51, 0.22)
+                        : Qt.rgba(0.06, 0.72, 0.51, 0.10)
+                border.color: Qt.rgba(0.06, 0.72, 0.51, 0.35)
+                border.width: 1
+                Behavior on color { ColorAnimation { duration: Constants.durFast } }
+
+                Text {
+                    id: restockLbl
+                    anchors.centerIn: parent
+                    text: qsTr("＋ Restock")
+                    color: Constants.success
+                    font.pixelSize: sp(Constants.fsCaption)
+                    font.bold: true
+                }
+                MouseArea {
+                    id: restockArea
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    // Accept the tap explicitly so it doesn't bubble up to
+                    // the outer ListCard (which would also fire viewClicked).
+                    onClicked: function(mouse) {
+                        mouse.accepted = true
+                        card.restockClicked()
+                    }
+                }
             }
         }
     }

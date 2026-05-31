@@ -23,6 +23,10 @@ App {
     property string memberErrorMessage: ""
     property string successMessage: ""
 
+    // Cached payload from SalesPage.exportRequested. The export sheet's
+    // format-selected handler reads this when the user picks a format.
+    property var _pendingAnalysisExport: null
+
     // app initialization
     Component.onCompleted: {
         AuthService.ensureFreshToken()
@@ -57,6 +61,19 @@ App {
         running: false
         repeat: false
         onTriggered: successMessage = ""
+    }
+
+    // Delays the FIFO migration just enough for OrdersStore /
+    // InventoryStore / TransactionStore / PartyStore to finish their
+    // initial GETs. The migration itself short-circuits when the
+    // `_migrations/fifo_v1` flag is set, so this is safe to fire on
+    // every tenantContextReady.
+    Timer {
+        id: migrationKickoffTimer
+        interval: 1500
+        running: false
+        repeat: false
+        onTriggered: MigrationService.runIfNeeded()
     }
 
     // ── Layer 1: Theme ────────────────────────────────────────────────────────
@@ -154,6 +171,19 @@ App {
             InventoryStore.syncFromFirebase()
             SalesStore.syncFromFirebase()
             StaffStore.syncFromFirebase()
+            // TransactionStore powers the Analysis charts and the per-product
+            // History — without this re-sync the report cards go blank after
+            // a relaunch since the singleton's `Component.onCompleted` ran
+            // before the tenant id was known.
+            TransactionStore.syncFromFirebase()
+            // SupplierStore + StockBatchStore are the FIFO cost ledger that
+            // backs every per-supplier analytic. Same reasoning: their initial
+            // fetch fired before tenant context, so re-sync now.
+            SupplierStore.syncFromFirebase()
+            StockBatchStore.syncFromFirebase()
+            // Kick the one-shot FIFO backfill once the upstream stores have
+            // had a beat to land their data. The check inside is idempotent.
+            migrationKickoffTimer.restart()
             logic.loadData()
             inviteMemberDlg.errorMessage = ""
             memberErrorMessage = ""
@@ -167,6 +197,9 @@ App {
             InventoryStore.clear()
             SalesStore.clear()
             StaffStore.clear()
+            TransactionStore.clear()
+            SupplierStore.clear()
+            StockBatchStore.clear()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }
@@ -296,6 +329,7 @@ App {
                         onActivityItemClicked: function(kind, entityId) {
                             app._routeActivity(kind, entityId)
                         }
+                        onSeeAllActivityRequested: activityPageOverlay.open()
                     }
                 }
             }
@@ -313,6 +347,7 @@ App {
                     navigationBarHidden: true
 
                     OrdersPage {
+                        id: ordersPage
                         anchors.fill: parent
                         compact: app.compact
                         canApproveAll: AuthStore.canApproveAll
@@ -332,7 +367,10 @@ App {
                             importDlg.mode = "orders"
                             importDlg.pickAndStart()
                         }
-                        onFiltersRequested: filterSheet.open()
+                        onFiltersRequested: {
+                            filterSheet.range = ordersPage.dateRange
+                            filterSheet.open()
+                        }
                     }
                 }
             }
@@ -377,21 +415,28 @@ App {
             }
         }
 
-        // ── Tab: Sales ──
+        // ── Tab: Analysis ──
         NavigationItem {
-            title: qsTr("Sales")
+            title: qsTr("Analysis")
             iconType: IconType.linechart
             visible: AuthStore.canViewSales
 
             NavigationStack {
                 initialPage: AppPage {
-                    title: qsTr("Sales")
+                    title: qsTr("Analysis")
                     navigationBarHidden: true
 
                     SalesPage {
                         anchors.fill: parent
                         compact: app.compact
-                        onExportRequested: { exportSheet.kind = "sales"; exportSheet.open() }
+                        // SalesPage hands us the active-view payload here so
+                        // Main.qml doesn't need a reachable id reference into
+                        // the NavigationStack subtree.
+                        onExportRequested: function(payload) {
+                            app._pendingAnalysisExport = payload
+                            exportSheet.kind = "sales"
+                            exportSheet.open()
+                        }
                     }
                 }
             }
@@ -412,6 +457,7 @@ App {
         visible: navigation.visible
                  && !profilePage.visible
                  && !staffPageOverlay.visible
+                 && !activityPageOverlay.visible
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -424,7 +470,7 @@ App {
             { icon: "⌂", label: "Home" },
             { icon: "🧾", label: "Orders" },
             { icon: "📦", label: "Stock" },
-            { icon: "📈", label: "Sales" }
+            { icon: "📈", label: qsTr("Analysis") }
         ]
         onTabChanged: function(idx) {
             if (navigation.currentIndex !== idx)
@@ -526,8 +572,11 @@ App {
         id: newOrderDlg
         onOrderCreated: function(order) {
             logic.addOrder(order.customer, order.items, order.total,
-                order.status, order.date, order.email, order.phone, order.products)
+                order.status, order.date, order.email, order.phone, order.products,
+                order.discountType || "flat", order.discountValue || 0,
+                order.orderChannel || "", order.staffId || "")
         }
+        onManageChannelsRequested: manageChannelsDlg.open()
     }
     OrderDetailDialog {
         id: orderDetail
@@ -549,6 +598,7 @@ App {
         onManageCategoriesRequested: manageCategoriesDlg.open()
     }
     ManageCategoriesDialog { id: manageCategoriesDlg }
+    ManageOrderChannelsDialog { id: manageChannelsDlg }
     EditProductDialog {
         id: editProductDlg
         onProductUpdateRequested: function(pid, fields) {
@@ -657,18 +707,29 @@ App {
         successToastTimer.restart()
     }
 
-    // Sales "report" — for now we export the underlying orders, which carry
-    // all the data driving the Sales page KPIs. A dedicated formatted report
-    // is a future iteration.
+    // Analysis report — emits the same view the user is currently looking
+    // at (Revenue / Sold / Purchased / Current). SalesPage hands us the
+    // payload via `onExportRequested` because its `id` lives inside a
+    // NavigationStack subtree and isn't reachable by name from this scope.
     function _exportSalesReport() {
-        var url = XlsxService.writeOrders(OrdersStore.orders, "sales_report_" + Qt.formatDateTime(new Date(), "yyyyMMdd") + ".xlsx")
+        var payload = _pendingAnalysisExport
+        if (!payload || !payload.sections || payload.sections.length === 0) {
+            successMessage = qsTr("Export failed")
+            successToastTimer.restart()
+            return
+        }
+        var url = XlsxService.writeAnalysis(payload.title || qsTr("Analysis"),
+                                            payload.sections,
+                                            payload.suggestedName || "")
         if (!url || url.length === 0) {
-            successMessage = "Export failed"
+            successMessage = qsTr("Export failed")
         } else {
-            successMessage = "✓ Sales report exported. Saved to Downloads."
+            successMessage = qsTr("✓ %1 exported. Saved to Downloads.").arg(payload.title || qsTr("Analysis"))
             if (typeof NativeUtils !== "undefined" && NativeUtils.share)
                 NativeUtils.share("", url)
         }
+        // Clear once consumed so a stale payload can't leak into a future export.
+        _pendingAnalysisExport = null
         successToastTimer.restart()
     }
     AddStaffDialog {
@@ -718,6 +779,20 @@ App {
                 onConfirm: function() {
                     profilePage.close()
                     logic.signOutRequested()
+                }
+            })
+        }
+        onLeaveWorkspaceRequested: {
+            // Removes only the tenant membership, then signs out. The user
+            // stays registered globally — they may own or belong to other
+            // workspaces. Owner self-removal is blocked in AuthService.
+            confirmDlg.ask({
+                title: qsTr("Leave workspace?"),
+                message: qsTr("You'll be removed from this workspace and signed out. Your sign-in still works elsewhere."),
+                confirmLabel: qsTr("Leave workspace"),
+                onConfirm: function() {
+                    profilePage.close()
+                    AuthService.leaveCurrentTenant()
                 }
             })
         }
@@ -776,6 +851,30 @@ App {
         }
     }
 
+    // ── Activity overlay (full list reached from Dashboard "See all") ───────
+    Item {
+        id: activityPageOverlay
+        anchors.fill: parent
+        z: 200
+        visible: false
+        function open() { visible = true }
+        function close() { visible = false }
+
+        ActivityPage {
+            anchors.fill: parent
+            onBackRequested: activityPageOverlay.close()
+            onActivityItemClicked: function(kind, entityId) {
+                activityPageOverlay.close()
+                app._routeActivity(kind, entityId)
+            }
+        }
+
+        Connections {
+            target: navigation
+            function onCurrentIndexChanged() { activityPageOverlay.close() }
+        }
+    }
+
     // ── Utility sheets (notifications / filters / export) ───────────────────
     NotificationsSheet {
         id: notificationsSheet
@@ -786,12 +885,10 @@ App {
 
     FilterSheet {
         id: filterSheet
-        onFiltersApplied: function(status, range) {
-            // Filter state belongs to the page — emit a signal back through
-            // the dispatcher so OrdersPage picks it up. For now Apply just
-            // closes; the page already drives its own chip-based filter.
-            Toast.show("Filter applied")
-        }
+        // Drive the orders list directly. The status dimension lives on the
+        // page chips; this sheet only carries the date range.
+        onFiltersApplied: function(status, range) { ordersPage.dateRange = range }
+        onResetRequested: ordersPage.dateRange = "all"
     }
 
     ExportSheet {
@@ -799,15 +896,12 @@ App {
         // `kind` is set by the caller before open(): "orders" | "products" | "sales" | "staff".
         property string kind: "orders"
         onFormatSelected: function(format) {
-            // Today XlsxService writes .xlsx natively. CSV / PDF reuse it for
-            // now and surface a toast — proper exporters land in a follow-up.
             switch (kind) {
                 case "products": app._exportProducts(); break
                 case "orders":   app._exportOrders();   break
                 case "sales":    app._exportSalesReport(); break
                 case "staff":    app._exportStaff();    break
             }
-            if (format !== "xlsx") Toast.show("Format converted to .xlsx (CSV/PDF coming soon)")
         }
     }
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
 import "../components"
@@ -39,6 +40,45 @@ BottomSheet {
         Layout.fillWidth: true
         spacing: dp(Constants.space2)
 
+        // Header row: count + "Clear all" affordance. Hidden when empty so
+        // the empty-state card below stands alone.
+        RowLayout {
+            Layout.fillWidth: true
+            visible: !root._isEmpty()
+            spacing: dp(Constants.space2)
+
+            Text {
+                Layout.fillWidth: true
+                text: {
+                    var n = (ActivityLog.entries || []).length + root._lowStockProducts().length
+                    return n === 1 ? qsTr("1 notification") : qsTr("%1 notifications").arg(n)
+                }
+                color: Constants.textSecondary
+                font.pixelSize: sp(Constants.fsCaption)
+            }
+            QQC.AbstractButton {
+                visible: (ActivityLog.entries || []).length > 0
+                implicitHeight: dp(28)
+                leftPadding: dp(10); rightPadding: dp(10)
+                topPadding: 0; bottomPadding: 0
+                background: Rectangle {
+                    radius: dp(Constants.radiusPill)
+                    color: Qt.rgba(0.93, 0.27, 0.27, 0.10)
+                    border.color: Qt.rgba(0.93, 0.27, 0.27, 0.25)
+                    border.width: 1
+                }
+                contentItem: Text {
+                    text: qsTr("Clear all")
+                    color: Constants.danger
+                    font.pixelSize: sp(Constants.fsCaption)
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: ActivityLog.clear()
+            }
+        }
+
         // Low-stock alerts — include SKU so the user can identify the product
         // by code, not just name. Click routes to Stock + opens the product.
         Repeater {
@@ -61,38 +101,144 @@ BottomSheet {
         }
 
         // Activity feed entries (newest first). Click routes to the right
-        // page + opens the right detail dialog.
+        // page + opens the right detail dialog AND dismisses the entry.
+        // Horizontal swipe also dismisses without navigating.
         Repeater {
             model: ActivityLog.entries
-            delegate: ListCard {
+            delegate: Item {
+                id: rowItem
                 Layout.fillWidth: true
-                title: modelData.title || ""
-                subtitle: (modelData.subtitle || "") + " · " + ActivityLog.timeAgo(modelData.timestamp)
-                onClicked: {
-                    root.notificationItemClicked(modelData.kind || "", modelData.entityId || "")
-                    root.close()
+                Layout.preferredHeight: dp(72)
+
+                // Tracks horizontal drag offset; when past threshold and released, removes.
+                property real _swipeX: 0
+                readonly property real _threshold: width * 0.35
+
+                // Swipe affordance underneath — red surface with a "Remove" hint.
+                Rectangle {
+                    anchors.fill: parent
+                    radius: dp(Constants.radius)
+                    color: Qt.rgba(0.93, 0.27, 0.27, 0.10)
+                    visible: Math.abs(rowItem._swipeX) > 1
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: dp(Constants.space4)
+                        visible: rowItem._swipeX > 1
+                        text: qsTr("Remove")
+                        color: Constants.danger
+                        font.bold: true
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right
+                        anchors.rightMargin: dp(Constants.space4)
+                        visible: rowItem._swipeX < -1
+                        text: qsTr("Remove")
+                        color: Constants.danger
+                        font.bold: true
+                    }
                 }
 
-                leading: AvatarBadge {
-                    label: {
-                        var k = modelData.kind || ""
-                        if (k === "product_added") return "＋"
-                        if (k === "product_updated") return "✎"
-                        if (k === "product_restocked") return "↻"
-                        if (k === "staff_added") return "👤"
-                        if (k === "staff_updated") return "✎"
-                        if (k === "low_stock") return "!"
-                        return "•"
+                Item {
+                    id: cardWrap
+                    width: parent.width
+                    height: parent.height
+                    x: rowItem._swipeX
+                    Behavior on x { NumberAnimation { duration: Constants.durFast; easing.type: Easing.OutCubic } }
+
+                    Rectangle {
+                        id: card
+                        anchors.fill: parent
+                        radius: dp(Constants.radius)
+                        color: dragArea.pressed ? Constants.subtleBg : Constants.cardBg
+                        border.color: Constants.borderColor
+                        border.width: 1
+                        Behavior on color { ColorAnimation { duration: Constants.durFast } }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: dp(14)
+                            anchors.rightMargin: dp(14)
+                            spacing: dp(Constants.space3)
+
+                            AvatarBadge {
+                                Layout.alignment: Qt.AlignVCenter
+                                label: {
+                                    var k = modelData.kind || ""
+                                    if (k === "product_added") return "＋"
+                                    if (k === "product_updated") return "✎"
+                                    if (k === "product_restocked") return "↻"
+                                    if (k === "staff_added") return "👤"
+                                    if (k === "staff_updated") return "✎"
+                                    if (k === "low_stock") return "!"
+                                    return "•"
+                                }
+                                palette: {
+                                    var k = modelData.kind || ""
+                                    if (k === "product_added") return Constants.grad4
+                                    if (k === "product_updated") return Constants.grad2
+                                    if (k === "product_restocked") return Constants.grad4
+                                    if (k === "staff_added") return Constants.grad3
+                                    if (k === "staff_updated") return Constants.grad2
+                                    if (k === "low_stock") return Constants.grad3
+                                    return Constants.grad1
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignVCenter
+                                spacing: dp(2)
+                                Text {
+                                    text: modelData.title || ""
+                                    color: Constants.textPrimary
+                                    font.pixelSize: sp(Constants.fsBodyLg)
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: (modelData.subtitle || "") + " · " + ActivityLog.timeAgo(modelData.timestamp)
+                                    color: Constants.textSecondary
+                                    font.pixelSize: sp(Constants.fsSmall)
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
                     }
-                    palette: {
-                        var k = modelData.kind || ""
-                        if (k === "product_added") return Constants.grad4
-                        if (k === "product_updated") return Constants.grad2
-                        if (k === "product_restocked") return Constants.grad4
-                        if (k === "staff_added") return Constants.grad3
-                        if (k === "staff_updated") return Constants.grad2
-                        if (k === "low_stock") return Constants.grad3
-                        return Constants.grad1
+
+                    MouseArea {
+                        id: dragArea
+                        anchors.fill: parent
+                        // Swipe-to-dismiss: drag horizontally past threshold.
+                        // Below threshold, snap back. Tap with no drag = open + dismiss.
+                        property real _startX: 0
+                        property bool _dragging: false
+                        onPressed: { _startX = mouse.x; _dragging = false }
+                        onPositionChanged: {
+                            var dx = mouse.x - _startX
+                            if (Math.abs(dx) > 6) _dragging = true
+                            if (_dragging) rowItem._swipeX = dx
+                        }
+                        onReleased: {
+                            if (_dragging && Math.abs(rowItem._swipeX) > rowItem._threshold) {
+                                rowItem._swipeX = rowItem._swipeX > 0 ? rowItem.width : -rowItem.width
+                                ActivityLog.remove(modelData.id || "")
+                            } else {
+                                rowItem._swipeX = 0
+                            }
+                            _dragging = false
+                        }
+                        onCanceled: { rowItem._swipeX = 0; _dragging = false }
+                        onClicked: {
+                            if (!_dragging) {
+                                var entryId = modelData.id || ""
+                                root.notificationItemClicked(modelData.kind || "", modelData.entityId || "")
+                                ActivityLog.remove(entryId)
+                                root.close()
+                            }
+                        }
                     }
                 }
             }

@@ -40,6 +40,36 @@ BottomSheet {
         sellingPriceField.text = "0.00"
         stockField.text = "0"
         minStockField.text = "0"
+        taxableCombo.currentIndex = 0
+        taxPercentField.text = "0"
+        // Build the supplier picker from SupplierStore. Index 0 stays empty
+        // ("Select or add a supplier") so the user can leave it blank.
+        dlg._refreshSuppliers("")
+        addPartyField.text = ""
+        dlg._addPartyOpen = false
+    }
+
+    // Local toggle for the inline "Add new party" row — see RestockDialog
+    // for why we don't drive this off the field's own `visible`.
+    property bool _addPartyOpen: false
+
+    // Mirror of SupplierStore for the picker: ids and labels move together.
+    property var _supplierIds: [""]
+    property var _supplierLabels: [qsTr("Select or add a supplier")]
+
+    function _refreshSuppliers(preferredId) {
+        var ids = [""]
+        var labels = [qsTr("Select or add a supplier")]
+        var src = SupplierStore.suppliers || []
+        for (var i = 0; i < src.length; ++i) {
+            ids.push(src[i].supplierId)
+            labels.push(src[i].name)
+        }
+        _supplierIds = ids
+        _supplierLabels = labels
+        partyCombo.model = labels
+        var idx = preferredId ? Math.max(0, ids.indexOf(preferredId)) : 0
+        partyCombo.currentIndex = idx
     }
 
     onPrimaryClicked: trySubmit()
@@ -171,16 +201,21 @@ BottomSheet {
                     property bool open: false
                     contentItem: RowLayout {
                         Text {
-                            text: "Advanced"
+                            text: qsTr("Advanced")
                             color: Constants.textPrimary
                             font.pixelSize: sp(Constants.fsBody)
                             font.bold: true
                             Layout.fillWidth: true
                         }
                         Text {
-                            text: advToggle.open ? "˅" : "›"
+                            // Match the AppComboBox dropdown caret so the
+                            // disclosure looks like the rest of the app's
+                            // selectable controls. Flip on open.
+                            text: "▾"
                             color: Constants.textSecondary
-                            font.pixelSize: sp(16)
+                            font.pixelSize: sp(14)
+                            rotation: advToggle.open ? 180 : 0
+                            Behavior on rotation { NumberAnimation { duration: Constants.durFast } }
                         }
                     }
                     background: Rectangle { color: "transparent" }
@@ -242,24 +277,130 @@ BottomSheet {
                         AuthTextField {
                             id: stockField
                             Layout.fillWidth: true
-                            label: "Initial stock"
+                            label: qsTr("Initial stock")
                             placeholderText: "0"
                             text: "0"
                         }
                         AuthTextField {
                             id: minStockField
                             Layout.fillWidth: true
-                            label: "Reorder at"
+                            label: qsTr("Reorder at")
                             placeholderText: "10"
                             text: "0"
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: dp(Constants.space2)
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: dp(4)
+                            Text { text: qsTr("Tax"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                            AppComboBox {
+                                id: taxableCombo
+                                Layout.fillWidth: true
+                                model: [qsTr("Not taxable"), qsTr("Taxable")]
+                                font.pixelSize: sp(Constants.fsBody)
+                            }
+                        }
+                        AuthTextField {
+                            id: taxPercentField
+                            Layout.fillWidth: true
+                            label: qsTr("Tax %")
+                            placeholderText: "0"
+                            text: "0"
+                            enabled: taxableCombo.currentIndex === 1
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
                         }
                     }
 
                     AuthTextField {
                         id: descField
                         Layout.fillWidth: true
-                        label: "Description"
-                        placeholderText: "Optional"
+                        label: qsTr("Description")
+                        placeholderText: qsTr("Optional")
+                    }
+
+                    // Supplier / party picker — optional. Tracking the source
+                    // of initial stock turns the "Created" history row into a
+                    // first purchase event for the Analysis page.
+                    Text {
+                        text: qsTr("Supplier (party)")
+                        color: Constants.textSecondary
+                        font.pixelSize: sp(Constants.fsSmall)
+                        font.bold: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: dp(Constants.space2)
+                        AppComboBox {
+                            id: partyCombo
+                            Layout.fillWidth: true
+                            // Labels come from `_supplierLabels`; selected
+                            // supplierId resolved via `_supplierIds[idx]`.
+                            model: dlg._supplierLabels
+                            font.pixelSize: sp(Constants.fsBody)
+                            displayText: currentIndex > 0
+                                    ? currentText
+                                    : qsTr("Select or add a supplier")
+                        }
+                        QQC.AbstractButton {
+                            id: addPartyToggle
+                            Layout.preferredWidth: dp(44)
+                            Layout.preferredHeight: dp(44)
+                            implicitWidth: dp(44)
+                            implicitHeight: dp(44)
+                            padding: 0
+                            topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
+                            background: Rectangle {
+                                anchors.fill: parent
+                                radius: dp(14)
+                                color: addPartyToggle.pressed ? Constants.borderColor : Constants.cardBg
+                                border.color: Constants.borderColor
+                                border.width: 1
+                                Behavior on color { ColorAnimation { duration: Constants.durFast } }
+                            }
+                            contentItem: Text {
+                                text: dlg._addPartyOpen ? "✕" : "＋"
+                                color: Constants.textPrimary
+                                font.pixelSize: sp(18)
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: {
+                                dlg._addPartyOpen = !dlg._addPartyOpen
+                                if (dlg._addPartyOpen) addPartyField.forceActiveFocus()
+                                else addPartyField.text = ""
+                            }
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: dp(Constants.space2)
+                        visible: dlg._addPartyOpen
+                        AuthTextField {
+                            id: addPartyField
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("New supplier name")
+                            onAccepted: addPartyBtn.clicked()
+                        }
+                        PrimaryButton {
+                            id: addPartyBtn
+                            text: qsTr("Save")
+                            implicitHeight: dp(44)
+                            implicitWidth: dp(80)
+                            onClicked: {
+                                var n = (addPartyField.text || "").trim()
+                                if (n.length === 0) return
+                                var s = SupplierStore.addSupplier({ name: n })
+                                dlg._refreshSuppliers(s ? s.supplierId : "")
+                                addPartyField.text = ""
+                                dlg._addPartyOpen = false
+                            }
+                        }
                     }
 
                     GhostButton {
@@ -295,11 +436,24 @@ BottomSheet {
         if (isNaN(s) || s < 0) errs.push("Enter valid stock")
         var ms = parseInt(minStockField.text)
         if (isNaN(ms) || ms < 0) errs.push("Enter valid reorder point")
+        var taxable = taxableCombo.currentIndex === 1
+        var taxPercent = 0
+        if (taxable) {
+            taxPercent = parseFloat(taxPercentField.text)
+            if (isNaN(taxPercent) || taxPercent < 0 || taxPercent > 100)
+                errs.push("Enter a valid tax % (0–100)")
+        }
         if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
         errorLabel.text = ""
 
+        // Resolve picker selection to a stable supplierId; index 0 means
+        // "no supplier", which leaves the initial-stock batch unattributed.
+        var supplierId = partyCombo.currentIndex > 0 ? dlg._supplierIds[partyCombo.currentIndex] : ""
+        // Initial-batch unit cost defaults to product cost — same convention
+        // as RestockDialog. Future "advanced" UI could expose this separately.
         var newId = InventoryStore.addProduct(nameField.text, skuField.text,
-            categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp)
+            categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
+            taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */)
         CategoryStore.setLastUsed(categoryCombo.currentText)
 
         if (pendingPhotoSource && pendingPhotoSource.length > 0 && newId) {

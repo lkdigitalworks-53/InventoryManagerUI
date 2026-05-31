@@ -25,6 +25,9 @@ Item {
 
     property string _searchText: ""
     property string _statusFilter: "all"  // "all" | "pending" | "processing" | "completed" | "cancelled"
+    // Public — set by Main.qml when the user picks a chip in the FilterSheet.
+    // "all" | "today" | "7days" | "30days"
+    property string dateRange: "all"
 
     Rectangle { anchors.fill: parent; color: Constants.appBg }
 
@@ -50,6 +53,9 @@ Item {
             IconActionButton {
                 variant: "glass"
                 text: "⚙"
+                // Dot badge when a date filter is active so the user can spot
+                // why the list is shorter than they expected.
+                badgeText: root.dateRange !== "all" && root.dateRange.length > 0 ? "•" : ""
                 onClicked: root.filtersRequested()
             }
         ]
@@ -190,16 +196,20 @@ Item {
                         }
                     }
                     QQC.AbstractButton {
-                        contentItem: Text {
-                            text: "Approve"
-                            color: Constants.textOnBrand
-                            font.pixelSize: sp(Constants.fsSmall)
-                            font.bold: true
+                        implicitWidth: dp(80); implicitHeight: dp(32)
+                        padding: 0
+                        contentItem: Item {
+                            Text {
+                                anchors.centerIn: parent
+                                text: qsTr("Approve")
+                                color: Constants.textOnBrand
+                                font.pixelSize: sp(Constants.fsSmall)
+                                font.bold: true
+                            }
                         }
                         background: Rectangle {
                             radius: dp(Constants.radiusPill)
                             color: Qt.rgba(1,1,1,0.22)
-                            implicitWidth: dp(80); implicitHeight: dp(32)
                         }
                         onClicked: _approveAllPending()
                     }
@@ -305,6 +315,24 @@ Item {
         return c
     }
 
+    // Resolve the chip key into a [from, to) date window. Returns `null` when
+    // the filter is "all" so callers can short-circuit the per-row check.
+    function _dateWindow() {
+        if (root.dateRange === "all" || !root.dateRange) return null
+        var now = new Date()
+        var to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)  // tomorrow 00:00
+        var from
+        if (root.dateRange === "today")
+            from = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        else if (root.dateRange === "7days")
+            from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6)
+        else if (root.dateRange === "30days")
+            from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)
+        else
+            return null
+        return { from: from, to: to }
+    }
+
     function _filteredOrders() {
         var orders = (OrdersStore.orders || []).slice()
         orders.sort(function(a, b) {
@@ -314,8 +342,14 @@ Item {
         })
         var q = (root._searchText || "").toLowerCase().trim()
         var statusFilter = root._statusFilter
+        var win = _dateWindow()
         return orders.filter(function(o) {
             if (statusFilter !== "all" && (o.status || "") !== statusFilter) return false
+            if (win) {
+                var od = new Date(o.date)
+                if (isNaN(od.getTime())) return false
+                if (od < win.from || od >= win.to) return false
+            }
             if (q.length === 0) return true
             var hay = ((o.orderId || "") + " " + (o.customer || "") + " " + (o.status || "")).toLowerCase()
             return hay.indexOf(q) >= 0
