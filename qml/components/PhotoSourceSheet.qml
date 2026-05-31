@@ -11,7 +11,11 @@ QQC.Popup {
     id: root
     modal: true
     width: parent ? parent.width : 360
-    height: Math.min(parent ? parent.height * 0.55 : 400, 400)
+    // Cap the sheet at 80% of viewport height so the content (camera + gallery
+    // + URL + remove rows) never spills past the bottom edge on phone-sized
+    // screens. ScrollView inside handles overflow when even 80% isn't enough.
+    height: Math.min(contentCol.implicitHeight + dp(24),
+                     parent ? parent.height * 0.8 : 480)
     x: 0
     y: parent ? parent.height - height : 0
     padding: 0
@@ -29,6 +33,7 @@ QQC.Popup {
     }
 
     contentItem: ColumnLayout {
+        id: contentCol
         spacing: 4
 
         Rectangle {
@@ -208,7 +213,7 @@ QQC.Popup {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item { Layout.preferredHeight: dp(8); Layout.fillWidth: true }
     }
 
     function _onCameraDone(ok, path) {

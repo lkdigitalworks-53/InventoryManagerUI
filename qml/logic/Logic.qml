@@ -35,7 +35,9 @@ Item {
 
     // ── Orders ────────────────────────────────────────────────────────────────
     signal addOrder(var customer, int items, var total, string status, var date,
-                    string email, string phone, var products)
+                    string email, string phone, var products,
+                    string discountType, var discountValue,
+                    string orderChannel, string staffId)
     signal updateOrder(string orderId, var fields)
     signal completeOrder(string orderId)
     signal approveAllPending()
@@ -49,7 +51,8 @@ Item {
 
     // ── Inventory ─────────────────────────────────────────────────────────────
     signal addProduct(string name, string sku, string category, string description,
-                      var price, string unit, int stock, int minStock, var sellingPrice)
+                      var price, string unit, int stock, int minStock, var sellingPrice,
+                      bool taxable, var taxPercent)
     signal updateProduct(string productId, var fields)
     signal restockProduct(string productId, int amount)
     signal deleteProduct(string productId)

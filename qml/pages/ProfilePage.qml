@@ -15,6 +15,7 @@ Item {
     signal editProfileRequested()
     signal manageMembersRequested()
     signal signOutRequested()
+    signal leaveWorkspaceRequested()
 
     Rectangle { anchors.fill: parent; color: Constants.appBg }
 
@@ -209,8 +210,19 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                text: "Sign out"
+                text: qsTr("Sign out")
                 onClicked: root.signOutRequested()
+            }
+
+            // Leave workspace — only for non-owners. Owners can't self-leave
+            // (would orphan the tenant); the row stays hidden for them.
+            DangerButton {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                visible: AuthStore.role !== "owner"
+                text: qsTr("Leave workspace")
+                onClicked: root.leaveWorkspaceRequested()
             }
 
             Item { Layout.preferredHeight: dp(Constants.tabbarClearance); Layout.fillWidth: true }

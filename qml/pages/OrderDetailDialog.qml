@@ -28,15 +28,59 @@ BottomSheet {
 
     ListModel { id: products }
 
+    property string _discountType: "flat"
+    property real _discountValue: 0
+
+    // Mirror of StaffStore for the picker (filtered to active members).
+    // Index 0 is the empty "(no staff)" row.
+    property var _staffIds: [""]
+    property var _staffLabels: [qsTr("Sold by (none)")]
+    function _refreshStaff(preferredId) {
+        var ids = [""]
+        var labels = [qsTr("Sold by (none)")]
+        var src = StaffStore.staff || []
+        for (var i = 0; i < src.length; ++i) {
+            var s = src[i]
+            if (s.status && s.status !== "active") continue
+            ids.push(s.staffId || s.id || "")
+            labels.push(s.name || qsTr("(unnamed)"))
+        }
+        _staffIds = ids
+        _staffLabels = labels
+        if (typeof staffCombo !== "undefined") {
+            staffCombo.model = labels
+            staffCombo.currentIndex = preferredId ? Math.max(0, ids.indexOf(preferredId)) : 0
+        }
+    }
+
     property real _subtotal: 0
-    property real _gst: Math.round(_subtotal * 0.18)
-    property real _total: _subtotal + _gst
+    property real _discount: 0
+    property real _tax: 0
+    property var _taxBreakdown: []
+    property real _total: 0
+
+    function _lineItemArray() {
+        var arr = []
+        for (var i = 0; i < products.count; ++i) {
+            var pr = products.get(i)
+            arr.push({ productId: pr.productId, name: pr.name, price: pr.price,
+                       quantity: pr.quantity,
+                       taxable: !!pr.taxable, taxPercent: pr.taxPercent || 0 })
+        }
+        return arr
+    }
 
     function recomputeSubtotal() {
-        var s = 0
-        for (var i = 0; i < products.count; ++i)
-            s += products.get(i).price * products.get(i).quantity
-        _subtotal = s
+        var lineArr = _lineItemArray()
+        var t = OrdersStore.computeOrderTotals(lineArr, _discountType, _discountValue)
+        _subtotal = t.subtotal
+        _discount = t.discount
+        _tax = t.tax
+        // Force reference change so the Repeater rebuilds even when
+        // computeOrderTotals returns a structurally-equal array.
+        _taxBreakdown = []
+        _taxBreakdown = t.taxBreakdown.slice()
+        _total = t.total
         var savedIdx = productCombo.currentIndex
         _rebuildCatalog()
         productCombo.currentIndex = savedIdx
@@ -48,8 +92,10 @@ BottomSheet {
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
             var avail = _availableStock(p.name)
-            cat.push({ name: p.name, price: p.price, productId: p.productId })
-            names.push(p.name + " — " + InventoryStore.formatCurrency(p.price) + "  ·  avail " + avail)
+            var sellPrice = p.sellingPrice !== undefined ? p.sellingPrice : p.price
+            cat.push({ name: p.name, price: sellPrice, productId: p.productId,
+                       taxable: !!p.taxable, taxPercent: p.taxPercent || 0 })
+            names.push(p.name + " — " + InventoryStore.formatCurrency(sellPrice) + "  ·  avail " + avail)
         }
         catalog = cat
         catalogNames = names
@@ -81,14 +127,37 @@ BottomSheet {
         statusCombo.currentIndex = ["pending","processing","completed"].indexOf(String(o.status))
         if (statusCombo.currentIndex < 0) statusCombo.currentIndex = 0
 
+        _discountType = o.discountType === "percent" ? "percent" : "flat"
+        _discountValue = parseFloat(o.discountValue) || 0
+        discountTypeToggle.selected = _discountType === "percent" ? 1 : 0
+        discountField.text = String(_discountValue)
+
+        // Channel + staff: pre-fill from the existing order. The channel
+        // string is matched against the configured list — when the order
+        // referenced a channel that's since been removed, the picker falls
+        // back to the default index so save doesn't accidentally clear the
+        // value.
+        channelCombo.model = OrderChannelStore.channels
+        var chIdx = OrderChannelStore.channels.indexOf(o.orderChannel || "")
+        channelCombo.currentIndex = chIdx >= 0 ? chIdx : OrderChannelStore.indexOfDefault()
+        dlg._refreshStaff(o.staffId || "")
+
         products.clear()
         if (o.products && o.products.length > 0) {
             for (var j = 0; j < o.products.length; ++j) {
+                var lp = o.products[j]
+                var inv = lp.productId ? InventoryStore.getById(lp.productId) : null
+                var taxable = lp.taxable !== undefined ? !!lp.taxable : (inv ? !!inv.taxable : false)
+                var taxPercent = lp.taxPercent !== undefined && lp.taxPercent !== null
+                    ? Number(lp.taxPercent)
+                    : (inv && taxable ? Number(inv.taxPercent || 0) : 0)
                 products.append({
-                    productId: o.products[j].productId || "",
-                    name: o.products[j].name,
-                    price: o.products[j].price,
-                    quantity: o.products[j].quantity
+                    productId: lp.productId || "",
+                    name: lp.name,
+                    price: lp.price,
+                    quantity: lp.quantity,
+                    taxable: taxable,
+                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent
                 })
             }
         } else {
@@ -96,10 +165,13 @@ BottomSheet {
             if (catalog.length >= 2 && itemCount >= 2) {
                 var qty1 = Math.ceil(itemCount / 2)
                 var qty2 = itemCount - qty1
-                products.append({ productId: catalog[0].productId, name: catalog[0].name, price: catalog[0].price, quantity: qty1 })
-                if (qty2 > 0) products.append({ productId: catalog[1].productId, name: catalog[1].name, price: catalog[1].price, quantity: qty2 })
+                products.append({ productId: catalog[0].productId, name: catalog[0].name, price: catalog[0].price, quantity: qty1,
+                                   taxable: catalog[0].taxable, taxPercent: catalog[0].taxPercent })
+                if (qty2 > 0) products.append({ productId: catalog[1].productId, name: catalog[1].name, price: catalog[1].price, quantity: qty2,
+                                                 taxable: catalog[1].taxable, taxPercent: catalog[1].taxPercent })
             } else if (catalog.length > 0) {
-                products.append({ productId: catalog[0].productId, name: catalog[0].name, price: catalog[0].price, quantity: Math.max(1, itemCount) })
+                products.append({ productId: catalog[0].productId, name: catalog[0].name, price: catalog[0].price, quantity: Math.max(1, itemCount),
+                                   taxable: catalog[0].taxable, taxPercent: catalog[0].taxPercent })
             }
         }
         recomputeSubtotal()
@@ -117,7 +189,10 @@ BottomSheet {
         for (var i = 0; i < products.count; ++i) {
             var p = products.get(i)
             itemCount += p.quantity
-            prods.push({ productId: p.productId || "", name: p.name, price: p.price, quantity: p.quantity })
+            prods.push({ productId: p.productId || "", name: p.name, price: p.price,
+                         quantity: p.quantity,
+                         taxable: !!p.taxable,
+                         taxPercent: p.taxPercent || 0 })
             var inv = InventoryStore.findByName(p.name)
             if (inv && p.quantity > inv.stock)
                 stockErrors.push(p.name + ": only " + inv.stock + " in stock, ordered " + p.quantity)
@@ -129,14 +204,24 @@ BottomSheet {
         stockErrorLabel.text = ""
 
         var statuses = ["pending","processing","completed"]
+        var chIdx = channelCombo.currentIndex
+        var channel = (chIdx >= 0 && chIdx < OrderChannelStore.channels.length)
+                ? OrderChannelStore.channels[chIdx]
+                : ""
+        var staffId = staffCombo.currentIndex > 0
+                ? dlg._staffIds[staffCombo.currentIndex]
+                : ""
         OrdersStore.updateOrder(dlg.orderId, {
             customer: customerField.text,
             email: emailField.text,
             phone: phoneField.text,
             status: statuses[Math.max(0, statusCombo.currentIndex)] || "pending",
             items: itemCount,
-            total: dlg._total,
-            products: prods
+            products: prods,
+            discountType: dlg._discountType,
+            discountValue: dlg._discountValue,
+            orderChannel: channel,
+            staffId: staffId
         })
         dlg.orderUpdated(dlg.orderId)
         dlg.close()
@@ -195,6 +280,36 @@ BottomSheet {
             }
         }
 
+        // Order channel + staff (sold-by). Read-only fields would normally
+        // sit in a banner, but the dialog is a single edit form so the
+        // pickers live alongside Status. A `dlg.staffId` getter feeds _save.
+        Text {
+            text: qsTr("Channel & sold by")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AppComboBox {
+                id: channelCombo
+                Layout.fillWidth: true
+                model: OrderChannelStore.channels
+                font.pixelSize: sp(Constants.fsBody)
+            }
+            AppComboBox {
+                id: staffCombo
+                Layout.fillWidth: true
+                model: dlg._staffLabels
+                font.pixelSize: sp(Constants.fsBody)
+                displayText: currentIndex > 0
+                        ? currentText
+                        : qsTr("Sold by (none)")
+            }
+        }
+
         // Products block
         Text {
             text: "Items"
@@ -231,7 +346,8 @@ BottomSheet {
                             return
                         }
                     }
-                    products.append({ productId: p.productId, name: p.name, price: p.price, quantity: 1 })
+                    products.append({ productId: p.productId, name: p.name, price: p.price, quantity: 1,
+                                       taxable: !!p.taxable, taxPercent: p.taxPercent || 0 })
                     dlg.recomputeSubtotal()
                 }
             }
@@ -339,6 +455,55 @@ BottomSheet {
             wrapMode: Text.Wrap
         }
 
+        // Discount block
+        Text {
+            text: qsTr("Discount")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            Layout.alignment: Qt.AlignBottom
+
+            ColumnLayout {
+                Layout.preferredWidth: dp(140)
+                spacing: dp(4)
+                Text {
+                    text: qsTr("Type")
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsSmall)
+                    font.bold: true
+                }
+                SegmentedPill {
+                    id: discountTypeToggle
+                    Layout.fillWidth: true
+                    model: ["₹", "%"]
+                    selected: 0
+                    onSegmentSelected: function(idx, label) {
+                        dlg._discountType = idx === 1 ? "percent" : "flat"
+                        dlg.recomputeSubtotal()
+                    }
+                }
+            }
+            AuthTextField {
+                id: discountField
+                Layout.fillWidth: true
+                label: qsTr("Amount")
+                placeholderText: "0"
+                text: "0"
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                onTextChanged: {
+                    var v = parseFloat(text)
+                    dlg._discountValue = isNaN(v) ? 0 : v
+                    dlg.recomputeSubtotal()
+                }
+            }
+        }
+
         // Totals strip
         Rectangle {
             Layout.fillWidth: true
@@ -356,18 +521,36 @@ BottomSheet {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "Subtotal"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsBody); Layout.fillWidth: true }
+                    Text { text: qsTr("Subtotal"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsBody); Layout.fillWidth: true }
                     Text { text: OrdersStore.formatCurrency(dlg._subtotal); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBody) }
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "GST (18%)"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsBody); Layout.fillWidth: true }
-                    Text { text: OrdersStore.formatCurrency(dlg._gst); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBody) }
+                    visible: dlg._discount > 0
+                    Text { text: qsTr("Discount"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsBody); Layout.fillWidth: true }
+                    Text { text: "− " + OrdersStore.formatCurrency(dlg._discount); color: Constants.success; font.pixelSize: sp(Constants.fsBody) }
+                }
+                Repeater {
+                    model: dlg._taxBreakdown
+                    delegate: RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: qsTr("Tax (%1%)").arg(modelData.rate)
+                            color: Constants.textSecondary
+                            font.pixelSize: sp(Constants.fsBody)
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: OrdersStore.formatCurrency(modelData.amount)
+                            color: Constants.textPrimary
+                            font.pixelSize: sp(Constants.fsBody)
+                        }
+                    }
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Constants.borderColor }
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "Total"; color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true; Layout.fillWidth: true }
+                    Text { text: qsTr("Total"); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true; Layout.fillWidth: true }
                     Text { text: OrdersStore.formatCurrency(dlg._total); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
                 }
             }

@@ -869,6 +869,34 @@ QtObject {
         signedOut()
     }
 
+    // Remove the current user from the active tenant's members collection,
+    // then sign them out. Their `users/{uid}` document is intentionally left
+    // alone — that record may carry ownership of other tenants. Owners cannot
+    // self-leave (would orphan the workspace).
+    function leaveCurrentTenant() {
+        if (!AuthStore.isAuthenticated || !AuthStore.uid) {
+            authFailed("Not authenticated")
+            return
+        }
+        if (!AuthStore.tenantId || AuthStore.tenantId.length === 0) {
+            authFailed("No active workspace")
+            return
+        }
+        if (AuthStore.role === "owner") {
+            authFailed("Owner cannot leave their own workspace")
+            return
+        }
+        var tid = AuthStore.tenantId
+        var uid = AuthStore.uid
+        FirebaseService.remove("tenants/" + tid + "/members/" + uid, function(ok) {
+            if (!ok) {
+                authFailed("Failed to leave workspace")
+                return
+            }
+            signOut()
+        })
+    }
+
     // Cascade-cleanup for a staff member that had app-login credentials.
     // Deletes Firestore docs only — the Firebase Auth user account itself
     // requires Admin SDK / Cloud Function to remove.

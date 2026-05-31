@@ -56,12 +56,15 @@ Item {
             InventoryStore.syncFromFirebase()
             SalesStore.syncFromFirebase()
             StaffStore.syncFromFirebase()
+            TransactionStore.syncFromFirebase()
+            SupplierStore.syncFromFirebase()
+            StockBatchStore.syncFromFirebase()
             _syncOrdersModel()
         }
 
         // ── Orders ────────────────────────────────────────────────────────────
-        function onAddOrder(customer, items, total, status, date, email, phone, products) {
-            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products)
+        function onAddOrder(customer, items, total, status, date, email, phone, products, discountType, discountValue, orderChannel, staffId) {
+            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, discountType, discountValue, orderChannel, staffId)
             _syncOrdersModel()
             var newOrderId = OrdersStore.orders[OrdersStore.orders.length - 1].orderId
             logic.orderAdded(newOrderId)
@@ -102,12 +105,12 @@ Item {
         }
 
         // ── Inventory ─────────────────────────────────────────────────────────
-        function onAddProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice) {
+        function onAddProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent) {
             if (!_hasAnyRole(["owner", "admin"])) {
                 logic.errorOccurred("auth", "Only owner/admin can add products")
                 return
             }
-            InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice)
+            InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent)
             logic.productAdded(InventoryStore.products[InventoryStore.products.length - 1].productId)
         }
 
@@ -241,12 +244,19 @@ Item {
         return lineItem.qty || 0
     }
 
-    // Cross-store orchestration: check stock and complete order
+    // Cross-store orchestration: validate stock, deduct via FIFO batch
+    // consumption, and persist the sale.
+    //
+    // Key invariant: `product.stock` is the validation source of truth.
+    // If the batch ledger drifts below product.stock (manual edit, import,
+    // legacy data), we top up the oldest batch silently so the sale still
+    // succeeds — never fail a customer-facing flow on a bookkeeping mismatch.
     function _tryCompleteOrder(orderId) {
         var o = OrdersStore.getById(orderId)
         if (!o) return false
         if (o.status === "completed") return true
 
+        // ── 1. Stock validation (against product.stock) ──────────────────
         var errs = []
         if (o.products && o.products.length > 0) {
             for (var i = 0; i < o.products.length; ++i) {
@@ -263,23 +273,64 @@ Item {
             _updateOrderInModel(orderId)
             return false
         }
-        // Deduct stock — prefer productId so renamed products still match.
+
+        // ── 2. FIFO consumption + deduct stock ───────────────────────────
+        // Build a parallel `linesWithConsumption` array so the post-deduct
+        // updateOrder call can stamp the per-batch lineage onto each line
+        // item — that's what lets per-supplier sold/revenue/margin queries
+        // work later.
+        var linesWithConsumption = []
         if (o.products && o.products.length > 0) {
             for (var j = 0; j < o.products.length; ++j) {
                 var pp = o.products[j]
                 var qqty = _lineQty(pp)
                 var invP = _resolveInventory(pp)
-                if (invP) {
+                var consumption = []
+                if (invP && qqty > 0) {
+                    consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
+                    var consumed = _sumConsumed(consumption)
+                    // Drift guard: if batches couldn't satisfy the qty even
+                    // though product.stock said they should, top up the oldest
+                    // batch by the deficit and try again. Logged inside the
+                    // store; we only retry once because topUp guarantees enough.
+                    if (consumed < qqty) {
+                        StockBatchStore.topUpOldest(invP.productId, qqty - consumed)
+                        var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
+                        for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
+                    }
                     InventoryStore.deductStock(invP.productId, qqty)
-                    console.log("[DataModel] Deducted", qqty, "from", invP.productId, invP.name)
-                } else {
+                    console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
+                                "across", consumption.length, "batch(es)")
+                } else if (!invP) {
                     console.warn("[DataModel] Could not resolve line item to inventory:", JSON.stringify(pp))
                 }
+                // Clone the line and stamp consumption — never mutate the
+                // OrdersStore row in place since it's shared state.
+                var line = {}
+                for (var k in pp) line[k] = pp[k]
+                line.consumption = consumption
+                linesWithConsumption.push(line)
             }
         }
-        OrdersStore.updateOrder(orderId, { status: "completed" })
+
+        // ── 3. Persist the order with consumption + record sale events ────
+        OrdersStore.updateOrder(orderId, {
+            status: "completed",
+            products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
+        })
         SalesStore.recordSale(o.total, o.items)
+        // The persisted order now carries `consumption[]` per line — read it
+        // back so TransactionStore writes the same lineage to every sale doc.
+        TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
         _updateOrderInModel(orderId)
         return true
+    }
+
+    // Internal: total qty across an FIFO consumption result.
+    function _sumConsumed(consumption) {
+        var s = 0
+        if (!consumption) return 0
+        for (var i = 0; i < consumption.length; ++i) s += (consumption[i].qtyConsumed || 0)
+        return s
     }
 }

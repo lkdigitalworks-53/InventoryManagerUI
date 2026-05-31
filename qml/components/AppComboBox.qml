@@ -56,10 +56,13 @@ QQC.ComboBox {
     }
 
     // ── Popup ───────────────────────────────────────────────────────────────
+    // Cap height at ~6 rows so long lists become scrollable instead of
+    // pushing the popup off-screen. The inner ListView already supports
+    // flick-scrolling — the cap lets it actually exercise that.
     popup: T.Popup {
         y: root.height + dp(4)
         width: root.width
-        implicitHeight: contentItem.implicitHeight + dp(8)
+        implicitHeight: Math.min(contentItem.implicitHeight + dp(8), dp(260))
         padding: dp(4)
 
         background: Rectangle {
@@ -74,6 +77,7 @@ QQC.ComboBox {
             implicitHeight: contentHeight
             model: root.popup.visible ? root.delegateModel : null
             currentIndex: root.highlightedIndex
+            boundsBehavior: Flickable.StopAtBounds
             QQC.ScrollIndicator.vertical: QQC.ScrollIndicator { }
         }
     }

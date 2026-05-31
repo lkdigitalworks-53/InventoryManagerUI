@@ -18,9 +18,7 @@ BottomSheet {
 
     Repeater {
         model: [
-            { fmt: "xlsx", icon: "📊", label: "Excel (.xlsx)", sub: "Spreadsheet, formulas preserved" },
-            { fmt: "csv",  icon: "📄", label: "CSV",            sub: "Plain text, max compatibility" },
-            { fmt: "pdf",  icon: "📑", label: "PDF report",     sub: "Printable formatted output" }
+            { fmt: "xlsx", icon: "📊", label: qsTr("Excel (.xlsx)"), sub: qsTr("Spreadsheet, formulas preserved") }
         ]
         delegate: ListCard {
             Layout.fillWidth: true

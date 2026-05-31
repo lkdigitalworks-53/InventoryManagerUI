@@ -46,6 +46,17 @@ QtObject {
                     if (!o.email) o.email = "";
                     if (!o.phone) o.phone = "";
                     if (!o.products) o.products = [];
+                    if (!o.discountType) o.discountType = "flat";
+                    if (o.discountValue === undefined || o.discountValue === null) o.discountValue = 0;
+                    if (o.subtotal === undefined || o.subtotal === null) o.subtotal = 0;
+                    if (o.tax === undefined || o.tax === null) o.tax = 0;
+                    if (o.discount === undefined || o.discount === null) o.discount = 0;
+                    if (!o.taxBreakdown) o.taxBreakdown = [];
+                    // Channel + staff are added by the new build going
+                    // forward; legacy docs default to empty so analytics
+                    // surface them under "(unspecified)".
+                    if (!o.orderChannel) o.orderChannel = "";
+                    if (!o.staffId) o.staffId = "";
                 }
                 orders = arr;
                 revision++;
@@ -146,36 +157,118 @@ QtObject {
         var rawProducts = r.products || [];
         for (var i = 0; i < rawProducts.length; ++i) {
             var lp = rawProducts[i];
+            // Resolve tax info from inventory if not carried on the line.
+            var inv = lp.productId ? InventoryStore.getById(lp.productId) : null;
+            var taxable = lp.taxable !== undefined ? !!lp.taxable : (inv ? !!inv.taxable : false);
+            var taxPercent = lp.taxPercent !== undefined && lp.taxPercent !== null
+                ? Number(lp.taxPercent)
+                : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
             prods.push({
                 productId: lp.productId || "",
                 name: lp.name || "",
                 price: typeof lp.price === "number" ? lp.price : parseCurrency(lp.price),
-                quantity: parseInt(lp.quantity) || parseInt(lp.qty) || 0
+                quantity: parseInt(lp.quantity) || parseInt(lp.qty) || 0,
+                taxable: taxable,
+                taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
+                // Pass-through field stamped by DataModel._tryCompleteOrder
+                // when the order completes — preserves the FIFO batch lineage
+                // through clone/normalise so analytics can attribute revenue
+                // back to specific suppliers.
+                consumption: Array.isArray(lp.consumption) ? lp.consumption.slice() : []
             });
         }
-        var totalItems = 0; var totalAmount = 0;
-        for (var j = 0; j < prods.length; ++j) {
-            totalItems += prods[j].quantity;
-            totalAmount += prods[j].quantity * prods[j].price;
-        }
+
+        var discountType = r.discountType === "percent" ? "percent" : "flat";
+        var discountValue = parseCurrency(r.discountValue);
+
+        var totals = computeOrderTotals(prods, discountType, discountValue);
+
         return {
             orderId: r.orderId,
             customer: r.customer || "",
             email: r.email || "",
             phone: r.phone || "",
-            items: prods.length > 0 ? totalItems : (parseInt(r.items) || 0),
-            total: prods.length > 0 ? totalAmount : parseCurrency(r.total),
+            items: prods.length > 0 ? totals.itemCount : (parseInt(r.items) || 0),
+            subtotal: totals.subtotal,
+            discountType: discountType,
+            discountValue: discountValue,
+            discount: totals.discount,
+            tax: totals.tax,
+            taxBreakdown: totals.taxBreakdown,
+            total: prods.length > 0 ? totals.total : parseCurrency(r.total),
             status: r.status || "pending",
             date: r.date || Qt.formatDate(new Date(), "yyyy-MM-dd"),
             notes: r.notes || "",
+            // Order channel (Online / In-store / …) + staff member who made
+            // the sale. Both default to "" for back-compat with existing
+            // docs; the Analysis page renders them as "(unspecified)".
+            orderChannel: r.orderChannel || "",
+            staffId: r.staffId || "",
             products: prods
+        };
+    }
+
+    // Compute subtotal, discount, per-rate tax breakdown, and grand total.
+    // Discount is distributed pro-rata across line items so per-line tax is
+    // taken on the discounted line value — matches how Indian GST invoices
+    // typically show line-level discounts.
+    function computeOrderTotals(prods, discountType, discountValue) {
+        if (!prods) prods = [];
+        var subtotal = 0; var itemCount = 0;
+        for (var i = 0; i < prods.length; ++i) {
+            subtotal += prods[i].quantity * prods[i].price;
+            itemCount += prods[i].quantity;
+        }
+        var discount = 0;
+        if (discountType === "percent") {
+            var pct = parseFloat(discountValue) || 0;
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            discount = subtotal * (pct / 100);
+        } else {
+            discount = parseFloat(discountValue) || 0;
+            if (discount < 0) discount = 0;
+            if (discount > subtotal) discount = subtotal;
+        }
+
+        var taxByRate = {};
+        var totalTax = 0;
+        for (var j = 0; j < prods.length; ++j) {
+            var p = prods[j];
+            if (!p.taxable || !p.taxPercent || p.taxPercent <= 0) continue;
+            var lineGross = p.quantity * p.price;
+            var lineShare = subtotal > 0 ? (discount * (lineGross / subtotal)) : 0;
+            var lineNet = lineGross - lineShare;
+            var lineTax = lineNet * (p.taxPercent / 100);
+            taxByRate[p.taxPercent] = (taxByRate[p.taxPercent] || 0) + lineTax;
+            totalTax += lineTax;
+        }
+        var taxBreakdown = [];
+        var keys = Object.keys(taxByRate).sort(function(a, b) { return parseFloat(a) - parseFloat(b); });
+        for (var k = 0; k < keys.length; ++k)
+            taxBreakdown.push({ rate: parseFloat(keys[k]), amount: taxByRate[keys[k]] });
+
+        var roundedDiscount = Math.round(discount * 100) / 100;
+        var roundedTax = Math.round(totalTax * 100) / 100;
+        var roundedSubtotal = Math.round(subtotal * 100) / 100;
+        var total = Math.round((roundedSubtotal - roundedDiscount + roundedTax) * 100) / 100;
+
+        return {
+            subtotal: roundedSubtotal,
+            discount: roundedDiscount,
+            tax: roundedTax,
+            taxBreakdown: taxBreakdown,
+            total: total,
+            itemCount: itemCount
         };
     }
 
     function _mergeOrder(existing, incoming) {
         var merged = {};
         var keys = ["orderId", "customer", "email", "phone", "items", "total",
-                    "status", "date", "notes", "products"];
+                    "status", "date", "notes", "products",
+                    "discountType", "discountValue", "subtotal", "discount", "tax", "taxBreakdown",
+                    "orderChannel", "staffId"];
         for (var i = 0; i < keys.length; ++i) {
             var k = keys[i];
             var v = incoming[k];
@@ -223,12 +316,43 @@ QtObject {
                     var p = o.products[j];
                     // Keep productId on every line item — _tryCompleteOrder
                     // uses it to deduct stock against the right inventory row.
-                    prods.push({ productId: p.productId || "", name: p.name, price: p.price, quantity: p.quantity });
+                    // Deep-copy consumption[] so consumers can mutate their
+                    // own clones without bleeding into the live store array.
+                    var consClone = [];
+                    if (Array.isArray(p.consumption)) {
+                        for (var ci = 0; ci < p.consumption.length; ++ci) {
+                            var c = p.consumption[ci];
+                            consClone.push({
+                                batchId: c.batchId || "",
+                                supplierId: c.supplierId || "",
+                                qtyConsumed: c.qtyConsumed || 0,
+                                unitCost: c.unitCost || 0
+                            });
+                        }
+                    }
+                    prods.push({ productId: p.productId || "", name: p.name, price: p.price, quantity: p.quantity,
+                                 taxable: !!p.taxable,
+                                 taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
+                                 consumption: consClone });
                 }
             }
+            var bd = [];
+            if (o.taxBreakdown) {
+                for (var k = 0; k < o.taxBreakdown.length; ++k)
+                    bd.push({ rate: o.taxBreakdown[k].rate, amount: o.taxBreakdown[k].amount });
+            }
             a.push({ orderId: o.orderId, customer: o.customer, items: o.items,
+                      subtotal: o.subtotal || 0,
+                      discountType: o.discountType || "flat",
+                      discountValue: o.discountValue || 0,
+                      discount: o.discount || 0,
+                      tax: o.tax || 0,
+                      taxBreakdown: bd,
                       total: o.total, status: o.status, date: o.date,
-                      notes: o.notes, email: o.email, phone: o.phone, products: prods });
+                      notes: o.notes, email: o.email, phone: o.phone,
+                      orderChannel: o.orderChannel || "",
+                      staffId: o.staffId || "",
+                      products: prods });
         }
         return a;
     }
@@ -292,14 +416,33 @@ QtObject {
         if (idx < 0) return;
         var arr = _clone();
         var o = arr[idx];
-        if (fields.status   !== undefined) o.status   = fields.status;
-        if (fields.customer !== undefined) o.customer = fields.customer;
-        if (fields.email    !== undefined) o.email    = fields.email;
-        if (fields.phone    !== undefined) o.phone    = fields.phone;
-        if (fields.items    !== undefined) o.items    = fields.items;
-        if (fields.total    !== undefined) o.total    = parseCurrency(fields.total);
-        if (fields.notes    !== undefined) o.notes    = fields.notes;
-        if (fields.products !== undefined) o.products = fields.products;
+        if (fields.status        !== undefined) o.status        = fields.status;
+        if (fields.customer      !== undefined) o.customer      = fields.customer;
+        if (fields.email         !== undefined) o.email         = fields.email;
+        if (fields.phone         !== undefined) o.phone         = fields.phone;
+        if (fields.items         !== undefined) o.items         = fields.items;
+        if (fields.notes         !== undefined) o.notes         = fields.notes;
+        if (fields.products      !== undefined) o.products      = fields.products;
+        if (fields.discountType  !== undefined) o.discountType  = fields.discountType;
+        if (fields.discountValue !== undefined) o.discountValue = parseCurrency(fields.discountValue);
+        if (fields.orderChannel  !== undefined) o.orderChannel  = fields.orderChannel;
+        if (fields.staffId       !== undefined) o.staffId       = fields.staffId;
+
+        // If the line items, discount, or product tax setup might have changed,
+        // recompute totals from the canonical formula. Callers can still pass
+        // an explicit total to override (e.g. legacy code paths).
+        if (fields.products !== undefined
+            || fields.discountType !== undefined
+            || fields.discountValue !== undefined) {
+            var t = computeOrderTotals(o.products || [], o.discountType, o.discountValue);
+            o.subtotal = t.subtotal;
+            o.discount = t.discount;
+            o.tax = t.tax;
+            o.taxBreakdown = t.taxBreakdown;
+            o.total = t.total;
+            o.items = t.itemCount;
+        }
+        if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         _commit(arr);
     }
 
@@ -312,7 +455,12 @@ QtObject {
         _commit(arr);
     }
 
-    function addOrder(customer, items, total, status, date, email, phone, orderProducts) {
+    // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
+    // (the salesperson) are optional — empty strings are persisted when the
+    // caller doesn't supply them, so the Analysis page can detect
+    // "(unspecified)" rows and bucket them out of per-channel/per-staff
+    // breakdowns.
+    function addOrder(customer, items, total, status, date, email, phone, orderProducts, discountType, discountValue, orderChannel, staffId) {
         var id = nextOrderId();
         var iso = Qt.formatDate(date, 'yyyy-MM-dd');
         var arr = _clone();
@@ -320,17 +468,36 @@ QtObject {
         if (orderProducts) {
             for (var k = 0; k < orderProducts.length; ++k) {
                 var pp = orderProducts[k];
+                var inv = pp.productId ? InventoryStore.getById(pp.productId) : null;
+                var taxable = pp.taxable !== undefined ? !!pp.taxable : (inv ? !!inv.taxable : false);
+                var taxPercent = pp.taxPercent !== undefined && pp.taxPercent !== null
+                    ? Number(pp.taxPercent)
+                    : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
                 prods.push({
                     productId: pp.productId || "",
                     name: pp.name,
                     price: pp.price,
-                    quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0)
+                    quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0),
+                    taxable: taxable,
+                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent
                 });
             }
         }
-        arr.push({ orderId: id, customer: customer, items: items, total: total,
+        var dt = discountType === "percent" ? "percent" : "flat";
+        var dv = parseCurrency(discountValue);
+        var totals = computeOrderTotals(prods, dt, dv);
+        arr.push({ orderId: id, customer: customer,
+                   items: prods.length > 0 ? totals.itemCount : items,
+                   subtotal: totals.subtotal,
+                   discountType: dt, discountValue: dv,
+                   discount: totals.discount,
+                   tax: totals.tax,
+                   taxBreakdown: totals.taxBreakdown,
+                   total: prods.length > 0 ? totals.total : total,
                    status: status, date: iso, notes: "",
                    email: email || "", phone: phone || "",
+                   orderChannel: orderChannel || "",
+                   staffId: staffId || "",
                    products: prods });
         _commit(arr);
     }

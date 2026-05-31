@@ -37,6 +37,17 @@ public:
     Q_INVOKABLE QString writeStaff(const QVariantList &staff,
                                    const QString &suggestedName = {});
 
+    // Generic single-sheet export used by the Analysis page. Accepts a list
+    // of "sections" — each a QVariantMap with keys:
+    //   "heading" : QString — bold sub-title for the block
+    //   "headers" : QStringList — column titles
+    //   "rows"    : QVariantList of QVariantLists — row data
+    // Sections render top-down with a blank gap between them. Used so a
+    // single workbook can carry Day / Week / Month / Year breakdowns.
+    Q_INVOKABLE QString writeAnalysis(const QString &title,
+                                      const QVariantList &sections,
+                                      const QString &suggestedName = {});
+
     // Read any workbook produced by the above. Returned map keys:
     //   "products": QVariantList of row maps (when a "Products" sheet exists)
     //   "orders":   QVariantList of row maps (when an "Orders" sheet exists)

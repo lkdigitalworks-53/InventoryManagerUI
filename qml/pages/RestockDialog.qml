@@ -19,8 +19,37 @@ BottomSheet {
     property string productName: ""
     property int currentStock: 0
     property int minStock: 0
+    // Inline "Add new party" expansion state — declared on `dlg` (root) so
+    // descendant references via `dlg._addPartyOpen` resolve correctly. Was
+    // briefly declared on the inner ColumnLayout, which silently broke the
+    // dialog by making `dlg._addPartyOpen` undefined and throwing in bindings.
+    property bool _addPartyOpen: false
 
     signal restockConfirmed(string productId, int amount)
+
+    // Cached supplier ids that mirror the picker rows. Index 0 is "" (no
+    // supplier), then SupplierStore.suppliers in display order — the picker
+    // model is built from `_supplierLabels`.
+    property var _supplierIds: [""]
+    property var _supplierLabels: [qsTr("Select or add a supplier")]
+
+    function _refreshSuppliers(preferredId) {
+        var ids = [""]
+        var labels = [qsTr("Select or add a supplier")]
+        var src = SupplierStore.suppliers || []
+        for (var i = 0; i < src.length; ++i) {
+            ids.push(src[i].supplierId)
+            labels.push(src[i].name)
+        }
+        _supplierIds = ids
+        _supplierLabels = labels
+        partyCombo.model = labels
+        // Restore selection by id rather than by index — the underlying list
+        // is sorted alphabetically so positions shift on every add.
+        var target = preferredId || ""
+        var idx = Math.max(0, ids.indexOf(target))
+        partyCombo.currentIndex = idx
+    }
 
     function openFor(pid) {
         var p = InventoryStore.getById(pid)
@@ -30,11 +59,25 @@ BottomSheet {
         currentStock = p.stock
         minStock = p.minStock
         qtyField.value = 10
+        // Default the cost field to the product's recorded cost — the user
+        // can override per-batch (price renegotiated, FX shift, etc.).
+        unitCostField.text = (p.price !== undefined && p.price !== null) ? String(p.price) : "0"
+
+        // Default the supplier picker to the most recent supplier we used.
+        _refreshSuppliers(TransactionStore.lastSupplierFor(pid))
+
+        addPartyField.text = ""
+        dlg._addPartyOpen = false
         dlg.open()
     }
 
     onPrimaryClicked: {
-        InventoryStore.restock(productId, qtyField.value)
+        var supplierId = partyCombo.currentIndex > 0
+                ? dlg._supplierIds[partyCombo.currentIndex]
+                : ""
+        var unitCost = parseFloat(unitCostField.text)
+        if (isNaN(unitCost) || unitCost < 0) unitCost = 0
+        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost)
         restockConfirmed(productId, qtyField.value)
         Toast.show("Restocked +" + qtyField.value + " units")
         dlg.close()
@@ -107,6 +150,107 @@ BottomSheet {
             text: "After this, stock will be " + (dlg.currentStock + qtyField.value) + " units."
             color: Constants.textSecondary
             font.pixelSize: sp(Constants.fsSmall)
+        }
+
+        // Cost-per-unit at receipt time. Drives FIFO margin reports — every
+        // sale that consumes from this batch will use this number as cost-of-
+        // goods. Pre-filled with the product's recorded cost; user can adjust.
+        Text {
+            text: qsTr("Unit cost (₹)")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+        AuthTextField {
+            id: unitCostField
+            Layout.fillWidth: true
+            placeholderText: "0.00"
+            inputMethodHints: Qt.ImhFormattedNumbersOnly
+        }
+
+        // Supplier picker — optional. The first row is the empty placeholder
+        // so the user can intentionally leave it blank (legacy stock).
+        Text {
+            text: qsTr("Supplier")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            AppComboBox {
+                id: partyCombo
+                Layout.fillWidth: true
+                // Display labels live in `_supplierLabels`; selection maps
+                // back to a supplierId via `_supplierIds[currentIndex]`.
+                model: dlg._supplierLabels
+                font.pixelSize: sp(Constants.fsBody)
+                displayText: currentIndex > 0
+                        ? currentText
+                        : qsTr("Select or add a supplier")
+            }
+            QQC.AbstractButton {
+                id: addPartyToggle
+                Layout.preferredWidth: dp(44)
+                Layout.preferredHeight: dp(44)
+                implicitWidth: dp(44)
+                implicitHeight: dp(44)
+                padding: 0
+                topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
+                background: Rectangle {
+                    anchors.fill: parent
+                    radius: dp(14)
+                    color: addPartyToggle.pressed ? Constants.borderColor : Constants.subtleBg
+                    border.color: Constants.borderColor
+                    border.width: 1
+                    Behavior on color { ColorAnimation { duration: Constants.durFast } }
+                }
+                contentItem: Text {
+                    text: dlg._addPartyOpen ? "✕" : "＋"
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(18)
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: {
+                    dlg._addPartyOpen = !dlg._addPartyOpen
+                    if (dlg._addPartyOpen) addPartyField.forceActiveFocus()
+                    else addPartyField.text = ""
+                }
+            }
+        }
+        // Inline "Add new party" row — appears when the user taps + above.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: dp(Constants.space2)
+            visible: dlg._addPartyOpen
+
+            AuthTextField {
+                id: addPartyField
+                Layout.fillWidth: true
+                placeholderText: qsTr("New supplier name")
+                onAccepted: addPartyBtn.clicked()
+            }
+            PrimaryButton {
+                id: addPartyBtn
+                text: qsTr("Save")
+                implicitHeight: dp(44)
+                implicitWidth: dp(80)
+                onClicked: {
+                    var n = (addPartyField.text || "").trim()
+                    if (n.length === 0) return
+                    // SupplierStore.addSupplier returns the existing record
+                    // when the name already exists, so we always have an id.
+                    var s = SupplierStore.addSupplier({ name: n })
+                    dlg._refreshSuppliers(s ? s.supplierId : "")
+                    addPartyField.text = ""
+                    dlg._addPartyOpen = false
+                }
+            }
         }
     }
 }

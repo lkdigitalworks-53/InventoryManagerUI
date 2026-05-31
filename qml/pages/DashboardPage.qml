@@ -27,6 +27,7 @@ Item {
     // dialog. kind: "order" | "product_added" | "product_updated"
     // | "product_restocked" | "staff_added" | "staff_updated"
     signal activityItemClicked(string kind, string entityId)
+    signal seeAllActivityRequested()
 
     // ── Greeting helper ──
     function _greeting() {
@@ -349,16 +350,34 @@ Item {
                 Layout.rightMargin: dp(Constants.space4)
                 spacing: dp(Constants.space2)
 
-                // Section heading only — the recent-activity list is itself
-                // scrollable as part of the page, so a "See all" link would
-                // be redundant. Each row routes to its respective detail
-                // surface via activityItemClicked.
-                Text {
+                // Section heading + "See all" link to a full-page list when
+                // the user wants more than the dashboard's 5-row preview.
+                RowLayout {
                     Layout.fillWidth: true
-                    text: "Recent activity"
-                    color: Constants.textPrimary
-                    font.pixelSize: sp(Constants.fsBodyLg)
-                    font.bold: true
+                    spacing: dp(Constants.space2)
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Recent activity")
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBodyLg)
+                        font.bold: true
+                    }
+                    QQC.AbstractButton {
+                        implicitHeight: dp(28)
+                        leftPadding: dp(8); rightPadding: dp(8)
+                        topPadding: 0; bottomPadding: 0
+                        background: Rectangle { color: "transparent" }
+                        contentItem: Text {
+                            text: qsTr("See all  ›")
+                            color: Constants.brand2
+                            font.pixelSize: sp(Constants.fsCaption)
+                            font.bold: true
+                            horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: root.seeAllActivityRequested()
+                    }
                 }
 
                 ColumnLayout {
