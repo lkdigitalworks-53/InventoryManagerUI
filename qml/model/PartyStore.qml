@@ -68,6 +68,17 @@ QtObject {
         _save()
     }
 
+    // Drop the QSettings-backed list. Called on sign-out so the next
+    // account doesn't see the previous tenant's party names — historically
+    // the migration promoted these into Supplier records, leaking data
+    // across tenants.
+    function clear() {
+        parties = defaults.slice()
+        lastUsed = ""
+        _settings.partiesJson = ""
+        _settings.lastUsed = ""
+    }
+
     function indexOfDefault() {
         for (var i = 0; i < parties.length; ++i)
             if (parties[i] === lastUsed) return i

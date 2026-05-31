@@ -1144,8 +1144,8 @@ Item {
                         value: byNameAccum[nm].profit,
                         revenue: byNameAccum[nm].revenue,
                         cogs: byNameAccum[nm].cogs,
-                        margin: byNameAccum[nm].revenue > 0
-                                ? (byNameAccum[nm].profit / byNameAccum[nm].revenue) * 100 : 0
+                        margin: byNameAccum[nm].cogs > 0
+                                ? (byNameAccum[nm].profit / byNameAccum[nm].cogs) * 100 : 0
                     })
                 }
                 _breakdown = topRowsP
@@ -1159,8 +1159,8 @@ Item {
 
                 _periodTotal = totalProfit
                 _periodLabel = qsTr("Potential profit on open stock")
-                _periodSecondary = totalRevenue > 0
-                        ? qsTr("Margin %1%").arg((totalProfit / totalRevenue * 100).toFixed(1))
+                _periodSecondary = totalCogs > 0
+                        ? qsTr("Margin %1%").arg((totalProfit / totalCogs * 100).toFixed(1))
                         : ""
                 _periodCompare = qsTr("at current selling prices") + partySuffix
                 return
@@ -1199,8 +1199,8 @@ Item {
 
             _periodTotal = totalProfit
             _periodLabel = qsTr("Realised profit this period")
-            _periodSecondary = totalRevenue > 0
-                    ? qsTr("Margin %1%").arg((totalProfit / totalRevenue * 100).toFixed(1))
+            _periodSecondary = totalCogs > 0
+                    ? qsTr("Margin %1%").arg((totalProfit / totalCogs * 100).toFixed(1))
                     : ""
             _periodCompare = qsTr("from completed sales") + partySuffix
             return
@@ -1893,7 +1893,7 @@ Item {
         var nks = Object.keys(out)
         for (var n = 0; n < nks.length; ++n) {
             var r = out[nks[n]]
-            r.margin = r.revenue > 0 ? (r.profit / r.revenue) * 100 : 0
+            r.margin = r.cogs > 0 ? (r.profit / r.cogs) * 100 : 0
         }
         return out
     }
@@ -1918,7 +1918,7 @@ Item {
         var nks = Object.keys(out)
         for (var n = 0; n < nks.length; ++n) {
             var r = out[nks[n]]
-            r.margin = r.revenue > 0 ? (r.profit / r.revenue) * 100 : 0
+            r.margin = r.cogs > 0 ? (r.profit / r.cogs) * 100 : 0
         }
         return out
     }
@@ -1939,7 +1939,7 @@ Item {
         var nks = Object.keys(out)
         for (var n = 0; n < nks.length; ++n) {
             var r = out[nks[n]]
-            r.margin = r.revenue > 0 ? (r.profit / r.revenue) * 100 : 0
+            r.margin = r.cogs > 0 ? (r.profit / r.cogs) * 100 : 0
         }
         return out
     }
@@ -1981,7 +1981,7 @@ Item {
             totCogs += r.cogs || 0
             totProfit += r.profit || 0
         }
-        var totalMargin = totRev > 0 ? ((totProfit / totRev) * 100).toFixed(1) + "%" : "0%"
+        var totalMargin = totCogs > 0 ? ((totProfit / totCogs) * 100).toFixed(1) + "%" : "0%"
         out.push([qsTr("Total"), totRev, totCogs, totProfit, totalMargin])
         return {
             heading: heading,

@@ -185,7 +185,9 @@ QtObject {
     //
     // Revenue uses the sale's per-line `unitPrice`; COGS uses each
     // consumption[]'s captured `unitCost` (which is FIFO-correct because
-    // batches snapshot cost at receipt time). Margin = profit / revenue.
+    // batches snapshot cost at receipt time). Margin is the markup over
+    // cost: `profit / cogs` (so a ₹100-cost item sold at ₹150 reports
+    // 50% margin, the way a small-business owner thinks about price).
     function realisedProfitByDimension(field) {
         var out = {}
         var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
@@ -220,11 +222,11 @@ QtObject {
             }
         }
         // Compute margin% in a second pass — avoids divide-by-zero on rows
-        // whose revenue is 0 (consumption-only legacy events).
+        // whose cogs is 0 (consumption-only legacy events).
         var keys = Object.keys(out)
         for (var k = 0; k < keys.length; ++k) {
             var row = out[keys[k]]
-            row.margin = row.revenue > 0 ? (row.profit / row.revenue) * 100 : 0
+            row.margin = row.cogs > 0 ? (row.profit / row.cogs) * 100 : 0
         }
         return out
     }
@@ -259,7 +261,7 @@ QtObject {
         var keys = Object.keys(out)
         for (var k = 0; k < keys.length; ++k) {
             var row = out[keys[k]]
-            row.margin = row.revenue > 0 ? (row.profit / row.revenue) * 100 : 0
+            row.margin = row.cogs > 0 ? (row.profit / row.cogs) * 100 : 0
         }
         return out
     }

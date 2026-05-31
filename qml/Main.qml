@@ -200,6 +200,13 @@ App {
             TransactionStore.clear()
             SupplierStore.clear()
             StockBatchStore.clear()
+            // PartyStore is QSettings-backed (device-local, not tenant-
+            // scoped). Without this, the next account inherits the previous
+            // user's supplier names.
+            PartyStore.clear()
+            // Per-process flag must be reset so runIfNeeded() can re-evaluate
+            // for the next tenant context.
+            MigrationService.reset()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }

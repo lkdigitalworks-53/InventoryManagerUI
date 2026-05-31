@@ -34,21 +34,16 @@ QQC.Dialog {
         open()
     }
 
+    // Opacity-only enter/exit. An earlier version animated `y` to slide the
+    // sheet up from the bottom edge, but Transition's NumberAnimation writes
+    // the property imperatively — which permanently destroyed the
+    // `y: parent.height - height` binding. After the first close the dialog
+    // was stuck off-screen and the second open showed nothing.
     enter: Transition {
-        ParallelAnimation {
-            NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: Constants.durMed }
-            NumberAnimation { property: "y"; from: parent ? parent.height : 600;
-                              to: parent ? parent.height - root.height : 0;
-                              duration: Constants.durSlow; easing.type: Easing.OutCubic }
-        }
+        NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: Constants.durMed }
     }
     exit: Transition {
-        ParallelAnimation {
-            NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: Constants.durMed }
-            NumberAnimation { property: "y"; from: parent ? parent.height - root.height : 0;
-                              to: parent ? parent.height : 600;
-                              duration: Constants.durMed; easing.type: Easing.InCubic }
-        }
+        NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: Constants.durMed }
     }
 
     QQC.Overlay.modal: Rectangle { color: Constants.overlay }

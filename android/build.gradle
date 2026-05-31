@@ -43,7 +43,7 @@ android {
 
     namespace            androidPackageName
     
-    compileSdkVersion    35
+    compileSdkVersion    34
     buildToolsVersion    androidBuildToolsVersion
 
     compileOptions {
@@ -53,11 +53,11 @@ android {
 
     defaultConfig {
       multiDexEnabled true
-      targetSdkVersion   35
+      targetSdkVersion   34
       applicationId    = productIdentifier
       versionCode      = productVersionCode
       versionName      = productVersionName
-      minSdkVersion    = project.hasProperty("qtMinSdkVersion") ? qtMinSdkVersion.toInteger() : 29
+      minSdkVersion    = project.hasProperty("qtMinSdkVersion") ? qtMinSdkVersion.toInteger() : 23
 
     }
 
