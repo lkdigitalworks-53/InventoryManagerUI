@@ -24,6 +24,59 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 | Member management dialog | ✅ Done |
 | Empty-state UI for Sales page | ✅ Done |
 | Success toast for key operations | ✅ Done |
+| India compliance roadmap (design) | 📋 Approved — see below |
+
+---
+
+## India Compliance Architecture (Approved 2026-06-06)
+
+Full design: `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md`.
+
+The app is legally part of its customers' "books of account" / "electronic records" under Indian
+law (Companies Act §2(13), CGST Rule 56, IT §44AA, DPDP Act) **even though it excludes billing**.
+A master roadmap decomposes compliance into sub-projects P0–P7.
+
+**Scoping decisions:** target = all segments (build to strictest common denominator → MCA-grade
+immutable logging is P0); backend = add Firebase Cloud Functions gateway; sequencing =
+foundation-first; manufacturing/BoM (56(12)) + digital signature (56(15)) deferred.
+
+### The architectural spine — two-tier data model + Cloud Functions gateway
+
+The current **client-direct Firestore REST** model cannot satisfy MCA Rule 11(g) (any member can
+edit/delete; client forges identity & time). The fix:
+
+- **Ledger tier (immutable, server-owned):** `audit_log` (new), `transactions`, `stock_batches`,
+  `stock_movements` (new), plus mutation snapshots. Firestore rules = **read-only to clients**;
+  the *only* writer is a Cloud Function (Admin SDK). **Append-only — no update, no delete.**
+- **Working tier (client-writable, as today):** live `inventory`, `orders`, `staff`, `suppliers`
+  the UI edits. Every mutation calls the gateway, which writes the doc **and** appends a ledger
+  entry in one transaction.
+
+`TransactionStore` / `StockBatchStore` become **read models** over the ledger tier (not writers).
+
+### Roadmap priority (each is its own spec → plan)
+
+- **P0** Gateway + immutable `audit_log` (MCA 11(g), CGST 56(8)) — foundation, builds the gateway.
+- **P1** Stock-movement taxonomy: loss/theft/destroyed/write_off/free_sample/gift + opening/closing
+  balance register (CGST 56(2)).
+- **P2** Tax-identity fields: HSN (4/6/8-digit) on products; GSTIN on supplier/customer/tenant
+  (client-only, run parallel to P0).
+- **P3** Legal docs & acceptance: ToS, Privacy Policy, DPA + versioned accept-record.
+- **P4** DPDP privacy core: consent capture/logs, privacy notice, grievance channel, 18+ gate,
+  data-residency decision (Firestore is `asia-southeast1`/Singapore — documented, allowed today).
+- **P5** PII erasure & retention: terminated-staff deletion, Auth-account cascade (closes the
+  `AuthService.cleanupStaffAuthDocs` TODO), backup-aware delete, 6/8-yr archival.
+- **P6** Breach detection & 72h notification (depends on P0).
+- **P7** Warehouse/storage mapping: address, license no., item↔location, in-transit (CGST 56(5)).
+
+**Required existing-code change:** `TransactionStore.renameParty()` mutates past entries — under
+append-only that is illegal. P0 **removes it** (dead code, zero callers); the live supplier rename
+already goes through `SupplierStore.updateSupplier` by stable `supplierId`, so no feature is lost.
+
+**Sub-project specs:** P0 design is in `docs/superpowers/specs/2026-06-06-P0-compliance-gateway-design.md`
+(gateway + immutable `audit_log`; transport = HTTPS-callable via existing XHR; optimistic UI + a
+persisted outbox/retry; P0 scope = inventory + stock only; fresh-start cutover wipes ledger
+collections and zeroes product stock).
 
 ---
 
@@ -266,6 +319,49 @@ QtObject {
 
 ---
 
+### 8. Compliance & Audit Agent
+
+**Purpose**: Owns the India compliance roadmap (P0–P7) — the immutable ledger tier, the Cloud
+Functions gateway, tax-identity fields, DPDP privacy, and retention.
+**Scope**: Cloud Functions (`functions/`, to be created), `FIRESTORE_RULES.md`, ledger stores
+(`TransactionStore`, `StockBatchStore`, new `AuditLogStore` / `StockMovementStore`), and the
+compliance design spec.
+
+**Responsibilities**:
+- Maintain the **two-tier model**: ledger tier stays append-only and server-written; working tier
+  routes every mutation through the gateway's `recordMutation(entity, entityId, action, before,
+  after)` callable.
+- Keep ledger Firestore rules `allow write: if false` — only the Admin SDK (Cloud Function) writes.
+- Never edit historical ledger rows. Relabels (e.g. supplier rename) propagate by stable id, not by
+  rewriting past rows.
+- Add tax-identity fields: product `hsnCode` (4/6/8-digit validated), `gstin` (15-char checksum) on
+  supplier/customer/tenant.
+- Implement the stock-movement taxonomy enum (`receipt|sale|loss|theft|destroyed|write_off|
+  free_sample|gift|adjustment`) and the opening/closing-balance register read model.
+- Build DPDP consent logs, privacy notice, grievance channel, 18+ gate; PII erasure with
+  Auth-account cascade and 6/8-yr archival; breach detection.
+
+**Invariants (do not violate)**:
+- The audit trail cannot be disabled or made configurable — no `enable_audit_trail` flag anywhere.
+- `serverTimestamp` (NTP-backed, set in the Cloud Function) is authoritative; `clientTimestamp` is
+  forensic-only.
+- `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
+  client payload.
+
+**Key Files**:
+- `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md` (master design)
+- `functions/` (Cloud Functions — to be created in P0)
+- `FIRESTORE_RULES.md`
+- `qml/model/TransactionStore.qml`, `qml/model/StockBatchStore.qml`
+
+**Example Prompts**:
+- "Spec out P0 — the compliance gateway and immutable audit_log"
+- "Add the HSN code field to products with 4/6/8-digit validation"
+- "Implement the P0 gateway and route InventoryStore writes through it"
+- "Lock the Firestore rules for ledger collections to read-only"
+
+---
+
 ## Agent Usage Patterns
 
 ### Adding a New Domain (e.g. Suppliers)
@@ -295,3 +391,15 @@ QtObject {
 2. **Build Agent** → Set `PRODUCT_LICENSE_KEY` and `PRODUCT_STAGE "publish"`
 3. **Build Agent** → Update `main.cpp` to use `qrc:/qml/Main.qml`
 4. **Build Agent** → Build for target platform and run packaging
+
+### Adding a Compliance Feature (any data that touches books of account / PII)
+
+1. **Compliance & Audit Agent** → Confirm which roadmap sub-project (P0–P7) it belongs to; read the
+   master spec.
+2. **Store & Firebase Agent** → Route the mutation through the gateway `recordMutation(...)`; never
+   write the ledger tier directly from the client.
+3. **Compliance & Audit Agent** → Ensure an `audit_log` entry is appended (before/after, actorUid,
+   serverTimestamp) and that ledger rules stay `allow write: if false`.
+4. **Pages & Dialogs Agent** → Surface required fields (HSN, GSTIN, movement reason, consent) and
+   any privacy notice.
+5. Never edit historical ledger rows — relabels propagate by stable id, not by rewriting past rows.

@@ -175,12 +175,11 @@ BottomSheet {
                                 border.width: 1
                             }
                             contentItem: Item {
-                                Text {
+                                Icon {
                                     anchors.centerIn: parent
-                                    text: (modelData.status === "suspended") ? "✓" : "⏸"
+                                    name: (modelData.status === "suspended") ? "check" : "pause-status"
                                     color: Constants.textSecondary
-                                    font.pixelSize: sp(14)
-                                    font.bold: true
+                                    size: sp(14)
                                 }
                             }
                             QQC.ToolTip.visible: hovered
@@ -199,12 +198,11 @@ BottomSheet {
                                 border.width: 1
                             }
                             contentItem: Item {
-                                Text {
+                                Icon {
                                     anchors.centerIn: parent
-                                    text: "✕"
+                                    name: "close"
                                     color: Constants.danger
-                                    font.pixelSize: sp(14)
-                                    font.bold: true
+                                    size: sp(14)
                                 }
                             }
                             QQC.ToolTip.visible: hovered

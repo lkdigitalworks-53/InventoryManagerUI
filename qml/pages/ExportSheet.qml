@@ -18,7 +18,7 @@ BottomSheet {
 
     Repeater {
         model: [
-            { fmt: "xlsx", icon: "📊", label: qsTr("Excel (.xlsx)"), sub: qsTr("Spreadsheet, formulas preserved") }
+            { fmt: "xlsx", iconName: "analytics", label: qsTr("Excel (.xlsx)"), sub: qsTr("Spreadsheet, formulas preserved") }
         ]
         delegate: ListCard {
             Layout.fillWidth: true
@@ -29,13 +29,13 @@ BottomSheet {
             leading: Rectangle {
                 width: dp(38); height: dp(38); radius: dp(12)
                 color: Qt.rgba(0.39, 0.40, 0.95, 0.10)
-                Text { anchors.centerIn: parent; text: modelData.icon; font.pixelSize: sp(18) }
+                Icon { anchors.centerIn: parent; name: modelData.iconName; size: sp(18); color: Constants.textPrimary }
             }
 
-            Text {
-                text: "›"
+            Icon {
+                name: "chevron"
                 color: Constants.textMuted
-                font.pixelSize: sp(16)
+                size: sp(16)
                 Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
             }
         }

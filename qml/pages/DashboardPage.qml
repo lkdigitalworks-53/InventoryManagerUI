@@ -222,12 +222,12 @@ Item {
         anchors.right: parent.right
         height: dp(76)
         greeting: root._greeting()
-        title: root._firstName() + " 👋"
+        title: root._firstName()
 
         actions: [
             IconActionButton {
                 variant: "glass"
-                text: "🔔"
+                iconName: "bell"
                 // Live count = low-stock products + unread activity entries.
                 // Cleared on notifications-sheet open via ActivityLog.markAllRead().
                 badgeText: {
@@ -322,22 +322,22 @@ Item {
 
                     ActionTile {
                         Layout.fillWidth: true
-                        emoji: "🧾"; caption: "New order"
+                        iconName: "orders"; caption: "New order"
                         onClicked: root.newOrderRequested()
                     }
                     ActionTile {
                         Layout.fillWidth: true
-                        emoji: "📦"; caption: "Add product"
+                        iconName: "products"; caption: "Add product"
                         onClicked: root.addProductRequested()
                     }
                     ActionTile {
                         Layout.fillWidth: true
-                        emoji: "👥"; caption: "Invite staff"
+                        iconName: "team"; caption: "Invite staff"
                         onClicked: root.inviteStaffRequested()
                     }
                     ActionTile {
                         Layout.fillWidth: true
-                        emoji: "📈"; caption: "View report"
+                        iconName: "report"; caption: "View report"
                         onClicked: root.navigateToSales()
                     }
                 }
@@ -398,12 +398,17 @@ Item {
                                 label: {
                                     var k = modelData.kind || "order"
                                     if (k === "order") return ((modelData.title || "?").charAt(0) || "?").toUpperCase()
-                                    if (k === "product_added") return "＋"
-                                    if (k === "product_updated") return "✎"
-                                    if (k === "product_restocked") return "↻"
-                                    if (k === "staff_added") return "👤"
-                                    if (k === "staff_updated") return "✎"
-                                    return "•"
+                                    return ""   // non-order kinds render via iconName
+                                }
+                                iconName: {
+                                    var k = modelData.kind || "order"
+                                    if (k === "product_added") return "product-added"
+                                    if (k === "product_updated") return "product-updated"
+                                    if (k === "product_restocked") return "restocked"
+                                    if (k === "staff_added") return "staff-added"
+                                    if (k === "staff_updated") return "staff-updated"
+                                    if (k === "order") return ""
+                                    return "activity"
                                 }
                                 palette: {
                                     var k = modelData.kind || "order"
@@ -452,9 +457,10 @@ Item {
                         ColumnLayout {
                             anchors.centerIn: parent
                             spacing: dp(6)
-                            Text {
-                                text: "📋"
-                                font.pixelSize: sp(28)
+                            Icon {
+                                name: "clipboard"
+                                size: sp(28)
+                                color: Constants.textSecondary
                                 Layout.alignment: Qt.AlignHCenter
                             }
                             Text {

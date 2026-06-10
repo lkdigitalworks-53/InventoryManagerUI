@@ -10,6 +10,11 @@ import "../helper"
 QQC.Popup {
     id: root
     modal: true
+    // Declare this at the App root (see Main.qml), NOT inside a BottomSheet. The
+    // sheet's default `body` alias routes children into its tall, scrollable
+    // content column, so a parent-relative `y` would open this popup off-screen
+    // (the EditProductDialog bug). At App root, `parent` is the window, so the
+    // bottom-anchored positioning below is window-relative and correct.
     width: parent ? parent.width : 360
     // Cap the sheet at 80% of viewport height so the content (camera + gallery
     // + URL + remove rows) never spills past the bottom edge on phone-sized
@@ -68,7 +73,7 @@ QQC.Popup {
                 anchors.fill: parent
                 anchors.leftMargin: 14; anchors.rightMargin: 14
                 spacing: 12
-                Text { text: "📷"; font.pixelSize: 20; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "camera"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
@@ -104,7 +109,7 @@ QQC.Popup {
                 anchors.fill: parent
                 anchors.leftMargin: 14; anchors.rightMargin: 14
                 spacing: 12
-                Text { text: "🖼️"; font.pixelSize: 20; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "gallery"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
@@ -148,7 +153,7 @@ QQC.Popup {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
-                    Text { text: "🌐"; font.pixelSize: 16 }
+                    Icon { name: "web"; size: 16; color: Constants.textPrimary }
                     Text {
                         text: "Use an image URL or path"
                         color: "#111827"
@@ -194,7 +199,7 @@ QQC.Popup {
                 anchors.fill: parent
                 anchors.leftMargin: 14; anchors.rightMargin: 14
                 spacing: 12
-                Text { text: "🗑️"; font.pixelSize: 20; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "delete"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2

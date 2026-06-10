@@ -14,3 +14,5 @@ singleton SupplierStore 1.0 SupplierStore.qml
 singleton StockBatchStore 1.0 StockBatchStore.qml
 singleton MigrationService 1.0 MigrationService.qml
 singleton OrderChannelStore 1.0 OrderChannelStore.qml
+singleton OutboxStore 1.0 OutboxStore.qml
+singleton Gateway 1.0 Gateway.qml

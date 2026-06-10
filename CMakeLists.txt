@@ -28,10 +28,10 @@ set(PRODUCT_STAGE "test")
 set(PRODUCT_LICENSE_KEY "")
 
 # Find all QML/JS files for the QML compiler:
-file(GLOB_RECURSE QmlFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.js)
+file(GLOB_RECURSE QmlFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.js)
 
 # Find all non-QML/JS files in the qml and assets folder to add as resources:
-file(GLOB_RECURSE AssetsFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
+file(GLOB_RECURSE AssetsFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
 list(REMOVE_ITEM AssetsFiles ${QmlFiles})
 
 qt_add_executable(appBusinessManagement

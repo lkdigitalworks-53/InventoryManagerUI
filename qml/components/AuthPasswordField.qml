@@ -88,10 +88,10 @@ ColumnLayout {
             anchors.bottom: parent.bottom
             width: dp(42)
 
-            Text {
+            Icon {
                 anchors.centerIn: parent
-                text: toggleButton.revealed ? "🙈" : "👁"
-                font.pixelSize: sp(16)
+                name: toggleButton.revealed ? "hide" : "reveal"
+                size: sp(16)
                 color: "#6b7280"
             }
 

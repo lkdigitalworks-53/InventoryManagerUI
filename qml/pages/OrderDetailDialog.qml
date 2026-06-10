@@ -332,7 +332,7 @@ BottomSheet {
             }
             IconActionButton {
                 variant: "default"
-                text: "＋"
+                iconName: "add"
                 onClicked: {
                     var idx = productCombo.currentIndex
                     if (idx < 0 || idx >= dlg.catalog.length) return
@@ -393,7 +393,7 @@ BottomSheet {
                             padding: 0
                             background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
                             contentItem: Item {
-                                Text { anchors.centerIn: parent; text: "−"; font.pixelSize: sp(16); font.bold: true; color: Constants.textPrimary }
+                                Icon { anchors.centerIn: parent; name: "remove"; size: sp(16); color: Constants.textPrimary }
                             }
                             onClicked: {
                                 var q = model.quantity - 1
@@ -419,7 +419,7 @@ BottomSheet {
                             padding: 0
                             background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
                             contentItem: Item {
-                                Text { anchors.centerIn: parent; text: "+"; font.pixelSize: sp(16); font.bold: true; color: Constants.textPrimary }
+                                Icon { anchors.centerIn: parent; name: "add"; size: sp(16); color: Constants.textPrimary }
                             }
                             onClicked: {
                                 var inv = InventoryStore.findByName(model.name)
@@ -435,7 +435,7 @@ BottomSheet {
                             padding: 0
                             background: Rectangle { radius: dp(8); color: "transparent" }
                             contentItem: Item {
-                                Text { anchors.centerIn: parent; text: "✕"; font.pixelSize: sp(14); font.bold: true; color: Constants.danger }
+                                Icon { anchors.centerIn: parent; name: "close"; size: sp(14); color: Constants.danger }
                             }
                             onClicked: { products.remove(row.rowIdx); dlg.recomputeSubtotal() }
                         }

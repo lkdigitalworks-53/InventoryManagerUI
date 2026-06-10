@@ -15,7 +15,7 @@ Item {
     id: root
 
     property int currentIndex: 0
-    // Each entry: { icon: "...", label: "Home" }
+    // Each entry: { iconName: "...", label: "Home" }
     property var tabs: []
 
     signal tabChanged(int index)
@@ -79,12 +79,11 @@ Item {
                     contentItem: ColumnLayout {
                         spacing: dp(2)
 
-                        Text {
+                        Icon {
                             Layout.alignment: Qt.AlignHCenter
-                            text: modelData.icon
+                            name: modelData.iconName
                             color: tab.isActive ? Constants.brand2 : Constants.textSecondary
-                            font.pixelSize: sp(20)
-                            horizontalAlignment: Text.AlignHCenter
+                            size: sp(20)
                         }
                         Text {
                             Layout.alignment: Qt.AlignHCenter

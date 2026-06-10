@@ -47,11 +47,11 @@ QQC.ComboBox {
         y: (root.height - height) / 2
         width: dp(20)
         height: dp(20)
-        Text {
+        Icon {
             anchors.centerIn: parent
-            text: "▾"
+            name: "dropdown"
             color: Constants.textSecondary
-            font.pixelSize: sp(14)
+            size: sp(14)
         }
     }
 

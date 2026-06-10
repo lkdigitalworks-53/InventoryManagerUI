@@ -1,6 +1,7 @@
 pragma Singleton
 
 import QtQuick
+import Felgo
 
 Item {
     // ── Backend ──────────────────────────────────────────────────────────────
@@ -115,4 +116,118 @@ Item {
     readonly property var grad2: ({ start: "#ec4899", end: "#f472b6" })
     readonly property var grad3: ({ start: "#f59e0b", end: "#ef4444" })
     readonly property var grad4: ({ start: "#06b6d4", end: "#14b8a6" })
+
+    // ── Icon system ──────────────────────────────────────────────────────────
+    // Semantic icon name → Felgo FontAwesome IconType string. The single
+    // source of truth for every icon in the app. Add new icons here, never
+    // inline a raw glyph in a Text element (breaks on Android — see
+    // docs/superpowers/specs/2026-06-06-icon-emoji-rendering-design.md).
+    readonly property var iconMap: ({
+        "dropdown":  IconType.caretdown,
+        "add":       IconType.plus,
+        "remove":    IconType.minus,
+        "close":     IconType.times,
+        "check":     IconType.check,
+        "edit":      IconType.pencil,
+        "settings":  IconType.cog,
+        "quick":     IconType.bolt,
+        "import":    IconType.download,
+        "export":    IconType.share,
+        "back":      IconType.arrowleft,
+        "chevron":   IconType.angleright,
+        "star":      IconType.star,
+        "warn":      IconType.exclamationtriangle,
+        "search":    IconType.search,
+        // Former emoji → monochrome
+        "camera":    IconType.camera,
+        "calendar":  IconType.calendar,
+        "bell":      IconType.bell,
+        "box":       IconType.archive,
+        "empty-inbox": IconType.inbox,
+        "celebrate": IconType.trophy,
+        "staff":     IconType.users,
+        "workspace": IconType.building,
+        "analytics": IconType.barchart,
+        "secure":    IconType.lock,
+        "delete":    IconType.trash,
+        "gallery":   IconType.image,
+        "web":       IconType.globe,
+        "clipboard": IconType.clipboard,
+        "history":   IconType.filetext,
+        "tag":       IconType.tag,
+        "orders":     IconType.shoppingcart,
+        "products":   IconType.archive,
+        "analysis":   IconType.linechart,
+        "report":     IconType.linechart,
+        "profile":    IconType.user,
+        "team":       IconType.users,
+        "security":   IconType.lock,
+        "appearance": IconType.paintbrush,
+        "language":   IconType.globe,
+        "currency":   IconType.exchange,
+        "pause":      IconType.pause,
+        "home":       IconType.home
+        ,"created":          IconType.pluscircle
+        ,"purchase":         IconType.download
+        ,"sale":             IconType.upload
+        ,"stock_adjustment": IconType.calculator
+        ,"field_change":     IconType.pencil
+        ,"photo_change":     IconType.image
+        ,"pause-status":     IconType.pause
+        // Activity feed kinds (final cleanup pass)
+        ,"product-added":    IconType.plus
+        ,"product-updated":  IconType.pencil
+        ,"restocked":        IconType.refresh
+        ,"staff-added":      IconType.user
+        ,"staff-updated":    IconType.pencil
+        ,"activity":         IconType.questioncircle  // generic "•" fallback
+        ,"reveal":           IconType.eye
+        ,"hide":             IconType.eyeslash
+        ,"file":             IconType.file
+    })
+
+    // Resolve a semantic name to an IconType. Falls back to a visible
+    // question-circle so a typo is obvious on-screen rather than blank.
+    function icon(name) {
+        return iconMap[name] !== undefined ? iconMap[name] : IconType.questioncircle
+    }
+
+    // ── Color icon set (full-color Twemoji SVG) ──────────────────────────────
+    // Names in this set render as a color SVG image (assets/icons/<name>.svg)
+    // instead of a tinted FontAwesome glyph. The `color` property has NO effect
+    // on these — they are full-color artwork. Anything not listed here falls
+    // through to iconMap (monochrome, tintable). See
+    // docs/superpowers/specs/2026-06-08-colorful-svg-icons-design.md.
+    readonly property var colorIconSet: ({
+        "camera": true, "calendar": true, "bell": true,
+        "box": true, "products": true,
+        "empty-inbox": true, "celebrate": true,
+        "staff": true, "team": true,
+        "workspace": true, "analytics": true,
+        "analysis": true, "report": true,
+        "gallery": true, "photo_change": true,
+        "web": true, "language": true,
+        "clipboard": true, "history": true, "tag": true,
+        "orders": true, "profile": true, "staff-added": true,
+        "security": true, "secure": true,
+        "appearance": true, "currency": true,
+        "file": true, "delete": true, "home": true,
+        "created": true, "purchase": true, "sale": true,
+        "stock_adjustment": true, "product-added": true,
+        "restocked": true, "activity": true,
+        // Header/action chrome promoted to color (always on light glass/cards)
+        "import": true, "export": true,
+        "settings": true, "quick": true
+    })
+
+    // Is this semantic name a full-color SVG icon?
+    function isColorIcon(name) {
+        return colorIconSet[name] === true
+    }
+
+    // URL of the color SVG asset for a name. Resolved relative to THIS file
+    // (qml/helper/), so it is correct regardless of which component calls it.
+    function colorIconSource(name) {
+        return Qt.resolvedUrl("../../assets/icons/" + name + ".svg")
+    }
 }

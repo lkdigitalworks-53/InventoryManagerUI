@@ -67,7 +67,7 @@ Item {
             padding: 0
             background: Rectangle { color: parent.pressed ? Qt.rgba(0,0,0,0.04) : "transparent"; radius: dp(12) }
             contentItem: Item {
-                Text { anchors.centerIn: parent; text: "←"; color: Constants.textPrimary; font.pixelSize: sp(22); font.bold: true }
+                Icon { anchors.centerIn: parent; name: "back"; color: Constants.textPrimary; size: sp(22) }
             }
             onClicked: root.backRequested()
         }
@@ -102,12 +102,17 @@ Item {
                         label: {
                             var k = modelData.kind || "order"
                             if (k === "order") return ((modelData.title || "?").charAt(0) || "?").toUpperCase()
-                            if (k === "product_added") return "＋"
-                            if (k === "product_updated") return "✎"
-                            if (k === "product_restocked") return "↻"
-                            if (k === "staff_added") return "👤"
-                            if (k === "staff_updated") return "✎"
-                            return "•"
+                            return ""   // non-order kinds render via iconName
+                        }
+                        iconName: {
+                            var k = modelData.kind || "order"
+                            if (k === "product_added") return "product-added"
+                            if (k === "product_updated") return "product-updated"
+                            if (k === "product_restocked") return "restocked"
+                            if (k === "staff_added") return "staff-added"
+                            if (k === "staff_updated") return "staff-updated"
+                            if (k === "order") return ""
+                            return "activity"
                         }
                         palette: {
                             var k = modelData.kind || "order"
@@ -146,7 +151,7 @@ Item {
                 ColumnLayout {
                     anchors.centerIn: parent
                     spacing: dp(6)
-                    Text { text: "📭"; font.pixelSize: sp(32); Layout.alignment: Qt.AlignHCenter }
+                    Icon { name: "empty-inbox"; size: sp(32); color: Constants.textMuted; Layout.alignment: Qt.AlignHCenter }
                     Text {
                         text: qsTr("No activity yet")
                         color: Constants.textPrimary

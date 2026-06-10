@@ -8,6 +8,7 @@ Rectangle {
     id: root
 
     property string label: "?"
+    property string iconName: ""
     property var palette: Constants.grad1
     property string size: "md"
     property string imageSource: ""
@@ -42,10 +43,18 @@ Rectangle {
 
     Text {
         anchors.centerIn: parent
-        visible: root.imageSource.length === 0
+        visible: root.imageSource.length === 0 && root.iconName.length === 0
         text: root.label
         color: Constants.textOnBrand
         font.pixelSize: root._font
         font.bold: true
+    }
+
+    Icon {
+        anchors.centerIn: parent
+        visible: root.imageSource.length === 0 && root.iconName.length > 0
+        name: root.iconName
+        color: Constants.textOnBrand
+        size: root._font
     }
 }

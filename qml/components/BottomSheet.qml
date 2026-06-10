@@ -113,11 +113,11 @@ QQC.Dialog {
             QQC.AbstractButton {
                 implicitWidth: dp(36); implicitHeight: dp(36)
                 contentItem: Item {
-                    Text {
+                    Icon {
                         anchors.centerIn: parent
-                        text: "✕"
+                        name: "close"
                         color: Constants.textSecondary
-                        font.pixelSize: sp(16)
+                        size: sp(16)
                     }
                 }
                 background: Rectangle { color: "transparent" }

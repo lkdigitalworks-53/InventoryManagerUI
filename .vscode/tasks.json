@@ -93,7 +93,7 @@
     {
       "label": "Felgo: Stop Running App (Debug)",
       "type": "shell",
-      "command": "cmd",
+      "command": "C:\\Windows\\System32\\cmd.exe",
       "args": [
         "/c",
         "taskkill /F /IM appBusinessManagement.exe >nul 2>nul & exit /b 0"
@@ -132,7 +132,7 @@
     {
       "label": "Felgo: Deploy Felgo extras (Debug)",
       "type": "shell",
-      "command": "cmd",
+      "command": "C:\\Windows\\System32\\cmd.exe",
       "args": [
         "/c",
         "(xcopy /E /I /Y \"C:/Felgo/Felgo/mingw_64/qml/Qt5Compat\" \"build/felgo-mingw-debug/qml/Qt5Compat\" || echo [warn] Qt5Compat copy had non-fatal errors) & (xcopy /E /I /Y \"C:/Felgo/Felgo/mingw_64/qml/QtQuick/LocalStorage\" \"build/felgo-mingw-debug/qml/QtQuick/LocalStorage\" || echo [warn] LocalStorage copy had non-fatal errors) & (copy /Y \"C:\\Felgo\\Felgo\\mingw_64\\bin\\Qt6ShaderTools.dll\" \"build\\felgo-mingw-debug\\\" || echo [warn] Qt6ShaderTools.dll copy had non-fatal errors) & (copy /Y \"C:\\Felgo\\Felgo\\mingw_64\\bin\\Qt6Sql.dll\" \"build\\felgo-mingw-debug\\\" || echo [warn] Qt6Sql.dll copy had non-fatal errors) & (copy /Y \"C:\\Felgo\\Felgo\\mingw_64\\bin\\Qt6QmlLocalStorage.dll\" \"build\\felgo-mingw-debug\\\" || echo [warn] Qt6QmlLocalStorage.dll copy had non-fatal errors) & (xcopy /E /I /Y \"C:/Felgo/Felgo/mingw_64/plugins/sqldrivers\" \"build/felgo-mingw-debug/sqldrivers\" || echo [warn] sqldrivers copy had non-fatal errors) & exit /b 0"
@@ -147,12 +147,25 @@
     {
       "label": "Felgo: Run (Debug)",
       "type": "shell",
-      "command": "${workspaceFolder}/build/felgo-mingw-debug/appBusinessManagement.exe",
+      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".vscode/process/run-app.ps1",
+        "-Exe",
+        "${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe",
+        "-Log",
+        "${workspaceFolder}\\app.log"
+      ],
       "dependsOn": "Felgo: Deploy Runtime (Debug)",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
-          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}",
+          "QT_MESSAGE_PATTERN": "[%{time yyyy-MM-dd hh:mm:ss.zzz} %{type}] ] %{category}: %{message} (%{file}:%{line}, %{function})",
+          "QT_ASSUME_STDERR_HAS_CONSOLE": "1"
         }
       },
       "presentation": {
@@ -165,12 +178,25 @@
     {
       "label": "Felgo: Run Clean Build (Debug)",
       "type": "shell",
-      "command": "${workspaceFolder}/build/felgo-mingw-debug/appBusinessManagement.exe",
+      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".vscode/process/run-app.ps1",
+        "-Exe",
+        "${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe",
+        "-Log",
+        "${workspaceFolder}\\app.log"
+      ],
       "dependsOn": "Felgo: Clean Build (Debug)",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
-          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}",
+          "QT_MESSAGE_PATTERN": "[%{time yyyy-MM-dd hh:mm:ss.zzz} %{type}] ] %{category}: %{message} (%{file}:%{line}, %{function})",
+          "QT_ASSUME_STDERR_HAS_CONSOLE": "1"
         }
       },
       "presentation": {
@@ -183,11 +209,24 @@
     {
       "label": "Felgo: Run (Debug, No Build)",
       "type": "shell",
-      "command": "${workspaceFolder}/build/felgo-mingw-debug/appBusinessManagement.exe",
+      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".vscode/process/run-app.ps1",
+        "-Exe",
+        "${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe",
+        "-Log",
+        "${workspaceFolder}\\app.log"
+      ],
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
-          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}"
+          "PATH": "${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;${env:PATH}",
+          "QT_MESSAGE_PATTERN": "[%{time yyyy-MM-dd hh:mm:ss.zzz} %{type}] ] %{category}: %{message} (%{file}:%{line}, %{function})",
+          "QT_ASSUME_STDERR_HAS_CONSOLE": "1"
         }
       },
       "presentation": {
@@ -200,10 +239,10 @@
     {
       "label": "Felgo: Run (Debug, Log To File)",
       "type": "shell",
-      "command": "cmd",
+      "command": "C:\\Windows\\System32\\cmd.exe",
       "args": [
         "/c",
-        "set PATH=${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;%PATH% && \"${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe\" > \"${workspaceFolder}\\runtime.log\" 2>&1"
+        "set PATH=${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;%PATH% && set QT_ASSUME_STDERR_HAS_CONSOLE=1 && \"${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe\" > \"${workspaceFolder}\\runtime.log\" 2>&1"
       ],
       "dependsOn": "Felgo: Deploy Runtime (Debug)",
       "options": {
@@ -269,6 +308,14 @@
         "clear": true
       },
       "problemMatcher": []
+    },
+    {
+      "type": "cmake",
+      "label": "CMake: configure",
+      "command": "configure",
+      "preset": "felgo-mingw-debug",
+      "problemMatcher": [],
+      "detail": "CMake template configure task"
     }
   ]
 }

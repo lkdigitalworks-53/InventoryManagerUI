@@ -69,8 +69,15 @@ BottomSheet {
             Layout.fillWidth: true
             spacing: dp(Constants.space2)
 
+            Icon {
+                name: "file"
+                size: sp(Constants.fsBody)
+                color: Constants.textPrimary
+                Layout.alignment: Qt.AlignVCenter
+                visible: root._fileName.length > 0
+            }
             Text {
-                text: root._fileName.length > 0 ? "📄  " + root._fileName : "Loading…"
+                text: root._fileName.length > 0 ? root._fileName : qsTr("Loading…")
                 font.pixelSize: sp(Constants.fsBody)
                 color: Constants.textPrimary
                 Layout.fillWidth: true
@@ -517,7 +524,7 @@ BottomSheet {
         else
             counts = OrdersStore.upsertMany(_readyRows)
 
-        var msg = "✓ Imported " + (counts.added + counts.updated)
+        var msg = "Imported " + (counts.added + counts.updated)
             + " row" + ((counts.added + counts.updated) === 1 ? "" : "s")
         if (counts.skipped > 0) msg += " · " + counts.skipped + " skipped"
         importCompleted(msg)

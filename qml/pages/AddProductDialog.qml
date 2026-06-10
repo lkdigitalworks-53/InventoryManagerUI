@@ -18,15 +18,15 @@ BottomSheet {
 
     signal productCreated()
     signal manageCategoriesRequested()
+    // The photo-source sheet is hoisted to the App root (Main.qml) — a Popup
+    // declared inside this BottomSheet's body opens off-screen. Main opens the
+    // shared sheet on request and routes its result back via these functions.
+    signal photoPickRequested(bool hasExistingPhoto)
 
     property string pendingPhotoSource: ""
 
-    PhotoSourceSheet {
-        id: photoSheet
-        hasExistingPhoto: dlg.pendingPhotoSource.length > 0
-        onPhotoSourceSelected: function(url) { dlg.pendingPhotoSource = url }
-        onRemoveRequested: dlg.pendingPhotoSource = ""
-    }
+    function applyPhotoSource(url) { dlg.pendingPhotoSource = url }
+    function clearPhotoSource() { dlg.pendingPhotoSource = "" }
 
     onOpened: {
         var idx = CategoryStore.indexOfDefault()
@@ -96,11 +96,12 @@ BottomSheet {
                     fillMode: Image.PreserveAspectCrop
                     sourceSize.width: 128; sourceSize.height: 128
                 }
-                Text {
+                Icon {
                     anchors.centerIn: parent
                     visible: dlg.pendingPhotoSource.length === 0
-                    text: "📷"
-                    font.pixelSize: sp(24)
+                    name: "camera"
+                    size: sp(24)
+                    color: Constants.textSecondary
                 }
             }
 
@@ -125,7 +126,7 @@ BottomSheet {
             GhostButton {
                 text: dlg.pendingPhotoSource.length > 0 ? "Change" : "Add photo"
                 implicitHeight: dp(36)
-                onClicked: photoSheet.open()
+                onClicked: dlg.photoPickRequested(dlg.pendingPhotoSource.length > 0)
             }
         }
 
@@ -207,13 +208,13 @@ BottomSheet {
                             font.bold: true
                             Layout.fillWidth: true
                         }
-                        Text {
+                        Icon {
                             // Match the AppComboBox dropdown caret so the
                             // disclosure looks like the rest of the app's
                             // selectable controls. Flip on open.
-                            text: "▾"
+                            name: "dropdown"
                             color: Constants.textSecondary
-                            font.pixelSize: sp(14)
+                            size: sp(14)
                             rotation: advToggle.open ? 180 : 0
                             Behavior on rotation { NumberAnimation { duration: Constants.durFast } }
                         }
@@ -362,13 +363,10 @@ BottomSheet {
                                 border.width: 1
                                 Behavior on color { ColorAnimation { duration: Constants.durFast } }
                             }
-                            contentItem: Text {
-                                text: dlg._addPartyOpen ? "✕" : "＋"
+                            contentItem: Icon {
+                                name: dlg._addPartyOpen ? "close" : "add"
                                 color: Constants.textPrimary
-                                font.pixelSize: sp(18)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
+                                size: sp(18)
                             }
                             onClicked: {
                                 dlg._addPartyOpen = !dlg._addPartyOpen

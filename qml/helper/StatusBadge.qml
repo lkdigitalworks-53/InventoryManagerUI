@@ -2,6 +2,8 @@
 import QtQuick
 import QtQuick.Controls
 
+import "../components"
+
 Rectangle {
     id: badge
     property string text: "status"
@@ -36,12 +38,12 @@ Rectangle {
             font.pixelSize: 12
             font.bold: true
         }
-        Text {
+        Icon {
             id: dropIcon
             visible: badge.showDropdown
-            text: "\u25BE"
+            name: "dropdown"
             color: badge.stroke
-            font.pixelSize: 10
+            size: 10
         }
     }
 

@@ -54,10 +54,11 @@ QtObject {
         arr.unshift(doc)
         entries = arr
         revision++
-        FirebaseService.put("transactions/" + doc.txId, doc, function(ok) {
-            if (!ok) console.warn("[TransactionStore] Firestore write failed for", doc.txId,
-                                  FirebaseService.lastStatusCode, FirebaseService.lastError)
-        })
+        // Transactions are append-only ledger rows — route through the
+        // compliance gateway so each one lands with an immutable audit_log
+        // entry. In "direct" mode (pre-deploy) the gateway writes the doc
+        // exactly as before.
+        Gateway.recordMutation("transaction", doc.txId, "create", null, doc)
     }
 
     function recordPurchase(productId, quantity, unitCost, productName, party) {
@@ -188,33 +189,6 @@ QtObject {
         for (var i = 0; i < entries.length; ++i)
             if (entries[i].productId === productId) out.push(entries[i])
         return out
-    }
-
-    // Rename `oldName` → `newName` across every entry that references it
-    // (top-level `party` field plus the legacy `snapshot.party`). In-memory
-    // only — old Firestore docs are not re-written, but every new analytics
-    // call will see the updated label thanks to the bumped `revision`.
-    function renameParty(oldName, newName) {
-        if (!oldName || !newName || oldName === newName) return
-        var changed = false
-        var arr = (entries || []).slice()
-        for (var i = 0; i < arr.length; ++i) {
-            var e = arr[i]
-            if (e.party === oldName) {
-                arr[i] = Object.assign({}, e, { party: newName })
-                changed = true
-                continue
-            }
-            if (e.snapshot && e.snapshot.party === oldName) {
-                var newSnap = Object.assign({}, e.snapshot, { party: newName })
-                arr[i] = Object.assign({}, e, { snapshot: newSnap })
-                changed = true
-            }
-        }
-        if (changed) {
-            entries = arr
-            revision++
-        }
     }
 
     // Most recent supplier id for a product (purchase/created events).

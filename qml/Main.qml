@@ -184,6 +184,9 @@ App {
             // Kick the one-shot FIFO backfill once the upstream stores have
             // had a beat to land their data. The check inside is idempotent.
             migrationKickoffTimer.restart()
+            // Flush any compliance-gateway writes that were queued offline /
+            // before this tenant context was known (no-op in "direct" mode).
+            Gateway.drainNow()
             logic.loadData()
             inviteMemberDlg.errorMessage = ""
             memberErrorMessage = ""
@@ -207,6 +210,9 @@ App {
             // Per-process flag must be reset so runIfNeeded() can re-evaluate
             // for the next tenant context.
             MigrationService.reset()
+            // Drop any queued gateway writes so a pending tenant's mutations
+            // never replay under the next account.
+            Gateway.clear()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }
@@ -474,10 +480,10 @@ App {
         z: 50
         currentIndex: navigation.currentIndex
         tabs: [
-            { icon: "⌂", label: "Home" },
-            { icon: "🧾", label: "Orders" },
-            { icon: "📦", label: "Stock" },
-            { icon: "📈", label: qsTr("Analysis") }
+            { iconName: "home", label: "Home" },
+            { iconName: "orders", label: "Orders" },
+            { iconName: "products", label: "Stock" },
+            { iconName: "analysis", label: qsTr("Analysis") }
         ]
         onTabChanged: function(idx) {
             if (navigation.currentIndex !== idx)
@@ -603,6 +609,7 @@ App {
     AddProductDialog {
         id: addProductDlg
         onManageCategoriesRequested: manageCategoriesDlg.open()
+        onPhotoPickRequested: function(hasExisting) { photoSourceSheet.openFor(addProductDlg, hasExisting) }
     }
     ManageCategoriesDialog { id: manageCategoriesDlg }
     ManageOrderChannelsDialog { id: manageChannelsDlg }
@@ -610,6 +617,27 @@ App {
         id: editProductDlg
         onProductUpdateRequested: function(pid, fields) {
             logic.updateProduct(pid, fields)
+        }
+        onPhotoPickRequested: function(hasExisting) { photoSourceSheet.openFor(editProductDlg, hasExisting) }
+    }
+
+    // Shared photo-source sheet, hoisted to the App root so it isn't trapped in
+    // a BottomSheet's scrollable body (where it opens off-screen). `openFor`
+    // remembers the requesting dialog and routes the result back to it via the
+    // dialog's applyPhotoSource()/clearPhotoSource() contract.
+    PhotoSourceSheet {
+        id: photoSourceSheet
+        property var _requester: null
+        function openFor(dialog, hasExisting) {
+            _requester = dialog
+            hasExistingPhoto = hasExisting
+            open()
+        }
+        onPhotoSourceSelected: function(url) {
+            if (_requester) _requester.applyPhotoSource(url)
+        }
+        onRemoveRequested: {
+            if (_requester) _requester.clearPhotoSource()
         }
     }
     ImportPreviewDialog {
@@ -682,7 +710,7 @@ App {
         if (!url || url.length === 0) {
             successMessage = "Export failed"
         } else {
-            successMessage = "✓ Products exported. Saved to Downloads."
+            successMessage = "Products exported. Saved to Downloads."
             // On mobile, hand off via the share sheet so the user can route to Drive/Mail/etc.
             if (typeof NativeUtils !== "undefined" && NativeUtils.share)
                 NativeUtils.share("", url)
@@ -695,7 +723,7 @@ App {
         if (!url || url.length === 0) {
             successMessage = "Export failed"
         } else {
-            successMessage = "✓ Orders exported. Saved to Downloads."
+            successMessage = "Orders exported. Saved to Downloads."
             if (typeof NativeUtils !== "undefined" && NativeUtils.share)
                 NativeUtils.share("", url)
         }
@@ -707,7 +735,7 @@ App {
         if (!url || url.length === 0) {
             successMessage = "Export failed"
         } else {
-            successMessage = "✓ Staff exported. Saved to Downloads."
+            successMessage = "Staff exported. Saved to Downloads."
             if (typeof NativeUtils !== "undefined" && NativeUtils.share)
                 NativeUtils.share("", url)
         }
@@ -731,7 +759,7 @@ App {
         if (!url || url.length === 0) {
             successMessage = qsTr("Export failed")
         } else {
-            successMessage = qsTr("✓ %1 exported. Saved to Downloads.").arg(payload.title || qsTr("Analysis"))
+            successMessage = qsTr("%1 exported. Saved to Downloads.").arg(payload.title || qsTr("Analysis"))
             if (typeof NativeUtils !== "undefined" && NativeUtils.share)
                 NativeUtils.share("", url)
         }

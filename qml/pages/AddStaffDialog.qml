@@ -100,7 +100,7 @@ BottomSheet {
                         text: Qt.formatDate(joinPicker.date, "dd/MM/yyyy")
                     }
                     IconActionButton {
-                        text: "📅"
+                        iconName: "calendar"
                         onClicked: joinPicker.open()
                     }
                     InlineDatePicker { id: joinPicker; onAccepted: function(d) { joinDateField.text = Qt.formatDate(d, "dd/MM/yyyy") } }

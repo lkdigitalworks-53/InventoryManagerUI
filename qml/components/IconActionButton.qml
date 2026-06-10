@@ -9,6 +9,7 @@ QQC.Button {
     id: root
 
     property string variant: "default"  // "default" | "ghost" | "glass"
+    property string iconName: ""
     property string badgeText: ""
 
     implicitWidth: dp(38)
@@ -35,6 +36,14 @@ QQC.Button {
             text: root.text
             font.pixelSize: sp(18)
             color: Constants.textPrimary
+            visible: root.iconName.length === 0
+        }
+        Icon {
+            anchors.centerIn: parent
+            name: root.iconName
+            size: sp(18)
+            color: Constants.textPrimary
+            visible: root.iconName.length > 0
         }
         // Tiny notification badge (e.g. on the bell icon)
         Rectangle {

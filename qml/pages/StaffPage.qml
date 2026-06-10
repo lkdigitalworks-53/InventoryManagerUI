@@ -45,12 +45,11 @@ Item {
             padding: 0
             background: Rectangle { color: parent.pressed ? Qt.rgba(0,0,0,0.04) : "transparent"; radius: dp(12) }
             contentItem: Item {
-                Text {
+                Icon {
                     anchors.centerIn: parent
-                    text: "←"
+                    name: "back"
                     color: Constants.textPrimary
-                    font.pixelSize: sp(22)
-                    font.bold: true
+                    size: sp(22)
                 }
             }
             onClicked: root.backRequested()
@@ -60,12 +59,12 @@ Item {
             IconActionButton {
                 visible: root.canInviteMembers
                 variant: "glass"
-                text: "👥"
+                iconName: "staff"
                 onClicked: root.manageMembersClicked()
             },
             IconActionButton {
                 variant: "glass"
-                text: "⤴"
+                iconName: "export"
                 onClicked: root.exportRequested()
             }
         ]
@@ -177,7 +176,7 @@ Item {
                 ColumnLayout {
                     anchors.centerIn: parent
                     spacing: dp(6)
-                    Text { text: "👥"; font.pixelSize: sp(32); Layout.alignment: Qt.AlignHCenter }
+                    Icon { name: "staff"; size: sp(32); color: Constants.textMuted; Layout.alignment: Qt.AlignHCenter }
                     Text {
                         text: root._searchText.length > 0 ? "No matches" : "No team members yet"
                         color: Constants.textPrimary
@@ -206,7 +205,6 @@ Item {
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)
         anchors.bottomMargin: dp(96)
-        emoji: "＋"
         onClicked: {
             if (root.canInviteMembers)
                 root.inviteMemberClicked()

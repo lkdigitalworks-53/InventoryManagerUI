@@ -2,6 +2,10 @@
 
 Use these rules to enforce the same member-management constraints that the app now applies client-side.
 
+> **Deployable copy:** the canonical, deploy-ready rules now live in `firestore.rules`
+> at the repo root (wired via the root `firebase.json`). The blocks below are the
+> explanatory reference; keep the two in sync. Deploy with `firebase deploy --only firestore:rules`.
+
 ## Goals
 
 - Tenant data isolation
@@ -9,6 +13,9 @@ Use these rules to enforce the same member-management constraints that the app n
 - Owners/admins can manage members
 - Owner record cannot be modified/removed by others
 - Admin cannot promote to owner
+- **Ledger tier is immutable (P0):** `audit_log`, `transactions`, `stock_batches`,
+  `stock_movements` are **read-only to all clients** — only the compliance gateway
+  Cloud Function (Admin SDK) writes them. This is what satisfies MCA Rule 11(g).
 
 ## Example Rules
 
@@ -115,10 +122,23 @@ service cloud.firestore {
                       && uid != request.auth.uid;
       }
 
-      // Domain collections (orders, inventory, sales, staff, ...)
+      // Ledger tier (P0): immutable, written only by the gateway Cloud
+      // Function (Admin SDK bypasses rules). Clients may read, never write.
+      match /audit_log/{docId}       { allow read: if isMember(tenantId); allow write: if false; }
+      match /transactions/{docId}    { allow read: if isMember(tenantId); allow write: if false; }
+      match /stock_batches/{docId}   { allow read: if isMember(tenantId); allow write: if false; }
+      match /stock_movements/{docId} { allow read: if isMember(tenantId); allow write: if false; }
+
+      // Working-tier domain collections (orders, inventory, sales, staff, ...).
+      // The ledger guard stops a ledger collection from ever matching this
+      // writable fallback (Firestore grants access if ANY match allows).
+      function isLedgerCollection(name) {
+        return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
+      }
       match /{collection}/{docId} {
         allow read: if isMember(tenantId);
-        allow create, update, delete: if isMember(tenantId);
+        allow create, update, delete: if isMember(tenantId)
+                                      && !isLedgerCollection(collection);
       }
     }
   }
