@@ -79,11 +79,11 @@ QQC.Dialog {
                 Layout.alignment: Qt.AlignHCenter
                 width: dp(56); height: dp(56); radius: dp(18)
                 color: Qt.rgba(0.93, 0.27, 0.27, 0.10)
-                Text {
+                Icon {
                     anchors.centerIn: parent
-                    text: "⚠"
+                    name: "warn"
                     color: Constants.danger
-                    font.pixelSize: sp(26)
+                    size: sp(26)
                 }
             }
 

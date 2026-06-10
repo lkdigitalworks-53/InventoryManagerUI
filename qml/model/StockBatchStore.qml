@@ -140,10 +140,7 @@ QtObject {
         var arr = batches.slice()
         arr.push(doc)
         batches = arr
-        FirebaseService.put("stock_batches/" + doc.batchId, doc, function(ok) {
-            if (!ok) console.warn("[StockBatchStore] write failed for", doc.batchId,
-                                  FirebaseService.lastStatusCode, FirebaseService.lastError)
-        })
+        Gateway.recordMutation("stock_batch", doc.batchId, "create", null, doc)
         return doc
     }
 
@@ -164,6 +161,7 @@ QtObject {
         var remaining = qty
         var consumption = []
         var touched = []
+        var touchedBefore = []   // pre-consumption snapshot, index-aligned with `touched`
         for (var i = 0; i < ordered.length && remaining > 0; ++i) {
             var b = ordered[i]
             var avail = b.qtyRemaining || 0
@@ -174,6 +172,7 @@ QtObject {
                 updatedAt: new Date().toISOString()
             })
             touched.push(updated)
+            touchedBefore.push(Object.assign({}, b))
             consumption.push({
                 batchId: b.batchId,
                 supplierId: b.supplierId || "",
@@ -194,12 +193,11 @@ QtObject {
                 next.push(touchedById[current.batchId] || current)
             }
             batches = next
-            // Per-doc PATCH so each updated batch lands in Firestore atomically.
+            // Each FIFO decrement is an auditable update — route through the
+            // gateway with before/after so the consumption is traceable.
             for (var u = 0; u < touched.length; ++u) {
-                var doc = touched[u]
-                FirebaseService.put("stock_batches/" + doc.batchId, doc, function(ok) {
-                    if (!ok) console.warn("[StockBatchStore] consume write failed")
-                })
+                Gateway.recordMutation("stock_batch", touched[u].batchId, "update",
+                                       touchedBefore[u], touched[u])
             }
         }
         return consumption
@@ -223,6 +221,7 @@ QtObject {
         // Top up the newest batch — assumption: drift came from an unrecorded
         // restock or import, and the most recent supplier is the best guess.
         var newest = ordered[ordered.length - 1]
+        var before = Object.assign({}, newest)
         var updated = Object.assign({}, newest, {
             qtyReceived: (newest.qtyReceived || 0) + deficit,
             qtyRemaining: (newest.qtyRemaining || 0) + deficit,
@@ -233,9 +232,7 @@ QtObject {
         for (var i = 0; i < batches.length; ++i)
             next.push(batches[i].batchId === updated.batchId ? updated : batches[i])
         batches = next
-        FirebaseService.put("stock_batches/" + updated.batchId, updated, function(ok) {
-            if (!ok) console.warn("[StockBatchStore] topUp write failed for", updated.batchId)
-        })
+        Gateway.recordMutation("stock_batch", updated.batchId, "update", before, updated)
         console.warn("[StockBatchStore] Topped up batch", updated.batchId, "by", deficit,
                      "to repair drift on product", productId)
     }

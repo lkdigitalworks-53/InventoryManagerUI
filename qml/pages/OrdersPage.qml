@@ -42,17 +42,17 @@ Item {
         actions: [
             IconActionButton {
                 variant: "glass"
-                text: "⤓"
+                iconName: "import"
                 onClicked: root.importRequested()
             },
             IconActionButton {
                 variant: "glass"
-                text: "⤴"
+                iconName: "export"
                 onClicked: root.exportRequested()
             },
             IconActionButton {
                 variant: "glass"
-                text: "⚙"
+                iconName: "settings"
                 // Dot badge when a date filter is active so the user can spot
                 // why the list is shorter than they expected.
                 badgeText: root.dateRange !== "all" && root.dateRange.length > 0 ? "•" : ""
@@ -100,9 +100,9 @@ Item {
                     anchors.rightMargin: dp(Constants.space2)
                     spacing: dp(Constants.space3)
 
-                    Text {
-                        text: "⚡"
-                        font.pixelSize: sp(16)
+                    Icon {
+                        name: "quick"
+                        size: sp(16)
                     }
                     ColumnLayout {
                         spacing: 0
@@ -174,11 +174,10 @@ Item {
                     anchors.rightMargin: dp(Constants.space2)
                     spacing: dp(Constants.space3)
 
-                    Text {
-                        text: "✓"
+                    Icon {
+                        name: "check"
                         color: Constants.textOnBrand
-                        font.pixelSize: sp(20)
-                        font.bold: true
+                        size: sp(20)
                     }
                     ColumnLayout {
                         spacing: 0
@@ -273,7 +272,7 @@ Item {
                 ColumnLayout {
                     anchors.centerIn: parent
                     spacing: dp(6)
-                    Text { text: "📭"; font.pixelSize: sp(32); Layout.alignment: Qt.AlignHCenter }
+                    Icon { name: "empty-inbox"; size: sp(32); color: Constants.textMuted; Layout.alignment: Qt.AlignHCenter }
                     Text {
                         text: root._searchText.length > 0 ? "No matches" : "No orders yet"
                         color: Constants.textPrimary
@@ -302,7 +301,6 @@ Item {
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)
         anchors.bottomMargin: dp(96)
-        emoji: "＋"
         onClicked: root.addOrderClicked()
     }
 

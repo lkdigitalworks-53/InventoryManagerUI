@@ -49,12 +49,12 @@ Item {
         actions: [
             IconActionButton {
                 variant: "glass"
-                text: "⤓"
+                iconName: "import"
                 onClicked: root.importRequested()
             },
             IconActionButton {
                 variant: "glass"
-                text: "⤴"
+                iconName: "export"
                 onClicked: root.exportRequested()
             }
         ]
@@ -170,7 +170,7 @@ Item {
                 ColumnLayout {
                     anchors.centerIn: parent
                     spacing: dp(6)
-                    Text { text: "📦"; font.pixelSize: sp(32); Layout.alignment: Qt.AlignHCenter }
+                    Icon { name: "box"; size: sp(32); color: Constants.textMuted; Layout.alignment: Qt.AlignHCenter }
                     Text {
                         text: root._searchText.length > 0 ? "No matches" : "No products yet"
                         color: Constants.textPrimary
@@ -199,7 +199,6 @@ Item {
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)
         anchors.bottomMargin: dp(96)
-        emoji: "＋"
         onClicked: root.addProductClicked()
     }
 
@@ -225,7 +224,7 @@ Item {
         leading: AvatarBadge {
             imageSource: card.product && card.product.photoUrl ? card.product.photoUrl : ""
             label: card.product && card.product.name && card.product.name.length > 0
-                ? card.product.name.charAt(0).toUpperCase() : "📦"
+                ? card.product.name.charAt(0).toUpperCase() : "?"
             palette: card.product && card.product.stock <= card.product.minStock
                     ? Constants.grad3 : Constants.grad4
         }
@@ -287,7 +286,7 @@ Item {
                 Text {
                     id: restockLbl
                     anchors.centerIn: parent
-                    text: qsTr("＋ Restock")
+                    text: qsTr("Restock")
                     color: Constants.success
                     font.pixelSize: sp(Constants.fsCaption)
                     font.bold: true

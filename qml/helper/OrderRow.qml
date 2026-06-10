@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../model"
+import "../components"
 
 Item {
     id: row
@@ -53,8 +54,7 @@ Item {
                 visible: row.status === "pending"
                 width: 28; height: 28; padding: 0
                 background: Rectangle { radius: 6; color: "#dcfce7"; border.color: "#22c55e" }
-                contentItem: Text { text: "\u2713"; color: "#22c55e"; font.pixelSize: 14; font.bold: true
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                contentItem: Icon { name: "check"; color: "#22c55e"; size: 14 }
                 onClicked: row.approveClicked(row.orderId)
                 ToolTip.visible: hovered; ToolTip.text: "Approve"
             }
@@ -62,8 +62,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 28; height: 28; padding: 0
                 background: Rectangle { radius: 6; color: "#f3f4f6"; border.color: "#e5e7eb" }
-                contentItem: Text { text: "\u270E"; color: "#6b7280"; font.pixelSize: 14
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                contentItem: Icon { name: "edit"; color: "#6b7280"; size: 14 }
                 onClicked: row.editClicked(row.orderId)
                 ToolTip.visible: hovered; ToolTip.text: "Edit"
             }

@@ -289,15 +289,27 @@ Item {
                     border.width: 1
                     implicitHeight: errTxt.implicitHeight + dp(16)
 
-                    Text {
-                        id: errTxt
+                    RowLayout {
                         anchors.fill: parent
                         anchors.margins: dp(10)
-                        text: "⚠  " + root._displayedError
-                        color: Constants.cancelledText
-                        font.pixelSize: sp(Constants.fsSmall)
-                        wrapMode: Text.Wrap
-                        verticalAlignment: Text.AlignVCenter
+                        spacing: dp(6)
+
+                        Icon {
+                            name: "warn"
+                            size: sp(Constants.fsSmall)
+                            color: Constants.cancelledText
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        Text {
+                            id: errTxt
+                            Layout.fillWidth: true
+                            text: root._displayedError
+                            color: Constants.cancelledText
+                            font.pixelSize: sp(Constants.fsSmall)
+                            wrapMode: Text.Wrap
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
                 }
 
@@ -342,13 +354,24 @@ Item {
                     }
                 }
 
-                Text {
+                RowLayout {
                     Layout.fillWidth: true
                     Layout.topMargin: dp(Constants.space3)
-                    horizontalAlignment: Text.AlignHCenter
-                    text: "🔒 Your sign-in is secure and encrypted"
-                    color: Constants.textMuted
-                    font.pixelSize: sp(Constants.fsCaption)
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: dp(6)
+
+                    Icon {
+                        name: "secure"
+                        size: sp(Constants.fsCaption)
+                        color: Constants.textMuted
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+
+                    Text {
+                        text: qsTr("Your sign-in is secure and encrypted")
+                        color: Constants.textMuted
+                        font.pixelSize: sp(Constants.fsCaption)
+                    }
                 }
             }
 

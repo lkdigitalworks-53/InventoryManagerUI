@@ -46,7 +46,7 @@ Item {
                     GradientStop { position: 0.55; color: Constants.brand2 }
                     GradientStop { position: 1.0; color: Constants.brand3 }
                 }
-                Text { anchors.centerIn: parent; text: "🏢"; font.pixelSize: sp(30) }
+                Icon { anchors.centerIn: parent; name: "workspace"; size: sp(30); color: Constants.textSecondary }
             }
 
             Text {
@@ -150,15 +150,27 @@ Item {
                     border.width: 1
                     implicitHeight: errTxt.implicitHeight + dp(16)
 
-                    Text {
-                        id: errTxt
+                    RowLayout {
                         anchors.fill: parent
                         anchors.margins: dp(10)
-                        text: "⚠  " + root.errorMessage
-                        color: Constants.cancelledText
-                        font.pixelSize: sp(Constants.fsSmall)
-                        wrapMode: Text.Wrap
-                        verticalAlignment: Text.AlignVCenter
+                        spacing: dp(6)
+
+                        Icon {
+                            name: "warn"
+                            size: sp(Constants.fsSmall)
+                            color: Constants.cancelledText
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        Text {
+                            id: errTxt
+                            Layout.fillWidth: true
+                            text: root.errorMessage
+                            color: Constants.cancelledText
+                            font.pixelSize: sp(Constants.fsSmall)
+                            wrapMode: Text.Wrap
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
                 }
 

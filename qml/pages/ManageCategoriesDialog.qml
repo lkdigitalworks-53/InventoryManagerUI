@@ -91,13 +91,23 @@ BottomSheet {
                                 border.color: Constants.borderColor
                                 border.width: 1
                             }
-                            contentItem: Text {
+                            contentItem: Row {
                                 id: starTxt
                                 anchors.centerIn: parent
-                                text: "★ Default"
-                                color: Constants.textSecondary
-                                font.pixelSize: sp(Constants.fsCaption)
-                                font.bold: true
+                                spacing: dp(4)
+                                Icon {
+                                    name: "star"
+                                    size: sp(Constants.fsCaption)
+                                    color: Constants.textSecondary
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: qsTr("Default")
+                                    color: Constants.textSecondary
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
                             onClicked: CategoryStore.setLastUsed(modelData)
                         }

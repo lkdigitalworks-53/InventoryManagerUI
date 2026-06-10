@@ -9,7 +9,7 @@ import "../helper"
 QQC.AbstractButton {
     id: root
 
-    property string emoji: "＋"
+    property string iconName: "add"
     property var palette: ({ start: Constants.brand1, end: Constants.brand3 })
 
     implicitWidth: dp(56)
@@ -32,15 +32,11 @@ QQC.AbstractButton {
     }
 
     contentItem: Item {
-        Text {
+        Icon {
             anchors.centerIn: parent
-            // Apply small visual offset compensation: the glyph's optical
-            // baseline sits below the geometric centre, so nudge up by 1dp.
-            anchors.verticalCenterOffset: -dp(1)
-            text: root.emoji
+            name: root.iconName
             color: Constants.textOnBrand
-            font.pixelSize: sp(28)
-            font.bold: true
+            size: sp(28)
         }
     }
 }

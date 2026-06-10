@@ -208,13 +208,10 @@ BottomSheet {
                     border.width: 1
                     Behavior on color { ColorAnimation { duration: Constants.durFast } }
                 }
-                contentItem: Text {
-                    text: dlg._addPartyOpen ? "✕" : "＋"
+                contentItem: Icon {
+                    name: dlg._addPartyOpen ? "close" : "add"
                     color: Constants.textPrimary
-                    font.pixelSize: sp(18)
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                    size: sp(18)
                 }
                 onClicked: {
                     dlg._addPartyOpen = !dlg._addPartyOpen

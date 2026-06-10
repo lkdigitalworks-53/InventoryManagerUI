@@ -551,3 +551,86 @@ QtObject {
 
 `Timer {}`, `Rectangle {}`, and other visual/non-visual Item types also cannot be used as children of `QtObject`. Only other `QtObject`-derived non-visual types and plain property/signal/function declarations are valid.
 
+---
+
+## Skill 21: India Compliance — Two-Tier Data Model
+
+**Design**: `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md`
+**Agent**: Compliance & Audit Agent (`AGENTS.md` §8)
+
+The app is legally part of customers' "books of account" under Indian law. Compliance data is split
+into two tiers — get this wrong and you break MCA Rule 11(g) / CGST 56(8).
+
+| Tier | Collections | Who writes | Client rules |
+|---|---|---|---|
+| **Ledger (immutable)** | `audit_log`, `transactions`, `stock_batches`, `stock_movements` | **Only** the Cloud Functions gateway (Admin SDK) | `allow read: if isMember; allow write: if false` |
+| **Working (mutable)** | `inventory`, `orders`, `staff`, `suppliers` | Client via gateway | read/write per RBAC |
+
+**Rule**: a page/store **never** writes the ledger tier directly. It calls the gateway, which writes
+the working doc **and** appends the ledger entry atomically.
+
+```js
+// CORRECT — route the mutation through the gateway (P0 onward)
+Gateway.recordMutation("inventory", productId, "update", beforeSnapshot, afterSnapshot)
+
+// WRONG — direct client write to a ledger collection (rules reject it; breaks immutability)
+FirebaseService.put("audit_log/" + id, entry, null)
+```
+
+`TransactionStore` and `StockBatchStore` are **read models** over the ledger — read from them freely,
+but they no longer own writes once P0 lands.
+
+---
+
+## Skill 22: Audit Log Entry Shape
+
+Every books-of-account mutation appends one append-only `audit_log` doc. Never edit or delete one.
+
+```js
+{
+  entryId, tenantId,
+  actorUid, actorRole,            // derived SERVER-side from the verified token — never client-supplied
+  action: "create" | "update" | "delete",
+  entity: "inventory" | "order" | "staff" | "supplier"
+        | "stock_movement" | "consent" | "tos_accept",
+  entityId,
+  before: {…} | null,             // full V(n-1)
+  after:  {…} | null,             // full V(n)
+  serverTimestamp,                // NTP-backed, set in the Cloud Function — AUTHORITATIVE
+  clientTimestamp,                // forensic compare only
+  requestId                       // idempotency
+}
+```
+
+**Invariants**: no `enable_audit_trail` flag anywhere; `serverTimestamp` wins over `clientTimestamp`;
+relabels (e.g. supplier rename) propagate by stable id (`SupplierStore.updateSupplier`), never by
+editing historical rows. Note: `TransactionStore.renameParty()` violated this and is **removed in
+P0** (dead code, zero callers).
+
+---
+
+## Skill 23: Stock-Movement Taxonomy (CGST 56(2))
+
+Non-sales stock changes need distinct immutable tags — a bare decrement is non-compliant. Use the
+`stock_movements` ledger with this `kind` enum:
+
+```
+receipt | sale | loss | theft | destroyed | write_off | free_sample | gift | adjustment
+```
+
+Each row: `{ id, productId, kind, qty, reason, valueAtCost, batchRef?, serverTimestamp, actorUid }`.
+The opening-balance / receipts / supplies / closing-balance register is a **derived read model**
+over these rows.
+
+---
+
+## Skill 24: Tax-Identity Fields (HSN / GSTIN)
+
+- **Product `hsnCode`** — string, validated as **4, 6, or 8 digits** (variable-length per turnover
+  tier). Empty is allowed for sub-₹1.5cr merchants — validate format only when non-empty.
+- **`gstin`** on supplier / order-customer / tenant — 15-char GSTIN with checksum validation.
+
+These are **client-only** (P2) — no gateway needed — so they can ship in parallel with the P0
+backend work. Add the field to the store's `_clone()` / normalizer and the relevant dialog
+(`AddProductDialog`, `EditProductDialog`, supplier/tenant forms).
+

@@ -28,3 +28,6 @@ build/
 *.txt.user
 
 .claude/
+
+*package-lock.json
+.vscode/*

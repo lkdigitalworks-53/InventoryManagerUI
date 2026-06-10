@@ -20,6 +20,10 @@ BottomSheet {
     secondaryAction: editMode ? "Cancel" : "Close"
 
     signal productUpdateRequested(string productId, var fields)
+    // The photo-source sheet is hoisted to the App root (Main.qml) — a Popup
+    // declared inside this BottomSheet's body opens off-screen. Main opens the
+    // shared sheet on request and routes its result back via the functions below.
+    signal photoPickRequested(bool hasExistingPhoto)
 
     property string productId: ""
     property bool editMode: false
@@ -122,29 +126,27 @@ BottomSheet {
         if (editMode) openFor(productId, false)
     }
 
-    PhotoSourceSheet {
-        id: photoSheet
-        hasExistingPhoto: root.photoUrl.length > 0
-        onPhotoSourceSelected: function(url) {
-            root.photoBusy = true
-            StorageService.uploadProductPhoto(root.productId, url, function(ok, photoUrlOut, err) {
-                root.photoBusy = false
-                if (ok) {
-                    root.photoUrl = photoUrlOut
-                    InventoryStore.setPhoto(root.productId, photoUrlOut)
-                } else {
-                    errorLabel.text = "Photo: " + err
-                }
-            })
-        }
-        onRemoveRequested: {
-            StorageService.deleteProductPhoto(root.productId, function(ok, err) {
-                if (ok) {
-                    root.photoUrl = ""
-                    InventoryStore.setPhoto(root.productId, "")
-                }
-            })
-        }
+    // Photo-source result handlers — invoked by Main.qml after the shared,
+    // App-root PhotoSourceSheet resolves (see photoPickRequested above).
+    function applyPhotoSource(url) {
+        root.photoBusy = true
+        StorageService.uploadProductPhoto(root.productId, url, function(ok, photoUrlOut, err) {
+            root.photoBusy = false
+            if (ok) {
+                root.photoUrl = photoUrlOut
+                InventoryStore.setPhoto(root.productId, photoUrlOut)
+            } else {
+                errorLabel.text = "Photo: " + err
+            }
+        })
+    }
+    function clearPhotoSource() {
+        StorageService.deleteProductPhoto(root.productId, function(ok, err) {
+            if (ok) {
+                root.photoUrl = ""
+                InventoryStore.setPhoto(root.productId, "")
+            }
+        })
     }
 
     ColumnLayout {
@@ -203,10 +205,11 @@ BottomSheet {
                     cache: true
                     visible: root.photoUrl.length > 0
                 }
-                Text {
+                Icon {
                     anchors.centerIn: parent
-                    text: "📦"
-                    font.pixelSize: sp(32)
+                    name: "box"
+                    size: sp(32)
+                    color: Constants.textSecondary
                     visible: root.photoUrl.length === 0
                 }
                 QQC.BusyIndicator {
@@ -240,7 +243,7 @@ BottomSheet {
                     implicitHeight: dp(36)
                     text: root.photoUrl.length > 0 ? "Change photo" : "Add photo"
                     enabled: root.editMode && !root.photoBusy
-                    onClicked: photoSheet.open()
+                    onClicked: root.photoPickRequested(root.photoUrl.length > 0)
                 }
             }
         }
@@ -437,9 +440,10 @@ BottomSheet {
                     anchors.leftMargin: dp(Constants.space3)
                     anchors.rightMargin: dp(Constants.space3)
                     spacing: dp(Constants.space2)
-                    Text {
-                        text: "🏷️"
-                        font.pixelSize: sp(16)
+                    Icon {
+                        name: "tag"
+                        size: sp(16)
+                        color: Constants.textSecondary
                     }
                     Text {
                         Layout.fillWidth: true
@@ -566,13 +570,10 @@ BottomSheet {
                         opacity: renamePartyToggle.enabled ? 1 : 0.5
                         Behavior on color { ColorAnimation { duration: Constants.durFast } }
                     }
-                    contentItem: Text {
-                        text: root._renaming ? "✕" : "✎"
+                    contentItem: Icon {
+                        name: root._renaming ? "close" : "edit"
                         color: Constants.textPrimary
-                        font.pixelSize: sp(16)
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                        size: sp(16)
                     }
                     onClicked: {
                         root._renaming = !root._renaming
@@ -640,9 +641,10 @@ BottomSheet {
             visible: !root.editMode
             spacing: dp(Constants.space2)
 
-            Text {
-                text: "📜"
-                font.pixelSize: sp(16)
+            Icon {
+                name: "history"
+                size: sp(16)
+                color: Constants.textSecondary
             }
             Text {
                 text: qsTr("History")
@@ -701,14 +703,14 @@ BottomSheet {
 
                     readonly property string _icon: {
                         switch (_kind) {
-                        case "created":          return "🆕"
-                        case "purchase":         return "📥"
-                        case "sale":             return "📤"
-                        case "stock_adjustment": return "🧮"
-                        case "field_change":     return "✏️"
-                        case "photo_change":     return "🖼"
-                        case "legacy_update":    return "✏️"
-                        default:                  return "•"
+                        case "created":          return "created"
+                        case "purchase":         return "purchase"
+                        case "sale":             return "sale"
+                        case "stock_adjustment": return "stock_adjustment"
+                        case "field_change":     return "field_change"
+                        case "photo_change":     return "photo_change"
+                        case "legacy_update":    return "field_change"
+                        default:                  return "field_change"
                         }
                     }
 
@@ -724,13 +726,14 @@ BottomSheet {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: dp(Constants.space2)
-                            Text {
+                            Icon {
                                 // Reach the delegate Rectangle directly via id —
                                 // `parent.parent` lands on histCol (one level
                                 // short) and silently resolves to undefined,
                                 // which is why the icon + title row was blank.
-                                text: histRow._icon
-                                font.pixelSize: sp(16)
+                                name: histRow._icon
+                                size: sp(16)
+                                color: Constants.textSecondary
                             }
                             Text {
                                 Layout.fillWidth: true

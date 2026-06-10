@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function memberDoc(tenantId, uid) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
+    }
+
+    function myRole(tenantId) {
+      return memberDoc(tenantId, request.auth.uid).data.role;
+    }
+
+    function isOwner(tenantId) {
+      return isSignedIn() && myRole(tenantId) == 'owner';
+    }
+
+    function isAdmin(tenantId) {
+      return isSignedIn() && myRole(tenantId) == 'admin';
+    }
+
+    function isOwnerOrAdmin(tenantId) {
+      return isOwner(tenantId) || isAdmin(tenantId);
+    }
+
+    function isMember(tenantId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
+    }
+
+    function roleIsValid(role) {
+      return role in ['owner', 'admin', 'manager', 'staff'];
+    }
+
+    function statusIsValid(status) {
+      return status in ['active', 'suspended'];
+    }
+
+    // Ledger tier (P0): immutable, append-only, written ONLY by the
+    // compliance gateway Cloud Function via the Admin SDK (which bypasses
+    // these rules). Clients may read for display but may never write —
+    // this is what an MCA Rule 11(g) auditor tests for.
+    function isLedgerCollection(name) {
+      return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
+    }
+
+    // users/{uid}
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // tenants/{tenantId}
+    match /tenants/{tenantId} {
+      allow read: if isMember(tenantId);
+
+      allow create: if isSignedIn()
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.name is string;
+
+      allow update: if isOwner(tenantId);
+      allow delete: if isOwner(tenantId);
+
+      // tenants/{tenantId}/members/{uid}
+      match /members/{uid} {
+        allow read: if isMember(tenantId);
+
+        allow create: if isOwnerOrAdmin(tenantId)
+                      && roleIsValid(request.resource.data.role)
+                      && statusIsValid(request.resource.data.status)
+                      && request.resource.data.uid == uid;
+
+        // BOOTSTRAP: owner creates their own membership during tenant setup.
+        allow create: if isSignedIn()
+                      && request.auth.uid == uid
+                      && request.resource.data.role == 'owner'
+                      && request.resource.data.status == 'active'
+                      && exists(/databases/$(database)/documents/tenants/$(tenantId))
+                      && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerId == request.auth.uid
+                      && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
+
+        allow update: if isOwnerOrAdmin(tenantId)
+                      && roleIsValid(request.resource.data.role)
+                      && statusIsValid(request.resource.data.status)
+                      && resource.data.role != 'owner'
+                      && (
+                        isOwner(tenantId)
+                        || (isAdmin(tenantId)
+                            && request.resource.data.role in ['manager', 'staff'])
+                      );
+
+        allow delete: if isOwnerOrAdmin(tenantId)
+                      && resource.data.role != 'owner'
+                      && uid != request.auth.uid;
+      }
+
+      // Ledger collections — read-only to every client. Only the gateway
+      // Cloud Function (Admin SDK) writes these.
+      match /audit_log/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if false;
+      }
+      match /transactions/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if false;
+      }
+      match /stock_batches/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if false;
+      }
+      match /stock_movements/{docId} {
+        allow read: if isMember(tenantId);
+        allow write: if false;
+      }
+
+      // Working-tier domain collections (orders, inventory, sales, staff,
+      // suppliers, ...). Inventory/stock writes will route through the
+      // gateway once P0 cutover flips Gateway.mode to "gateway"; until then
+      // clients write directly. The explicit ledger guard keeps a ledger
+      // collection from ever matching this writable fallback.
+      match /{collection}/{docId} {
+        allow read: if isMember(tenantId);
+        allow create, update, delete: if isMember(tenantId)
+                                      && !isLedgerCollection(collection);
+      }
+    }
+  }
+}

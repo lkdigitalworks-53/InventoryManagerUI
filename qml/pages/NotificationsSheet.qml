@@ -164,15 +164,16 @@ BottomSheet {
 
                             AvatarBadge {
                                 Layout.alignment: Qt.AlignVCenter
-                                label: {
+                                label: ""   // notification kinds render via iconName
+                                iconName: {
                                     var k = modelData.kind || ""
-                                    if (k === "product_added") return "＋"
-                                    if (k === "product_updated") return "✎"
-                                    if (k === "product_restocked") return "↻"
-                                    if (k === "staff_added") return "👤"
-                                    if (k === "staff_updated") return "✎"
-                                    if (k === "low_stock") return "!"
-                                    return "•"
+                                    if (k === "product_added") return "product-added"
+                                    if (k === "product_updated") return "product-updated"
+                                    if (k === "product_restocked") return "restocked"
+                                    if (k === "staff_added") return "staff-added"
+                                    if (k === "staff_updated") return "staff-updated"
+                                    if (k === "low_stock") return "warn"
+                                    return "activity"
                                 }
                                 palette: {
                                     var k = modelData.kind || ""
@@ -253,7 +254,7 @@ BottomSheet {
             subtitle: SalesStore.formatCurrency(SalesStore.totalRevenue) + " · " + SalesStore.totalOrders + " orders"
 
             leading: AvatarBadge {
-                label: "★"
+                iconName: "star"
                 palette: Constants.grad2
             }
         }
@@ -271,7 +272,7 @@ BottomSheet {
             ColumnLayout {
                 anchors.centerIn: parent
                 spacing: dp(4)
-                Text { text: "🎉"; font.pixelSize: sp(28); Layout.alignment: Qt.AlignHCenter }
+                Icon { name: "celebrate"; size: sp(28); color: Constants.textMuted; Layout.alignment: Qt.AlignHCenter }
                 Text {
                     text: "All caught up"
                     color: Constants.textPrimary

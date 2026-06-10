@@ -50,27 +50,10 @@ QtObject {
         });
     }
 
-    function _pushAllToFirebase() {
-        var obj = {};
-        for (var i = 0; i < products.length; ++i)
-            obj[products[i].productId] = products[i];
-        FirebaseService.put("inventory", obj, function(ok) {
-            if (!ok)
-                console.warn("[InventoryStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[InventoryStore] Firestore bulk write ok, documents:", products.length)
-        });
-    }
-
     function syncFromFirebase() { _fetchFromFirebase(); }
 
     function clear() {
         products = []
-    }
-
-    function _commit(arr) {
-        products = arr;
-        _pushAllToFirebase();
     }
 
     function _clone() {
@@ -305,13 +288,17 @@ QtObject {
         var sp = (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price;
         var tx = !!taxable;
         var tp = (typeof taxPercent === "number" && !isNaN(taxPercent)) ? taxPercent : 0;
-        arr.push({ productId: id, name: name, sku: sku, category: category,
+        var doc = { productId: id, name: name, sku: sku, category: category,
                    stock: stock, minStock: minStock,
                    price: price, sellingPrice: sp,
                    taxable: tx, taxPercent: tp,
                    unit: unit, description: description || "",
-                   photoUrl: "", photoUpdatedAt: "" });
-        _commit(arr);
+                   photoUrl: "", photoUpdatedAt: "" };
+        arr.push(doc);
+        // Optimistic local update; persist this one product via the gateway
+        // (a per-doc create, not the legacy bulk PUT of the whole collection).
+        products = arr;
+        Gateway.recordMutation("inventory", id, "create", null, doc);
         ActivityLog.record("product_added",
                            "Product added: " + name,
                            (sku ? sku + " · " : "") + "stock " + stock,
@@ -370,6 +357,7 @@ QtObject {
         var idx = findIndexById(productId);
         if (idx < 0) return;
         var arr = _clone();
+        var before = Object.assign({}, arr[idx]);
         var prevUrl = arr[idx].photoUrl || "";
         var newUrl = photoUrl || "";
         arr[idx].photoUrl = newUrl;
@@ -377,9 +365,7 @@ QtObject {
         products = arr;
         if (prevUrl !== newUrl)
             TransactionStore.recordPhotoChange(productId, arr[idx].name, prevUrl, newUrl);
-        FirebaseService.put("inventory/" + productId, arr[idx], function(ok) {
-            if (!ok) console.warn("[InventoryStore] Firestore photo write failed for", productId);
-        });
+        Gateway.recordMutation("inventory", productId, "update", before, arr[idx]);
     }
 
     // Bulk import / upsert. Records carry the same shape as products plus an
@@ -414,18 +400,20 @@ QtObject {
                     // Treat as new: assign fresh id and unique SKU
                     r.productId = nextProductId();
                     if (r.sku) r.sku = r.sku + "-" + counts.added + 1;
-                    arr.push(_normalizeRecord(r));
+                    var renamedDoc = _normalizeRecord(r);
+                    arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
                     if (r.sku) bySku[r.sku.toLowerCase()] = arr.length - 1;
+                    Gateway.recordMutation("inventory", renamedDoc.productId, "create", null, renamedDoc);
                     counts.added++;
                     continue;
                 }
                 // overwrite
                 var existing = arr[existingIdx];
+                var overwriteBefore = Object.assign({}, existing);
                 arr[existingIdx] = _mergeRecord(existing, r);
-                FirebaseService.put("inventory/" + existing.productId, arr[existingIdx], function(ok) {
-                    if (!ok) console.warn("[InventoryStore] import overwrite write failed");
-                });
+                Gateway.recordMutation("inventory", existing.productId, "update",
+                                       overwriteBefore, arr[existingIdx]);
                 counts.updated++;
             } else {
                 // New row
@@ -439,9 +427,7 @@ QtObject {
                 arr.push(doc);
                 byId[doc.productId] = arr.length - 1;
                 if (doc.sku) bySku[doc.sku.toLowerCase()] = arr.length - 1;
-                FirebaseService.put("inventory/" + doc.productId, doc, function(ok) {
-                    if (!ok) console.warn("[InventoryStore] import add write failed");
-                });
+                Gateway.recordMutation("inventory", doc.productId, "create", null, doc);
                 counts.added++;
             }
         }
@@ -532,16 +518,15 @@ QtObject {
 
     function deleteProduct(productId) {
         var arr = _clone();
+        var before = null
         var found = false
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].productId === productId) { arr.splice(i, 1); found = true; break; }
+            if (arr[i].productId === productId) { before = arr[i]; arr.splice(i, 1); found = true; break; }
         }
         products = arr
         if (!found) return
 
-        FirebaseService.remove("inventory/" + productId, function(ok) {
-            if (!ok) console.warn("[InventoryStore] Firestore delete failed for", productId)
-        })
+        Gateway.recordMutation("inventory", productId, "delete", before, null)
     }
 
     // `party` may be a supplierId, an existing supplier name, or a brand-new
@@ -551,9 +536,11 @@ QtObject {
     function restock(productId, amount, party, unitCost) {
         var arr = _clone();
         var changed = null;
+        var before = null;
         var addedQty = amount || 10;
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].productId === productId) {
+                before = Object.assign({}, arr[i]);
                 arr[i].stock += addedQty;
                 changed = arr[i];
                 break;
@@ -575,11 +562,7 @@ QtObject {
         // The receipt also lands as a FIFO batch — this is what every
         // subsequent sale will draw from in date order.
         StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, "");
-        FirebaseService.put("inventory/" + productId, changed, function(ok) {
-            if (!ok)
-                console.warn("[InventoryStore] Firestore restock failed for", productId,
-                             FirebaseService.lastStatusCode, FirebaseService.lastError)
-        });
+        Gateway.recordMutation("inventory", productId, "update", before, changed);
     }
 
     function stockStatus(p) {
@@ -594,8 +577,10 @@ QtObject {
     function deductStock(productId, qty) {
         var arr = _clone();
         var changed = null;
+        var before = null;
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].productId === productId) {
+                before = Object.assign({}, arr[i]);
                 arr[i].stock = Math.max(0, arr[i].stock - qty);
                 changed = arr[i];
                 break;
@@ -606,16 +591,8 @@ QtObject {
             console.warn("[InventoryStore] deductStock: no product with id", productId)
             return
         }
-        // Per-doc PATCH so the write definitely lands in Firestore. The bulk
-        // _pushAllToFirebase path used to be racy when several deductions ran
-        // back-to-back from order completion.
-        FirebaseService.put("inventory/" + productId, changed, function(ok) {
-            if (!ok)
-                console.warn("[InventoryStore] Firestore deduct failed for", productId,
-                             FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[InventoryStore] Deducted stock for", productId, "→", changed.stock)
-        });
+        // Each deduction is an auditable update routed through the gateway.
+        Gateway.recordMutation("inventory", productId, "update", before, changed);
     }
 
     function findIndexById(productId) {
@@ -630,6 +607,9 @@ QtObject {
         var arr = _clone()
         var prev = arr[idx]
         var p = arr[idx]
+        // Full pre-mutation snapshot for the audit_log `before` (taken before
+        // any field is reassigned through the shared `p` reference).
+        var auditBefore = Object.assign({}, prev)
         // Snapshot prev values BEFORE we mutate `p`, since some fields below
         // assign through to the same object reference.
         var prevSnap = {
@@ -673,10 +653,7 @@ QtObject {
         }
         if (stockChange)
             TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after)
-        // Per-doc PATCH bypasses the broken bulk-PUT path used by _commit.
-        FirebaseService.put("inventory/" + productId, p, function(ok) {
-            if (!ok) console.warn("[InventoryStore] Firestore update failed for", productId)
-        })
+        Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
     }
 
     function findByName(name) {

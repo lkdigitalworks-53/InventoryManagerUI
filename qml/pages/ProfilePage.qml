@@ -33,12 +33,11 @@ Item {
             padding: 0
             background: Rectangle { color: parent.pressed ? Qt.rgba(0,0,0,0.04) : "transparent"; radius: dp(12) }
             contentItem: Item {
-                Text {
+                Icon {
                     anchors.centerIn: parent
-                    text: "←"
+                    name: "back"
                     color: Constants.textPrimary
-                    font.pixelSize: sp(22)
-                    font.bold: true
+                    size: sp(22)
                 }
             }
             onClicked: root.backRequested()
@@ -161,11 +160,11 @@ Item {
                         anchors.margins: dp(4)
                         spacing: 0
 
-                        SettingsRow { emoji: "👤"; label: "Edit profile";       onClicked: root.editProfileRequested() }
-                        SettingsRow { emoji: "🏢"; label: "Workspace settings"; onClicked: root.editProfileRequested() }
-                        SettingsRow { emoji: "🧑‍🤝‍🧑"; label: "Team members";  onClicked: root.manageMembersRequested(); visible: AuthStore.canInviteMembers }
-                        SettingsRow { emoji: "🔐"; label: "Security & passkeys" }
-                        SettingsRow { emoji: "🔔"; label: "Notifications";       last: true }
+                        SettingsRow { iconName: "profile"; label: "Edit profile";       onClicked: root.editProfileRequested() }
+                        SettingsRow { iconName: "workspace"; label: "Workspace settings"; onClicked: root.editProfileRequested() }
+                        SettingsRow { iconName: "team"; label: "Team members";  onClicked: root.manageMembersRequested(); visible: AuthStore.canInviteMembers }
+                        SettingsRow { iconName: "security"; label: "Security & passkeys" }
+                        SettingsRow { iconName: "bell"; label: "Notifications";       last: true }
                     }
                 }
             }
@@ -198,9 +197,9 @@ Item {
                         anchors.margins: dp(4)
                         spacing: 0
 
-                        SettingsRow { emoji: "🎨"; label: "Appearance";   trailingText: "System" }
-                        SettingsRow { emoji: "🌐"; label: "Language";     trailingText: "English" }
-                        SettingsRow { emoji: "💱"; label: "Currency";     trailingText: "INR"; last: true }
+                        SettingsRow { iconName: "appearance"; label: "Appearance";   trailingText: "System" }
+                        SettingsRow { iconName: "language"; label: "Language";     trailingText: "English" }
+                        SettingsRow { iconName: "currency"; label: "Currency";     trailingText: "INR"; last: true }
                     }
                 }
             }
@@ -261,7 +260,8 @@ Item {
     }
 
     component SettingsRow: QQC.AbstractButton {
-        property string emoji: "•"
+        id: settingsRowRoot
+        property string iconName: ""
         property string label: ""
         property string trailingText: ""
         property bool last: false
@@ -288,10 +288,11 @@ Item {
             Rectangle {
                 width: dp(32); height: dp(32); radius: dp(10)
                 color: Qt.rgba(0.39, 0.40, 0.95, 0.10)
-                Text {
+                Icon {
                     anchors.centerIn: parent
-                    text: parent.parent.parent.emoji
-                    font.pixelSize: sp(16)
+                    name: settingsRowRoot.iconName
+                    size: sp(16)
+                    color: Constants.textSecondary
                 }
             }
 
@@ -309,10 +310,10 @@ Item {
                 font.pixelSize: sp(Constants.fsSmall)
             }
 
-            Text {
-                text: "›"
+            Icon {
+                name: "chevron"
                 color: Constants.textMuted
-                font.pixelSize: sp(16)
+                size: sp(16)
             }
         }
     }

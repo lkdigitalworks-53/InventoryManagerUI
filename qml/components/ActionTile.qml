@@ -7,7 +7,7 @@ import "../helper"
 QQC.AbstractButton {
     id: root
 
-    property string emoji: "✨"
+    property string iconName: ""
     property string caption: ""
 
     implicitWidth: dp(80)
@@ -22,18 +22,17 @@ QQC.AbstractButton {
             anchors.centerIn: parent
             spacing: dp(6)
 
-            // Fixed-width emoji container — emoji glyphs have asymmetric
-            // padding around their drawn shape, so centering the Text element
-            // alone isn't optically centred. Pinning a known-size box gives
-            // a predictable centre.
+            // Fixed-size icon container — pinning a known-size box gives the
+            // Icon a predictable optical centre within the tile.
             Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: dp(28)
                 height: dp(28)
-                Text {
+                Icon {
                     anchors.centerIn: parent
-                    text: root.emoji
-                    font.pixelSize: sp(22)
+                    name: root.iconName
+                    size: sp(22)
+                    color: Constants.textPrimary
                 }
             }
             Text {

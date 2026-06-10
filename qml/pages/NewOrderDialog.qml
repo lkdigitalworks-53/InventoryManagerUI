@@ -187,7 +187,7 @@ BottomSheet {
 
             IconActionButton {
                 variant: "default"
-                text: "＋"
+                iconName: "add"
                 onClicked: dlg.addSelectedProduct()
             }
         }
@@ -217,11 +217,10 @@ BottomSheet {
                             padding: 0
                             background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
                             contentItem: Item {
-                                Text {
+                                Icon {
                                     anchors.centerIn: parent
-                                    text: "−"
-                                    font.pixelSize: sp(16)
-                                    font.bold: true
+                                    name: "remove"
+                                    size: sp(16)
                                     color: Constants.textPrimary
                                 }
                             }
@@ -240,11 +239,10 @@ BottomSheet {
                             padding: 0
                             background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
                             contentItem: Item {
-                                Text {
+                                Icon {
                                     anchors.centerIn: parent
-                                    text: "+"
-                                    font.pixelSize: sp(16)
-                                    font.bold: true
+                                    name: "add"
+                                    size: sp(16)
                                     color: Constants.textPrimary
                                 }
                             }

@@ -110,7 +110,7 @@ Item {
         actions: [
             IconActionButton {
                 variant: "glass"
-                text: "⚙"
+                iconName: "settings"
                 // Dot badge when any filter has moved off its default — the
                 // user can tell at a glance that the on-screen numbers are
                 // narrowed without expanding the sheet.
@@ -145,7 +145,7 @@ Item {
             },
             IconActionButton {
                 variant: "glass"
-                text: "⤴"
+                iconName: "export"
                 onClicked: root.exportRequested(root.buildAnalysisExport())
             }
         ]
@@ -190,7 +190,7 @@ Item {
         ColumnLayout {
             anchors.centerIn: parent
             spacing: dp(Constants.space3)
-            Text { text: "📊"; font.pixelSize: sp(56); Layout.alignment: Qt.AlignHCenter }
+            Icon { name: "analytics"; size: sp(56); color: Constants.textMuted; Layout.alignment: Qt.AlignHCenter }
             Text {
                 text: "No sales data yet"
                 font.pixelSize: sp(Constants.fsH2)
@@ -314,13 +314,12 @@ Item {
                                 font.pixelSize: sp(Constants.fsCaption)
                                 font.bold: true
                             }
-                            Text {
+                            Icon {
                                 id: closeIcon
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: "×"
+                                name: "close"
                                 color: Constants.textOnBrand
-                                font.pixelSize: sp(14)
-                                font.bold: true
+                                size: sp(14)
                             }
                         }
                         MouseArea {
@@ -2353,11 +2352,7 @@ Item {
     }
 
     function _txTitle(d) {
-        var icon = d.kind === "purchase" ? "📥 "
-                 : d.kind === "created"  ? "🆕 "
-                 : d.kind === "sale"     ? "📤 "
-                 :                          ""
-        return icon + (d.productName || qsTr("(unknown)"))
+        return d.productName || qsTr("(unknown)")
     }
 
     function _txSubtitle(d) {

@@ -26,9 +26,9 @@ Rectangle {
         anchors.rightMargin: dp(6)
         spacing: dp(8)
 
-        Text {
-            text: "🔍"
-            font.pixelSize: sp(14)
+        Icon {
+            name: "search"
+            size: sp(14)
             color: Constants.textSecondary
         }
 
@@ -47,11 +47,11 @@ Rectangle {
             visible: input.text.length > 0
             implicitWidth: dp(28)
             implicitHeight: dp(28)
-            contentItem: Text {
-                text: "✕"
+            contentItem: Icon {
+                name: "close"
                 anchors.centerIn: parent
                 color: Constants.textSecondary
-                font.pixelSize: sp(13)
+                size: sp(13)
             }
             onClicked: { input.text = ""; root.cleared() }
         }
