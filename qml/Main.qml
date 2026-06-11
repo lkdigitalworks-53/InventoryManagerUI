@@ -23,6 +23,12 @@ App {
     property string memberErrorMessage: ""
     property string successMessage: ""
 
+    // Consume the Android Back event so it does NOT propagate to the OS (which
+    // would background/exit the app). "AutoAccept" = mark the event accepted;
+    // true keeps the app open and lets our _handleBack router do the navigation
+    // (we call Qt.quit() ourselves only on the second tap of double-tap-exit).
+    backButtonAutoAcceptGlobally: true
+
     // Cached payload from SalesPage.exportRequested. The export sheet's
     // format-selected handler reads this when the user picks a format.
     property var _pendingAnalysisExport: null
@@ -30,7 +36,58 @@ App {
     // app initialization
     Component.onCompleted: {
         AuthService.ensureFreshToken()
+        // TEMP diagnostic (remove after device check): confirms the inset source
+        // and whether AppPage already pads the tab pages (→ double with topInset).
+        console.log("[SafeArea] NativeUtils insets top", NativeUtils.safeAreaInsets.top,
+                    "bottom", NativeUtils.safeAreaInsets.bottom)
     }
+
+    // ── Android hardware/keyboard Back router ───────────────────────────────
+    // Single source of truth for Back behavior; mirrors the on-screen back
+    // button. Closes the top-most transient layer first. If a dialog id is
+    // added/renamed, update the `dialogs` list below.
+    property bool _exitArmed: false
+    Timer {
+        id: _exitArmTimer
+        interval: 2000
+        onTriggered: app._exitArmed = false
+    }
+
+    onBackButtonPressedGlobally: app._handleBack()
+
+    function _handleBack() {
+        // 1. Open modal sheet / dialog → close the first open one.
+        var dialogs = [photoSourceSheet, importPathPrompt, addProductDlg, editProductDlg,
+                       newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
+                       memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
+                       manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
+                       forgotPasswordDlg, confirmDlg, stockErrorDlg, permissionErrorDlg]
+        for (var i = 0; i < dialogs.length; ++i) {
+            if (dialogs[i] && dialogs[i].opened) { dialogs[i].close(); return }
+        }
+        // 2. Full-screen overlay visible → close back to Dashboard.
+        if (profilePage.visible)         { profilePage.close();         return }
+        if (staffPageOverlay.visible)    { staffPageOverlay.close();    return }
+        if (activityPageOverlay.visible) { activityPageOverlay.close(); return }
+        // 3. Not on Home tab → go to Home.
+        if (navigation.visible && navigation.currentIndex !== 0) {
+            navigation.currentIndex = 0
+            return
+        }
+        // 4. Home root → double-tap to exit.
+        if (_exitArmed) { Qt.quit(); return }
+        _exitArmed = true
+        Toast.show(qsTr("Press back again to exit"))
+        _exitArmTimer.restart()
+    }
+
+    // Bind the SafeArea singleton to Felgo's live device insets. The insets live
+    // on NativeUtils (NOT on App), so bind there. Updates on rotation / cutout
+    // change via safeAreaInsetsChanged. 0 on desktop.
+    Binding { target: SafeArea; property: "top";    value: NativeUtils.safeAreaInsets.top }
+    Binding { target: SafeArea; property: "bottom"; value: NativeUtils.safeAreaInsets.bottom }
+    Binding { target: SafeArea; property: "left";   value: NativeUtils.safeAreaInsets.left }
+    Binding { target: SafeArea; property: "right";  value: NativeUtils.safeAreaInsets.right }
 
     // Bring the app window to the foreground when Google sign-in completes.
     // Without this, the OS browser keeps focus and the user sees no change.
@@ -476,7 +533,7 @@ App {
         anchors.bottom: parent.bottom
         anchors.leftMargin: dp(12)
         anchors.rightMargin: dp(12)
-        anchors.bottomMargin: dp(14)
+        anchors.bottomMargin: dp(14) + SafeArea.bottom
         z: 50
         currentIndex: navigation.currentIndex
         tabs: [

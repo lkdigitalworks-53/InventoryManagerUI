@@ -28,6 +28,11 @@ set(PRODUCT_STAGE "test")
 set(PRODUCT_LICENSE_KEY "")
 
 # Find all QML/JS files for the QML compiler:
+# CONFIGURE_DEPENDS re-globs on every build so newly-added files (e.g. new
+# model singletons or icon assets) are picked up without a manual reconfigure.
+# Without it, CMake caches the file list at configure time and silently omits
+# new files from the Android package — the loader then fails with
+# "Gateway.qml: No such file or directory" and the app crashes on launch.
 file(GLOB_RECURSE QmlFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.js)
 
 # Find all non-QML/JS files in the qml and assets folder to add as resources:

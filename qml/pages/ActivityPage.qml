@@ -55,6 +55,7 @@ Item {
 
     GlassHeader {
         id: header
+        topInset: SafeArea.top
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -162,7 +163,7 @@ Item {
                 }
             }
 
-            Item { Layout.preferredHeight: dp(Constants.tabbarClearance); Layout.fillWidth: true }
+            Item { Layout.preferredHeight: dp(Constants.tabbarClearance) + SafeArea.bottom; Layout.fillWidth: true }
         }
     }
 }
