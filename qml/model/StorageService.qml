@@ -40,8 +40,17 @@ QtObject {
             return
         }
 
+        // Picked images on Android arrive as content:// URIs that ImageProcessor
+        // can't stat. Resolve to a readable local path first (passthrough for
+        // already-local sources).
+        var readable = NativeFile.toReadablePath(sourceUrl)
+        if (!readable || readable.length === 0) {
+            if (callback) callback(false, "", "Could not read the selected image")
+            return
+        }
+
         // Compress first so on-device storage stays small (~50 KB JPEG).
-        var compressedUrl = ImageProcessor.compressForUpload(sourceUrl, 800, 75)
+        var compressedUrl = ImageProcessor.compressForUpload(readable, 800, 75)
         if (!compressedUrl || compressedUrl.length === 0) {
             if (callback) callback(false, "", "Could not compress image")
             return

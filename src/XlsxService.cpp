@@ -315,7 +315,10 @@ XlsxService::XlsxService(QObject *parent)
 
 QString XlsxService::outputDir()
 {
-    QString base = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    // App-private storage: always writable with no permission on every Android
+    // version (public Downloads is blocked by scoped storage on API 29+). The
+    // file leaves the sandbox via NativeUtils.share() + the declared FileProvider.
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (base.isEmpty())
         base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     QDir().mkpath(base);

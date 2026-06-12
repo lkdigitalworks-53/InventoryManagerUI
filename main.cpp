@@ -5,6 +5,7 @@
 #include "src/OAuthServer.h"
 #include "src/ImageProcessor.h"
 #include "src/XlsxService.h"
+#include "src/NativeFile.h"
 
 int main(int argc, char *argv[])
 {
@@ -26,6 +27,10 @@ int main(int argc, char *argv[])
     // Register XLSX read/write helper (used by the import/export pipeline).
     auto *xlsxService = new XlsxService(&app);
     engine.rootContext()->setContextProperty(QStringLiteral("XlsxService"), xlsxService);
+
+    // Register the content-URI → readable-path helper (photo + import pickers).
+    auto *nativeFile = new NativeFile(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("NativeFile"), nativeFile);
 
     // Set an optional license key from project file
     felgo.setLicenseKey(PRODUCT_LICENSE_KEY);

@@ -47,6 +47,8 @@ qt_add_executable(appBusinessManagement
     src/ImageProcessor.cpp
     src/XlsxService.h
     src/XlsxService.cpp
+    src/NativeFile.h
+    src/NativeFile.cpp
     ${QmlFiles}
     ${AssetsFiles}
 )

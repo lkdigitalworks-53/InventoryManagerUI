@@ -36,10 +36,6 @@ App {
     // app initialization
     Component.onCompleted: {
         AuthService.ensureFreshToken()
-        // TEMP diagnostic (remove after device check): confirms the inset source
-        // and whether AppPage already pads the tab pages (→ double with topInset).
-        console.log("[SafeArea] NativeUtils insets top", NativeUtils.safeAreaInsets.top,
-                    "bottom", NativeUtils.safeAreaInsets.bottom)
     }
 
     // ── Android hardware/keyboard Back router ───────────────────────────────
@@ -57,7 +53,7 @@ App {
 
     function _handleBack() {
         // 1. Open modal sheet / dialog → close the first open one.
-        var dialogs = [photoSourceSheet, importPathPrompt, addProductDlg, editProductDlg,
+        var dialogs = [photoSourceSheet, addProductDlg, editProductDlg,
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
@@ -704,43 +700,33 @@ App {
             successToastTimer.restart()
             if (mode === "products") OrdersStore.syncFromFirebase()
         }
-        onPathPromptRequested: importPathPrompt.open()
+        onFilePickRequested: {
+            NativeUtils.filePickerFinished.connect(app._onImportFilePicked)
+            // Filter format differs by platform: desktop maps to QFileDialog (Qt
+            // name-filter like "Name (*.ext)"); mobile uses a MIME type. A bare
+            // "*/*" reads as a literal pattern on desktop → no selectable files.
+            var isMobile = (Qt.platform.os === "android" || Qt.platform.os === "ios")
+            var filter = isMobile
+                ? "*/*"
+                : "Spreadsheets (*.xlsx *.xls *.csv)"
+            NativeUtils.displayFilePicker(qsTr("Choose a spreadsheet"), "", filter)
+        }
     }
 
-    // Path-prompt is hoisted out of ImportPreviewDialog because a QQC.Dialog
-    // nested inside another Dialog won't render until the outer one is open.
-    QQC.Dialog {
-        id: importPathPrompt
-        modal: true
-        anchors.centerIn: parent
-        title: importDlg.mode === "products" ? "Open products .xlsx" : "Open orders .xlsx"
-        width: Math.min(parent ? parent.width - dp(40) : dp(480), dp(480))
-        standardButtons: QQC.Dialog.Ok | QQC.Dialog.Cancel
-
-        contentItem: ColumnLayout {
-            spacing: dp(8)
-            QQC.Label {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                text: "Paste the full path of the .xlsx file (or a https URL). On mobile, share the sheet into this app from Files / Drive / Sheets."
-                color: "#6b7280"
-                font.pixelSize: sp(12)
-            }
-            QQC.TextField {
-                id: importPathField
-                Layout.fillWidth: true
-                placeholderText: "/sdcard/Download/products.xlsx  or  C:/Users/me/Downloads/products.xlsx"
-            }
+    // Receives the native file-picker result for import. One-shot: disconnects
+    // itself so repeated imports don't stack the connection.
+    function _onImportFilePicked(accepted, files) {
+        NativeUtils.filePickerFinished.disconnect(app._onImportFilePicked)
+        if (!accepted || !files || files.length === 0) return
+        var local = NativeFile.toReadablePath(files[0])
+        if (!local || local.length === 0) {
+            successMessage = qsTr("Could not read the selected file")
+            successToastTimer.restart()
+            return
         }
-
-        onAccepted: {
-            if (importPathField.text.length > 0) {
-                importDlg.importFromUserPath(importPathField.text.trim())
-                importPathField.text = ""
-            }
-        }
-        onRejected: importPathField.text = ""
+        importDlg.importFromUserPath(local)
     }
+
 
     // Routes a click on a recent-activity / notification entry to the right
     // page + detail dialog. `kind` matches ActivityLog kinds plus "order"
@@ -762,41 +748,38 @@ App {
         }
     }
 
-    function _exportProducts() {
-        var url = XlsxService.writeProducts(InventoryStore.products, "")
+    // Deliver a freshly-written export file, platform-aware. Mobile: the share
+    // sheet (route to Drive/Mail/Files). Desktop: open the file directly, since
+    // NativeUtils.share is mobile-only (a no-op on desktop would leave the file
+    // stranded in app-private storage). `label` names the export in the toast.
+    function _deliverExport(url, label) {
         if (!url || url.length === 0) {
-            successMessage = "Export failed"
+            successMessage = qsTr("Export failed")
+            successToastTimer.restart()
+            return
+        }
+        var os = Qt.platform.os
+        var isMobile = (os === "android" || os === "ios")
+        if (isMobile && typeof NativeUtils !== "undefined" && NativeUtils.share) {
+            successMessage = qsTr("%1 exported — choose where to save.").arg(label)
+            NativeUtils.share("", url)
         } else {
-            successMessage = "Products exported. Saved to Downloads."
-            // On mobile, hand off via the share sheet so the user can route to Drive/Mail/etc.
-            if (typeof NativeUtils !== "undefined" && NativeUtils.share)
-                NativeUtils.share("", url)
+            successMessage = qsTr("%1 exported — opening…").arg(label)
+            Qt.openUrlExternally(url)
         }
         successToastTimer.restart()
+    }
+
+    function _exportProducts() {
+        _deliverExport(XlsxService.writeProducts(InventoryStore.products, ""), qsTr("Products"))
     }
 
     function _exportOrders() {
-        var url = XlsxService.writeOrders(OrdersStore.orders, "")
-        if (!url || url.length === 0) {
-            successMessage = "Export failed"
-        } else {
-            successMessage = "Orders exported. Saved to Downloads."
-            if (typeof NativeUtils !== "undefined" && NativeUtils.share)
-                NativeUtils.share("", url)
-        }
-        successToastTimer.restart()
+        _deliverExport(XlsxService.writeOrders(OrdersStore.orders, ""), qsTr("Orders"))
     }
 
     function _exportStaff() {
-        var url = XlsxService.writeStaff(StaffStore.staff, "")
-        if (!url || url.length === 0) {
-            successMessage = "Export failed"
-        } else {
-            successMessage = "Staff exported. Saved to Downloads."
-            if (typeof NativeUtils !== "undefined" && NativeUtils.share)
-                NativeUtils.share("", url)
-        }
-        successToastTimer.restart()
+        _deliverExport(XlsxService.writeStaff(StaffStore.staff, ""), qsTr("Staff"))
     }
 
     // Analysis report — emits the same view the user is currently looking
@@ -813,16 +796,9 @@ App {
         var url = XlsxService.writeAnalysis(payload.title || qsTr("Analysis"),
                                             payload.sections,
                                             payload.suggestedName || "")
-        if (!url || url.length === 0) {
-            successMessage = qsTr("Export failed")
-        } else {
-            successMessage = qsTr("%1 exported. Saved to Downloads.").arg(payload.title || qsTr("Analysis"))
-            if (typeof NativeUtils !== "undefined" && NativeUtils.share)
-                NativeUtils.share("", url)
-        }
+        _deliverExport(url, payload.title || qsTr("Analysis"))
         // Clear once consumed so a stale payload can't leak into a future export.
         _pendingAnalysisExport = null
-        successToastTimer.restart()
     }
     AddStaffDialog {
         id: addStaffDlg
