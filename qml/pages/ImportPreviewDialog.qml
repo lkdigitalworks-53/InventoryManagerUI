@@ -12,7 +12,7 @@ import "../model"
 //   property string mode
 //   property var _readyRows, _issueRows
 //   property string _fileName
-//   signal pathPromptRequested()
+//   signal filePickRequested()
 //   signal importCompleted(message)
 //   function pickAndStart(), importFromUserPath(rawPath)
 BottomSheet {
@@ -30,12 +30,12 @@ BottomSheet {
     property var _issueRows: []
     property string _fileName: ""
 
-    signal pathPromptRequested()
+    signal filePickRequested()
     signal importCompleted(string message)
 
     function pickAndStart() {
         _readyRows = []; _issueRows = []; _fileName = ""
-        pathPromptRequested()
+        filePickRequested()
     }
 
     function importFromUserPath(rawPath) {

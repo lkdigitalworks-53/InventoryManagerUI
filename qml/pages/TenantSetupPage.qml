@@ -34,7 +34,7 @@ Item {
             width: tenantScroll.availableWidth
             spacing: dp(Constants.space5)
 
-            Item { Layout.preferredHeight: dp(Constants.space7); Layout.fillWidth: true }
+            Item { Layout.preferredHeight: dp(Constants.space7) + SafeArea.top; Layout.fillWidth: true }
 
             // Brand mark
             Rectangle {

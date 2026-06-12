@@ -1,10 +1,11 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
+import Felgo
 
 import "../helper"
 
-// PhotoSourceSheet — bottom-anchored popup offering Camera / Gallery / URL /
+// PhotoSourceSheet — bottom-anchored popup offering Camera / Gallery /
 // Remove. No inline components, no Qt.labs.platform — both have caused
 // startup crashes when combined with Felgo's stack.
 QQC.Popup {
@@ -58,9 +59,9 @@ QQC.Popup {
             color: "#111827"
         }
 
-        // Camera (mobile only)
+        // Camera (mobile only — no camera picker on desktop)
         Rectangle {
-            visible: typeof NativeUtils !== "undefined"
+            visible: Qt.platform.os === "android" || Qt.platform.os === "ios"
             Layout.fillWidth: true
             Layout.leftMargin: 12; Layout.rightMargin: 12
             Layout.topMargin: 4
@@ -122,63 +123,23 @@ QQC.Popup {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (typeof NativeUtils !== "undefined" && NativeUtils.displayImagePicker) {
+                    var isMobile = (Qt.platform.os === "android" || Qt.platform.os === "ios")
+                    // Close this modal sheet BEFORE launching a picker. On desktop,
+                    // opening the native file dialog while the modal is still tearing
+                    // down suppresses the dialog — so defer it to the next tick.
+                    root.close()
+                    if (isMobile && NativeUtils.displayImagePicker) {
+                        // Mobile: the OS photo picker.
                         NativeUtils.imagePickerFinished.connect(root._onGalleryDone)
-                        NativeUtils.displayImagePicker()
-                        root.close()
+                        NativeUtils.displayImagePicker(qsTr("Choose a photo"))
                     } else {
-                        urlField.placeholderText = "Paste a file:// path or http URL…"
-                        urlField.forceActiveFocus()
-                    }
-                }
-            }
-        }
-
-        // Paste URL
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12; Layout.rightMargin: 12
-            Layout.topMargin: 4
-            radius: 10
-            color: "#f9fafb"
-            border.color: Constants.borderColor
-            implicitHeight: urlCol.implicitHeight + 16
-
-            ColumnLayout {
-                id: urlCol
-                anchors.fill: parent
-                anchors.margins: 8
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Icon { name: "web"; size: 16; color: Constants.textPrimary }
-                    Text {
-                        text: "Use an image URL or path"
-                        color: "#111827"
-                        font.pixelSize: 13
-                        font.bold: true
-                        Layout.fillWidth: true
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    QQC.TextField {
-                        id: urlField
-                        Layout.fillWidth: true
-                        placeholderText: "https://… or file:///path/to/image.jpg"
-                        font.pixelSize: 12
-                    }
-                    QQC.Button {
-                        text: "Use"
-                        enabled: urlField.text.length > 4
-                        onClicked: {
-                            root.photoSourceSelected(urlField.text.trim())
-                            urlField.text = ""
-                            root.close()
-                        }
+                        // Desktop: no native photo picker — use the system file
+                        // dialog with a Qt name-filter (NOT a MIME wildcard).
+                        NativeUtils.filePickerFinished.connect(root._onPhotoFilePicked)
+                        Qt.callLater(function() {
+                            NativeUtils.displayFilePicker(qsTr("Choose a photo"), "",
+                                "Image files (*.png *.jpg *.jpeg *.gif *.bmp *.webp)")
+                        })
                     }
                 }
             }
@@ -225,13 +186,37 @@ QQC.Popup {
         if (typeof NativeUtils !== "undefined")
             NativeUtils.cameraPickerFinished.disconnect(root._onCameraDone)
         if (ok && path && path.length > 0)
-            root.photoSourceSelected(path)
+            root.photoSourceSelected(_toFileUrl(path))
     }
 
     function _onGalleryDone(ok, path) {
         if (typeof NativeUtils !== "undefined")
             NativeUtils.imagePickerFinished.disconnect(root._onGalleryDone)
         if (ok && path && path.length > 0)
-            root.photoSourceSelected(path)
+            root.photoSourceSelected(_toFileUrl(path))
+    }
+
+    // Desktop gallery path: the system file dialog returns via filePickerFinished
+    // (a list of files), unlike the mobile image picker's single-path signal.
+    function _onPhotoFilePicked(ok, files) {
+        if (typeof NativeUtils !== "undefined")
+            NativeUtils.filePickerFinished.disconnect(root._onPhotoFilePicked)
+        if (ok && files && files.length > 0)
+            root.photoSourceSelected(_toFileUrl(files[0]))
+    }
+
+    // Normalize a picker result to a valid URL. A raw Windows path like
+    // "C:/dir/x.png" assigned to a url property mis-parses ("file://c/…" — the
+    // drive letter becomes the host); prepend a slash so it becomes a correct
+    // "file:///C:/dir/x.png". Already-schemed sources pass through unchanged.
+    function _toFileUrl(raw) {
+        var s = String(raw).trim()
+        var lower = s.toLowerCase()
+        if (lower.indexOf("http://") === 0 || lower.indexOf("https://") === 0) return s
+        if (lower.indexOf("file:") === 0) return s
+        if (lower.indexOf("content://") === 0) return s
+        var norm = s.replace(/\\/g, "/")
+        if (norm.indexOf("/") !== 0) norm = "/" + norm
+        return "file://" + norm
     }
 }

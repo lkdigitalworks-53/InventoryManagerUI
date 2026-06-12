@@ -15,7 +15,12 @@ Rectangle {
     property alias leading: leadingHolder.data
     property bool elevated: true
 
-    height: dp(64)
+    // Top safe-area inset (status bar / cutout). The glass background still
+    // paints up under the status bar, but the tappable title/action row drops
+    // below it by this amount. 0 on desktop. Callers pass SafeArea.top.
+    property real topInset: 0
+
+    height: dp(64) + topInset
     color: Constants.glassBg
     border.color: Constants.borderColor
     border.width: 0
@@ -28,7 +33,11 @@ Rectangle {
     }
 
     RowLayout {
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.top: parent.top
+        anchors.topMargin: root.topInset
         anchors.leftMargin: dp(Constants.space4)
         anchors.rightMargin: dp(Constants.space4)
         spacing: dp(Constants.space2)

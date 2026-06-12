@@ -91,22 +91,24 @@ BottomSheet {
                                 border.color: Constants.borderColor
                                 border.width: 1
                             }
-                            contentItem: Row {
-                                id: starTxt
-                                anchors.centerIn: parent
-                                spacing: dp(4)
-                                Icon {
-                                    name: "star"
-                                    size: sp(Constants.fsCaption)
-                                    color: Constants.textSecondary
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: qsTr("Default")
-                                    color: Constants.textSecondary
-                                    font.pixelSize: sp(Constants.fsCaption)
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
+                            contentItem: Item {
+                                Row {
+                                    id: starTxt
+                                    anchors.centerIn: parent
+                                    spacing: dp(4)
+                                    Icon {
+                                        name: "star"
+                                        size: sp(Constants.fsCaption)
+                                        color: Constants.textSecondary
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                    Text {
+                                        text: qsTr("Default")
+                                        color: Constants.textSecondary
+                                        font.pixelSize: sp(Constants.fsCaption)
+                                        font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
                                 }
                             }
                             onClicked: CategoryStore.setLastUsed(modelData)
@@ -122,13 +124,15 @@ BottomSheet {
                                 border.color: Qt.rgba(0.93, 0.27, 0.27, 0.25)
                                 border.width: 1
                             }
-                            contentItem: Text {
-                                id: removeTxt
-                                anchors.centerIn: parent
-                                text: "Remove"
-                                color: Constants.danger
-                                font.pixelSize: sp(Constants.fsCaption)
-                                font.bold: true
+                            contentItem: Item {
+                                Text {
+                                    id: removeTxt
+                                    anchors.centerIn: parent
+                                    text: "Remove"
+                                    color: Constants.danger
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    font.bold: true
+                                }
                             }
                             onClicked: root._confirmRemove(modelData)
                         }

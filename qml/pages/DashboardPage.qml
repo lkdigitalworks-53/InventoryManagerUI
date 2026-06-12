@@ -482,7 +482,7 @@ Item {
             }
 
             // Bottom spacer so content clears the tabbar.
-            Item { Layout.preferredHeight: dp(Constants.tabbarClearance); Layout.fillWidth: true }
+            Item { Layout.preferredHeight: dp(Constants.tabbarClearance) + SafeArea.bottom; Layout.fillWidth: true }
         }
     }
 }
