@@ -96,6 +96,13 @@ service cloud.firestore {
         allow delete: if isOwnerOrAdmin(tenantId)
                       && resource.data.role != 'owner'
                       && uid != request.auth.uid;
+
+        // VOLUNTARY LEAVE: a member may remove their OWN membership. The owner
+        // cannot self-leave (would orphan the workspace) — that's blocked by
+        // the role check, matching leaveCurrentTenant()'s client guard.
+        allow delete: if isSignedIn()
+                      && uid == request.auth.uid
+                      && resource.data.role != 'owner';
       }
 
       // Ledger collections — read-only to every client. Only the gateway

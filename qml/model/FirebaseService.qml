@@ -83,7 +83,7 @@ QtObject {
         return databaseUrl + "/" + _encodePath(docPath)
     }
 
-    function _request(method, url, body, callback) {
+    function _request(method, url, body, callback, authToken) {
         var urlWithKey = url + (url.indexOf("?") >= 0 ? "&" : "?") + "key=" + encodeURIComponent(apiKey)
         var xhr = new XMLHttpRequest()
         lastRequest = method + " " + urlWithKey
@@ -122,8 +122,12 @@ QtObject {
         xhr.open(method, urlWithKey)
         if (body !== undefined && body !== null)
             xhr.setRequestHeader("Content-Type", "application/json")
-        if (AuthStore.idToken && AuthStore.idToken.length > 0)
-            xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+        // Use an explicit token when provided (e.g. provisioning a staff user's
+        // own users/{uid} doc with THAT staff's token); otherwise the current
+        // session's token.
+        var bearer = (authToken && authToken.length > 0) ? authToken : AuthStore.idToken
+        if (bearer && bearer.length > 0)
+            xhr.setRequestHeader("Authorization", "Bearer " + bearer)
         xhr.send(body !== undefined && body !== null ? JSON.stringify(body) : null)
     }
 
@@ -259,7 +263,7 @@ QtObject {
         })
     }
 
-    function put(path, data, callback) {
+    function put(path, data, callback, authToken) {
         var p = _splitPath(path)
         if (!p.normalizedPath) {
             if (callback) callback(false)
@@ -274,7 +278,7 @@ QtObject {
             }
             _request("POST", databaseUrl + ":commit", { writes: writes }, function(ok) {
                 if (callback) callback(ok)
-            })
+            }, authToken)
             return
         }
 
@@ -282,7 +286,7 @@ QtObject {
             if (!ok)
                 console.warn("[Firestore] PUT failed", path)
             if (callback) callback(ok)
-        })
+        }, authToken)
     }
 
     function patch(path, data, callback) {

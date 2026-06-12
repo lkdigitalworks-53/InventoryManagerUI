@@ -18,6 +18,7 @@ Item {
     signal addStaffClicked()
     signal inviteMemberClicked()
     signal manageMembersClicked()
+    signal staffActionsRequested()
     signal viewStaffClicked(string staffId)
     signal editStaffClicked(string staffId)
     signal deleteStaffClicked(string staffId)
@@ -207,8 +208,10 @@ Item {
         anchors.rightMargin: dp(Constants.space5)
         anchors.bottomMargin: dp(96)
         onClicked: {
+            // Owner/admin can both create staff and invite existing users →
+            // offer the choice sheet. Others can only add staff → go direct.
             if (root.canInviteMembers)
-                root.inviteMemberClicked()
+                root.staffActionsRequested()
             else
                 root.addStaffClicked()
         }

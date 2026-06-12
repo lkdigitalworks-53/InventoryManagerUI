@@ -49,6 +49,8 @@ qt_add_executable(appBusinessManagement
     src/XlsxService.cpp
     src/NativeFile.h
     src/NativeFile.cpp
+    src/Clipboard.h
+    src/Clipboard.cpp
     ${QmlFiles}
     ${AssetsFiles}
 )

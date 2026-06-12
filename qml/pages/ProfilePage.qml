@@ -110,6 +110,39 @@ Item {
 
                 Item {
                     Layout.fillWidth: true
+                    Layout.preferredHeight: uidBtn.height
+                    visible: AuthStore.uid.length > 0
+                    QQC.AbstractButton {
+                        id: uidBtn
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        padding: dp(6)
+                        contentItem: Row {
+                            spacing: dp(6)
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: qsTr("ID: %1").arg(root._shortUid(AuthStore.uid))
+                                color: Constants.textMuted
+                                font.pixelSize: sp(Constants.fsSmall)
+                            }
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "clipboard"
+                                size: sp(Constants.fsSmall)
+                            }
+                        }
+                        background: Rectangle {
+                            radius: dp(Constants.radiusSm)
+                            color: uidBtn.pressed ? Constants.subtleBg : "transparent"
+                        }
+                        onClicked: {
+                            Clipboard.copy(AuthStore.uid)
+                            Toast.show(qsTr("User ID copied"))
+                        }
+                    }
+                }
+
+                Item {
+                    Layout.fillWidth: true
                     Layout.preferredHeight: heroStats.height
                     Layout.topMargin: dp(Constants.space2)
                     Row {
@@ -322,5 +355,13 @@ Item {
     function _formatRole(r) {
         if (!r) return ""
         return r.charAt(0).toUpperCase() + r.slice(1)
+    }
+
+    // Short, shareable rendering of a UID: first 6 + ellipsis + last 4. Full
+    // value is what gets copied; this is display-only.
+    function _shortUid(u) {
+        if (!u || u.length === 0) return qsTr("—")
+        if (u.length <= 12) return u
+        return u.substring(0, 6) + "…" + u.substring(u.length - 4)
     }
 }

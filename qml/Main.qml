@@ -817,6 +817,17 @@ App {
             }
         }
     }
+
+    // Staff FAB choice sheet (hoisted to App root). Routes to the two existing
+    // staff dialogs; both are already hosted here.
+    StaffActionSheet {
+        id: staffActionSheet
+        onAddStaffSelected: addStaffDlg.open()
+        onInviteSelected: {
+            inviteMemberDlg.errorMessage = ""
+            inviteMemberDlg.open()
+        }
+    }
     RestockDialog { id: restockDlg }
 
     // ── Profile overlay ─────────────────────────────────────────────────────
@@ -885,6 +896,7 @@ App {
             canInviteMembers: AuthStore.canInviteMembers
             onBackRequested: staffPageOverlay.close()
             onAddStaffClicked: addStaffDlg.open()
+            onStaffActionsRequested: staffActionSheet.open()
             onExportRequested: { exportSheet.kind = "staff"; exportSheet.open() }
             onViewStaffClicked: function(sid) { staffDetailDlg.openFor(sid, false) }
             onEditStaffClicked: function(sid) { staffDetailDlg.openFor(sid, true) }
