@@ -171,7 +171,7 @@ Item {
         var orders = OrdersStore.orders || []
         for (var i = 0; i < orders.length; ++i) {
             var o = orders[i]
-            var t = new Date(o.date).getTime() || 0
+            var t = new Date(o.updatedAt || o.date).getTime() || 0
             merged.push({
                 _ts: t,
                 kind: "order",

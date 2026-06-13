@@ -7,6 +7,14 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Google OAuth custom-scheme deep-link redirect. The scheme MUST
+                 equal GoogleAuthService.reversedClientId. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="com.googleusercontent.apps.219471233608-vque5f2bc586h09hpjcbnjm05cu1c7qa"/>
+            </intent-filter>
             <!-- Qt internal meta data -->
             <meta-data android:name="android.app.lib_name" android:value="-- %%INSERT_APP_LIB_NAME%% --"/>
             <meta-data android:name="android.app.arguments" android:value="-- %%INSERT_APP_ARGUMENTS%% --"/>

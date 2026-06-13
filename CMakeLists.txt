@@ -51,6 +51,8 @@ qt_add_executable(appBusinessManagement
     src/NativeFile.cpp
     src/Clipboard.h
     src/Clipboard.cpp
+    src/PkceGenerator.h
+    src/PkceGenerator.cpp
     ${QmlFiles}
     ${AssetsFiles}
 )

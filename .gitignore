@@ -31,3 +31,9 @@ build/
 
 *package-lock.json
 .vscode/*
+
+graphify-out/*
+
+.agent-skills
+
+src/3rdParty

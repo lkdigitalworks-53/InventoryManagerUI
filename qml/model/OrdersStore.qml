@@ -198,6 +198,7 @@ QtObject {
             total: prods.length > 0 ? totals.total : parseCurrency(r.total),
             status: r.status || "pending",
             date: r.date || Qt.formatDate(new Date(), "yyyy-MM-dd"),
+            updatedAt: r.updatedAt || new Date().toISOString(),
             notes: r.notes || "",
             // Order channel (Online / In-store / …) + staff member who made
             // the sale. Both default to "" for back-compat with existing
@@ -443,6 +444,7 @@ QtObject {
             o.items = t.itemCount;
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
+        o.updatedAt = new Date().toISOString();
         _commit(arr);
     }
 

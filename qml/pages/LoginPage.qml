@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import "../components"
 import "../helper"
+import "../model"
 
 // Mobile-first auth page. Mirrors the prototype:
 //   • Fluid gradient blob background
@@ -46,6 +47,22 @@ Item {
     property string _googleNonce: ""
     property bool _signupMode: false
 
+    function clearFields() {
+        if (nameField) nameField.text = ""
+        if (emailField) emailField.text = ""
+        if (passwordField) passwordField.text = ""
+        if (confirmField) confirmField.text = ""
+        errorMessage = ""
+        localError = ""
+    }
+
+    // Clear fields when page becomes invisible (after successful login)
+    onVisibleChanged: {
+        if (!visible) {
+            Qt.callLater(clearFields)
+        }
+    }
+
     Connections {
         target: OAuthServer
         function onTokenReceived(idToken) {
@@ -55,6 +72,19 @@ Item {
         function onServerError(message) {
             _googleFlowActive = false
             localError = "Google sign-in failed: " + message
+        }
+    }
+
+    // Mobile (deep-link) Google flow results, from GoogleAuthService.
+    Connections {
+        target: GoogleAuthService
+        function onIdTokenReady(idToken) {
+            _googleFlowActive = false
+            googleSignInRequested(idToken)
+        }
+        function onAuthError(reason) {
+            _googleFlowActive = false
+            localError = "Google sign-in failed: " + reason
         }
     }
 
@@ -494,11 +524,20 @@ Item {
     }
 
     function _startGoogleSignIn() {
+        localError = ""
+        var os = Qt.platform.os
+        if (os === "android" || os === "ios") {
+            // Native flow: custom-scheme deep link + auth-code/PKCE. Main.qml
+            // listens on App.appLinkUrlReceived and routes the resulting token.
+            _googleFlowActive = true
+            GoogleAuthService.start()
+            return
+        }
+        // Desktop: loopback (unchanged).
         if (!OAuthServer.start()) {
             localError = "Could not start local auth server."
             return
         }
-        localError = ""
         _googleFlowActive = true
         _googleNonce = _generateNonce()
         var url = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -512,7 +551,11 @@ Item {
     }
 
     function _cancelGoogleFlow() {
-        OAuthServer.stop()
+        var os = Qt.platform.os
+        if (os === "android" || os === "ios")
+            GoogleAuthService.cancel()
+        else
+            OAuthServer.stop()
         _googleFlowActive = false
         _googleNonce = ""
     }

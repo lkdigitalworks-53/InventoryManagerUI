@@ -881,6 +881,11 @@ QtObject {
         onboardingNeeded = false
         AuthStore.clear()
         AuthStore.saveSession()
+        // Clear activity log to prevent cross-tenant data leakage. The log is
+        // an in-memory singleton with no tenant filtering — purging on sign-out
+        // is the only way to prevent Tenant A's activities from appearing in
+        // Tenant B's session.
+        ActivityLog.clear()
         signedOut()
     }
 

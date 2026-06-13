@@ -7,6 +7,7 @@
 #include "src/XlsxService.h"
 #include "src/NativeFile.h"
 #include "src/Clipboard.h"
+#include "src/PkceGenerator.h"
 
 int main(int argc, char *argv[])
 {
@@ -36,6 +37,10 @@ int main(int argc, char *argv[])
     // Register the clipboard helper (copy User ID, etc.).
     auto *clipboard = new Clipboard(&app);
     engine.rootContext()->setContextProperty(QStringLiteral("Clipboard"), clipboard);
+
+    // Register the PKCE helper (native Google auth-code flow on mobile).
+    auto *pkceGenerator = new PkceGenerator(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("PkceGenerator"), pkceGenerator);
 
     // Set an optional license key from project file
     felgo.setLicenseKey(PRODUCT_LICENSE_KEY);

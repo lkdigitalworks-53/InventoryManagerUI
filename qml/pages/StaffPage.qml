@@ -95,7 +95,7 @@ Item {
 
                 GradientKpiCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dp(96)
+                    Layout.preferredHeight: dp(110)
                     label: "Total"
                     value: String(StaffStore.totalStaff())
                     trend: StaffStore.departmentCount() + " depts"
@@ -103,7 +103,7 @@ Item {
                 }
                 GradientKpiCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dp(96)
+                    Layout.preferredHeight: dp(110)
                     label: "Active"
                     value: String(StaffStore.activeCount())
                     trend: "on shift"
@@ -111,7 +111,7 @@ Item {
                 }
                 GradientKpiCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dp(96)
+                    Layout.preferredHeight: dp(110)
                     label: "On leave"
                     value: String(StaffStore.onLeaveCount())
                     trend: "temporarily away"

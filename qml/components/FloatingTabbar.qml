@@ -83,13 +83,13 @@ Item {
                             Layout.alignment: Qt.AlignHCenter
                             name: modelData.iconName
                             color: tab.isActive ? Constants.brand2 : Constants.textSecondary
-                            size: sp(20)
+                            size: sp(24)
                         }
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             text: modelData.label
                             color: tab.isActive ? Constants.brand2 : Constants.textSecondary
-                            font.pixelSize: sp(10)
+                            font.pixelSize: sp(11)
                             font.bold: tab.isActive
                             horizontalAlignment: Text.AlignHCenter
                         }
