@@ -811,6 +811,19 @@ QtObject {
                 authFailed("Staff account created without UID")
                 return
             }
+            // accounts:signUp returns the NEW staff account's own idToken. We
+            // must write users/{uid} with THAT token — Firestore rules require
+            // request.auth.uid == uid for the users/ collection, so the owner's
+            // token would be denied (the cause of the "create a workspace" bug:
+            // the staff profile was never written). The member doc, by contrast,
+            // is written with the owner's token (rules: isOwnerOrAdmin). The
+            // owner's own AuthStore session is untouched — we never call
+            // _applyAuthResult here, so this is purely a per-write token.
+            var staffToken = data.idToken || ""
+            if (!staffToken) {
+                authFailed("Staff account created without an auth token")
+                return
+            }
 
             var userDoc = {
                 uid: uid,
@@ -839,12 +852,14 @@ QtObject {
                 status: "active"
             }
 
+            // users/{uid} written with the staff's own token (auth.uid == uid).
             FirebaseService.put("users/" + uid, userDoc, function(okUser) {
                 if (!okUser) {
                     authFailed("Failed to save staff user profile")
                     return
                 }
 
+                // members/{uid} written with the owner's token (isOwnerOrAdmin).
                 FirebaseService.put("tenants/" + AuthStore.tenantId + "/members/" + uid, memberDoc, function(okMember) {
                     if (!okMember) {
                         authFailed("Failed to save staff tenant membership")
@@ -856,8 +871,8 @@ QtObject {
                         StaffStore.setAppUid(staffId, uid)
                     loadTenantMembers()
                     memberOperationSucceeded("Staff credentials created for " + email)
-                })
-            })
+                }, undefined)
+            }, staffToken)
         })
     }
 
@@ -866,6 +881,11 @@ QtObject {
         onboardingNeeded = false
         AuthStore.clear()
         AuthStore.saveSession()
+        // Clear activity log to prevent cross-tenant data leakage. The log is
+        // an in-memory singleton with no tenant filtering — purging on sign-out
+        // is the only way to prevent Tenant A's activities from appearing in
+        // Tenant B's session.
+        ActivityLog.clear()
         signedOut()
     }
 
@@ -888,12 +908,33 @@ QtObject {
         }
         var tid = AuthStore.tenantId
         var uid = AuthStore.uid
-        FirebaseService.remove("tenants/" + tid + "/members/" + uid, function(ok) {
-            if (!ok) {
-                authFailed("Failed to leave workspace")
-                return
-            }
-            signOut()
+
+        // Clear the tenant pointer on the user's OWN doc FIRST. Removing only
+        // the member doc isn't enough: _loadUserProfile reads tenantId/role
+        // from users/{uid} on the next login and would walk straight back into
+        // the (now membership-less) workspace — showing no data. We read-modify
+        // -write so other fields (and other-tenant ownership) are preserved.
+        FirebaseService.get("users/" + uid, function(okGet, userDoc) {
+            var doc = (okGet && userDoc) ? userDoc : {}
+            doc.tenantId = ""
+            doc.tenantName = ""
+            doc.role = ""
+            if (Array.isArray(doc.tenants))
+                doc.tenants = doc.tenants.filter(function(t) { return t !== tid })
+            doc.lastUpdatedAt = new Date().toISOString()
+
+            FirebaseService.put("users/" + uid, doc, function(okUser) {
+                if (!okUser) {
+                    authFailed("Failed to leave workspace")
+                    return
+                }
+                // Then remove the membership (rules allow self-delete of a
+                // non-owner membership). Sign out regardless of this result —
+                // the user doc no longer points here, so the workspace is left.
+                FirebaseService.remove("tenants/" + tid + "/members/" + uid, function() {
+                    signOut()
+                })
+            })
         })
     }
 

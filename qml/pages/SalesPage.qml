@@ -44,6 +44,7 @@ Item {
     property string _channelFilter: "All"
     property string _staffFilter: "All"
     property string _categoryFilter: "All"
+    property bool _showAllActivities: false  // Toggle for showing all vs limited recent activities
 
     // Recomputed by _rebuildBreakdown() whenever the period, view mode, or
     // OrdersStore/TransactionStore revisions change.
@@ -86,7 +87,7 @@ Item {
     on_BatchWatcherChanged: _rebuildBreakdown()
     on_SupWatcherChanged: _rebuildBreakdown()
     on_PeriodChanged: _rebuildBreakdown()
-    on_ViewModeChanged: _rebuildBreakdown()
+    on_ViewModeChanged: { _rebuildBreakdown(); _showAllActivities = false }
     on_PartyFilterChanged: _rebuildBreakdown()
     on_ProfitModeChanged: _rebuildBreakdown()
     on_DateFilterChanged: _rebuildBreakdown()
@@ -899,30 +900,47 @@ Item {
                 }
             }
 
-            // Recent transactions — scoped to the active view:
+            // Recent transactions — shown in Revenue and Purchased views only.
             //   Revenue   → recent sales (each completed order line)
-            //   Sold      → recent sales
             //   Purchased → recent restocks + new-product creations
-            //   Current   → hidden (snapshot view; transactions aren't relevant)
+            //   Sold/Profit/Current/Value → hidden to avoid repetition
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
                 spacing: dp(Constants.space2)
-                visible: root._viewMode !== root._MODE_CURRENT
-                         && root._viewMode !== root._MODE_VALUE
+                visible: root._viewMode === root._MODE_REVENUE || root._viewMode === root._MODE_PURCHASED
 
-                Text {
-                    text: root._viewMode === root._MODE_PURCHASED
-                            ? qsTr("Recent purchases")
-                            : qsTr("Recent sales")
-                    color: Constants.textPrimary
-                    font.pixelSize: sp(Constants.fsBodyLg)
-                    font.bold: true
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: root._viewMode === root._MODE_PURCHASED
+                                ? qsTr("Recent purchases")
+                                : qsTr("Recent sales")
+                        color: Constants.textPrimary
+                        font.pixelSize: sp(Constants.fsBodyLg)
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    QQC.AbstractButton {
+                        visible: root._scopedTransactions(999).length > 5
+                        implicitWidth: dp(60)
+                        implicitHeight: dp(28)
+                        contentItem: Text {
+                            text: root._showAllActivities ? qsTr("Show less") : qsTr("See all")
+                            color: Constants.brand2
+                            font.pixelSize: sp(Constants.fsSmall)
+                            font.bold: true
+                            horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle { color: "transparent" }
+                        onClicked: root._showAllActivities = !root._showAllActivities
+                    }
                 }
 
                 Repeater {
-                    model: root._scopedTransactions()
+                    model: root._scopedTransactions(root._showAllActivities ? 999 : 5)
                     delegate: ListCard {
                         Layout.fillWidth: true
                         title: root._txTitle(modelData)
@@ -945,7 +963,7 @@ Item {
                 }
 
                 Text {
-                    visible: root._scopedTransactions().length === 0
+                    visible: root._scopedTransactions(999).length === 0
                     text: root._viewMode === root._MODE_PURCHASED
                             ? qsTr("No purchases yet — restock or add a product.")
                             : qsTr("No sales yet — complete an order.")
@@ -2076,6 +2094,7 @@ Item {
         var seen = {}
         var inv = InventoryStore.products || []
         for (var i = 0; i < inv.length; ++i) {
+            if (inv[i].stock <= 0) continue
             var n = inv[i].name || ""
             if (n) seen[n] = true
         }
@@ -2087,6 +2106,7 @@ Item {
         var seen = {}
         var inv = InventoryStore.products || []
         for (var i = 0; i < inv.length; ++i) {
+            if (inv[i].stock <= 0) continue
             var s = inv[i].sku || ""
             if (s) seen[s] = true
         }
@@ -2098,6 +2118,7 @@ Item {
         var seen = {}
         var inv = InventoryStore.products || []
         for (var i = 0; i < inv.length; ++i) {
+            if (inv[i].stock <= 0) continue
             var c = inv[i].category || ""
             if (c) seen[c] = true
         }
@@ -2318,7 +2339,8 @@ Item {
     // consumption array references the filter supplier, even if the sale
     // also drew from other suppliers (partial match — the row is still a
     // record the user wants to see).
-    function _scopedTransactions() {
+    function _scopedTransactions(limit) {
+        var maxItems = (typeof limit === "number" && limit > 0) ? limit : 5
         var w = root._txWatcher
         var v = root._viewMode
         // Recent transactions list is meaningless for snapshot views
@@ -2331,7 +2353,7 @@ Item {
         var filterId = partyOn ? _supplierIdForName(root._partyFilter) : ""
         var arr = TransactionStore.entries || []
         var out = []
-        for (var i = 0; i < arr.length && out.length < 20; ++i) {
+        for (var i = 0; i < arr.length && out.length < maxItems; ++i) {
             var e = arr[i]
             if (!allow[e.kind]) continue
             if (partyOn) {

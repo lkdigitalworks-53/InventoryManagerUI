@@ -36,12 +36,12 @@ BottomSheet {
         nameField.text = ""
         skuField.text = ""
         descField.text = ""
-        priceField.text = "0.00"
-        sellingPriceField.text = "0.00"
-        stockField.text = "0"
-        minStockField.text = "0"
+        priceField.text = ""
+        sellingPriceField.text = ""
+        stockField.text = ""
+        minStockField.text = ""
         taxableCombo.currentIndex = 0
-        taxPercentField.text = "0"
+        taxPercentField.text = ""
         // Build the supplier picker from SupplierStore. Index 0 stays empty
         // ("Select or add a supplier") so the user can leave it blank.
         dlg._refreshSuppliers("")
@@ -147,7 +147,6 @@ BottomSheet {
                 label: "Cost"
                 placeholderText: "0.00"
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                text: "0.00"
             }
             AuthTextField {
                 id: sellingPriceField
@@ -155,7 +154,6 @@ BottomSheet {
                 label: "Price"
                 placeholderText: "0.00"
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                text: "0.00"
             }
         }
 
@@ -280,14 +278,12 @@ BottomSheet {
                             Layout.fillWidth: true
                             label: qsTr("Initial stock")
                             placeholderText: "0"
-                            text: "0"
                         }
                         AuthTextField {
                             id: minStockField
                             Layout.fillWidth: true
                             label: qsTr("Reorder at")
-                            placeholderText: "10"
-                            text: "0"
+                            placeholderText: "2"
                         }
                     }
 

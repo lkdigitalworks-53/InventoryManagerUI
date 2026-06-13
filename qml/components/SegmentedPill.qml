@@ -43,10 +43,16 @@ Rectangle {
 
                 Text {
                     anchors.centerIn: parent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: dp(4)
+                    anchors.rightMargin: dp(4)
                     text: modelData
                     color: parent.isOn ? Constants.textOnBrand : Constants.textSecondary
                     font.pixelSize: sp(Constants.fsBody)
                     font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
                 }
 
                 MouseArea {

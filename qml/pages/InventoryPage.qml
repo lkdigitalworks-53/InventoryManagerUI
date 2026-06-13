@@ -198,12 +198,12 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)
-        anchors.bottomMargin: dp(96)
+        anchors.bottomMargin: dp(Constants.tabbarClearance) + SafeArea.bottom
         onClicked: root.addProductClicked()
     }
 
     // Per-row card — extracted so the card layout stays tidy.
-    component ProductCard: ListCard {
+    component ProductCard: QQC.AbstractButton {
         id: card
         property var product
         property bool canManage: true
@@ -213,75 +213,107 @@ Item {
         signal restockClicked()
         signal deleteClicked()
 
-        title: product ? product.name : ""
-        subtitle: product
-            ? (product.sku ? product.sku + " · " : "") +
-              InventoryStore.formatCurrency(product.sellingPrice !== undefined ? product.sellingPrice : product.price)
-            : ""
-        implicitHeight: dp(84)
+        implicitHeight: dp(110)
+        padding: dp(Constants.space3)
         onClicked: card.viewClicked()
 
-        leading: AvatarBadge {
-            imageSource: card.product && card.product.photoUrl ? card.product.photoUrl : ""
-            label: card.product && card.product.name && card.product.name.length > 0
-                ? card.product.name.charAt(0).toUpperCase() : "?"
-            palette: card.product && card.product.stock <= card.product.minStock
-                    ? Constants.grad3 : Constants.grad4
+        background: Rectangle {
+            radius: dp(Constants.radius)
+            color: card.pressed ? Constants.subtleBg : Constants.cardBg
+            border.color: Constants.borderColor
+            border.width: 1
+            Behavior on color { ColorAnimation { duration: Constants.durFast } }
         }
 
-        // Trailing column — stock counter on top, progress bar below, then a
-        // "Restock" button when the user can manage inventory. Width bumped
-        // to fit the inline button without crowding the card.
-        ColumnLayout {
-            spacing: dp(4)
-            Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
-            Layout.preferredWidth: dp(96)
+        contentItem: RowLayout {
+            spacing: dp(Constants.space3)
 
-            Text {
-                Layout.alignment: Qt.AlignRight
+            // Leading avatar
+            AvatarBadge {
+                Layout.alignment: Qt.AlignVCenter
+                size: "lg"
+                imageSource: card.product && card.product.photoUrl ? card.product.photoUrl : ""
+                label: card.product && card.product.name && card.product.name.length > 0
+                    ? card.product.name.charAt(0).toUpperCase() : "?"
+                palette: card.product && card.product.stock <= card.product.minStock
+                        ? Constants.grad3 : Constants.grad4
+            }
+
+            // Content column - title, subtitle, then units/indicator/button row
+            ColumnLayout {
                 Layout.fillWidth: true
-                horizontalAlignment: Text.AlignRight
-                text: card.product
-                        ? card.product.stock + " " + (card.product.unit || "pcs")
-                        : "0"
-                color: card.product && card.product.stock <= card.product.minStock
-                        ? Constants.danger
-                        : Constants.textSecondary
-                font.pixelSize: sp(Constants.fsCaption)
-                font.bold: card.product && card.product.stock <= card.product.minStock
-            }
-            StockProgressBar {
-                Layout.alignment: Qt.AlignRight
-                Layout.preferredWidth: dp(72)
-                barWidth: dp(72)
-                value: card.product ? Math.min(1, card.product.stock / Math.max(1, card.product.minStock * 3)) : 0
-                low: card.product && card.product.stock <= card.product.minStock
-            }
-            StatusPill {
-                Layout.alignment: Qt.AlignRight
-                visible: card.product && card.product.stock <= card.product.minStock
-                status: "low"
-                label: "Low"
-            }
-            // Pill-shaped restock affordance. We deliberately use a Rectangle
-            // + MouseArea instead of nesting another AbstractButton inside
-            // the parent ListCard — when AbstractButtons are nested, both
-            // outer (view) and inner (restock) `clicked` handlers can fire,
-            // which manifested as the dialog never opening (or opening the
-            // detail dialog instead).
-            Rectangle {
-                id: restockBtn
-                Layout.alignment: Qt.AlignRight
-                Layout.preferredHeight: dp(28)
-                Layout.preferredWidth: restockLbl.implicitWidth + dp(20)
-                visible: card.canManage
-                radius: dp(Constants.radiusPill)
-                color: restockArea.pressed
-                        ? Qt.rgba(0.06, 0.72, 0.51, 0.22)
-                        : Qt.rgba(0.06, 0.72, 0.51, 0.10)
-                border.color: Qt.rgba(0.06, 0.72, 0.51, 0.35)
-                border.width: 1
-                Behavior on color { ColorAnimation { duration: Constants.durFast } }
+                Layout.alignment: Qt.AlignVCenter
+                spacing: dp(4)
+
+                // Title
+                Text {
+                    Layout.fillWidth: true
+                    text: card.product ? card.product.name : ""
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(Constants.fsBody)
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+
+                // Subtitle (SKU · Price)
+                Text {
+                    Layout.fillWidth: true
+                    text: card.product
+                        ? (card.product.sku ? card.product.sku + " · " : "") +
+                          InventoryStore.formatCurrency(card.product.sellingPrice !== undefined ? card.product.sellingPrice : card.product.price)
+                        : ""
+                    color: Constants.textSecondary
+                    font.pixelSize: sp(Constants.fsCaption)
+                    elide: Text.ElideRight
+                }
+
+                // Bottom row - units, progress bar, low indicator, restock button
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: dp(2)
+                    spacing: dp(6)
+
+                    // Units text
+                    Text {
+                        text: card.product
+                                ? card.product.stock + " " + (card.product.unit || "pcs")
+                                : "0"
+                        color: card.product && card.product.stock <= card.product.minStock
+                                ? Constants.danger
+                                : Constants.textSecondary
+                        font.pixelSize: sp(Constants.fsCaption)
+                        font.bold: card.product && card.product.stock <= card.product.minStock
+                    }
+
+                    // Progress bar
+                    StockProgressBar {
+                        barWidth: dp(48)
+                        value: card.product ? Math.min(1, card.product.stock / Math.max(1, card.product.minStock * 3)) : 0
+                        low: card.product && card.product.stock <= card.product.minStock
+                    }
+
+                    // Low indicator
+                    StatusPill {
+                        visible: card.product && card.product.stock <= card.product.minStock
+                        status: "low"
+                        label: "Low"
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    // Restock button
+                    Rectangle {
+                        id: restockBtn
+                        Layout.preferredHeight: dp(28)
+                        Layout.preferredWidth: restockLbl.implicitWidth + dp(20)
+                        visible: card.canManage
+                        radius: dp(Constants.radiusPill)
+                        color: restockArea.pressed
+                                ? Qt.rgba(0.06, 0.72, 0.51, 0.22)
+                                : Qt.rgba(0.06, 0.72, 0.51, 0.10)
+                        border.color: Qt.rgba(0.06, 0.72, 0.51, 0.35)
+                        border.width: 1
+                        Behavior on color { ColorAnimation { duration: Constants.durFast } }
 
                 Text {
                     id: restockLbl
@@ -301,6 +333,8 @@ Item {
                         mouse.accepted = true
                         card.restockClicked()
                     }
+                }
+            }
                 }
             }
         }

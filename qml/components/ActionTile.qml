@@ -26,12 +26,12 @@ QQC.AbstractButton {
             // Icon a predictable optical centre within the tile.
             Item {
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: dp(28)
-                height: dp(28)
+                width: dp(32)
+                height: dp(32)
                 Icon {
                     anchors.centerIn: parent
                     name: root.iconName
-                    size: sp(22)
+                    size: sp(26)
                     color: Constants.textPrimary
                 }
             }

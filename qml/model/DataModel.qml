@@ -77,6 +77,32 @@ Item {
         }
 
         function onUpdateOrder(orderId, fields) {
+            // If status is changing to "completed", route through the full
+            // completion flow (stock validation + FIFO deduction + sales record).
+            if (fields.status === "completed") {
+                var o = OrdersStore.getById(orderId)
+                if (o && o.status !== "completed") {
+                    // First persist all non-status fields so the order snapshot
+                    // is complete when _tryCompleteOrder reads it back.
+                    var nonStatusFields = {}
+                    for (var k in fields) {
+                        if (k !== "status") nonStatusFields[k] = fields[k]
+                    }
+                    if (Object.keys(nonStatusFields).length > 0)
+                        OrdersStore.updateOrder(orderId, nonStatusFields)
+                    // Now delegate to the orchestrated completion path.
+                    var success = _tryCompleteOrder(orderId)
+                    if (!success) {
+                        logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
+                        _updateOrderInModel(orderId)
+                        return
+                    }
+                    _updateOrderInModel(orderId)
+                    logic.orderUpdated(orderId)
+                    return
+                }
+            }
+            // Normal update path (status not changing to completed).
             OrdersStore.updateOrder(orderId, fields)
             _updateOrderInModel(orderId)
             logic.orderUpdated(orderId)

@@ -18,6 +18,18 @@ Item {
     property string errorMessage: ""
     property string userEmail: ""
 
+    function clearFields() {
+        if (tenantNameField) tenantNameField.text = ""
+        errorMessage = ""
+    }
+
+    // Clear fields when page becomes invisible (after successful workspace creation)
+    onVisibleChanged: {
+        if (!visible) {
+            Qt.callLater(clearFields)
+        }
+    }
+
     Rectangle { anchors.fill: parent; color: Constants.appBg }
 
     // Background blobs to keep visual continuity with LoginPage.

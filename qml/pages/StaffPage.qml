@@ -18,6 +18,7 @@ Item {
     signal addStaffClicked()
     signal inviteMemberClicked()
     signal manageMembersClicked()
+    signal staffActionsRequested()
     signal viewStaffClicked(string staffId)
     signal editStaffClicked(string staffId)
     signal deleteStaffClicked(string staffId)
@@ -94,7 +95,7 @@ Item {
 
                 GradientKpiCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dp(96)
+                    Layout.preferredHeight: dp(110)
                     label: "Total"
                     value: String(StaffStore.totalStaff())
                     trend: StaffStore.departmentCount() + " depts"
@@ -102,7 +103,7 @@ Item {
                 }
                 GradientKpiCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dp(96)
+                    Layout.preferredHeight: dp(110)
                     label: "Active"
                     value: String(StaffStore.activeCount())
                     trend: "on shift"
@@ -110,7 +111,7 @@ Item {
                 }
                 GradientKpiCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dp(96)
+                    Layout.preferredHeight: dp(110)
                     label: "On leave"
                     value: String(StaffStore.onLeaveCount())
                     trend: "temporarily away"
@@ -207,8 +208,10 @@ Item {
         anchors.rightMargin: dp(Constants.space5)
         anchors.bottomMargin: dp(96)
         onClicked: {
+            // Owner/admin can both create staff and invite existing users →
+            // offer the choice sheet. Others can only add staff → go direct.
             if (root.canInviteMembers)
-                root.inviteMemberClicked()
+                root.staffActionsRequested()
             else
                 root.addStaffClicked()
         }

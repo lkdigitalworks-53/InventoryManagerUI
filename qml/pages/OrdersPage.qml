@@ -300,7 +300,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)
-        anchors.bottomMargin: dp(96)
+        anchors.bottomMargin: dp(Constants.tabbarClearance) + SafeArea.bottom
         onClicked: root.addOrderClicked()
     }
 
@@ -334,9 +334,9 @@ Item {
     function _filteredOrders() {
         var orders = (OrdersStore.orders || []).slice()
         orders.sort(function(a, b) {
-            var da = new Date(a.date).getTime() || 0
-            var db = new Date(b.date).getTime() || 0
-            return db - da
+            var ta = new Date(a.updatedAt || a.date).getTime() || 0
+            var tb = new Date(b.updatedAt || b.date).getTime() || 0
+            return tb - ta
         })
         var q = (root._searchText || "").toLowerCase().trim()
         var statusFilter = root._statusFilter
@@ -365,8 +365,12 @@ Item {
         }
         dataModel.syncOrdersModel()
         if (failed.length > 0) {
-            dataModel.stockErrorMsg = "Could not approve: " + failed.join(", ") + " (insufficient stock)"
-            stockErrorDlg.open()
+            var errorMsg = qsTr("Could not approve orders: %1\n\nInsufficient stock available.").arg(failed.join(", "))
+            stockErrorDlg.show({
+                title: qsTr("Insufficient Inventory"),
+                message: errorMsg,
+                variant: "error"
+            })
         }
     }
 }

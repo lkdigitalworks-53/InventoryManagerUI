@@ -51,6 +51,14 @@ App {
 
     onBackButtonPressedGlobally: app._handleBack()
 
+    // Google OAuth deep-link redirect (Android). Hand the custom-scheme URL to
+    // GoogleAuthService, which exchanges the code for an id_token; LoginPage's
+    // GoogleAuthService.onIdTokenReady then drives the existing Firebase step.
+    onAppLinkUrlReceived: function(appLinkUrl) {
+        if (GoogleAuthService.isRedirect(appLinkUrl))
+            GoogleAuthService.handleRedirect(appLinkUrl)
+    }
+
     function _handleBack() {
         // 1. Open modal sheet / dialog → close the first open one.
         var dialogs = [photoSourceSheet, addProductDlg, editProductDlg,
@@ -154,7 +162,11 @@ App {
     Connections {
         target: logic
         function onOrderCompletionFailed(orderId, errorMessage) {
-            stockErrorDlg.open()
+            stockErrorDlg.show({
+                title: qsTr("Insufficient Inventory"),
+                message: dataModel.stockErrorMsg || qsTr("Cannot complete order due to insufficient stock."),
+                variant: "error"
+            })
         }
 
         function onErrorOccurred(context, message) {
@@ -310,15 +322,8 @@ App {
         }
     }
 
-    QQC.Dialog {
-        id: stockErrorDlg; modal: true; title: "Insufficient Inventory"
-        anchors.centerIn: parent; width: dp(420); height: stockErrCol.height + dp(120)
-        standardButtons: QQC.Dialog.Ok
-        Column {
-            id: stockErrCol; width: parent.width; spacing: dp(8)
-            Text { text: "Cannot complete order — insufficient stock:"; font.pixelSize: sp(13); font.bold: true; color: "#991b1b"; wrapMode: Text.Wrap; width: parent.width }
-            Text { text: dataModel.stockErrorMsg; font.pixelSize: sp(12); color: "#ef4444"; wrapMode: Text.Wrap; width: parent.width }
-        }
+    AlertDialog {
+        id: stockErrorDlg
     }
 
     QQC.Dialog {
@@ -817,6 +822,17 @@ App {
             }
         }
     }
+
+    // Staff FAB choice sheet (hoisted to App root). Routes to the two existing
+    // staff dialogs; both are already hosted here.
+    StaffActionSheet {
+        id: staffActionSheet
+        onAddStaffSelected: addStaffDlg.open()
+        onInviteSelected: {
+            inviteMemberDlg.errorMessage = ""
+            inviteMemberDlg.open()
+        }
+    }
     RestockDialog { id: restockDlg }
 
     // ── Profile overlay ─────────────────────────────────────────────────────
@@ -885,6 +901,7 @@ App {
             canInviteMembers: AuthStore.canInviteMembers
             onBackRequested: staffPageOverlay.close()
             onAddStaffClicked: addStaffDlg.open()
+            onStaffActionsRequested: staffActionSheet.open()
             onExportRequested: { exportSheet.kind = "staff"; exportSheet.open() }
             onViewStaffClicked: function(sid) { staffDetailDlg.openFor(sid, false) }
             onEditStaffClicked: function(sid) { staffDetailDlg.openFor(sid, true) }

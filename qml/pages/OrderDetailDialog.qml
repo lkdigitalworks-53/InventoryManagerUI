@@ -211,7 +211,7 @@ BottomSheet {
         var staffId = staffCombo.currentIndex > 0
                 ? dlg._staffIds[staffCombo.currentIndex]
                 : ""
-        OrdersStore.updateOrder(dlg.orderId, {
+        logic.updateOrder(dlg.orderId, {
             customer: customerField.text,
             email: emailField.text,
             phone: phoneField.text,

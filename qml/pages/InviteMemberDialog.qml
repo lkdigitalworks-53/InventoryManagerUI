@@ -28,7 +28,7 @@ BottomSheet {
         spacing: dp(Constants.space3)
 
         Text {
-            text: "Invite an existing authenticated user by their UID. They'll receive workspace access immediately."
+            text: qsTr("Invite someone who already has an account. Ask them to open their Profile and copy their User ID, then paste it below. They'll get workspace access immediately.")
             color: Constants.textSecondary
             font.pixelSize: sp(Constants.fsBody)
             Layout.fillWidth: true

@@ -18,15 +18,41 @@ BottomSheet {
 
     signal staffCreated(var payload)
 
+    // True while an async login-credential provision is in flight. While set,
+    // the dialog stays open + busy and listens for the AuthService result so a
+    // failure (weak password, email exists, write denied) is shown instead of
+    // silently closing.
+    property bool _provisioning: false
+
     onOpened: {
         nameField.text = ""; emailField.text = ""; phoneField.text = ""
         roleField.text = ""; salaryField.text = "50000"
         loginPasswordField.text = ""; createLoginCheck.checked = false
         appRoleCombo.currentIndex = 0; deptCombo.currentIndex = 0; statusCombo.currentIndex = 0
         joinPicker.date = new Date()
+        errorLabel.text = ""
+        _provisioning = false
+        busy = false
     }
 
     onPrimaryClicked: trySubmit()
+
+    // Result of the async staff-credential provision (only while _provisioning).
+    Connections {
+        target: AuthService
+        enabled: dlg._provisioning
+        function onMemberOperationSucceeded(message) {
+            dlg._provisioning = false
+            dlg.busy = false
+            Toast.show("Staff added")
+            dlg.close()
+        }
+        function onAuthFailed(reason) {
+            dlg._provisioning = false
+            dlg.busy = false
+            errorLabel.text = reason || "Could not create staff login"
+        }
+    }
 
     ColumnLayout {
         Layout.fillWidth: true
@@ -225,8 +251,19 @@ BottomSheet {
             appRole: appRoleCombo.currentText.toLowerCase()
         }
 
-        Toast.show("Teammate added")
         staffCreated(payload)
+
+        if (createLoginCheck.checked) {
+            // Async: AuthService.provisionStaffCredentials runs after staffCreated.
+            // Keep the sheet open + busy; the Connections block above closes it on
+            // success or shows the error on failure.
+            _provisioning = true
+            busy = true
+            return
+        }
+
+        // No login to provision — the staff record is added synchronously.
+        Toast.show("Teammate added")
         dlg.close()
     }
 }
