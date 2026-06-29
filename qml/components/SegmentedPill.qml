@@ -58,10 +58,11 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        root.selected = index
-                        root.segmentSelected(index, modelData)
-                    }
+                    // Controlled component: never write our own `selected` — that
+                    // would clobber a parent's `selected:` binding and freeze the
+                    // highlight (so taps moved it but swipes/external changes didn't).
+                    // The parent owns the state and updates it in onSegmentSelected.
+                    onClicked: root.segmentSelected(index, modelData)
                 }
             }
         }

@@ -24,17 +24,19 @@ BottomSheet {
     secondaryAction: "Cancel"
 
     property string mode: "products"
+    property var dataModelRef: null
 
     // Internal state
     property var _readyRows: []
     property var _issueRows: []
+    property var _warnRows: []
     property string _fileName: ""
 
     signal filePickRequested()
     signal importCompleted(string message)
 
     function pickAndStart() {
-        _readyRows = []; _issueRows = []; _fileName = ""
+        _readyRows = []; _issueRows = []; _warnRows = []; _fileName = ""
         filePickRequested()
     }
 
@@ -49,8 +51,17 @@ BottomSheet {
         var s = String(raw).trim()
         var lower = s.toLowerCase()
         if (lower.indexOf("http://") === 0 || lower.indexOf("https://") === 0) return s
-        if (lower.indexOf("file:") === 0) return s
         if (lower.indexOf("content://") === 0) return s
+        // Normalize a file: URL down to its bare path so we can rebuild a VALID
+        // one. The desktop picker returns a malformed 2-slash "file://C:/…",
+        // where "C:" is parsed as the URL HOST and the path becomes "//c/…" →
+        // QFile can't find it ("File not found"). Stripping "file:" + leading
+        // slashes here, then re-applying the drive-letter rule below, turns
+        // "file://C:/…", "file:///C:/…", and a raw "C:\…" all into a correct
+        // "file:///C:/…". (content:// already returned above; on Android a
+        // copied cache path has no scheme and flows straight through.)
+        if (lower.indexOf("file:") === 0)
+            s = s.substring(5).replace(/^\/+/, "")
         var norm = s.replace(/\\/g, "/")
         if (norm.indexOf("/") !== 0) norm = "/" + norm
         return "file://" + norm
@@ -91,6 +102,11 @@ BottomSheet {
                 visible: root._issueRows.length > 0
                 status: "pending"
                 label: root._issueRows.length + " issue" + (root._issueRows.length === 1 ? "" : "s")
+            }
+            StatusPill {
+                visible: root._warnRows.length > 0
+                status: "processing"
+                label: root._warnRows.length + " warning" + (root._warnRows.length === 1 ? "" : "s")
             }
         }
 
@@ -284,6 +300,55 @@ BottomSheet {
                     Layout.topMargin: dp(Constants.space3)
                     horizontalAlignment: Text.AlignHCenter
                 }
+
+                // Warnings section (distinct from hard-reject issues)
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: dp(Constants.space3)
+                    visible: root._warnRows.length > 0
+                    spacing: dp(Constants.space2)
+
+                    Text {
+                        text: "Imported with warnings — these reduce report accuracy"
+                        color: Constants.textSecondary
+                        font.pixelSize: sp(Constants.fsSmall)
+                        font.bold: true
+                    }
+
+                    Repeater {
+                        model: root._warnRows
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            radius: dp(Constants.radius)
+                            color: Qt.rgba(1.0, 0.95, 0.8, 1.0)  // amber/warning bg
+                            border.color: Qt.rgba(0.9, 0.7, 0.3, 0.5)
+                            border.width: 1
+                            Layout.preferredHeight: warnTxt.implicitHeight + dp(Constants.space3 * 2)
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: dp(Constants.space3)
+                                spacing: dp(Constants.space2)
+
+                                Text {
+                                    text: "Row " + modelData.row
+                                    color: Qt.rgba(0.6, 0.4, 0.0, 1.0)  // dark amber
+                                    font.pixelSize: sp(Constants.fsCaption)
+                                    font.bold: true
+                                    Layout.preferredWidth: dp(50)
+                                }
+                                Text {
+                                    id: warnTxt
+                                    text: modelData.message
+                                    color: Qt.rgba(0.6, 0.4, 0.0, 1.0)
+                                    font.pixelSize: sp(Constants.fsBody)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -311,6 +376,7 @@ BottomSheet {
     function _validateProductRows(rows) {
         var ready = []
         var issues = []
+        var warns = []
         var existingBySku = {}
         var existingById = {}
         for (var i = 0; i < InventoryStore.products.length; ++i) {
@@ -322,37 +388,68 @@ BottomSheet {
         for (var k = 0; k < rows.length; ++k) {
             var r = rows[k]
             var row = k + 2
+            var pid = (r["Product ID"] || "").toString().trim()
+            var sku = (r["SKU"] || "").toString().trim()
+
+            // HARD-REJECT: both Product ID and SKU empty
+            if (!pid && !sku) {
+                issues.push({ row: row, message: "Missing identifier: need SKU or Product ID" })
+                continue
+            }
+
             var name = (r["Name"] || "").toString().trim()
             if (!name || name.length < 2) {
                 issues.push({ row: row, message: "Missing or too-short Name" })
                 continue
             }
+
             var sellRaw = r["Selling Price"]
             var sell = parseFloat(sellRaw)
             if (isNaN(sell) || sell <= 0) {
                 issues.push({ row: row, message: "Invalid or missing Selling Price (got '" + sellRaw + "')" })
                 continue
             }
+
+            // HARD-REJECT: missing Cost Price
             var costRaw = r["Cost Price"]
             var cost = parseFloat(costRaw)
-            if (isNaN(cost) || cost < 0) cost = 0
+            if (isNaN(cost)) {
+                issues.push({ row: row, message: "Missing Cost Price (required for value/profit reports)" })
+                continue
+            }
+            if (cost < 0) cost = 0
+
             if (sell < cost) {
                 issues.push({ row: row, message: "Selling Price < Cost Price" })
                 continue
             }
+
+            // DEFAULT+WARN: missing Unit
+            var unit = (r["Unit"] || "").toString().trim()
+            if (!unit) {
+                unit = "Units (pcs)"
+                warns.push({ row: row, message: name + ": Unit defaulted to 'Units (pcs)'" })
+            }
+
+            // DEFAULT+WARN: missing SKU but Product ID present
+            if (!sku && pid) {
+                warns.push({ row: row, message: name + ": SKU will be auto-generated" })
+            }
+
             var rec = {
                 row: row,
-                productId: (r["Product ID"] || "").toString().trim(),
+                productId: pid,
                 name: name,
-                sku: (r["SKU"] || "").toString().trim(),
+                sku: sku,
                 category: (r["Category"] || "").toString().trim(),
-                unit: (r["Unit"] || "").toString().trim() || "Units (pcs)",
+                unit: unit,
                 description: (r["Description"] || "").toString(),
                 price: cost,
                 sellingPrice: sell,
                 stock: parseInt(r["Stock"]) || 0,
                 minStock: parseInt(r["Min Stock"]) || 0,
                 photoUrl: (r["Photo URL"] || "").toString().trim(),
+                supplier: (r["Supplier"] || "").toString().trim(),
                 _conflictPolicy: "skip"
             }
             var hit = null
@@ -363,11 +460,13 @@ BottomSheet {
         }
         _readyRows = ready
         _issueRows = issues
+        _warnRows = warns
     }
 
     function _validateOrderRows(rows) {
         var ready = []
         var issues = []
+        var warns = []
         var existingById = {}
         for (var i = 0; i < OrdersStore.orders.length; ++i)
             existingById[OrdersStore.orders[i].orderId] = OrdersStore.orders[i]
@@ -418,6 +517,12 @@ BottomSheet {
                 continue
             }
 
+            // DEFAULT+WARN: missing Date
+            var orderDate = (head["Date"] || "").toString().trim()
+            if (!orderDate) {
+                warns.push({ row: grp.firstRow, message: customer + ": Date defaulted to import day (skews time-series)" })
+            }
+
             var prods = []
             var unresolved = []
             for (var rr = 0; rr < grp.rows.length; ++rr) {
@@ -425,8 +530,18 @@ BottomSheet {
                 var lineRow = grp.rows[rr].row
                 var pid = (lineSrc["Product ID"] || "").toString().trim()
                 var sku = (lineSrc["SKU"] || "").toString().trim()
-                var qty = parseInt(lineSrc["Quantity"]) || 0
-                if (!pid && !sku && !qty) continue   // empty line — order has no items
+                var qtyRaw = lineSrc["Quantity"]
+                var hasQty = qtyRaw !== undefined && qtyRaw !== null && String(qtyRaw).trim() !== ""
+                var qty = parseInt(qtyRaw) || 0
+
+                // Empty continuation line
+                if (!pid && !sku && !hasQty) continue
+
+                // HARD-REJECT LINE: has data but no identifier
+                if (!pid && !sku) {
+                    unresolved.push("row " + lineRow + ": missing Product ID/SKU")
+                    continue
+                }
 
                 var inv = null
                 if (pid && idToProduct[pid]) inv = idToProduct[pid]
@@ -435,31 +550,47 @@ BottomSheet {
                     unresolved.push("row " + lineRow + ": " + (pid || sku || "(no id)"))
                     continue
                 }
+
+                // REJECT LINE + WARN: missing/invalid quantity
+                if (!hasQty || qty <= 0) {
+                    warns.push({ row: lineRow, message: inv.name + ": line skipped — missing Quantity" })
+                    continue
+                }
+
+                // DEFAULT+WARN: missing Unit Price
                 var unitPriceRaw = lineSrc["Unit Price"]
                 var unitPrice = parseFloat(unitPriceRaw)
-                if (isNaN(unitPrice)) unitPrice = inv.sellingPrice || inv.price || 0
+                if (isNaN(unitPrice)) {
+                    unitPrice = inv.sellingPrice || inv.price || 0
+                    warns.push({ row: lineRow, message: inv.name + ": Unit Price defaulted to current selling price (may differ from sale price)" })
+                }
+
                 var taxPctRaw = lineSrc["Tax %"]
                 var taxPct = parseFloat(taxPctRaw)
                 if (isNaN(taxPct)) taxPct = inv.taxable ? Number(inv.taxPercent || 0) : 0
                 var taxable = taxPct > 0 || !!inv.taxable
+
+                // Per-line discount (from LINE cells, not order-level)
+                var lnDt = (lineSrc["Discount Type"] || "flat").toString().trim().toLowerCase()
+                if (lnDt !== "percent") lnDt = "flat"
+                var lnDv = parseFloat(lineSrc["Discount Value"])
+                if (isNaN(lnDv)) lnDv = 0
+
                 prods.push({
                     productId: inv.productId,
                     name: inv.name,
                     price: unitPrice,
                     quantity: qty,
                     taxable: taxable,
-                    taxPercent: taxPct
+                    taxPercent: taxPct,
+                    discountType: lnDt,
+                    discountValue: lnDv
                 })
             }
             if (unresolved.length > 0) {
                 issues.push({ row: grp.firstRow, message: "Unknown product(s): " + unresolved.join("; ") })
                 continue
             }
-
-            var dt = (head["Discount Type"] || "flat").toString().trim().toLowerCase()
-            if (dt !== "percent") dt = "flat"
-            var dv = parseFloat(head["Discount Value"])
-            if (isNaN(dv)) dv = 0
 
             var rec = {
                 row: grp.firstRow,
@@ -468,10 +599,8 @@ BottomSheet {
                 email: (head["Email"] || "").toString().trim(),
                 phone: (head["Phone"] || "").toString().trim(),
                 status: status,
-                date: (head["Date"] || "").toString().trim(),
+                date: orderDate,
                 notes: (head["Notes"] || "").toString(),
-                discountType: dt,
-                discountValue: dv,
                 products: prods,
                 _conflictPolicy: "skip"
             }
@@ -480,6 +609,7 @@ BottomSheet {
         }
         _readyRows = ready
         _issueRows = issues
+        _warnRows = warns
     }
 
     function _summarize(rec) {
@@ -518,15 +648,36 @@ BottomSheet {
     }
 
     function _apply() {
-        var counts
-        if (mode === "products")
+        var counts, understocked = 0
+        if (mode === "products") {
             counts = InventoryStore.upsertMany(_readyRows)
-        else
+        } else {
             counts = OrdersStore.upsertMany(_readyRows)
+            // Book every newly-added COMPLETED order (anon orders got ids inside
+            // upsertMany — use the returned addedIds so we don't miss them).
+            var addedIds = counts.addedIds || []
+            // Map added orders back to their source records to check status.
+            // Newly-added records are those not skipped; match by resulting order.
+            for (var i = 0; i < addedIds.length; ++i) {
+                var o = OrdersStore.getById(addedIds[i])
+                if (!o || o.status !== "completed") continue
+                if (dataModelRef) {
+                    var res = dataModelRef.completeImportedOrder(addedIds[i])
+                    if (res && res.understocked) understocked++
+                }
+            }
+        }
 
-        var msg = "Imported " + (counts.added + counts.updated)
-            + " row" + ((counts.added + counts.updated) === 1 ? "" : "s")
+        var n = counts.added + counts.updated
+        var msg = "Imported " + n + " row" + (n === 1 ? "" : "s")
         if (counts.skipped > 0) msg += " · " + counts.skipped + " skipped"
+        if (understocked > 0) msg += " · " + understocked + " completed with insufficient stock"
+        if (_warnRows.length > 0) msg += " · " + _warnRows.length + " warning(s)"
+
+        ActivityLog.record("import",
+            (mode === "products" ? "Imported products" : "Imported orders"),
+            msg, "")
+
         importCompleted(msg)
         close()
     }

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="320" viewBox="0 0 1320 320">
+  <defs>
+    <radialGradient id="sheen" cx="35%" cy="30%" r="90%">
+      <stop offset="0" stop-color="#312e81"/>
+      <stop offset="1" stop-color="#1e1b4b"/>
+    </radialGradient>
+    <!-- K gradient: identical span to icon.svg (0,0->1024,1024) so the scaled K
+         shows the same indigo->violet->pink spectrum as the app icon. -->
+    <linearGradient id="k" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#818cf8"/>
+      <stop offset="0.5" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <linearGradient id="word" x1="372" y1="0" x2="1110" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="0.5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+  <!-- K tile, 320x320 on the left -->
+  <rect x="0" y="0" width="320" height="320" rx="72" fill="#1e1b4b"/>
+  <rect x="0" y="0" width="320" height="320" rx="72" fill="url(#sheen)"/>
+  <!-- K: same geometry + stroke-width (116) as icon.svg, scaled into the 320 tile. -->
+  <g fill="none" stroke="url(#k)" stroke-width="116" stroke-linecap="butt" stroke-linejoin="miter"
+     transform="scale(0.3125)">
+    <line x1="360" y1="300" x2="360" y2="724"/>
+    <polyline points="700,300 430,512 700,724"/>
+  </g>
+  <text x="372" y="230" font-family="Helvetica, Arial, sans-serif" font-weight="800"
+        font-size="200" letter-spacing="-6" fill="url(#word)">Karobar</text>
+</svg>

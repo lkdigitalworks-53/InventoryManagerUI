@@ -2,6 +2,9 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+// Product categories. Persisted to Firestore (tenant-scoped) AND cached
+// device-locally via QSettings. Exposes a single default category that
+// pre-selects in the AddProductDialog picker. Edited via ManageCategoriesDialog.
 QtObject {
     id: root
 
@@ -10,7 +13,10 @@ QtObject {
     ]
 
     property var categories: defaults.slice()
-    property string lastUsed: ""
+    // Single default category. `lastUsed` kept as a back-compat alias.
+    property string defaultCategory: ""
+    property string lastUsed: defaultCategory
+    property int revision: 0
 
     property Settings _settings: Settings {
         category: "CategoryStore"
@@ -18,25 +24,59 @@ QtObject {
         property string lastUsed: ""
     }
 
-    Component.onCompleted: _load()
+    Component.onCompleted: {
+        _loadLocal()
+        _fetchFromFirebase()
+    }
 
-    function _load() {
+    function _loadLocal() {
         if (_settings.categoriesJson && _settings.categoriesJson.length > 2) {
             try {
                 var arr = JSON.parse(_settings.categoriesJson)
-                if (Array.isArray(arr) && arr.length > 0) {
-                    categories = arr
-                }
+                if (Array.isArray(arr) && arr.length > 0) categories = arr
             } catch (e) {
                 categories = defaults.slice()
             }
         }
-        lastUsed = _settings.lastUsed || (categories.length > 0 ? categories[0] : "")
+        defaultCategory = _settings.lastUsed || (categories.length > 0 ? categories[0] : "")
+        lastUsed = defaultCategory
     }
 
-    function _save() {
+    function _fetchFromFirebase() {
+        FirebaseService.get("config/categories", function(ok, data) {
+            if (!ok || !data) return
+            if (Array.isArray(data.categories) && data.categories.length > 0)
+                categories = data.categories
+            var def = data.defaultCategory || ""
+            defaultCategory = (def && categories.indexOf(def) >= 0)
+                    ? def : (categories.length > 0 ? categories[0] : "")
+            lastUsed = defaultCategory
+            revision++
+            _saveLocal()
+        })
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase() }
+
+    function _saveLocal() {
         _settings.categoriesJson = JSON.stringify(categories)
-        _settings.lastUsed = lastUsed
+        _settings.lastUsed = defaultCategory
+    }
+
+    function _pushToFirebase() {
+        FirebaseService.put("config/categories",
+                            { categories: categories, defaultCategory: defaultCategory },
+                            function(ok) {
+            if (!ok) console.warn("[CategoryStore] Firestore write failed",
+                                  FirebaseService.lastStatusCode, FirebaseService.lastError)
+        })
+    }
+
+    function _commit() {
+        lastUsed = defaultCategory
+        revision++
+        _saveLocal()
+        _pushToFirebase()
     }
 
     function addCategory(name) {
@@ -48,7 +88,9 @@ QtObject {
         var arr = categories.slice()
         arr.push(trimmed)
         categories = arr
-        _save()
+        if (!defaultCategory || categories.indexOf(defaultCategory) < 0)
+            defaultCategory = trimmed
+        _commit()
         return true
     }
 
@@ -57,20 +99,22 @@ QtObject {
         for (var i = 0; i < categories.length; ++i)
             if (categories[i] !== name) arr.push(categories[i])
         categories = arr
-        if (lastUsed === name)
-            lastUsed = arr.length > 0 ? arr[0] : ""
-        _save()
+        if (defaultCategory === name)
+            defaultCategory = arr.length > 0 ? arr[0] : ""
+        _commit()
     }
 
-    function setLastUsed(name) {
-        if (!name) return
-        lastUsed = name
-        _save()
+    function setDefault(name) {
+        if (!name || categories.indexOf(name) < 0) return
+        defaultCategory = name
+        _commit()
     }
+
+    function setLastUsed(name) { setDefault(name) }
 
     function indexOfDefault() {
         for (var i = 0; i < categories.length; ++i)
-            if (categories[i] === lastUsed) return i
+            if (categories[i] === defaultCategory) return i
         return 0
     }
 }

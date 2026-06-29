@@ -236,4 +236,29 @@ QtObject {
         console.warn("[StockBatchStore] Topped up batch", updated.batchId, "by", deficit,
                      "to repair drift on product", productId)
     }
+
+    // Inverse of consumeFifo: credit `qty` back onto a specific batch (used when
+    // a completed-order line is returned and the units go back to sellable
+    // stock). The batch is found by id — batches are never deleted, only zeroed,
+    // so a fully-consumed batch is still present and gets its qtyRemaining
+    // restored. If the batch id can't be found (rare: ledger drift), fall back to
+    // topUpOldest so stock isn't silently lost.
+    function restoreFifo(batchId, productId, qty) {
+        if (!qty || qty <= 0) return
+        var b = getById(batchId)
+        if (!b) {
+            if (productId) topUpOldest(productId, qty)
+            return
+        }
+        var before = Object.assign({}, b)
+        var updated = Object.assign({}, b, {
+            qtyRemaining: (b.qtyRemaining || 0) + qty,
+            updatedAt: new Date().toISOString()
+        })
+        var next = []
+        for (var i = 0; i < batches.length; ++i)
+            next.push(batches[i].batchId === batchId ? updated : batches[i])
+        batches = next
+        Gateway.recordMutation("stock_batch", batchId, "update", before, updated)
+    }
 }

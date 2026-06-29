@@ -1,4 +1,7 @@
 import QtQuick
+import "../helper/StockReconcile.js" as StockReconcile
+import "../helper/OrderAdjust.js" as OrderAdjust
+import "../helper/OrderMath.js" as OrderMath
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataModel.qml  –  Orchestrator / single source of truth
@@ -63,8 +66,8 @@ Item {
         }
 
         // ── Orders ────────────────────────────────────────────────────────────
-        function onAddOrder(customer, items, total, status, date, email, phone, products, discountType, discountValue, orderChannel, staffId) {
-            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, discountType, discountValue, orderChannel, staffId)
+        function onAddOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId) {
+            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId)
             _syncOrdersModel()
             var newOrderId = OrdersStore.orders[OrdersStore.orders.length - 1].orderId
             logic.orderAdded(newOrderId)
@@ -77,11 +80,14 @@ Item {
         }
 
         function onUpdateOrder(orderId, fields) {
+            var cur = OrdersStore.getById(orderId)
+            var wasCompleted = cur && cur.status === "completed"
+            var toCompleted = fields.status === "completed"
+
             // If status is changing to "completed", route through the full
             // completion flow (stock validation + FIFO deduction + sales record).
-            if (fields.status === "completed") {
-                var o = OrdersStore.getById(orderId)
-                if (o && o.status !== "completed") {
+            if (toCompleted) {
+                if (cur && !wasCompleted) {
                     // First persist all non-status fields so the order snapshot
                     // is complete when _tryCompleteOrder reads it back.
                     var nonStatusFields = {}
@@ -101,8 +107,37 @@ Item {
                     logic.orderUpdated(orderId)
                     return
                 }
+            } else if (wasCompleted && fields.status !== undefined) {
+                // Reverting a COMPLETED order back to pending/processing (or any
+                // non-completed status). The completion deducted stock and booked
+                // sale events; reopening MUST reverse both or the inventory and
+                // the analysis reports permanently overcount (bug 1). This also
+                // makes a later re-completion a clean, fresh deduction instead of
+                // a second one stacked on top (bug 2). Reversal reads the order's
+                // current consumption[] lineage, so it MUST run before the
+                // updateOrder below (which may strip consumption from products).
+                _reverseCompletedOrder(cur)
+                // Persist the new status with consumption cleared off every line —
+                // a reopened order holds no booked lineage until it completes again.
+                var revertFields = {}
+                for (var rk in fields) revertFields[rk] = fields[rk]
+                if (revertFields.products === undefined) {
+                    var cleared = []
+                    var cp = cur.products || []
+                    for (var ci = 0; ci < cp.length; ++ci) {
+                        var lc = {}
+                        for (var lk in cp[ci]) lc[lk] = cp[ci][lk]
+                        lc.consumption = []
+                        cleared.push(lc)
+                    }
+                    revertFields.products = cleared
+                }
+                OrdersStore.updateOrder(orderId, revertFields)
+                _updateOrderInModel(orderId)
+                logic.orderUpdated(orderId)
+                return
             }
-            // Normal update path (status not changing to completed).
+            // Normal update path (status not changing completed↔non-completed).
             OrdersStore.updateOrder(orderId, fields)
             _updateOrderInModel(orderId)
             logic.orderUpdated(orderId)
@@ -130,6 +165,20 @@ Item {
             logic.orderDeleted(orderId)
         }
 
+        function onAdjustOrder(orderId, newLines, reason, condition, note) {
+            if (!_hasAnyRole(["owner", "admin", "manager"])) {
+                logic.errorOccurred("auth", "You do not have permission to adjust orders")
+                return
+            }
+            var ok = _tryAdjustOrder(orderId, newLines, reason, condition, note)
+            if (ok) {
+                _updateOrderInModel(orderId)
+                logic.orderUpdated(orderId)
+            } else {
+                logic.errorOccurred("order", dataModel.stockErrorMsg || "Could not adjust order")
+            }
+        }
+
         // ── Inventory ─────────────────────────────────────────────────────────
         function onAddProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent) {
             if (!_hasAnyRole(["owner", "admin"])) {
@@ -145,7 +194,14 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can update products")
                 return
             }
+            // Capture the pre-edit stock so we can reconcile the FIFO batch
+            // ledger after the product update. A manual stock edit only touches
+            // product.stock; without this the batch ledger (which backs the
+            // Value / Potential-profit / by-supplier Analysis reports) drifts.
+            var before = InventoryStore.getById(productId)
+            var oldStock = before ? before.stock : undefined
             InventoryStore.updateProduct(productId, fields)
+            _reconcileBatchesForStockEdit(productId, oldStock, fields.stock)
             logic.productUpdated(productId)
         }
 
@@ -352,11 +408,346 @@ Item {
         return true
     }
 
+    // Complete an imported order that arrived with status "completed".
+    // Mirrors _tryCompleteOrder's FIFO consumption + sale recording, but never
+    // FAILS on insufficient stock (owner decision "complete + report shortfall"):
+    // it consumes what's available, tops up the deficit so the sale still books
+    // with correct lineage, deducts product.stock, and reports the shortfall to
+    // the caller. The import flow (ImportPreviewDialog) calls this for each
+    // freshly-added order whose status is "completed".
+    //   returns { ok: bool, understocked: bool }
+    function completeImportedOrder(orderId) {
+        var o = OrdersStore.getById(orderId)
+        if (!o) return { ok: false, understocked: false }
+        var understocked = false
+        var linesWithConsumption = []
+        if (o.products && o.products.length > 0) {
+            for (var j = 0; j < o.products.length; ++j) {
+                var pp = o.products[j]
+                var qqty = _lineQty(pp)
+                var invP = _resolveInventory(pp)
+                var consumption = []
+                if (invP && qqty > 0) {
+                    if ((invP.stock || 0) < qqty) understocked = true
+                    consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
+                    var consumed = _sumConsumed(consumption)
+                    if (consumed < qqty) {
+                        StockBatchStore.topUpOldest(invP.productId, qqty - consumed)
+                        var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
+                        for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
+                    }
+                    InventoryStore.deductStock(invP.productId, qqty)
+                } else if (!invP) {
+                    console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
+                }
+                var line = {}
+                for (var k in pp) line[k] = pp[k]
+                line.consumption = consumption
+                linesWithConsumption.push(line)
+            }
+        }
+        OrdersStore.updateOrder(orderId, {
+            products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
+        })
+        SalesStore.recordSale(o.total, o.items)
+        TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
+        _updateOrderInModel(orderId)
+        return { ok: true, understocked: understocked }
+    }
+
+    // Reverse a COMPLETED order back to an un-booked state. Mirrors a full
+    // return on every line: restores each line's consumed batches to sellable
+    // stock, credits product.stock, and appends a negating ledger event so the
+    // sold/revenue/profit reports net the original sale back to zero. Used when
+    // a completed order is reopened (status → pending/processing). Idempotent at
+    // the call site: onUpdateOrder only invokes this on the completed→non-completed
+    // edge, and clears consumption[] afterwards so a re-revert is a no-op.
+    function _reverseCompletedOrder(o) {
+        if (!o || !o.products) return
+        for (var i = 0; i < o.products.length; ++i) {
+            var line = o.products[i]
+            var qty = _lineQty(line)
+            if (qty <= 0) continue
+            var consumption = Array.isArray(line.consumption) ? line.consumption : []
+            // Reverse-FIFO plan over the WHOLE line (return every unit).
+            var plan = OrderAdjust.restorePlan(consumption, qty)
+            var reversed = []
+            for (var p = 0; p < plan.length; ++p)
+                reversed.push({ batchId: plan[p].batchId, supplierId: plan[p].supplierId,
+                                qtyConsumed: -plan[p].qty, unitCost: plan[p].unitCost })
+            // Restore sellable stock (batch ledger + product.stock).
+            if (plan.length > 0) {
+                for (var pr = 0; pr < plan.length; ++pr)
+                    StockBatchStore.restoreFifo(plan[pr].batchId, line.productId, plan[pr].qty)
+            } else if (line.productId) {
+                // Pre-FIFO line: no lineage — repair via topUpOldest.
+                StockBatchStore.topUpOldest(line.productId, qty)
+            }
+            if (line.productId)
+                InventoryStore.creditStockNoBatch(line.productId, qty)
+            // Negating ledger event so realised revenue/sold/profit unwind exactly
+            // what completion booked. Reason "reopened" surfaces it in history.
+            TransactionStore.recordReturn(o, { productId: line.productId, name: line.name, price: line.price },
+                                          qty, reversed, "reopened", "restock",
+                                          qsTr("Order reopened — sale reversed"))
+        }
+    }
+
     // Internal: total qty across an FIFO consumption result.
     function _sumConsumed(consumption) {
         var s = 0
         if (!consumption) return 0
         for (var i = 0; i < consumption.length; ++i) s += (consumption[i].qtyConsumed || 0)
         return s
+    }
+
+    // Reverse/adjust a COMPLETED order's lines. Diffs the edited lines vs the
+    // order's current lines and, per changed line: restores returned units to
+    // their original batches (Restock) or writes them off (Damaged), deducts any
+    // added units via fresh FIFO, writes a negative return ledger event, and
+    // reconciles any price change on surviving units. Then updates the order +
+    // appends an adjustments[] entry. Mirrors _tryCompleteOrder in reverse.
+    function _tryAdjustOrder(orderId, newLines, reason, condition, note) {
+        var o = OrdersStore.getById(orderId)
+        if (!o) return false
+        // Only completed orders carry booked stock + sale events to reverse.
+        // A pending/processing order never deducted stock, so reversing would
+        // corrupt both ledgers. Guard defensively (the UI only routes completed
+        // orders here, but RBAC gates WHO, not the order STATE).
+        if (o.status !== "completed") {
+            dataModel.stockErrorMsg = "Only completed orders can be adjusted"
+            return false
+        }
+
+        var alloc = OrderMath.allocate(o)
+        var allocByPid = {}
+        for (var ai = 0; ai < alloc.perLine.length; ++ai) {
+            var pl = alloc.perLine[ai]
+            allocByPid[pl.productId] = pl
+        }
+
+        var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
+        var refundAmount = 0
+        var restock = (condition !== "damaged")
+        // Capture FIFO lineage for any ADDED units (exchange replacement / qty
+        // increase), keyed by productId, so we can stamp it onto the adjusted
+        // order line below. Without this the replacement's consumption lives
+        // only on its sale event, so order-sourced reports (export Totals block,
+        // Revenue-by-supplier) miss its COGS and supplier — overstating profit
+        // and undercounting the supplier axis on every exchange (bug 14).
+        var addedConsByPid = {}
+
+        for (var i = 0; i < deltas.length; ++i) {
+            var d = deltas[i]
+
+            // ── Returned / removed units ─────────────────────────────────
+            if (d.returnedQty > 0) {
+                var line = _findLine(o.products, d.productId, d.name)
+                var consumption = line && Array.isArray(line.consumption) ? line.consumption : []
+                var plan = OrderAdjust.restorePlan(consumption, d.returnedQty)
+                var reversed = []
+                for (var p = 0; p < plan.length; ++p)
+                    reversed.push({ batchId: plan[p].batchId, supplierId: plan[p].supplierId,
+                                    qtyConsumed: -plan[p].qty, unitCost: plan[p].unitCost })
+                if (restock) {
+                    if (plan.length > 0) {
+                        for (var pr = 0; pr < plan.length; ++pr)
+                            StockBatchStore.restoreFifo(plan[pr].batchId, d.productId, plan[pr].qty)
+                    } else if (d.productId) {
+                        // Pre-FIFO line: no lineage — repair via topUpOldest.
+                        StockBatchStore.topUpOldest(d.productId, d.returnedQty)
+                    }
+                    InventoryStore.creditStockNoBatch(d.productId, d.returnedQty)
+                }
+                // Damaged: units are written off — batch ledger NOT credited and
+                // product.stock stays reduced (it already reflects the sale).
+                TransactionStore.recordReturn(o, { productId: d.productId, name: d.name, price: d.oldPrice },
+                                              d.returnedQty, reversed, reason, condition, note)
+                // Refund the returned units at the ORIGINAL-sale per-unit rate
+                // (net+tax)/qty read from the immutable sale event — NOT the live
+                // allocation, which on a 2nd adjustment already reflects
+                // adjustment #1's discount edit (SITE 6). Fall back to the live
+                // allocation, then the old price, for pre-event legacy orders.
+                var saleEv = TransactionStore.firstSaleEvent(o.orderId, d.productId)
+                var perUnit = OrderMath.refundPerUnit(saleEv)
+                if (perUnit === 0) {
+                    var pl2 = allocByPid[d.productId]
+                    perUnit = pl2 && pl2.qty > 0 ? (pl2.net + pl2.tax) / pl2.qty : d.oldPrice
+                }
+                refundAmount += d.returnedQty * perUnit
+            }
+
+            // ── Added units (exchange replacement / modify-up) ───────────
+            if (d.addedQty > 0) {
+                var invA = InventoryStore.getById(d.productId)
+                if (invA) {
+                    var cons = StockBatchStore.consumeFifo(d.productId, d.addedQty)
+                    var consumed = _sumConsumed(cons)
+                    if (consumed < d.addedQty) {
+                        StockBatchStore.topUpOldest(d.productId, d.addedQty - consumed)
+                        var retry = StockBatchStore.consumeFifo(d.productId, d.addedQty - consumed)
+                        for (var rr = 0; rr < retry.length; ++rr) cons.push(retry[rr])
+                    }
+                    InventoryStore.deductStock(d.productId, d.addedQty)
+                    // Tax the ADDED units at the product's CURRENT setting (bug 3).
+                    // The original units' sale event is immutable and keeps the
+                    // tax booked at completion, so "originals unchanged, added
+                    // units current tax" holds in the authoritative event ledger
+                    // even when the product's tax changed after completion.
+                    TransactionStore.recordSaleFromOrder({
+                        orderId: o.orderId, date: o.date, orderChannel: o.orderChannel,
+                        staffId: o.staffId,
+                        products: [{ productId: d.productId, name: d.name, price: d.newPrice,
+                                     quantity: d.addedQty, consumption: cons,
+                                     taxable: !!invA.taxable,
+                                     taxPercent: invA.taxable ? (invA.taxPercent || 0) : 0 }]
+                    })
+                    // Remember the added units' lineage so it's stamped onto the
+                    // order line too (bug 14) — keeps order-sourced COGS/supplier
+                    // reports correct for exchanges.
+                    if (d.productId) addedConsByPid[d.productId] = cons
+                    refundAmount -= d.addedQty * d.newPrice
+                }
+            }
+
+            // ── Price change on surviving units (modify) ─────────────────
+            // A pure revenue correction on units that remain — recorded as a
+            // dedicated price_adjust event (quantity:0 so Units Sold is NOT
+            // affected; total carries the revenue delta; profit nets it since
+            // COGS is unchanged).
+            if (d.oldPrice !== d.newPrice && d.newQty > 0 && d.oldQty > 0) {
+                var survivingQty = Math.min(d.oldQty, d.newQty)
+                var perUnitDelta = d.oldPrice - d.newPrice
+                if (survivingQty > 0 && perUnitDelta !== 0) {
+                    TransactionStore.recordPriceAdjust(
+                        o, { productId: d.productId, name: d.name },
+                        survivingQty, perUnitDelta, reason,
+                        (note ? note + " · " : "") + "price " + d.oldPrice + "->" + d.newPrice)
+                    refundAmount += survivingQty * perUnitDelta
+                }
+            }
+        }
+
+        // Re-stamp surviving consumption[] onto the adjusted lines so the
+        // order-sourced Revenue-by-supplier breakdown keeps its FIFO lineage
+        // (returns reduce a line's consumption; additions don't carry lineage
+        // here, which is acceptable — added units' lineage lives in their sale
+        // event). Without this, an adjusted line loses consumption and the
+        // Revenue supplier axis drops the whole order.
+        var enrichedLines = (newLines || []).map(function(nl) {
+            var orig = _findLine(o.products, nl.productId, nl.name)
+            var origCons = orig && Array.isArray(orig.consumption) ? orig.consumption : []
+            var oldQ = orig ? (orig.quantity || 0) : 0
+            var newQ = nl.quantity || 0
+            var returnedQ = Math.max(0, oldQ - newQ)
+            var survCons = OrderAdjust.survivingConsumption(origCons, returnedQ)
+            // Append the FIFO lineage for any ADDED units on this line so the
+            // adjusted order carries full consumption (original surviving + new).
+            // Fixes exchange/qty-up COGS + supplier attribution in order-sourced
+            // reports (bug 14).
+            var added = addedConsByPid[nl.productId]
+            if (Array.isArray(added) && added.length > 0)
+                survCons = survCons.concat(added)
+            var copy = {}
+            for (var k in nl) copy[k] = nl[k]
+            copy.consumption = survCons
+            return copy
+        })
+
+        // ── Per-line discount change (revenue adjustment) ─────────────────
+        // Discount is per-line now. A discount-only edit doesn't change unit
+        // price, so diffLines won't surface it — scan matched lines directly.
+        // Isolate the discount-RATE change from any qty change by valuing the
+        // discount delta on the SURVIVING units only (returned/added units are
+        // already revenue-handled by the blocks above). Emits one price_adjust
+        // per changed line (reason "discount") so it nets into ledger Profit
+        // and shows in BOTH the order's and the product's history (bug 17).
+        function _lineDiscAmt(ln) {
+            var gross = (ln.quantity || 0) * (ln.price || 0)
+            if (ln.discountType === "percent") {
+                var p = parseFloat(ln.discountValue) || 0
+                if (p < 0) p = 0; if (p > 100) p = 100
+                return gross * (p / 100)
+            }
+            var d = parseFloat(ln.discountValue) || 0
+            if (d < 0) d = 0; if (d > gross) d = gross
+            return d
+        }
+        var newByPid = {}
+        for (var nbi = 0; nbi < (newLines || []).length; ++nbi) {
+            var nlx = newLines[nbi]
+            newByPid[nlx.productId || nlx.name] = nlx
+        }
+        for (var oli = 0; oli < (o.products || []).length; ++oli) {
+            var ol2 = o.products[oli]
+            var key3 = ol2.productId || ol2.name
+            var nl2 = newByPid[key3]
+            if (!nl2) continue   // fully removed lines: revenue handled by return block
+            var oldQ2 = ol2.quantity || 0
+            var newQ2 = nl2.quantity || 0
+            if (oldQ2 <= 0 || newQ2 <= 0) continue
+            // Per-unit discount under each setting.
+            var oldPerUnitDisc = _lineDiscAmt(ol2) / oldQ2
+            var newPerUnitDisc = _lineDiscAmt(nl2) / newQ2
+            var survQ = Math.min(oldQ2, newQ2)
+            var addedQ2 = Math.max(0, newQ2 - oldQ2)
+            // Discount delta has TWO parts:
+            //  • surviving units: their per-unit discount changes old→new.
+            //  • added units: booked by the added-units sale event at full price
+            //    with NO discount, so the scanner must book their new per-unit
+            //    discount here too (else addedQ/newQ of the line discount is
+            //    silently lost → event-ledger net overshoots vs the live order).
+            // Returned units' old discount is already unwound by the return block.
+            var discDelta = survQ * (newPerUnitDisc - oldPerUnitDisc)
+                          + addedQ2 * newPerUnitDisc
+            if (Math.abs(discDelta) < 0.005) continue
+            // revenue down when discount up: recordPriceAdjust(qty, perUnitDelta)
+            // yields revenueDelta = -(qty*perUnitDelta). Factor as (1, discDelta)
+            // so revenueDelta = -discDelta exactly, independent of survQ.
+            TransactionStore.recordPriceAdjust(
+                o, { productId: ol2.productId || "", name: ol2.name },
+                1, discDelta, "discount",
+                (note ? note + " · " : "") + "discount "
+                    + (Math.round(_lineDiscAmt(ol2) * 100) / 100) + "->"
+                    + (Math.round(_lineDiscAmt(nl2) * 100) / 100) + " on " + ol2.name)
+            refundAmount += discDelta   // discount up → refund owed to customer
+        }
+
+        OrdersStore.applyAdjustment(orderId, enrichedLines, {
+            date: new Date().toISOString(),
+            reason: reason || "", condition: condition || "",
+            lineDeltas: deltas, refundAmount: refundAmount,
+            note: note || "", actorUid: AuthStore.uid || ""
+        })
+        return true
+    }
+
+    // Find an order line by productId (preferred) or name.
+    function _findLine(lines, productId, name) {
+        if (!lines) return null
+        for (var i = 0; i < lines.length; ++i) {
+            if (productId && lines[i].productId === productId) return lines[i]
+            if (!productId && name && lines[i].name === name) return lines[i]
+        }
+        return null
+    }
+
+    // Reconcile a manual product.stock edit into the FIFO batch ledger so the
+    // batch-derived Analysis reports (Value, Potential profit, by-supplier) stay
+    // in sync with product.stock. A decrease drains oldest batches first
+    // (consumeFifo); an increase tops up the newest batch (topUpOldest). The
+    // decision is the pure StockReconcile.delta; the side effects reuse the same
+    // primitives the order-completion flow uses. `fieldsStock` is undefined when
+    // the edit didn't touch stock — delta() returns "none" in that case.
+    function _reconcileBatchesForStockEdit(productId, oldStock, fieldsStock) {
+        var d = StockReconcile.delta(oldStock, fieldsStock)
+        if (d.action === "consume") {
+            // Drain oldest batches; if the ledger had drifted below product.stock
+            // and can't cover the decrease, that's fine — qtyRemaining floors at
+            // 0 and the remaining (already-missing) units simply aren't there.
+            StockBatchStore.consumeFifo(productId, d.qty)
+        } else if (d.action === "topup") {
+            StockBatchStore.topUpOldest(productId, d.qty)
+        }
     }
 }

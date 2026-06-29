@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/StaffScope.js" as StaffScope
 
 // Full activity log — accessed from the Dashboard's "See all" link.
 // Shows the merged ActivityLog + recent orders feed without the 5-row cap.
@@ -14,16 +15,24 @@ Item {
     signal backRequested()
     signal activityItemClicked(string kind, string entityId)
 
+    property bool canViewFinancials: true
+    property string currentStaffId: ""
+
     property var _all: []
     property int _ordersWatcher: OrdersStore.revision
     property int _activityWatcher: ActivityLog.revision
     on_OrdersWatcherChanged: _rebuild()
     on_ActivityWatcherChanged: _rebuild()
+    onCurrentStaffIdChanged: _rebuild()
+    onCanViewFinancialsChanged: _rebuild()
     Component.onCompleted: _rebuild()
 
     function _rebuild() {
         var merged = []
-        var orders = OrdersStore.orders || []
+        // Staff see only their own orders here (fail-closed via ownOrders).
+        var orders = canViewFinancials
+                ? (OrdersStore.orders || [])
+                : StaffScope.ownOrders(OrdersStore.orders || [], currentStaffId)
         for (var i = 0; i < orders.length; ++i) {
             var o = orders[i]
             merged.push({
@@ -32,7 +41,7 @@ Item {
                 entityId: o.orderId || "",
                 title: (o.orderId || "Order") + " · " + (o.customer || "Walk-in"),
                 subtitle: (o.items || 0) + " items · " + (o.date || ""),
-                amount: OrdersStore.formatCurrency(o.total || 0)
+                amount: canViewFinancials ? OrdersStore.formatCurrency(o.total || 0) : ""
             })
         }
         var acts = ActivityLog.entries || []
@@ -74,13 +83,11 @@ Item {
         }
     }
 
-    QQC.ScrollView {
+    AppScrollView {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             width: root.width
@@ -112,6 +119,7 @@ Item {
                             if (k === "product_restocked") return "restocked"
                             if (k === "staff_added") return "staff-added"
                             if (k === "staff_updated") return "staff-updated"
+                            if (k === "import") return "import"
                             if (k === "order") return ""
                             return "activity"
                         }
@@ -123,6 +131,7 @@ Item {
                             if (k === "product_restocked") return Constants.grad4
                             if (k === "staff_added") return Constants.grad3
                             if (k === "staff_updated") return Constants.grad2
+                            if (k === "import") return Constants.grad2
                             return Constants.grad1
                         }
                     }

@@ -607,62 +607,35 @@ QtObject {
         var safeRole = role && role.length > 0 ? role : "staff"
         var safeEmail = email || ""
         var safeName = displayName || ""
-        var nowIso = new Date().toISOString()
 
-        FirebaseService.get("users/" + safeUid, function(okUserRead, existingUser) {
-            var userDoc = okUserRead && existingUser ? existingUser : {
-                uid: safeUid,
-                email: safeEmail,
-                displayName: safeName,
-                photoUrl: "",
-                tenants: []
-            }
-
-            if (!userDoc.tenants || !Array.isArray(userDoc.tenants))
-                userDoc.tenants = []
-
-            if (userDoc.tenants.indexOf(AuthStore.tenantId) < 0)
-                userDoc.tenants.push(AuthStore.tenantId)
-
-            if (!userDoc.tenantId)
-                userDoc.tenantId = AuthStore.tenantId
-            if (!userDoc.tenantName)
-                userDoc.tenantName = AuthStore.tenantName
-            if (!userDoc.role)
-                userDoc.role = safeRole
-            userDoc.lastLoginAt = nowIso
-            userDoc.createdAt = userDoc.createdAt || nowIso
-            userDoc.email = userDoc.email || safeEmail
-            userDoc.displayName = userDoc.displayName || safeName
-
-            var memberDoc = {
-                uid: safeUid,
-                role: safeRole,
-                email: safeEmail,
-                displayName: safeName,
-                tenantName: AuthStore.tenantName,
-                joinedAt: nowIso,
-                invitedBy: AuthStore.uid,
-                status: "active"
-            }
-
-            FirebaseService.put("users/" + safeUid, userDoc, function(okUserWrite) {
-                if (!okUserWrite) {
-                    authFailed("Failed to update user profile for invite")
+        // Invites also go through the server-side function. The old client path
+        // tried to write the invitee's users/{uid} doc with the OWNER's token,
+        // which the Firestore rules always reject (a user may only write their
+        // OWN users/ doc) — that was the perpetual "Failed to update user
+        // profile for invite". The Admin SDK adds the tenant to the invitee's
+        // tenants[] and writes the member doc atomically.
+        Gateway.provisionMember({
+            uid: safeUid,
+            email: safeEmail,
+            displayName: safeName,
+            role: safeRole
+        }, function(ok, data) {
+            if (!ok || !data || !data.ok) {
+                var reason = data && data.error ? data.error : "unknown"
+                // Inviting needs the server-side function. Until it's deployed,
+                // tell the user this feature is pending rather than showing a
+                // raw failure — keeps the message honest and non-alarming.
+                if (reason === "provisioning-unavailable") {
+                    memberOperationFailed(_provisionErrorMessage(reason))
                     return
                 }
-
-                FirebaseService.put("tenants/" + AuthStore.tenantId + "/members/" + safeUid, memberDoc, function(okMember) {
-                    if (!okMember) {
-                        authFailed("Failed to write tenant membership")
-                        memberOperationFailed("Failed to write tenant membership")
-                        return
-                    }
-                    loadTenantMembers()
-                    memberOperationSucceeded("Member invited")
-                    tenantContextReady(AuthStore.tenantId, AuthStore.role)
-                })
-            })
+                authFailed("Failed to invite member: " + _provisionErrorMessage(reason))
+                memberOperationFailed("Failed to invite member: " + _provisionErrorMessage(reason))
+                return
+            }
+            loadTenantMembers()
+            memberOperationSucceeded("Member invited")
+            tenantContextReady(AuthStore.tenantId, AuthStore.role)
         })
     }
 
@@ -793,87 +766,63 @@ QtObject {
 
         var role = appRole && appRole.length > 0 ? appRole : "staff"
         var safeRole = role === "admin" || role === "manager" || role === "staff" ? role : "staff"
-        var nowIso = new Date().toISOString()
-        var signUpUrl = authBaseUrl + "/accounts:signUp?key=" + encodeURIComponent(apiKey)
 
-        _postJson(signUpUrl, {
+        // Provisioning runs server-side (Admin SDK). The function creates the
+        // Auth account when the email is new, or attaches the EXISTING account
+        // when it already exists — then writes users/{uid} (tenant context) and
+        // the member doc in one transaction. This fixes the old client-only
+        // path, which (a) couldn't write another user's users/{uid} doc under
+        // the Firestore rules and (b) hard-failed on EMAIL_EXISTS, leaving the
+        // staff member without workspace access.
+        Gateway.provisionMember({
             email: email,
+            displayName: displayName || "",
             password: password,
-            returnSecureToken: true
+            role: safeRole
         }, function(ok, data) {
-            if (!ok) {
-                authFailed("Failed to create staff auth account: " + _parseErrorReason())
-                return
-            }
-
-            var uid = data.localId || ""
-            if (!uid) {
-                authFailed("Staff account created without UID")
-                return
-            }
-            // accounts:signUp returns the NEW staff account's own idToken. We
-            // must write users/{uid} with THAT token — Firestore rules require
-            // request.auth.uid == uid for the users/ collection, so the owner's
-            // token would be denied (the cause of the "create a workspace" bug:
-            // the staff profile was never written). The member doc, by contrast,
-            // is written with the owner's token (rules: isOwnerOrAdmin). The
-            // owner's own AuthStore session is untouched — we never call
-            // _applyAuthResult here, so this is purely a per-write token.
-            var staffToken = data.idToken || ""
-            if (!staffToken) {
-                authFailed("Staff account created without an auth token")
-                return
-            }
-
-            var userDoc = {
-                uid: uid,
-                email: email,
-                displayName: displayName || "",
-                phone: phone || "",
-                department: department || "",
-                photoUrl: "",
-                tenantId: AuthStore.tenantId,
-                tenantName: AuthStore.tenantName,
-                role: safeRole,
-                tenants: [AuthStore.tenantId],
-                createdAt: nowIso,
-                lastLoginAt: nowIso,
-                status: "active"
-            }
-
-            var memberDoc = {
-                uid: uid,
-                role: safeRole,
-                email: email,
-                displayName: displayName || "",
-                tenantName: AuthStore.tenantName,
-                joinedAt: nowIso,
-                invitedBy: AuthStore.uid,
-                status: "active"
-            }
-
-            // users/{uid} written with the staff's own token (auth.uid == uid).
-            FirebaseService.put("users/" + uid, userDoc, function(okUser) {
-                if (!okUser) {
-                    authFailed("Failed to save staff user profile")
+            if (!ok || !data || !data.ok) {
+                var reason = data && data.error ? data.error : "unknown"
+                // The staff RECORD is already saved (StaffStore added it before
+                // this call). When login provisioning is simply unavailable
+                // (no deployed Cloud Function yet), that's not a failure of the
+                // add — surface it as a soft, non-blocking notice so the user
+                // sees the member was added and that login access will follow.
+                if (reason === "provisioning-unavailable") {
+                    memberOperationSucceeded("Staff added. " + _provisionErrorMessage(reason))
                     return
                 }
-
-                // members/{uid} written with the owner's token (isOwnerOrAdmin).
-                FirebaseService.put("tenants/" + AuthStore.tenantId + "/members/" + uid, memberDoc, function(okMember) {
-                    if (!okMember) {
-                        authFailed("Failed to save staff tenant membership")
-                        return
-                    }
-                    // Stamp the auth uid back on the staff record so a later
-                    // delete can cascade to users/{uid} + members/{uid}.
-                    if (staffId && staffId.length > 0)
-                        StaffStore.setAppUid(staffId, uid)
-                    loadTenantMembers()
-                    memberOperationSucceeded("Staff credentials created for " + email)
-                }, undefined)
-            }, staffToken)
+                authFailed("Failed to create staff credentials: " + _provisionErrorMessage(reason))
+                return
+            }
+            // Stamp the auth uid back on the staff record so a later delete can
+            // cascade to users/{uid} + members/{uid}.
+            if (staffId && staffId.length > 0 && data.uid)
+                StaffStore.setAppUid(staffId, data.uid)
+            loadTenantMembers()
+            var verb = data.created ? "created" : "linked"
+            memberOperationSucceeded("Staff credentials " + verb + " for " + email)
         })
+    }
+
+    // Map a provisionMember error code to a user-facing message.
+    function _provisionErrorMessage(code) {
+        switch (code) {
+        case "password-required":
+            return "this email needs a password (min 6 characters) to create a login."
+        case "user-not-found":
+            return "no account exists for that user."
+        case "role-not-allowed":
+        case "not-authorized":
+            return "you don't have permission to assign that role."
+        case "no-tenant-context":
+            return "your workspace context is missing — sign in again."
+        case "not-signed-in":
+            return "you're not signed in."
+        case "provisioning-unavailable":
+            return "Login access will be enabled once the server is set up."
+        default:
+            return "please try again."
+        }
     }
 
     function signOut() {

@@ -710,6 +710,8 @@ BottomSheet {
                         case "field_change":     return "field_change"
                         case "photo_change":     return "photo_change"
                         case "legacy_update":    return "field_change"
+                        case "return":          return "sale"
+                        case "price_adjust":    return "field_change"
                         default:                  return "field_change"
                         }
                     }
@@ -843,6 +845,21 @@ BottomSheet {
                     return qsTr("Photo updated")
                 case "legacy_update":
                     return qsTr("Updated")
+                case "return":
+                    var retQty = Math.abs(d.quantity || 0)
+                    var retVerb = d.reason === "exchange" ? qsTr("Exchanged")
+                                : d.reason === "modify" ? qsTr("Modified")
+                                : d.reason === "other" ? qsTr("Adjusted")
+                                : qsTr("Returned")
+                    var retHead = d.orderId
+                            ? retVerb + qsTr(" %1 · #%2").arg(retQty).arg(d.orderId)
+                            : retVerb + qsTr(" %1").arg(retQty)
+                    if (d.condition === "damaged") retHead += qsTr(" · damaged")
+                    return retHead
+                case "price_adjust":
+                    return d.orderId
+                            ? qsTr("Price adjusted · #%1").arg(d.orderId)
+                            : qsTr("Price adjusted")
                 }
                 return qsTr("Activity")
             }
@@ -874,6 +891,15 @@ BottomSheet {
                     return ""
                 case "legacy_update":
                     return d.note || ""
+                case "return":
+                    var rDetail = qsTr("%1 refunded").arg(InventoryStore.formatCurrency(Math.abs(d.total || 0)))
+                    if (d.note && d.note.length > 0) rDetail += " · " + d.note
+                    return rDetail
+                case "price_adjust":
+                    var paDetail = (d.total < 0 ? qsTr("Revenue −%1") : qsTr("Revenue +%1"))
+                            .arg(InventoryStore.formatCurrency(Math.abs(d.total || 0)))
+                    if (d.note && d.note.length > 0) paDetail += " · " + d.note
+                    return paDetail
                 }
                 return ""
             }

@@ -72,13 +72,11 @@ Item {
         ]
     }
 
-    QQC.ScrollView {
+    AppScrollView {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             id: stack

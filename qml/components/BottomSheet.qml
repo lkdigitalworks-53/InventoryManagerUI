@@ -136,6 +136,16 @@ QQC.Dialog {
             clip: true
             QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
+            // Pin the auto-created internal Flickable to StopAtBounds so the
+            // sheet body can't be free-dragged / rubber-banded on touch when
+            // its content already fits (Android-only free-drag, see AppScrollView).
+            function _pinBounds() {
+                if (contentItem && contentItem.boundsBehavior !== undefined)
+                    contentItem.boundsBehavior = Flickable.StopAtBounds
+            }
+            onContentItemChanged: _pinBounds()
+            Component.onCompleted: _pinBounds()
+
             ColumnLayout {
                 id: bodyHolder
                 width: scroller.availableWidth

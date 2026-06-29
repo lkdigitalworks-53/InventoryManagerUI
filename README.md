@@ -270,3 +270,52 @@ Documentation checklist for all page/dialog components is tracked in:
 - `qml/pages/DOCS_CHECKLIST.md`
 
 Use it during feature completion to keep docs coverage consistent.
+
+---
+
+## Environments (dev / test / prd)
+
+The app selects its Firestore database at **build time** from `PRODUCT_STAGE` in
+`CMakeLists.txt`:
+
+| PRODUCT_STAGE | env  | Firestore database |
+|---------------|------|--------------------|
+| `dev`         | dev  | `dev`              |
+| `test`        | test | `test`             |
+| `publish`     | prd  | `(default)`        |
+
+Unknown/unset stage falls back to **prd** (`(default)`), so a misconfigured
+release never points at an empty dev database. The resolution chain is
+`PRODUCT_STAGE` → `PRODUCT_STAGE_DEF` (CMake compile def) → `APP_STAGE` (QML
+context property, set in `main.cpp`) → `EnvConfig.js` → `FirebaseService.databaseId`.
+On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
+
+### One-time backend setup (per non-default database)
+
+> **Requires the Blaze (pay-as-you-go) billing plan.** The free Spark plan allows
+> only the single `(default)` database; creating named databases returns HTTP 403
+> "This API method requires billing to be enabled". Until Blaze is on, build with
+> `PRODUCT_STAGE "publish"` (uses `(default)`).
+>
+> **Region must match `(default)`:** it is **`asia-south1`** (Mumbai) — a database's
+> location is immutable, so create the others in the same region.
+>
+> **Database ids are 4–63 chars** (`[a-z0-9-]`), so `dev` (3 chars) is rejected —
+> use e.g. `dev1` or `development`. `test` is fine. If you change the id, update
+> the `PRODUCT_STAGE`→env→databaseId mapping in `qml/helper/EnvConfig.js` to match.
+
+```bash
+firebase firestore:databases:create test --location=asia-south1
+firebase firestore:databases:create dev1 --location=asia-south1   # 'dev' is too short
+```
+
+Then apply the same security rules (`FIRESTORE_RULES.md`) to each database
+(Firebase console → Firestore → select database → Rules, or
+`firebase deploy --only firestore:rules` targeting each database).
+
+Auth users, Storage, and Cloud Functions are **shared** across environments —
+only the Firestore database differs. `test`/`dev1` start empty (MVP fresh-data).
+
+> **Follow-up (not yet built):** the Cloud Functions gateway (`Gateway.qml`)
+> still writes to `(default)` server-side; make it env-aware when Blaze + the
+> functions are deployed.

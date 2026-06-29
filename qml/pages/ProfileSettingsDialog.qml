@@ -123,6 +123,29 @@ BottomSheet {
                         elide: Text.ElideRight
                     }
                 }
+                // Build environment — only shown on non-production builds so a
+                // dev/test build is unmistakable (prd hides the whole row).
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: FirebaseService.environment !== "prd"
+                    Text { text: qsTr("Environment"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); Layout.preferredWidth: dp(96) }
+                    Rectangle {
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: dp(Constants.radiusPill)
+                        color: Constants.warn
+                        implicitHeight: dp(22)
+                        implicitWidth: envBadgeText.implicitWidth + dp(20)
+                        Text {
+                            id: envBadgeText
+                            anchors.centerIn: parent
+                            text: FirebaseService.environment.toUpperCase()   // "DEV" | "TEST"
+                            color: Constants.textOnBrand
+                            font.pixelSize: sp(Constants.fsCaption)
+                            font.bold: true
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                }
             }
         }
 

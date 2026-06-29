@@ -5,7 +5,9 @@ import Felgo
 
 Item {
     // ── Backend ──────────────────────────────────────────────────────────────
-    readonly property string firebaseDatabaseUrl: "https://firestore.googleapis.com/v1/projects/inventorymanager-48392/databases/(default)/documents"
+    // The live Firestore base URL is environment-aware and owned by
+    // FirebaseService.databaseUrl (resolved from PRODUCT_STAGE via EnvConfig.js).
+    // Do NOT hard-code a database URL here — it would bypass dev/test/prd routing.
 
     // ── Brand palette (mobile redesign) ──────────────────────────────────────
     // Maps 1:1 to the prototype's --c-brand-* tokens.

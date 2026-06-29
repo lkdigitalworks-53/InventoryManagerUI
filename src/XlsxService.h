@@ -48,6 +48,16 @@ public:
                                       const QVariantList &sections,
                                       const QString &suggestedName = {});
 
+    // Multi-sheet Analysis export — ONE workbook, one sheet per report view.
+    // `sheets` is a QVariantList of QVariantMaps, each:
+    //   "name"     : QString — sheet tab name (sanitised; ≤31 chars, unique)
+    //   "title"    : QString — bold title rendered at the top of the sheet
+    //   "sections" : QVariantList — same { heading, headers, rows } shape as
+    //                writeAnalysis. Empty-section sheets are skipped.
+    // Returns the file URL, empty on failure / no non-empty sheets.
+    Q_INVOKABLE QString writeAnalysisWorkbook(const QVariantList &sheets,
+                                              const QString &suggestedName = {});
+
     // Read any workbook produced by the above. Returned map keys:
     //   "products": QVariantList of row maps (when a "Products" sheet exists)
     //   "orders":   QVariantList of row maps (when an "Orders" sheet exists)

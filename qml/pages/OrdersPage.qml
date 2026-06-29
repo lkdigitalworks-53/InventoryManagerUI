@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/StaffScope.js" as StaffScope
 
 // Mobile-first orders feed. Glass header with filter/search icons, status
 // chip-scroller, swipe-friendly card list, FAB for new order.
@@ -14,7 +15,13 @@ Item {
 
     property bool compact: false
     property bool canApproveAll: true
+    // Whether the current role may approve pending orders at all. Staff are
+    // allowed, but the approve action below operates on _scopedOrders(), so a
+    // staff member only ever clears their OWN pending backlog.
+    property bool canApprovePending: true
     property bool canDeleteOrders: false
+    property bool canViewAllSales: true
+    property string currentStaffId: ""
 
     signal addOrderClicked()
     signal orderDetailsClicked(string orderId)
@@ -26,8 +33,11 @@ Item {
     property string _searchText: ""
     property string _statusFilter: "all"  // "all" | "pending" | "processing" | "completed" | "cancelled"
     // Public — set by Main.qml when the user picks a chip in the FilterSheet.
-    // "all" | "today" | "7days" | "30days"
+    // "all" | "today" | "7days" | "30days" | "custom"
     property string dateRange: "all"
+    // Only consulted when dateRange === "custom". "yyyy-MM-dd" each.
+    property string customFrom: ""
+    property string customTo: ""
 
     Rectangle { anchors.fill: parent; color: Constants.appBg }
 
@@ -61,13 +71,11 @@ Item {
         ]
     }
 
-    QQC.ScrollView {
+    AppScrollView {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             id: stack
@@ -142,10 +150,10 @@ Item {
             ChipScroller {
                 Layout.fillWidth: true
                 model: [
-                    { label: "All", count: (OrdersStore.orders || []).length },
-                    { label: "Pending", count: OrdersStore.pendingOrderCount },
+                    { label: "All", count: _scopedOrders().length },
+                    { label: "Pending", count: _countByStatus("pending") },
                     { label: "Processing", count: _countByStatus("processing") },
-                    { label: "Completed", count: OrdersStore.completedOrderCount },
+                    { label: "Completed", count: _countByStatus("completed") },
                     { label: "Cancelled", count: _countByStatus("cancelled") }
                 ]
                 onChipSelected: function(idx, label) {
@@ -159,7 +167,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                visible: root.canApproveAll && OrdersStore.pendingOrderCount > 0
+                visible: root.canApprovePending && root._scopedPendingCount() > 0
                 radius: dp(Constants.radius)
                 Layout.preferredHeight: dp(56)
                 gradient: Gradient {
@@ -168,49 +176,63 @@ Item {
                     GradientStop { position: 1.0; color: Constants.brand5 }
                 }
 
-                RowLayout {
-                    anchors.fill: parent
+                // Anchors (not a RowLayout) so the Approve button pins flush to
+                // the banner's right edge. A RowLayout left a large gap here
+                // because Layout.fillWidth on the text column didn't claim the
+                // trailing space; the banner is a plain Rectangle, so anchoring
+                // its children directly is both correct and warning-free.
+                Icon {
+                    id: bannerIcon
+                    anchors.left: parent.left
                     anchors.leftMargin: dp(Constants.space4)
-                    anchors.rightMargin: dp(Constants.space2)
-                    spacing: dp(Constants.space3)
-
-                    Icon {
-                        name: "check"
-                        color: Constants.textOnBrand
-                        size: sp(20)
-                    }
-                    ColumnLayout {
-                        spacing: 0
-                        Layout.fillWidth: true
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "check"
+                    color: Constants.textOnBrand
+                    size: sp(20)
+                }
+                QQC.AbstractButton {
+                    id: approveBtn
+                    anchors.right: parent.right
+                    anchors.rightMargin: dp(Constants.space3)
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: dp(80); implicitHeight: dp(32)
+                    padding: 0
+                    contentItem: Item {
                         Text {
-                            text: "Approve all pending"
+                            anchors.centerIn: parent
+                            text: qsTr("Approve")
                             color: Constants.textOnBrand
-                            font.pixelSize: sp(Constants.fsBodyLg)
+                            font.pixelSize: sp(Constants.fsSmall)
                             font.bold: true
                         }
-                        Text {
-                            text: OrdersStore.pendingOrderCount + " orders waiting"
-                            color: Qt.rgba(1,1,1,0.85)
-                            font.pixelSize: sp(Constants.fsCaption)
-                        }
                     }
-                    QQC.AbstractButton {
-                        implicitWidth: dp(80); implicitHeight: dp(32)
-                        padding: 0
-                        contentItem: Item {
-                            Text {
-                                anchors.centerIn: parent
-                                text: qsTr("Approve")
-                                color: Constants.textOnBrand
-                                font.pixelSize: sp(Constants.fsSmall)
-                                font.bold: true
-                            }
-                        }
-                        background: Rectangle {
-                            radius: dp(Constants.radiusPill)
-                            color: Qt.rgba(1,1,1,0.22)
-                        }
-                        onClicked: _approveAllPending()
+                    background: Rectangle {
+                        radius: dp(Constants.radiusPill)
+                        color: Qt.rgba(1,1,1,0.22)
+                    }
+                    onClicked: _approveAllPending()
+                }
+                Column {
+                    spacing: 0
+                    anchors.left: bannerIcon.right
+                    anchors.leftMargin: dp(Constants.space3)
+                    anchors.right: approveBtn.left
+                    anchors.rightMargin: dp(Constants.space2)
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        width: parent.width
+                        text: "Approve all pending"
+                        color: Constants.textOnBrand
+                        font.pixelSize: sp(Constants.fsBodyLg)
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        width: parent.width
+                        text: root._scopedPendingCount() + " orders waiting"
+                        color: Qt.rgba(1,1,1,0.85)
+                        font.pixelSize: sp(Constants.fsCaption)
+                        elide: Text.ElideRight
                     }
                 }
             }
@@ -305,9 +327,19 @@ Item {
     }
 
     // ── Helpers ──
+    // Base order set, narrowed to the current staff member when they may not
+    // view all sales (everyone else gets the full tenant set). The revision
+    // read ties this to OrdersStore changes so chips/list refresh.
+    function _scopedOrders() {
+        var _r = OrdersStore.revision   // reactivity tie
+        var all = OrdersStore.orders || []
+        if (canViewAllSales) return all
+        return StaffScope.ownOrders(all, currentStaffId)
+    }
+
     function _countByStatus(s) {
         var c = 0
-        var arr = OrdersStore.orders || []
+        var arr = _scopedOrders()
         for (var i = 0; i < arr.length; ++i)
             if (arr[i].status === s) c++
         return c
@@ -326,13 +358,22 @@ Item {
             from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6)
         else if (root.dateRange === "30days")
             from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)
-        else
+        else if (root.dateRange === "custom") {
+            // Only honour the window when both ends parse — otherwise treat the
+            // filter as inactive so we don't show an empty list. Mirrors
+            // SalesPage._dateWindow's custom branch (local midnight, inclusive to).
+            var f = new Date(root.customFrom + "T00:00:00")
+            var t = new Date(root.customTo + "T00:00:00")
+            if (isNaN(f.getTime()) || isNaN(t.getTime())) return null
+            from = f
+            to = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)
+        } else
             return null
         return { from: from, to: to }
     }
 
     function _filteredOrders() {
-        var orders = (OrdersStore.orders || []).slice()
+        var orders = _scopedOrders().slice()
         orders.sort(function(a, b) {
             var ta = new Date(a.updatedAt || a.date).getTime() || 0
             var tb = new Date(b.updatedAt || b.date).getTime() || 0
@@ -344,7 +385,11 @@ Item {
         return orders.filter(function(o) {
             if (statusFilter !== "all" && (o.status || "") !== statusFilter) return false
             if (win) {
-                var od = new Date(o.date)
+                // o.date is "yyyy-MM-dd"; append time so it parses as LOCAL
+                // midnight to match win.from/to (which are local). Bare
+                // "yyyy-MM-dd" parses as UTC, shifting the whole window by the
+                // tz offset — "Today" then shows nothing in negative-offset zones.
+                var od = new Date(o.date + "T00:00:00")
                 if (isNaN(od.getTime())) return false
                 if (od < win.from || od >= win.to) return false
             }
@@ -354,13 +399,20 @@ Item {
         })
     }
 
+    // Pending orders the current user is allowed to see — tenant-wide for
+    // owner/admin/manager, own-only for staff. The banner count and the
+    // approve action both read this so staff never see or act on others' work.
+    function _scopedPendingCount() {
+        return _countByStatus("pending")
+    }
+
     function _approveAllPending() {
-        var allOrders = OrdersStore.orders
+        var scoped = _scopedOrders()
         var failed = []
-        for (var i = 0; i < allOrders.length; ++i) {
-            if (allOrders[i].status === "pending") {
-                if (!dataModel.tryCompleteOrder(allOrders[i].orderId))
-                    failed.push(allOrders[i].orderId)
+        for (var i = 0; i < scoped.length; ++i) {
+            if (scoped[i].status === "pending") {
+                if (!dataModel.tryCompleteOrder(scoped[i].orderId))
+                    failed.push(scoped[i].orderId)
             }
         }
         dataModel.syncOrdersModel()

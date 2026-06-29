@@ -42,6 +42,15 @@ int main(int argc, char *argv[])
     auto *pkceGenerator = new PkceGenerator(&app);
     engine.rootContext()->setContextProperty(QStringLiteral("PkceGenerator"), pkceGenerator);
 
+    // Build-time environment stage (PRODUCT_STAGE from CMake) → QML context.
+    // EnvConfig.js maps this to the Firestore database. Fallback "publish" keeps
+    // an undefined macro on production (default db).
+#ifndef PRODUCT_STAGE_DEF
+#define PRODUCT_STAGE_DEF "publish"
+#endif
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("APP_STAGE"), QStringLiteral(PRODUCT_STAGE_DEF));
+
     // Set an optional license key from project file
     felgo.setLicenseKey(PRODUCT_LICENSE_KEY);
 

@@ -26,8 +26,8 @@ BottomSheet {
 
     onOpened: {
         nameField.text = ""; emailField.text = ""; phoneField.text = ""
-        roleField.text = ""; salaryField.text = "50000"
-        loginPasswordField.text = ""; createLoginCheck.checked = false
+        roleField.text = ""; salaryField.text = ""
+        loginPasswordField.text = ""
         appRoleCombo.currentIndex = 0; deptCombo.currentIndex = 0; statusCombo.currentIndex = 0
         joinPicker.date = new Date()
         errorLabel.text = ""
@@ -150,7 +150,7 @@ BottomSheet {
             Layout.fillWidth: true
             label: "Salary (₹)"
             placeholderText: "50000"
-            text: "50000"
+            text: ""
             inputMethodHints: Qt.ImhFormattedNumbersOnly
         }
 
@@ -170,42 +170,34 @@ BottomSheet {
                 anchors.margins: dp(Constants.space3)
                 spacing: dp(Constants.space2)
 
+                Text {
+                    text: qsTr("App login")
+                    color: Constants.textPrimary
+                    font.pixelSize: sp(Constants.fsBody)
+                    font.bold: true
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
-                    QQC.CheckBox {
-                        id: createLoginCheck
-                        text: "Create app login for this teammate"
-                        checked: false
+                    spacing: dp(Constants.space2)
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: dp(4)
+                        Text { text: qsTr("App role"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+                        AppComboBox {
+                            id: appRoleCombo
+                            Layout.fillWidth: true
+                            model: ["Staff", "Manager", "Admin"]
+                            font.pixelSize: sp(Constants.fsBody)
+                        }
                     }
                 }
 
-                ColumnLayout {
-                    visible: createLoginCheck.checked
+                AuthPasswordField {
+                    id: loginPasswordField
                     Layout.fillWidth: true
-                    spacing: dp(Constants.space2)
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: dp(Constants.space2)
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: dp(4)
-                            Text { text: "App role"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
-                            AppComboBox {
-                                id: appRoleCombo
-                                Layout.fillWidth: true
-                                model: ["Staff", "Manager", "Admin"]
-                                font.pixelSize: sp(Constants.fsBody)
-                            }
-                        }
-                    }
-
-                    AuthPasswordField {
-                        id: loginPasswordField
-                        Layout.fillWidth: true
-                        label: "Temporary password"
-                        placeholderText: "min 6 characters"
-                    }
+                    label: qsTr("Temporary password")
+                    placeholderText: qsTr("min 6 characters")
                 }
             }
         }
@@ -227,10 +219,9 @@ BottomSheet {
         if (!phoneField.text) errs.push("Enter a phone number")
         if (!roleField.text) errs.push("Enter a role")
         if (deptCombo.currentIndex < 0) errs.push("Select a department")
-        if (createLoginCheck.checked) {
-            if (!loginPasswordField.text || loginPasswordField.text.length < 6)
-                errs.push("Login password ≥ 6 chars")
-        }
+        // App login is mandatory — password always required.
+        if (!loginPasswordField.text || loginPasswordField.text.length < 6)
+            errs.push("Login password ≥ 6 chars")
         if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
         errorLabel.text = ""
 
@@ -246,24 +237,25 @@ BottomSheet {
             joinDate: joinPicker.date,
             status: statusCombo.currentText.toLowerCase().replace(" ", "_"),
             salary: sal,
-            createLogin: createLoginCheck.checked,
+            createLogin: true,
             loginPassword: loginPasswordField.text,
             appRole: appRoleCombo.currentText.toLowerCase()
         }
 
+        // Login is mandatory. Arm the result listener BEFORE emitting
+        // staffCreated. The provision can resolve SYNCHRONOUSLY — in the current
+        // pre-Blaze build Gateway.provisioningAvailable is false, so
+        // provisionMember invokes its callback inline and AuthService emits
+        // memberOperationSucceeded/authFailed DURING the staffCreated() call
+        // below. The Connections block is gated on `_provisioning`; setting it
+        // after the emit would let the synchronous signal arrive while the
+        // listener was still disabled, leaving the sheet stuck open + busy.
+        _provisioning = true
+        busy = true
         staffCreated(payload)
-
-        if (createLoginCheck.checked) {
-            // Async: AuthService.provisionStaffCredentials runs after staffCreated.
-            // Keep the sheet open + busy; the Connections block above closes it on
-            // success or shows the error on failure.
-            _provisioning = true
-            busy = true
-            return
-        }
-
-        // No login to provision — the staff record is added synchronously.
-        Toast.show("Teammate added")
-        dlg.close()
+        // The Connections block closes the sheet on success or shows the error
+        // on failure — whether that result arrived synchronously during the emit
+        // above or arrives later for a real network call.
+        return
     }
 }

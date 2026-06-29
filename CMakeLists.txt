@@ -21,8 +21,9 @@ set(PRODUCT_IDENTIFIER "com.lkdigitalworks.business.management.app")
 set(PRODUCT_VERSION_NAME "1.0.0")
 set(PRODUCT_VERSION_CODE 1)
 
-# Set either "test" or "publish" stage:
-set(PRODUCT_STAGE "test")
+# Stage selects the Firestore env (see README "Environments"): dev | test | publish.
+# publish -> (default) db; dev/test -> named DBs (require Blaze billing to exist).
+set(PRODUCT_STAGE "publish")
 
 # Optionally set a license key (used for local builds and Felgo Cloud Builds)
 set(PRODUCT_LICENSE_KEY "")
@@ -88,7 +89,8 @@ set_target_properties(appBusinessManagement PROPERTIES
 # 3. change the setMainQmlFileName() call in main.cpp to the one starting with "qrc:/"
 
 target_compile_definitions(appBusinessManagement
-    PRIVATE $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:QT_QML_DEBUG>)
+    PRIVATE $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:QT_QML_DEBUG>
+    PRIVATE PRODUCT_STAGE_DEF="${PRODUCT_STAGE}")
 
 target_link_libraries(appBusinessManagement PRIVATE
     Felgo

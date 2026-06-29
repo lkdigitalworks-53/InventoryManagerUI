@@ -5,6 +5,9 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/BreakdownMath.js" as BreakdownMath
+import "../helper/OrderMath.js" as OrderMath
+import "../helper/RealisedMath.js" as RealisedMath
 
 // Modern sales report — segmented period pill, gradient hero card with area
 // chart, weekly bar breakdown, top items list. All numbers from SalesStore.
@@ -12,6 +15,14 @@ Item {
     id: root
 
     property bool compact: false
+
+    // Staff-restriction inputs (bound from Main.qml). Permissive defaults so
+    // non-staff and tests are unaffected.
+    property bool canViewFinancials: true
+    property bool canViewSuppliers: true
+    property bool canViewAllSales: true
+    property string currentStaffId: ""
+    property string currentStaffName: ""
 
     // The payload contains everything Main.qml needs to write an xlsx —
     // packaged here because `id: salesPage` is nested inside a NavigationStack
@@ -33,6 +44,11 @@ Item {
     readonly property int _MODE_REVENUE: 3
     readonly property int _MODE_SOLD: 4
     readonly property int _MODE_PROFIT: 5
+    // Sentinel staffId used to hard-scope a staff user who has no resolved
+    // staffId (unlinked account). It can never equal a real staffId ("STF-…")
+    // nor an empty staffId, so every comparison fails → the staff user sees
+    // zero rows (fail-closed), never the whole tenant's data.
+    readonly property string _STAFF_SCOPE_NONE: " __no_staff__"
     property int _viewMode: _MODE_VALUE
     // "Realised" or "Potential" — only consumed when _viewMode === _MODE_PROFIT.
     property string _profitMode: "Realised"
@@ -50,6 +66,8 @@ Item {
     // OrdersStore/TransactionStore revisions change.
     property var _breakdown: []
     property real _periodTotal: 0
+    property real _periodTax: 0
+    property real _periodDiscount: 0
     property string _periodLabel: ""
     property string _periodCompare: ""
     // Currency for Value / Revenue / Profit; raw qty for the rest.
@@ -61,8 +79,8 @@ Item {
     property string _periodSecondary: ""
 
     // Current-view-only datasets, populated alongside _breakdown.
-    property var _stockByCategory: []
-    property var _stockByParty: []
+    property var _breakdownByCategory: []
+    property var _breakdownBySupplier: []
     property var _topByName: []
     // Inventory-value + Profit datasets — populated when those views build.
     // Each is an array of { label, value, fullLabel? } compatible with the
@@ -96,7 +114,80 @@ Item {
     on_ChannelFilterChanged: _rebuildBreakdown()
     on_StaffFilterChanged: _rebuildBreakdown()
     on_CategoryFilterChanged: _rebuildBreakdown()
-    Component.onCompleted: _rebuildBreakdown()
+    Component.onCompleted: {
+        if (!canViewFinancials && _viewMode !== _MODE_CURRENT && _viewMode !== _MODE_SOLD)
+            _viewMode = _MODE_CURRENT
+        _rebuildBreakdown()
+    }
+    onCanViewFinancialsChanged: {
+        if (!canViewFinancials && _viewMode !== _MODE_CURRENT && _viewMode !== _MODE_SOLD)
+            _viewMode = _MODE_CURRENT
+    }
+
+    // Staff are hard-scoped to their own sales: force the existing name-keyed
+    // staff filter to themselves and keep it pinned (the removable filter chip
+    // and filter sheet are hidden for staff in their respective edits).
+    function _enforceStaffScope() {
+        if (!canViewAllSales && currentStaffName.length > 0 && _staffFilter !== currentStaffName)
+            _staffFilter = currentStaffName
+    }
+
+    // Ordered list of view modes the current user may see — mirrors the
+    // SegmentedPill gating: staff (no financials) see only Current + Sold.
+    function _allowedViewModes() {
+        return canViewFinancials
+            ? [_MODE_VALUE, _MODE_PURCHASED, _MODE_CURRENT, _MODE_REVENUE, _MODE_SOLD, _MODE_PROFIT]
+            : [_MODE_CURRENT, _MODE_SOLD]
+    }
+
+    // Step the view mode by a swipe. dir = -1 (swipe-left → previous view),
+    // +1 (swipe-right → next view). Clamps at the ends — no wraparound.
+    function _stepViewMode(dir) {
+        var modes = _allowedViewModes()
+        var cur = modes.indexOf(_viewMode)
+        if (cur < 0) cur = 0
+        var next = cur + dir
+        if (next < 0 || next >= modes.length) return
+        _viewMode = modes[next]
+    }
+
+    // The viewing identity changed (logout → login as a different user). The
+    // page instance persists across that switch, so clear every carried-over
+    // filter to a clean slate — otherwise the previous user's filters (notably
+    // a staff member's auto-pinned self-filter) leak into the next session.
+    // After clearing, re-apply the forced own-scope for staff.
+    function _resetFiltersForViewer() {
+        _dateFilter = "all"
+        _customFrom = ""
+        _customTo = ""
+        _partyFilter = "All"
+        _channelFilter = "All"
+        _staffFilter = "All"
+        _categoryFilter = "All"
+        _enforceStaffScope()
+    }
+    onCanViewAllSalesChanged: _resetFiltersForViewer()
+    onCurrentStaffIdChanged: _resetFiltersForViewer()
+    onCurrentStaffNameChanged: _enforceStaffScope()
+
+    // Resolve the active staff filter to a stable staffId. When the page is
+    // hard-scoped to the current staff member, use their resolved currentStaffId
+    // directly (robust against display-name vs roster-name mismatch and name
+    // collisions). Otherwise fall back to resolving the filter NAME against the
+    // roster (the normal owner/admin filter-by-name path). Returns "" when the
+    // filter is "All" or no match resolves.
+    function _resolveStaffFilterId() {
+        // Staff are always hard-scoped to themselves, regardless of _staffFilter.
+        // Unknown id (unlinked account) → sentinel that matches nothing (fail-closed).
+        if (!canViewAllSales)
+            return currentStaffId.length > 0 ? currentStaffId : _STAFF_SCOPE_NONE
+        // Non-staff: resolve the chosen filter NAME against the roster (unchanged).
+        if (_staffFilter === "All") return ""
+        var roster = StaffStore.staff || []
+        for (var i = 0; i < roster.length; ++i)
+            if (roster[i].name === _staffFilter) return roster[i].staffId || ""
+        return ""
+    }
 
     Rectangle { anchors.fill: parent; color: Constants.appBg }
 
@@ -131,7 +222,7 @@ Item {
                     var isPotentialProfit = root._viewMode === root._MODE_PROFIT
                             && root._profitMode === "Potential"
                     analysisFilterSheet.showChannelStaff =
-                            !isPotentialProfit && (
+                            root.canViewAllSales && !isPotentialProfit && (
                                 root._viewMode === root._MODE_REVENUE
                                 || root._viewMode === root._MODE_SOLD
                                 || root._viewMode === root._MODE_PROFIT)
@@ -141,13 +232,15 @@ Item {
                             !isPotentialProfit
                             && root._viewMode !== root._MODE_VALUE
                             && root._viewMode !== root._MODE_CURRENT
+                    analysisFilterSheet.showSupplier = root.canViewSuppliers
                     analysisFilterSheet.open()
                 }
             },
             IconActionButton {
                 variant: "glass"
                 iconName: "export"
-                onClicked: root.exportRequested(root.buildAnalysisExport())
+                // Multi-sheet workbook: one sheet per report view (bug 11).
+                onClicked: root.exportRequested(root.buildAnalysisWorkbook())
             }
         ]
     }
@@ -208,14 +301,31 @@ Item {
         }
     }
 
-    QQC.ScrollView {
+    AppScrollView {
+        id: reportScroll
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
         visible: root._hasAnyData
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
+
+        // Horizontal swipe → prev/next view. Constrained to the X axis so it
+        // only claims dominantly-horizontal drags; vertical flicks stay with the
+        // Flickable and taps pass through to the pills/buttons. target:null means
+        // it detects without moving anything. Touch gesture behaviour differs on
+        // Android vs desktop — device-verify (see memory scrollview_touch_freedrag).
+        DragHandler {
+            target: null
+            yAxis.enabled: false
+            xAxis.enabled: true
+            // finger left (dx<0) = swipe-left = previous view; right = next.
+            onActiveChanged: {
+                if (active) return
+                var dx = centroid.position.x - centroid.pressPosition.x
+                if (Math.abs(dx) > dp(60))
+                    root._stepViewMode(dx < 0 ? -1 : +1)
+            }
+        }
 
         ColumnLayout {
             id: stack
@@ -227,10 +337,19 @@ Item {
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
                 Layout.topMargin: dp(Constants.space3)
-                model: [qsTr("Value"), qsTr("Purchased"), qsTr("Current"),
-                        qsTr("Revenue"), qsTr("Sold"), qsTr("Profit")]
-                selected: root._viewMode
-                onSegmentSelected: function(idx, label) { root._viewMode = idx }
+                // Staff see only Current + Sold; everyone else sees all six.
+                model: root.canViewFinancials
+                       ? [qsTr("Value"), qsTr("Purchased"), qsTr("Current"),
+                          qsTr("Revenue"), qsTr("Sold"), qsTr("Profit")]
+                       : [qsTr("Current"), qsTr("Sold")]
+                // Map the visible segment index back to the real _MODE_* value.
+                selected: root.canViewFinancials
+                          ? root._viewMode
+                          : (root._viewMode === root._MODE_SOLD ? 1 : 0)
+                onSegmentSelected: function(idx, label) {
+                    if (root.canViewFinancials) root._viewMode = idx
+                    else root._viewMode = (idx === 1 ? root._MODE_SOLD : root._MODE_CURRENT)
+                }
             }
 
             // Period pill — applies to the time-bucketed views (Revenue,
@@ -273,7 +392,8 @@ Item {
                 // Source of supplier names — pulls live from the SupplierStore
                 // singleton so a rename or add elsewhere refreshes the chips
                 // automatically (the `revision` integer makes it reactive).
-                visible: root._viewMode === root._MODE_CURRENT
+                visible: root.canViewSuppliers
+                         && root._viewMode === root._MODE_CURRENT
                          && (SupplierStore.suppliers || []).length > 0
                 model: {
                     var sRev = SupplierStore.revision
@@ -387,6 +507,16 @@ Item {
                         color: Qt.rgba(1,1,1,0.92)
                         font.pixelSize: sp(Constants.fsSmall)
                         font.bold: true
+                    }
+
+                    Text {
+                        visible: root._viewMode === root._MODE_REVENUE
+                                 && (root._periodTax > 0 || root._periodDiscount > 0)
+                        text: qsTr("incl. %1 tax · %2 discount")
+                              .arg(SalesStore.formatCurrency(root._periodTax))
+                              .arg(SalesStore.formatCurrency(root._periodDiscount))
+                        color: Qt.rgba(1,1,1,0.92)
+                        font.pixelSize: sp(Constants.fsSmall)
                     }
 
                     Text {
@@ -523,336 +653,51 @@ Item {
                 }
             }
 
-            // ── Current-view: Stock by category chart ──
-            ColumnLayout {
+            // ── By-category breakdown (all views) ──
+            BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                spacing: dp(Constants.space2)
-                visible: root._viewMode === root._MODE_CURRENT
-
-                Text {
-                    text: qsTr("Stock by category")
-                    color: Constants.textPrimary
-                    font.pixelSize: sp(Constants.fsBodyLg)
-                    font.bold: true
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dp(180)
-                    radius: dp(Constants.radius)
-                    color: Constants.cardBg
-                    border.color: Constants.borderColor
-                    border.width: 1
-
-                    Item {
-                        id: yAxisCat
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.leftMargin: dp(Constants.space3)
-                        anchors.topMargin: dp(Constants.space3)
-                        anchors.bottomMargin: dp(Constants.space3) + dp(20)
-                        width: dp(28)
-                        Text {
-                            anchors.right: parent.right; anchors.top: parent.top
-                            text: root._formatAxisValue(root._maxValue(root._stockByCategory))
-                            color: Constants.textMuted; font.pixelSize: sp(Constants.fsCaption)
-                        }
-                        Text {
-                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                            text: root._formatAxisValue(root._maxValue(root._stockByCategory) / 2)
-                            color: Constants.textMuted; font.pixelSize: sp(Constants.fsCaption)
-                        }
-                        Text {
-                            anchors.right: parent.right; anchors.bottom: parent.bottom
-                            text: "0"; color: Constants.textMuted; font.pixelSize: sp(Constants.fsCaption)
-                        }
-                    }
-
-                    RowLayout {
-                        anchors.left: yAxisCat.right
-                        anchors.leftMargin: dp(Constants.space2)
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.rightMargin: dp(Constants.space3)
-                        anchors.topMargin: dp(Constants.space3)
-                        anchors.bottomMargin: dp(Constants.space3)
-                        spacing: dp(6)
-                        Repeater {
-                            model: root._stockByCategory
-                            delegate: ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                spacing: dp(4)
-                                Item {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        radius: dp(Constants.radiusSm)
-                                        height: Math.max(dp(6), parent.height *
-                                                Math.min(1, modelData.value /
-                                                    Math.max(1, root._maxValue(root._stockByCategory))))
-                                        gradient: Gradient {
-                                            orientation: Gradient.Vertical
-                                            GradientStop { position: 0.0; color: Constants.brand3 }
-                                            GradientStop { position: 1.0; color: Constants.brand2 }
-                                        }
-                                        Behavior on height { NumberAnimation { duration: Constants.durMed } }
-                                    }
-                                }
-                                Text {
-                                    text: modelData.label
-                                    color: Constants.textSecondary
-                                    font.pixelSize: sp(Constants.fsCaption)
-                                    Layout.alignment: Qt.AlignHCenter
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-                    }
-                }
+                visible: (root._breakdownByCategory || []).length > 0
+                title: root._breakdownTitles().category
+                model: root._breakdownByCategory
+                currency: root._isCurrency
+                barTop: Constants.brand3
+                barBottom: Constants.brand2
             }
 
-            // ── Current-view: Stock by party chart ──
-            ColumnLayout {
+            // ── By-supplier breakdown (all views) ──
+            BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                spacing: dp(Constants.space2)
-                visible: root._viewMode === root._MODE_CURRENT
-
-                Text {
-                    // Reads as "purchased qty per supplier (lifetime)" —
-                    // unaffected by later restocks from a different party.
-                    text: qsTr("Purchases by party")
-                    color: Constants.textPrimary
-                    font.pixelSize: sp(Constants.fsBodyLg)
-                    font.bold: true
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dp(180)
-                    radius: dp(Constants.radius)
-                    color: Constants.cardBg
-                    border.color: Constants.borderColor
-                    border.width: 1
-
-                    Item {
-                        id: yAxisParty
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.leftMargin: dp(Constants.space3)
-                        anchors.topMargin: dp(Constants.space3)
-                        anchors.bottomMargin: dp(Constants.space3) + dp(20)
-                        width: dp(28)
-                        Text {
-                            anchors.right: parent.right; anchors.top: parent.top
-                            text: root._formatAxisValue(root._maxValue(root._stockByParty))
-                            color: Constants.textMuted; font.pixelSize: sp(Constants.fsCaption)
-                        }
-                        Text {
-                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                            text: root._formatAxisValue(root._maxValue(root._stockByParty) / 2)
-                            color: Constants.textMuted; font.pixelSize: sp(Constants.fsCaption)
-                        }
-                        Text {
-                            anchors.right: parent.right; anchors.bottom: parent.bottom
-                            text: "0"; color: Constants.textMuted; font.pixelSize: sp(Constants.fsCaption)
-                        }
-                    }
-
-                    RowLayout {
-                        anchors.left: yAxisParty.right
-                        anchors.leftMargin: dp(Constants.space2)
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.rightMargin: dp(Constants.space3)
-                        anchors.topMargin: dp(Constants.space3)
-                        anchors.bottomMargin: dp(Constants.space3)
-                        spacing: dp(6)
-                        Repeater {
-                            model: root._stockByParty
-                            delegate: ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                spacing: dp(4)
-                                Item {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        radius: dp(Constants.radiusSm)
-                                        height: Math.max(dp(6), parent.height *
-                                                Math.min(1, modelData.value /
-                                                    Math.max(1, root._maxValue(root._stockByParty))))
-                                        gradient: Gradient {
-                                            orientation: Gradient.Vertical
-                                            GradientStop { position: 0.0; color: Constants.brand4 }
-                                            GradientStop { position: 1.0; color: Constants.brand5 }
-                                        }
-                                        Behavior on height { NumberAnimation { duration: Constants.durMed } }
-                                    }
-                                }
-                                Text {
-                                    text: modelData.label
-                                    color: Constants.textSecondary
-                                    font.pixelSize: sp(Constants.fsCaption)
-                                    Layout.alignment: Qt.AlignHCenter
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-                    }
-                }
-                Text {
-                    visible: (root._stockByParty || []).length === 0
-                    text: qsTr("No supplier purchases recorded yet — capture a supplier on your next restock.")
-                    color: Constants.textMuted
-                    font.pixelSize: sp(Constants.fsCaption)
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                }
+                visible: root.canViewSuppliers
+                         && (root._viewMode === root._MODE_CURRENT
+                             || (root._breakdownBySupplier || []).length > 0
+                             || root._supplierBreakdownApplies())
+                title: root._breakdownTitles().supplier
+                model: root._breakdownBySupplier
+                currency: root._isCurrency
+                barTop: Constants.brand4
+                barBottom: Constants.brand5
+                emptyText: root._viewMode === root._MODE_CURRENT
+                           ? qsTr("No supplier purchases recorded yet — capture a supplier on your next restock.")
+                           : qsTr("No supplier data for this period.")
             }
 
-            // Breakdown bars — title flips per view. For Current we replaced
-            // the old per-product chart (which duplicated the Stock page) with
-            // a "Stock health" distribution: how many SKUs are in stock vs low
-            // vs out of stock. Actionable at a glance.
-            ColumnLayout {
+            // Main breakdown — time series for Revenue/Sold/Purchased, top-N
+            // for Value/Profit, stock-health for Current. Title flips per view.
+            BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                spacing: dp(Constants.space2)
-
-                Text {
-                    text: root._viewMode === root._MODE_CURRENT ? qsTr("Stock health") : qsTr("Breakdown")
-                    color: Constants.textPrimary
-                    font.pixelSize: sp(Constants.fsBodyLg)
-                    font.bold: true
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dp(200)
-                    radius: dp(Constants.radius)
-                    color: Constants.cardBg
-                    border.color: Constants.borderColor
-                    border.width: 1
-
-                    // Y-axis labels — anchored to the left edge so they don't
-                    // eat horizontal space the bar row would otherwise use.
-                    // Bottom label aligns with the top of the x-axis caption
-                    // line so the "0" sits flush with where bars begin.
-                    Item {
-                        id: yAxisMain
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.leftMargin: dp(Constants.space3)
-                        anchors.topMargin: dp(Constants.space3)
-                        anchors.bottomMargin: dp(Constants.space3) + dp(20)
-                        width: dp(28)
-                        Text {
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            text: root._formatAxisValue(root._maxBreakdown())
-                            color: Constants.textMuted
-                            font.pixelSize: sp(Constants.fsCaption)
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: root._formatAxisValue(root._maxBreakdown() / 2)
-                            color: Constants.textMuted
-                            font.pixelSize: sp(Constants.fsCaption)
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            text: "0"
-                            color: Constants.textMuted
-                            font.pixelSize: sp(Constants.fsCaption)
-                        }
-                    }
-
-                    RowLayout {
-                        // Anchor past the y-axis. Right margin keeps the last
-                        // bar from touching the card edge.
-                        anchors.left: yAxisMain.right
-                        anchors.leftMargin: dp(Constants.space2)
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.rightMargin: dp(Constants.space3)
-                        anchors.topMargin: dp(Constants.space3)
-                        anchors.bottomMargin: dp(Constants.space3)
-                        spacing: dp(6)
-
-                        Repeater {
-                            // Period-aware breakdown: hourly (Day) / daily (Week) /
-                            // weekly (Month) / monthly (Year). Recomputed by
-                            // _rebuildBreakdown() whenever _period changes.
-                            model: root._breakdown
-                            delegate: ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                spacing: dp(4)
-
-                                Item {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        radius: dp(Constants.radiusSm)
-                                        height: Math.max(dp(6), parent.height *
-                                                Math.min(1, modelData.value /
-                                                    Math.max(1, root._maxBreakdown())))
-                                        gradient: Gradient {
-                                            orientation: Gradient.Vertical
-                                            GradientStop { position: 0.0; color: Constants.brand2 }
-                                            GradientStop { position: 1.0; color: Constants.brand1 }
-                                        }
-                                        Behavior on height { NumberAnimation { duration: Constants.durMed } }
-                                    }
-                                    // Per-bar value tip — only when the bar is
-                                    // tall enough to host the text.
-                                    Text {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.bottom: parent.bottom
-                                        anchors.bottomMargin: dp(2)
-                                        visible: modelData.value > 0 && parent.height > dp(40)
-                                                 && (modelData.value / Math.max(1, root._maxBreakdown())) > 0.18
-                                        text: root._formatAxisValue(modelData.value)
-                                        color: Constants.textOnBrand
-                                        font.pixelSize: sp(Constants.fsCaption)
-                                        font.bold: true
-                                    }
-                                }
-
-                                Text {
-                                    text: modelData.label
-                                    color: Constants.textSecondary
-                                    font.pixelSize: sp(Constants.fsCaption)
-                                    Layout.alignment: Qt.AlignHCenter
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-                    }
-                }
+                title: root._viewMode === root._MODE_CURRENT ? qsTr("Stock health") : qsTr("Breakdown")
+                model: root._breakdown
+                currency: root._isCurrency
+                chartHeight: dp(200)
+                showValueTips: true
+                barTop: Constants.brand2
+                barBottom: Constants.brand1
             }
 
             // Top items — only meaningful for revenue / sold-stock views.
@@ -861,7 +706,7 @@ Item {
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
                 spacing: dp(Constants.space2)
-                visible: root._viewMode === root._MODE_REVENUE || root._viewMode === root._MODE_SOLD
+                visible: root.canViewFinancials && (root._viewMode === root._MODE_REVENUE || root._viewMode === root._MODE_SOLD)
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -909,7 +754,7 @@ Item {
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
                 spacing: dp(Constants.space2)
-                visible: root._viewMode === root._MODE_REVENUE || root._viewMode === root._MODE_PURCHASED
+                visible: root.canViewFinancials && (root._viewMode === root._MODE_REVENUE || root._viewMode === root._MODE_PURCHASED)
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -989,6 +834,7 @@ Item {
     // Sets _breakdown, _periodTotal, _periodLabel, _periodCompare.
 
     function _rebuildBreakdown() {
+        _enforceStaffScope()
         var partyOn = _partyFilter !== "All" && _partyFilter.length > 0
         var partySuffix = partyOn ? qsTr(" · party: %1").arg(_partyFilter) : ""
         // The chip stores a supplier *name* (label is what users see); resolve
@@ -1003,36 +849,10 @@ Item {
         // populate `_valueByCategory` / `_valueBySupplier` for the Current-
         // view-style chart cards already on the page.
         if (_viewMode === _MODE_VALUE) {
-            var byProductV
-            var bySupplierV
-            var byCategoryV
-            var anyValueFilter = !!filterId || _categoryFilter !== "All"
-
-            if (anyValueFilter) {
-                // Walk batches once and apply both supplier AND category
-                // filters. We rebuild every map from the filtered set so the
-                // hero, breakdown, and parallel charts agree.
-                var bs = StockBatchStore.batches || []
-                byProductV = {}
-                bySupplierV = {}
-                byCategoryV = {}
-                for (var bi = 0; bi < bs.length; ++bi) {
-                    var b = bs[bi]
-                    if (filterId && b.supplierId !== filterId) continue
-                    var pc = InventoryStore.getById(b.productId)
-                    var cat = (pc && pc.category) ? pc.category : "(uncategorised)"
-                    if (_categoryFilter !== "All" && cat !== _categoryFilter) continue
-                    var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
-                    if (v <= 0) continue
-                    byProductV[b.productId] = (byProductV[b.productId] || 0) + v
-                    bySupplierV[b.supplierId || ""] = (bySupplierV[b.supplierId || ""] || 0) + v
-                    byCategoryV[cat] = (byCategoryV[cat] || 0) + v
-                }
-            } else {
-                byProductV  = InventoryStore.valueByProduct() || {}
-                bySupplierV = InventoryStore.valueBySupplier() || {}
-                byCategoryV = InventoryStore.valueByCategory() || {}
-            }
+            var vm = _valueMaps(filterId, _categoryFilter)
+            var byProductV  = vm.byProduct
+            var bySupplierV = vm.bySupplier
+            var byCategoryV = vm.byCategory
 
             // Top-N bars grouped by product *name* — collapse SKU-only
             // duplicates so a product family with multiple SKUs appears as
@@ -1073,9 +893,9 @@ Item {
             _breakdown = topRows
             _topByName = topRows
             _valueByCategory = _topNFromMap(byCategoryV, 8)
-            _stockByCategory = _valueByCategory   // reuse the existing card
+            _breakdownByCategory = _valueByCategory   // reuse the existing card
             _valueBySupplier = _topNFromMap(supplierNamed, 8)
-            _stockByParty = _valueBySupplier      // reuse the existing card
+            _breakdownBySupplier = _valueBySupplier      // reuse the existing card
 
             _periodTotal = totalV
             _periodLabel = qsTr("Inventory value")
@@ -1171,53 +991,48 @@ Item {
                 _profitBySupplier = _profitTopN(bySupAccum, 8, "")
                 _profitByChannel = []
                 _profitByStaff = []
-                _stockByCategory = _profitByCategory
-                _stockByParty = _profitBySupplier
+                _breakdownByCategory = _profitByCategory
+                _breakdownBySupplier = _profitBySupplier
 
                 _periodTotal = totalProfit
                 _periodLabel = qsTr("Potential profit on open stock")
                 _periodSecondary = totalCogs > 0
-                        ? qsTr("Margin %1%").arg((totalProfit / totalCogs * 100).toFixed(1))
+                        ? qsTr("Markup %1%").arg((totalProfit / totalCogs * 100).toFixed(1))
                         : ""
                 _periodCompare = qsTr("at current selling prices") + partySuffix
                 return
             }
 
-            // Realised — walk consumption[] grouped into period bins. Each
-            // sale entry can contribute partial supplier qty (mixed-supplier
-            // FIFO consumption), so we use the per-line predicate model
-            // already proven on the Sold view.
-            bins = _profitBucketWalk(_period, filterId)
+            // Hero revenue / cogs / profit AND every by-dimension section share
+            // ONE filter scope (A) and ONE source — the event log — so the hero
+            // reconciles to Σ(by-dimension) under any active filter. The profit
+            // bins go through the SAME canonical RealisedMath path as the Revenue
+            // hero (metric "profit"): scope carries supplier/channel/staff/category
+            // + the period∩date window, so a supplier-filtered price_adjust is
+            // attributed via its stamped slices and the bins use the identical
+            // window as the by-dimension cards (no hand-duplicated walker to drift).
+            var realisedScope = _realisedScope(true)
+            bins = InventoryStore.realisedBucketWalk("profit", _period, realisedScope)
             for (var bb2 = 0; bb2 < bins.length; ++bb2)
                 totalProfit += bins[bb2].value
 
-            // Compute revenue / cogs across the same scope so the hero can
-            // show margin %. Slightly redundant pass — clarity > perf here.
-            var realisedAgg = InventoryStore.realisedProfitByDimension("supplierId") || {}
-            if (filterId) {
-                var rR = realisedAgg[filterId] || { revenue: 0, cogs: 0 }
-                totalRevenue = rR.revenue; totalCogs = rR.cogs
-            } else {
-                var rks = Object.keys(realisedAgg)
-                for (var rk = 0; rk < rks.length; ++rk) {
-                    totalRevenue += realisedAgg[rks[rk]].revenue
-                    totalCogs += realisedAgg[rks[rk]].cogs
-                }
-            }
+            var realisedTotals = InventoryStore.realisedTotals(realisedScope)
+            totalRevenue = realisedTotals.net
+            totalCogs = realisedTotals.cogs
             _breakdown = bins
-            _profitByCategory = _profitTopN(InventoryStore.realisedProfitByDimension("category"), 8, "")
-            var realisedBySup = InventoryStore.realisedProfitByDimension("supplierId") || {}
+            _profitByCategory = _profitTopN(InventoryStore.realisedProfitByDimension("category", realisedScope), 8, "")
+            var realisedBySup = InventoryStore.realisedProfitByDimension("supplierId", realisedScope) || {}
             _profitBySupplier = _profitTopN(_namedSupplierMap(realisedBySup), 8, "")
-            _profitByChannel = _profitTopN(InventoryStore.realisedProfitByDimension("channel"), 8, "")
-            _profitByStaff = _profitTopN(_namedStaffMap(InventoryStore.realisedProfitByDimension("staffId")), 8, "")
-            _stockByCategory = _profitByCategory
-            _stockByParty = _profitBySupplier
-            _topByName = _profitTopN(_namedProductMap(InventoryStore.realisedProfitByDimension("productId")), 8, "")
+            _profitByChannel = _profitTopN(InventoryStore.realisedProfitByDimension("channel", realisedScope), 8, "")
+            _profitByStaff = _profitTopN(_namedStaffMap(InventoryStore.realisedProfitByDimension("staffId", realisedScope)), 8, "")
+            _breakdownByCategory = _profitByCategory
+            _breakdownBySupplier = _profitBySupplier
+            _topByName = _profitTopN(_namedProductMap(InventoryStore.realisedProfitByDimension("productId", realisedScope)), 8, "")
 
             _periodTotal = totalProfit
             _periodLabel = qsTr("Realised profit this period")
             _periodSecondary = totalCogs > 0
-                    ? qsTr("Margin %1%").arg((totalProfit / totalCogs * 100).toFixed(1))
+                    ? qsTr("Markup %1%").arg((totalProfit / totalCogs * 100).toFixed(1))
                     : ""
             _periodCompare = qsTr("from completed sales") + partySuffix
             return
@@ -1326,8 +1141,8 @@ Item {
                 { label: qsTr("Low"),         value: lowStockCount },
                 { label: qsTr("Out"),         value: outOfStockCount }
             ]
-            _stockByCategory = _topNFromMap(byCat, 8)
-            _stockByParty = _topNFromMap(bySupplier, 8)
+            _breakdownByCategory = _topNFromMap(byCat, 8)
+            _breakdownBySupplier = _topNFromMap(bySupplier, 8)
             _topByName = _topNFromMap(byName, 8)
 
             _periodTotal = total
@@ -1361,6 +1176,8 @@ Item {
             _periodTotal = soldTotal
             _periodLabel = qsTr("Units sold this period")
             _periodCompare = qsTr("from completed orders") + partySuffix
+            _breakdownByCategory = _topNFromMap(_breakdownByDimension("sold", "category", false), 8)
+            _breakdownBySupplier = _topNFromMap(_breakdownByDimension("sold", "supplier", false), 8)
             return
         }
 
@@ -1369,174 +1186,127 @@ Item {
         // category filters apply the same way; channel + staff only affect
         // sales, so they pass-through (a purchase event has no channel).
         if (_viewMode === _MODE_PURCHASED) {
-            var purchasePredicate = function(e) {
-                if (filterId) {
-                    var pid = e.party || (e.snapshot ? e.snapshot.supplierId || e.snapshot.party || "" : "")
-                    if (pid !== filterId) return false
-                }
-                // Reuse the cross-filter helper — channel/staff are no-ops
-                // for purchase events (those fields don't exist) which means
-                // those filters effectively bypass purchases.
-                if (_dateFilter !== "all") {
-                    var win = _dateWindow()
-                    if (win) {
-                        var ed = new Date(e.timestamp || e.date)
-                        if (isNaN(ed.getTime()) || ed < win.from || ed >= win.to) return false
-                    }
-                }
-                if (_categoryFilter !== "All") {
-                    var p = InventoryStore.getById(e.productId)
-                    if (!p || (p.category || "") !== _categoryFilter) return false
-                }
-                return true
-            }
-            var bought = TransactionStore.bucketsForFiltered(["purchase", "created"], _period, purchasePredicate)
+            var bought = TransactionStore.bucketsForFiltered(["purchase", "created"], _period, _purchasePredicate(filterId))
             _breakdown = bought
             var boughtTotal = 0
             for (var pb = 0; pb < bought.length; ++pb) boughtTotal += bought[pb].value
             _periodTotal = boughtTotal
             _periodLabel = qsTr("Units purchased this period")
             _periodCompare = qsTr("from restocks") + partySuffix
+            _breakdownByCategory = _topNFromMap(_breakdownByDimension("purchased", "category", false), 8)
+            _breakdownBySupplier = _topNFromMap(_breakdownByDimension("purchased", "supplier", false), 8)
             return
         }
 
-        // Revenue view — every order is gated by every active filter:
-        // channel + staff at the order level, category + supplier at the
-        // line level. The previous implementation had a "no filter →
-        // o.total" short-circuit that swallowed the channel/staff result
-        // when supplier/category were All; that's gone now, so the
-        // behaviour is consistent regardless of which filters are set.
-        //
-        // Staff filter resolves the chip's display name into a stable
-        // staffId once. If the chip name doesn't resolve (e.g. the staff
-        // member was deleted after the chip was applied), `staffFilterId`
-        // stays "" and we just match orders that also have empty staffId.
-        var staffFilterId = ""
-        if (_staffFilter !== "All") {
-            var roster = StaffStore.staff || []
-            for (var sri = 0; sri < roster.length; ++sri)
-                if (roster[sri].name === _staffFilter) { staffFilterId = roster[sri].staffId || ""; break }
-        }
-        var revenueOf = function(o) {
-            if (_channelFilter !== "All" && (o.orderChannel || "") !== _channelFilter) return 0
-            if (_staffFilter !== "All" && (o.staffId || "") !== staffFilterId) return 0
-            // Category + supplier require per-line walk. When neither is
-            // set, the line-level walk simplifies to summing every line's
-            // qty × unit price — that yields the same result as o.total
-            // *and* preserves the channel/staff gating above.
-            var sum = 0
-            var lines = o.products || []
-            for (var li = 0; li < lines.length; ++li) {
-                var ln = lines[li]
-                if (_categoryFilter !== "All") {
-                    var p = InventoryStore.getById(ln.productId)
-                    if (!p || (p.category || "") !== _categoryFilter) continue
-                }
-                var pr = (typeof ln.price === "number") ? ln.price : 0
-                if (filterId) {
-                    var c = ln.consumption || []
-                    for (var ci = 0; ci < c.length; ++ci) {
-                        if (c[ci].supplierId !== filterId) continue
-                        sum += (c[ci].qtyConsumed || 0) * pr
-                    }
-                } else {
-                    var qty = ln.quantity || ln.qty || 0
-                    sum += qty * pr
-                }
-            }
-            return sum
-        }
-        // Date filter — applied per-bucket below by intersecting the
-        // period bin against the active window.
-        var dateWin = _dateWindow()
-        var orders = OrdersStore.orders || []
-        var now = new Date()
-        var bins = []
-        var labels = []
-
-        if (_period === 0) { // Day — 24 hourly bins
-            for (var i = 0; i < 24; ++i) {
-                bins.push(0)
-                labels.push((i % 6 === 0) ? (i + "h") : "")
-            }
-            for (var k = 0; k < orders.length; ++k) {
-                var o = orders[k]
-                if (o.status !== "completed") continue
-                var d = new Date(o.date)
-                if (isNaN(d.getTime())) continue
-                if (dateWin && (d < dateWin.from || d >= dateWin.to)) continue
-                if (d.getFullYear() === now.getFullYear()
-                    && d.getMonth() === now.getMonth()
-                    && d.getDate() === now.getDate()) {
-                    bins[d.getHours()] += revenueOf(o)
-                }
-            }
-            _periodLabel = qsTr("Revenue today")
-            _periodCompare = qsTr("▲ from yesterday") + partySuffix
-        } else if (_period === 1) { // Week — 7 daily bins (Mon–Sun)
-            var dayLabels = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-            for (var w = 0; w < 7; ++w) { bins.push(0); labels.push(dayLabels[w]) }
-            // Compute Monday of current week
-            var monday = new Date(now)
-            var dow = (monday.getDay() + 6) % 7  // 0=Mon..6=Sun
-            monday.setDate(monday.getDate() - dow)
-            monday.setHours(0,0,0,0)
-            var nextMonday = new Date(monday)
-            nextMonday.setDate(monday.getDate() + 7)
-            for (var k2 = 0; k2 < orders.length; ++k2) {
-                var o2 = orders[k2]
-                if (o2.status !== "completed") continue
-                var d2 = new Date(o2.date)
-                if (isNaN(d2.getTime())) continue
-                if (dateWin && (d2 < dateWin.from || d2 >= dateWin.to)) continue
-                if (d2 >= monday && d2 < nextMonday) {
-                    var idx = (d2.getDay() + 6) % 7
-                    bins[idx] += revenueOf(o2)
-                }
-            }
-            _periodLabel = qsTr("Revenue this week")
-            _periodCompare = qsTr("▲ from last week") + partySuffix
-        } else if (_period === 2) { // Month — 4 weekly bins
-            for (var m = 0; m < 4; ++m) { bins.push(0); labels.push("W" + (m+1)) }
-            var startMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-            var endMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-            for (var k3 = 0; k3 < orders.length; ++k3) {
-                var o3 = orders[k3]
-                if (o3.status !== "completed") continue
-                var d3 = new Date(o3.date)
-                if (isNaN(d3.getTime())) continue
-                if (dateWin && (d3 < dateWin.from || d3 >= dateWin.to)) continue
-                if (d3 >= startMonth && d3 < endMonth) {
-                    var weekIdx = Math.min(3, Math.floor((d3.getDate() - 1) / 7))
-                    bins[weekIdx] += revenueOf(o3)
-                }
-            }
-            _periodLabel = qsTr("Revenue this month")
-            _periodCompare = qsTr("▲ from last month") + partySuffix
-        } else { // Year — 12 monthly bins
-            var monthLabels = ["J","F","M","A","M","J","J","A","S","O","N","D"]
-            for (var y = 0; y < 12; ++y) { bins.push(0); labels.push(monthLabels[y]) }
-            for (var k4 = 0; k4 < orders.length; ++k4) {
-                var o4 = orders[k4]
-                if (o4.status !== "completed") continue
-                var d4 = new Date(o4.date)
-                if (isNaN(d4.getTime())) continue
-                if (dateWin && (d4 < dateWin.from || d4 >= dateWin.to)) continue
-                if (d4.getFullYear() === now.getFullYear())
-                    bins[d4.getMonth()] += revenueOf(o4)
-            }
-            _periodLabel = qsTr("Revenue this year")
-            _periodCompare = qsTr("▲ vs prior year") + partySuffix
-        }
-
-        var arr = []
+        // Revenue view — every event is gated by every active filter (date /
+        // channel / staff / category / supplier) inside the scope object.
+        // Revenue now walks the IMMUTABLE event log (SITE 5) — the same source
+        // as the Profit view — so an adjusted/returned order nets correctly
+        // (the ledger keeps the sale + return rows) and Revenue reconciles with
+        // Profit. The period bins are scoped to period ∩ date-filter ∩ the other
+        // active filters via realisedBucketWalk.
+        var periodScope = _realisedScope(true)
+        var arr = InventoryStore.realisedBucketWalk("net", _period, periodScope)
         var total = 0
-        for (var b = 0; b < bins.length; ++b) {
-            arr.push({ label: labels[b], value: bins[b] })
-            total += bins[b]
-        }
+        for (var b = 0; b < arr.length; ++b) total += arr[b].value
         _breakdown = arr
         _periodTotal = total
+        if (_period === 0) {
+            _periodLabel = qsTr("Revenue today");      _periodCompare = qsTr("▲ from yesterday") + partySuffix
+        } else if (_period === 1) {
+            _periodLabel = qsTr("Revenue this week");   _periodCompare = qsTr("▲ from last week") + partySuffix
+        } else if (_period === 2) {
+            _periodLabel = qsTr("Revenue this month");  _periodCompare = qsTr("▲ from last month") + partySuffix
+        } else {
+            _periodLabel = qsTr("Revenue this year");   _periodCompare = qsTr("▲ vs prior year") + partySuffix
+        }
+
+        // Hero sublines: tax collected + discount given over the same scope.
+        // Order-level tax/discount can't be cleanly attributed to category/supplier
+        // (they're whole-order aggregates). Hide the subline when a line-level
+        // filter is active to avoid misleading the user.
+        if (_categoryFilter !== "All" || filterId) {
+            _periodTax = 0
+            _periodDiscount = 0
+        } else {
+            // Tax/discount over the same period scope, from the event log.
+            var subTotals = InventoryStore.realisedTotals(periodScope)
+            _periodTax = subTotals.tax
+            _periodDiscount = subTotals.discount
+        }
+        _breakdownByCategory = _topNFromMap(_breakdownByDimension("revenue", "category", false), 8)
+        _breakdownBySupplier = _topNFromMap(_breakdownByDimension("revenue", "supplier", false), 8)
+    }
+
+    // Build the live opts bundle and delegate the grouping to BreakdownMath.
+    // metric ∈ "revenue"|"tax"|"discount"|"sold"|"purchased"; dim ∈ "category"|"supplier".
+    // ignorePeriod=true skips the period window (used by the export, whose
+    // category/supplier sections are filter-scoped totals, not single-period).
+    // Returns a { key -> number } map; callers wrap it with _topNFromMap.
+    //
+    // The MONEY metrics (revenue/tax/discount) route through the immutable event
+    // log via RealisedMath (SITE 5) so the Revenue cards + export net/tax/discount
+    // sections reconcile with the Totals block on adjusted/returned orders. The
+    // UNIT metrics (sold/purchased) stay on BreakdownMath (qty over events).
+    function _breakdownByDimension(metric, dim, ignorePeriod) {
+        // Window = period ∩ date-filter (or just date-filter when ignoring period).
+        var periodWin = ignorePeriod ? null : BreakdownMath.periodWindow(_period, new Date())
+        var win = BreakdownMath.intersect(periodWin, _dateWindow())
+
+        // Resolve staff filter → stable id (prefers currentStaffId when staff-scoped).
+        var staffId = _resolveStaffFilterId()
+
+        if (metric === "revenue" || metric === "tax" || metric === "discount") {
+            // Event-log money aggregation. dim → RealisedMath field; the returned
+            // {key→row} is flattened to {key→number} for the metric column, then
+            // id keys are resolved to display names for the supplier dim (parity
+            // with BreakdownMath's _supplierKey/_categoryKey output).
+            var field = dim === "supplier" ? "supplierId" : "category"
+            var scope = {
+                window: win,
+                channel: _channelFilter === "All" ? "" : _channelFilter,
+                staffId: staffId,
+                category: _categoryFilter === "All" ? "" : _categoryFilter,
+                supplierId: _partyFilter !== "All" ? _supplierIdForName(_partyFilter) : ""
+            }
+            var rows = InventoryStore.realisedProfitByDimension(field, scope)
+            var col = metric === "revenue" ? "revenue" : metric === "tax" ? "tax" : "discount"
+            var out = {}
+            var rk = Object.keys(rows)
+            for (var ri = 0; ri < rk.length; ++ri) {
+                var key = rk[ri]
+                var label = dim === "supplier"
+                        ? (key ? (SupplierStore.nameOf(key) || qsTr("(removed)")) : qsTr("Unknown"))
+                        : (key || qsTr("(uncategorised)"))
+                out[label] = (out[label] || 0) + (rows[key][col] || 0)
+            }
+            return out
+        }
+
+        // productId → category, supplierId → name lookup maps.
+        var productCategory = {}
+        var inv = InventoryStore.products || []
+        for (var pi = 0; pi < inv.length; ++pi)
+            productCategory[inv[pi].productId] = inv[pi].category || ""
+        var supplierName = {}
+        var sup = SupplierStore.suppliers || []
+        for (var sj = 0; sj < sup.length; ++sj)
+            supplierName[sup[sj].supplierId] = sup[sj].name
+
+        return BreakdownMath.breakdown({
+            metric: metric,
+            dim: dim,
+            orders: OrdersStore.orders || [],
+            entries: TransactionStore.entries || [],
+            window: win,
+            channel: _channelFilter === "All" ? "" : _channelFilter,
+            staffId: staffId,
+            category: _categoryFilter === "All" ? "" : _categoryFilter,
+            supplierId: _partyFilter !== "All" ? _supplierIdForName(_partyFilter) : "",
+            productCategory: productCategory,
+            supplierName: supplierName,
+            allocate: OrderMath.allocate
+        })
     }
 
     function _maxBreakdown() {
@@ -1544,6 +1314,31 @@ Item {
         for (var i = 0; i < _breakdown.length; ++i)
             if (_breakdown[i].value > max) max = _breakdown[i].value
         return max
+    }
+
+    // Per-view titles for the two breakdown cards. Wording lives in one place
+    // so the cards stay declarative.
+    function _breakdownTitles() {
+        switch (_viewMode) {
+        case _MODE_VALUE:     return { category: qsTr("Value by category"),          supplier: qsTr("Value by supplier") }
+        case _MODE_PURCHASED: return { category: qsTr("Purchased units by category"), supplier: qsTr("Purchased units by supplier") }
+        case _MODE_CURRENT:   return { category: qsTr("Stock by category"),           supplier: qsTr("Purchases by party") }
+        case _MODE_REVENUE:   return { category: qsTr("Revenue by category"),         supplier: qsTr("Revenue by supplier") }
+        case _MODE_SOLD:      return { category: qsTr("Units sold by category"),      supplier: qsTr("Units sold by supplier") }
+        case _MODE_PROFIT:    return { category: qsTr("Profit by category"),          supplier: qsTr("Profit by supplier") }
+        }
+        return { category: qsTr("By category"), supplier: qsTr("By supplier") }
+    }
+
+    // True for views where a supplier breakdown is meaningful — so the card
+    // shows its empty-state message rather than disappearing when there's no
+    // supplier lineage yet (e.g. pre-FIFO sales).
+    function _supplierBreakdownApplies() {
+        return _viewMode === _MODE_VALUE
+            || _viewMode === _MODE_REVENUE
+            || _viewMode === _MODE_SOLD
+            || _viewMode === _MODE_PURCHASED
+            || _viewMode === _MODE_PROFIT
     }
 
     // Build an export payload for the active view. Called from Main.qml's
@@ -1567,16 +1362,20 @@ Item {
 
         // ── Inventory value snapshot ────────────────────────────────────
         if (root._viewMode === root._MODE_VALUE) {
-            var byProd = root._namedProductMapValue(InventoryStore.valueByProduct())
+            // Scope to the active supplier + category so the export matches the
+            // on-screen Value view (shared via _valueMaps).
+            var vmx = _valueMaps(root._partyFilter !== "All" ? _supplierIdForName(root._partyFilter) : "",
+                                 root._categoryFilter)
+            var byProd = root._namedProductMapValue(vmx.byProduct)
             var bySup = {}
-            var bySupRaw = InventoryStore.valueBySupplier()
+            var bySupRaw = vmx.bySupplier
             var supKeys = Object.keys(bySupRaw)
             for (var sk = 0; sk < supKeys.length; ++sk) {
                 var sNm = supKeys[sk] ? (SupplierStore.nameOf(supKeys[sk]) || qsTr("(removed)"))
                                       : qsTr("Unknown")
                 bySup[sNm] = (bySup[sNm] || 0) + bySupRaw[supKeys[sk]]
             }
-            var byCat = InventoryStore.valueByCategory()
+            var byCat = vmx.byCategory
             return {
                 title: qsTr("Inventory value") + partyTag,
                 suggestedName: "inventory_value_" + stamp + ".xlsx",
@@ -1594,37 +1393,54 @@ Item {
             var titleP = realised ? qsTr("Realised profit") : qsTr("Potential profit")
             var sectionsP = []
             if (realised) {
-                // Period bucket section first — mirrors the on-screen chart.
-                var periodBins = _profitBucketWalk(root._period, "")
-                var periodRows = []
-                var pTotal = 0
-                for (var pb = 0; pb < periodBins.length; ++pb) {
-                    periodRows.push([periodBins[pb].label, periodBins[pb].value])
-                    pTotal += periodBins[pb].value
+                // Every realised section shares ONE filter scope (A) and ONE
+                // source — the event log — so the Totals block reconciles to
+                // Σ(each by-dimension section). The by-dimension sections are
+                // whole-window totals (not period-bucketed), so periodScoped=false.
+                var exportScope = _realisedScope(false)
+                // By-period section: buckets are anchored to *now* (today/this
+                // week/month/year). Under a custom/back-dated date filter those
+                // buckets ∩ the filter window are near-empty and would disagree
+                // with the Totals block, so omit the section entirely (B).
+                if (root._dateFilter !== "custom") {
+                    var periodBins = InventoryStore.realisedBucketWalk("profit", root._period, exportScope)
+                    var periodRows = []
+                    var pTotal = 0
+                    for (var pb = 0; pb < periodBins.length; ++pb) {
+                        periodRows.push([periodBins[pb].label, periodBins[pb].value])
+                        pTotal += periodBins[pb].value
+                    }
+                    periodRows.push([qsTr("Total"), pTotal])
+                    sectionsP.push({
+                        heading: qsTr("By period"),
+                        headers: [qsTr("Bucket"), qsTr("Profit (₹)")],
+                        rows: periodRows
+                    })
                 }
-                periodRows.push([qsTr("Total"), pTotal])
-                sectionsP.push({
-                    heading: qsTr("By period"),
-                    headers: [qsTr("Bucket"), qsTr("Profit (₹)")],
-                    rows: periodRows
-                })
                 sectionsP.push(_exportProfitSection(qsTr("By product"),
-                        _namedProductMap(InventoryStore.realisedProfitByDimension("productId"))))
+                        _namedProductMap(InventoryStore.realisedProfitByDimension("productId", exportScope))))
                 sectionsP.push(_exportProfitSection(qsTr("By supplier"),
-                        _namedSupplierMap(InventoryStore.realisedProfitByDimension("supplierId"))))
+                        _namedSupplierMap(InventoryStore.realisedProfitByDimension("supplierId", exportScope))))
                 sectionsP.push(_exportProfitSection(qsTr("By category"),
-                        InventoryStore.realisedProfitByDimension("category")))
+                        InventoryStore.realisedProfitByDimension("category", exportScope)))
                 sectionsP.push(_exportProfitSection(qsTr("By channel"),
-                        InventoryStore.realisedProfitByDimension("channel")))
+                        InventoryStore.realisedProfitByDimension("channel", exportScope)))
                 sectionsP.push(_exportProfitSection(qsTr("By staff"),
-                        _namedStaffMap(InventoryStore.realisedProfitByDimension("staffId"))))
+                        _namedStaffMap(InventoryStore.realisedProfitByDimension("staffId", exportScope))))
+                sectionsP.unshift(_exportTotalsBlock())
             } else {
+                // Potential is a batch snapshot — only supplier + category apply
+                // (no date/channel/staff lineage), matching the on-screen view.
+                var potScope = {
+                    supplierId: root._partyFilter !== "All" ? _supplierIdForName(root._partyFilter) : "",
+                    category: root._categoryFilter !== "All" ? root._categoryFilter : ""
+                }
                 sectionsP.push(_exportProfitSection(qsTr("By product"),
-                        _namedProductMap(InventoryStore.potentialProfitByDimension("productId"))))
+                        _namedProductMap(InventoryStore.potentialProfitByDimension("productId", potScope))))
                 sectionsP.push(_exportProfitSection(qsTr("By supplier"),
-                        _namedSupplierMap(InventoryStore.potentialProfitByDimension("supplierId"))))
+                        _namedSupplierMap(InventoryStore.potentialProfitByDimension("supplierId", potScope))))
                 sectionsP.push(_exportProfitSection(qsTr("By category"),
-                        InventoryStore.potentialProfitByDimension("category")))
+                        InventoryStore.potentialProfitByDimension("category", potScope)))
             }
             return {
                 title: titleP + partyTag,
@@ -1636,9 +1452,12 @@ Item {
         if (root._viewMode === root._MODE_CURRENT) {
             // Current — full per-product snapshot, with a totals row at the
             // bottom so the user can sanity-check the chart.
-            var snapHeaders = [qsTr("Name"), qsTr("SKU"), qsTr("Category"),
-                               qsTr("Supplier"), qsTr("Stock"), qsTr("Min stock"),
-                               qsTr("Status")]
+            var showSup = root.canViewSuppliers
+            var snapHeaders = showSup
+                    ? [qsTr("Name"), qsTr("SKU"), qsTr("Category"), qsTr("Supplier"),
+                       qsTr("Stock"), qsTr("Min stock"), qsTr("Status")]
+                    : [qsTr("Name"), qsTr("SKU"), qsTr("Category"),
+                       qsTr("Stock"), qsTr("Min stock"), qsTr("Status")]
             var snapRows = []
             var inv = (InventoryStore.products || []).slice()
             inv.sort(function(a, b) { return (b.stock || 0) - (a.stock || 0) })
@@ -1649,6 +1468,11 @@ Item {
                     ? _supplierIdForName(root._partyFilter) : ""
             for (var i = 0; i < inv.length; ++i) {
                 var p = inv[i]
+                // Honour the active category filter, same as the on-screen
+                // Current view (the snapshot must match what's charted).
+                if (root._categoryFilter !== "All"
+                        && (p.category || qsTr("Uncategorised")) !== root._categoryFilter)
+                    continue
                 // The display "supplier" for the Current-stock export is the
                 // most-recent batch's supplier — same convention as the
                 // EditProductDialog banner (UI consistency, not analytics).
@@ -1661,10 +1485,17 @@ Item {
                 var status = s <= 0 ? qsTr("Out of stock")
                             : s <= (p.minStock || 0) ? qsTr("Low")
                             : qsTr("In stock")
-                snapRows.push([p.name || "", p.sku || "", p.category || "",
-                               sup, s, p.minStock || 0, status])
+                if (showSup)
+                    snapRows.push([p.name || "", p.sku || "", p.category || "",
+                                   sup, s, p.minStock || 0, status])
+                else
+                    snapRows.push([p.name || "", p.sku || "", p.category || "",
+                                   s, p.minStock || 0, status])
             }
-            snapRows.push(["", "", "", qsTr("Total"), grandTotal, "", ""])
+            if (showSup)
+                snapRows.push(["", "", "", qsTr("Total"), grandTotal, "", ""])
+            else
+                snapRows.push(["", "", qsTr("Total"), grandTotal, "", ""])
             return {
                 title: qsTr("Current stock snapshot") + partyTag,
                 suggestedName: "current_stock_" + stamp + ".xlsx",
@@ -1708,10 +1539,88 @@ Item {
                 rows: rows
             })
         }
+        // Category + supplier breakdowns mirror the on-screen cards. Filter-
+        // scoped totals (ignorePeriod) — the period tables above already cover
+        // the time dimension, so these summarise across the active filters.
+        var metricKey = root._viewMode === root._MODE_REVENUE ? "revenue"
+                      : root._viewMode === root._MODE_SOLD ? "sold" : "purchased"
+        var dimUnit = root._viewMode === root._MODE_REVENUE ? qsTr("Amount (₹)") : qsTr("Units")
+        if (root._viewMode === root._MODE_REVENUE) {
+            // Build net/tax/discount maps per dimension and emit reconciling sections.
+            var catNet  = _breakdownByDimension("revenue", "category", true)
+            var catTax  = _breakdownByDimension("tax", "category", true)
+            var catDisc = _breakdownByDimension("discount", "category", true)
+            sections.push(_exportNetSection(qsTr("By category"), _mergeNetMaps(catNet, catTax, catDisc)))
+            if (root.canViewSuppliers) {
+                var supNet  = _breakdownByDimension("revenue", "supplier", true)
+                var supTax  = _breakdownByDimension("tax", "supplier", true)
+                var supDisc = _breakdownByDimension("discount", "supplier", true)
+                sections.push(_exportNetSection(qsTr("By supplier"), _mergeNetMaps(supNet, supTax, supDisc)))
+            }
+            sections.unshift(_exportTotalsBlock())
+        } else {
+            // Sold / Purchased stay unit-based (no tax/discount dimension).
+            sections.push(_exportSectionFromMap(qsTr("By category"),
+                    [qsTr("Category"), dimUnit],
+                    _breakdownByDimension(metricKey, "category", true)))
+            if (root.canViewSuppliers)
+                sections.push(_exportSectionFromMap(qsTr("By supplier"),
+                        [qsTr("Supplier"), dimUnit],
+                        _breakdownByDimension(metricKey, "supplier", true)))
+        }
         return {
             title: titleMap[root._viewMode] + partyTag,
             suggestedName: "analysis_" + (titleMap[root._viewMode] || "report").toLowerCase() + "_" + stamp + ".xlsx",
             sections: sections
+        }
+    }
+
+    // Build a MULTI-SHEET workbook payload: every report view the current user
+    // can see becomes its own sheet (bug 11). Reuses buildAnalysisExport() per
+    // view by briefly switching _viewMode/_profitMode (synchronous, pure reads),
+    // then restoring — the active filters (date/channel/staff/party/category)
+    // stay applied to every sheet, so the workbook reflects what's on screen.
+    //   → { suggestedName, sheets: [{ name, title, sections }] }
+    function buildAnalysisWorkbook() {
+        var savedView = root._viewMode
+        var savedProfit = root._profitMode
+        var stamp = Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss")
+
+        // View list gated by permission — mirrors the on-screen SegmentedPill.
+        // Each entry: { mode, profit?, name }.
+        var views = []
+        if (root.canViewFinancials) {
+            views.push({ mode: root._MODE_VALUE,     name: qsTr("Inventory value") })
+            views.push({ mode: root._MODE_PURCHASED, name: qsTr("Purchased") })
+            views.push({ mode: root._MODE_CURRENT,   name: qsTr("Current stock") })
+            views.push({ mode: root._MODE_REVENUE,   name: qsTr("Revenue") })
+            views.push({ mode: root._MODE_SOLD,      name: qsTr("Sold") })
+            views.push({ mode: root._MODE_PROFIT, profit: "Realised", name: qsTr("Realised profit") })
+            views.push({ mode: root._MODE_PROFIT, profit: "Potential", name: qsTr("Potential profit") })
+        } else {
+            // Staff (no financials) see only stock + units sold.
+            views.push({ mode: root._MODE_CURRENT, name: qsTr("Current stock") })
+            views.push({ mode: root._MODE_SOLD,    name: qsTr("Sold") })
+        }
+
+        var sheets = []
+        for (var i = 0; i < views.length; ++i) {
+            var v = views[i]
+            root._viewMode = v.mode
+            if (v.profit !== undefined) root._profitMode = v.profit
+            var payload = buildAnalysisExport()
+            if (payload && payload.sections && payload.sections.length > 0)
+                sheets.push({ name: v.name, title: payload.title, sections: payload.sections })
+        }
+
+        // Restore the on-screen view exactly as it was.
+        root._viewMode = savedView
+        root._profitMode = savedProfit
+        _rebuildBreakdown()
+
+        return {
+            suggestedName: "analysis_report_" + stamp + ".xlsx",
+            sheets: sheets
         }
     }
 
@@ -1734,95 +1643,33 @@ Item {
                 root._period = savedPeriod
                 return bins
             }
-            return TransactionStore.bucketsForFiltered("sale", periodIdx, null)
+            return TransactionStore.bucketsForFiltered("sale", periodIdx, _passesCrossFilters)
         }
         if (viewMode === root._MODE_PURCHASED) {
-            var purchasePredicate = null
-            if (filterId) {
-                purchasePredicate = function(e) {
-                    var pid = e.party || (e.snapshot ? e.snapshot.supplierId || e.snapshot.party || "" : "")
-                    return pid === filterId
-                }
-            }
-            return TransactionStore.bucketsForFiltered(["purchase", "created"], periodIdx, purchasePredicate)
+            // Same predicate as the on-screen Purchased view (supplier + date +
+            // category), so the export bins narrow with the active filters.
+            return TransactionStore.bucketsForFiltered(["purchase", "created"], periodIdx, _purchasePredicate(filterId))
         }
 
-        // Revenue — bucket completed orders by period. Per-supplier filter
-        // walks each line's consumption array (qty × unit price for batches
-        // belonging to the supplier).
-        var revenueOf = function(o) {
-            if (!filterId) return o.total || 0
-            var sum = 0
-            var lines = o.products || []
-            for (var li = 0; li < lines.length; ++li) {
-                var ln = lines[li]
-                var pr = (typeof ln.price === "number") ? ln.price : 0
-                var c = ln.consumption || []
-                for (var ci = 0; ci < c.length; ++ci) {
-                    if (c[ci].supplierId !== filterId) continue
-                    sum += (c[ci].qtyConsumed || 0) * pr
-                }
-            }
-            return sum
+        // Revenue — net per period bin from the IMMUTABLE event log (SITE 5),
+        // scoped to the active date/channel/staff/category/supplier filters, so
+        // an adjusted/returned order nets correctly and the export period tables
+        // reconcile with the Totals block. The bucketing for `periodIdx` lives in
+        // RealisedMath.bucketWalk (shared with the on-screen chart). The Year
+        // labels here use 3-letter months (export convention) vs the on-screen
+        // single-letter; remap to preserve the export's wider labels.
+        var scope = {
+            window: _dateWindow(),
+            channel: root._channelFilter === "All" ? "" : root._channelFilter,
+            staffId: _resolveStaffFilterId(),
+            category: root._categoryFilter === "All" ? "" : root._categoryFilter,
+            supplierId: filterId
         }
-        var orders = OrdersStore.orders || []
-        var now = new Date()
-        var bins = []
-        var labels = []
-
-        if (periodIdx === 0) {
-            for (var h = 0; h < 24; ++h) { bins.push(0); labels.push((h % 6 === 0) ? (h + "h") : "") }
-            for (var k = 0; k < orders.length; ++k) {
-                var o = orders[k]
-                if (o.status !== "completed") continue
-                var d = new Date(o.date)
-                if (isNaN(d.getTime())) continue
-                if (d.getFullYear() === now.getFullYear()
-                    && d.getMonth() === now.getMonth()
-                    && d.getDate() === now.getDate())
-                    bins[d.getHours()] += revenueOf(o)
-            }
-        } else if (periodIdx === 1) {
-            var dl = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-            for (var w = 0; w < 7; ++w) { bins.push(0); labels.push(dl[w]) }
-            var monday = new Date(now); var dow = (monday.getDay() + 6) % 7
-            monday.setDate(monday.getDate() - dow); monday.setHours(0,0,0,0)
-            var nextMonday = new Date(monday); nextMonday.setDate(monday.getDate() + 7)
-            for (var k2 = 0; k2 < orders.length; ++k2) {
-                var o2 = orders[k2]
-                if (o2.status !== "completed") continue
-                var d2 = new Date(o2.date)
-                if (isNaN(d2.getTime())) continue
-                if (d2 >= monday && d2 < nextMonday)
-                    bins[(d2.getDay() + 6) % 7] += revenueOf(o2)
-            }
-        } else if (periodIdx === 2) {
-            for (var m = 0; m < 4; ++m) { bins.push(0); labels.push("W" + (m+1)) }
-            var startMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-            var endMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-            for (var k3 = 0; k3 < orders.length; ++k3) {
-                var o3 = orders[k3]
-                if (o3.status !== "completed") continue
-                var d3 = new Date(o3.date)
-                if (isNaN(d3.getTime())) continue
-                if (d3 >= startMonth && d3 < endMonth)
-                    bins[Math.min(3, Math.floor((d3.getDate() - 1) / 7))] += revenueOf(o3)
-            }
-        } else {
+        var arr = InventoryStore.realisedBucketWalk("net", periodIdx, scope)
+        if (periodIdx === 3) {
             var ml = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-            for (var y = 0; y < 12; ++y) { bins.push(0); labels.push(ml[y]) }
-            for (var k4 = 0; k4 < orders.length; ++k4) {
-                var o4 = orders[k4]
-                if (o4.status !== "completed") continue
-                var d4 = new Date(o4.date)
-                if (isNaN(d4.getTime())) continue
-                if (d4.getFullYear() === now.getFullYear())
-                    bins[d4.getMonth()] += revenueOf(o4)
-            }
+            for (var bi = 0; bi < arr.length; ++bi) arr[bi].label = ml[bi]
         }
-        var arr = []
-        for (var bi = 0; bi < bins.length; ++bi)
-            arr.push({ label: labels[bi], value: bins[bi] })
         return arr
     }
 
@@ -1840,13 +1687,6 @@ Item {
             return "₹" + compact
         }
         return compact
-    }
-
-    function _maxValue(arr) {
-        var m = 0
-        for (var i = 0; i < (arr || []).length; ++i)
-            if (arr[i].value > m) m = arr[i].value
-        return m
     }
 
     // Take an object {key: number} and return up to N {label, value} sorted
@@ -1891,74 +1731,31 @@ Item {
     }
 
     // Replace { supplierId → row } with { supplierName → row } so chart
-    // labels match the chip strip without a per-bar lookup.
+    // labels match the chip strip without a per-bar lookup. Thin shim over
+    // RealisedMath.nameMerge (the shared id→name merge — closes the X1 gap).
     function _namedSupplierMap(rows) {
-        var out = {}
-        var keys = Object.keys(rows || {})
-        for (var i = 0; i < keys.length; ++i) {
-            var k = keys[i]
-            var name = k ? (SupplierStore.nameOf(k) || qsTr("(removed)"))
-                         : qsTr("Unknown")
-            // Sum if multiple supplierIds resolve to the same display name
-            // (shouldn't happen but cheap to guard).
-            if (!out[name]) out[name] = { revenue: 0, cogs: 0, profit: 0, margin: 0 }
-            out[name].revenue += rows[k].revenue
-            out[name].cogs += rows[k].cogs
-            out[name].profit += rows[k].profit
-        }
-        // Recompute margin% per merged row.
-        var nks = Object.keys(out)
-        for (var n = 0; n < nks.length; ++n) {
-            var r = out[nks[n]]
-            r.margin = r.cogs > 0 ? (r.profit / r.cogs) * 100 : 0
-        }
-        return out
+        return RealisedMath.nameMerge(rows,
+                function(k) { return SupplierStore.nameOf(k) || qsTr("(removed)") },
+                qsTr("Unknown"))
     }
 
     // { staffId → row } → { staffName → row }. Empty keys roll up under
     // "(unassigned)" so a removed/blank staffId still renders.
     function _namedStaffMap(rows) {
-        var out = {}
-        var keys = Object.keys(rows || {})
         var roster = StaffStore.staff || []
         var lookup = {}
         for (var ri = 0; ri < roster.length; ++ri) lookup[roster[ri].staffId || ""] = roster[ri].name
-        for (var i = 0; i < keys.length; ++i) {
-            var k = keys[i]
-            var name = k ? (lookup[k] || qsTr("(removed)"))
-                         : qsTr("(unassigned)")
-            if (!out[name]) out[name] = { revenue: 0, cogs: 0, profit: 0, margin: 0 }
-            out[name].revenue += rows[k].revenue
-            out[name].cogs += rows[k].cogs
-            out[name].profit += rows[k].profit
-        }
-        var nks = Object.keys(out)
-        for (var n = 0; n < nks.length; ++n) {
-            var r = out[nks[n]]
-            r.margin = r.cogs > 0 ? (r.profit / r.cogs) * 100 : 0
-        }
-        return out
+        return RealisedMath.nameMerge(rows,
+                function(k) { return lookup[k] || qsTr("(removed)") },
+                qsTr("(unassigned)"))
     }
 
-    // { productId → row } → { productName → row }.
+    // { productId → row } → { productName → row }. Unknown product falls back to
+    // the raw key (the productId), preserving the original behaviour.
     function _namedProductMap(rows) {
-        var out = {}
-        var keys = Object.keys(rows || {})
-        for (var i = 0; i < keys.length; ++i) {
-            var k = keys[i]
-            var p = InventoryStore.getById(k)
-            var name = p ? (p.name || k) : k
-            if (!out[name]) out[name] = { revenue: 0, cogs: 0, profit: 0, margin: 0 }
-            out[name].revenue += rows[k].revenue
-            out[name].cogs += rows[k].cogs
-            out[name].profit += rows[k].profit
-        }
-        var nks = Object.keys(out)
-        for (var n = 0; n < nks.length; ++n) {
-            var r = out[nks[n]]
-            r.margin = r.cogs > 0 ? (r.profit / r.cogs) * 100 : 0
-        }
-        return out
+        return RealisedMath.nameMerge(rows,
+                function(k) { var p = InventoryStore.getById(k); return p ? (p.name || k) : k },
+                qsTr("Unknown"))
     }
 
     // ── Export helpers ─────────────────────────────────────────────────
@@ -1978,34 +1775,128 @@ Item {
         return { heading: heading, headers: headers, rows: rows }
     }
 
-    // Build a 5-column profit section (key, revenue, cogs, profit, margin%)
+    // Combine three {key → number} maps (net, tax, discount) into
+    // {key → {revenue, tax, discount}} for _exportNetSection.
+    function _mergeNetMaps(netMap, taxMap, discMap) {
+        var out = {}
+        function _acc(map, field) {
+            var ks = Object.keys(map || {})
+            for (var i = 0; i < ks.length; ++i) {
+                if (!out[ks[i]]) out[ks[i]] = { revenue: 0, tax: 0, discount: 0 }
+                out[ks[i]][field] += map[ks[i]] || 0
+            }
+        }
+        _acc(netMap, "revenue"); _acc(taxMap, "tax"); _acc(discMap, "discount")
+        return out
+    }
+
+    // Net-section builder: a {key → {revenue, tax, discount}} map → rows with
+    // Net / Discount / Tax columns and a reconciling Total row.
+    function _exportNetSection(heading, rows) {
+        var keys = Object.keys(rows || {})
+        keys.sort(function(a, b) { return (rows[b].revenue || 0) - (rows[a].revenue || 0) })
+        var out = []
+        var tNet = 0, tTax = 0, tDisc = 0
+        for (var i = 0; i < keys.length; ++i) {
+            var r = rows[keys[i]]
+            out.push([keys[i] || qsTr("(unspecified)"), r.revenue || 0, r.discount || 0, r.tax || 0])
+            tNet += r.revenue || 0; tTax += r.tax || 0; tDisc += r.discount || 0
+        }
+        out.push([qsTr("Total"), tNet, tDisc, tTax])
+        return {
+            heading: heading,
+            headers: [qsTr("Key"), qsTr("Net Revenue (₹)"), qsTr("Discount (₹)"), qsTr("Tax (₹)")],
+            rows: out
+        }
+    }
+
+    // Export Totals block — net/discount/tax/cogs/profit over the active filter
+    // scope. Aggregated from the IMMUTABLE event log (RealisedMath.totals), so it
+    // equals Σ(each by-dimension section) by construction and honours exactly the
+    // same scope the sections do (date/channel/staff/category/supplier).
+    function _exportTotalsBlock() {
+        // Single source of truth: aggregate the IMMUTABLE event log over the
+        // active filter scope (SITE 5). This reconciles to Σ(each by-dimension
+        // section) by construction (RealisedMath.totals == Σ byDimension), and
+        // a returned/adjusted order nets correctly because the ledger keeps the
+        // sale + return rows rather than reading the mutated live order. gross is
+        // computed as net + discount, rounded once (D).
+        var t = InventoryStore.realisedTotals(_realisedScope(false))
+        var margin = t.cogs > 0 ? ((t.profit / t.cogs) * 100).toFixed(1) + "%" : "0%"
+        return {
+            heading: qsTr("Totals"),
+            headers: [qsTr("Metric"), qsTr("Amount (₹)")],
+            rows: [
+                [qsTr("Gross sales"), t.gross],
+                [qsTr("Discount"), t.discount],
+                [qsTr("Net Revenue"), t.net],
+                [qsTr("Tax Collected"), t.tax],
+                [qsTr("COGS"), t.cogs],
+                [qsTr("Profit"), t.profit],
+                [qsTr("Markup %"), margin]
+            ]
+        }
+    }
+
+    // Build a 7-column profit section (key, revenue, discount, tax, cogs, profit, margin%)
     // from the InventoryStore.{realised|potential}ProfitByDimension shape.
     function _exportProfitSection(heading, rows) {
         var keys = Object.keys(rows || {})
         keys.sort(function(a, b) { return (rows[b].profit || 0) - (rows[a].profit || 0) })
         var out = []
-        var totRev = 0; var totCogs = 0; var totProfit = 0
+        var totRev = 0, totCogs = 0, totProfit = 0, totTax = 0, totDisc = 0
         for (var i = 0; i < keys.length; ++i) {
             var r = rows[keys[i]]
             out.push([
                 keys[i] || qsTr("(unspecified)"),
-                r.revenue || 0,
-                r.cogs || 0,
-                r.profit || 0,
+                r.revenue || 0, r.discount || 0, r.tax || 0,
+                r.cogs || 0, r.profit || 0,
                 (r.margin || 0).toFixed(1) + "%"
             ])
-            totRev += r.revenue || 0
-            totCogs += r.cogs || 0
-            totProfit += r.profit || 0
+            totRev += r.revenue || 0; totCogs += r.cogs || 0; totProfit += r.profit || 0
+            totTax += r.tax || 0; totDisc += r.discount || 0
         }
         var totalMargin = totCogs > 0 ? ((totProfit / totCogs) * 100).toFixed(1) + "%" : "0%"
-        out.push([qsTr("Total"), totRev, totCogs, totProfit, totalMargin])
+        out.push([qsTr("Total"), totRev, totDisc, totTax, totCogs, totProfit, totalMargin])
         return {
             heading: heading,
-            headers: [qsTr("Key"), qsTr("Revenue (₹)"), qsTr("COGS (₹)"),
-                      qsTr("Profit (₹)"), qsTr("Margin %")],
+            headers: [qsTr("Key"), qsTr("Net Revenue (₹)"), qsTr("Discount (₹)"),
+                      qsTr("Tax (₹)"), qsTr("COGS (₹)"), qsTr("Profit (₹)"), qsTr("Markup %")],
             rows: out
         }
+    }
+
+    // Inventory-value maps, scoped to the active supplier (id) + category.
+    // Returns id-keyed { byProduct, bySupplier, byCategory } so both the
+    // on-screen Value view and the export read ONE source and agree under a
+    // filter. With no filter active it returns the unfiltered store maps
+    // (byte-for-byte the prior behaviour). category "" / "All" = no category gate.
+    function _valueMaps(filterId, categoryFilter) {
+        var catOn = categoryFilter && categoryFilter !== "All"
+        if (!filterId && !catOn) {
+            return {
+                byProduct:  InventoryStore.valueByProduct() || {},
+                bySupplier: InventoryStore.valueBySupplier() || {},
+                byCategory: InventoryStore.valueByCategory() || {}
+            }
+        }
+        // Walk batches once, applying supplier AND category filters together,
+        // so every map reflects the same filtered set.
+        var byProduct = {}, bySupplier = {}, byCategory = {}
+        var bs = StockBatchStore.batches || []
+        for (var bi = 0; bi < bs.length; ++bi) {
+            var b = bs[bi]
+            if (filterId && b.supplierId !== filterId) continue
+            var pc = InventoryStore.getById(b.productId)
+            var cat = (pc && pc.category) ? pc.category : "(uncategorised)"
+            if (catOn && cat !== categoryFilter) continue
+            var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
+            if (v <= 0) continue
+            byProduct[b.productId] = (byProduct[b.productId] || 0) + v
+            bySupplier[b.supplierId || ""] = (bySupplier[b.supplierId || ""] || 0) + v
+            byCategory[cat] = (byCategory[cat] || 0) + v
+        }
+        return { byProduct: byProduct, bySupplier: bySupplier, byCategory: byCategory }
     }
 
     // { productId → number } → { productName → number }. Used for the
@@ -2022,72 +1913,12 @@ Item {
         return out
     }
 
-    // Bucket realised profit (revenue − cogs) into the active period bins.
-    // Handles supplier filtering by short-circuiting consumption[] entries
-    // whose supplierId doesn't match. Mirrors `_consumptionBucketWalk` but
-    // emits profit instead of qty/revenue, so a single pass per call
-    // suffices.
-    function _profitBucketWalk(periodIdx, supplierId) {
-        var bins = []; var labels = []; var bucket
-        var now = new Date()
-        if (periodIdx === 0) {
-            for (var i = 0; i < 24; ++i) { bins.push(0); labels.push((i % 6 === 0) ? (i + "h") : "") }
-            bucket = function(d) {
-                if (d.getFullYear() === now.getFullYear()
-                    && d.getMonth() === now.getMonth()
-                    && d.getDate() === now.getDate()) return d.getHours()
-                return -1
-            }
-        } else if (periodIdx === 1) {
-            var dl = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-            for (var w = 0; w < 7; ++w) { bins.push(0); labels.push(dl[w]) }
-            var monday = new Date(now); var dow = (monday.getDay() + 6) % 7
-            monday.setDate(monday.getDate() - dow); monday.setHours(0,0,0,0)
-            var nextMonday = new Date(monday); nextMonday.setDate(monday.getDate() + 7)
-            bucket = function(d) {
-                if (d >= monday && d < nextMonday) return (d.getDay() + 6) % 7
-                return -1
-            }
-        } else if (periodIdx === 2) {
-            for (var m = 0; m < 4; ++m) { bins.push(0); labels.push("W" + (m+1)) }
-            var startMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-            var endMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-            bucket = function(d) {
-                if (d >= startMonth && d < endMonth)
-                    return Math.min(3, Math.floor((d.getDate() - 1) / 7))
-                return -1
-            }
-        } else {
-            var ml = ["J","F","M","A","M","J","J","A","S","O","N","D"]
-            for (var y = 0; y < 12; ++y) { bins.push(0); labels.push(ml[y]) }
-            bucket = function(d) {
-                if (d.getFullYear() === now.getFullYear()) return d.getMonth()
-                return -1
-            }
-        }
-
-        var entries = TransactionStore.entries || []
-        for (var k = 0; k < entries.length; ++k) {
-            var e = entries[k]
-            if (e.kind !== "sale") continue
-            if (!_passesCrossFilters(e)) continue
-            var dd = new Date(e.timestamp || e.date)
-            if (isNaN(dd.getTime())) continue
-            var idx = bucket(dd)
-            if (idx < 0) continue
-            var unitPrice = e.unitPrice || 0
-            var c = e.consumption || []
-            for (var ci = 0; ci < c.length; ++ci) {
-                if (supplierId && c[ci].supplierId !== supplierId) continue
-                var qty = c[ci].qtyConsumed || 0
-                if (qty <= 0) continue
-                bins[idx] += qty * (unitPrice - (c[ci].unitCost || 0))
-            }
-        }
-        var arr = []
-        for (var b = 0; b < bins.length; ++b) arr.push({ label: labels[b], value: bins[b] })
-        return arr
-    }
+    // NOTE: the realised-profit hero + export "By period" section now use the
+    // canonical InventoryStore.realisedBucketWalk("profit", …) — the same path as
+    // the Revenue hero. The old hand-duplicated _profitBucketWalk was deleted
+    // (2026-06-26): it had drifted from RealisedMath.bucketWalk and produced two
+    // reconciliation bugs (supplier-filtered price_adjust dropped; date window not
+    // intersected with the period). See docs/.../profit-hero-dedupe-walker-design.md.
 
     function _distinctNames() {
         var w = root._invWatcher
@@ -2133,7 +1964,9 @@ Item {
         return _dateFilter !== "all"
             || _partyFilter !== "All"
             || _channelFilter !== "All"
-            || _staffFilter !== "All"
+            // A staff user's _staffFilter is auto-pinned to themselves; that's
+            // not a user-applied filter, so it must not light the filter badge.
+            || (_staffFilter !== "All" && canViewAllSales)
             || _categoryFilter !== "All"
     }
 
@@ -2154,7 +1987,7 @@ Item {
             out.push({ dimension: "supplier", label: qsTr("Supplier: %1").arg(_partyFilter) })
         if (_channelFilter !== "All")
             out.push({ dimension: "channel", label: qsTr("Channel: %1").arg(_channelFilter) })
-        if (_staffFilter !== "All")
+        if (_staffFilter !== "All" && canViewAllSales)
             out.push({ dimension: "staff", label: qsTr("Staff: %1").arg(_staffFilter) })
         if (_categoryFilter !== "All")
             out.push({ dimension: "category", label: qsTr("Category: %1").arg(_categoryFilter) })
@@ -2174,6 +2007,31 @@ Item {
     }
 
     // ── Filter predicates ──────────────────────────────────────────────
+    // Per-event predicate for purchase/created rows, gating on supplier (id) +
+    // date + category. Channel/staff are intentionally no-ops — purchase events
+    // carry neither field. Shared by the on-screen Purchased view and the
+    // export bins so both narrow identically. `filterId` "" = no supplier gate.
+    function _purchasePredicate(filterId) {
+        return function(e) {
+            if (filterId) {
+                var pid = e.party || (e.snapshot ? e.snapshot.supplierId || e.snapshot.party || "" : "")
+                if (pid !== filterId) return false
+            }
+            if (_dateFilter !== "all") {
+                var win = _dateWindow()
+                if (win) {
+                    var ed = OrderMath.eventDate(e)
+                    if (isNaN(ed.getTime()) || ed < win.from || ed >= win.to) return false
+                }
+            }
+            if (_categoryFilter !== "All") {
+                var p = InventoryStore.getById(e.productId)
+                if (!p || (p.category || "") !== _categoryFilter) return false
+            }
+            return true
+        }
+    }
+
     // Resolve the active date filter into a [from, to) Date window. Returns
     // `null` when the filter is "all" so callers can short-circuit. The
     // bucket walkers compare an event's timestamp against this window.
@@ -2187,14 +2045,18 @@ Item {
         } else if (_dateFilter === "custom") {
             // Only honour the window when both ends parse — otherwise treat
             // the filter as inactive so we don't show an empty chart.
-            var f = new Date(_customFrom)
-            var t = new Date(_customTo)
+            // Parse as LOCAL midnight (+"T00:00:00"): the period bounds and the
+            // inclusive `to` below are local, and events are filtered by absolute
+            // instant. A bare new Date("yyyy-MM-dd") is UTC midnight, which shifts
+            // the `from` edge by the tz offset and drops start-of-day sales in
+            // positive-offset zones (IST). Mirrors OrdersPage._dateWindow.
+            var f = new Date(_customFrom + "T00:00:00")
+            var t = new Date(_customTo + "T00:00:00")
             if (isNaN(f.getTime()) || isNaN(t.getTime())) return null
             // Inclusive `to` — bump by one day so a window of [Mar 1, Mar 1]
             // catches all of March 1st.
-            t = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)
             from = f
-            to = t
+            to = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)
         } else {
             return null
         }
@@ -2208,19 +2070,17 @@ Item {
     function _passesCrossFilters(e) {
         var win = _dateWindow()
         if (win) {
-            var ed = new Date(e.timestamp || e.date)
+            var ed = OrderMath.eventDate(e)
             if (isNaN(ed.getTime())) return false
             if (ed < win.from || ed >= win.to) return false
         }
         if (_channelFilter !== "All") {
             if ((e.orderChannel || "") !== _channelFilter) return false
         }
-        if (_staffFilter !== "All") {
-            // Filter by staff name — translate name → id via StaffStore.
-            var roster = StaffStore.staff || []
-            var sid = ""
-            for (var i = 0; i < roster.length; ++i)
-                if (roster[i].name === _staffFilter) { sid = roster[i].staffId || ""; break }
+        if (_staffFilter !== "All" || !canViewAllSales) {
+            // Translate the staff filter to a stable id (prefers currentStaffId
+            // when staff-scoped) and gate the entry on it.
+            var sid = _resolveStaffFilterId()
             if ((e.staffId || "") !== sid) return false
         }
         if (_categoryFilter !== "All") {
@@ -2228,6 +2088,32 @@ Item {
             if (!p || (p.category || "") !== _categoryFilter) return false
         }
         return true
+    }
+
+    // Bundle the active filters into the scope object RealisedMath consumes, so
+    // the realised hero / Totals / by-dimension sections all honour the same
+    // filters (A). Mirrors _passesCrossFilters' gating exactly. supplierId is
+    // resolved from the chip NAME; "" everywhere = "all".
+    //
+    // `periodScoped` true (on-screen view): intersect the active date window with
+    // the selected period (Day/Week/Month/Year), so the by-dimension sections
+    // cover the SAME span the hero/chart bins do and Σ(by-dimension) reconciles
+    // with the hero. false (export): the by-dimension sections are whole-window
+    // totals across all periods, so only the date filter applies.
+    function _realisedScope(periodScoped) {
+        var staffId = _resolveStaffFilterId()
+        var win = _dateWindow()
+        if (periodScoped)
+            win = BreakdownMath.intersect(BreakdownMath.periodWindow(_period, new Date()), win)
+        return {
+            window: win,
+            channel: _channelFilter !== "All" ? _channelFilter : "",
+            // Match _passesCrossFilters: a staff user is always self-scoped even
+            // when _staffFilter === "All".
+            staffId: (_staffFilter !== "All" || !canViewAllSales) ? staffId : "",
+            category: _categoryFilter !== "All" ? _categoryFilter : "",
+            supplierId: _partyFilter !== "All" ? _supplierIdForName(_partyFilter) : ""
+        }
     }
 
     // The chip uses supplier *names*; everywhere else we compare by id.
@@ -2292,26 +2178,35 @@ Item {
         var entries = TransactionStore.entries || []
         for (var k = 0; k < entries.length; ++k) {
             var e = entries[k]
-            if (e.kind !== kind) continue
+            // Returns net against sales: include them whenever sales are requested.
+            if (e.kind !== kind && !(kind === "sale" && e.kind === "return")) continue
             // Cross-cutting filters (date / channel / staff / category)
             // gate every row before we consider its consumption[]. A row
             // outside the date window or with the wrong channel never
             // contributes regardless of supplier match.
             if (!_passesCrossFilters(e)) continue
-            var dd = new Date(e.timestamp || e.date)
+            var dd = OrderMath.eventDate(e)
             if (isNaN(dd.getTime())) continue
             var idx = bucket(dd)
             if (idx < 0) continue
             var c = e.consumption || []
+            // Revenue/margin distribute the STAMPED net (discounted) by
+            // qtyConsumed/lineQty — NOT gross qty*unitPrice (SITE 7) — so they
+            // match the net-revenue convention used everywhere else. qty stays
+            // a plain unit count.
+            var lineQty = 0
+            for (var lq = 0; lq < c.length; ++lq) lineQty += (c[lq].qtyConsumed || 0)
+            var evNet = (e.net !== undefined && e.net !== null) ? e.net : 0
             for (var ci = 0; ci < c.length; ++ci) {
                 if (c[ci].supplierId !== supplierId) continue
+                var qc = c[ci].qtyConsumed || 0
                 if (field === "qty") {
-                    bins[idx] += (c[ci].qtyConsumed || 0)
+                    bins[idx] += qc
                 } else if (field === "revenue") {
-                    bins[idx] += (c[ci].qtyConsumed || 0) * (e.unitPrice || 0)
+                    bins[idx] += evNet * (lineQty !== 0 ? (qc / lineQty) : 0)
                 } else if (field === "margin") {
-                    bins[idx] += (c[ci].qtyConsumed || 0)
-                            * ((e.unitPrice || 0) - (c[ci].unitCost || 0))
+                    var rowNet = evNet * (lineQty !== 0 ? (qc / lineQty) : 0)
+                    bins[idx] += rowNet - (qc * (c[ci].unitCost || 0))
                 }
             }
         }
@@ -2348,7 +2243,7 @@ Item {
         if (v === root._MODE_CURRENT || v === root._MODE_VALUE) return []
         var allow = v === root._MODE_PURCHASED
                 ? { purchase: true, created: true }
-                : { sale: true }
+                : { sale: true, "return": true, price_adjust: true }
         var partyOn = root._partyFilter !== "All" && root._partyFilter.length > 0
         var filterId = partyOn ? _supplierIdForName(root._partyFilter) : ""
         var arr = TransactionStore.entries || []
@@ -2356,6 +2251,10 @@ Item {
         for (var i = 0; i < arr.length && out.length < maxItems; ++i) {
             var e = arr[i]
             if (!allow[e.kind]) continue
+            // Date / channel / staff / category gating — same predicate the
+            // on-screen breakdown uses, so the list narrows with the active
+            // filters instead of only honouring the supplier chip.
+            if (!_passesCrossFilters(e)) continue
             if (partyOn) {
                 if (v === root._MODE_PURCHASED) {
                     var ep = e.party || (e.snapshot ? e.snapshot.supplierId || e.snapshot.party || "" : "")
@@ -2374,7 +2273,12 @@ Item {
     }
 
     function _txTitle(d) {
-        return d.productName || qsTr("(unknown)")
+        var name = d.productName || qsTr("(unknown)")
+        // Show the order number alongside the product on sale-cycle rows (bug 13)
+        // so a recent-sales line ties back to its order at a glance.
+        if (d.orderId && (d.kind === "sale" || d.kind === "return" || d.kind === "price_adjust"))
+            return name + "  ·  #" + d.orderId
+        return name
     }
 
     function _txSubtitle(d) {
@@ -2383,10 +2287,25 @@ Item {
         else if (d.kind === "created") head = d.quantity > 0
                                               ? qsTr("Created with %1").arg(d.quantity)
                                               : qsTr("Created")
+        else if (d.kind === "return")  head = qsTr("Returned %1").arg(Math.abs(d.quantity || 0))
+        // price_adjust covers two edits: a discount-rate change (reason
+        // "discount") and a per-unit price modify. Distinguish them so the row
+        // is meaningful — mirrors OrderDetailDialog's history wording.
+        else if (d.kind === "price_adjust") head = d.reason === "discount"
+                                                   ? qsTr("Discount changed")
+                                                   : qsTr("Price adjusted")
         else if (d.kind === "sale")    head = qsTr("Sold %1").arg(d.quantity || 0)
         else                            head = ""
+        // SKU (resolved from inventory by productId) on sale-cycle rows —
+        // includes price_adjust so discount/price-change rows show their SKU
+        // like every other sale-cycle entry (bug 13).
+        var skuTail = ""
+        if (d.productId && (d.kind === "sale" || d.kind === "return" || d.kind === "price_adjust")) {
+            var inv = InventoryStore.getById(d.productId)
+            if (inv && inv.sku) skuTail = "  ·  " + qsTr("SKU %1").arg(inv.sku)
+        }
         var party = d.party || (d.snapshot ? d.snapshot.party || "" : "")
         var partyTail = party ? "  ·  " + qsTr("from %1").arg(party) : ""
-        return head + partyTail + (d.date ? "  ·  " + d.date : "")
+        return head + skuTail + partyTail + (d.date ? "  ·  " + d.date : "")
     }
 }

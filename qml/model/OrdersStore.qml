@@ -46,8 +46,6 @@ QtObject {
                     if (!o.email) o.email = "";
                     if (!o.phone) o.phone = "";
                     if (!o.products) o.products = [];
-                    if (!o.discountType) o.discountType = "flat";
-                    if (o.discountValue === undefined || o.discountValue === null) o.discountValue = 0;
                     if (o.subtotal === undefined || o.subtotal === null) o.subtotal = 0;
                     if (o.tax === undefined || o.tax === null) o.tax = 0;
                     if (o.discount === undefined || o.discount === null) o.discount = 0;
@@ -57,6 +55,7 @@ QtObject {
                     // surface them under "(unspecified)".
                     if (!o.orderChannel) o.orderChannel = "";
                     if (!o.staffId) o.staffId = "";
+                    if (!Array.isArray(o.adjustments)) o.adjustments = [];
                 }
                 orders = arr;
                 revision++;
@@ -101,10 +100,14 @@ QtObject {
     // optional `_conflictPolicy` ("skip" | "overwrite" | "rename").
     // `inventoryByName` and `inventoryBySku` are caller-supplied lookup tables
     // so we can resolve order-line products to a stable productId.
-    // Returns { added, updated, skipped } counts.
+    // Returns { added, updated, skipped, addedIds } counts.
     function upsertMany(records) {
         var counts = { added: 0, updated: 0, skipped: 0 };
-        if (!records || records.length === 0) return counts;
+        var addedIds = [];
+        if (!records || records.length === 0) {
+            counts.addedIds = addedIds;
+            return counts;
+        }
 
         var arr = _clone();
         var byId = {};
@@ -119,10 +122,11 @@ QtObject {
             if (existingIdx >= 0) {
                 if (policy === "skip") { counts.skipped++; continue; }
                 if (policy === "rename") {
-                    products = arr;  // ensure nextOrderId() sees latest
+                    orders = arr;  // ensure nextOrderId() sees latest
                     r.orderId = nextOrderId();
                     arr.push(_normalizeOrder(r));
                     byId[r.orderId] = arr.length - 1;
+                    addedIds.push(r.orderId);
                     counts.added++;
                     continue;
                 }
@@ -139,6 +143,7 @@ QtObject {
                 var doc = _normalizeOrder(r);
                 arr.push(doc);
                 byId[doc.orderId] = arr.length - 1;
+                addedIds.push(doc.orderId);
                 FirebaseService.put("orders/" + doc.orderId, doc, function(ok) {
                     if (!ok) console.warn("[OrdersStore] import add failed");
                 });
@@ -149,6 +154,7 @@ QtObject {
         orders = arr;
         revision++;
         _refreshCounts();
+        counts.addedIds = addedIds;
         return counts;
     }
 
@@ -163,6 +169,8 @@ QtObject {
             var taxPercent = lp.taxPercent !== undefined && lp.taxPercent !== null
                 ? Number(lp.taxPercent)
                 : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
+            var lnType = lp.discountType === "percent" ? "percent" : "flat";
+            var lnVal = parseCurrency(lp.discountValue);
             prods.push({
                 productId: lp.productId || "",
                 name: lp.name || "",
@@ -170,18 +178,14 @@ QtObject {
                 quantity: parseInt(lp.quantity) || parseInt(lp.qty) || 0,
                 taxable: taxable,
                 taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
-                // Pass-through field stamped by DataModel._tryCompleteOrder
-                // when the order completes — preserves the FIFO batch lineage
-                // through clone/normalise so analytics can attribute revenue
-                // back to specific suppliers.
+                discountType: lnType,
+                discountValue: lnVal,
+                // FIFO batch lineage stamped by DataModel on order completion
                 consumption: Array.isArray(lp.consumption) ? lp.consumption.slice() : []
             });
         }
 
-        var discountType = r.discountType === "percent" ? "percent" : "flat";
-        var discountValue = parseCurrency(r.discountValue);
-
-        var totals = computeOrderTotals(prods, discountType, discountValue);
+        var totals = computeOrderTotals(prods);
 
         return {
             orderId: r.orderId,
@@ -190,8 +194,6 @@ QtObject {
             phone: r.phone || "",
             items: prods.length > 0 ? totals.itemCount : (parseInt(r.items) || 0),
             subtotal: totals.subtotal,
-            discountType: discountType,
-            discountValue: discountValue,
             discount: totals.discount,
             tax: totals.tax,
             taxBreakdown: totals.taxBreakdown,
@@ -200,59 +202,54 @@ QtObject {
             date: r.date || Qt.formatDate(new Date(), "yyyy-MM-dd"),
             updatedAt: r.updatedAt || new Date().toISOString(),
             notes: r.notes || "",
-            // Order channel (Online / In-store / …) + staff member who made
-            // the sale. Both default to "" for back-compat with existing
-            // docs; the Analysis page renders them as "(unspecified)".
             orderChannel: r.orderChannel || "",
             staffId: r.staffId || "",
             products: prods
         };
     }
 
-    // Compute subtotal, discount, per-rate tax breakdown, and grand total.
-    // Discount is distributed pro-rata across line items so per-line tax is
-    // taken on the discounted line value — matches how Indian GST invoices
-    // typically show line-level discounts.
-    function computeOrderTotals(prods, discountType, discountValue) {
+    // Compute subtotal, summed per-line discount, per-rate tax breakdown, and
+    // grand total. Each line carries its own discountType/discountValue; tax is
+    // taken on the discounted line net and is a pass-through (excluded from net).
+    function computeOrderTotals(prods) {
         if (!prods) prods = [];
-        var subtotal = 0; var itemCount = 0;
+        var subtotal = 0; var itemCount = 0; var totalDiscount = 0;
+        var taxByRate = {}; var totalTax = 0;
         for (var i = 0; i < prods.length; ++i) {
-            subtotal += prods[i].quantity * prods[i].price;
-            itemCount += prods[i].quantity;
-        }
-        var discount = 0;
-        if (discountType === "percent") {
-            var pct = parseFloat(discountValue) || 0;
-            if (pct < 0) pct = 0;
-            if (pct > 100) pct = 100;
-            discount = subtotal * (pct / 100);
-        } else {
-            discount = parseFloat(discountValue) || 0;
-            if (discount < 0) discount = 0;
-            if (discount > subtotal) discount = subtotal;
-        }
-
-        var taxByRate = {};
-        var totalTax = 0;
-        for (var j = 0; j < prods.length; ++j) {
-            var p = prods[j];
-            if (!p.taxable || !p.taxPercent || p.taxPercent <= 0) continue;
+            var p = prods[i];
             var lineGross = p.quantity * p.price;
-            var lineShare = subtotal > 0 ? (discount * (lineGross / subtotal)) : 0;
-            var lineNet = lineGross - lineShare;
-            var lineTax = lineNet * (p.taxPercent / 100);
-            taxByRate[p.taxPercent] = (taxByRate[p.taxPercent] || 0) + lineTax;
-            totalTax += lineTax;
+            subtotal += lineGross;
+            itemCount += p.quantity;
+            var lnType = p.discountType === "percent" ? "percent" : "flat";
+            var lineDisc;
+            if (lnType === "percent") {
+                var pct = parseFloat(p.discountValue) || 0;
+                if (pct < 0) pct = 0;
+                if (pct > 100) pct = 100;
+                lineDisc = lineGross * (pct / 100);
+            } else {
+                lineDisc = parseFloat(p.discountValue) || 0;
+                if (lineDisc < 0) lineDisc = 0;
+                if (lineDisc > lineGross) lineDisc = lineGross;
+            }
+            totalDiscount += lineDisc;
+            var lineNet = lineGross - lineDisc;
+            if (p.taxable && p.taxPercent && p.taxPercent > 0) {
+                var lineTax = lineNet * (p.taxPercent / 100);
+                taxByRate[p.taxPercent] = (taxByRate[p.taxPercent] || 0) + lineTax;
+                totalTax += lineTax;
+            }
         }
         var taxBreakdown = [];
         var keys = Object.keys(taxByRate).sort(function(a, b) { return parseFloat(a) - parseFloat(b); });
         for (var k = 0; k < keys.length; ++k)
             taxBreakdown.push({ rate: parseFloat(keys[k]), amount: taxByRate[keys[k]] });
 
-        var roundedDiscount = Math.round(discount * 100) / 100;
+        var roundedDiscount = Math.round(totalDiscount * 100) / 100;
         var roundedTax = Math.round(totalTax * 100) / 100;
         var roundedSubtotal = Math.round(subtotal * 100) / 100;
-        var total = Math.round((roundedSubtotal - roundedDiscount + roundedTax) * 100) / 100;
+        var roundedNet = Math.round((roundedSubtotal - roundedDiscount) * 100) / 100;
+        var total = Math.round((roundedNet + roundedTax) * 100) / 100;
 
         return {
             subtotal: roundedSubtotal,
@@ -268,7 +265,7 @@ QtObject {
         var merged = {};
         var keys = ["orderId", "customer", "email", "phone", "items", "total",
                     "status", "date", "notes", "products",
-                    "discountType", "discountValue", "subtotal", "discount", "tax", "taxBreakdown",
+                    "subtotal", "discount", "tax", "taxBreakdown",
                     "orderChannel", "staffId"];
         for (var i = 0; i < keys.length; ++i) {
             var k = keys[i];
@@ -334,6 +331,8 @@ QtObject {
                     prods.push({ productId: p.productId || "", name: p.name, price: p.price, quantity: p.quantity,
                                  taxable: !!p.taxable,
                                  taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
+                                 discountType: p.discountType === "percent" ? "percent" : "flat",
+                                 discountValue: typeof p.discountValue === "number" ? p.discountValue : parseCurrency(p.discountValue),
                                  consumption: consClone });
                 }
             }
@@ -344,8 +343,6 @@ QtObject {
             }
             a.push({ orderId: o.orderId, customer: o.customer, items: o.items,
                       subtotal: o.subtotal || 0,
-                      discountType: o.discountType || "flat",
-                      discountValue: o.discountValue || 0,
                       discount: o.discount || 0,
                       tax: o.tax || 0,
                       taxBreakdown: bd,
@@ -353,6 +350,7 @@ QtObject {
                       notes: o.notes, email: o.email, phone: o.phone,
                       orderChannel: o.orderChannel || "",
                       staffId: o.staffId || "",
+                      adjustments: Array.isArray(o.adjustments) ? o.adjustments.slice() : [],
                       products: prods });
         }
         return a;
@@ -380,8 +378,10 @@ QtObject {
 
     function formatCurrency(val) {
         var n = parseCurrency(val);
-        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n); }
-        catch(e) { return 'INR ' + Math.round(n).toString(); }
+        // Up to 1 decimal so a fractional discount/total displays exactly
+        // (₹10.5), integers stay clean (₹15) — display now matches the math.
+        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(n); }
+        catch(e) { return 'INR ' + (Math.round(n * 10) / 10).toString(); }
     }
 
     function findIndexById(orderId) {
@@ -424,18 +424,11 @@ QtObject {
         if (fields.items         !== undefined) o.items         = fields.items;
         if (fields.notes         !== undefined) o.notes         = fields.notes;
         if (fields.products      !== undefined) o.products      = fields.products;
-        if (fields.discountType  !== undefined) o.discountType  = fields.discountType;
-        if (fields.discountValue !== undefined) o.discountValue = parseCurrency(fields.discountValue);
         if (fields.orderChannel  !== undefined) o.orderChannel  = fields.orderChannel;
         if (fields.staffId       !== undefined) o.staffId       = fields.staffId;
 
-        // If the line items, discount, or product tax setup might have changed,
-        // recompute totals from the canonical formula. Callers can still pass
-        // an explicit total to override (e.g. legacy code paths).
-        if (fields.products !== undefined
-            || fields.discountType !== undefined
-            || fields.discountValue !== undefined) {
-            var t = computeOrderTotals(o.products || [], o.discountType, o.discountValue);
+        if (fields.products !== undefined) {
+            var t = computeOrderTotals(o.products || []);
             o.subtotal = t.subtotal;
             o.discount = t.discount;
             o.tax = t.tax;
@@ -444,6 +437,48 @@ QtObject {
             o.items = t.itemCount;
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
+        o.updatedAt = new Date().toISOString();
+        _commit(arr);
+    }
+
+    // Apply a return/exchange/modify adjustment: set the order's lines to the
+    // post-adjustment state, recompute totals, and append one immutable entry to
+    // the order's adjustments[] audit log. Used by DataModel._tryAdjustOrder
+    // AFTER it has already written the stock + ledger reversals. Distinct from
+    // updateOrder so the normal edit path is untouched.
+    //   adjustmentRecord: { date, reason, condition, lineDeltas, refundAmount, note, actorUid }
+    function applyAdjustment(orderId, newLines, adjustmentRecord) {
+        var idx = findIndexById(orderId);
+        if (idx < 0) return;
+        var arr = _clone();
+        var o = arr[idx];
+        o.products = newLines || [];
+        var t = computeOrderTotals(o.products);
+        o.subtotal = t.subtotal;
+        o.discount = t.discount;
+        o.taxBreakdown = t.taxBreakdown;
+        o.items = t.itemCount;
+        // A COMPLETED order's lines (one tax rate each) can't represent
+        // mixed-vintage tax (originals at the booked rate + units added after a
+        // tax change at the current rate). _tryAdjustOrder has already booked the
+        // added units' sale events, so take the authoritative tax/net/total from
+        // the immutable ledger — reconciles with the Analysis reports by
+        // construction. Pending orders have no ledger yet → keep the line totals.
+        if (o.status === "completed") {
+            var led = (typeof TransactionStore !== "undefined" && TransactionStore)
+                    ? TransactionStore.totalsForOrder(orderId) : null;
+            if (led) {
+                o.tax = led.tax;
+                o.total = led.total;
+            } else {
+                o.tax = t.tax; o.total = t.total;
+            }
+        } else {
+            o.tax = t.tax;
+            o.total = t.total;
+        }
+        if (!Array.isArray(o.adjustments)) o.adjustments = [];
+        o.adjustments.push(adjustmentRecord);
         o.updatedAt = new Date().toISOString();
         _commit(arr);
     }
@@ -462,7 +497,7 @@ QtObject {
     // caller doesn't supply them, so the Analysis page can detect
     // "(unspecified)" rows and bucket them out of per-channel/per-staff
     // breakdowns.
-    function addOrder(customer, items, total, status, date, email, phone, orderProducts, discountType, discountValue, orderChannel, staffId) {
+    function addOrder(customer, items, total, status, date, email, phone, orderProducts, orderChannel, staffId) {
         var id = nextOrderId();
         var iso = Qt.formatDate(date, 'yyyy-MM-dd');
         var arr = _clone();
@@ -481,17 +516,16 @@ QtObject {
                     price: pp.price,
                     quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0),
                     taxable: taxable,
-                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent
+                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
+                    discountType: pp.discountType === "percent" ? "percent" : "flat",
+                    discountValue: parseCurrency(pp.discountValue)
                 });
             }
         }
-        var dt = discountType === "percent" ? "percent" : "flat";
-        var dv = parseCurrency(discountValue);
-        var totals = computeOrderTotals(prods, dt, dv);
+        var totals = computeOrderTotals(prods);
         arr.push({ orderId: id, customer: customer,
                    items: prods.length > 0 ? totals.itemCount : items,
                    subtotal: totals.subtotal,
-                   discountType: dt, discountValue: dv,
                    discount: totals.discount,
                    tax: totals.tax,
                    taxBreakdown: totals.taxBreakdown,

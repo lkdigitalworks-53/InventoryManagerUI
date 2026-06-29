@@ -37,3 +37,8 @@ graphify-out/*
 .agent-skills
 
 src/3rdParty
+
+.superpowers/
+
+scripts/node_modules/
+scripts/.icns-tmp.png

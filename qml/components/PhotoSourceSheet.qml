@@ -213,8 +213,15 @@ QQC.Popup {
         var s = String(raw).trim()
         var lower = s.toLowerCase()
         if (lower.indexOf("http://") === 0 || lower.indexOf("https://") === 0) return s
-        if (lower.indexOf("file:") === 0) return s
         if (lower.indexOf("content://") === 0) return s
+        // The desktop picker returns a malformed 2-slash "file://C:/…", where
+        // "C:" parses as the URL HOST so the path collapses to "//c/…" and both
+        // Image.source and QFile fail. Strip "file:" + leading slashes, then
+        // re-apply the drive-letter rule below so "file://C:/…", "file:///C:/…",
+        // and a raw "C:\…" all converge to a valid "file:///C:/…". (Mirrors
+        // ImportPreviewDialog._toFileUrl, the verified-working desktop path.)
+        if (lower.indexOf("file:") === 0)
+            s = s.substring(5).replace(/^\/+/, "")
         var norm = s.replace(/\\/g, "/")
         if (norm.indexOf("/") !== 0) norm = "/" + norm
         return "file://" + norm
