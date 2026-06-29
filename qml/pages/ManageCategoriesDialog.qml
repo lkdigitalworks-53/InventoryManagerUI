@@ -66,7 +66,7 @@ BottomSheet {
                 delegate: ListCard {
                     Layout.fillWidth: true
                     title: modelData
-                    subtitle: modelData === CategoryStore.lastUsed ? "Default category" : ""
+                    subtitle: modelData === CategoryStore.defaultCategory ? "Default category" : ""
 
                     leading: AvatarBadge {
                         size: "md"
@@ -82,7 +82,7 @@ BottomSheet {
                         Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
 
                         QQC.AbstractButton {
-                            visible: modelData !== CategoryStore.lastUsed
+                            visible: modelData !== CategoryStore.defaultCategory
                             implicitHeight: dp(28)
                             implicitWidth: starTxt.implicitWidth + dp(20)
                             background: Rectangle {
@@ -111,7 +111,7 @@ BottomSheet {
                                     }
                                 }
                             }
-                            onClicked: CategoryStore.setLastUsed(modelData)
+                            onClicked: CategoryStore.setDefault(modelData)
                         }
 
                         QQC.AbstractButton {

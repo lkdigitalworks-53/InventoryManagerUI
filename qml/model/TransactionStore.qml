@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "../helper/OrderMath.js" as OrderMath
 
 // Persistent transaction log. One entry per product-affecting event:
 //   kind="created"          — product first added to inventory (initial stock)
@@ -191,6 +192,23 @@ QtObject {
         return out
     }
 
+    // Returns all sell-cycle entries for one order, newest first — the order's
+    // timeline: the original sale lines, plus any returns / exchanges (added
+    // sale lines) / price modifies / discount adjustments / reopen reversals.
+    // Powers the OrderDetailDialog history section (bug 18). Includes all
+    // price_adjust rows (discount edits are now per-line carrying real productId).
+    function forOrder(orderId) {
+        if (!orderId) return []
+        var out = []
+        for (var i = 0; i < entries.length; ++i) {
+            var e = entries[i]
+            if (e.orderId !== orderId) continue
+            if (e.kind === "sale" || e.kind === "return" || e.kind === "price_adjust")
+                out.push(e)
+        }
+        return out
+    }
+
     // Most recent supplier id for a product (purchase/created events).
     // Used by EditProductDialog's "current supplier" banner. Analytics
     // should walk the FIFO consumption arrays instead — `lastSupplierFor`
@@ -220,6 +238,51 @@ QtObject {
         return ""
     }
 
+    // The FIRST original sale event for a product on an order — used by
+    // DataModel._tryAdjustOrder to refund returned units at the ORIGINAL-sale
+    // per-unit rate (net+tax)/qty, immune to a later adjustment's discount edit
+    // (SITE 6). Returns null when no such sale event exists (pre-event legacy).
+    function firstSaleEvent(orderId, productId) {
+        if (!orderId) return null
+        var arr = entries || []
+        for (var i = 0; i < arr.length; ++i) {
+            var e = arr[i]
+            if (e.kind === "sale" && e.orderId === orderId
+                    && (e.productId || "") === (productId || ""))
+                return e
+        }
+        return null
+    }
+
+    // Authoritative booked { net, tax, total } for one order, summed from the
+    // STAMPED event log — the same fields and convention the Analysis reports
+    // sum, so a completed order's total reconciles with the reports by
+    // construction. Used by OrdersStore.applyAdjustment for completed orders,
+    // whose lines (single tax rate each) can't represent mixed-vintage tax.
+    //   tax  = Σ e.tax  over sale + return (returns carry negative tax → netted).
+    //          price_adjust has NO tax field → contributes 0 (revenue-only).
+    //   net  = Σ e.net  over sale + return  +  Σ e.total over price_adjust (the
+    //          signed revenue delta of a price/discount edit folds into net).
+    //   total = net + tax, rounded once.
+    function totalsForOrder(orderId) {
+        var net = 0, tax = 0
+        if (!orderId) return { net: 0, tax: 0, total: 0 }
+        var arr = entries || []
+        for (var i = 0; i < arr.length; ++i) {
+            var e = arr[i]
+            if (e.orderId !== orderId) continue
+            if (e.kind === "sale" || e.kind === "return") {
+                net += (e.net !== undefined && e.net !== null) ? e.net : 0
+                tax += (e.tax !== undefined && e.tax !== null) ? e.tax : 0
+            } else if (e.kind === "price_adjust") {
+                net += (e.total || 0)
+            }
+        }
+        net = Math.round(net * 100) / 100
+        tax = Math.round(tax * 100) / 100
+        return { net: net, tax: tax, total: Math.round((net + tax) * 100) / 100 }
+    }
+
     // Persists one `sale` doc per line item. The optional `consumption` field
     // on each line is a list of FIFO batches that were consumed (each entry:
     // `{ batchId, supplierId, qtyConsumed, unitCost }`). All per-supplier
@@ -230,11 +293,17 @@ QtObject {
     function recordSaleFromOrder(order) {
         if (!order || !order.products) return
         var iso = new Date().toISOString()
+        var alloc = OrderMath.allocate(order)
+        // productId → allocated perLine (line-level net/tax/discount).
+        var allocByProduct = {}
+        for (var ai = 0; ai < alloc.perLine.length; ++ai)
+            allocByProduct[alloc.perLine[ai].productId] = alloc.perLine[ai]
         for (var i = 0; i < order.products.length; ++i) {
             var p = order.products[i]
             var qty = p.quantity || p.qty || 0
             if (!qty) continue
             var inv = p.productId ? InventoryStore.getById(p.productId) : null
+            var al = allocByProduct[p.productId || ""] || { net: qty * (p.price || 0), tax: 0, discountShare: 0 }
             var doc = {
                 txId: _nextId("s"),
                 kind: "sale",
@@ -243,15 +312,12 @@ QtObject {
                 productId: p.productId || "",
                 productName: p.name || (inv ? inv.name : ""),
                 quantity: qty,
-                unitCost: inv ? (inv.price || 0) : 0,
                 unitPrice: typeof p.price === "number" ? p.price : 0,
+                net: al.net,
+                tax: al.tax,
+                discountShare: al.discountShare,
                 total: qty * (typeof p.price === "number" ? p.price : 0),
                 orderId: order.orderId || "",
-                // Stamp channel + staff onto every sale doc so per-channel
-                // and per-staff Analysis queries don't have to join back to
-                // OrdersStore at read time. Empty strings indicate
-                // "unspecified" — the Analysis page filters those out of
-                // per-dimension breakdowns.
                 orderChannel: order.orderChannel || "",
                 staffId: order.staffId || "",
                 consumption: Array.isArray(p.consumption) ? p.consumption.slice() : []
@@ -260,12 +326,108 @@ QtObject {
         }
     }
 
+    // Append an immutable return event for one returned line. Negative quantity
+    // and total so the existing sale-summing analytics net it down. Carries the
+    // REVERSED consumption[] (negative qtyConsumed at the original unitCost) so
+    // per-supplier/profit queries unwind the exact margin originally booked.
+    //   reversedConsumption: [{ batchId, supplierId, qtyConsumed (negative), unitCost }]
+    function recordReturn(order, line, returnedQty, reversedConsumption, reason, condition, note) {
+        if (!returnedQty || returnedQty <= 0) return
+        var unitPrice = typeof line.price === "number" ? line.price : 0
+        // Allocate the parent order and scale the returned line's net/tax/discount
+        // to the returned qty (negative, mirroring the negative quantity/total).
+        var rNet = 0, rTax = 0, rDisc = 0
+        var parent = (typeof OrdersStore !== "undefined" && order && order.orderId)
+                ? OrdersStore.getById(order.orderId) : null
+        var src = parent || order
+        if (src) {
+            var ra = OrderMath.allocate(src)
+            for (var ri = 0; ri < ra.perLine.length; ++ri) {
+                var rl = ra.perLine[ri]
+                if (rl.productId === (line.productId || "") && rl.qty > 0) {
+                    var f = returnedQty / rl.qty
+                    rNet = -(rl.net * f); rTax = -(rl.tax * f); rDisc = -(rl.discountShare * f)
+                    break
+                }
+            }
+        }
+        var doc = {
+            txId: _nextId("r"),
+            kind: "return",
+            timestamp: new Date().toISOString(),
+            date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
+            productId: line.productId || "",
+            productName: line.name || "",
+            quantity: -returnedQty,
+            unitCost: 0,
+            unitPrice: unitPrice,
+            net: rNet,
+            tax: rTax,
+            discountShare: rDisc,
+            total: -(returnedQty * unitPrice),
+            orderId: order.orderId || "",
+            orderChannel: order.orderChannel || "",
+            staffId: order.staffId || "",
+            consumption: Array.isArray(reversedConsumption) ? reversedConsumption.slice() : [],
+            reason: reason || "",
+            condition: condition || "",
+            note: note || ""
+        }
+        _push(doc)
+    }
+
+    // Record a price-only correction on already-sold units (a "modify" that
+    // changed unit price, not quantity). quantity:0 so Units Sold is unaffected;
+    // total carries the signed revenue delta; consumption is empty (the delta has
+    // no unit/cost basis — it's a pure price correction on already-counted units),
+    // so the analysis layer nets `total` straight into Revenue AND Profit (COGS is
+    // unchanged, so the profit delta equals the revenue delta).
+    //   revenueDelta: signed (negative when price dropped → revenue down)
+    //   perUnitDelta: oldPrice - newPrice (so unitPrice on the event reads the delta)
+    function recordPriceAdjust(order, line, survivingQty, perUnitDelta, reason, note) {
+        if (!survivingQty || survivingQty <= 0 || !perUnitDelta) return
+        var revenueDelta = -(survivingQty * perUnitDelta)   // price drop (delta>0) → negative revenue
+        // Stamp the per-supplier split of this delta AT WRITE TIME, while the
+        // parent order still carries its FIFO consumption lineage. Reading it
+        // back from the live order at report time is unsafe: a later full return
+        // empties the line's consumption, so the supplier axis would lose the
+        // lineage and dump the delta into an "Unknown" bucket (residue bug).
+        // Order-wide adjustments (no productId) spread across all lines; per-line
+        // adjustments spread across that one line's consumption.
+        var supplierSlices = []
+        if (line.productId)
+            supplierSlices = OrderMath.spreadLineDeltaBySupplier(order, line.productId, revenueDelta)
+        else
+            supplierSlices = OrderMath.spreadOrderDelta(order, revenueDelta, "supplierId", null)
+        var doc = {
+            txId: _nextId("pa"),
+            kind: "price_adjust",
+            timestamp: new Date().toISOString(),
+            date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
+            productId: line.productId || "",
+            productName: line.name || "",
+            quantity: 0,
+            unitCost: 0,
+            unitPrice: -perUnitDelta,
+            total: revenueDelta,
+            orderId: order.orderId || "",
+            orderChannel: order.orderChannel || "",
+            staffId: order.staffId || "",
+            consumption: [],
+            supplierSlices: supplierSlices,   // [{ key: supplierId, amount }] — immutable, return-proof
+            revenueDelta: revenueDelta,
+            reason: reason || "modify",
+            note: note || ""
+        }
+        _push(doc)
+    }
+
     // Returns entries with timestamp (or date) inside [fromDate, toDate).
     function between(fromDate, toDate) {
         var out = []
         for (var i = 0; i < entries.length; ++i) {
             var e = entries[i]
-            var d = new Date(e.timestamp || e.date)
+            var d = OrderMath.eventDate(e)
             if (isNaN(d.getTime())) continue
             if (d >= fromDate && d < toDate) out.push(e)
         }
@@ -334,8 +496,9 @@ QtObject {
         for (var k = 0; k < entries.length; ++k) {
             var e = entries[k]
             if (kindSet) {
-                if (!kindSet[e.kind]) continue
-            } else if (kind && e.kind !== kind) {
+                // A "sale" request also nets "return" rows (signed quantity).
+                if (!kindSet[e.kind] && !(kindSet["sale"] && e.kind === "return")) continue
+            } else if (kind && e.kind !== kind && !(kind === "sale" && e.kind === "return")) {
                 // Legacy/back-compat: an existing "purchase" doc with the
                 // old note "Initial stock" is logically a creation event —
                 // include it when the caller asks for "created".
@@ -348,7 +511,7 @@ QtObject {
                 }
             }
             if (predicate && !predicate(e)) continue
-            var dd = new Date(e.timestamp || e.date)
+            var dd = OrderMath.eventDate(e)
             if (isNaN(dd.getTime())) continue
             var idx = bucket(dd)
             if (idx >= 0) bins[idx] += (e.quantity || 0)

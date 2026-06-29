@@ -36,9 +36,9 @@ Item {
     // ── Orders ────────────────────────────────────────────────────────────────
     signal addOrder(var customer, int items, var total, string status, var date,
                     string email, string phone, var products,
-                    string discountType, var discountValue,
                     string orderChannel, string staffId)
     signal updateOrder(string orderId, var fields)
+    signal adjustOrder(string orderId, var newLines, string reason, string condition, string note)
     signal completeOrder(string orderId)
     signal approveAllPending()
     signal deleteOrder(string orderId)

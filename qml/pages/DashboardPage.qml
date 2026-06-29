@@ -5,6 +5,8 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/StaffScope.js" as StaffScope
+import "../helper/OrderMath.js" as OrderMath
 
 // Mobile dashboard — first thing users see after sign-in. Mirrors the
 // prototype: greeting + avatar + bell, KPI grid, Quick Actions, Recent
@@ -13,6 +15,8 @@ Item {
     id: root
 
     property bool compact: false
+    property bool canViewFinancials: true
+    property string currentStaffId: ""
 
     signal newOrderRequested()
     signal addProductRequested()
@@ -61,7 +65,7 @@ Item {
             if (d.getDate() === today.getDate()
                 && d.getMonth() === today.getMonth()
                 && d.getFullYear() === today.getFullYear()) {
-                sum += (o.total || 0)
+                sum += OrderMath.allocate(o).totals.net
             }
         }
         return sum
@@ -80,6 +84,43 @@ Item {
                 && d.getFullYear() === today.getFullYear()) {
                 c++
             }
+        }
+        return c
+    }
+
+    // Count of the current staff member's own completed orders dated today.
+    // Drives the staff replacement for the revenue KPI. Reads OrdersStore.orders
+    // directly (the screen already recomputes on order changes via the cards'
+    // bindings); fail-closed via StaffScope.ownOrders when currentStaffId is "".
+    function _myCompletedToday() {
+        var mine = StaffScope.ownOrders(OrdersStore.orders || [], currentStaffId)
+        var now = new Date()
+        var c = 0
+        for (var i = 0; i < mine.length; ++i) {
+            var o = mine[i]
+            if ((o.status || "") !== "completed") continue
+            var d = new Date(o.date)
+            if (isNaN(d.getTime())) continue
+            if (d.getFullYear() === now.getFullYear()
+                && d.getMonth() === now.getMonth()
+                && d.getDate() === now.getDate()) c++
+        }
+        return c
+    }
+
+    // Count of the current staff member's own orders dated today (any status).
+    // Staff replacement for the tenant-wide _todayOrderCount() on the Orders KPI,
+    // so a staff user never sees other staff's order activity. Fail-closed.
+    function _myOrdersToday() {
+        var mine = StaffScope.ownOrders(OrdersStore.orders || [], currentStaffId)
+        var now = new Date()
+        var c = 0
+        for (var i = 0; i < mine.length; ++i) {
+            var d = new Date(mine[i].date)
+            if (isNaN(d.getTime())) continue
+            if (d.getFullYear() === now.getFullYear()
+                && d.getMonth() === now.getMonth()
+                && d.getDate() === now.getDate()) c++
         }
         return c
     }
@@ -106,7 +147,7 @@ Item {
             if (isNaN(d.getTime())) continue
             d.setHours(0, 0, 0, 0)
             var diff = Math.round((today.getTime() - d.getTime()) / 86400000)
-            if (diff >= 0 && diff < 7) bins[6 - diff] += (o.total || 0)
+            if (diff >= 0 && diff < 7) bins[6 - diff] += OrderMath.allocate(o).totals.net
         }
         return bins
     }
@@ -137,7 +178,7 @@ Item {
             var d = new Date(o.date)
             if (isNaN(d.getTime())) continue
             if (d.getDate() === y.getDate() && d.getMonth() === y.getMonth() && d.getFullYear() === y.getFullYear())
-                sum += (o.total || 0)
+                sum += OrderMath.allocate(o).totals.net
         }
         return sum
     }
@@ -168,7 +209,10 @@ Item {
         var merged = []
 
         // Orders → uniform shape with a timestamp millisecond key for sort.
-        var orders = OrdersStore.orders || []
+        // Staff see only their own orders in the activity feed (fail-closed).
+        var orders = canViewFinancials
+                ? (OrdersStore.orders || [])
+                : StaffScope.ownOrders(OrdersStore.orders || [], currentStaffId)
         for (var i = 0; i < orders.length; ++i) {
             var o = orders[i]
             var t = new Date(o.updatedAt || o.date).getTime() || 0
@@ -178,7 +222,7 @@ Item {
                 entityId: o.orderId || "",
                 title: (o.orderId || "Order") + " · " + (o.customer || "Walk-in"),
                 subtitle: (o.items || 0) + " items · " + (o.date || ""),
-                amount: OrdersStore.formatCurrency(o.total || 0),
+                amount: canViewFinancials ? OrdersStore.formatCurrency(o.total || 0) : "",
                 status: o.status || "pending"
             })
         }
@@ -244,13 +288,11 @@ Item {
         ]
     }
 
-    QQC.ScrollView {
+    AppScrollView {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             id: stack
@@ -268,22 +310,34 @@ Item {
                 rowSpacing: dp(Constants.space2 + 2)
 
                 GradientKpiCard {
-                    label: "Today's sales"
-                    value: OrdersStore.formatCurrency(root._todayRevenue())
-                    trend: root._todaySalesTrend()
-                    spark: root._last7DaysRevenue()
+                    label: root.canViewFinancials ? "Today's sales" : "My sales today"
+                    value: root.canViewFinancials
+                           ? OrdersStore.formatCurrency(root._todayRevenue())
+                           : String(root._myCompletedToday())
+                    trend: root.canViewFinancials ? root._todaySalesTrend() : "today"
+                    trendVariant: root.canViewFinancials ? "up" : "muted"
+                    spark: root.canViewFinancials ? root._last7DaysRevenue() : []
                     palette: Constants.grad1
                 }
                 GradientKpiCard {
-                    label: "Orders"
-                    value: String(root._todayOrderCount())
+                    label: root.canViewFinancials ? "Orders" : "My orders"
+                    // Staff see only their own orders today; everyone else the
+                    // tenant-wide count. The pending fallback (tenant-wide) is
+                    // suppressed for staff so it can't leak others' backlog.
+                    value: root.canViewFinancials
+                           ? String(root._todayOrderCount())
+                           : String(root._myOrdersToday())
                     trend: {
+                        if (!root.canViewFinancials) {
+                            var mt = root._myOrdersToday()
+                            return mt > 0 ? "▲ " + mt + " today" : "None today"
+                        }
                         var t = root._todayOrderCount()
                         if (t > 0) return "▲ " + t + " today"
                         if (OrdersStore.pendingOrderCount > 0) return "▲ " + OrdersStore.pendingOrderCount + " pending"
                         return "All caught up"
                     }
-                    spark: root._last7DaysOrderCounts()
+                    spark: root.canViewFinancials ? root._last7DaysOrderCounts() : []
                     palette: Constants.grad2
                 }
                 GradientKpiCard {
@@ -407,6 +461,7 @@ Item {
                                     if (k === "product_restocked") return "restocked"
                                     if (k === "staff_added") return "staff-added"
                                     if (k === "staff_updated") return "staff-updated"
+                                    if (k === "import") return "import"
                                     if (k === "order") return ""
                                     return "activity"
                                 }
@@ -418,6 +473,7 @@ Item {
                                     if (k === "product_restocked") return Constants.grad4
                                     if (k === "staff_added") return Constants.grad3
                                     if (k === "staff_updated") return Constants.grad2
+                                    if (k === "import") return Constants.grad2
                                     return Constants.grad1
                                 }
                             }
@@ -444,10 +500,14 @@ Item {
                         }
                     }
 
-                    // Empty state
+                    // Empty state. Keyed on the MERGED recent feed (_recent),
+                    // not orders alone — otherwise "No orders yet" showed even
+                    // when product/staff activity existed (and the list above
+                    // was already rendering those rows). Generic wording covers
+                    // every activity kind; it disappears the moment any exists.
                     Rectangle {
                         Layout.fillWidth: true
-                        visible: (OrdersStore.orders || []).length === 0
+                        visible: (root._recent || []).length === 0
                         radius: dp(Constants.radius)
                         color: Constants.cardBg
                         border.color: Constants.borderColor
@@ -464,14 +524,14 @@ Item {
                                 Layout.alignment: Qt.AlignHCenter
                             }
                             Text {
-                                text: "No orders yet"
+                                text: qsTr("No activity yet")
                                 color: Constants.textPrimary
                                 font.pixelSize: sp(Constants.fsBodyLg)
                                 font.bold: true
                                 Layout.alignment: Qt.AlignHCenter
                             }
                             Text {
-                                text: "Tap + to record your first sale."
+                                text: qsTr("Add a product or record a sale to get started.")
                                 color: Constants.textSecondary
                                 font.pixelSize: sp(Constants.fsSmall)
                                 Layout.alignment: Qt.AlignHCenter

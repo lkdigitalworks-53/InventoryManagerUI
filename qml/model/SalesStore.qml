@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "../helper/OrderMath.js" as OrderMath
 
 QtObject {
     id: root
@@ -12,38 +13,28 @@ QtObject {
     // Computed
     readonly property real averageOrder: totalOrders > 0 ? totalRevenue / totalOrders : 0
 
+    // OrdersStore is the SINGLE source of truth for these KPIs. They are
+    // derived (_rebuildDerivedData sums allocate().totals.net over completed
+    // orders and counts them), never an independently-persisted running tally.
+    //
+    // The old design ALSO kept an incrementing "sales/summary" doc that
+    // recordSale bumped (by tax-inclusive o.total) and _fetchFromFirebase loaded
+    // back. That summary was never decremented, so reopening + re-completing an
+    // order double-counted it; and its tax-inclusive revenue disagreed with the
+    // net-based Analysis/Dashboard. On load it clobbered the correct recompute.
+    // We no longer read or write that doc — recompute from OrdersStore instead.
     function _load() {
-        _fetchFromFirebase();
-    }
-
-    function _save() {
-        _pushToFirebase();
+        _rebuildDerivedData();
     }
 
     function _fetchFromFirebase() {
-        FirebaseService.get("sales", function(ok, data) {
-            if (ok) {
-                var d = data || {};
-                totalRevenue = d.totalRevenue !== undefined ? d.totalRevenue : 0;
-                totalOrders = d.totalOrders !== undefined ? d.totalOrders : 0;
-                activeCustomers = d.activeCustomers !== undefined ? d.activeCustomers : 0;
-                console.log("[SalesStore] Synced from Firestore");
-            } else {
-                console.warn("[SalesStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            }
-        });
+        // Orders may not have synced yet on first call; OrdersStore.revision
+        // bumps (onOrdersRevisionWatcherChanged) trigger a fresh recompute once
+        // they land, so this is safe to call eagerly.
+        _rebuildDerivedData();
     }
 
-    function _pushToFirebase() {
-        FirebaseService.put("sales", { totalRevenue: totalRevenue, totalOrders: totalOrders, activeCustomers: activeCustomers }, function(ok) {
-            if (!ok)
-                console.warn("[SalesStore] Firestore write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[SalesStore] Firestore write ok")
-        });
-    }
-
-    function syncFromFirebase() { _fetchFromFirebase(); }
+    function syncFromFirebase() { _rebuildDerivedData(); }
 
     function clear() {
         totalRevenue = 0
@@ -54,11 +45,13 @@ QtObject {
         topProducts = []
     }
 
+    // Kept for the Logic.recordSale signal path, but it no longer maintains an
+    // independent running tally (that double-counted on re-completion and used
+    // tax-inclusive amounts). The KPIs are recomputed from OrdersStore, which is
+    // the source of truth — the order it represents is already persisted there.
+    // (Most callers reach completion via DataModel._tryCompleteOrder, which bumps
+    // OrdersStore.revision → onOrdersRevisionWatcherChanged → recompute anyway.)
     function recordSale(amount, itemCount) {
-        totalRevenue += amount;
-        totalOrders += 1;
-        activeCustomers += 1;
-        _save();
         _rebuildDerivedData();
     }
 
@@ -107,19 +100,26 @@ QtObject {
 
             var d = _safeDate(o.date)
             var m = d.getMonth()
-            revenueByMonth[m] += (o.total || 0)
+            var a = OrderMath.allocate(o)
+            revenueByMonth[m] += a.totals.net
             ordersByMonth[m] += 1
+
+            var allocByPid = {}
+            for (var ai = 0; ai < a.perLine.length; ++ai) {
+                var pl = a.perLine[ai]
+                allocByPid[pl.productId] = pl
+            }
 
             var products = o.products || []
             for (var j = 0; j < products.length; ++j) {
                 var p = products[j]
                 var name = p.name || "Unknown"
                 var qty = p.quantity !== undefined ? p.quantity : (p.qty || 0)
-                var price = p.price || 0
+                var lineNet = allocByPid[p.productId] ? allocByPid[p.productId].net : (qty * (p.price || 0))
                 if (!productMap[name])
                     productMap[name] = { name: name, sold: 0, revenue: 0 }
                 productMap[name].sold += qty
-                productMap[name].revenue += qty * price
+                productMap[name].revenue += lineNet
             }
         }
 
@@ -130,7 +130,7 @@ QtObject {
         for (var z = 0; z < OrdersStore.orders.length; ++z) {
             var co = OrdersStore.orders[z]
             if (co.status === "completed") {
-                totalRev += (co.total || 0)
+                totalRev += OrderMath.allocate(co).totals.net
                 totalOrd += 1
                 if (co.customer) customerSet[co.customer] = true
             }
@@ -167,8 +167,9 @@ QtObject {
     function formatCurrency(val) {
         var n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[^0-9.]/g, ''));
         if (isNaN(n)) n = 0;
-        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n); }
-        catch(e) { return '₹' + Math.round(n).toString(); }
+        // Up to 1 decimal so fractional values display exactly; integers clean.
+        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(n); }
+        catch(e) { return '₹' + (Math.round(n * 10) / 10).toString(); }
     }
 
     function formatNumber(val) {

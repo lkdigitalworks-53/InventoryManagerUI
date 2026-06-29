@@ -13,6 +13,8 @@ Item {
 
     property bool compact: false
     property bool canManageInventory: true
+    property bool canOpenProductDetail: true
+    property bool canViewFinancials: true
 
     signal addProductClicked()
     signal restockClicked(string productId)
@@ -60,13 +62,11 @@ Item {
         ]
     }
 
-    QQC.ScrollView {
+    AppScrollView {
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             id: stack
@@ -111,6 +111,7 @@ Item {
                     palette: Constants.grad4
                 }
                 GradientKpiCard {
+                    visible: root.canViewFinancials
                     Layout.fillWidth: true
                     Layout.preferredHeight: dp(110)
                     label: "Avg markup"
@@ -148,7 +149,8 @@ Item {
                         Layout.fillWidth: true
                         product: modelData
                         canManage: root.canManageInventory
-                        onViewClicked:    root.viewProductClicked(modelData.productId)
+                        canOpenDetail: root.canOpenProductDetail
+                        onViewClicked:    if (root.canOpenProductDetail) root.viewProductClicked(modelData.productId)
                         onEditClicked:    root.editProductClicked(modelData.productId)
                         onRestockClicked: root.restockClicked(modelData.productId)
                         onDeleteClicked:  root.deleteProductClicked(modelData.productId)
@@ -207,6 +209,7 @@ Item {
         id: card
         property var product
         property bool canManage: true
+        property bool canOpenDetail: true
 
         signal viewClicked()
         signal editClicked()
@@ -215,11 +218,11 @@ Item {
 
         implicitHeight: dp(110)
         padding: dp(Constants.space3)
-        onClicked: card.viewClicked()
+        onClicked: if (card.canOpenDetail) card.viewClicked()
 
         background: Rectangle {
             radius: dp(Constants.radius)
-            color: card.pressed ? Constants.subtleBg : Constants.cardBg
+            color: (card.canOpenDetail && card.pressed) ? Constants.subtleBg : Constants.cardBg
             border.color: Constants.borderColor
             border.width: 1
             Behavior on color { ColorAnimation { duration: Constants.durFast } }

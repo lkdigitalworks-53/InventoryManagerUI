@@ -23,12 +23,16 @@ BottomSheet {
     // caller should treat it as cosmetic.
     property string status: "all"
     property string range:  "all"
+    // Only consulted when range === "custom". "yyyy-MM-dd" each. The page
+    // validates these via _dateWindow() before applying.
+    property string customFrom: ""
+    property string customTo: ""
 
     signal filtersApplied(string status, string range)
     signal resetRequested()
 
     onPrimaryClicked: { filtersApplied(status, range); close() }
-    onSecondaryClicked: { status = "all"; range = "all"; resetRequested() }
+    onSecondaryClicked: { status = "all"; range = "all"; customFrom = ""; customTo = ""; resetRequested() }
 
     ColumnLayout {
         Layout.fillWidth: true
@@ -48,7 +52,8 @@ BottomSheet {
                 { key: "all",    label: qsTr("All time") },
                 { key: "today",  label: qsTr("Today") },
                 { key: "7days",  label: qsTr("Last 7 days") },
-                { key: "30days", label: qsTr("Last 30 days") }
+                { key: "30days", label: qsTr("Last 30 days") },
+                { key: "custom", label: qsTr("Custom") }
             ]
 
             Repeater {
@@ -90,6 +95,29 @@ BottomSheet {
                         onClicked: root.range = modelData.key
                     }
                 }
+            }
+        }
+
+        // Custom-range inputs — only when "Custom" is selected. Plain text
+        // fields with a yyyy-MM-dd hint; OrdersPage._dateWindow() validates the
+        // strings (and falls back to "no filter" if either fails to parse).
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.range === "custom"
+            spacing: dp(Constants.space2)
+            AuthTextField {
+                Layout.fillWidth: true
+                label: qsTr("From")
+                placeholderText: "yyyy-MM-dd"
+                text: root.customFrom
+                onTextChanged: root.customFrom = text
+            }
+            AuthTextField {
+                Layout.fillWidth: true
+                label: qsTr("To")
+                placeholderText: "yyyy-MM-dd"
+                text: root.customTo
+                onTextChanged: root.customTo = text
             }
         }
     }

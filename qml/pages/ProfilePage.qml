@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/StaffScope.js" as StaffScope
 
 // Profile screen — avatar + stats card, Account & Preferences lists,
 // destructive sign-out CTA. Wired to AuthStore + emits navigation signals.
@@ -45,14 +46,12 @@ Item {
         }
     }
 
-    QQC.ScrollView {
+    AppScrollView {
         id: profileScroll
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             id: stack
@@ -151,10 +150,16 @@ Item {
                         spacing: dp(Constants.space2)
 
                         StatTile {
-                            title: String(SalesStore.totalOrders)
+                            // Staff see their OWN order count; everyone else the tenant total.
+                            title: AuthStore.canViewFinancials
+                                   ? String(SalesStore.totalOrders)
+                                   : String(StaffScope.ownOrders(OrdersStore.orders || [], AuthStore.currentStaffId).length)
                             caption: "Orders"
                         }
                         StatTile {
+                            // Revenue is financial — hidden from staff. Row skips
+                            // invisible children, so the hero reflows to 2 tiles.
+                            visible: AuthStore.canViewFinancials
                             title: SalesStore.formatCurrency(SalesStore.totalRevenue)
                             caption: "Revenue"
                         }

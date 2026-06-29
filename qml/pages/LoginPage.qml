@@ -1,6 +1,8 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls as QQC
 import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
 
 import "../components"
 import "../helper"
@@ -135,11 +137,9 @@ Item {
     }
 
     // ── Auth card ─────────────────────────────────────────────────────────
-    QQC.ScrollView {
+    AppScrollView {
         id: authScroll
         anchors.fill: parent
-        clip: true
-        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
 
         ColumnLayout {
             id: scrollCol
@@ -149,23 +149,45 @@ Item {
 
             Item { Layout.preferredHeight: dp(Constants.space7) + SafeArea.top; Layout.fillWidth: true }
 
-            // Brand mark
-            Rectangle {
+            // Brand mark — Karobar "K" (assets/brand/icon.svg carries tile + rounding)
+            Image {
                 Layout.alignment: Qt.AlignHCenter
-                width: dp(72); height: dp(72); radius: dp(22)
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: Constants.brand1 }
-                    GradientStop { position: 0.55; color: Constants.brand2 }
-                    GradientStop { position: 1.0; color: Constants.brand3 }
-                }
+                width: dp(72); height: dp(72)
+                source: Qt.resolvedUrl("../../assets/brand/icon.svg")
+                // Rasterize at physical pixels so the SVG stays crisp on HiDPI.
+                sourceSize.width: dp(72) * Math.min(Screen.devicePixelRatio, 3)
+                sourceSize.height: dp(72) * Math.min(Screen.devicePixelRatio, 3)
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
+                cache: true
+            }
+
+            // Wordmark — "Karobar" in the brand gradient (matches the logo wordmark).
+            // The Text is the alpha mask; LinearGradient paints only the glyphs.
+            Item {
+                Layout.alignment: Qt.AlignHCenter
+                implicitWidth: brandWordmark.implicitWidth
+                implicitHeight: brandWordmark.implicitHeight
+
                 Text {
-                    anchors.centerIn: parent
-                    text: "BM"
-                    color: Constants.textOnBrand
+                    id: brandWordmark
+                    text: "Karobar"
+                    font.pixelSize: sp(26)
                     font.bold: true
-                    font.pixelSize: sp(22)
-                    font.letterSpacing: 0.5
+                    font.letterSpacing: -0.5
+                    visible: false   // sizes to content; drives the mask only
+                }
+                LinearGradient {
+                    anchors.fill: brandWordmark
+                    source: brandWordmark
+                    start: Qt.point(0, 0)
+                    end: Qt.point(brandWordmark.width, 0)
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: Constants.brand1 }
+                        GradientStop { position: 0.5; color: Constants.brand2 }
+                        GradientStop { position: 1.0; color: Constants.brand3 }
+                    }
                 }
             }
 

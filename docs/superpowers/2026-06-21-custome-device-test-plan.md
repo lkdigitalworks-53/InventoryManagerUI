@@ -1,0 +1,15 @@
+- Add Rida item with 10 CP, 20 SP, Rida supp 
+- Add Bag item with 100 CP, 200 SP, Bag supp
+- Add C1 order with Rida. Check reports.
+- Add C2 order with Bag. Check reports.
+- Modify order 1, to add 2 more item with modify and other reason. Add reason note. Check all history and reports.
+- Modify order 1, to reduce items with return reason. Add reason note. Check all history and reports.
+- Modify order 1, to exchange items with exchange reason. Add reason note. Check all history and reports.
+- Add tax in the Bag item. Check history.
+- Modify C2 order to add more item, and check if tax is added or not. 
+- Add C3 order with 2 Rida. Complete it. Modify to reduce one Rida item and add 1 Bag item. Check tax calculation and history for exchange. Check all reports.
+- Open C3 order, modify price of rida. Save as modify and other reason sequentially with note. Check history and reports.
+- Open C2 add discount flat/%, save changes for modify/other reason with note. check history and reports.
+- Open C2 change price, save changes for modify/other reason with note. check history and reports.
+- Open C2 change price when discount if % based, save changes for modify/other reason with note. check history shows both price and discount changes and check reports.
+- Check import export feature.

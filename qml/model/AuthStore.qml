@@ -32,9 +32,32 @@ QtObject {
     readonly property bool canManageStaff: role === "owner" || role === "admin"
     readonly property bool canDeleteOrders: role === "owner" || role === "admin" || role === "manager"
     readonly property bool canApproveAll: role === "owner" || role === "admin" || role === "manager"
+    // Approving PENDING orders. Includes staff so they can clear their own
+    // backlog when auto-approve is off — but the Orders page scopes the action
+    // to each role's visible order set, so staff only ever approve their own.
+    readonly property bool canApprovePending: role === "owner" || role === "admin" || role === "manager" || role === "staff"
     readonly property bool canViewSales: role === "owner" || role === "admin" || role === "manager"
     readonly property bool canViewStaff: role === "owner" || role === "admin" || role === "manager"
     readonly property bool canInviteMembers: role === "owner" || role === "admin"
+
+    // ── Staff-role restriction flags ─────────────────────────────────────
+    // Every flag is permissive (true) for non-staff, so owner/admin/manager
+    // behavior is unchanged. Client-side UI gating only (server enforcement is
+    // the separately-planned P0 gateway).
+    readonly property bool isStaffRole:          role === "staff"
+    readonly property bool canViewFinancials:    role !== "staff"  // Value/Purchased/Revenue/Profit, cost, revenue
+    readonly property bool canViewSuppliers:     role !== "staff"  // supplier names anywhere
+    readonly property bool canViewAllSales:      role !== "staff"  // others' sales; staff see only their own
+    readonly property bool canOpenProductDetail: role !== "staff"  // the product detail/edit dialog
+
+    // The logged-in user's own staffId, resolved from the staff roster by
+    // appUid. "" for non-staff / unlinked users. Referencing StaffStore.staff
+    // directly makes this re-resolve when the roster array is reassigned
+    // (StaffStore has no `revision` property).
+    readonly property string currentStaffId: {
+        var _s = StaffStore.staff   // reactivity tie — re-resolve on roster change
+        return StaffStore.findByAppUid(uid)
+    }
 
     property Settings _settings: Settings {
         category: "AuthStore"

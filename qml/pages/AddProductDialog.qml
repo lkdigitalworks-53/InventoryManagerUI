@@ -47,6 +47,7 @@ BottomSheet {
         dlg._refreshSuppliers("")
         addPartyField.text = ""
         dlg._addPartyOpen = false
+        advToggle.open = true   // advanced section visible every time the sheet opens
     }
 
     // Local toggle for the inline "Add new party" row — see RestockDialog
@@ -197,7 +198,7 @@ BottomSheet {
                     id: advToggle
                     Layout.fillWidth: true
                     Layout.preferredHeight: dp(32)
-                    property bool open: false
+                    property bool open: true   // advanced section starts expanded
                     contentItem: RowLayout {
                         Text {
                             text: qsTr("Advanced")
@@ -238,6 +239,12 @@ BottomSheet {
                         GhostButton {
                             text: "Gen"
                             implicitHeight: dp(44)
+                            // Bottom-align so the button sits level with the SKU
+                            // INPUT field, not vertically centred across the
+                            // field's label + input (which floated it up to the
+                            // label row). The AuthTextField sibling carries the
+                            // label on top, so AlignBottom matches the input box.
+                            Layout.alignment: Qt.AlignBottom
                             onClicked: skuField.text = InventoryStore.generateSku(nameField.text)
                         }
                     }

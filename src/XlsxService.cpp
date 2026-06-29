@@ -17,18 +17,17 @@ namespace {
 // import. Keep in sync with the InventoryStore schema.
 const QStringList kProductHeaders = {
     "Product ID", "Name", "SKU", "Category", "Unit", "Description",
-    "Cost Price", "Selling Price", "Stock", "Min Stock", "Photo URL"
+    "Cost Price", "Selling Price", "Stock", "Min Stock", "Photo URL", "Supplier"
 };
 
 // Canonical order columns — one row per line item. Order-level columns repeat
 // for each line of the same order so the sheet stays human-friendly. Orders
 // with zero line items still emit a single row with empty product columns.
 const QStringList kOrderHeaders = {
-    "Order ID", "Customer", "Email", "Phone", "Status", "Date", "Notes",
-    "Discount Type", "Discount Value", "Order Subtotal", "Order Discount",
-    "Order Tax", "Order Total",
+    "Order ID", "Customer", "Email", "Phone", "Staff", "Status", "Date", "Notes",
+    "Order Subtotal", "Order Discount", "Order Tax", "Tax Collected", "Order Total",
     "Product ID", "SKU", "Product Name", "Quantity", "Unit Price",
-    "Tax %", "Line Tax", "Line Total"
+    "Discount Type", "Discount Value", "Tax %", "Line Tax", "Line Total"
 };
 
 // Canonical staff columns.
@@ -79,6 +78,7 @@ void writeProductsSheet(Document &doc, const QVariantList &products)
         doc.write(row, 9,  static_cast<int>(variantToNumber(p.value("stock"))));
         doc.write(row, 10, static_cast<int>(variantToNumber(p.value("minStock"))));
         doc.write(row, 11, variantToString(p.value("photoUrl")));
+        doc.write(row, 12, variantToString(p.value("supplier")));
     }
 
     // Reasonable column widths
@@ -93,6 +93,7 @@ void writeProductsSheet(Document &doc, const QVariantList &products)
     doc.setColumnWidth(9, 10);
     doc.setColumnWidth(10, 12);
     doc.setColumnWidth(11, 32);
+    doc.setColumnWidth(12, 20);
 }
 
 void writeOrdersSheet(Document &doc, const QVariantList &orders)
@@ -108,11 +109,10 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
         const QString customer = variantToString(o.value("customer"));
         const QString email = variantToString(o.value("email"));
         const QString phone = variantToString(o.value("phone"));
+        const QString staffName = variantToString(o.value("staffName"));
         const QString status = variantToString(o.value("status"));
         const QString date = variantToString(o.value("date"));
         const QString notes = variantToString(o.value("notes"));
-        const QString discountType = variantToString(o.value("discountType"));
-        const double discountValue = variantToNumber(o.value("discountValue"));
         const double subtotal = variantToNumber(o.value("subtotal"));
         const double discount = variantToNumber(o.value("discount"));
         const double tax = variantToNumber(o.value("tax"));
@@ -123,14 +123,14 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
             doc.write(r, 2,  customer);
             doc.write(r, 3,  email);
             doc.write(r, 4,  phone);
-            doc.write(r, 5,  status);
-            doc.write(r, 6,  date);
-            doc.write(r, 7,  notes);
-            doc.write(r, 8,  discountType);
-            doc.write(r, 9,  discountValue);
-            doc.write(r, 10, subtotal);
-            doc.write(r, 11, discount);
-            doc.write(r, 12, tax);
+            doc.write(r, 5,  staffName);
+            doc.write(r, 6,  status);
+            doc.write(r, 7,  date);
+            doc.write(r, 8,  notes);
+            doc.write(r, 9,  subtotal);
+            doc.write(r, 10, discount);
+            doc.write(r, 11, tax);
+            doc.write(r, 12, tax);            // Tax Collected (same as Order Tax)
             doc.write(r, 13, total);
         };
 
@@ -145,27 +145,30 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
             writeOrderHeaderCols(row);
 
             const QString lineProductId = variantToString(line.value("productId"));
-            // SKU isn't stored on the line item; the column stays for human
-            // readability and downstream import resolves by Product ID.
-            const QString sku;
+            const QString sku = variantToString(line.value("sku"));   // now populated by QML
             const int qty = static_cast<int>(variantToNumber(line.value("quantity")));
             const double unitPrice = variantToNumber(line.value("price"));
+            const QString lnDiscType = variantToString(line.value("discountType"));
+            const double lnDiscVal = variantToNumber(line.value("discountValue"));
             const double taxPct = variantToNumber(line.value("taxPercent"));
             const bool taxable = line.value("taxable").toBool();
             const double lineGross = qty * unitPrice;
-            const double lineTax = (taxable && taxPct > 0)
-                ? (lineGross * (taxPct / 100.0))
-                : 0.0;
+            double lineDisc = (lnDiscType == QLatin1String("percent"))
+                ? lineGross * (lnDiscVal / 100.0)
+                : qMin(lnDiscVal, lineGross);
+            const double lineNet = lineGross - lineDisc;
+            const double lineTax = (taxable && taxPct > 0) ? (lineNet * (taxPct / 100.0)) : 0.0;
 
             doc.write(row, 14, lineProductId);
             doc.write(row, 15, sku);
             doc.write(row, 16, variantToString(line.value("name")));
             doc.write(row, 17, qty);
             doc.write(row, 18, unitPrice);
-            doc.write(row, 19, taxable ? taxPct : 0.0);
-            doc.write(row, 20, lineTax);
-            doc.write(row, 21, lineGross);
-
+            doc.write(row, 19, lnDiscType);
+            doc.write(row, 20, lnDiscVal);
+            doc.write(row, 21, taxable ? taxPct : 0.0);
+            doc.write(row, 22, lineTax);
+            doc.write(row, 23, lineGross);
             ++row;
         }
     }
@@ -174,23 +177,25 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
     doc.setColumnWidth(2, 24);   // Customer
     doc.setColumnWidth(3, 24);   // Email
     doc.setColumnWidth(4, 16);   // Phone
-    doc.setColumnWidth(5, 14);   // Status
-    doc.setColumnWidth(6, 12);   // Date
-    doc.setColumnWidth(7, 28);   // Notes
-    doc.setColumnWidth(8, 14);   // Discount Type
-    doc.setColumnWidth(9, 14);   // Discount Value
-    doc.setColumnWidth(10, 14);  // Order Subtotal
-    doc.setColumnWidth(11, 14);  // Order Discount
-    doc.setColumnWidth(12, 12);  // Order Tax
+    doc.setColumnWidth(5, 20);   // Staff
+    doc.setColumnWidth(6, 14);   // Status
+    doc.setColumnWidth(7, 12);   // Date
+    doc.setColumnWidth(8, 28);   // Notes
+    doc.setColumnWidth(9, 14);   // Order Subtotal
+    doc.setColumnWidth(10, 14);  // Order Discount
+    doc.setColumnWidth(11, 12);  // Order Tax
+    doc.setColumnWidth(12, 14);  // Tax Collected
     doc.setColumnWidth(13, 14);  // Order Total
     doc.setColumnWidth(14, 12);  // Product ID
     doc.setColumnWidth(15, 14);  // SKU
     doc.setColumnWidth(16, 28);  // Product Name
     doc.setColumnWidth(17, 10);  // Quantity
     doc.setColumnWidth(18, 12);  // Unit Price
-    doc.setColumnWidth(19, 8);   // Tax %
-    doc.setColumnWidth(20, 12);  // Line Tax
-    doc.setColumnWidth(21, 14);  // Line Total
+    doc.setColumnWidth(19, 14);  // Discount Type
+    doc.setColumnWidth(20, 14);  // Discount Value
+    doc.setColumnWidth(21, 8);   // Tax %
+    doc.setColumnWidth(22, 12);  // Line Tax
+    doc.setColumnWidth(23, 14);  // Line Total
 }
 
 void writeReadmeSheet(Document &doc, const QString &kind)
@@ -211,7 +216,7 @@ void writeReadmeSheet(Document &doc, const QString &kind)
     doc.write(row++, 1, kind == "products" ? QStringLiteral("Products import/export — schema")
                                             : QStringLiteral("Orders import/export — schema"), title);
     doc.write(row++, 1, QStringLiteral("Edit the data sheet, then import this file back into the app. "
-                                        "Empty cells use sensible defaults; required fields are marked with an asterisk."), wrap);
+                                        "Required fields are marked with an asterisk; some defaults degrade report accuracy when left blank."), wrap);
     row++;
 
     doc.write(row, 1, QStringLiteral("Column"), hdr);
@@ -225,15 +230,16 @@ void writeReadmeSheet(Document &doc, const QString &kind)
         const R rows[] = {
             {"Product ID",    "no",  "text",   "Empty → auto-generated as PRD-NNN. If filled, must be unique."},
             {"Name *",        "yes", "text",   "Minimum 2 characters."},
-            {"SKU",           "no",  "text",   "Empty → auto-generated. Used by the Orders sheet to reference products."},
+            {"SKU *",         "yes", "text",   "Required unless Product ID is given. Used by the Orders sheet to reference products."},
             {"Category",      "no",  "text",   "Falls back to your last-used category. New values are added to the workspace list."},
-            {"Unit",          "no",  "text",   "Default \"Units (pcs)\". Common values: Units (pcs), Kg, Litres, Metres."},
+            {"Unit *",        "yes", "text",   "e.g. Units (pcs), Kg, Litres. Defaults to 'Units (pcs)' if blank."},
             {"Description",   "no",  "text",   "Free text."},
-            {"Cost Price",    "no",  "number", "What you pay your supplier. Defaults to 0."},
+            {"Cost Price *",  "yes", "number", "What you pay your supplier. Required — drives value & profit reports."},
             {"Selling Price *","yes","number", "What customers pay. Must be > 0 and ≥ Cost Price."},
             {"Stock",         "no",  "integer","Current stock on hand. Defaults to 0."},
-            {"Min Stock",     "no",  "integer","Reorder threshold. Defaults to 0."},
+            {"Min Stock *",   "yes", "integer","Reorder threshold."},
             {"Photo URL",     "no",  "text",   "Public image URL. Leave empty to keep the existing photo."},
+            {"Supplier",      "no",  "text",   "Supplier name. Creates an opening stock batch so by-supplier reports work."},
         };
         for (const R &r : rows) {
             doc.write(row, 1, QString::fromUtf8(r.col));
@@ -249,20 +255,22 @@ void writeReadmeSheet(Document &doc, const QString &kind)
             {"Customer *",      "yes", "text",   "Customer name. Repeats on every line of the same order."},
             {"Email",           "no",  "text",   "Repeats on every line of the same order."},
             {"Phone",           "no",  "text",   "Repeats on every line of the same order."},
-            {"Status",          "no",  "text",   "One of: pending, processing, completed, out of stock. Default pending."},
-            {"Date",            "no",  "date",   "yyyy-MM-dd preferred; dd/MM/yyyy and MM/dd/yyyy are accepted. Default today."},
+            {"Staff",           "no",  "text",   "Salesperson name. Informational on export."},
+            {"Status *",        "yes", "text",   "One of: pending, processing, completed, out of stock."},
+            {"Date *",          "yes", "date",   "yyyy-MM-dd preferred. Blank defaults to import day (skews time-series)."},
             {"Notes",           "no",  "text",   ""},
-            {"Discount Type",   "no",  "text",   "'flat' or 'percent'. Repeats on every line of the same order."},
-            {"Discount Value",  "no",  "number", "Number applied to the order subtotal (flat ₹ or %)."},
             {"Order Subtotal",  "no",  "number", "Recomputed on import from line items × prices."},
-            {"Order Discount",  "no",  "number", "Recomputed on import from Discount Type/Value."},
+            {"Order Discount",  "no",  "number", "Recomputed on import from line-level discounts."},
             {"Order Tax",       "no",  "number", "Recomputed on import from line tax %."},
+            {"Tax Collected",   "no",  "number", "Order tax total (pass-through; not part of revenue)."},
             {"Order Total",     "no",  "number", "Recomputed on import: Subtotal − Discount + Tax."},
             {"Product ID",      "no",  "text",   "Inventory PRD-NNN if known. Otherwise SKU is used to resolve."},
-            {"SKU",              "no",  "text",   "Inventory SKU. Used to resolve Product ID when blank."},
+            {"SKU *",           "yes", "text",   "Required unless Product ID is given. Resolves the line to a product."},
             {"Product Name",    "no",  "text",   "Display name; informational on import (resolved from inventory)."},
-            {"Quantity",        "no",  "integer","Per-line quantity."},
-            {"Unit Price",      "no",  "number", "Per-line selling price; defaults to inventory selling price."},
+            {"Quantity *",      "yes", "integer","Per-line quantity. A line with no quantity is skipped on import."},
+            {"Unit Price *",    "yes", "number", "Per-line price. Blank falls back to current selling price (may differ)."},
+            {"Discount Type",   "no",  "text",   "'flat' or 'percent' — per LINE."},
+            {"Discount Value",  "no",  "number", "Per-line discount amount."},
             {"Tax %",           "no",  "number", "Per-line tax rate; resolved from inventory if 0."},
             {"Line Tax",        "no",  "number", "Quantity × Unit Price × Tax%. Recomputed on import."},
             {"Line Total",      "no",  "number", "Quantity × Unit Price (gross). Recomputed on import."},
@@ -425,13 +433,14 @@ QString XlsxService::writeStaff(const QVariantList &staff, const QString &sugges
     return QUrl::fromLocalFile(path).toString();
 }
 
-QString XlsxService::writeAnalysis(const QString &title,
-                                   const QVariantList &sections,
-                                   const QString &suggestedName)
-{
-    Document doc;
-    doc.addSheet("Analysis");
+namespace {
 
+// Render a title + a list of { heading, headers, rows } sections onto the
+// currently-selected sheet of `doc`. Shared by the single-sheet writeAnalysis
+// and the multi-sheet writeAnalysisWorkbook so the layout stays identical.
+void renderAnalysisSections(Document &doc, const QString &title,
+                            const QVariantList &sections)
+{
     Format titleFmt;
     titleFmt.setFontBold(true);
     titleFmt.setFontSize(14);
@@ -499,8 +508,81 @@ QString XlsxService::writeAnalysis(const QString &title,
     if (widestColumnCount >= 1) doc.setColumnWidth(1, 24);
     for (int col = 2; col <= widestColumnCount; ++col)
         doc.setColumnWidth(col, 16);
+}
 
+// Excel sheet names cannot exceed 31 chars or contain : \ / ? * [ ].
+QString sanitizeSheetName(const QString &raw, int fallbackIndex)
+{
+    static const QString kForbidden = QStringLiteral(":\\/?*[]");
+    QString s;
+    s.reserve(raw.size());
+    for (const QChar ch : raw)
+        s.append(kForbidden.contains(ch) ? QChar(' ') : ch);
+    s = s.trimmed();
+    if (s.isEmpty())
+        s = QStringLiteral("Sheet %1").arg(fallbackIndex + 1);
+    if (s.size() > 31)
+        s = s.left(31);
+    return s;
+}
+
+} // namespace
+
+QString XlsxService::writeAnalysis(const QString &title,
+                                   const QVariantList &sections,
+                                   const QString &suggestedName)
+{
+    Document doc;
+    doc.addSheet("Analysis");
+    renderAnalysisSections(doc, title, sections);
     doc.selectSheet("Analysis");
+
+    const QString name = suggestedName.isEmpty()
+        ? QStringLiteral("analysis_%1.xlsx").arg(stamp())
+        : suggestedName;
+    const QString path = QStringLiteral("%1/%2").arg(outputDir(), name);
+
+    if (!doc.saveAs(path))
+        return {};
+    return QUrl::fromLocalFile(path).toString();
+}
+
+QString XlsxService::writeAnalysisWorkbook(const QVariantList &sheets,
+                                           const QString &suggestedName)
+{
+    if (sheets.isEmpty())
+        return {};
+
+    Document doc;
+    QStringList usedNames;
+    QString firstSheet;
+
+    for (int i = 0; i < sheets.size(); ++i) {
+        const QVariantMap sheet = sheets.at(i).toMap();
+        const QVariantList sections = sheet.value("sections").toList();
+        if (sections.isEmpty())
+            continue;   // skip views with nothing to show
+
+        QString name = sanitizeSheetName(sheet.value("name").toString(), i);
+        // De-duplicate sheet names (Excel rejects duplicates).
+        QString unique = name;
+        int suffix = 2;
+        while (usedNames.contains(unique, Qt::CaseInsensitive)) {
+            const QString tail = QStringLiteral(" (%1)").arg(suffix++);
+            unique = name.left(31 - tail.size()) + tail;
+        }
+        usedNames << unique;
+
+        doc.addSheet(unique);
+        doc.selectSheet(unique);
+        renderAnalysisSections(doc, sheet.value("title").toString(), sections);
+        if (firstSheet.isEmpty())
+            firstSheet = unique;
+    }
+
+    if (firstSheet.isEmpty())
+        return {};
+    doc.selectSheet(firstSheet);
 
     const QString name = suggestedName.isEmpty()
         ? QStringLiteral("analysis_%1.xlsx").arg(stamp())

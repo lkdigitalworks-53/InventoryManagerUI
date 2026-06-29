@@ -1,13 +1,22 @@
 pragma Singleton
 import QtQuick
+import "../helper/EnvConfig.js" as EnvConfig
 
 QtObject {
     id: root
 
     readonly property string projectId: "inventorymanager-48392"
     readonly property string apiKey: "AIzaSyAeA5Mb6ZmtKLOb3Oxw_n-dh62_qY0r4mA"
+
+    // Build-time environment (APP_STAGE from CMake PRODUCT_STAGE). prd → the
+    // existing (default) database; test/dev → named databases in the same
+    // project. Single point of change — every get/put/patch/remove builds its
+    // URL from databaseUrl/databaseId below, so all data access switches here.
+    readonly property string environment: EnvConfig.envForStage(
+        (typeof APP_STAGE !== "undefined" && APP_STAGE) ? APP_STAGE : "")
+    readonly property string databaseId: EnvConfig.databaseIdForEnv(environment)
     readonly property string databaseUrl: "https://firestore.googleapis.com/v1/projects/"
-                                          + projectId + "/databases/(default)/documents"
+                                          + projectId + "/databases/" + databaseId + "/documents"
 
     property bool syncing: false
     property int pendingRequests: 0
@@ -217,7 +226,7 @@ QtObject {
         var keys = Object.keys(data || {})
         for (var i = 0; i < keys.length; ++i) {
             var docId = keys[i]
-            var docName = "projects/" + projectId + "/databases/(default)/documents/"
+            var docName = "projects/" + projectId + "/databases/" + databaseId + "/documents/"
                           + collectionPath + "/" + docId
             writes.push({
                 update: {

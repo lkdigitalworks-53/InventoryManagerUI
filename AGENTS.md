@@ -19,11 +19,20 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 | Inventory CRUD + delete | ✅ Done |
 | Staff CRUD + delete + credential provisioning | ✅ Done |
 | Sales analytics from live completed orders | ✅ Done |
+| Analysis page — 6 view modes (Value/Purchased/Current/Revenue/Sold/Profit) | ✅ Done |
+| Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
+| Analysis filters (date / supplier / channel / staff / category) + xlsx export | ✅ Done |
 | Staff activities from real data | ✅ Done |
 | Profile Settings dialog | ✅ Done |
 | Member management dialog | ✅ Done |
-| Empty-state UI for Sales page | ✅ Done |
+| Empty-state UI for Analysis page | ✅ Done |
 | Success toast for key operations | ✅ Done |
+| QML unit-test harness (qmltestrunner, first suite landed) | ✅ Done |
+| Editable per-line price in New Order dialog | ✅ Done |
+| Swipe left/right between Analysis report views | ✅ Done |
+| Add Product advanced section open by default | ✅ Done |
+| Mandatory always-visible staff app-login fields | ✅ Done |
+| dev/test/prd Firestore environments (build-time via PRODUCT_STAGE) | ✅ Done |
 | India compliance roadmap (design) | 📋 Approved — see below |
 
 ---
@@ -95,6 +104,10 @@ collections and zeroes product stock).
 - Set Android target/compile SDK versions via `set_target_properties`
 - Configure `FELGO_LICENSE_KEY` for local and Cloud builds
 - Enable/disable Felgo Hot Reload in `CMakeLists.txt` and `main.cpp`
+- Select the Firestore environment via `PRODUCT_STAGE` (`dev`|`test`|`publish`):
+  CMake emits `PRODUCT_STAGE_DEF` → `main.cpp` sets the `APP_STAGE` context
+  property → `EnvConfig.js` maps it (`publish`→`(default)`, `dev`/`test`→named
+  DBs) → `FirebaseService.databaseId`. Unknown/unset stage fails safe to `prd`.
 
 **Key Files**:
 - `CMakeLists.txt`
@@ -211,6 +224,9 @@ App (Main.qml)
 - Add new store files for new domains following the singleton pattern
 - Register new stores in `qml/model/qmldir`
 - Keep `FirebaseService` REST helpers (`get`, `put`, `patch`, `remove`, `toArray`) up to date
+- `FirebaseService.databaseUrl`/`databaseId` are environment-aware (resolved from
+  `PRODUCT_STAGE` via `EnvConfig.js`); never hard-code `databases/(default)` — it
+  bypasses dev/test/prd routing. All REST calls already build URLs from these.
 
 **Store Pattern**:
 ```qml
@@ -232,8 +248,10 @@ QtObject {
 **Key Files**:
 - `qml/model/OrdersStore.qml`
 - `qml/model/InventoryStore.qml`
-- `qml/model/SalesStore.qml`
+- `qml/model/SalesStore.qml` — KPIs are **derived** from OrdersStore (net revenue, completed-only); no persisted tally (see SKILLS Skill 28)
 - `qml/model/StaffStore.qml`
+- `qml/model/OrderChannelStore.qml`, `qml/model/CategoryStore.qml` — Firestore-backed `config/*` + QSettings cache, single pinned default
+- `qml/model/ActivityLog.qml` — Firestore-backed (`activity_log`), re-synced on login
 - `qml/model/AuthService.qml`
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
@@ -252,8 +270,9 @@ QtObject {
 **Scope**: `qml/pages/`
 
 **Responsibilities**:
-- Maintain all four feature pages (Orders, Inventory, Sales, Staff)
-- Build and update all dialogs (New Order, Order Detail, Add Product, Add Staff, Restock, ProfileSettings, InviteMember, MemberManagement)
+- Maintain all four feature pages (Orders, Inventory, Analysis [`SalesPage.qml`, header reads "Analysis"], Staff)
+- Build and update all dialogs (New Order, Order Detail, Add Product, Add Staff, Restock, ProfileSettings, InviteMember, MemberManagement, AnalysisFilterSheet)
+- The Analysis page has six view modes — Value, Purchased, Current, Revenue, Sold, Profit — each showing a hero total + main breakdown + a **by-category** and **by-supplier** chart (all three render via the shared `BreakdownBarCard` component). The grouping math lives in `qml/helper/BreakdownMath.js` (pure, unit-tested); the page's `_breakdownByDimension()` wrapper feeds it live filter/period state. See SKILLS.md Skill 25.
 - Implement responsive layouts using `compact: width < 520`
 - Expose `canManage*` / `canDelete*` boolean properties on pages; never import AuthStore directly inside pages — bind from Main.qml
 - Wire delete signals: `onDeleteOrderClicked`, `onDeleteProductClicked`, `onDeleteStaffClicked` → `logic.deleteX(id)`
@@ -267,7 +286,8 @@ QtObject {
 **Key Files**:
 - `qml/pages/OrdersPage.qml`
 - `qml/pages/InventoryPage.qml`
-- `qml/pages/SalesPage.qml`
+- `qml/pages/SalesPage.qml` (the "Analysis" page)
+- `qml/pages/AnalysisFilterSheet.qml`
 - `qml/pages/StaffPage.qml`
 - `qml/pages/LoginPage.qml`
 - `qml/pages/TenantSetupPage.qml`
@@ -285,19 +305,21 @@ QtObject {
 - "Create a new SupplierPage for vendor management"
 - "Fix the date picker in AddStaffDialog for mobile"
 - "Add a filter dropdown to InventoryPage"
+- "Add a new breakdown dimension (e.g. by channel) to the Analysis page"
 
 ---
 
 ### 7. Shared Components Agent
 
-**Purpose**: Manages reusable UI components, theming, and constants.  
-**Scope**: `qml/helper/`
+**Purpose**: Manages reusable UI components, theming, constants, and pure helper libraries.  
+**Scope**: `qml/helper/` and `qml/components/`
 
 **Responsibilities**:
 - Maintain `Constants.qml` (singleton: colors, breakpoints, Firebase URL)
 - Maintain `CustomeTheme.qml` (Felgo theme color tokens)
-- Develop and maintain reusable components: `CardKPI`, `StatusBadge`, `OrderRow`, `SegmentedNav`, `InlineDatePicker`, `PlaceholderPage`
-- Register new singleton helpers in `qml/helper/qmldir`
+- Develop and maintain reusable components in `qml/helper/` (`CardKPI`, `StatusBadge`, `OrderRow`, `SegmentedNav`, `InlineDatePicker`, `PlaceholderPage`) and `qml/components/` (`BreakdownBarCard`, `Icon`, `ListCard`, `SegmentedPill`, `ChipScroller`, `BottomSheet`, etc.)
+- Maintain pure JS helper libraries in `qml/helper/` (`.pragma library`): `BreakdownMath.js` — stateless analytics grouping math (sold/purchased unit metrics by category|supplier); `RealisedMath.js` — the single source of truth for REALISED money aggregation over the immutable event log (`byDimension`/`totals`/`bucketWalk`/`nameMerge`; scope-filtered, stamped-fields-only, reconciliation invariant Σ byDimension == totals == Σ bucketWalk — see SKILLS Skill 29); `OrderMath.js` — per-order allocation + `eventProfit`/`refundPerUnit`; `ImportMath.js` — import helpers (`renameSku`). All are QML/singleton-free so they are unit-testable headlessly.
+- Register new **singleton** helpers in `qml/helper/qmldir` (plain components and `.pragma library` JS files need NO qmldir entry — they resolve via the directory import `import "../helper"` / `import "../helper/Foo.js" as Foo`).
 - Ensure components import only what they need (`"../model"` for store access)
 
 **Key Files**:
@@ -309,13 +331,16 @@ QtObject {
 - `qml/helper/SegmentedNav.qml`
 - `qml/helper/InlineDatePicker.qml`
 - `qml/helper/PlaceholderPage.qml`
+- `qml/helper/BreakdownMath.js`
 - `qml/helper/qmldir`
+- `qml/components/BreakdownBarCard.qml` (reusable vertical-bar chart for the Analysis page)
 
 **Example Prompts**:
 - "Add a new ToastNotification component for success/error feedback"
 - "Update CardKPI to support a trend indicator"
 - "Add a new color to CustomeTheme for danger/warning states"
 - "Create a SearchBar reusable component"
+- "Add a new metric to BreakdownMath.js and a test for it"
 
 ---
 
@@ -348,6 +373,11 @@ compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
+**Environment follow-up (not yet built):** the Cloud Functions gateway (`Gateway.qml`:
+`recordMutation`/`runCutover`/`provisionMember`) still writes to `(default)` server-side and is
+NOT env-aware. When Blaze + the functions are deployed, each must target the caller's env
+database (dev/test/prd) — the client already switches via `FirebaseService.databaseId`.
+
 **Key Files**:
 - `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md` (master design)
 - `functions/` (Cloud Functions — to be created in P0)
@@ -362,6 +392,41 @@ compliance design spec.
 
 ---
 
+### 9. Testing & QA Agent
+
+**Purpose**: Owns the QML test harness and unit coverage for pure logic.
+**Scope**: `tests/`
+
+**Responsibilities**:
+- Write Qt Quick Test (`TestCase`) suites for **pure, headless-testable logic** — primarily the
+  `.pragma library` JS helpers (e.g. `qml/helper/BreakdownMath.js`). Page-level QML that needs the
+  full Felgo `App` context (`dp()`/`sp()`/`Theme`/`GlassHeader`) cannot load under the runner — keep
+  the testable math in a pure library and test that.
+- Run the suite headlessly:
+  ```bash
+  QT_FORCE_STDERR_LOGGING=1 QT_LOGGING_TO_CONSOLE=1 \
+    PATH="/c/Felgo/Felgo/mingw_64/bin:$PATH" \
+    "C:/Felgo/Felgo/mingw_64/bin/qmltestrunner.exe" -platform offscreen -input tests/tst_<Name>.qml
+  ```
+  (On this box `qmltestrunner.exe` is silent without the two `QT_*` env vars — set them to see PASS/FAIL lines.)
+- Keep `tests/` OUTSIDE `qml/` so test files are NOT globbed into the app package. There is no CMake
+  test target — the runner executes the `.qml` directly.
+- Assert real numeric behavior, and for analytics assert the reconciliation invariant (a breakdown's
+  bars sum to the hero total under the same period/filters).
+
+**Key Files**:
+- `tests/tst_BreakdownMath.qml` (sold/purchased grouping math)
+- `tests/tst_RealisedMath.qml` (realised money aggregator — `byDimension`/`totals`/`bucketWalk`/`nameMerge`; asserts the Σ byDimension == totals == Σ bucketWalk reconciliation invariant under each active filter)
+- `tests/tst_OrderMath.qml` (allocation, `eventProfit`, `refundPerUnit`)
+- `tests/tst_ImportMath.qml` (import SKU rename suffix)
+- 14 suites total; run all with the loop in the spec / SKILLS Skill 27. **140 cases pass, 0 fail.**
+
+**Example Prompts**:
+- "Add tests for the new breakdown metric"
+- "Write a TestCase covering the week/month period windows"
+
+---
+
 ## Agent Usage Patterns
 
 ### Adding a New Domain (e.g. Suppliers)
@@ -371,6 +436,12 @@ compliance design spec.
 3. **Data Model Agent** → Add `onAddSupplier` handler in `DataModel.qml`
 4. **Pages & Dialogs Agent** → Create `qml/pages/SuppliersPage.qml` and dialog(s)
 5. **App Architecture Agent** → Add `NavigationItem` for Suppliers in `Main.qml`, wire dialog
+
+### Adding / Changing Analysis Breakdowns
+
+1. **Shared Components Agent** → Add/extend the grouping math in the pure libs: `RealisedMath.js` for REALISED money (revenue/profit/totals), `BreakdownMath.js` for sold/purchased units. Never aggregate realised money from live orders — use the event log (SKILLS Skill 29).
+2. **Testing & QA Agent** → Add a `TestCase` asserting the new math reconciles (Σ byDimension == totals == Σ bucketWalk under the same scope).
+3. **Pages & Dialogs Agent** → Wire it in `SalesPage.qml` via `InventoryStore.realisedProfitByDimension(field, scope)` / `_breakdownByDimension()` + a `BreakdownBarCard`; extend `buildAnalysisExport()` if the export should mirror it. Build the scope with `_realisedScope(periodScoped)`.
 
 ### Fixing a Data Bug
 

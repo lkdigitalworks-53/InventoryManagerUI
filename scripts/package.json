@@ -1,0 +1,15 @@
+{
+  "name": "karobar-icon-gen",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Rasterizes assets/brand SVGs into platform app-icon sets.",
+  "scripts": {
+    "gen": "node gen-icons.mjs"
+  },
+  "dependencies": {
+    "@fiahfy/icns-convert": "0.0.12",
+    "png-to-ico": "3.0.1",
+    "sharp": "0.35.2"
+  }
+}

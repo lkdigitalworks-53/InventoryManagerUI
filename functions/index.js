@@ -57,7 +57,15 @@ async function deriveContext(uid) {
         role = member.role || role;
         if (member.status && member.status !== "active") return null;
     }
-    return { tenantId: tenantId, role: role };
+    // Tenant display name — preferred from the tenant doc, falling back to
+    // whatever the user doc cached. Used when stamping new member/user docs.
+    let tenantName = user.tenantName || "";
+    const tenantSnap = await db.doc("tenants/" + tenantId).get();
+    if (tenantSnap.exists) {
+        const t = tenantSnap.data() || {};
+        tenantName = t.name || t.tenantName || tenantName;
+    }
+    return { tenantId: tenantId, role: role, tenantName: tenantName };
 }
 
 exports.recordMutation = functions.onRequest(
@@ -172,6 +180,179 @@ async function deleteCollection(path) {
     if (n % 400 !== 0) await batch.commit();
     return snap.size;
 }
+
+// ── Member provisioning (Admin SDK) ─────────────────────────────────────────
+// Adds a teammate to the caller's tenant, handling all three cases the client
+// cannot do itself:
+//   1. brand-new account  — create the Auth user (email + password)
+//   2. existing account   — look it up by email (no duplicate signUp)
+//   3. invite-by-uid      — caller already has the target's uid
+//
+// Why server-side: Firestore rules only let a user write their OWN
+// users/{uid} doc (request.auth.uid == uid), but login resolves a member's
+// tenant/role from THAT doc — so an owner/admin physically cannot grant tenant
+// access from the client. The Admin SDK bypasses the rules, so this function
+// writes both users/{uid} (tenant context) AND tenants/{t}/members/{uid} in
+// one place. The caller's identity, tenant, and role are derived server-side
+// (never trusted from the body), mirroring recordMutation.
+
+// Owner may assign admin/manager/staff; admin may assign manager/staff.
+// Mirrors AuthService._canAssignRole so client and server agree.
+function canAssignRole(actorRole, targetRole) {
+    if (actorRole === "owner")
+        return ["admin", "manager", "staff"].indexOf(targetRole) >= 0;
+    if (actorRole === "admin")
+        return ["manager", "staff"].indexOf(targetRole) >= 0;
+    return false;
+}
+
+// Resolve an email to an existing Auth user, or create one. `password` is only
+// used when creating. Returns { uid, created }.
+async function findOrCreateAuthUser(email, password, displayName) {
+    try {
+        const existing = await admin.auth().getUserByEmail(email);
+        return { uid: existing.uid, created: false };
+    } catch (e) {
+        if (e.code !== "auth/user-not-found") throw e;
+    }
+    if (!password || password.length < 6) {
+        const err = new Error("password-required");
+        err.code = "password-required";
+        throw err;
+    }
+    const created = await admin.auth().createUser({
+        email: email,
+        password: password,
+        displayName: displayName || undefined
+    });
+    return { uid: created.uid, created: true };
+}
+
+exports.provisionMember = functions.onRequest(
+    { region: "asia-southeast1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const authHeader = req.get("Authorization") || "";
+        const match = authHeader.match(/^Bearer\s+(.+)$/i);
+        if (!match) { send(res, 401, { ok: false, error: "missing-token" }); return; }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(match[1]);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+
+        const ctx = await deriveContext(decoded.uid);
+        if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
+        if (ctx.role !== "owner" && ctx.role !== "admin") {
+            send(res, 403, { ok: false, error: "not-authorized" });
+            return;
+        }
+
+        const body = req.body || {};
+        const email = String(body.email || "").trim().toLowerCase();
+        const displayName = String(body.displayName || "").trim();
+        const password = body.password ? String(body.password) : "";
+        const targetUid = String(body.uid || "").trim();
+        let role = String(body.role || "staff");
+        if (["admin", "manager", "staff"].indexOf(role) < 0) role = "staff";
+
+        if (!canAssignRole(ctx.role, role)) {
+            send(res, 403, { ok: false, error: "role-not-allowed" });
+            return;
+        }
+        if (!email && !targetUid) {
+            send(res, 400, { ok: false, error: "email-or-uid-required" });
+            return;
+        }
+
+        // Resolve the target uid: explicit uid wins (invite-by-uid), else
+        // find-or-create by email (add-staff). Surface the two recoverable
+        // cases — duplicate email vs. missing password — with clear codes.
+        let uid, created = false, resolvedEmail = email;
+        try {
+            if (targetUid) {
+                uid = targetUid;
+                const u = await admin.auth().getUser(targetUid);
+                resolvedEmail = u.email || email;
+            } else {
+                const r = await findOrCreateAuthUser(email, password, displayName);
+                uid = r.uid;
+                created = r.created;
+            }
+        } catch (e) {
+            if (e.code === "password-required") {
+                send(res, 400, { ok: false, error: "password-required" });
+                return;
+            }
+            if (e.code === "auth/user-not-found") {
+                send(res, 404, { ok: false, error: "user-not-found" });
+                return;
+            }
+            console.error("provisionMember auth resolve failed", e);
+            send(res, 500, { ok: false, error: "auth-failed" });
+            return;
+        }
+
+        const nowIso = new Date().toISOString();
+        const userRef = db.doc("users/" + uid);
+        const memberRef = db.doc(
+            "tenants/" + ctx.tenantId + "/members/" + uid);
+
+        try {
+            await db.runTransaction(async (txn) => {
+                const userSnap = await txn.get(userRef);
+                const existing = userSnap.exists ? (userSnap.data() || {}) : {};
+                const tenants = Array.isArray(existing.tenants)
+                    ? existing.tenants.slice() : [];
+                if (tenants.indexOf(ctx.tenantId) < 0) tenants.push(ctx.tenantId);
+
+                // Land the member in this tenant on next login. We set the
+                // active tenant context to the inviting tenant for a brand-new
+                // account; for an existing account we only add to tenants[] and
+                // fill role/tenant if absent, so we never yank a user out of
+                // a workspace they're already active in.
+                const userDoc = {
+                    uid: uid,
+                    email: existing.email || resolvedEmail,
+                    displayName: existing.displayName || displayName,
+                    photoUrl: existing.photoUrl || "",
+                    tenants: tenants,
+                    tenantId: created ? ctx.tenantId : (existing.tenantId || ctx.tenantId),
+                    tenantName: created ? ctx.tenantName : (existing.tenantName || ctx.tenantName),
+                    role: created ? role : (existing.role || role),
+                    createdAt: existing.createdAt || nowIso,
+                    lastLoginAt: existing.lastLoginAt || nowIso,
+                    status: "active"
+                };
+                txn.set(userRef, userDoc, { merge: true });
+
+                txn.set(memberRef, {
+                    uid: uid,
+                    role: role,
+                    email: resolvedEmail,
+                    displayName: displayName,
+                    tenantName: ctx.tenantName,
+                    joinedAt: nowIso,
+                    invitedBy: decoded.uid,
+                    status: "active"
+                }, { merge: true });
+            });
+        } catch (e) {
+            console.error("provisionMember write failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        send(res, 200, { ok: true, uid: uid, created: created });
+    });
 
 exports.runCutover = functions.onRequest(
     { region: "asia-southeast1", cors: true },

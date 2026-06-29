@@ -47,6 +47,7 @@ BottomSheet {
     // batch ledger and don't have a time dimension. Caller hides the
     // Date row entirely so the user can't pick something that won't apply.
     property bool showDate: true
+    property bool showSupplier: true
 
     signal filtersApplied(var payload)
     signal resetRequested()
@@ -181,10 +182,10 @@ BottomSheet {
             font.pixelSize: sp(Constants.fsSmall)
             font.bold: true
             Layout.topMargin: dp(Constants.space2)
-            visible: (SupplierStore.suppliers || []).length > 0
+            visible: root.showSupplier && (SupplierStore.suppliers || []).length > 0
         }
         FilterChipRow {
-            visible: (SupplierStore.suppliers || []).length > 0
+            visible: root.showSupplier && (SupplierStore.suppliers || []).length > 0
             entries: {
                 var sRev = SupplierStore.revision   // reactivity
                 var arr = [{ key: "All", label: qsTr("All") }]

@@ -23,10 +23,26 @@ QtObject {
     // "direct" until the Cloud Function + locked rules are deployed.
     property string mode: "direct"
 
+    // Member/staff credential provisioning needs the Admin-SDK Cloud Function
+    // (provisionMember) — it CANNOT fall back to a direct client write, because
+    // Firestore rules forbid a client writing another user's users/{uid} doc.
+    // The function is only reachable once deployed on a Blaze plan. Until then,
+    // keep this false: provisionMember() short-circuits with a clear
+    // "provisioning-unavailable" code instead of firing a request that 404s and
+    // surfacing a misleading hard error. Flip to true the day functions/ is
+    // deployed and provisioning starts working.
+    property bool provisioningAvailable: false
+
     // recordMutation HTTPS endpoint (Gen-2 onRequest, asia-southeast1).
     property string functionUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
     property string cutoverUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/runCutover"
+    // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
+    // teammate to the caller's tenant — creates the Auth account for a new
+    // staff member, or attaches an existing account, writing both users/{uid}
+    // and the member doc server-side (the client can't write another user's
+    // profile under the Firestore rules).
+    property string provisionMemberUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/provisionMember"
 
     signal cutoverFinished(bool ok, string error)
 
@@ -190,6 +206,44 @@ QtObject {
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
         xhr.send(JSON.stringify({ confirm: "CUTOVER", clientTimestamp: new Date().toISOString() }))
+    }
+
+    // ── Member provisioning (owner/admin only) ──────────────────────────────
+    // POST a provision request to the Admin-SDK function. `payload` carries
+    // { email, displayName, password?, uid?, role }. `callback(ok, data)` gets
+    // the parsed JSON ({ ok, uid, created, error }) so the caller can react to
+    // recoverable cases (e.g. error === "password-required"). The function
+    // derives the caller's tenant + role from the verified token, so we send
+    // only the target details — never the tenant or actor role.
+    function provisionMember(payload, callback) {
+        if (!provisioningAvailable) {
+            // No deployed Cloud Function (pre-Blaze). Don't fire a request that
+            // 404s — report a recoverable code the caller turns into a friendly
+            // "login access coming once the server is set up" notice.
+            if (callback) callback(false, { ok: false, error: "provisioning-unavailable" })
+            return
+        }
+        if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
+            if (callback) callback(false, { ok: false, error: "not-signed-in" })
+            return
+        }
+        if (typeof AuthService !== "undefined" && AuthService)
+            AuthService.ensureFreshToken()
+
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            var ok = xhr.status >= 200 && xhr.status < 300
+            var data = null
+            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            if (!ok)
+                console.warn("[Gateway] provisionMember failed", xhr.status, xhr.responseText)
+            if (callback) callback(ok, data)
+        }
+        xhr.open("POST", provisionMemberUrl)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+        xhr.send(JSON.stringify(payload))
     }
 
     function clear() {

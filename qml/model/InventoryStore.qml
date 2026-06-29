@@ -1,5 +1,8 @@
 pragma Singleton
 import QtQuick
+import "../helper/OrderMath.js" as OrderMath
+import "../helper/RealisedMath.js" as RealisedMath
+import "../helper/ImportMath.js" as ImportMath
 
 QtObject {
     id: root
@@ -163,70 +166,86 @@ QtObject {
     }
 
     // Realised profit over completed sales, grouped on the requested
-    // dimension. Returns `{ key → { revenue, cogs, profit, margin } }`.
+    // dimension. Returns `{ key → { revenue, cogs, profit, tax, discount, margin } }`.
     // `field` ∈ "productId" | "supplierId" | "category" | "channel" | "staffId".
     //
-    // Revenue uses the sale's per-line `unitPrice`; COGS uses each
-    // consumption[]'s captured `unitCost` (which is FIFO-correct because
-    // batches snapshot cost at receipt time). Margin is the markup over
-    // cost: `profit / cogs` (so a ₹100-cost item sold at ₹150 reports
-    // 50% margin, the way a small-business owner thinks about price).
-    function realisedProfitByDimension(field) {
-        var out = {}
+    // Thin adapter over RealisedMath.byDimension (the single source of truth for
+    // realised money aggregation). Reads STAMPED event net/tax/discount only — a
+    // missing net fails closed to 0, never re-allocates the live order (SITE 4).
+    // Multi-batch FIFO splits are remainder-reconciled (C). Margin is the markup
+    // over cost: `profit / cogs`.
+    //
+    // `opts` (optional) carries the active filter scope so the by-dimension
+    // sections honour the page's filters (A):
+    //   { window:{from,to}|null, channel, staffId, category, supplierId }
+    // Omitting opts (or passing nothing) sums the whole ledger — byte-for-byte
+    // the legacy behaviour, so existing callers are unaffected.
+    function realisedProfitByDimension(field, opts) {
         var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
                 ? (TransactionStore.entries || []) : []
-        for (var i = 0; i < entries.length; ++i) {
-            var e = entries[i]
-            if (e.kind !== "sale") continue
-            var unitPrice = e.unitPrice || 0
-            var c = e.consumption || []
-            // For category, look up the product's category once per row.
-            var rowCategory = null
-            if (field === "category") {
-                var pp = getById(e.productId)
-                rowCategory = (pp && pp.category) ? pp.category : "(uncategorised)"
-            }
-            for (var ci = 0; ci < c.length; ++ci) {
-                var cc = c[ci]
-                var qty = cc.qtyConsumed || 0
-                if (qty <= 0) continue
-                var revenue = qty * unitPrice
-                var cogs = qty * (cc.unitCost || 0)
-                var key
-                if (field === "productId")      key = e.productId || ""
-                else if (field === "supplierId") key = cc.supplierId || ""
-                else if (field === "channel")    key = e.orderChannel || ""
-                else if (field === "staffId")    key = e.staffId || ""
-                else                              key = rowCategory
-                if (!out[key]) out[key] = { revenue: 0, cogs: 0, profit: 0, margin: 0 }
-                out[key].revenue += revenue
-                out[key].cogs    += cogs
-                out[key].profit  += (revenue - cogs)
+        var lookups = {
+            categoryOf: function(pid) { var p = getById(pid); return (p && p.category) ? p.category : "" },
+            orderLookup: function(oid) {
+                return (typeof OrdersStore !== "undefined" && oid) ? OrdersStore.getById(oid) : null
             }
         }
-        // Compute margin% in a second pass — avoids divide-by-zero on rows
-        // whose cogs is 0 (consumption-only legacy events).
-        var keys = Object.keys(out)
-        for (var k = 0; k < keys.length; ++k) {
-            var row = out[keys[k]]
-            row.margin = row.cogs > 0 ? (row.profit / row.cogs) * 100 : 0
+        return RealisedMath.byDimension(field, entries, opts || null, lookups)
+    }
+
+    // Filtered realised totals block (gross/discount/net/tax/cogs/profit) over the
+    // event log — the single reconciling source for the Revenue/Profit hero and
+    // the export Totals block (SITE 5, D). `opts` is the same scope shape as
+    // realisedProfitByDimension; omitting it sums the whole ledger.
+    function realisedTotals(opts) {
+        var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
+                ? (TransactionStore.entries || []) : []
+        var lookups = {
+            categoryOf: function(pid) { var p = getById(pid); return (p && p.category) ? p.category : "" },
+            orderLookup: function(oid) {
+                return (typeof OrdersStore !== "undefined" && oid) ? OrdersStore.getById(oid) : null
+            }
         }
-        return out
+        return RealisedMath.totals(entries, opts || null, lookups)
+    }
+
+    // Period-bucketed realised event walk for the on-screen chart / export
+    // period tables. metric ∈ "net" | "profit". Both Revenue and Profit bins
+    // now walk the SAME event log (SITE 5), so they reconcile to realisedTotals.
+    // `opts` is the filter scope (date/channel/staff/category/supplier).
+    function realisedBucketWalk(metric, periodIdx, opts) {
+        var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
+                ? (TransactionStore.entries || []) : []
+        var lookups = {
+            categoryOf: function(pid) { var p = getById(pid); return (p && p.category) ? p.category : "" }
+        }
+        return RealisedMath.bucketWalk(metric, periodIdx, entries, opts || null, new Date(), lookups)
     }
 
     // Potential profit on open stock — for each open batch, value at the
     // product's current sellingPrice minus the batch's captured unitCost.
     // Same return shape as realisedProfitByDimension. `field` ∈
     // "productId" | "supplierId" | "category".
-    function potentialProfitByDimension(field) {
+    //
+    // `opts` (optional) gates the batch walk by the active filter scope so the
+    // export matches the on-screen Potential view. Only supplier + category
+    // apply — Potential is a batch snapshot with no date/channel/staff lineage.
+    //   { supplierId: "", category: "" }   ("" = all)
+    function potentialProfitByDimension(field, opts) {
         var out = {}
+        var filterSup = (opts && opts.supplierId) ? opts.supplierId : ""
+        var filterCat = (opts && opts.category) ? opts.category : ""
         var bs = (typeof StockBatchStore !== "undefined" && StockBatchStore)
                 ? (StockBatchStore.batches || []) : []
         for (var i = 0; i < bs.length; ++i) {
             var b = bs[i]
             var qty = b.qtyRemaining || 0
             if (qty <= 0) continue
+            if (filterSup && (b.supplierId || "") !== filterSup) continue
             var p = getById(b.productId)
+            if (filterCat) {
+                var pcat = (p && p.category) ? p.category : "(uncategorised)"
+                if (pcat !== filterCat) continue
+            }
             var sell = p ? (p.sellingPrice !== undefined ? p.sellingPrice : (p.price || 0)) : 0
             var cost = b.unitCost || 0
             var revenue = qty * sell
@@ -236,7 +255,7 @@ QtObject {
             else if (field === "supplierId") key = b.supplierId || ""
             else if (field === "category")   key = (p && p.category) ? p.category : "(uncategorised)"
             else                              key = ""
-            if (!out[key]) out[key] = { revenue: 0, cogs: 0, profit: 0, margin: 0 }
+            if (!out[key]) out[key] = { revenue: 0, cogs: 0, profit: 0, tax: 0, discount: 0, margin: 0 }
             out[key].revenue += revenue
             out[key].cogs    += cogs
             out[key].profit  += (revenue - cogs)
@@ -252,8 +271,10 @@ QtObject {
     function formatCurrency(val) {
         var n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[^0-9.]/g, ''));
         if (isNaN(n)) n = 0;
-        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n); }
-        catch(e) { return '₹' + Math.round(n).toString(); }
+        // Up to 1 decimal so fractional discounts/taxes display exactly (₹4.5),
+        // integers stay clean (₹15). Avoids "rounded display ≠ stored value".
+        try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(n); }
+        catch(e) { return '₹' + (Math.round(n * 10) / 10).toString(); }
     }
 
     function nextProductId() {
@@ -351,6 +372,22 @@ QtObject {
         return created ? created.supplierId : "";
     }
 
+    // Book the ledger side-effects for an imported product so analytics
+    // (Value / Purchased / Profit / by-supplier) populate exactly as if the
+    // product had been created in-app. Opening batch only when stock > 0.
+    function _bookImportedProduct(doc) {
+        var supplierId = doc.supplierId || "";
+        var batchCost = (typeof doc.price === "number" && !isNaN(doc.price)) ? doc.price : 0;
+        TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
+            sku: doc.sku || "", category: doc.category || "", unit: doc.unit || "",
+            sellingPrice: doc.sellingPrice, taxable: doc.taxable, taxPercent: doc.taxPercent,
+            minStock: doc.minStock || 0, description: doc.description || "",
+            supplierId: supplierId, origin: "imported"
+        }, supplierId);
+        if (doc.stock > 0)
+            StockBatchStore.addBatch(doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock");
+    }
+
     // Persist a photo URL on a product. Per-doc PATCH bypasses the bulk-PUT
     // path so the write is always atomic.
     function setPhoto(productId, photoUrl) {
@@ -399,12 +436,13 @@ QtObject {
                 if (policy === "rename") {
                     // Treat as new: assign fresh id and unique SKU
                     r.productId = nextProductId();
-                    if (r.sku) r.sku = r.sku + "-" + counts.added + 1;
+                    if (r.sku) r.sku = ImportMath.renameSku(r.sku, counts.added);
                     var renamedDoc = _normalizeRecord(r);
                     arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
                     if (r.sku) bySku[r.sku.toLowerCase()] = arr.length - 1;
                     Gateway.recordMutation("inventory", renamedDoc.productId, "create", null, renamedDoc);
+                    _bookImportedProduct(renamedDoc);
                     counts.added++;
                     continue;
                 }
@@ -428,6 +466,7 @@ QtObject {
                 byId[doc.productId] = arr.length - 1;
                 if (doc.sku) bySku[doc.sku.toLowerCase()] = arr.length - 1;
                 Gateway.recordMutation("inventory", doc.productId, "create", null, doc);
+                _bookImportedProduct(doc);
                 counts.added++;
             }
         }
@@ -455,7 +494,8 @@ QtObject {
             stock: parseInt(r.stock) || 0,
             minStock: parseInt(r.minStock) || 0,
             photoUrl: r.photoUrl || "",
-            photoUpdatedAt: r.photoUpdatedAt || ""
+            photoUpdatedAt: r.photoUpdatedAt || "",
+            supplierId: r.supplierId || (r.supplier ? _resolveSupplierId(r.supplier) : "")
         };
     }
 
@@ -463,7 +503,7 @@ QtObject {
         var merged = {};
         var keys = ["productId", "name", "sku", "category", "unit", "description",
                     "price", "sellingPrice", "taxable", "taxPercent",
-                    "stock", "minStock", "photoUrl", "photoUpdatedAt"];
+                    "stock", "minStock", "photoUrl", "photoUpdatedAt", "supplierId"];
         for (var i = 0; i < keys.length; ++i) {
             var k = keys[i];
             // Empty incoming values fall back to existing — empty cells in the
@@ -593,6 +633,25 @@ QtObject {
         }
         // Each deduction is an auditable update routed through the gateway.
         Gateway.recordMutation("inventory", productId, "update", before, changed);
+    }
+
+    // Increment product.stock WITHOUT creating a batch or purchase event. Used by
+    // the returns flow, where StockBatchStore.restoreFifo has ALREADY credited the
+    // batch ledger — this just keeps product.stock in lockstep. (Distinct from
+    // restock(), which is a supplier receipt that DOES create a batch.)
+    function creditStockNoBatch(productId, qty) {
+        if (!qty || qty <= 0) return
+        var arr = _clone()
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].productId === productId) {
+                var before = Object.assign({}, arr[i])
+                arr[i].stock = (arr[i].stock || 0) + qty
+                products = arr
+                Gateway.recordMutation("inventory", productId, "update", before, arr[i])
+                return
+            }
+        }
+        console.warn("[InventoryStore] creditStockNoBatch: no product with id", productId)
     }
 
     function findIndexById(productId) {

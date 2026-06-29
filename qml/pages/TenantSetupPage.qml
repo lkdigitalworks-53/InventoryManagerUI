@@ -36,10 +36,9 @@ Item {
     Rectangle { z: -1; width: dp(220); height: dp(220); radius: dp(110); x: -dp(70); y: -dp(70); color: Constants.brand1; opacity: 0.40 }
     Rectangle { z: -1; width: dp(180); height: dp(180); radius: dp(90); x: parent.width - dp(140); y: parent.height - dp(180); color: Constants.brand4; opacity: 0.30 }
 
-    QQC.ScrollView {
+    AppScrollView {
         id: tenantScroll
         anchors.fill: parent
-        clip: true
 
         ColumnLayout {
             id: col

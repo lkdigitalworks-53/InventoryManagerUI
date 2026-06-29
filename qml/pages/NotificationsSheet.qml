@@ -32,7 +32,7 @@ BottomSheet {
 
     function _isEmpty() {
         return _lowStockProducts().length === 0
-            && (ActivityLog.entries || []).length === 0
+            && (ActivityLog.notifications || []).length === 0
             && SalesStore.totalRevenue === 0
     }
 
@@ -50,14 +50,14 @@ BottomSheet {
             Text {
                 Layout.fillWidth: true
                 text: {
-                    var n = (ActivityLog.entries || []).length + root._lowStockProducts().length
+                    var n = (ActivityLog.notifications || []).length + root._lowStockProducts().length
                     return n === 1 ? qsTr("1 notification") : qsTr("%1 notifications").arg(n)
                 }
                 color: Constants.textSecondary
                 font.pixelSize: sp(Constants.fsCaption)
             }
             QQC.AbstractButton {
-                visible: (ActivityLog.entries || []).length > 0
+                visible: (ActivityLog.notifications || []).length > 0
                 implicitHeight: dp(28)
                 leftPadding: dp(10); rightPadding: dp(10)
                 topPadding: 0; bottomPadding: 0
@@ -75,7 +75,9 @@ BottomSheet {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
-                onClicked: ActivityLog.clear()
+                // Hide all notifications from this sheet WITHOUT deleting them
+                // from history — the dashboard recent-activity card is unaffected.
+                onClicked: ActivityLog.dismissAll()
             }
         }
 
@@ -104,7 +106,7 @@ BottomSheet {
         // page + opens the right detail dialog AND dismisses the entry.
         // Horizontal swipe also dismisses without navigating.
         Repeater {
-            model: ActivityLog.entries
+            model: ActivityLog.notifications
             delegate: Item {
                 id: rowItem
                 Layout.fillWidth: true
@@ -199,7 +201,17 @@ BottomSheet {
                                     Layout.fillWidth: true
                                 }
                                 Text {
-                                    text: (modelData.subtitle || "") + " · " + ActivityLog.timeAgo(modelData.timestamp)
+                                    // Restock entries embed "· from <supplier>" in their subtitle.
+                                    // Strip that supplier segment for staff (no canViewSuppliers);
+                                    // qty/stock parts stay (acceptable, like low-stock).
+                                    text: {
+                                        var sub = modelData.subtitle || ""
+                                        if (!AuthStore.canViewSuppliers && (modelData.kind || "") === "product_restocked") {
+                                            var i = sub.indexOf(" · from ")
+                                            if (i >= 0) sub = sub.substring(0, i)
+                                        }
+                                        return sub + " · " + ActivityLog.timeAgo(modelData.timestamp)
+                                    }
                                     color: Constants.textSecondary
                                     font.pixelSize: sp(Constants.fsSmall)
                                     elide: Text.ElideRight
@@ -225,7 +237,9 @@ BottomSheet {
                         onReleased: {
                             if (_dragging && Math.abs(rowItem._swipeX) > rowItem._threshold) {
                                 rowItem._swipeX = rowItem._swipeX > 0 ? rowItem.width : -rowItem.width
-                                ActivityLog.remove(modelData.id || "")
+                                // Dismiss from this sheet only — keeps the entry
+                                // in the dashboard recent-activity history.
+                                ActivityLog.dismiss(modelData.id || "")
                             } else {
                                 rowItem._swipeX = 0
                             }
@@ -236,7 +250,7 @@ BottomSheet {
                             if (!_dragging) {
                                 var entryId = modelData.id || ""
                                 root.notificationItemClicked(modelData.kind || "", modelData.entityId || "")
-                                ActivityLog.remove(entryId)
+                                ActivityLog.dismiss(entryId)
                                 root.close()
                             }
                         }
@@ -248,7 +262,7 @@ BottomSheet {
         // Sales summary card — purely informational, kept for parity with
         // earlier behaviour.
         ListCard {
-            visible: SalesStore.totalRevenue > 0
+            visible: AuthStore.canViewFinancials && SalesStore.totalRevenue > 0
             Layout.fillWidth: true
             title: "Revenue update"
             subtitle: SalesStore.formatCurrency(SalesStore.totalRevenue) + " · " + SalesStore.totalOrders + " orders"

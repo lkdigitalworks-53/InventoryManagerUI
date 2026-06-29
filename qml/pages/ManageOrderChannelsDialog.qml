@@ -66,7 +66,7 @@ BottomSheet {
                 delegate: ListCard {
                     Layout.fillWidth: true
                     title: modelData
-                    subtitle: modelData === OrderChannelStore.lastUsed ? qsTr("Default channel") : ""
+                    subtitle: modelData === OrderChannelStore.defaultChannel ? qsTr("Default channel") : ""
 
                     leading: AvatarBadge {
                         size: "md"
@@ -84,7 +84,7 @@ BottomSheet {
                         // Promote to default — hidden when this row is already default.
                         QQC.AbstractButton {
                             id: defaultBtn
-                            visible: modelData !== OrderChannelStore.lastUsed
+                            visible: modelData !== OrderChannelStore.defaultChannel
                             implicitHeight: dp(28)
                             implicitWidth: starTxt.implicitWidth + dp(20)
                             padding: 0
@@ -115,7 +115,7 @@ BottomSheet {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
-                            onClicked: OrderChannelStore.setLastUsed(modelData)
+                            onClicked: OrderChannelStore.setDefault(modelData)
                         }
 
                         QQC.AbstractButton {

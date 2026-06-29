@@ -3,10 +3,10 @@ import QtQuick
 import QtCore
 
 // Configurable list of order channels (Online / In-store / Direct …).
-// Persisted device-locally via QSettings — same shape as CategoryStore.
-// Used by NewOrderDialog / OrderDetailDialog as a picker model and by
-// SalesPage's filter chips. The user can add or remove channels through
-// ManageOrderChannelsDialog.
+// Persisted to Firestore (tenant-scoped) AND cached device-locally via
+// QSettings. Used by NewOrderDialog / OrderDetailDialog as a picker model and
+// by SalesPage's filter chips. The user can add/remove channels and pin ONE
+// default through ManageOrderChannelsDialog; the default pre-fills the picker.
 QtObject {
     id: root
 
@@ -15,9 +15,16 @@ QtObject {
     ]
 
     property var channels: defaults.slice()
-    // The most recently used channel — pre-selected on the next NewOrderDialog
-    // open so a quick succession of the same channel doesn't require re-pick.
-    property string lastUsed: ""
+    // The single default channel — pre-selected on every NewOrderDialog open so
+    // the user doesn't re-pick. Exactly one default at a time (set via
+    // setDefault). `lastUsed` kept as an alias for back-compat with callers.
+    property string defaultChannel: ""
+    // revision bump lets QML bindings (the picker model) react to add/remove/
+    // default changes WITHOUT reopening the dialog — fixes the stale dropdown.
+    property int revision: 0
+
+    // Back-compat alias: older call sites referenced `lastUsed`.
+    property string lastUsed: defaultChannel
 
     property Settings _settings: Settings {
         category: "OrderChannelStore"
@@ -25,9 +32,12 @@ QtObject {
         property string lastUsed: ""
     }
 
-    Component.onCompleted: _load()
+    Component.onCompleted: {
+        _loadLocal()
+        _fetchFromFirebase()
+    }
 
-    function _load() {
+    function _loadLocal() {
         if (_settings.channelsJson && _settings.channelsJson.length > 2) {
             try {
                 var arr = JSON.parse(_settings.channelsJson)
@@ -36,12 +46,49 @@ QtObject {
                 channels = defaults.slice()
             }
         }
-        lastUsed = _settings.lastUsed || (channels.length > 0 ? channels[0] : "")
+        defaultChannel = _settings.lastUsed || (channels.length > 0 ? channels[0] : "")
+        lastUsed = defaultChannel
     }
 
-    function _save() {
+    // Firestore is the source of truth across devices/reinstalls. The config is
+    // a single doc { channels: [...], defaultChannel: "..." } under "config".
+    function _fetchFromFirebase() {
+        FirebaseService.get("config/orderChannels", function(ok, data) {
+            if (!ok || !data) return   // keep local defaults on miss/first run
+            if (Array.isArray(data.channels) && data.channels.length > 0)
+                channels = data.channels
+            var def = data.defaultChannel || ""
+            // Validate the stored default still exists in the list.
+            defaultChannel = (def && channels.indexOf(def) >= 0)
+                    ? def : (channels.length > 0 ? channels[0] : "")
+            lastUsed = defaultChannel
+            revision++
+            _saveLocal()
+        })
+    }
+
+    function syncFromFirebase() { _fetchFromFirebase() }
+
+    function _saveLocal() {
         _settings.channelsJson = JSON.stringify(channels)
-        _settings.lastUsed = lastUsed
+        _settings.lastUsed = defaultChannel
+    }
+
+    function _pushToFirebase() {
+        FirebaseService.put("config/orderChannels",
+                            { channels: channels, defaultChannel: defaultChannel },
+                            function(ok) {
+            if (!ok) console.warn("[OrderChannelStore] Firestore write failed",
+                                  FirebaseService.lastStatusCode, FirebaseService.lastError)
+        })
+    }
+
+    // Persist everywhere + notify bindings.
+    function _commit() {
+        lastUsed = defaultChannel
+        revision++
+        _saveLocal()
+        _pushToFirebase()
     }
 
     function addChannel(name) {
@@ -53,7 +100,10 @@ QtObject {
         var arr = channels.slice()
         arr.push(trimmed)
         channels = arr
-        _save()
+        // First channel ever becomes the default automatically.
+        if (!defaultChannel || channels.indexOf(defaultChannel) < 0)
+            defaultChannel = trimmed
+        _commit()
         return true
     }
 
@@ -62,20 +112,26 @@ QtObject {
         for (var i = 0; i < channels.length; ++i)
             if (channels[i] !== name) arr.push(channels[i])
         channels = arr
-        if (lastUsed === name)
-            lastUsed = arr.length > 0 ? arr[0] : ""
-        _save()
+        // Removing the default reassigns it to the first remaining channel so
+        // there's always exactly one valid default.
+        if (defaultChannel === name)
+            defaultChannel = arr.length > 0 ? arr[0] : ""
+        _commit()
     }
 
-    function setLastUsed(name) {
-        if (!name) return
-        lastUsed = name
-        _save()
+    // Pin a single channel as the default. Enforces "only one default".
+    function setDefault(name) {
+        if (!name || channels.indexOf(name) < 0) return
+        defaultChannel = name
+        _commit()
     }
+
+    // Back-compat alias for the old API name used by some callers.
+    function setLastUsed(name) { setDefault(name) }
 
     function indexOfDefault() {
         for (var i = 0; i < channels.length; ++i)
-            if (channels[i] === lastUsed) return i
+            if (channels[i] === defaultChannel) return i
         return 0
     }
 }

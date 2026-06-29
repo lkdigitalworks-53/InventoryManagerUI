@@ -634,3 +634,286 @@ These are **client-only** (P2) — no gateway needed — so they can ship in par
 backend work. Add the field to the store's `_clone()` / normalizer and the relevant dialog
 (`AddProductDialog`, `EditProductDialog`, supplier/tenant forms).
 
+---
+
+## Skill 25: Analysis Page — view modes & breakdown charts
+
+**File**: `qml/pages/SalesPage.qml` (the "Analysis" page) + `qml/components/BreakdownBarCard.qml`
+
+The Analysis page has six view modes selected by a `SegmentedPill`:
+
+```
+_MODE_VALUE=0  _MODE_PURCHASED=1  _MODE_CURRENT=2  _MODE_REVENUE=3  _MODE_SOLD=4  _MODE_PROFIT=5
+```
+
+Each view renders three charts, all via the shared `BreakdownBarCard`:
+1. **Main breakdown** (`_breakdown`) — time series (Revenue/Sold/Purchased), top-N (Value/Profit), or stock-health (Current).
+2. **By category** (`_breakdownByCategory`).
+3. **By supplier** (`_breakdownBySupplier`).
+
+`_rebuildBreakdown()` recomputes all three on any period/view/filter/store-revision change. For
+Value/Current the category & supplier maps come from existing `InventoryStore` aggregators
+(`valueByCategory`, etc.). For **Profit and Revenue** they come from the event-log aggregator
+`InventoryStore.realisedProfitByDimension(field, scope)` / `realisedTotals(scope)` /
+`realisedBucketWalk(...)` — one source of truth, scope-aware so the sections honour the active filters
+(Skill 29). For Sold/Purchased (unit metrics) they come from `_breakdownByDimension(metric, dim,
+ignorePeriod)` → `BreakdownMath.breakdown(...)` (Skill 26). The money metrics inside
+`_breakdownByDimension` (revenue/tax/discount) also route through `realisedProfitByDimension`.
+
+**Reconciliation invariant:** the *category* breakdown always sums to the hero `_periodTotal` under
+the same filters. The *supplier* breakdown can undercount for pre-FIFO / unresolved-inventory sales
+(no supplier lineage) — surfaced via the card's "No supplier data for this period" empty-state.
+Category is the safe reconciling axis.
+
+### Using BreakdownBarCard
+
+```qml
+import "../components"
+
+BreakdownBarCard {
+    title: root._breakdownTitles().category   // per-view title
+    model: root._breakdownByCategory          // [{ label, value, fullLabel }]
+    currency: root._isCurrency                // ₹ prefix on axis + tips
+    barTop: Constants.brand3
+    barBottom: Constants.brand2
+    chartHeight: dp(180)        // default
+    showValueTips: false        // per-bar value caption
+    emptyText: ""               // centered message when model is empty
+}
+```
+
+Pure presentation — it computes its own max and renders gradient bars + a y-axis (max / max÷2 / 0).
+It is a plain component (no qmldir entry); `import "../components"` makes it available.
+
+---
+
+## Skill 26: BreakdownMath.js — pure analytics grouping
+
+**File**: `qml/helper/BreakdownMath.js` (`.pragma library` — stateless, no QML/singleton deps)
+
+Groups a metric by a dimension into a `{ key -> number }` map. All inputs are injected, which is
+what makes it unit-testable headlessly (Skill 27).
+
+```qml
+import "../helper/BreakdownMath.js" as BreakdownMath
+
+var win = BreakdownMath.intersect(
+            BreakdownMath.periodWindow(_period, new Date()),  // period [from,to)
+            _dateWindow())                                    // date-filter [from,to) or null
+var byCat = BreakdownMath.breakdown({
+    metric: "revenue",          // "revenue" | "sold" | "purchased"
+    dim: "category",            // "category" | "supplier"
+    orders: OrdersStore.orders, // revenue source
+    entries: TransactionStore.entries, // sold/purchased source
+    window: win,                // null = unbounded
+    channel: "", staffId: "", category: "", supplierId: "",  // "" = no filter
+    productCategory: { productId: category, ... },   // lookup maps (injected)
+    supplierName:    { supplierId: name, ... }
+})
+```
+
+- `periodWindow(idx, now)` — Day(0, today) / Week(1, Mon–Sun) / Month(2) / Year(3) → `{from,to}`.
+- `intersect(a, b)` — `[from,to)` intersection; `null` = unbounded; both `null` → `null`.
+- Category keys fall back to `"(uncategorised)"`; supplier keys: `""` → `"Unknown"`, unknown id → `"(removed)"`.
+
+On the page, wrap the result with `_topNFromMap(map, 8)` to get chart-ready `[{label, value, fullLabel}]`.
+The page method `_breakdownByDimension(metric, dim, ignorePeriod)` builds the opts bundle from live
+filter state; pass `ignorePeriod=true` for the export (filter-scoped totals, not single-period).
+
+---
+
+## Skill 27: QML unit tests (qmltestrunner)
+
+**Files**: `tests/tst_*.qml` (e.g. `tests/tst_BreakdownMath.qml`)
+
+Test **pure logic** — the `.pragma library` JS helpers. Page-level QML can't load headlessly (needs
+the full Felgo `App` context), so keep testable math in a pure library and test that.
+
+```qml
+import QtQuick
+import QtTest
+import "../qml/helper/BreakdownMath.js" as BM
+
+TestCase {
+    name: "BreakdownMath"
+    function test_revenue_category_sum_equals_supplier_sum() {
+        var byCat = BM.breakdown({ metric:"revenue", dim:"category", /* ...fixtures... */ })
+        var bySup = BM.breakdown({ metric:"revenue", dim:"supplier", /* ...fixtures... */ })
+        compare(_sum(byCat), _sum(bySup))   // reconciliation invariant
+    }
+}
+```
+
+Run headlessly (set the two `QT_*` vars — the runner is silent without them on this box):
+
+```bash
+QT_FORCE_STDERR_LOGGING=1 QT_LOGGING_TO_CONSOLE=1 \
+  PATH="/c/Felgo/Felgo/mingw_64/bin:$PATH" \
+  "C:/Felgo/Felgo/mingw_64/bin/qmltestrunner.exe" -platform offscreen -input tests/tst_BreakdownMath.qml
+```
+
+`tests/` lives OUTSIDE `qml/` so it is not packaged into the app, and there is no CMake test target —
+the runner executes the `.qml` directly. `Object.assign` is available in the engine (Qt 6.8).
+
+---
+
+## Skill 28: Order adjustments, KPI derivation & multi-sheet export
+
+**Files**: `qml/helper/OrderMath.js`, `qml/model/DataModel.qml`, `qml/model/SalesStore.qml`,
+`qml/model/InventoryStore.qml`, `qml/pages/SalesPage.qml`, `src/XlsxService.cpp`,
+`qml/model/OrderChannelStore.qml`, `qml/model/CategoryStore.qml`
+
+Lessons baked in after the device-bug pass — follow these to avoid re-introducing fixed defects:
+
+- **Revenue = net, everywhere.** Subtotal − discount, **tax excluded**. `SalesStore` KPIs
+  (`totalRevenue`/`totalOrders`/`activeCustomers`) are **derived** from `OrdersStore` via
+  `_rebuildDerivedData` (sum `OrderMath.allocate(o).totals.net` over completed orders) — never an
+  independently-persisted running tally. Currency formatters use `maximumFractionDigits: 1` so a
+  fractional discount (₹4.5) reconciles with the total instead of rounding to ₹5.
+
+- **Reopening a completed order must reverse it.** `DataModel.onUpdateOrder` calls
+  `_reverseCompletedOrder` (restore batches + product.stock, append a negating `return` event,
+  reason `"reopened"`) BEFORE persisting and clears `consumption[]`. Reversal reads lineage, so it
+  must run before any updateOrder that strips it. Re-completing is then a clean fresh deduction.
+
+- **`price_adjust` event spreading.** An order-wide discount edit has `productId:""`; a per-line
+  modify has a real productId but empty `consumption[]`. For the supplier/category/product axes use
+  `OrderMath.spreadOrderDelta(order, total, dim, categoryOf)` (order-wide) and
+  `OrderMath.spreadLineDeltaBySupplier(order, productId, total)` (per-line) so the delta nets across
+  REAL keys, not a bogus "(unspecified)"/"Unknown" row. `dim` accepts `"supplier"` AND `"supplierId"`
+  (callers pass the field name — a mismatch silently falls through to the product branch).
+
+- **Added units on a completed-order adjust** are booked as a SEPARATE sale event carrying the
+  product's CURRENT tax (`taxable`/`taxPercent` from inventory); the original completion event is
+  immutable. A single order line stores one tax rate, so a mixed-rate line is correct in the event
+  ledger/reports but the order-line summary shows the original rate (known display limitation).
+
+- **Multi-sheet Analysis export.** `XlsxService.writeAnalysisWorkbook(sheets, name)` writes ONE
+  workbook with one sheet per report view; `SalesPage.buildAnalysisWorkbook()` builds the payload by
+  briefly switching `_viewMode`/`_profitMode` and reusing `buildAnalysisExport()` per view. Sheet
+  names are sanitized + de-duped server-side (≤31 chars, no `:\/?*[]`).
+
+- **Config stores** (`OrderChannelStore`, `CategoryStore`) persist to Firestore under
+  `config/{orderChannels|categories}` (tenant-scoped) AND cache to QSettings, with exactly one pinned
+  default (`setDefault`; `setLastUsed` is a back-compat alias). Re-synced on `onTenantContextReady`.
+  Picker dropdowns bind `model:` directly — never reassign `.model` imperatively (freezes the binding).
+
+- **`ActivityLog`** is Firestore-backed (`activity_log`, tenant-scoped) and re-syncs on login so
+  non-order activity survives sign-out; `clear()` stays an in-memory-only sign-out wipe.
+
+- **Desktop file import.** The Felgo desktop picker returns a malformed 2-slash `file://C:/…` URL;
+  `ImportPreviewDialog._toFileUrl` normalizes any `file:` URL to a valid `file:///C:/…`. Only
+  `content://` (Android) is routed through `NativeFile.toReadablePath` — a desktop path through its
+  QUrl round-trip mangles the drive letter.
+
+---
+
+## Skill 29: RealisedMath.js — one source of truth for realised money
+
+**File**: `qml/helper/RealisedMath.js` (`.pragma library`, `.import`s `OrderMath.js`). The single home
+for REALISED money aggregation over the immutable transaction event log. Pure, headless-testable
+(`tests/tst_RealisedMath.qml`).
+
+**The rule it enforces (SITE 5):** the Analysis Revenue hero, the export Totals block, the Revenue
+period bins, and every realised by-dimension section all aggregate the **immutable event log** — NEVER
+the live order via `OrderMath.allocate`. The live order is mutated by returns/discount edits
+(`OrdersStore.applyAdjustment` rewrites `o.products`), so allocating it double-counts. Reading the
+ledger (sale + return + price_adjust rows) nets adjusted orders correctly, so Revenue and Profit views
+reconcile to the same number.
+
+```qml
+import "../helper/RealisedMath.js" as RealisedMath
+// scope mirrors _passesCrossFilters: { window:{from,to}|null, channel, staffId, category, supplierId }
+var rows = RealisedMath.byDimension("supplierId", entries, scope, lookups) // {key->{revenue,cogs,profit,tax,discount,margin}}
+var t    = RealisedMath.totals(entries, scope, lookups)                    // {gross,discount,net,tax,cogs,profit}
+var bins = RealisedMath.bucketWalk("net", periodIdx, entries, scope, now, lookups) // "net" | "profit"
+var named = RealisedMath.nameMerge(rows, function(id){return nameOf(id)}, "Unknown")
+```
+
+- **Invariant (locked):** for any scope, `Σ byDimension(any field) == totals == Σ bucketWalk`. New
+  tests must assert it. The `tst_RealisedMath` reconciliation cases exist for exactly this.
+- **Stamped-only / fail-closed (SITE 4):** reads `e.net/e.tax/e.discountShare`; a missing `net`
+  contributes **0**, never re-allocates the live order.
+- **Cent-exact splits (C/D):** multi-batch FIFO uses remainder-to-largest; `gross = round(net+disc)`
+  once.
+- **price_adjust under a supplier filter** is excluded from BOTH `totals` and `bucketWalk` (no clean
+  supplier lineage) so the invariant holds; with no supplier filter it's spread via
+  `OrderMath.spreadOrderDelta`/`spreadLineDeltaBySupplier` (SITES 2/3).
+- **On the page:** `InventoryStore.realisedProfitByDimension(field, opts)` / `realisedTotals(opts)` /
+  `realisedBucketWalk(metric, period, opts)` are thin adapters that inject `entries` + lookups. Build
+  `opts` from `SalesPage._realisedScope(periodScoped)` — `true` intersects the selected period (the
+  on-screen hero/chart), `false` is the whole filter window (the export sections). `opts` is OPTIONAL
+  everywhere; omitting it sums the whole ledger (legacy behaviour).
+- **Other extractions:** `OrderMath.refundPerUnit(saleEvent)` (refund returned units at the
+  original-sale rate, SITE 6) and `ImportMath.renameSku(sku, addedCount)` (import rename suffix, E).
+
+**Coverage ceiling:** `SalesPage.qml` and the C++ `XlsxService` still can't load under `qmltestrunner`.
+The pure libs are fully tested; the page WIRING (which map feeds which `BreakdownBarCard`) and the
+xlsx column-writer stay verified by the manual export→unzip→decode→reconcile procedure.
+
+---
+
+## Skill 30: Build-time environments (dev / test / prd)
+
+**Files**: `qml/helper/EnvConfig.js` (`.pragma library`), `qml/model/FirebaseService.qml`,
+`CMakeLists.txt`, `main.cpp`, `tests/tst_EnvConfig.qml`
+
+The app talks to an isolated Firestore database per environment, selected at **build time** —
+no runtime switcher. Each env is a **named Firestore database in the one project**
+(`inventorymanager-48392`, region `asia-southeast1`); Auth, Storage, and Cloud Functions are
+**shared**.
+
+**Resolution chain (single source of truth):**
+
+```
+PRODUCT_STAGE (CMakeLists.txt)
+  → PRODUCT_STAGE_DEF  (target_compile_definitions)
+  → APP_STAGE          (engine.rootContext()->setContextProperty in main.cpp)
+  → EnvConfig.envForStage(APP_STAGE)  → "prd" | "test" | "dev"
+  → EnvConfig.databaseIdForEnv(env)   → "(default)" | "test" | "dev"
+  → FirebaseService.databaseId / .databaseUrl   (every REST call builds off this)
+```
+
+| `PRODUCT_STAGE` | env  | database    |
+|-----------------|------|-------------|
+| `dev`           | dev  | `dev`       |
+| `test`          | test | `test`      |
+| `publish`       | prd  | `(default)` |
+
+```qml
+// FirebaseService.qml — env resolved once; all get/put/patch/remove switch here.
+readonly property string environment: EnvConfig.envForStage(
+    (typeof APP_STAGE !== "undefined" && APP_STAGE) ? APP_STAGE : "")
+readonly property string databaseId: EnvConfig.databaseIdForEnv(environment)
+```
+
+- **Fail-safe = prd:** unknown/empty stage → `envForStage` returns `"prd"` → `(default)` db, so a
+  misconfigured/unflagged build never silently hits an empty dev database.
+- **Never hard-code `databases/(default)`** anywhere — it bypasses routing. The only acceptable
+  `(default)` literal is the `databaseIdForEnv` ternary in `EnvConfig.js`.
+- **Pure + headless-tested:** `EnvConfig.js` has no QML deps; `tests/tst_EnvConfig.qml` asserts the
+  stage→env→databaseId mapping incl. the fail-safe.
+- **Env badge:** `ProfileSettingsDialog` shows a `DEV`/`TEST` pill bound to
+  `FirebaseService.environment`, hidden on `prd`.
+- **Backend setup + Cloud Functions follow-up:** see README "Environments" and AGENTS §8 — the
+  gateway functions still write to `(default)` server-side and must be made env-aware when Blaze
+  lands.
+
+---
+
+## Skill 31: New Order editable price + Analysis swipe navigation
+
+Two small page interactions added alongside the env work:
+
+- **Editable per-line price in `NewOrderDialog`** — mirrors the `OrderDetailDialog` price field
+  (blur/accept commit, plain number while focused, formatted currency otherwise). The helper
+  `_setLinePrice(idx, value)` does an immutable `selectedProducts` replace (same shape as
+  `_setLineDiscount`), so `_totalsCache` and the `orderCreated` payload pick up the new price with
+  no signal/store change. Rejects empty/NaN/negative by keeping the old price.
+- **Swipe between Analysis views** — `SalesPage._stepViewMode(dir)` (`dir = -1` swipe-left/prev,
+  `+1` swipe-right/next) steps within `_allowedViewModes()` (staff: Current↔Sold; others: all six)
+  and clamps at both ends (no wrap). Driven by a `DragHandler { yAxis.enabled: false }` over the
+  `AppScrollView` so vertical scroll and control taps pass through; horizontal threshold `dp(60)`.
+  Touch-gesture behaviour differs Android vs desktop — device-verify (see the
+  `scrollview_touch_freedrag` note).
+

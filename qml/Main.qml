@@ -246,6 +246,15 @@ App {
             // fetch fired before tenant context, so re-sync now.
             SupplierStore.syncFromFirebase()
             StockBatchStore.syncFromFirebase()
+            // ActivityLog is now Firestore-backed (tenant-scoped). Re-sync so the
+            // full recent-activity history (product/staff edits, not just orders)
+            // survives sign-out/sign-in instead of being wiped to in-memory empty.
+            ActivityLog.syncFromFirebase()
+            // Channel + category config is now Firestore-backed too, so a new
+            // device / reinstall picks up the workspace's channels, categories,
+            // and chosen defaults instead of falling back to the seed list.
+            OrderChannelStore.syncFromFirebase()
+            CategoryStore.syncFromFirebase()
             // Kick the one-shot FIFO backfill once the upstream stores have
             // had a beat to land their data. The check inside is idempotent.
             migrationKickoffTimer.restart()
@@ -385,6 +394,8 @@ App {
                     DashboardPage {
                         anchors.fill: parent
                         compact: app.compact
+                        canViewFinancials: AuthStore.canViewFinancials
+                        currentStaffId:    AuthStore.currentStaffId
                         onNewOrderRequested: newOrderDlg.open()
                         onAddProductRequested: addProductDlg.open()
                         onInviteStaffRequested: {
@@ -422,7 +433,10 @@ App {
                         anchors.fill: parent
                         compact: app.compact
                         canApproveAll: AuthStore.canApproveAll
+                        canApprovePending: AuthStore.canApprovePending
                         canDeleteOrders: AuthStore.canDeleteOrders
+                        canViewAllSales: AuthStore.canViewAllSales
+                        currentStaffId:  AuthStore.currentStaffId
                         onAddOrderClicked: newOrderDlg.open()
                         onOrderDetailsClicked: function(orderId) { orderDetail.openFor(orderId) }
                         onDeleteOrderClicked: function(orderId) {
@@ -439,7 +453,13 @@ App {
                             importDlg.pickAndStart()
                         }
                         onFiltersRequested: {
+                            // ordersPage's id is only visible here (page scope);
+                            // the root-level filterSheet can't name it, so hand
+                            // it the page object to write back through.
+                            filterSheet.targetPage = ordersPage
                             filterSheet.range = ordersPage.dateRange
+                            filterSheet.customFrom = ordersPage.customFrom
+                            filterSheet.customTo = ordersPage.customTo
                             filterSheet.open()
                         }
                     }
@@ -462,6 +482,8 @@ App {
                         anchors.fill: parent
                         compact: app.compact
                         canManageInventory: AuthStore.canManageInventory
+                        canOpenProductDetail: AuthStore.canOpenProductDetail
+                        canViewFinancials: AuthStore.canViewFinancials
                         onAddProductClicked: addProductDlg.open()
                         onRestockClicked: function(pid) { restockDlg.openFor(pid) }
                         onViewProductClicked: function(pid) { editProductDlg.openFor(pid, false) }
@@ -490,7 +512,7 @@ App {
         NavigationItem {
             title: qsTr("Analysis")
             iconType: IconType.linechart
-            visible: AuthStore.canViewSales
+            visible: AuthStore.isAuthenticated
 
             NavigationStack {
                 initialPage: AppPage {
@@ -500,6 +522,11 @@ App {
                     SalesPage {
                         anchors.fill: parent
                         compact: app.compact
+                        canViewFinancials: AuthStore.canViewFinancials
+                        canViewSuppliers:  AuthStore.canViewSuppliers
+                        canViewAllSales:   AuthStore.canViewAllSales
+                        currentStaffId:    AuthStore.currentStaffId
+                        currentStaffName:  AuthStore.displayName
                         // SalesPage hands us the active-view payload here so
                         // Main.qml doesn't need a reachable id reference into
                         // the NavigationStack subtree.
@@ -644,14 +671,21 @@ App {
         onOrderCreated: function(order) {
             logic.addOrder(order.customer, order.items, order.total,
                 order.status, order.date, order.email, order.phone, order.products,
-                order.discountType || "flat", order.discountValue || 0,
                 order.orderChannel || "", order.staffId || "")
         }
         onManageChannelsRequested: manageChannelsDlg.open()
     }
     OrderDetailDialog {
         id: orderDetail
-        onOrderUpdated: function(oid) { logic.updateOrder(oid, {}) }
+        onAdjustRequested: function(oid, newLines, originalLines) {
+            confirmReturnSheet.openFor(oid, newLines, originalLines)
+        }
+    }
+    ConfirmReturnSheet {
+        id: confirmReturnSheet
+        onConfirmed: function(oid, newLines, reason, condition, note) {
+            logic.adjustOrder(oid, newLines, reason, condition, note)
+        }
     }
     ConfirmDialog {
         id: confirmDlg
@@ -700,6 +734,7 @@ App {
     }
     ImportPreviewDialog {
         id: importDlg
+        dataModelRef: dataModel
         onImportCompleted: function(message) {
             successMessage = message
             successToastTimer.restart()
@@ -723,7 +758,17 @@ App {
     function _onImportFilePicked(accepted, files) {
         NativeUtils.filePickerFinished.disconnect(app._onImportFilePicked)
         if (!accepted || !files || files.length === 0) return
-        var local = NativeFile.toReadablePath(files[0])
+        var picked = String(files[0])
+        // toReadablePath() exists to copy an Android content:// URI into a
+        // readable cache file. On desktop the picker returns a real filesystem
+        // path / file:// URL that QFile can already open — and routing a bare
+        // Windows path ("C:\…") through toReadablePath's QUrl round-trip mangles
+        // it (drive letter parsed as a URL scheme) → empty → the misleading
+        // "Could not read the selected file" toast. So only use it for
+        // content:// (Android); otherwise hand the picked path straight to the
+        // dialog, exactly like the (working) desktop photo picker does.
+        var needsCopy = picked.toLowerCase().indexOf("content://") === 0
+        var local = needsCopy ? NativeFile.toReadablePath(files[0]) : picked
         if (!local || local.length === 0) {
             successMessage = qsTr("Could not read the selected file")
             successToastTimer.restart()
@@ -739,12 +784,20 @@ App {
     function _routeActivity(kind, entityId) {
         if (!kind) return
         if (kind === "order") {
+            // Staff may only open their own orders (fail-closed); others'
+            // order detail stays blocked, mirroring the OrdersPage own-scope.
+            if (!AuthStore.canViewAllSales) {
+                var o = OrdersStore.getById(entityId)
+                if (!o || (o.staffId || "") !== AuthStore.currentStaffId) return
+            }
             navigation.currentIndex = 1   // Orders tab
             if (entityId) Qt.callLater(function() { orderDetail.openFor(entityId) })
         } else if (kind === "product_added"
                 || kind === "product_updated"
                 || kind === "product_restocked"
                 || kind === "low_stock") {
+            // Staff can't open product detail anywhere — block the route entirely.
+            if (!AuthStore.canOpenProductDetail) return
             navigation.currentIndex = 2   // Stock tab
             if (entityId) Qt.callLater(function() { editProductDlg.openFor(entityId, false) })
         } else if (kind === "staff_added" || kind === "staff_updated") {
@@ -776,11 +829,34 @@ App {
     }
 
     function _exportProducts() {
-        _deliverExport(XlsxService.writeProducts(InventoryStore.products, ""), qsTr("Products"))
+        var src = InventoryStore.products || []
+        var out = []
+        for (var i = 0; i < src.length; ++i) {
+            var p = src[i]
+            var clone = JSON.parse(JSON.stringify(p))
+            // supplierId may live on the product or on its latest batch/txn.
+            var sid = p.supplierId || TransactionStore.lastSupplierFor(p.productId)
+            clone.supplier = sid ? (SupplierStore.nameOf(sid) || "") : ""
+            out.push(clone)
+        }
+        _deliverExport(XlsxService.writeProducts(out, ""), qsTr("Products"))
     }
 
     function _exportOrders() {
-        _deliverExport(XlsxService.writeOrders(OrdersStore.orders, ""), qsTr("Orders"))
+        var src = OrdersStore.orders || []
+        var out = []
+        for (var i = 0; i < src.length; ++i) {
+            var o = JSON.parse(JSON.stringify(src[i]))
+            var st = o.staffId ? StaffStore.getById(o.staffId) : null
+            o.staffName = st ? st.name : ""
+            var lines = o.products || []
+            for (var j = 0; j < lines.length; ++j) {
+                var inv = lines[j].productId ? InventoryStore.getById(lines[j].productId) : null
+                lines[j].sku = inv && inv.sku ? inv.sku : ""
+            }
+            out.push(o)
+        }
+        _deliverExport(XlsxService.writeOrders(out, ""), qsTr("Orders"))
     }
 
     function _exportStaff() {
@@ -793,6 +869,16 @@ App {
     // NavigationStack subtree and isn't reachable by name from this scope.
     function _exportSalesReport() {
         var payload = _pendingAnalysisExport
+        // New multi-sheet payload: { suggestedName, sheets:[{name,title,sections}] }.
+        // One workbook, one sheet per report view (bug 11). Fall back to the
+        // legacy single-sheet payload shape for safety.
+        if (payload && payload.sheets && payload.sheets.length > 0) {
+            var wbUrl = XlsxService.writeAnalysisWorkbook(payload.sheets,
+                                                          payload.suggestedName || "")
+            _deliverExport(wbUrl, qsTr("Analysis report"))
+            _pendingAnalysisExport = null
+            return
+        }
         if (!payload || !payload.sections || payload.sections.length === 0) {
             successMessage = qsTr("Export failed")
             successToastTimer.restart()
@@ -812,10 +898,9 @@ App {
                            payload.department, payload.joinDate, payload.status, payload.salary)
 
             if (payload.createLogin) {
-                // The staff record was just appended; grab its id so we can
-                // stamp the auth uid back onto it for cascade-aware deletes.
-                var staffArr = StaffStore.staff
-                var staffId = staffArr.length > 0 ? staffArr[staffArr.length - 1].staffId : ""
+                // Provision login against the id StaffStore just generated —
+                // robust under reordering / async sync, unlike "last element".
+                var staffId = StaffStore.lastAddedId
                 AuthService.provisionStaffCredentials(payload.name, payload.email, payload.loginPassword,
                                                       payload.phone, payload.department, payload.appRole,
                                                       staffId)
@@ -947,6 +1032,8 @@ App {
 
         ActivityPage {
             anchors.fill: parent
+            canViewFinancials: AuthStore.canViewFinancials
+            currentStaffId:    AuthStore.currentStaffId
             onBackRequested: activityPageOverlay.close()
             onActivityItemClicked: function(kind, entityId) {
                 activityPageOverlay.close()
@@ -972,8 +1059,25 @@ App {
         id: filterSheet
         // Drive the orders list directly. The status dimension lives on the
         // page chips; this sheet only carries the date range.
-        onFiltersApplied: function(status, range) { ordersPage.dateRange = range }
-        onResetRequested: ordersPage.dateRange = "all"
+        //
+        // This sheet lives at Main's root, but the OrdersPage instance lives
+        // inside NavigationStack.initialPage (a Component) — its `ordersPage`
+        // id is NOT visible out here, so naming it threw ReferenceError and
+        // silently dropped every applied filter. The page-scoped
+        // onFiltersRequested hands us the page object via targetPage instead.
+        property var targetPage: null
+        onFiltersApplied: function(status, range) {
+            if (!targetPage) return
+            targetPage.dateRange = range
+            targetPage.customFrom = filterSheet.customFrom
+            targetPage.customTo = filterSheet.customTo
+        }
+        onResetRequested: {
+            if (!targetPage) return
+            targetPage.dateRange = "all"
+            targetPage.customFrom = ""
+            targetPage.customTo = ""
+        }
     }
 
     ExportSheet {
