@@ -43,7 +43,7 @@ android {
 
     namespace            androidPackageName
     
-    compileSdkVersion    34
+    compileSdkVersion    35
     buildToolsVersion    androidBuildToolsVersion
 
     compileOptions {
@@ -53,7 +53,7 @@ android {
 
     defaultConfig {
       multiDexEnabled true
-      targetSdkVersion   34
+      targetSdkVersion   35
       applicationId    = productIdentifier
       versionCode      = productVersionCode.toInteger()
       versionName      = productVersionName
