@@ -2,6 +2,8 @@
 #include <FelgoApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QIcon>
+#include <QCoreApplication>
 #include "src/OAuthServer.h"
 #include "src/ImageProcessor.h"
 #include "src/XlsxService.h"
@@ -12,6 +14,16 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+
+    // Runtime window / taskbar icon. The .rc (win/app_icon.rc) only sets the
+    // EXECUTABLE FILE icon shown in Explorer before launch; the icon shown on
+    // the taskbar while running comes from the window icon, which Qt does NOT
+    // seed from the .rc — it must be set explicitly (see Qt "Setting the
+    // Application Icon"). Dev build: load the deployed SVG next to the exe.
+    // For PUBLISHING (qrc build), use the commented qrc path instead.
+    app.setWindowIcon(QIcon(QCoreApplication::applicationDirPath()
+                            + QStringLiteral("/assets/brand/icon.svg")));
+    //app.setWindowIcon(QIcon(QStringLiteral("qrc:/assets/brand/icon.svg")));
 
     FelgoApplication felgo;
 
