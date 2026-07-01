@@ -68,12 +68,12 @@ int main(int argc, char *argv[])
 
     // use this during development
     // for PUBLISHING, use the entry point below
-    felgo.setMainQmlFileName(QStringLiteral("qml/Main.qml"));
+    // felgo.setMainQmlFileName(QStringLiteral("qml/Main.qml"));
 
     // use this instead of the above call to avoid deployment of the qml files
     // and compile them into the binary with qt's resource system qrc
     // this is the preferred deployment option for publishing apps to the app stores
-    //felgo.setMainQmlFileName(QStringLiteral("qrc:/qml/Main.qml"));
+    felgo.setMainQmlFileName(QStringLiteral("qrc:/qml/Main.qml"));
 
     engine.load(QUrl(felgo.mainQmlFileName()));
 

@@ -55,7 +55,7 @@ android {
       multiDexEnabled true
       targetSdkVersion   34
       applicationId    = productIdentifier
-      versionCode      = productVersionCode
+      versionCode      = productVersionCode.toInteger()
       versionName      = productVersionName
       minSdkVersion    = project.hasProperty("qtMinSdkVersion") ? qtMinSdkVersion.toInteger() : 23
 
