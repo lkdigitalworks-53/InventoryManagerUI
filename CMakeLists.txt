@@ -83,6 +83,18 @@ set_target_properties(appBusinessManagement PROPERTIES
     QT_ANDROID_TARGET_SDK_VERSION 34
 )
 
+# User-visible executable name (Windows only). The CMake target id stays
+# appBusinessManagement (so target references keep resolving); only the produced
+# Windows binary is renamed to Karobar.exe to match the app's display name.
+# Scoped to Windows on purpose: a global OUTPUT_NAME would also rename the
+# Android shared library (libappBusinessManagement_<abi>.so) and collide with
+# the Linux ".run" name Felgo sets itself — both verified working, so leave them.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set_target_properties(appBusinessManagement PROPERTIES
+        OUTPUT_NAME "Karobar"
+    )
+endif()
+
 # NOTE: for PUBLISHING, perform the following steps:
 # 1. comment the deploy_resources line above
 # 2. uncomment the QML_FILES and RESOURCES above

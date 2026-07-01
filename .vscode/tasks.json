@@ -96,7 +96,7 @@
       "command": "C:\\Windows\\System32\\cmd.exe",
       "args": [
         "/c",
-        "taskkill /F /IM appBusinessManagement.exe >nul 2>nul & exit /b 0"
+        "taskkill /F /IM Karobar.exe >nul 2>nul & exit /b 0"
       ],
       "presentation": {
         "reveal": "always",
@@ -114,7 +114,7 @@
         "qml",
         "--dir",
         "build/felgo-mingw-debug",
-        "build/felgo-mingw-debug/appBusinessManagement.exe"
+        "build/felgo-mingw-debug/Karobar.exe"
       ],
       "dependsOn": "Felgo: Build (Debug)",
       "options": {
@@ -155,7 +155,7 @@
         "-File",
         ".vscode/process/run-app.ps1",
         "-Exe",
-        "${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe",
+        "${workspaceFolder}\\build\\felgo-mingw-debug\\Karobar.exe",
         "-Log",
         "${workspaceFolder}\\app.log"
       ],
@@ -186,7 +186,7 @@
         "-File",
         ".vscode/process/run-app.ps1",
         "-Exe",
-        "${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe",
+        "${workspaceFolder}\\build\\felgo-mingw-debug\\Karobar.exe",
         "-Log",
         "${workspaceFolder}\\app.log"
       ],
@@ -217,7 +217,7 @@
         "-File",
         ".vscode/process/run-app.ps1",
         "-Exe",
-        "${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe",
+        "${workspaceFolder}\\build\\felgo-mingw-debug\\Karobar.exe",
         "-Log",
         "${workspaceFolder}\\app.log"
       ],
@@ -242,7 +242,7 @@
       "command": "C:\\Windows\\System32\\cmd.exe",
       "args": [
         "/c",
-        "set PATH=${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;%PATH% && set QT_ASSUME_STDERR_HAS_CONSOLE=1 && \"${workspaceFolder}\\build\\felgo-mingw-debug\\appBusinessManagement.exe\" > \"${workspaceFolder}\\runtime.log\" 2>&1"
+        "set PATH=${workspaceFolder}/build/felgo-mingw-debug;C:/Felgo/Tools/mingw1310_64/bin;%PATH% && set QT_ASSUME_STDERR_HAS_CONSOLE=1 && \"${workspaceFolder}\\build\\felgo-mingw-debug\\Karobar.exe\" > \"${workspaceFolder}\\runtime.log\" 2>&1"
       ],
       "dependsOn": "Felgo: Deploy Runtime (Debug)",
       "options": {
