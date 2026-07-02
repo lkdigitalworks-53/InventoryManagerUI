@@ -104,6 +104,7 @@ QtObject {
     function upsertMany(records) {
         var counts = { added: 0, updated: 0, skipped: 0 };
         var addedIds = [];
+        var updatedOrders = [];
         if (!records || records.length === 0) {
             counts.addedIds = addedIds;
             return counts;
@@ -130,11 +131,14 @@ QtObject {
                     counts.added++;
                     continue;
                 }
-                arr[existingIdx] = _mergeOrder(arr[existingIdx], r);
-                FirebaseService.put("orders/" + arr[existingIdx].orderId, arr[existingIdx], function(ok) {
-                    if (!ok) console.warn("[OrdersStore] import overwrite failed");
-                });
-                counts.updated++;
+                if (policy === "overwrite") {
+                    // For overwrite policy, we need to adjust the order data and calculate the inventory, discount, price, and sales matrics
+                    // Hence we will give back the updated orders and try to adjust the order.
+                    var order = OrdersStore.getById(r.orderId)
+                    if (!order || order.status !== "completed") continue;
+                    updatedOrders.push({orderId: r.orderId, products: r.products})
+                    counts.updated++;
+                }
             } else {
                 if (!r.orderId || r.orderId.length === 0) {
                     orders = arr;  // align nextOrderId scope
@@ -155,6 +159,7 @@ QtObject {
         revision++;
         _refreshCounts();
         counts.addedIds = addedIds;
+        counts.updatedOrders = updatedOrders
         return counts;
     }
 

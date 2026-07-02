@@ -660,6 +660,7 @@ BottomSheet {
             // Book every newly-added COMPLETED order (anon orders got ids inside
             // upsertMany — use the returned addedIds so we don't miss them).
             var addedIds = counts.addedIds || []
+            var updateOrders = counts.updatedOrders || []
             // Map added orders back to their source records to check status.
             // Newly-added records are those not skipped; match by resulting order.
             for (var i = 0; i < addedIds.length; ++i) {
@@ -669,6 +670,9 @@ BottomSheet {
                     var res = dataModelRef.completeImportedOrder(addedIds[i])
                     if (res && res.understocked) understocked++
                 }
+            }
+            for (var j = 0; j < updateOrders.length; ++j) {
+                logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
             }
         }
 
