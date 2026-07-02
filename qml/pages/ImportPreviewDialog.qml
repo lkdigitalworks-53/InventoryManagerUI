@@ -168,6 +168,10 @@ BottomSheet {
                 Repeater {
                     model: root._readyRows
                     delegate: Rectangle {
+                        id: readyRowDelegate
+
+                        property int readyRowIndex: index
+
                         Layout.fillWidth: true
                         radius: dp(Constants.radius)
                         color: Constants.cardBg
@@ -225,7 +229,7 @@ BottomSheet {
                                     model: ["skip", "overwrite", "rename"]
                                     currentIndex: ["skip", "overwrite", "rename"].indexOf(modelData._conflictPolicy || "skip")
                                     font.pixelSize: sp(Constants.fsCaption)
-                                    onActivated: root._setRowPolicy(index, currentText)
+                                    onActivated: root._setRowPolicy(readyRowDelegate.readyRowIndex, currentText)
                                 }
                             }
 
