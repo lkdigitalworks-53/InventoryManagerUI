@@ -440,6 +440,8 @@ BottomSheet {
                 warns.push({ row: row, message: name + ": SKU will be auto-generated" })
             }
 
+            // To-Do: There are no tax information getting exported.
+            // We need to export tax information as well with the product details.
             var rec = {
                 row: row,
                 productId: pid,
@@ -655,6 +657,10 @@ BottomSheet {
         var counts, understocked = 0
         if (mode === "products") {
             counts = InventoryStore.upsertMany(_readyRows)
+            var updatedProducts = counts.updatedProducts || []
+            for (var i = 0; i < updatedProducts.length; ++i) {
+                logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields)
+            }
         } else {
             counts = OrdersStore.upsertMany(_readyRows)
             // Book every newly-added COMPLETED order (anon orders got ids inside

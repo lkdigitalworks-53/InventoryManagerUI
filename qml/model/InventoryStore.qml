@@ -415,6 +415,7 @@ QtObject {
         var arr = _clone();
         var byId = {};
         var bySku = {};
+        var updatedProducts = []
         for (var i = 0; i < arr.length; ++i) {
             byId[arr[i].productId] = i;
             if (arr[i].sku) bySku[arr[i].sku.toLowerCase()] = i;
@@ -446,12 +447,25 @@ QtObject {
                     counts.added++;
                     continue;
                 }
+
                 // overwrite
-                var existing = arr[existingIdx];
-                var overwriteBefore = Object.assign({}, existing);
-                arr[existingIdx] = _mergeRecord(existing, r);
-                Gateway.recordMutation("inventory", existing.productId, "update",
-                                       overwriteBefore, arr[existingIdx]);
+                // For overwrite operation we have to send it through logic and data model layer to update details.
+                updatedProducts.push({productId: r.productId, fields: {
+                                  name: r.name,
+                                  sku: r.sku,
+                                  category: r.category,
+                                  description: r.description,
+                                  unit: r.unit,
+                                  price: r.price,
+                                  sellingPrice: r.sellingPrice,
+                                  // To-Do: There are no tax information getting exported.
+                                  // Keeping below lines, for future to uncomment when export of tax information implemented
+
+                                  // taxable: taxable,
+                                  // taxPercent: taxable ? taxPercent : 0,
+                                  stock: r.stock,
+                                  minStock: r.minStock
+                              }})
                 counts.updated++;
             } else {
                 // New row
@@ -472,6 +486,7 @@ QtObject {
         }
 
         products = arr;
+        counts.updatedProducts = updatedProducts;
         return counts;
     }
 
