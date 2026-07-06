@@ -402,7 +402,7 @@ BottomSheet {
             var sell = parseFloat(sellRaw)
             if (isNaN(sell) || sell <= 0) {
                 issues.push({ row: row, message: "Invalid or missing Selling Price (got '" + sellRaw + "')" })
-                continue
+                sell = 0
             }
 
             // HARD-REJECT: missing Cost Price
@@ -410,13 +410,12 @@ BottomSheet {
             var cost = parseFloat(costRaw)
             if (isNaN(cost)) {
                 issues.push({ row: row, message: "Missing Cost Price (required for value/profit reports)" })
-                continue
+                cost = 0
             }
             if (cost < 0) cost = 0
 
             if (sell < cost) {
                 issues.push({ row: row, message: "Selling Price < Cost Price" })
-                continue
             }
 
             // DEFAULT+WARN: missing Unit
