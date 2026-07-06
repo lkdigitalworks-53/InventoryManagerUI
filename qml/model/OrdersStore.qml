@@ -539,6 +539,7 @@ QtObject {
                    email: email || "", phone: phone || "",
                    orderChannel: orderChannel || "",
                    staffId: staffId || "",
+                   updatedAt: new Date().toISOString(),
                    products: prods });
         _commit(arr);
     }
