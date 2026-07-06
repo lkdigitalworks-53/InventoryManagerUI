@@ -61,17 +61,25 @@ QtObject {
 
     function syncFromFirebase() { _fetchFromFirebase() }
 
-    // Bulk upsert the in-memory feed. Newest-50 cap mirrors record(); a deleted
-    // older row simply stops being re-pushed (the collection self-trims on the
-    // next fresh-start cutover, and 50 stale rows are harmless).
-    function _pushAllToFirebase() {
-        var obj = {}
-        var src = entries || []
-        for (var i = 0; i < src.length; ++i)
-            obj[src[i].id] = src[i]
-        FirebaseService.put("activity_log", obj, function(ok) {
-            if (!ok) console.warn("[ActivityLog] Firestore bulk write failed",
+    // Single-entry persistence — replaces the old _pushAllToFirebase(), which
+    // rebuilt the whole 50-entry feed into one bulk :commit on every change.
+    // Harmless at 50 rows re: the 500-write cap, but still wasteful (up to 50x
+    // more writes than needed for a change that touched one or a few rows).
+    function _pushOneToFirebase(entry) {
+        FirebaseService.put("activity_log/" + entry.id, entry, function(ok) {
+            if (!ok) console.warn("[ActivityLog] Firestore write failed for", entry.id,
                                   FirebaseService.lastStatusCode, FirebaseService.lastError)
+        })
+    }
+
+    // Multi-entry persistence for mutations that genuinely touch several rows
+    // at once (markAllRead/dismissAll) — chunked via FirebaseService.putMany
+    // rather than an unbounded bulk :commit.
+    function _pushManyToFirebase(changedDocsById) {
+        var changedCount = Object.keys(changedDocsById).length
+        if (changedCount === 0) return
+        FirebaseService.putMany("activity_log", changedDocsById, function(ok, errorInfo) {
+            if (!ok) console.warn("[ActivityLog] putMany failed", JSON.stringify(errorInfo))
         })
     }
 
@@ -111,7 +119,7 @@ QtObject {
     // pass their uid here so those DO notify.
     function record(kind, title, subtitle, entityId, actorUid) {
         var arr = (entries || []).slice()
-        arr.unshift({
+        var newEntry = {
             id: "act-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
             kind: kind || "info",
             title: title || "",
@@ -121,28 +129,32 @@ QtObject {
             read: false,
             dismissed: false,
             actorUid: (actorUid !== undefined && actorUid !== null) ? actorUid : AuthStore.uid
-        })
+        }
+        arr.unshift(newEntry)
         if (arr.length > 50) arr = arr.slice(0, 50)
         entries = arr
         revision++
-        _pushAllToFirebase()
+        _pushOneToFirebase(newEntry)
     }
 
     function markAllRead() {
         if (unreadCount === 0) return
         var arr = []
+        var changedDocsById = {}
         for (var i = 0; i < entries.length; ++i) {
             var e = entries[i]
-            arr.push({
+            var updated = {
                 id: e.id, kind: e.kind, title: e.title,
                 subtitle: e.subtitle, entityId: e.entityId || "",
                 timestamp: e.timestamp, read: true,
                 dismissed: e.dismissed || false, actorUid: e.actorUid || ""
-            })
+            }
+            arr.push(updated)
+            if (!e.read) changedDocsById[e.id] = updated
         }
         entries = arr
         revision++
-        _pushAllToFirebase()
+        _pushManyToFirebase(changedDocsById)
     }
 
     // Hard wipe of ALL history. Used only on sign-out — the Notifications sheet
@@ -159,50 +171,52 @@ QtObject {
     function dismiss(id) {
         if (!id) return
         var arr = []
-        var changed = false
+        var changedEntry = null
         for (var i = 0; i < entries.length; ++i) {
             var e = entries[i]
             if (e.id === id && !e.dismissed) {
-                arr.push({
+                var updated = {
                     id: e.id, kind: e.kind, title: e.title,
                     subtitle: e.subtitle, entityId: e.entityId || "",
                     timestamp: e.timestamp, read: e.read, dismissed: true,
                     actorUid: e.actorUid || ""
-                })
-                changed = true
+                }
+                arr.push(updated)
+                changedEntry = updated
             } else {
                 arr.push(e)
             }
         }
-        if (!changed) return
+        if (!changedEntry) return
         entries = arr
         revision++
-        _pushAllToFirebase()
+        _pushOneToFirebase(changedEntry)
     }
 
     // "Clear all" in the Notifications sheet — hide every currently-visible
     // entry from the sheet while leaving history fully intact.
     function dismissAll() {
         var arr = []
-        var changed = false
+        var changedDocsById = {}
         for (var i = 0; i < entries.length; ++i) {
             var e = entries[i]
             if (!e.dismissed) {
-                arr.push({
+                var updated = {
                     id: e.id, kind: e.kind, title: e.title,
                     subtitle: e.subtitle, entityId: e.entityId || "",
                     timestamp: e.timestamp, read: e.read, dismissed: true,
                     actorUid: e.actorUid || ""
-                })
-                changed = true
+                }
+                arr.push(updated)
+                changedDocsById[e.id] = updated
             } else {
                 arr.push(e)
             }
         }
-        if (!changed) return
+        if (Object.keys(changedDocsById).length === 0) return
         entries = arr
         revision++
-        _pushAllToFirebase()
+        _pushManyToFirebase(changedDocsById)
     }
 
     // Friendly relative-time label for an ISO timestamp.

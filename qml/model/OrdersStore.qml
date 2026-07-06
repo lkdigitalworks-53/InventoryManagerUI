@@ -76,18 +76,6 @@ QtObject {
         });
     }
 
-    function _pushAllToFirebase() {
-        var obj = {};
-        for (var i = 0; i < orders.length; ++i)
-            obj[orders[i].orderId] = orders[i];
-        FirebaseService.put("orders", obj, function(ok) {
-            if (!ok)
-                console.warn("[OrdersStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[OrdersStore] Firestore bulk write ok, documents:", orders.length)
-        });
-    }
-
     function syncFromFirebase() { _fetchFromFirebase(); }
 
     function clear() {
@@ -302,11 +290,18 @@ QtObject {
         outOfStockCount = oos;
     }
 
-    function _commit(arr) {
+    // `changedOrder`, when provided, is the single order doc this mutation
+    // actually touched — persisted with one single-doc PUT instead of
+    // rebuilding the entire collection into one bulk :commit (which hard-fails
+    // past Firestore's 500-write-per-commit cap). Callers that legitimately
+    // touch several docs at once (approveAllPending) omit changedOrder here
+    // and persist via FirebaseService.putMany() themselves after calling this.
+    function _commit(arr, changedOrder) {
         orders = arr;
         revision++;
         _refreshCounts();
-        _pushAllToFirebase();
+        if (changedOrder)
+            _pushToFirebase(changedOrder);
     }
 
     function _clone() {
@@ -443,7 +438,7 @@ QtObject {
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         o.updatedAt = new Date().toISOString();
-        _commit(arr);
+        _commit(arr, o);
     }
 
     // Apply a return/exchange/modify adjustment: set the order's lines to the
@@ -485,16 +480,27 @@ QtObject {
         if (!Array.isArray(o.adjustments)) o.adjustments = [];
         o.adjustments.push(adjustmentRecord);
         o.updatedAt = new Date().toISOString();
-        _commit(arr);
+        _commit(arr, o);
     }
 
     function approveAllPending() {
         var arr = _clone();
+        var changedDocsById = {};
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].status === "pending")
+            if (arr[i].status === "pending") {
                 arr[i].status = "completed";
+                changedDocsById[arr[i].orderId] = arr[i];
+            }
         }
         _commit(arr);
+        var changedCount = Object.keys(changedDocsById).length;
+        if (changedCount === 0) return;
+        FirebaseService.putMany("orders", changedDocsById, function(ok, errorInfo) {
+            if (!ok)
+                console.warn("[OrdersStore] approveAllPending putMany failed", JSON.stringify(errorInfo));
+            else
+                console.log("[OrdersStore] approveAllPending putMany ok, documents:", changedCount);
+        });
     }
 
     // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
@@ -528,7 +534,7 @@ QtObject {
             }
         }
         var totals = computeOrderTotals(prods);
-        arr.push({ orderId: id, customer: customer,
+        var newOrder = { orderId: id, customer: customer,
                    items: prods.length > 0 ? totals.itemCount : items,
                    subtotal: totals.subtotal,
                    discount: totals.discount,
@@ -540,8 +546,9 @@ QtObject {
                    orderChannel: orderChannel || "",
                    staffId: staffId || "",
                    updatedAt: new Date().toISOString(),
-                   products: prods });
-        _commit(arr);
+                   products: prods };
+        arr.push(newOrder);
+        _commit(arr, newOrder);
     }
 
     function deleteOrder(orderId) {

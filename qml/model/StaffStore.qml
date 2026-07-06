@@ -136,11 +136,17 @@ QtObject {
         var id = nextStaffId();
         var iso = Qt.formatDate(joinDate, 'yyyy-MM-dd');
         var arr = _clone();
-        arr.push({ staffId: id, name: name, role: role, department: department,
-                   email: email, phone: phone, joinDate: iso, status: status, salary: salary });
+        var newStaff = { staffId: id, name: name, role: role, department: department,
+                   email: email, phone: phone, joinDate: iso, status: status, salary: salary };
+        arr.push(newStaff);
         staff = arr;
         lastAddedId = id;
-        _pushAllToFirebase();
+        // Single-doc PUT — matches updateStaff/setAppUid's already-correct
+        // pattern; avoids the bulk-collection-overwrite path that hard-fails
+        // once staff count crosses Firestore's 500-write-per-commit cap.
+        FirebaseService.put("staff/" + id, newStaff, function(ok) {
+            if (!ok) console.warn("[StaffStore] Firestore write failed for", id)
+        })
         _rebuildActivities();
         ActivityLog.record("staff_added",
                            "Teammate added: " + name,
@@ -246,18 +252,6 @@ QtObject {
             } else {
                 console.warn("[StaffStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
             }
-        });
-    }
-
-    function _pushAllToFirebase() {
-        var obj = {};
-        for (var i = 0; i < staff.length; ++i)
-            obj[staff[i].staffId] = staff[i];
-        FirebaseService.put("staff", obj, function(ok) {
-            if (!ok)
-                console.warn("[StaffStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[StaffStore] Firestore bulk write ok, documents:", staff.length)
         });
     }
 

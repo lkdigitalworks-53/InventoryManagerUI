@@ -246,20 +246,36 @@ QtObject {
         }
 
         if (p.isCollection) {
-            _request("GET", _collectionUrl(p.normalizedPath), null, function(ok, data) {
-                if (!ok) {
-                    if (callback) callback(false, null)
-                    return
-                }
-                var docs = (data && data.documents) ? data.documents : []
-                var arr = []
-                for (var i = 0; i < docs.length; ++i) {
-                    var decoded = _decodeDoc(docs[i])
-                    if (decoded !== null)
-                        arr.push(decoded)
-                }
-                if (callback) callback(true, arr)
-            })
+            var acc = []
+            var baseUrl = _collectionUrl(p.normalizedPath)
+            var fetchPage = function(pageToken) {
+                var url = baseUrl
+                if (pageToken)
+                    url += "?pageToken=" + encodeURIComponent(pageToken)
+                _request("GET", url, null, function(ok, data) {
+                    if (!ok) {
+                        if (callback) callback(false, null)
+                        return
+                    }
+                    var docs = (data && data.documents) ? data.documents : []
+                    for (var i = 0; i < docs.length; ++i) {
+                        var decoded = _decodeDoc(docs[i])
+                        if (decoded !== null)
+                            acc.push(decoded)
+                    }
+                    // Firestore's List-Documents endpoint paginates internally
+                    // once a collection crosses an internal response-size
+                    // threshold; a truncated first page previously returned
+                    // silently (no error, no warning) if nextPageToken wasn't
+                    // followed. Loop until it's absent.
+                    if (data && data.nextPageToken) {
+                        fetchPage(data.nextPageToken)
+                    } else {
+                        if (callback) callback(true, acc)
+                    }
+                })
+            }
+            fetchPage(null)
             return
         }
 
@@ -300,6 +316,57 @@ QtObject {
 
     function patch(path, data, callback) {
         put(path, data, callback)
+    }
+
+    // Bulk upsert of ONLY the docs the caller actually changed (not a
+    // collection-wide overwrite). Chunks into <=500-write commits since a
+    // single Firestore :commit is hard-capped at 500 writes — one unbounded
+    // commit would fail outright once a caller's changed-doc set crossed that
+    // line. Sequential, not parallel, to avoid a burst of concurrent commits
+    // against the same collection. callback(ok, errorInfo) where errorInfo is
+    // null on success or { failedAtChunk: index } on failure, so the caller
+    // can retry just the docs in that chunk instead of the whole batch.
+    function putMany(collectionPath, docsById, callback) {
+        var p = _splitPath(collectionPath)
+        if (!p.normalizedPath || !p.isCollection) {
+            if (callback) callback(false, { failedAtChunk: 0 })
+            return
+        }
+
+        var keys = Object.keys(docsById || {})
+        if (keys.length === 0) {
+            if (callback) callback(true, null)
+            return
+        }
+
+        var CHUNK_SIZE = 500
+        var chunks = []
+        for (var i = 0; i < keys.length; i += CHUNK_SIZE) {
+            var chunkKeys = keys.slice(i, i + CHUNK_SIZE)
+            var chunkData = {}
+            for (var j = 0; j < chunkKeys.length; ++j)
+                chunkData[chunkKeys[j]] = docsById[chunkKeys[j]]
+            chunks.push(chunkData)
+        }
+
+        var idx = 0
+        var runNext = function() {
+            if (idx >= chunks.length) {
+                if (callback) callback(true, null)
+                return
+            }
+            var writes = _buildCommitWrites(p.normalizedPath, chunks[idx])
+            _request("POST", databaseUrl + ":commit", { writes: writes }, function(ok) {
+                if (!ok) {
+                    console.warn("[Firestore] putMany chunk failed", collectionPath, "chunk:", idx)
+                    if (callback) callback(false, { failedAtChunk: idx })
+                    return
+                }
+                idx++
+                runNext()
+            })
+        }
+        runNext()
     }
 
     function remove(path, callback) {
