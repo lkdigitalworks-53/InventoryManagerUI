@@ -472,11 +472,9 @@ BottomSheet {
         for (var i = 0; i < OrdersStore.orders.length; ++i)
             existingById[OrdersStore.orders[i].orderId] = OrdersStore.orders[i]
 
-        var skuToProduct = {}
         var idToProduct = {}
         for (var ip = 0; ip < InventoryStore.products.length; ++ip) {
             var p = InventoryStore.products[ip]
-            if (p.sku) skuToProduct[p.sku.toLowerCase()] = p
             idToProduct[p.productId] = p
         }
 
@@ -536,17 +534,16 @@ BottomSheet {
                 var qty = parseInt(qtyRaw) || 0
 
                 // Empty continuation line
-                if (!pid && !sku && !hasQty) continue
+                if (!pid && !hasQty) continue
 
                 // HARD-REJECT LINE: has data but no identifier
-                if (!pid && !sku) {
+                if (!pid) {
                     unresolved.push("row " + lineRow + ": missing Product ID/SKU")
                     continue
                 }
 
                 var inv = null
                 if (pid && idToProduct[pid]) inv = idToProduct[pid]
-                else if (sku && skuToProduct[sku.toLowerCase()]) inv = skuToProduct[sku.toLowerCase()]
                 if (!inv) {
                     unresolved.push("row " + lineRow + ": " + (pid || sku || "(no id)"))
                     continue
