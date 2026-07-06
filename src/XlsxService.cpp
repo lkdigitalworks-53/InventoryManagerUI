@@ -230,7 +230,7 @@ void writeReadmeSheet(Document &doc, const QString &kind)
         const R rows[] = {
             {"Product ID",    "no",  "text",   "Empty → auto-generated as PRD-NNN. If filled, must be unique."},
             {"Name *",        "yes", "text",   "Minimum 2 characters."},
-            {"SKU *",         "yes", "text",   "Required unless Product ID is given. Used by the Orders sheet to reference products."},
+            {"SKU",           "no", "text",    "Empty → auto-generated. Used by the Orders sheet to reference products."},
             {"Category",      "no",  "text",   "Falls back to your last-used category. New values are added to the workspace list."},
             {"Unit *",        "yes", "text",   "e.g. Units (pcs), Kg, Litres. Defaults to 'Units (pcs)' if blank."},
             {"Description",   "no",  "text",   "Free text."},

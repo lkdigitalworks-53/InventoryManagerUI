@@ -370,7 +370,6 @@ BottomSheet {
             _readyRows = []
             return
         }
-
         if (mode === "products")
             _validateProductRows(rows)
         else
@@ -381,12 +380,10 @@ BottomSheet {
         var ready = []
         var issues = []
         var warns = []
-        var existingBySku = {}
         var existingById = {}
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var ep = InventoryStore.products[i]
             existingById[ep.productId] = ep
-            if (ep.sku) existingBySku[ep.sku.toLowerCase()] = ep
         }
 
         for (var k = 0; k < rows.length; ++k) {
@@ -394,12 +391,6 @@ BottomSheet {
             var row = k + 2
             var pid = (r["Product ID"] || "").toString().trim()
             var sku = (r["SKU"] || "").toString().trim()
-
-            // HARD-REJECT: both Product ID and SKU empty
-            if (!pid && !sku) {
-                issues.push({ row: row, message: "Missing identifier: need SKU or Product ID" })
-                continue
-            }
 
             var name = (r["Name"] || "").toString().trim()
             if (!name || name.length < 2) {
@@ -435,9 +426,14 @@ BottomSheet {
                 warns.push({ row: row, message: name + ": Unit defaulted to 'Units (pcs)'" })
             }
 
-            // DEFAULT+WARN: missing SKU but Product ID present
-            if (!sku && pid) {
+            // DEFAULT+WARN: missing SKU
+            if (!sku) {
                 warns.push({ row: row, message: name + ": SKU will be auto-generated" })
+            }
+
+            // DEFAULT+WARN: missing PID
+            if (!pid) {
+                warns.push({ row: row, message: name + ": PID will be auto-generated" })
             }
 
             // To-Do: There are no tax information getting exported.
@@ -460,7 +456,6 @@ BottomSheet {
             }
             var hit = null
             if (rec.productId && existingById[rec.productId]) hit = existingById[rec.productId]
-            else if (rec.sku && existingBySku[rec.sku.toLowerCase()]) hit = existingBySku[rec.sku.toLowerCase()]
             rec._conflictWith = hit ? (hit.productId + (hit.sku ? "/" + hit.sku : "")) : ""
             ready.push(rec)
         }
