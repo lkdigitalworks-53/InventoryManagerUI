@@ -156,6 +156,7 @@ QtObject {
         city = profileData.city || city
         country = profileData.country || country
         postalCode = profileData.postalCode || postalCode
+        tenantName = profileData. tenantName || tenantName
         saveSession()
     }
 }

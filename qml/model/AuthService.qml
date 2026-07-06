@@ -902,7 +902,7 @@ QtObject {
         })
     }
 
-    function updateUserProfile(phone, address, city, country, postalCode) {
+    function updateUserProfile(phone, address, city, country, postalCode, tenantName) {
         if (!AuthStore.isAuthenticated || !AuthStore.uid) {
             authFailed("Not authenticated")
             return
@@ -914,7 +914,8 @@ QtObject {
             city: city || AuthStore.city,
             country: country || AuthStore.country,
             postalCode: postalCode || AuthStore.postalCode,
-            lastUpdatedAt: new Date().toISOString()
+            lastUpdatedAt: new Date().toISOString(),
+            tenantName: tenantName
         }
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, existingUser) {
@@ -930,6 +931,7 @@ QtObject {
             updatedDoc.country = country || existingUser.country
             updatedDoc.postalCode = postalCode || existingUser.postalCode
             updatedDoc.lastUpdatedAt = new Date().toISOString()
+            updatedDoc.tenantName = tenantName
 
             FirebaseService.put("users/" + AuthStore.uid, updatedDoc, function(ok) {
                 if (!ok) {
@@ -938,6 +940,31 @@ QtObject {
                 }
                 AuthStore.updateProfile(profileUpdate)
                 profileUpdated()
+            })
+        })
+    }
+    function updateTenantName(tenantName) {
+        FirebaseService.get("tenants/" + AuthStore.tenantId, function(ok, tenantDoc) {
+            if (!ok) {
+                authFailed("Failed to get tenant info")
+                return
+            }
+            var doc = {
+                tenantId: tenantDoc.tenantId,
+                name: tenantName,
+                ownerId: tenantDoc.uid,
+                plan: tenantDoc.plan,
+                createdAt: tenantDoc.createdAt,
+                updatedAt: new Date().toISOString()
+            }
+            console.log(" =========== doc: ", JSON.stringify(doc))
+            FirebaseService.put("tenants/" + AuthStore.tenantId, doc, function(ok) {
+                if (!ok) {
+                    console.log(" =========== failed")
+                    authFailed("Failed to update tenant name")
+                    return
+                }
+                console.log(" =========== passed")
             })
         })
     }

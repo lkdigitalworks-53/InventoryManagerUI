@@ -35,12 +35,16 @@ BottomSheet {
 
     onPrimaryClicked: {
         if (!busy) {
+            if (AuthStore.tenantName !== workspaceName.text) {
+                AuthService.updateTenantName(workspaceName.text.trim())
+            }
             AuthService.updateUserProfile(
                 phoneField.text.trim(),
                 addressField.text.trim(),
                 cityField.text.trim(),
                 countryField.text.trim(),
-                postalField.text.trim()
+                postalField.text.trim(),
+                workspaceName.text.trim()
             )
         }
     }
@@ -115,12 +119,20 @@ BottomSheet {
                 RowLayout {
                     Layout.fillWidth: true
                     Text { text: "Workspace"; color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); Layout.preferredWidth: dp(96) }
-                    Text {
+                    QQC.TextField {
+                        id: workspaceName
                         text: AuthStore.tenantName || "(none)"
                         Layout.fillWidth: true
                         color: Constants.textPrimary
                         font.pixelSize: sp(Constants.fsBody)
-                        elide: Text.ElideRight
+                        enabled: AuthStore.role !== "staff"
+                        background: Rectangle {
+                            Layout.fillWidth: true
+                            color: Constants.subtleBg
+                            border.color: workspaceName.enabled ? Constants.borderColor : ""
+                            border.width: workspaceName.enabled ? 1 : 0
+                            radius: width/2
+                        }
                     }
                 }
                 // Build environment — only shown on non-production builds so a
