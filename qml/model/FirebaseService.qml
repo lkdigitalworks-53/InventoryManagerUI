@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick
 import "../helper/EnvConfig.js" as EnvConfig
+import "../helper/PagingHelper.js" as PagingHelper
 
 QtObject {
     id: root
@@ -86,6 +87,18 @@ QtObject {
 
     function _collectionUrl(collectionPath) {
         return databaseUrl + "/" + _encodePath(collectionPath)
+    }
+
+    // runQuery needs the collection split into its parent document path (or
+    // "" for a root-level collection) and the bare collectionId — Firestore's
+    // structured-query REST shape addresses "parent document + collectionId",
+    // not a flat collection path the way get()/put() do.
+    function _splitCollectionParent(normalizedPath) {
+        var idx = normalizedPath.lastIndexOf("/")
+        if (idx < 0)
+            return { parent: "", collectionId: normalizedPath }
+        return { parent: normalizedPath.substring(0, idx),
+                 collectionId: normalizedPath.substring(idx + 1) }
     }
 
     function _docUrl(docPath) {
@@ -285,6 +298,85 @@ QtObject {
                 return
             }
             if (callback) callback(true, _decodeDoc(data))
+        })
+    }
+
+    // Cursor-paginated read via Firestore's structured-query (:runQuery)
+    // endpoint — the mechanism that lets us load a bounded page instead of
+    // get()'s "fetch the whole collection" (which is what Phase 1 replaces
+    // for the six growing collections; get() itself stays correct for
+    // bounded/small collections and single documents).
+    //
+    // opts = { orderBy, direction ("ASCENDING"|"DESCENDING", default
+    //          ASCENDING), limit (default 50), startAfter (opaque cursor
+    //          value from a previous page's result, omit for the first page) }
+    //
+    // callback(ok, { items, nextCursor, hasMore }). nextCursor is null when
+    // hasMore is false, so a caller can't accidentally page past the end.
+    function query(path, opts, callback) {
+        var p = _splitPath(path)
+        if (!p.normalizedPath || !p.isCollection) {
+            if (callback) callback(false, null)
+            return
+        }
+
+        var split = _splitCollectionParent(p.normalizedPath)
+        var requestedLimit = (opts && opts.limit) ? opts.limit : 50
+        var orderByField = (opts && opts.orderBy) ? opts.orderBy : "__name__"
+        var direction = (opts && opts.direction) ? opts.direction : "ASCENDING"
+
+        var structuredQuery = {
+            from: [{ collectionId: split.collectionId }],
+            orderBy: [{ field: { fieldPath: orderByField }, direction: direction }],
+            // Over-fetch by one so PagingHelper can detect hasMore exactly at
+            // the page boundary instead of guessing from "got a full page".
+            limit: requestedLimit + 1
+        }
+        if (opts && opts.startAfter !== undefined && opts.startAfter !== null) {
+            // Firestore requires a __name__ cursor to be a referenceValue (the
+            // document's full resource path), not a plain string value — a
+            // stringValue cursor against __name__ is silently wrong/rejected.
+            var cursorValue = (orderByField === "__name__")
+                ? { referenceValue: opts.startAfter }
+                : _encodeValue(opts.startAfter)
+            structuredQuery.startAt = { values: [cursorValue], before: false }
+        }
+
+        var url = split.parent
+            ? (databaseUrl + "/" + _encodePath(split.parent) + ":runQuery")
+            : (databaseUrl + ":runQuery")
+
+        _request("POST", url, { structuredQuery: structuredQuery }, function(ok, data) {
+            if (!ok) {
+                if (callback) callback(false, null)
+                return
+            }
+            var rows = Array.isArray(data) ? data : []
+            var decoded = []
+            // Parallel to `decoded`, same indices — the raw orderBy-field
+            // value per row, kept OUT of the returned items. For "__name__"
+            // this is Firestore's full document resource path, which must
+            // never leak into an item: if that item is later edited and PUT
+            // back, "__name__" is a reserved field name and Firestore rejects
+            // writing it. For a real field it's just the decoded value again.
+            var rawCursorValues = []
+            for (var i = 0; i < rows.length; ++i) {
+                // Firestore may interleave rows with no `document` (progress
+                // heartbeats on a slow query) — skip those, only real results
+                // count toward the page.
+                if (rows[i] && rows[i].document) {
+                    var d = _decodeDoc(rows[i].document)
+                    if (d !== null) {
+                        decoded.push(d)
+                        rawCursorValues.push(orderByField === "__name__"
+                            ? rows[i].document.name
+                            : d[orderByField])
+                    }
+                }
+            }
+            var merged = PagingHelper.mergePage([], decoded, requestedLimit)
+            var cursor = merged.hasMore ? rawCursorValues[merged.items.length - 1] : null
+            if (callback) callback(true, { items: merged.items, nextCursor: cursor, hasMore: merged.hasMore })
         })
     }
 
