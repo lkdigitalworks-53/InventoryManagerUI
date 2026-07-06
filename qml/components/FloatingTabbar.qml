@@ -89,7 +89,7 @@ Item {
                             Layout.alignment: Qt.AlignHCenter
                             text: modelData.label
                             color: tab.isActive ? Constants.brand2 : Constants.textSecondary
-                            font.pixelSize: sp(11)
+                            font.pixelSize: sp(12)
                             font.bold: tab.isActive
                             horizontalAlignment: Text.AlignHCenter
                         }

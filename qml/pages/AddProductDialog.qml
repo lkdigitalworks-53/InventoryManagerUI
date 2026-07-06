@@ -73,6 +73,15 @@ BottomSheet {
         partyCombo.currentIndex = idx
     }
 
+    function getSellingPrice(sellingPriceText, costPriceText, isMarkupSelected) {
+        var v = parseFloat(sellingPriceText)
+        if (!isMarkupSelected) return v;
+
+        var c = parseFloat(costPriceText)
+        var sp = Math.round(((v * c) / 100) + c)
+        return sp
+    }
+
     onPrimaryClicked: trySubmit()
 
     ColumnLayout {
@@ -139,8 +148,10 @@ BottomSheet {
         }
 
         RowLayout {
+            id: priceRow
             Layout.fillWidth: true
             spacing: dp(Constants.space2)
+            property bool isMarkupSelected: false
 
             AuthTextField {
                 id: priceField
@@ -149,10 +160,21 @@ BottomSheet {
                 placeholderText: "0.00"
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
             }
+
+            SegmentedPill {
+                Layout.preferredWidth: dp(72)
+                Layout.alignment: Qt.AlignBottom
+                model: ["₹", "%"]
+                selected: priceRow.isMarkupSelected ? 1 : 0
+                onSegmentSelected: function(idx, label) {
+                    priceRow.isMarkupSelected = idx === 1 ? true : false
+                }
+            }
+
             AuthTextField {
                 id: sellingPriceField
                 Layout.fillWidth: true
-                label: "Price"
+                label: priceRow.isMarkupSelected ? "Markup %" : "₹ Price"
                 placeholderText: "0.00"
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
             }
@@ -160,10 +182,12 @@ BottomSheet {
 
         // Markup pill (live)
         Rectangle {
+            id: markupPill
             Layout.fillWidth: true
             radius: dp(12)
             color: Qt.rgba(0.06, 0.72, 0.51, 0.10)
             Layout.preferredHeight: dp(36)
+            visible: !priceRow.isMarkupSelected // Show markup information if flat price is selected
             Text {
                 anchors.centerIn: parent
                 color: Constants.success
@@ -174,6 +198,29 @@ BottomSheet {
                     var s = parseFloat(sellingPriceField.text)
                     if (isNaN(c) || isNaN(s) || c <= 0) return "Markup —"
                     return "Markup " + Math.round(((s - c) / c) * 100) + "%   ·   profit ₹" + (s - c).toFixed(2)
+                }
+            }
+        }
+
+        // Selling price pill (live)
+        Rectangle {
+            id: sellingPricePill
+            Layout.fillWidth: true
+            radius: dp(12)
+            color: Qt.rgba(0.06, 0.72, 0.51, 0.10)
+            Layout.preferredHeight: dp(36)
+            visible: priceRow.isMarkupSelected // Show price information if markup % is selected
+            Text {
+                anchors.centerIn: parent
+                color: Constants.success
+                font.pixelSize: sp(Constants.fsSmall)
+                font.bold: true
+                text: {
+                    var c = parseFloat(priceField.text)
+                    var m = parseFloat(sellingPriceField.text)
+                    if (isNaN(c) || isNaN(m) || c <= 0) return "Selling price —"
+                    var sp = Math.round(((m * c) / 100) + c)
+                    return "Selling price ₹" + sp + "   ·   profit ₹" + (sp - c).toFixed(2)
                 }
             }
         }
@@ -430,7 +477,7 @@ BottomSheet {
         if (categoryCombo.currentIndex < 0) errs.push("Select a category")
         var p = parseFloat(priceField.text)
         if (isNaN(p) || p < 0) errs.push("Enter a valid cost")
-        var sp = parseFloat(sellingPriceField.text)
+        var sp = getSellingPrice(sellingPriceField.text, priceField.text,  priceRow.isMarkupSelected)
         if (isNaN(sp) || sp <= 0) errs.push("Enter a valid price")
         if (!isNaN(p) && !isNaN(sp) && sp < p) errs.push("Price < cost")
         var s = parseInt(stockField.text)
