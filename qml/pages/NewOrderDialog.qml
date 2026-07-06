@@ -72,6 +72,10 @@ BottomSheet {
         var names = []
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
+
+            // HARD REJECT: Avoid showing products which has 0 stock.
+            if (!p.stock || p.stock <= 0) continue
+
             var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             var sku = p.sku ? "[" + p.sku + "] " : ""
             names.push(sku + p.name + " — " + InventoryStore.formatCurrency(sp)
