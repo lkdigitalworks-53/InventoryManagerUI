@@ -13,6 +13,14 @@ QtObject {
     // array is ever reordered or synced async between add and read.
     property string lastAddedId: ""
 
+    // Bounded collection (capped by realistic business size) — the UI needs
+    // the full set (department lists, dropdowns), so we page to exhaustion
+    // rather than exposing a partial list. Same pattern as InventoryStore.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
     function _daysAgoText(dateStr) {
         var d = new Date(dateStr)
         if (isNaN(d.getTime()))
@@ -237,23 +245,40 @@ QtObject {
     Component.onCompleted: _load()
 
     function _load() {
+        _resetAndFetch()
+    }
+
+    function _resetAndFetch() {
         staff = []
         activities = []
+        hasMore = true
+        _cursor = null
         _fetchFromFirebase()
     }
 
     function _fetchFromFirebase() {
-        FirebaseService.get("staff", function(ok, data) {
-            if (ok) {
-                var arr = FirebaseService.toArray(data);
-                staff = arr;
-                _rebuildActivities();
-                console.log("[StaffStore] Synced", arr.length, "staff from Firestore");
-            } else {
+        if (loadingMore) return
+        loadingMore = true
+        FirebaseService.query("staff", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false
+            if (!ok || !result) {
                 console.warn("[StaffStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return
             }
-        });
+            staff = staff.concat(result.items)
+            hasMore = result.hasMore
+            _cursor = result.nextCursor
+            _rebuildActivities()
+            if (hasMore) {
+                // Bounded collection: keep paging until Firestore reports no
+                // more pages, so `staff` ends up complete either way — just
+                // fetched in bounded chunks instead of one unbounded request.
+                _fetchFromFirebase()
+            } else {
+                console.log("[StaffStore] Synced", staff.length, "staff from Firestore (all pages)")
+            }
+        })
     }
 
-    function syncFromFirebase() { _fetchFromFirebase(); }
+    function syncFromFirebase() { _resetAndFetch() }
 }

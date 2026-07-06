@@ -78,9 +78,39 @@ implementation.
 |---|---|
 | Analytics approach | **On-demand server-side compute** (`computeAnalysis` Cloud Function), not persisted rollups. Reuses the existing `RealisedMath`/`BreakdownMath` logic (ported to Node) rather than introducing write-time aggregate maintenance. Rollups are a documented future upgrade if/when a full-ledger scan per view becomes slow — the client-facing contract doesn't change if that swap happens later. |
 | Pagination transport | Firestore's structured-query REST endpoint (`:runQuery`), not the List-Documents endpoint — needed for `orderBy` + cursor control that List-Documents doesn't give us. |
-| Bounded vs. unbounded collections | Inventory/staff/suppliers auto-page to exhaustion (UI needs the full set for search/dropdowns; realistic business size keeps this small). Orders/ledger reads only load a recent window; older data pages in on demand. |
+| Bounded vs. unbounded collections | **Revised (see §3.1) — all six stores auto-page to exhaustion in Phase 1.** Original plan was "orders/ledger keep a recent window, older data pages in on demand"; deeper audit found `OrdersStore`/`TransactionStore`/`StockBatchStore` are read directly by correctness-critical logic (FIFO consumption, Dashboard/KPI sums, import dedup, live Analysis) that assumes the complete set today. Windowing them now would silently miscompute, not just under-display. |
 | Shared math | **Ported, not literally shared** — `RealisedMath.js`/`BreakdownMath.js` use QML's `.pragma library` + `.import`, which isn't valid Node. Parity is enforced by shared JSON fixtures run against both the existing `tst_RealisedMath.qml`/`tst_BreakdownMath.qml` and new Node tests. |
 | Write-path fix scope | Exactly the 3 call sites in §2.2 — no broader rewrite. |
+| Firebase billing plan | **Blaze (pay-as-you-go), already active.** Cloud Functions, outbound network calls from functions, and other Blaze-only Firestore/Functions features are all available — nothing in this design or its future-work items is blocked on a billing upgrade. |
+
+### 3.1 Why the scope was revised (audit findings)
+
+Phase 1's original goal — get `FirebaseService.get()`'s truncation bug fixed everywhere — is
+unchanged. What changed is *how* the three growing collections get fixed. A deeper audit (prompted
+mid-implementation) of every consumer of `OrdersStore`, `TransactionStore`, and `StockBatchStore`
+found:
+
+- `StockBatchStore.batches` is scanned directly by `InventoryStore`'s FIFO/stock-value functions,
+  which filter for `qtyRemaining > 0` **after** iterating the whole array — an old, large batch that
+  hasn't sold through yet would silently vanish from stock value and FIFO consumption order if it
+  fell outside a "recent" window. Also consumed directly by `DataModel.qml`'s `consumeFifo` /
+  `topUpOldest` / `restoreFifo` (the actual stock-deduction logic) and `SalesPage.qml` (COGS/supplier
+  lineage).
+- `TransactionStore.entries` feeds directly into `SalesPage.qml`'s live RealisedMath scope (today,
+  not just after Phase 2) and its own direct full-array scans (`bucketsForFiltered`,
+  `lastSupplierFor`).
+- `OrdersStore.orders` is scanned in full by `SalesStore.qml`'s KPI derivation (Dashboard revenue/
+  order-count totals), `ImportPreviewDialog.qml`'s duplicate-detection map, `ProfilePage.qml`'s
+  per-staff order count, and `DashboardPage.qml`'s several KPI scans.
+
+None of these are display-only; they're correctness-critical aggregations that assume the complete
+local set right now. Splitting "what needs everything" from "what's just a display list" for these
+three stores is a real, separate architecture project (redesigning Dashboard KPIs, import dedup, and
+FIFO consumption to not require full local data) — out of scope here. **Decision: keep full local
+data for all six stores in Phase 1** (unchanged app behavior), and fix only the read/write
+*mechanics* so they don't fail or truncate as data grows. The genuine memory-bounded design — windowed
+lists in-app, all analytics computed server-side — remains the documented long-term direction (§10),
+now more clearly reachable given Blaze is active.
 
 ---
 
@@ -93,9 +123,10 @@ implementation.
    `mergePage(existingItems, newItems, limit) -> {items, hasMore}` and `cursorFrom(items,
    orderByField) -> value|null`. Centralizes cursor bookkeeping so it isn't copy-pasted per store.
 3. **Store changes (6 stores, §2.1 High priority list)** — each gains `hasMore`, `loadingMore`,
-   `loadMore()`. First load becomes "first page" instead of "everything." Bounded collections
-   auto-call `loadMore()` until `hasMore === false`. Unbounded ones (orders, ledger read models)
-   stop after the first page(s) and expose `loadMore()` for explicit pagination (scroll/"load more").
+   `loadMore()`. First load becomes "first page" instead of "everything," then auto-continues
+   calling `loadMore()` until `hasMore === false` — **all six**, per the §3.1 scope revision, so the
+   app's in-memory data ends up complete either way, just fetched in bounded chunks instead of one
+   unbounded request that silently truncates.
 4. **`FirebaseService.putMany(path, docsById, callback)`** — chunks `Object.keys(docsById)` into
    groups of ≤500, issues one `:commit` per chunk sequentially, reports which chunk failed (if any)
    rather than swallowing partial failure.
@@ -299,11 +330,17 @@ computeAnalysis({
     so nothing silently truncates while Phase 1 is being built. Small, non-breaking, no store
     changes required.
 - **Phase 1:** `FirebaseService.query()` + `PagingHelper.js` + `loadMore()` wiring across all six
-  stores in §2.1. Bounded collections (inventory/staff/suppliers) auto-page to exhaustion; unbounded
-  ones (orders, transactions, stock_batches) keep a recent window with on-demand older pages.
+  stores in §2.1. **All six auto-page to exhaustion** (see §3.1) — full local data, same app
+  behavior as before, just fetched in bounded chunks instead of one unbounded request that silently
+  truncates. No "recent window" truncation for any store in this phase.
 - **Phase 2:** `computeAnalysis` + `AnalysisService.qml`; cut `SalesPage` over from local
   `RealisedMath`/`BreakdownMath` scans to the compute endpoint; ship the shared-fixture parity
   tests alongside it.
+- **Phase 3 (future, not scheduled):** the genuine memory-bounded redesign — `OrdersStore` /
+  `TransactionStore` / `StockBatchStore` move to real windowed loading in-app, with Dashboard KPIs,
+  import dedup, and FIFO consumption redesigned to not require the full local set (targeted queries
+  or server-side logic instead). Blaze is already active, so nothing here is blocked on billing —
+  this is purely an engineering-scope decision for later.
 
 Each phase is independently shippable and testable — same P0-then-fast-follow convention this repo
 already established.
@@ -312,6 +349,9 @@ already established.
 
 ## 10. Out of Scope
 
+- **The Phase 3 redesign described above** — deferred, not because of any technical blocker, but
+  because it touches Dashboard KPIs, import dedup, and FIFO consumption simultaneously and deserves
+  its own dedicated spec rather than being folded into this one.
 - Persisted rollup/aggregate documents (§3 — documented future upgrade, not built now; the
   `computeAnalysis` contract is designed so this swap wouldn't change the client side at all).
 - Migrating `orders`/`staff`/`suppliers` writes onto the `Gateway`/ledger pattern — that's the P0
