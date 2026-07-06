@@ -127,7 +127,7 @@ Rectangle {
             // Constants.space4 == 16; outer ColumnLayout uses anchors.margins
             // of dp(space4) on each side, so subtract 32dp of card width.
             readonly property real _maxW: root.width - dp(32)
-            Layout.preferredWidth: Math.min(trendTxt.implicitWidth + dp(16), _maxW)
+            Layout.preferredWidth: Math.min(trendTxt.implicitWidth + dp(20), _maxW)
             Layout.maximumWidth: _maxW
             clip: true
             Text {

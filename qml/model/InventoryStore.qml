@@ -414,11 +414,9 @@ QtObject {
 
         var arr = _clone();
         var byId = {};
-        var bySku = {};
         var updatedProducts = []
         for (var i = 0; i < arr.length; ++i) {
             byId[arr[i].productId] = i;
-            if (arr[i].sku) bySku[arr[i].sku.toLowerCase()] = i;
         }
 
         for (var k = 0; k < records.length; ++k) {
@@ -429,8 +427,6 @@ QtObject {
             var existingIdx = -1;
             if (r.productId && byId[r.productId] !== undefined)
                 existingIdx = byId[r.productId];
-            else if (r.sku && bySku[r.sku.toLowerCase()] !== undefined)
-                existingIdx = bySku[r.sku.toLowerCase()];
 
             if (existingIdx >= 0) {
                 if (policy === "skip") { counts.skipped++; continue; }
@@ -441,7 +437,6 @@ QtObject {
                     var renamedDoc = _normalizeRecord(r);
                     arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
-                    if (r.sku) bySku[r.sku.toLowerCase()] = arr.length - 1;
                     Gateway.recordMutation("inventory", renamedDoc.productId, "create", null, renamedDoc);
                     _bookImportedProduct(renamedDoc);
                     counts.added++;
@@ -475,10 +470,14 @@ QtObject {
                     products = arr;
                     r.productId = nextProductId();
                 }
+                if (!r.sku || r.sku.length === 0) {
+                    // Generate SKU if empty, for a new row
+                    r.sku = generateSku(r.name);
+                }
+
                 var doc = _normalizeRecord(r);
                 arr.push(doc);
                 byId[doc.productId] = arr.length - 1;
-                if (doc.sku) bySku[doc.sku.toLowerCase()] = arr.length - 1;
                 Gateway.recordMutation("inventory", doc.productId, "create", null, doc);
                 _bookImportedProduct(doc);
                 counts.added++;

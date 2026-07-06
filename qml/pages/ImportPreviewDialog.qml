@@ -370,7 +370,6 @@ BottomSheet {
             _readyRows = []
             return
         }
-
         if (mode === "products")
             _validateProductRows(rows)
         else
@@ -381,12 +380,10 @@ BottomSheet {
         var ready = []
         var issues = []
         var warns = []
-        var existingBySku = {}
         var existingById = {}
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var ep = InventoryStore.products[i]
             existingById[ep.productId] = ep
-            if (ep.sku) existingBySku[ep.sku.toLowerCase()] = ep
         }
 
         for (var k = 0; k < rows.length; ++k) {
@@ -394,12 +391,6 @@ BottomSheet {
             var row = k + 2
             var pid = (r["Product ID"] || "").toString().trim()
             var sku = (r["SKU"] || "").toString().trim()
-
-            // HARD-REJECT: both Product ID and SKU empty
-            if (!pid && !sku) {
-                issues.push({ row: row, message: "Missing identifier: need SKU or Product ID" })
-                continue
-            }
 
             var name = (r["Name"] || "").toString().trim()
             if (!name || name.length < 2) {
@@ -411,7 +402,7 @@ BottomSheet {
             var sell = parseFloat(sellRaw)
             if (isNaN(sell) || sell <= 0) {
                 issues.push({ row: row, message: "Invalid or missing Selling Price (got '" + sellRaw + "')" })
-                continue
+                sell = 0
             }
 
             // HARD-REJECT: missing Cost Price
@@ -419,13 +410,12 @@ BottomSheet {
             var cost = parseFloat(costRaw)
             if (isNaN(cost)) {
                 issues.push({ row: row, message: "Missing Cost Price (required for value/profit reports)" })
-                continue
+                cost = 0
             }
             if (cost < 0) cost = 0
 
             if (sell < cost) {
                 issues.push({ row: row, message: "Selling Price < Cost Price" })
-                continue
             }
 
             // DEFAULT+WARN: missing Unit
@@ -435,9 +425,14 @@ BottomSheet {
                 warns.push({ row: row, message: name + ": Unit defaulted to 'Units (pcs)'" })
             }
 
-            // DEFAULT+WARN: missing SKU but Product ID present
-            if (!sku && pid) {
+            // DEFAULT+WARN: missing SKU
+            if (!sku) {
                 warns.push({ row: row, message: name + ": SKU will be auto-generated" })
+            }
+
+            // DEFAULT+WARN: missing PID
+            if (!pid) {
+                warns.push({ row: row, message: name + ": PID will be auto-generated" })
             }
 
             // To-Do: There are no tax information getting exported.
@@ -460,7 +455,6 @@ BottomSheet {
             }
             var hit = null
             if (rec.productId && existingById[rec.productId]) hit = existingById[rec.productId]
-            else if (rec.sku && existingBySku[rec.sku.toLowerCase()]) hit = existingBySku[rec.sku.toLowerCase()]
             rec._conflictWith = hit ? (hit.productId + (hit.sku ? "/" + hit.sku : "")) : ""
             ready.push(rec)
         }
@@ -477,11 +471,9 @@ BottomSheet {
         for (var i = 0; i < OrdersStore.orders.length; ++i)
             existingById[OrdersStore.orders[i].orderId] = OrdersStore.orders[i]
 
-        var skuToProduct = {}
         var idToProduct = {}
         for (var ip = 0; ip < InventoryStore.products.length; ++ip) {
             var p = InventoryStore.products[ip]
-            if (p.sku) skuToProduct[p.sku.toLowerCase()] = p
             idToProduct[p.productId] = p
         }
 
@@ -541,17 +533,16 @@ BottomSheet {
                 var qty = parseInt(qtyRaw) || 0
 
                 // Empty continuation line
-                if (!pid && !sku && !hasQty) continue
+                if (!pid && !hasQty) continue
 
                 // HARD-REJECT LINE: has data but no identifier
-                if (!pid && !sku) {
+                if (!pid) {
                     unresolved.push("row " + lineRow + ": missing Product ID/SKU")
                     continue
                 }
 
                 var inv = null
                 if (pid && idToProduct[pid]) inv = idToProduct[pid]
-                else if (sku && skuToProduct[sku.toLowerCase()]) inv = skuToProduct[sku.toLowerCase()]
                 if (!inv) {
                     unresolved.push("row " + lineRow + ": " + (pid || sku || "(no id)"))
                     continue
