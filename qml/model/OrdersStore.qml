@@ -40,7 +40,7 @@ QtObject {
                     if (!o.customer) o.customer = "";
                     if (o.items === undefined) o.items = 0;
                     if (o.total === undefined) o.total = 0;
-                    if (!o.status) o.status = "pending";
+                    if (!o.status) { console.error(" ======== status is not present"); o.status = "pending";}
                     if (!o.date) o.date = o.created_at || "";
                     if (!o.notes) o.notes = "";
                     if (!o.email) o.email = "";

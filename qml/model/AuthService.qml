@@ -8,6 +8,7 @@ QtObject {
     readonly property string authBaseUrl: "https://identitytoolkit.googleapis.com/v1"
     readonly property string tokenBaseUrl: "https://securetoken.googleapis.com/v1"
 
+    property bool isOnline: false
     property bool busy: false
     property bool membersBusy: false
     property bool tenantCreateBusy: false
@@ -30,7 +31,13 @@ QtObject {
     signal profileUpdated()
     signal passwordResetSent(string email)
 
-    Component.onCompleted: {
+    onIsOnlineChanged: {
+        if (isOnline && !AuthStore.isAuthenticated) {
+            init()
+        }
+    }
+
+    function init() {
         AuthStore.loadSession()
         if (AuthStore.isAuthenticated) {
             profileResolved = false
@@ -40,6 +47,10 @@ QtObject {
             refreshIdToken()
         else
             profileResolved = true
+    }
+
+    Component.onCompleted: {
+        init()
     }
 
     function _parseErrorReason() {
@@ -232,6 +243,8 @@ QtObject {
             onboardingRequired()
             return
         }
+
+        if (!isOnline) return
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, data) {
             if (!ok || !data) {
@@ -902,7 +915,7 @@ QtObject {
         })
     }
 
-    function updateUserProfile(phone, address, city, country, postalCode) {
+    function updateUserProfile(phone, address, city, country, postalCode, tenantName) {
         if (!AuthStore.isAuthenticated || !AuthStore.uid) {
             authFailed("Not authenticated")
             return
@@ -914,7 +927,8 @@ QtObject {
             city: city || AuthStore.city,
             country: country || AuthStore.country,
             postalCode: postalCode || AuthStore.postalCode,
-            lastUpdatedAt: new Date().toISOString()
+            lastUpdatedAt: new Date().toISOString(),
+            tenantName: tenantName
         }
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, existingUser) {
@@ -930,6 +944,7 @@ QtObject {
             updatedDoc.country = country || existingUser.country
             updatedDoc.postalCode = postalCode || existingUser.postalCode
             updatedDoc.lastUpdatedAt = new Date().toISOString()
+            updatedDoc.tenantName = tenantName
 
             FirebaseService.put("users/" + AuthStore.uid, updatedDoc, function(ok) {
                 if (!ok) {
@@ -938,6 +953,28 @@ QtObject {
                 }
                 AuthStore.updateProfile(profileUpdate)
                 profileUpdated()
+            })
+        })
+    }
+    function updateTenantName(tenantName) {
+        FirebaseService.get("tenants/" + AuthStore.tenantId, function(ok, tenantDoc) {
+            if (!ok) {
+                authFailed("Failed to get tenant info")
+                return
+            }
+            var doc = {
+                tenantId: tenantDoc.tenantId,
+                name: tenantName,
+                ownerId: tenantDoc.uid,
+                plan: tenantDoc.plan,
+                createdAt: tenantDoc.createdAt,
+                updatedAt: new Date().toISOString()
+            }
+            FirebaseService.put("tenants/" + AuthStore.tenantId, doc, function(ok) {
+                if (!ok) {
+                    authFailed("Failed to update tenant name")
+                    return
+                }
             })
         })
     }

@@ -38,6 +38,11 @@ App {
         AuthService.ensureFreshToken()
     }
 
+    onIsOnlineChanged: {
+        AuthService.isOnline = isOnline
+        successMessage = isOnline ? qsTr("Back online!") : qsTr("Internet is not available. Do not perform any action.")
+    }
+
     // ── Android hardware/keyboard Back router ───────────────────────────────
     // Single source of truth for Back behavior; mirrors the on-screen back
     // button. Closes the top-most transient layer first. If a dialog id is
@@ -371,6 +376,8 @@ App {
     Navigation {
         id: navigation
         visible: AuthStore.isAuthenticated && AuthStore.tenantId.length > 0
+        enabled: isOnline
+
         // No built-in tabs — our FloatingTabbar is the only nav UI. Felgo's
         // TabControl tabs were stacking under the floating pill.
         navigationMode: navigationModeNone

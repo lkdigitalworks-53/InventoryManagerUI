@@ -85,6 +85,7 @@ QtObject {
 
     function loadSession() {
         clear()
+        _settings.sessionJson = _settings.value("current_session")
         if (_settings.sessionJson && _settings.sessionJson.length > 2) {
             try {
                 var s = JSON.parse(_settings.sessionJson)
@@ -112,12 +113,10 @@ QtObject {
     }
 
     function saveSession() {
-        _settings.sessionJson = JSON.stringify({
+        var json_str = JSON.stringify({
             uid: uid,
             email: email,
             displayName: displayName,
-            photoUrl: photoUrl,
-            idToken: idToken,
             refreshToken: refreshToken,
             expiresAtEpochSec: expiresAtEpochSec,
             tenantId: tenantId,
@@ -127,8 +126,12 @@ QtObject {
             address: address,
             city: city,
             country: country,
-            postalCode: postalCode
+            postalCode: postalCode,
+            photoUrl: photoUrl,
+            idToken: idToken
         })
+        _settings.sessionJson = json_str
+        _settings.setValue("current_session", json_str)
     }
 
     function applyAuth(auth) {
@@ -156,6 +159,7 @@ QtObject {
         city = profileData.city || city
         country = profileData.country || country
         postalCode = profileData.postalCode || postalCode
+        tenantName = profileData. tenantName || tenantName
         saveSession()
     }
 }

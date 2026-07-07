@@ -200,7 +200,6 @@ Item {
                         spacing: 0
 
                         SettingsRow { iconName: "profile"; label: "Edit profile";       onClicked: root.editProfileRequested() }
-                        SettingsRow { iconName: "workspace"; label: "Workspace settings"; onClicked: root.editProfileRequested(); visible: AuthStore.role !== "staff" }
                         SettingsRow { iconName: "team"; label: "Team members";  onClicked: root.manageMembersRequested(); visible: AuthStore.canInviteMembers }
                         SettingsRow { iconName: "security"; label: "Security & passkeys" }
                         SettingsRow { iconName: "bell"; label: "Notifications";       last: true }
