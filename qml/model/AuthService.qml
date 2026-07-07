@@ -32,8 +32,12 @@ QtObject {
     signal passwordResetSent(string email)
 
     onIsOnlineChanged: {
-        if (isOnline && !AuthStore.isAuthenticated) {
-            init()
+        if (isOnline) {
+            if (!AuthStore.isAuthenticated) {
+                init()
+            } else if (profileResolved) {
+                _loadUserProfile()
+            }
         }
     }
 
@@ -244,7 +248,7 @@ QtObject {
             return
         }
 
-        if (!isOnline) return
+        if (!isOnline) { profileResolved = true; return; }
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, data) {
             if (!ok || !data) {
