@@ -27,26 +27,32 @@ commit only after explicit confirmation; push only after a push token is provide
 | Phase 1 — `OrdersStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
 | Phase 1 — `TransactionStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
 | Phase 1 — `StockBatchStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
-| Phase 2 — `computeAnalysis` Cloud Function + `AnalysisService.qml` | ⬜ Not started | — | — |
+| Phase 2 — `computeAnalysis` Cloud Function + `AnalysisService.qml` | ✅ Done, pending review + commit + push | `feature/paginated-reads-phase1` (continuing here for now) | — |
+
+### Phase 2 sub-tasks (detail) — all complete
+
+| Sub-task | Status |
+|---|---|
+| `functions/lib/{orderMath,realisedMath,breakdownMath}.js` — Node ports | ✅ Done, smoke-tested |
+| Shared parity fixtures + tests (RealisedMath: 5/5 pass, BreakdownMath: 2/2 pass) + paired QML mirrors | ✅ Done (QML side needs a real qmltestrunner run to fully confirm -- can't run that in this container) |
+| `functions/index.js` — `scopedDb(env)` + per-request `db` across all 4 handlers | ✅ Done, syntax-checked |
+| `functions/index.js` — `computeAnalysis` handler | ✅ Done, syntax-checked, pipeline logic smoke-tested end-to-end |
+| `Gateway.qml` — `env` injected into all 3 outgoing bodies | ✅ Done |
+| `AnalysisService.qml` + `qmldir` registration | ✅ Done -- **not yet wired into SalesPage.qml**, that cutover is a separate later step as agreed |
+| `functions/package.json` — added `npm test` script (`node --test`) | ✅ Done, verified working (9/9 pass) |
+
+**What's verified vs. not, honestly:**
+- Verified in this container: all pure math logic (Node ports + parity vs. known-correct QML test values), the full computeAnalysis aggregation pipeline (mocked data, no real Firestore), syntax of all changed files.
+- NOT verified here (needs your machine / real deploy): the QML parity test files under `qmltestrunner`, actual Firestore reads (`readAllPaged`/`scopedDb`/`deriveContext` against a real or emulated database), and the full HTTP request/response path end-to-end.
 
 ---
 
 ## Next action
 
-Phase 1 is now functionally complete for all 6 stores (pending review + commit + push of the last
-three). Next real milestone is **Phase 2**: `functions/computeAnalysis.js` + `functions/lib/
-realisedMath.js` + `functions/lib/breakdownMath.js` (ported math, parity via shared JSON fixtures)
-+ `AnalysisService.qml`, then cutting `SalesPage.qml` over from local `RealisedMath`/`BreakdownMath`
-scans to the compute endpoint. See design spec SS6.5 for the exact `computeAnalysis` contract.
-
-**Watch for while implementing Phase 2:**
-- `functions/` directory may not exist yet in this repo — check before assuming a Cloud Functions
-  project is already scaffolded (`firebase init functions` territory if not).
-- Env-awareness is a hard requirement from the start (see spec SS6.5) — don't let this repeat the
-  gap Skill 30 already flags for `recordMutation`'s write side.
-- Shared-fixture parity: extract the fixtures already embedded in `tst_RealisedMath.qml`/
-  `tst_BreakdownMath.qml` into standalone JSON files consumed by both those tests and new Node tests
-  — don't hand-duplicate fixture data.
+Review the full diff, then commit + push (branch `feature/paginated-reads-phase1`, continuing there --
+consider whether Phase 2 deserves its own branch before merging, since it's a distinct unit from
+Phase 1's pagination work). After that, remaining work is the deliberately-deferred SalesPage.qml
+cutover to AnalysisService, whenever that's next taken up.
 
 ---
 
