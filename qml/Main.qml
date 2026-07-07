@@ -35,6 +35,7 @@ App {
 
     // app initialization
     Component.onCompleted: {
+        AuthService.isOnline = isOnline
         AuthService.ensureFreshToken()
     }
 
