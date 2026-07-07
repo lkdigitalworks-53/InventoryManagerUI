@@ -18,26 +18,61 @@ QtObject {
     property var entries: []
     property int revision: 0
 
-    Component.onCompleted: _fetchFromFirebase()
+    // Bounded-for-now collection (per design spec SS3.1 — full local data is
+    // kept, since RealisedMath/BreakdownMath on the live Analysis page read
+    // this array directly today, not just after Phase 2's server-side
+    // compute lands). Fetches happen in <=_pageSize chunks via
+    // FirebaseService.query() instead of one unbounded FirebaseService.get().
+    // Ordered by __name__, not `timestamp` -- the existing sort's
+    // "(b.timestamp || \"\")" fallback is evidence some entries lack it, and
+    // Firestore's orderBy silently EXCLUDES documents missing the ordered
+    // field from query results. The final in-memory sort below (by
+    // timestamp descending) restores display order regardless of fetch
+    // order, so this doesn't change what the UI shows.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
+    Component.onCompleted: _resetAndFetch()
+
+    function _resetAndFetch() {
+        entries = []
+        hasMore = true
+        _cursor = null
+        _fetchFromFirebase()
+    }
 
     function _fetchFromFirebase() {
-        FirebaseService.get("transactions", function(ok, data) {
-            if (!ok) {
+        if (loadingMore) return
+        loadingMore = true
+        FirebaseService.query("transactions", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false
+            if (!ok || !result) {
                 console.warn("[TransactionStore] Firestore sync failed",
                              FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return
             }
-            var arr = FirebaseService.toArray(data)
+            var arr = entries.concat(result.items)
             arr.sort(function(a, b) {
                 return (b.timestamp || "").localeCompare(a.timestamp || "")
             })
             entries = arr
             revision++
-            console.log("[TransactionStore] Synced", arr.length, "transactions")
+            hasMore = result.hasMore
+            _cursor = result.nextCursor
+            if (hasMore) {
+                // Keep paging until Firestore reports no more pages, so
+                // `entries` ends up complete either way -- just fetched in
+                // bounded chunks instead of one unbounded request.
+                _fetchFromFirebase()
+            } else {
+                console.log("[TransactionStore] Synced", entries.length, "transactions (all pages)")
+            }
         })
     }
 
-    function syncFromFirebase() { _fetchFromFirebase() }
+    function syncFromFirebase() { _resetAndFetch() }
 
     // Drop in-memory state. Used on sign-out so the next user never briefly
     // sees the previous account's transactions before the next sync lands.

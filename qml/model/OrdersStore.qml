@@ -9,6 +9,19 @@ QtObject {
     property var orders: []
     property bool autoApproveEnabled: false
 
+    // Bounded-for-now collection (per design spec SS3.1 — full local data is
+    // kept, same app behavior as before, since Dashboard KPIs, import dedup,
+    // and analysis all currently assume the complete set). Fetches happen in
+    // <=_pageSize chunks via FirebaseService.query() instead of one unbounded
+    // FirebaseService.get(). Ordered by __name__, not `date` -- some legacy
+    // orders predate that field entirely (see the "!o.date" fallback below),
+    // and Firestore's orderBy silently EXCLUDES documents missing the
+    // ordered field from query results.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
     property Settings _settings: Settings {
         category: "OrdersStore"
         property bool autoApprove: false
@@ -24,45 +37,66 @@ QtObject {
     }
 
     function _load() {
-        orders = []
+        _resetAndFetch()
+    }
+
+    function _resetAndFetch() {
+        orders = [];
+        hasMore = true;
+        _cursor = null;
         _refreshCounts();
         _fetchFromFirebase();
     }
 
+    function _normalizeOrders(arr) {
+        // Normalize backend field names to local schema
+        for (var i = 0; i < arr.length; ++i) {
+            var o = arr[i];
+            if (o.order_id && !o.orderId) o.orderId = o.order_id;
+            if (!o.customer) o.customer = "";
+            if (o.items === undefined) o.items = 0;
+            if (o.total === undefined) o.total = 0;
+            if (!o.status) o.status = "pending";
+            if (!o.date) o.date = o.created_at || "";
+            if (!o.notes) o.notes = "";
+            if (!o.email) o.email = "";
+            if (!o.phone) o.phone = "";
+            if (!o.products) o.products = [];
+            if (o.subtotal === undefined || o.subtotal === null) o.subtotal = 0;
+            if (o.tax === undefined || o.tax === null) o.tax = 0;
+            if (o.discount === undefined || o.discount === null) o.discount = 0;
+            if (!o.taxBreakdown) o.taxBreakdown = [];
+            // Channel + staff are added by the new build going
+            // forward; legacy docs default to empty so analytics
+            // surface them under "(unspecified)".
+            if (!o.orderChannel) o.orderChannel = "";
+            if (!o.staffId) o.staffId = "";
+            if (!Array.isArray(o.adjustments)) o.adjustments = [];
+        }
+        return arr;
+    }
+
     function _fetchFromFirebase() {
-        FirebaseService.get("orders", function(ok, data) {
-            if (ok) {
-                var arr = FirebaseService.toArray(data);
-                // Normalize backend field names to local schema
-                for (var i = 0; i < arr.length; ++i) {
-                    var o = arr[i];
-                    if (o.order_id && !o.orderId) o.orderId = o.order_id;
-                    if (!o.customer) o.customer = "";
-                    if (o.items === undefined) o.items = 0;
-                    if (o.total === undefined) o.total = 0;
-                    if (!o.status) { console.error(" ======== status is not present"); o.status = "pending";}
-                    if (!o.date) o.date = o.created_at || "";
-                    if (!o.notes) o.notes = "";
-                    if (!o.email) o.email = "";
-                    if (!o.phone) o.phone = "";
-                    if (!o.products) o.products = [];
-                    if (o.subtotal === undefined || o.subtotal === null) o.subtotal = 0;
-                    if (o.tax === undefined || o.tax === null) o.tax = 0;
-                    if (o.discount === undefined || o.discount === null) o.discount = 0;
-                    if (!o.taxBreakdown) o.taxBreakdown = [];
-                    // Channel + staff are added by the new build going
-                    // forward; legacy docs default to empty so analytics
-                    // surface them under "(unspecified)".
-                    if (!o.orderChannel) o.orderChannel = "";
-                    if (!o.staffId) o.staffId = "";
-                    if (!Array.isArray(o.adjustments)) o.adjustments = [];
-                }
-                orders = arr;
-                revision++;
-                _refreshCounts();
-                console.log("[OrdersStore] Synced", arr.length, "orders from Firestore");
-            } else {
+        if (loadingMore) return;
+        loadingMore = true;
+        FirebaseService.query("orders", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false;
+            if (!ok || !result) {
                 console.warn("[OrdersStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return;
+            }
+            orders = orders.concat(_normalizeOrders(result.items));
+            revision++;
+            _refreshCounts();
+            hasMore = result.hasMore;
+            _cursor = result.nextCursor;
+            if (hasMore) {
+                // Keep paging until Firestore reports no more pages, so
+                // `orders` ends up complete either way -- just fetched in
+                // bounded chunks instead of one unbounded request.
+                _fetchFromFirebase();
+            } else {
+                console.log("[OrdersStore] Synced", orders.length, "orders from Firestore (all pages)");
             }
         });
     }
@@ -76,7 +110,7 @@ QtObject {
         });
     }
 
-    function syncFromFirebase() { _fetchFromFirebase(); }
+    function syncFromFirebase() { _resetAndFetch(); }
 
     function clear() {
         orders = []

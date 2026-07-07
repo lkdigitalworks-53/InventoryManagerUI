@@ -21,34 +21,32 @@ commit only after explicit confirmation; push only after a push token is provide
 | Phase 0 — write-path fix (3 call sites) + read stopgap | ✅ Done, pushed | `fix/write-path-bulk-overwrite` | `32af145` |
 | Phase 1 — `PagingHelper.js` + `FirebaseService.query()` | ✅ Done, pushed | `feature/paginated-reads-phase1` | `66ce94b` |
 | Phase 1 — `InventoryStore` pilot | ✅ Done, pushed | `feature/paginated-reads-phase1` | `66ce94b` |
-| Phase 1 — `StaffStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
-| Phase 1 — `SupplierStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
-| **Scope revision** (§3.1 of spec): all 6 stores auto-page to exhaustion, not a recent-window split | ✅ Decided + spec updated | `feature/paginated-reads-phase1` | — (spec edit not yet committed) |
-| Phase 1 — `OrdersStore` | ⬜ Not started | — | — |
-| Phase 1 — `TransactionStore` | ⬜ Not started | — | — |
-| Phase 1 — `StockBatchStore` | ⬜ Not started | — | — |
+| Phase 1 — `StaffStore` | ✅ Done, committed (not yet pushed) | `feature/paginated-reads-phase1` | `8ef5887` |
+| Phase 1 — `SupplierStore` | ✅ Done, committed (not yet pushed) | `feature/paginated-reads-phase1` | `8ef5887` |
+| **Scope revision** (§3.1 of spec): all 6 stores auto-page to exhaustion, not a recent-window split | ✅ Decided + spec updated, committed | `feature/paginated-reads-phase1` | `8ef5887` |
+| Phase 1 — `OrdersStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
+| Phase 1 — `TransactionStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
+| Phase 1 — `StockBatchStore` | ✅ Done, **not yet committed** | `feature/paginated-reads-phase1` | — |
 | Phase 2 — `computeAnalysis` Cloud Function + `AnalysisService.qml` | ⬜ Not started | — | — |
 
 ---
 
 ## Next action
 
-Implement pagination for `OrdersStore`, `TransactionStore`, `StockBatchStore` — same pattern as
-`InventoryStore`/`StaffStore`/`SupplierStore` (auto-page-to-exhaustion via `FirebaseService.query()`,
-default `__name__` ordering unless a field is provably present on every existing doc). Then show the
-combined diff for review, commit, and push (with a fresh token if the session has changed).
+Phase 1 is now functionally complete for all 6 stores (pending review + commit + push of the last
+three). Next real milestone is **Phase 2**: `functions/computeAnalysis.js` + `functions/lib/
+realisedMath.js` + `functions/lib/breakdownMath.js` (ported math, parity via shared JSON fixtures)
++ `AnalysisService.qml`, then cutting `SalesPage.qml` over from local `RealisedMath`/`BreakdownMath`
+scans to the compute endpoint. See design spec SS6.5 for the exact `computeAnalysis` contract.
 
-**Watch for while implementing these three:**
-- `OrdersStore` — check whether `date`/`updatedAt` are safe to order by (need to confirm no legacy
-  order predates these fields, same class of check that caught the `SupplierStore.createdAt` risk)
-  or just default to `__name__` to be safe.
-- `TransactionStore` — ledger entries; check field naming (`timestamp`? `serverTimestamp`?) before
-  assuming any field name.
-- `StockBatchStore` — check `_pushToFirebase`/write-path already goes through Gateway (confirmed
-  clean in the original audit, §2.2) — only the READ side needs touching here.
-- All three: after wiring, grep for any other direct `FirebaseService.get("orders"|"transactions"|
-  "stock_batches", ...)` call sites outside the store itself (there weren't any for the first three
-  stores, but confirm per-store).
+**Watch for while implementing Phase 2:**
+- `functions/` directory may not exist yet in this repo — check before assuming a Cloud Functions
+  project is already scaffolded (`firebase init functions` territory if not).
+- Env-awareness is a hard requirement from the start (see spec SS6.5) — don't let this repeat the
+  gap Skill 30 already flags for `recordMutation`'s write side.
+- Shared-fixture parity: extract the fixtures already embedded in `tst_RealisedMath.qml`/
+  `tst_BreakdownMath.qml` into standalone JSON files consumed by both those tests and new Node tests
+  — don't hand-duplicate fixture data.
 
 ---
 
