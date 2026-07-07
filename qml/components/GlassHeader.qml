@@ -75,10 +75,10 @@ Rectangle {
             }
 
             Text {
-                visible: root.subtitle.length > 0 && root.greeting.length === 0
-                text: root.subtitle
+                visible: !app.isOnline || (root.subtitle.length > 0 && root.greeting.length === 0)
+                text: app.isOnline ? root.subtitle : qsTr("App is offline, no operation allowed.")
                 font.pixelSize: sp(Constants.fsCaption)
-                color: Constants.textSecondary
+                color: app.isOnline ? Constants.textSecondary : Constants.danger
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }

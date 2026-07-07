@@ -8,6 +8,7 @@ QtObject {
     readonly property string authBaseUrl: "https://identitytoolkit.googleapis.com/v1"
     readonly property string tokenBaseUrl: "https://securetoken.googleapis.com/v1"
 
+    property bool isOnline: false
     property bool busy: false
     property bool membersBusy: false
     property bool tenantCreateBusy: false
@@ -30,7 +31,13 @@ QtObject {
     signal profileUpdated()
     signal passwordResetSent(string email)
 
-    Component.onCompleted: {
+    onIsOnlineChanged: {
+        if (isOnline && !AuthStore.isAuthenticated) {
+            init()
+        }
+    }
+
+    function init() {
         AuthStore.loadSession()
         if (AuthStore.isAuthenticated) {
             profileResolved = false
@@ -40,6 +47,10 @@ QtObject {
             refreshIdToken()
         else
             profileResolved = true
+    }
+
+    Component.onCompleted: {
+        init()
     }
 
     function _parseErrorReason() {
@@ -232,6 +243,8 @@ QtObject {
             onboardingRequired()
             return
         }
+
+        if (!isOnline) return
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, data) {
             if (!ok || !data) {
@@ -957,14 +970,11 @@ QtObject {
                 createdAt: tenantDoc.createdAt,
                 updatedAt: new Date().toISOString()
             }
-            console.log(" =========== doc: ", JSON.stringify(doc))
             FirebaseService.put("tenants/" + AuthStore.tenantId, doc, function(ok) {
                 if (!ok) {
-                    console.log(" =========== failed")
                     authFailed("Failed to update tenant name")
                     return
                 }
-                console.log(" =========== passed")
             })
         })
     }
