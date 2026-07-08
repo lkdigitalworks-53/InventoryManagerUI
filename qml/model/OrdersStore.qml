@@ -2,12 +2,23 @@
 pragma Singleton
 import QtQuick
 import QtCore
+import "../helper/WriteCoalescer.js" as WriteCoalescer
 
 QtObject {
     id: root
 
     property var orders: []
     property bool autoApproveEnabled: false
+
+    // Serializes Firestore pushes for the orders collection so at most one
+    // write is ever in flight — see qml/helper/WriteCoalescer.js. Without
+    // this, two writes fired close together (e.g. add-order's "pending"
+    // write still in flight when complete-order's "completed" write goes
+    // out) can have their responses arrive OUT OF ORDER over a real mobile
+    // network, letting the older write silently revert the newer one
+    // server-side (bug: a completed order's Firestore doc reverts to
+    // "pending" on its own, with none of the completion side effects).
+    property var _pusher: WriteCoalescer.createCoalescedPusher(_pushAllToFirebase)
 
     property Settings _settings: Settings {
         category: "OrdersStore"
@@ -76,7 +87,10 @@ QtObject {
         });
     }
 
-    function _pushAllToFirebase() {
+    // `done` is required by WriteCoalescer — it must fire exactly once, on
+    // both success and failure, so the coalescer knows the in-flight write
+    // finished and can send a follow-up if more commits happened meanwhile.
+    function _pushAllToFirebase(done) {
         var obj = {};
         for (var i = 0; i < orders.length; ++i)
             obj[orders[i].orderId] = orders[i];
@@ -85,6 +99,7 @@ QtObject {
                 console.warn("[OrdersStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
             else
                 console.log("[OrdersStore] Firestore bulk write ok, documents:", orders.length)
+            if (done) done(ok);
         });
     }
 
@@ -306,7 +321,7 @@ QtObject {
         orders = arr;
         revision++;
         _refreshCounts();
-        _pushAllToFirebase();
+        _pusher.trigger();
     }
 
     function _clone() {

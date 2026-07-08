@@ -917,3 +917,44 @@ Two small page interactions added alongside the env work:
   Touch-gesture behaviour differs Android vs desktop — device-verify (see the
   `scrollview_touch_freedrag` note).
 
+---
+
+## Skill 32: OrdersStore Firestore writes must be single-flight (WriteCoalescer)
+
+**Files**: `qml/helper/WriteCoalescer.js` (`.pragma library`), `qml/model/OrdersStore.qml`,
+`tests/tst_WriteCoalescer.qml`
+
+**The bug:** `OrdersStore._commit()` used to call `_pushAllToFirebase()` directly on every
+mutation — an un-coordinated, fire-and-forget Firestore write with no request sequencing.
+Completing an order fires two commits close together (add-order's `"pending"` write, then
+complete-order's `"completed"` write moments later). Over a real mobile network, response
+ordering is **not** guaranteed to match request ordering — the older `"pending"` write's
+response could arrive at Firestore **after** the newer `"completed"` write and silently revert
+it server-side. Because this write path bypasses `DataModel` entirely, none of the completion
+side effects ran (no stock reversal, no sale/transaction record) — the order's `status` field
+just flipped back on its own. Re-approving it then reran the full completion flow, double-booking
+stock and revenue.
+
+**The fix:** `OrdersStore` now routes every `_commit()` through a `WriteCoalescer` instance
+(`_pusher`) instead of calling `_pushAllToFirebase()` directly. The coalescer guarantees **at
+most one write in flight** for the orders collection: a `trigger()` while a write is outstanding
+just flags "pending" instead of firing a second overlapping request; when the in-flight write
+finishes, if more commits happened meanwhile, exactly one follow-up write is sent, and it always
+reads the **current** `orders` state (never a stale snapshot). This makes it structurally
+impossible for an older write's response to land after a newer one and revert it.
+
+- **Pure + headless-tested:** `WriteCoalescer.js` has no QML/singleton deps (same pattern as
+  `OrderMath.js`/`RealisedMath.js`); `tests/tst_WriteCoalescer.qml` reproduces the exact
+  out-of-order-response race with a controllable fake transport and asserts the coalescer
+  converges to the latest state regardless of response ordering.
+- **Other stores (`InventoryStore`/`StockBatchStore`/`TransactionStore`) already write
+  single documents per mutation** via `Gateway.recordMutation` (see Gateway.qml) rather than
+  bulk-overwriting a whole collection, so they were not exposed to this same failure mode.
+  `OrdersStore` predates that P0 gateway migration and isn't in its scope (orders isn't a
+  books-of-account entity) — `WriteCoalescer` is the minimal fix for its existing
+  `_pushAllToFirebase()` pattern, not a migration onto `Gateway`.
+- **If you add a new mutation path to `OrdersStore`,** route it through `_commit()` (which
+  already calls `_pusher.trigger()`) rather than calling `_pushAllToFirebase()` directly, or the
+  new path reintroduces the race.
+
+

@@ -220,6 +220,9 @@ App (Main.qml)
 - Maintain `OrdersStore`, `InventoryStore`, `SalesStore`, `StaffStore`
 - Keep local persistence via `QtCore.Settings` working correctly
 - Maintain Firebase REST sync (`_fetchFromFirebase`, `_pushAllToFirebase`, `syncFromFirebase`)
+- `OrdersStore._commit()` MUST push via `_pusher.trigger()` (`WriteCoalescer`), never call
+  `_pushAllToFirebase()` directly — see SKILLS Skill 32. Direct calls reintroduce an out-of-order
+  network race that can silently revert a completed order back to "pending".
 - Handle field normalization between Firebase schema and local schema
 - Add new store files for new domains following the singleton pattern
 - Register new stores in `qml/model/qmldir`
