@@ -33,22 +33,23 @@ Taher's explicit confirmation; push only after Taher provides a push token in th
 `main` yet.** Both are pushed and PR-ready; merge strategy (open PRs? merge order? squash?) hasn't
 been decided — that's a legitimate open question for Taher, not something to decide unilaterally.
 
-## What's NOT done — the one remaining piece
+## What's NOT done — deferred as its own future project (decided, not just paused)
 
-**`SalesPage.qml` has not been cut over to `AnalysisService`.** It still computes Revenue/Profit/
-Sold/Purchased locally via `InventoryStore.realisedProfitByDimension`/`realisedTotals`/
-`realisedBucketWalk`, which still scan `TransactionStore.entries`/`OrdersStore.orders` directly. This
-was a deliberate, agreed decision (see design spec SS9, Phase 2) — `computeAnalysis` and
-`AnalysisService.qml` are built, tested (as far as this container allows), and available, but the
-actual page cutover is separate because `SalesPage.qml` is large and can only be manually verified
-(no qmltestrunner coverage for it — see Skill 29's coverage-ceiling note).
+**`SalesPage.qml` has not been cut over to `AnalysisService`, and this is now explicitly deferred as
+its own separate, undesigned future project** — not "a separate later step of Phase 2" as earlier
+checkpoint text said. Correction, found when actually starting this work: `InventoryStore.
+realisedProfitByDimension`/`realisedTotals`/`realisedBucketWalk` are called *synchronously* at 15+
+call sites in `SalesPage.qml` (the main `_rebuildBreakdown()` view, plus a 5-call export flow) — a
+synchronous function cannot return a value that depends on `AnalysisService.compute(...)`'s async
+network response. There is no "thin passthrough" version of this swap; it requires rewriting
+`SalesPage.qml`'s data-loading flow to be callback-driven (loading states per chart/hero, the
+export flow's 5 calls batched into one `dims:[...]` request). That's a real risk to a large file
+with zero automated test coverage (Skill 29's coverage ceiling). Taher explicitly chose to defer
+this entirely rather than attempt it now or as a smaller partial step — see design spec §9.1 for
+the full writeup (added there specifically so this isn't rediscovered from scratch later).
 
-**When picking this up:** the cutover means changing `InventoryStore.realisedProfitByDimension` /
-`realisedTotals` / `realisedBucketWalk` to call `AnalysisService.compute(...)` and return its result,
-instead of running `RealisedMath`/`BreakdownMath` locally over `TransactionStore.entries`/
-`OrdersStore.orders`. The design spec SS6.5 has the exact `computeAnalysis` request/response contract.
-Given `SalesPage.qml`'s size and the manual-verification-only constraint, this should be its own
-small, carefully-reviewed change — not bundled with anything else.
+`computeAnalysis` and `AnalysisService.qml` remain built and available for whenever that future
+project is taken up — their contract doesn't need to change to support it.
 
 ---
 
@@ -158,21 +159,19 @@ Two things landed together, on purpose (they share one helper):
 
 ## Next action for a fresh session
 
-1. Re-read the design spec (SS1-SS11) and this checkpoint in full before doing anything else — don't
-   re-derive the store audit or the env-awareness investigation from scratch, it's all captured above.
-2. Ask Taher whether he wants the `SalesPage.qml` cutover now, or whether to first sort out
-   branch/PR/merge strategy for the two already-pushed branches (`fix/write-path-bulk-overwrite`,
-   `feature/paginated-reads-phase1`) — both are open questions, not decided.
-3. If proceeding with the `SalesPage.qml` cutover: re-view `SalesPage.qml` fresh (it's large, and
-   time will have passed), identify every call site of `InventoryStore.realisedProfitByDimension`/
-   `realisedTotals`/`realisedBucketWalk`, and change those three `InventoryStore` functions to call
-   `AnalysisService.compute(...)` and return its result — a thin passthrough, not a rewrite of
-   `SalesPage.qml` itself. Show the diff for review before committing, same as every other change in
-   this project. Remember: no qmltestrunner coverage for `SalesPage.qml` — this needs Taher's manual
-   verification on a real device/build, so be extra careful and precise, and say so explicitly.
-4. Whenever Cloud Functions changes are actually deployed (`firebase deploy --only functions` from
-   the `functions/` directory), that's the first real end-to-end test of everything Phase 2 built —
-   flag that clearly, since nothing here has touched a real Firestore instance yet.
+**There is no pending implementation work from this design.** Phase 0, Phase 1, and Phase 2 (as
+actually scoped — the backend capability, not the SalesPage cutover) are complete, committed, and
+pushed. The `SalesPage.qml` cutover is deferred as its own future project (see above and spec §9.1)
+— it needs its own brainstorming/design pass when Taher wants to take it up, not a continuation of
+this one. Likely first questions for that future project: does it get its own design spec file, and
+does it happen before or after the branch/merge decisions below.
+
+Two open, undecided questions for Taher whenever he's ready:
+1. Branch/PR/merge strategy for the two already-pushed, not-yet-merged branches
+   (`fix/write-path-bulk-overwrite`, `feature/paginated-reads-phase1`).
+2. Whether/when to actually deploy the Cloud Functions changes (`firebase deploy --only functions`)
+   — nothing in Phase 2 has touched a real Firestore instance yet; that deploy would be the first
+   real end-to-end test of everything built here.
 
 ---
 
@@ -212,3 +211,11 @@ Two things landed together, on purpose (they share one helper):
 - This checkpoint file substantially rewritten at the end of the session (per Taher's explicit
   request) to be self-sufficient for a fresh session — the conversation itself had become too large
   to carry forward as context.
+- Taher then asked to continue with "next remaining steps, as per the plan" (the SalesPage cutover).
+  Investigating the actual call sites (not just assuming, per this project's established discipline)
+  found the cutover was mischaracterized in the checkpoint/spec as a "thin passthrough" — it isn't
+  one, since `InventoryStore`'s three realised* functions are called synchronously at 15+ sites and
+  `AnalysisService.compute` is necessarily async. Surfaced this to Taher rather than either
+  proceeding with a large risky rewrite or silently declining. Taher chose to defer the cutover
+  entirely as its own future project. Design spec (§9, §9.1, §10, §11) and this checkpoint corrected
+  accordingly so the mistake isn't rediscovered later.

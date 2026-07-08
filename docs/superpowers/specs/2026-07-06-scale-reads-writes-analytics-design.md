@@ -145,10 +145,14 @@ now more clearly reachable given Blaze is active.
    instead of `.pragma library`/`.import`. Kept in sync via shared fixtures (§7), not by file
    identity.
 8. **`AnalysisService.qml`** (new singleton, same XHR + Bearer-token pattern as `Gateway.qml`) —
-   `compute(period, viewMode, dims, scope, periodScoped)` POSTs to `computeAnalysis`.
-   `InventoryStore.realisedProfitByDimension` / `realisedTotals` / `realisedBucketWalk` become thin
-   pass-throughs to `AnalysisService` results (same adapter pattern already documented in Skill 29),
-   so `SalesPage.qml`'s call sites don't change shape.
+   `compute(period, viewMode, dims, scope, periodScoped, callback)` POSTs to `computeAnalysis`,
+   async/callback-based (it's a network call). **Correction after investigation (§9.1): this is
+   NOT a thin, shape-preserving passthrough.** `InventoryStore.realisedProfitByDimension` /
+   `realisedTotals` / `realisedBucketWalk` are called *synchronously* at 15+ call sites in
+   `SalesPage.qml` today (the main `_rebuildBreakdown()` view and a 5-call export flow) — a
+   synchronous function cannot return a value that depends on an async network response. Actually
+   cutting `SalesPage.qml` over requires rewriting its data-loading flow to be callback-driven, not
+   swapping one function body. This is deferred — see §9.1 and §10.
 9. **Doc fix (small, unrelated to the code but worth doing alongside):** SKILLS.md's Skill 12 still
    describes the old Realtime Database REST shape (`firebasedatabase.app`, single-arg
    `function(data)` callback). Skill 11's "Adding a New Store" template has the same stale
@@ -181,17 +185,19 @@ Logic signal → DataModel handler → OrdersStore.updateOrder/addOrder/deleteOr
        → chunks into ≤500-write commits, reports first failed chunk if any
 ```
 
-**C — Analysis compute**
+**C — Analysis compute (backend built; SalesPage cutover deferred, see §9.1)**
 ```
-SalesPage._rebuildBreakdown()
-  → AnalysisService.compute(period, viewMode, dims, scope, periodScoped)
-      → POST computeAnalysis callable {period, viewMode, dims, scope, periodScoped}
+[future, not yet wired] SalesPage's async-rewritten data flow
+  → AnalysisService.compute(period, viewMode, dims, scope, periodScoped, callback)
+      → POST computeAnalysis callable {env, period, viewMode, dims, scope, periodScoped}
           → CF: verify token → derive tenantId server-side → resolve env-scoped database
-            → Admin SDK reads ledger collections in CF-internal pages (accumulator, not one array)
+            → Admin SDK reads ledger collections in CF-internal pages (§6.5's honest scope note:
+              paginated reads, single in-memory materialization -- not a true streaming reducer)
             → runs ported RealisedMath.totals / .byDimension / .bucketWalk equivalent
-      ← {totals, byDimension, bucketWalk}   — same shape SalesPage already consumes
-  → InventoryStore.realisedProfitByDimension/... return this payload (thin passthrough)
-  → BreakdownBarCard renders unchanged
+      ← callback(ok, {totals, byDimension, bucketWalk})   — async; SalesPage today calls the
+        InventoryStore adapters SYNCHRONOUSLY at 15+ call sites, so this requires a real rewrite
+        of its data-loading flow, not a drop-in swap (§9.1)
+  → BreakdownBarCard renders once the callback resolves
 ```
 
 ---
@@ -333,14 +339,43 @@ computeAnalysis({
   stores in §2.1. **All six auto-page to exhaustion** (see §3.1) — full local data, same app
   behavior as before, just fetched in bounded chunks instead of one unbounded request that silently
   truncates. No "recent window" truncation for any store in this phase.
-- **Phase 2:** `computeAnalysis` + `AnalysisService.qml`; cut `SalesPage` over from local
-  `RealisedMath`/`BreakdownMath` scans to the compute endpoint; ship the shared-fixture parity
-  tests alongside it.
+- **Phase 2:** `computeAnalysis` + `AnalysisService.qml`, env-aware Cloud Functions, ported math +
+  shared-fixture parity tests. **Delivered as a standalone, callable backend capability.** Does
+  *not* include cutting `SalesPage.qml` over to it — see §9.1.
 - **Phase 3 (future, not scheduled):** the genuine memory-bounded redesign — `OrdersStore` /
   `TransactionStore` / `StockBatchStore` move to real windowed loading in-app, with Dashboard KPIs,
   import dedup, and FIFO consumption redesigned to not require the full local set (targeted queries
   or server-side logic instead). Blaze is already active, so nothing here is blocked on billing —
   this is purely an engineering-scope decision for later.
+
+### 9.1 SalesPage.qml cutover — deferred as its own future project (not part of this spec)
+
+The original plan (earlier draft of this section) was to "cut `SalesPage.qml` over from local
+`RealisedMath`/`BreakdownMath` scans to the compute endpoint" as part of Phase 2, on the assumption
+that `InventoryStore.realisedProfitByDimension` / `realisedTotals` / `realisedBucketWalk` could
+become thin, shape-preserving pass-throughs to `AnalysisService.compute(...)`.
+
+**That assumption was wrong, found during implementation.** Those three functions are called
+*synchronously* — they `return` a value immediately — at 15+ call sites across `SalesPage.qml`:
+the main `_rebuildBreakdown()` view (the on-screen hero/charts) and a 5-call export flow that builds
+one export document from five separate per-dimension calls. `AnalysisService.compute(...)` is
+necessarily asynchronous (it's a network request to a Cloud Function). A synchronous function
+cannot return a value that depends on an async response — there is no "thin passthrough" version of
+this swap.
+
+Actually cutting over means rewriting `SalesPage.qml`'s data-loading flow to be callback-driven:
+every chart/hero needs a loading state, `_rebuildBreakdown()` needs restructuring around a callback,
+and the export flow's 5 separate dimension calls should be batched into one `computeAnalysis`
+request (the API already supports this via `dims: [...]`) — which means rewriting the export
+function's control flow too. That's a substantial change to a large file with **no automated test
+coverage** (Skill 29's coverage ceiling — `SalesPage.qml` can't load under `qmltestrunner`, so this
+would be manually-verified-only, same risk profile as the rest of that page).
+
+**Decision: this is explicitly out of scope for this design (see §10) and deferred as its own,
+separate, dedicated future project** — not scheduled, not designed yet. `computeAnalysis` and
+`AnalysisService.qml` remain built, tested (as far as a container without a real Firestore/
+qmltestrunner allows), and available for whenever that future project is taken up. Nothing about
+their contract needs to change to support it later.
 
 Each phase is independently shippable and testable — same P0-then-fast-follow convention this repo
 already established.
@@ -349,6 +384,10 @@ already established.
 
 ## 10. Out of Scope
 
+- **The `SalesPage.qml` cutover to `AnalysisService`** (§9.1) — found during implementation to be a
+  genuine async rewrite of a large, only-manually-verifiable file, not the thin passthrough
+  originally assumed. Deferred as its own future project; `computeAnalysis`/`AnalysisService.qml`
+  are built and available whenever that project is taken up.
 - **The Phase 3 redesign described above** — deferred, not because of any technical blocker, but
   because it touches Dashboard KPIs, import dedup, and FIFO consumption simultaneously and deserves
   its own dedicated spec rather than being folded into this one.
@@ -375,9 +414,17 @@ already established.
   `putMany`; `_pushAllToFirebase()` removed once no call sites remain.
 - `StaffStore.qml` — `addStaff()` switches to single-doc `PUT`.
 - `ActivityLog.qml` — `record()` switches to single-doc `PUT`.
-- New: `qml/helper/PagingHelper.js`, `qml/model/AnalysisService.qml`,
-  `functions/computeAnalysis.js`, `functions/lib/realisedMath.js`, `functions/lib/breakdownMath.js`.
-- `InventoryStore.realisedProfitByDimension` / `realisedTotals` / `realisedBucketWalk` — become thin
-  passthroughs to `AnalysisService.compute(...)`.
+- New: `qml/helper/PagingHelper.js`, `qml/model/AnalysisService.qml` (built, available, **not yet
+  called from anywhere in the app** — see §9.1), `functions/index.js`'s `computeAnalysis` export,
+  `functions/lib/{orderMath,realisedMath,breakdownMath}.js`.
+- `functions/index.js` — `scopedDb(env)` helper added; `db` changed from a module-level global to
+  per-request (`deriveContext(db, uid)`, `deleteCollection(db, path)` now take `db` explicitly);
+  `recordMutation`/`provisionMember`/`runCutover` all updated consistently.
+- `Gateway.qml` — injects `env: FirebaseService.environment` into its 3 outgoing request bodies.
+- **`InventoryStore.realisedProfitByDimension` / `realisedTotals` / `realisedBucketWalk` are
+  UNCHANGED** — still call `RealisedMath` locally over `TransactionStore.entries`/`getById`, exactly
+  as before this design's work started. The originally-planned passthrough to
+  `AnalysisService.compute(...)` turned out to require an async rewrite of `SalesPage.qml`, not a
+  drop-in swap (§9.1) — deferred as its own future project, not attempted here.
 - SKILLS.md — correct Skill 12 (real Firestore v1 REST shape, not RTDB) and Skill 11's
   `_fetchFromFirebase()` template (`callback(ok, data)`, not single-arg `function(data)`).
