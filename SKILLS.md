@@ -224,41 +224,60 @@ NavigationItem {
 ```qml
 pragma Singleton
 import QtQuick
-import QtCore
 
 QtObject {
     id: root
     property var items: []
 
-    property Settings _settings: Settings {
-        category: "NewDomainStore"
-        property string json: ""
+    // Bounded-for-now collection -- auto-pages to exhaustion (Skill 32) so it
+    // doesn't hit Firestore's List-Documents response-size truncation once it
+    // grows. Full local data, same app behavior as a plain fetch-everything
+    // store, just pagination-safe fetch mechanics.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
+    Component.onCompleted: _resetAndFetch()
+
+    function _resetAndFetch() {
+        items = []
+        hasMore = true
+        _cursor = null
+        _fetchFromFirebase()
     }
-
-    Component.onCompleted: _load()
-
-    function _load() {
-        var saved = _settings.json
-        if (saved && saved !== "") {
-            try { items = JSON.parse(saved) } catch(e) {}
-        }
-        if (items.length === 0) _fetchFromFirebase()
-    }
-
-    function _save() { _settings.json = JSON.stringify(items) }
 
     function _fetchFromFirebase() {
-        FirebaseService.get("newdomain", function(data) {
-            if (data) items = FirebaseService.toArray(data)
+        if (loadingMore) return
+        loadingMore = true
+        // orderBy defaults to Firestore's __name__ (always present on every
+        // doc) unless you've confirmed some OTHER field is present on
+        // literally every existing document -- see Skill 32's gotcha.
+        FirebaseService.query("newdomain", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false
+            if (!ok || !result) {
+                console.warn("[NewDomainStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return
+            }
+            items = items.concat(result.items)
+            hasMore = result.hasMore
+            _cursor = result.nextCursor
+            if (hasMore) _fetchFromFirebase()
         })
     }
+
+    function syncFromFirebase() { _resetAndFetch() }
 
     function addItem(item) {
         var arr = items.slice()
         arr.push(item)
         items = arr
-        _save()
-        FirebaseService.put("newdomain/" + item.id, item, null)
+        // Single-doc PUT -- never rebuild the whole collection into one
+        // write (Firestore hard-caps a single :commit at 500 writes; see
+        // Skill 12's putMany() for the rare genuinely-multi-doc case).
+        FirebaseService.put("newdomain/" + item.id, item, function(ok) {
+            if (!ok) console.warn("[NewDomainStore] Firestore write failed for", item.id)
+        })
     }
 }
 ```
@@ -289,28 +308,49 @@ onAddNewDomainItem: function(item) {
 
 ## Skill 12: Firebase REST Pattern
 
-**File**: `qml/model/FirebaseService.qml`  
-**Base URL**: `Constants.firebaseDatabaseUrl` → `https://inventorymanager-48392-default-rtdb.asia-southeast1.firebasedatabase.app`
+**File**: `qml/model/FirebaseService.qml`
+**Base URL**: `databaseUrl` — Firestore v1 REST, `https://firestore.googleapis.com/v1/projects/<project-id>/databases/<databaseId>/documents` (env-aware; see Skill 30 for how `databaseId` is resolved. This is **not** Realtime Database — the app migrated off RTDB before the env-config/P0 work, and callbacks are two-argument `(ok, data)`, not the older single-arg `function(data)` shape.)
 
 ```qml
-// GET
-FirebaseService.get("orders", function(data) {
-    var arr = FirebaseService.toArray(data)
+// GET a whole collection (small/bounded collections only -- see query() below
+// for anything that can grow past a few hundred docs)
+FirebaseService.get("orders", function(ok, arr) {
+    if (ok) { /* arr is already a decoded JS array */ }
 })
 
-// PUT (full overwrite of a node)
-FirebaseService.put("orders/" + order.id, order, function(result) {
-    console.log("saved", JSON.stringify(result))
+// GET a single document
+FirebaseService.get("orders/" + id, function(ok, doc) { ... })
+
+// query() -- cursor-paginated read via Firestore's :runQuery structured-query
+// endpoint. See Skill 32 for the full pagination pattern and the __name__
+// default-ordering gotcha.
+FirebaseService.query("orders", { limit: 50, startAfter: cursor }, function(ok, result) {
+    // result = { items, nextCursor, hasMore }
 })
 
-// PATCH (partial update)
+// PUT (full overwrite of ONE document -- never a whole collection; see Skill 32's
+// write-path note)
+FirebaseService.put("orders/" + order.id, order, function(ok) {
+    if (!ok) console.warn("save failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+})
+
+// putMany() -- the ONLY sanctioned way to write several docs from one user
+// action (e.g. approveAllPending). Chunks into <=500-write commits internally
+// -- Firestore hard-caps a single :commit at 500 writes.
+FirebaseService.putMany("orders", changedDocsById, function(ok, errorInfo) {
+    // errorInfo = { failedAtChunk: n } on failure, so the caller can retry
+    // just that slice instead of the whole batch.
+})
+
+// PATCH (partial update of one document)
 FirebaseService.patch("orders/" + id, { status: "Completed" }, null)
 
 // DELETE
 FirebaseService.remove("orders/" + id, null)
 ```
 
-**`toArray(obj)`**: Converts Firebase `{"-key1": {…}, "-key2": {…}}` to a flat JS array with an `id` field added from each key.
+**`toArray(obj)`**: Normalizes a Firestore-decoded value into a flat JS array (safe to call on an
+already-decoded array too — it's a no-op passthrough in that case).
 
 ---
 
@@ -475,7 +515,9 @@ The delete flow for any domain follows:
 
 1. **Logic signal** → `logic.deleteOrder(orderId)` / `logic.deleteProduct(productId)` / `logic.deleteStaff(staffId)`
 2. **DataModel handler** → validates RBAC role, calls store `deleteX()`, emits feedback signal
-3. **Store function** → filters the array, calls `_commit()` or `_pushAllToFirebase()`
+3. **Store function** → filters the array, calls `_commit()` (which pushes the single changed/
+   removed doc — see Skill 32's write-path note; never a whole-collection `_pushAllToFirebase()`,
+   that pattern was a confirmed bug, removed)
 4. **UI** → reactive `model` or `Repeater` binding auto-refreshes
 
 ```qml
@@ -895,9 +937,12 @@ readonly property string databaseId: EnvConfig.databaseIdForEnv(environment)
   stage→env→databaseId mapping incl. the fail-safe.
 - **Env badge:** `ProfileSettingsDialog` shows a `DEV`/`TEST` pill bound to
   `FirebaseService.environment`, hidden on `prd`.
-- **Backend setup + Cloud Functions follow-up:** see README "Environments" and AGENTS §8 — the
-  gateway functions still write to `(default)` server-side and must be made env-aware when Blaze
-  lands.
+- **Cloud Functions are env-aware too (done):** all 4 functions (`recordMutation`, `provisionMember`,
+  `runCutover`, `computeAnalysis`) resolve their Firestore database **per request** via
+  `scopedDb(env)` in `functions/index.js`, mirroring this exact resolution chain (fail-safe to prd
+  on unknown/missing `env`). The client sends `env: FirebaseService.environment` in every request
+  body — `Gateway.qml` injects it for its 3 endpoints, `AnalysisService.qml` for `computeAnalysis`.
+  See Skill 33 for the Cloud Functions side of this pattern.
 
 ---
 
@@ -916,4 +961,158 @@ Two small page interactions added alongside the env work:
   `AppScrollView` so vertical scroll and control taps pass through; horizontal threshold `dp(60)`.
   Touch-gesture behaviour differs Android vs desktop — device-verify (see the
   `scrollview_touch_freedrag` note).
+
+---
+
+## Skill 32: Paginated reads — `FirebaseService.query()` + `PagingHelper.js`
+
+**Files**: `qml/model/FirebaseService.qml` (`query()`), `qml/helper/PagingHelper.js`,
+`tests/tst_PagingHelper.qml`
+
+A plain `FirebaseService.get("collection", ...)` fetches the whole collection in one request.
+Firestore's List-Documents endpoint paginates **internally** once a collection crosses an internal
+response-size threshold, and `get()` follows `nextPageToken` to still return everything — but for a
+collection that's genuinely growing (not just occasionally large), fetching it all in one shot on
+every launch doesn't scale. `query()` fetches bounded pages instead:
+
+```qml
+FirebaseService.query("inventory", { limit: 50, startAfter: cursor }, function(ok, result) {
+    // result = { items, nextCursor, hasMore }
+    if (!ok || !result) { /* handle failure, keep already-loaded items on screen */ return }
+    items = items.concat(result.items)
+    hasMore = result.hasMore
+    cursor = result.nextCursor
+    if (hasMore) /* auto-page-to-exhaustion, or wait for explicit loadMore() */
+})
+```
+
+**`opts`**: `{ orderBy, direction ("ASCENDING"|"DESCENDING", default ASCENDING), limit (default 50),
+startAfter (opaque cursor from a previous page, omit for the first page) }`.
+
+**The `orderBy` default-field gotcha (important, easy to get wrong):** `query()` defaults to
+ordering by Firestore's `__name__` (the document's resource name — always present on every
+document, immune to schema drift) when `opts.orderBy` is omitted. **Don't order by an app-level
+timestamp/date field unless you've confirmed it's present on literally every existing document.**
+Firestore's `orderBy` silently **excludes** documents missing the ordered field from query results
+— ordering by a sometimes-missing field reintroduces a truncation-shaped bug, just via a different
+mechanism than the original unpaginated-`get()` bug. **The tell:** a defensive `field || ""` /
+`field || fallback` fallback already present in a store's existing normalization code is strong
+evidence some documents lack that field. This was caught for `SupplierStore.createdAt`,
+`OrdersStore.date`, `TransactionStore.timestamp`, and `StockBatchStore.receivedDate` — all four
+default to `__name__` instead of the "obvious" timestamp field.
+
+**Auto-page-to-exhaustion vs. explicit `loadMore()`:** all six existing stores
+(`InventoryStore`/`StaffStore`/`SupplierStore`/`OrdersStore`/`TransactionStore`/`StockBatchStore`)
+currently auto-page to exhaustion — full local data, same app behavior as a plain fetch-everything
+store, just pagination-safe fetch mechanics (see `docs/superpowers/specs/
+2026-07-06-scale-reads-writes-analytics-design.md` §3.1 for why: several of these stores are read
+directly by correctness-critical logic — FIFO consumption, Dashboard KPIs, import dedup, the live
+Analysis page — that assumes the complete local set today; a "recent window" would silently
+miscompute those, not just under-display a list). A genuine windowed/on-demand-`loadMore()` UI is
+possible for any of these but isn't built yet — that's deferred, unscheduled future work (same spec,
+§9 Phase 3).
+
+**`PagingHelper.js`** (`.pragma library`, pure, no QML deps — same convention as `BreakdownMath.js`):
+`mergePage(existingItems, newItems, limit) -> {items, hasMore}` and `cursorFrom(items, orderByField)
+-> value|null`. `query()` uses these internally (over-fetches `limit+1` and trims, so `hasMore` is
+exact at the page boundary — never guessed from "got a full page back").
+
+**Write side — the matching gotcha:** pagination fixes the READ side. The equivalent write-side
+bug (a store rebuilding its *entire* collection into one bulk `:commit` on every single-record
+change) is a different, separately-fixed problem — see Skill 12's `putMany()` and the same design
+spec's §2.2 audit. Don't assume a store using `query()` correctly also means its writes are safe;
+check both independently.
+
+---
+
+## Skill 33: Cloud Functions env-awareness — `scopedDb(env)`
+
+**File**: `functions/index.js`
+
+Every Cloud Function (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`) resolves
+its Firestore database **per request**, not from a module-level global:
+
+```js
+const DATABASE_ID_FOR_ENV = { dev: "dev", test: "test", prd: "(default)" };
+
+function scopedDb(env) {
+    const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;  // fail-safe to prd
+    return getFirestore(admin.app(), databaseId);
+}
+
+exports.someFunction = functions.onRequest({ region: "asia-southeast1", cors: true }, async (req, res) => {
+    const body = req.body || {};
+    const db = scopedDb(body.env);              // <-- parse body FIRST, before anything needing db
+    const ctx = await deriveContext(db, decoded.uid);  // deriveContext takes db explicitly
+    // ...
+});
+```
+
+**Why this exists:** a Cloud Functions deployment is shared across dev/test/prd (Skill 30 — Auth,
+Storage, and Cloud Functions are shared; only the Firestore database differs per env), so a Cloud
+Function has no way to know which database to use except being told. Before this, `admin.firestore()`
+was called once at module load with no `databaseId`, meaning every Cloud Function always read/wrote
+the `(default)` (prd) database regardless of which env the calling client was built for — confirmed
+in the actual deployed code, not hypothetical.
+
+**Client side:** every request body includes `env: FirebaseService.environment`. `Gateway.qml`
+injects it into all 3 of its outgoing bodies (`_send`/`recordMutation`, `runCutover`,
+`provisionMember`) in one place, so no caller (a store, `AuthService.qml`) needs to remember to add
+it. `AnalysisService.qml` does the same for `computeAnalysis`.
+
+**Constrained enum, not a free-form string:** `scopedDb` maps exactly 3 known values, never trusts an
+arbitrary client-supplied database id — a malformed/malicious `env` value just falls back to prd via
+`DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd`, same fail-safe philosophy as `EnvConfig.js`'s
+`envForStage`.
+
+**`deleteCollection(db, path)` and `deriveContext(db, uid)`** both take `db` as an explicit first
+parameter (not a closure over a shared global) for the same reason — whichever database a given
+request is scoped to must flow through consistently to every read/write that request makes.
+
+---
+
+## Skill 34: `computeAnalysis` — ported math + shared-fixture parity
+
+**Files**: `functions/index.js` (`computeAnalysis` export), `functions/lib/{orderMath,realisedMath,
+breakdownMath}.js`, `functions/test/{realisedMath,breakdownMath}.test.js`,
+`functions/test/fixtures/*.js`, paired QML tests `tests/tst_{RealisedMath,BreakdownMath}
+ParityFixtures.qml`
+
+`computeAnalysis` runs Revenue/Profit/Sold/Purchased aggregation server-side instead of requiring the
+full transaction ledger resident in QML. It reuses the **same math** as the client — but "reuses"
+means *ported*, not literally shared: `qml/helper/{OrderMath,RealisedMath,BreakdownMath}.js` use
+QML's `.pragma library` + `.import`, which aren't valid Node/CommonJS syntax. The Node versions in
+`functions/lib/` have byte-identical function bodies, only the module boilerplate differs
+(`require`/`module.exports` instead of `.pragma library`/`.import`).
+
+**Parity is proven by shared fixtures, not file identity.** Since there are now two copies of the
+same logic, drift between them is the risk. `functions/test/fixtures/*.js` holds scenario data
+lifted directly from already-verified cases in `tests/tst_RealisedMath.qml`/`tst_BreakdownMath.qml`
+(not invented fresh) — run against the Node port via `functions/test/*.test.js` (`node:test`, `cd
+functions && npm test`), **and** manually mirrored (same literal data, not loaded from a shared
+file — QML has no established pattern in this repo for reading an external JSON file synchronously
+in a test) into paired QML test files that assert the same expected values against the QML
+original. **If you change a scenario in one fixture file, change it in its pair too** — the paired
+files say so in their header comments.
+
+**Request contract** (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md`
+§6.5 for the full spec): `{ env, period, viewMode, dims, scope, periodScoped }` →
+`{ totals, byDimension, bucketWalk }`. `env` per Skill 33. Reads the tenant's `transactions`/
+`orders`/`inventory`/`suppliers` via a Firestore-`orderBy(__name__)`-paginated internal loop
+(`readAllPaged`, ≤500 docs/page — never one unbounded query), then runs the ported math.
+
+**Honest scope note (also in the code):** reads are paginated, but the result is still one
+in-memory array by the time `RealisedMath`/`BreakdownMath` run — those functions take a full
+`entries` array, same contract as the QML originals; no streaming/incremental rewrite was
+attempted. This still fixes the actual failure mode (an unbounded read tripping Firestore's
+response-size limits) and moves the memory burden from a phone to a Cloud Function with far more
+headroom. A true streaming version is a possible future refinement, not required for this to be
+useful today.
+
+**Not yet wired into `SalesPage.qml`.** `AnalysisService.qml` (the client for this endpoint) exists
+and works, but `InventoryStore.realisedProfitByDimension`/`realisedTotals`/`realisedBucketWalk` are
+still local synchronous `RealisedMath`/`BreakdownMath` calls — cutting `SalesPage.qml` over is **not**
+a thin passthrough (those three functions are called synchronously at 15+ sites; `AnalysisService.
+compute` is necessarily async), and is deferred as its own separate, undesigned future project. See
+the design spec §9.1 before assuming this is a quick swap.
 

@@ -33,6 +33,11 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 | Add Product advanced section open by default | ✅ Done |
 | Mandatory always-visible staff app-login fields | ✅ Done |
 | dev/test/prd Firestore environments (build-time via PRODUCT_STAGE) | ✅ Done |
+| Cloud Functions env-awareness (all 4 functions resolve db per request) | ✅ Done — pending real deploy/emulator verification |
+| Paginated reads, all 6 growing stores (fixes silent truncation past Firestore's internal page-size threshold) | ✅ Done — pending qmltestrunner run |
+| Write-path fix (no more collection-wide bulk overwrite on a single mutation) | ✅ Done |
+| `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
+| SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
 | India compliance roadmap (design) | 📋 Approved — see below |
 
 ---
@@ -217,31 +222,39 @@ App (Main.qml)
 **Scope**: `qml/model/` (stores + FirebaseService)
 
 **Responsibilities**:
-- Maintain `OrdersStore`, `InventoryStore`, `SalesStore`, `StaffStore`
-- Keep local persistence via `QtCore.Settings` working correctly
-- Maintain Firebase REST sync (`_fetchFromFirebase`, `_pushAllToFirebase`, `syncFromFirebase`)
-- Handle field normalization between Firebase schema and local schema
-- Add new store files for new domains following the singleton pattern
+- Maintain `OrdersStore`, `InventoryStore`, `SalesStore`, `StaffStore`, `SupplierStore`,
+  `TransactionStore`, `StockBatchStore`, `ActivityLog`
+- Maintain Firebase REST sync (`_fetchFromFirebase`, `syncFromFirebase`) — all six growing
+  collections page in bounded chunks via `FirebaseService.query()` (SKILLS Skill 32), not one
+  unbounded `get()`
+- Handle field normalization between Firestore schema and local schema
+- Add new store files for new domains following the singleton pattern (SKILLS Skill 11)
 - Register new stores in `qml/model/qmldir`
-- Keep `FirebaseService` REST helpers (`get`, `put`, `patch`, `remove`, `toArray`) up to date
+- Keep `FirebaseService` REST helpers (`get`, `query`, `put`, `putMany`, `patch`, `remove`, `toArray`)
+  up to date
 - `FirebaseService.databaseUrl`/`databaseId` are environment-aware (resolved from
   `PRODUCT_STAGE` via `EnvConfig.js`); never hard-code `databases/(default)` — it
   bypasses dev/test/prd routing. All REST calls already build URLs from these.
+- **Never write a whole collection in one bulk `:commit`** on a single-record mutation — Firestore
+  hard-caps a single commit at 500 writes (this was a real, confirmed bug in `OrdersStore`,
+  `StaffStore.addStaff`, and `ActivityLog` — fixed; see SKILLS Skill 12's `putMany()`). Single-doc
+  `put()` per changed record; `putMany()` only for a genuinely multi-doc action (e.g.
+  `approveAllPending`).
 
-**Store Pattern**:
+**Store Pattern** (see SKILLS Skill 11 for the full paginated version):
 ```qml
 pragma Singleton
 import QtQuick
-import QtCore   // for Settings (OrdersStore, InventoryStore, SalesStore)
 
 QtObject {
-    property var data: []
-    property Settings _settings: Settings { category: "StoreName"; property string json: "" }
-    Component.onCompleted: _load()
-    function _load() { /* local Settings → Firebase fallback */ }
-    function _save() { /* persist to Settings */ }
-    function _fetchFromFirebase() { FirebaseService.get("path", callback) }
-    function _commit(arr) { data = arr; _save(); _pushAllToFirebase() }
+    property var items: []
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+    Component.onCompleted: _resetAndFetch()
+    function _resetAndFetch() { items = []; hasMore = true; _cursor = null; _fetchFromFirebase() }
+    function _fetchFromFirebase() { /* FirebaseService.query("path", {limit, startAfter}, cb) */ }
+    function addItem(item) { /* single-doc FirebaseService.put("path/" + item.id, item, cb) -- never a bulk collection overwrite */ }
 }
 ```
 
@@ -250,17 +263,19 @@ QtObject {
 - `qml/model/InventoryStore.qml`
 - `qml/model/SalesStore.qml` — KPIs are **derived** from OrdersStore (net revenue, completed-only); no persisted tally (see SKILLS Skill 28)
 - `qml/model/StaffStore.qml`
-- `qml/model/OrderChannelStore.qml`, `qml/model/CategoryStore.qml` — Firestore-backed `config/*` + QSettings cache, single pinned default
+- `qml/model/SupplierStore.qml`, `qml/model/StockBatchStore.qml`, `qml/model/TransactionStore.qml`
+- `qml/model/OrderChannelStore.qml`, `qml/model/CategoryStore.qml` — Firestore-backed `config/*` singleton documents (not paginated collections — a single doc has no List-Documents truncation risk)
 - `qml/model/ActivityLog.qml` — Firestore-backed (`activity_log`), re-synced on login
 - `qml/model/AuthService.qml`
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
+- `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
 - `qml/model/qmldir`
 
 **Example Prompts**:
 - "Add a Suppliers store for vendor management"
-- "Fix the Firebase sync for orders to handle pagination"
 - "Add a deleteOrder function to OrdersStore"
+- "Audit every store for the bulk-overwrite write-path bug before adding a new mutation"
 
 ---
 
@@ -373,22 +388,27 @@ compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
-**Environment follow-up (not yet built):** the Cloud Functions gateway (`Gateway.qml`:
-`recordMutation`/`runCutover`/`provisionMember`) still writes to `(default)` server-side and is
-NOT env-aware. When Blaze + the functions are deployed, each must target the caller's env
-database (dev/test/prd) — the client already switches via `FirebaseService.databaseId`.
+**Environment follow-up: done.** All 4 Cloud Functions (`recordMutation`, `provisionMember`,
+`runCutover`, and the new `computeAnalysis`) resolve their Firestore database **per request** via
+`scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33. `Gateway.qml` and
+`AnalysisService.qml` inject `env: FirebaseService.environment` into every request body. This was
+confirmed as a real, already-live gap (not hypothetical) before being fixed — `admin.firestore()`
+was previously called once at module load with no `databaseId`, so every Cloud Function always
+targeted `(default)` (prd) regardless of the calling client's actual env.
 
 **Key Files**:
 - `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md` (master design)
-- `functions/` (Cloud Functions — to be created in P0)
+- `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` (pagination,
+  write-path fix, env-awareness fix, `computeAnalysis` — builds on the P0 gateway)
+- `functions/` — Cloud Functions project (exists: `index.js`, `lib/` for ported pure math,
+  `test/` for parity tests, `package.json` with an `npm test` script)
 - `FIRESTORE_RULES.md`
 - `qml/model/TransactionStore.qml`, `qml/model/StockBatchStore.qml`
 
 **Example Prompts**:
-- "Spec out P0 — the compliance gateway and immutable audit_log"
 - "Add the HSN code field to products with 4/6/8-digit validation"
-- "Implement the P0 gateway and route InventoryStore writes through it"
 - "Lock the Firestore rules for ledger collections to read-only"
+- "Deploy the Cloud Functions changes and verify computeAnalysis against a real tenant"
 
 ---
 
@@ -419,11 +439,26 @@ database (dev/test/prd) — the client already switches via `FirebaseService.dat
 - `tests/tst_RealisedMath.qml` (realised money aggregator — `byDimension`/`totals`/`bucketWalk`/`nameMerge`; asserts the Σ byDimension == totals == Σ bucketWalk reconciliation invariant under each active filter)
 - `tests/tst_OrderMath.qml` (allocation, `eventProfit`, `refundPerUnit`)
 - `tests/tst_ImportMath.qml` (import SKU rename suffix)
-- 14 suites total; run all with the loop in the spec / SKILLS Skill 27. **140 cases pass, 0 fail.**
+- `tests/tst_PagingHelper.qml` (cursor-merge/hasMore logic, SKILLS Skill 32 — verified via a Node port
+  of the same cases in this session, not yet run under a real `qmltestrunner`)
+- `tests/tst_RealisedMathParityFixtures.qml`, `tests/tst_BreakdownMathParityFixtures.qml` — **paired**
+  with `functions/test/{realisedMath,breakdownMath}.test.js` (SKILLS Skill 34). Same literal fixture
+  data in both; proves the Node-ported math (`functions/lib/`) agrees with the QML original. If you
+  change a scenario in one file of a pair, change it in the other too.
+- 17 suites total (14 pre-existing + 3 new this session). Historical baseline before the 3 new
+  suites: **140 cases pass, 0 fail** — the 3 new suites haven't been run under a real
+  `qmltestrunner` yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; their
+  Node-side twins do pass, 7/7, via `cd functions && npm test`).
+- **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
+  test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
+  different runtime, kept in parity via the paired fixture files above, not by sharing one file
+  (QML has no established pattern here for reading an external JSON file synchronously in a test).
 
 **Example Prompts**:
 - "Add tests for the new breakdown metric"
 - "Write a TestCase covering the week/month period windows"
+- "Add a parity fixture pair for a new RealisedMath scenario, in both functions/test/fixtures/ and
+  the matching tst_RealisedMathParityFixtures.qml"
 
 ---
 
