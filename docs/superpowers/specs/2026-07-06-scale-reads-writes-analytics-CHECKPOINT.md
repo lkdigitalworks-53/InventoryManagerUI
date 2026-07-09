@@ -251,8 +251,15 @@ Two open, undecided questions for Taher whenever he's ready:
     pre-existing style, out of scope, not touched.)
   - [x] Diff reviewed line-by-line in this session — six files, same single change repeated, no
     unrelated edits.
-  - **Not committed yet** (standing rule: commit only after Taher's explicit confirmation; push only
-    with a fresh token). Diff shown to Taher in-conversation for review.
+- **Status: committed and pushed to `origin` — `951fa11` on `feature/paginated-reads-phase1`.**
+  - [x] TDD proof, real test (`tests/tst_TenantContextRaceGuard.qml`), fix in all six stores, lint
+    clean, diff reviewed, committed, pushed. Still needs a real `qmltestrunner` run on an actual
+    machine to fully confirm (same limitation as the Phase 2 parity tests — no Qt/Felgo toolchain in
+    this container).
+  - `ActivityLog`/`OrderChannelStore`/`CategoryStore` optional follow-up (same
+    `Component.onCompleted`-fires-a-fetch shape, not actually broken today) remains open, undecided.
+  - Push token used this session should be treated as burned — Taher was told to revoke/rotate it on
+    GitHub right after the push.
 
 **2026-07-06, session 1:**
 - Read `/mnt/skills/plugins/superpowers:brainstorming/SKILL.md`, followed its process for the design
