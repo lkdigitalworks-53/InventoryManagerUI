@@ -13,7 +13,8 @@ A cross-platform inventory and business management application built with **Felg
 | **Sales** | Revenue analytics, order volume charts, top-selling products, cumulative sales metrics |
 | **Staff** | Team member management, department distribution, activity feed, leave tracking |
 
-All data is persisted locally via `QtCore.Settings` and synced to **Firebase Realtime Database** via a REST API layer.
+Data is synced to **Cloud Firestore** via a REST API layer (`FirebaseService.qml`), with one
+Firestore database per environment (dev/test/prd — see "Environments" below).
 
 ---
 
@@ -21,7 +22,7 @@ All data is persisted locally via `QtCore.Settings` and synced to **Firebase Rea
 
 - **Framework**: Felgo SDK (Qt-based cross-platform)
 - **Language**: QML + JavaScript
-- **Database**: Firebase Realtime Database (REST)
+- **Database**: Cloud Firestore (REST, one database per env — dev/test/prd)
 - **Build**: CMake 3.16+, Ninja
 - **Targets**: Android (min SDK 28, target SDK 34), iOS, Desktop
 
@@ -152,18 +153,28 @@ Before publishing to app stores:
 
 ## Firebase Configuration
 
-Firebase Realtime Database is accessed via REST (`FirebaseService.qml`).
+Cloud Firestore is accessed via its v1 REST API (`FirebaseService.qml`), env-aware — see
+"Environments" below for the full dev/test/prd resolution chain.
 
-The database URL is configured in `qml/helper/Constants.qml`:
+The database URL is built in `FirebaseService.qml` from the resolved `databaseId`:
 ```qml
-readonly property string firebaseDatabaseUrl: "https://<project-id>-default-rtdb.<region>.firebasedatabase.app"
+readonly property string databaseUrl:
+    "https://firestore.googleapis.com/v1/projects/" + projectId + "/databases/" + databaseId + "/documents"
 ```
 
-Data paths:
+Top-level collections (all tenant-scoped under `tenants/{tenantId}/...`):
 - `orders/` – order records
 - `inventory/` – product records
-- `sales/` – aggregate sales data
 - `staff/` – staff member records
+- `suppliers/` – supplier records
+- `transactions/` – immutable ledger event log (see `AGENTS.md`'s Compliance & Audit Agent)
+- `stock_batches/` – FIFO stock batches
+- `activity_log/` – staff activity feed
+- `config/categories`, `config/orderChannels` – single-document settings, not paginated collections
+
+All six growing collections (`orders`/`inventory`/`staff`/`suppliers`/`transactions`/
+`stock_batches`) are read via bounded, cursor-paginated queries — see "Scaling" above and
+`SKILLS.md` Skill 32.
 
 ---
 
@@ -316,6 +327,38 @@ Then apply the same security rules (`FIRESTORE_RULES.md`) to each database
 Auth users, Storage, and Cloud Functions are **shared** across environments —
 only the Firestore database differs. `test`/`dev1` start empty (MVP fresh-data).
 
-> **Follow-up (not yet built):** the Cloud Functions gateway (`Gateway.qml`)
-> still writes to `(default)` server-side; make it env-aware when Blaze + the
-> functions are deployed.
+All 4 Cloud Functions (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`) resolve
+their Firestore database **per request** from a client-declared `env` field (`scopedDb(env)` in
+`functions/index.js`), mirroring this exact resolution chain — see `SKILLS.md` Skill 33. This closes
+a real, confirmed gap: before this fix, every Cloud Function always read/wrote the `(default)` (prd)
+database regardless of which env the calling client was built for.
+
+---
+
+## Scaling: pagination & server-side analytics
+
+Two problems, fixed separately (full design: `docs/superpowers/specs/
+2026-07-06-scale-reads-writes-analytics-design.md`):
+
+- **Reads** — every growing collection (`inventory`, `orders`, `staff`, `suppliers`,
+  `transactions`, `stock_batches`) now pages in bounded chunks via `FirebaseService.query()`
+  (Firestore's `:runQuery`, cursor-based) instead of one unbounded `get()`, which silently
+  truncated once a collection crossed Firestore's internal response-size threshold. All six
+  currently auto-page to exhaustion (full local data, same app behavior — several of them are read
+  by correctness-critical logic today, like FIFO stock consumption and Dashboard KPIs, that assumes
+  the complete set; see the spec §3.1 for why a "recent window" isn't safe for those yet). See
+  `SKILLS.md` Skill 32.
+- **Writes** — `OrdersStore`, `StaffStore.addStaff`, and `ActivityLog` used to rebuild their entire
+  collection into one bulk Firestore commit on every single-record mutation, which hard-fails past
+  Firestore's 500-write-per-commit cap. Fixed to single-doc writes (`FirebaseService.putMany()` for
+  the rare genuinely-multi-doc action). See `SKILLS.md` Skill 12.
+- **Analytics** — a new `computeAnalysis` Cloud Function runs Revenue/Profit/Sold/Purchased
+  aggregation server-side (ported `RealisedMath`/`BreakdownMath`, parity-tested against the QML
+  originals via shared fixtures), so this no longer needs the full transaction ledger resident on
+  the phone. `AnalysisService.qml` is the client for it. **Not yet wired into `SalesPage.qml`** —
+  that page currently calls the local `InventoryStore.realisedProfitByDimension`/etc. adapters
+  synchronously at 15+ call sites, and `AnalysisService.compute` is necessarily async, so the
+  cutover is a real rewrite of that page's data flow, deferred as its own future project (spec §9.1).
+  See `SKILLS.md` Skill 34.
+
+---

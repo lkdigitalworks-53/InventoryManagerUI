@@ -9,6 +9,17 @@ QtObject {
 
     property var products: []
 
+    // Bounded collection (capped by realistic business size) — the UI needs
+    // the full set for search/dropdowns, so we page to exhaustion rather than
+    // exposing a partial list. Fetches happen in <=_pageSize chunks via
+    // FirebaseService.query() instead of one unbounded FirebaseService.get(),
+    // which is what silently truncated past Firestore's internal
+    // response-size threshold (confirmed: 250 products -> 170 fetched).
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
     // Bumped whenever `products` is reassigned. Consumers (DashboardPage,
     // InventoryPage) bind a watcher property to this to trigger their own
     // recomputation — Repeater/ColumnLayout sometimes lags on a bare
@@ -16,44 +27,75 @@ QtObject {
     property int revision: 0
     onProductsChanged: revision++
 
-    Component.onCompleted: _load()
+    // Only fetch here if tenant context is ALREADY known (lazy/warm
+    // creation). On cold start with a persisted session this singleton can
+    // be created (via DashboardPage's eager InventoryStore.revision binding)
+    // before AuthStore.loadSession() has run, which would hit Firestore with
+    // an unscoped path and 403. Main.qml's onTenantContextReady already
+    // re-syncs every store once tenant context resolves — defer to that.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _load()
+    }
 
     function _load() {
+        _resetAndFetch();
+    }
+
+    function _resetAndFetch() {
         products = [];
+        hasMore = true;
+        _cursor = null;
         _fetchFromFirebase();
     }
 
+    function _normalizeProducts(arr) {
+        // Normalize backend field names to local schema
+        for (var i = 0; i < arr.length; ++i) {
+            var p = arr[i];
+            if (p.product_id && !p.productId) p.productId = p.product_id;
+            if (p.currentStock !== undefined && p.stock === undefined) p.stock = p.currentStock;
+            if (p.minimumStock !== undefined && p.minStock === undefined) p.minStock = p.minimumStock;
+            if (!p.sku) p.sku = "";
+            if (!p.category) p.category = "";
+            if (!p.unit) p.unit = "pcs";
+            if (!p.description) p.description = "";
+            // `price` is COST. `sellingPrice` is what customers pay.
+            // Default sellingPrice to cost for legacy docs that pre-date this field.
+            if (p.sellingPrice === undefined || p.sellingPrice === null) p.sellingPrice = p.price || 0;
+            if (p.taxable === undefined || p.taxable === null) p.taxable = false;
+            if (p.taxPercent === undefined || p.taxPercent === null) p.taxPercent = 0;
+            if (!p.photoUrl) p.photoUrl = "";
+            if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
+        }
+        return arr;
+    }
+
     function _fetchFromFirebase() {
-        FirebaseService.get("inventory", function(ok, data) {
-            if (ok) {
-                var arr = FirebaseService.toArray(data);
-                // Normalize backend field names to local schema
-                for (var i = 0; i < arr.length; ++i) {
-                    var p = arr[i];
-                    if (p.product_id && !p.productId) p.productId = p.product_id;
-                    if (p.currentStock !== undefined && p.stock === undefined) p.stock = p.currentStock;
-                    if (p.minimumStock !== undefined && p.minStock === undefined) p.minStock = p.minimumStock;
-                    if (!p.sku) p.sku = "";
-                    if (!p.category) p.category = "";
-                    if (!p.unit) p.unit = "pcs";
-                    if (!p.description) p.description = "";
-                    // `price` is COST. `sellingPrice` is what customers pay.
-                    // Default sellingPrice to cost for legacy docs that pre-date this field.
-                    if (p.sellingPrice === undefined || p.sellingPrice === null) p.sellingPrice = p.price || 0;
-                    if (p.taxable === undefined || p.taxable === null) p.taxable = false;
-                    if (p.taxPercent === undefined || p.taxPercent === null) p.taxPercent = 0;
-                    if (!p.photoUrl) p.photoUrl = "";
-                    if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
-                }
-                products = arr;
-                console.log("[InventoryStore] Synced", arr.length, "products from Firestore");
-            } else {
+        if (loadingMore) return;
+        loadingMore = true;
+        FirebaseService.query("inventory", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false;
+            if (!ok || !result) {
                 console.warn("[InventoryStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return;
+            }
+            products = products.concat(_normalizeProducts(result.items));
+            hasMore = result.hasMore;
+            _cursor = result.nextCursor;
+            if (hasMore) {
+                // Bounded collection: keep paging until Firestore reports no
+                // more pages, so `products` ends up complete either way —
+                // just fetched in bounded chunks instead of one unbounded
+                // request.
+                _fetchFromFirebase();
+            } else {
+                console.log("[InventoryStore] Synced", products.length, "products from Firestore (all pages)");
             }
         });
     }
 
-    function syncFromFirebase() { _fetchFromFirebase(); }
+    function syncFromFirebase() { _resetAndFetch(); }
 
     function clear() {
         products = []

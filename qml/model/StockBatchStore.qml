@@ -27,41 +27,85 @@ QtObject {
     property int revision: 0
     onBatchesChanged: revision++
 
-    Component.onCompleted: _load()
+    // Bounded-for-now collection (per design spec SS3.1 — full local data is
+    // kept, since FIFO consumption/stock-value logic assumes the complete
+    // set today). Fetches happen in <=_pageSize chunks via
+    // FirebaseService.query() instead of one unbounded FirebaseService.get().
+    // Ordered by __name__, not `receivedDate` -- the "!b.receivedDate"
+    // fallback below is evidence some batches lack it, and Firestore's
+    // orderBy silently EXCLUDES documents missing the ordered field from
+    // query results. FIFO correctness doesn't depend on fetch order anyway:
+    // forProduct() independently sorts by receivedDate on every call.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
+    // Only fetch here if tenant context is ALREADY known (lazy/warm
+    // creation). On cold start with a persisted session this singleton could
+    // otherwise be created before AuthStore.loadSession() has run, hitting
+    // Firestore with an unscoped path and 403. Main.qml's
+    // onTenantContextReady already re-syncs every store once tenant context
+    // resolves — defer to that.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _load()
+    }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     function _load() {
+        _resetAndFetch()
+    }
+
+    function _resetAndFetch() {
         batches = []
+        hasMore = true
+        _cursor = null
         _fetchFromFirebase()
     }
 
+    function _normalizeBatches(arr) {
+        for (var i = 0; i < arr.length; ++i) {
+            var b = arr[i]
+            if (!b.batchId) b.batchId = b.id || ""
+            if (!b.productId) b.productId = ""
+            if (!b.supplierId) b.supplierId = ""
+            if (b.qtyReceived === undefined || b.qtyReceived === null) b.qtyReceived = 0
+            if (b.qtyRemaining === undefined || b.qtyRemaining === null) b.qtyRemaining = b.qtyReceived
+            if (b.unitCost === undefined || b.unitCost === null) b.unitCost = 0
+            if (!b.receivedDate) b.receivedDate = b.createdAt || ""
+            if (!b.poId) b.poId = ""
+            if (!b.note) b.note = ""
+        }
+        return arr
+    }
+
     function _fetchFromFirebase() {
-        FirebaseService.get("stock_batches", function(ok, data) {
-            if (!ok) {
+        if (loadingMore) return
+        loadingMore = true
+        FirebaseService.query("stock_batches", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false
+            if (!ok || !result) {
                 console.warn("[StockBatchStore] Firestore sync failed",
                              FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return
             }
-            var arr = FirebaseService.toArray(data)
-            for (var i = 0; i < arr.length; ++i) {
-                var b = arr[i]
-                if (!b.batchId) b.batchId = b.id || ""
-                if (!b.productId) b.productId = ""
-                if (!b.supplierId) b.supplierId = ""
-                if (b.qtyReceived === undefined || b.qtyReceived === null) b.qtyReceived = 0
-                if (b.qtyRemaining === undefined || b.qtyRemaining === null) b.qtyRemaining = b.qtyReceived
-                if (b.unitCost === undefined || b.unitCost === null) b.unitCost = 0
-                if (!b.receivedDate) b.receivedDate = b.createdAt || ""
-                if (!b.poId) b.poId = ""
-                if (!b.note) b.note = ""
+            batches = batches.concat(_normalizeBatches(result.items))
+            hasMore = result.hasMore
+            _cursor = result.nextCursor
+            if (hasMore) {
+                // Keep paging until Firestore reports no more pages, so
+                // `batches` ends up complete either way -- just fetched in
+                // bounded chunks instead of one unbounded request.
+                _fetchFromFirebase()
+            } else {
+                console.log("[StockBatchStore] Synced", batches.length, "batches (all pages)")
             }
-            batches = arr
-            console.log("[StockBatchStore] Synced", arr.length, "batches")
         })
     }
 
-    function syncFromFirebase() { _fetchFromFirebase() }
+    function syncFromFirebase() { _resetAndFetch() }
 
     function clear() {
         batches = []

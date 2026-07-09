@@ -9,6 +9,19 @@ QtObject {
     property var orders: []
     property bool autoApproveEnabled: false
 
+    // Bounded-for-now collection (per design spec SS3.1 — full local data is
+    // kept, same app behavior as before, since Dashboard KPIs, import dedup,
+    // and analysis all currently assume the complete set). Fetches happen in
+    // <=_pageSize chunks via FirebaseService.query() instead of one unbounded
+    // FirebaseService.get(). Ordered by __name__, not `date` -- some legacy
+    // orders predate that field entirely (see the "!o.date" fallback below),
+    // and Firestore's orderBy silently EXCLUDES documents missing the
+    // ordered field from query results.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
     property Settings _settings: Settings {
         category: "OrdersStore"
         property bool autoApprove: false
@@ -16,7 +29,18 @@ QtObject {
 
     Component.onCompleted: {
         autoApproveEnabled = _settings.autoApprove
-        _load()
+        // Only fetch here if tenant context is ALREADY known (lazy/warm
+        // creation, well after login). On cold start with a persisted
+        // session, this singleton can be created (via DashboardPage's eager
+        // OrdersStore.revision binding) before AuthService's own
+        // Component.onCompleted has run AuthStore.loadSession() — firing
+        // here in that case would hit Firestore with an unscoped path
+        // (AuthStore.tenantId still "") and get a 403. Main.qml's
+        // onTenantContextReady already re-syncs every store unconditionally
+        // once tenant context resolves, so it's safe to just defer to that
+        // instead of racing it.
+        if (AuthStore.tenantId.length > 0)
+            _load()
     }
 
     onAutoApproveEnabledChanged: {
@@ -24,45 +48,66 @@ QtObject {
     }
 
     function _load() {
-        orders = []
+        _resetAndFetch()
+    }
+
+    function _resetAndFetch() {
+        orders = [];
+        hasMore = true;
+        _cursor = null;
         _refreshCounts();
         _fetchFromFirebase();
     }
 
+    function _normalizeOrders(arr) {
+        // Normalize backend field names to local schema
+        for (var i = 0; i < arr.length; ++i) {
+            var o = arr[i];
+            if (o.order_id && !o.orderId) o.orderId = o.order_id;
+            if (!o.customer) o.customer = "";
+            if (o.items === undefined) o.items = 0;
+            if (o.total === undefined) o.total = 0;
+            if (!o.status) o.status = "pending";
+            if (!o.date) o.date = o.created_at || "";
+            if (!o.notes) o.notes = "";
+            if (!o.email) o.email = "";
+            if (!o.phone) o.phone = "";
+            if (!o.products) o.products = [];
+            if (o.subtotal === undefined || o.subtotal === null) o.subtotal = 0;
+            if (o.tax === undefined || o.tax === null) o.tax = 0;
+            if (o.discount === undefined || o.discount === null) o.discount = 0;
+            if (!o.taxBreakdown) o.taxBreakdown = [];
+            // Channel + staff are added by the new build going
+            // forward; legacy docs default to empty so analytics
+            // surface them under "(unspecified)".
+            if (!o.orderChannel) o.orderChannel = "";
+            if (!o.staffId) o.staffId = "";
+            if (!Array.isArray(o.adjustments)) o.adjustments = [];
+        }
+        return arr;
+    }
+
     function _fetchFromFirebase() {
-        FirebaseService.get("orders", function(ok, data) {
-            if (ok) {
-                var arr = FirebaseService.toArray(data);
-                // Normalize backend field names to local schema
-                for (var i = 0; i < arr.length; ++i) {
-                    var o = arr[i];
-                    if (o.order_id && !o.orderId) o.orderId = o.order_id;
-                    if (!o.customer) o.customer = "";
-                    if (o.items === undefined) o.items = 0;
-                    if (o.total === undefined) o.total = 0;
-                    if (!o.status) { console.error(" ======== status is not present"); o.status = "pending";}
-                    if (!o.date) o.date = o.created_at || "";
-                    if (!o.notes) o.notes = "";
-                    if (!o.email) o.email = "";
-                    if (!o.phone) o.phone = "";
-                    if (!o.products) o.products = [];
-                    if (o.subtotal === undefined || o.subtotal === null) o.subtotal = 0;
-                    if (o.tax === undefined || o.tax === null) o.tax = 0;
-                    if (o.discount === undefined || o.discount === null) o.discount = 0;
-                    if (!o.taxBreakdown) o.taxBreakdown = [];
-                    // Channel + staff are added by the new build going
-                    // forward; legacy docs default to empty so analytics
-                    // surface them under "(unspecified)".
-                    if (!o.orderChannel) o.orderChannel = "";
-                    if (!o.staffId) o.staffId = "";
-                    if (!Array.isArray(o.adjustments)) o.adjustments = [];
-                }
-                orders = arr;
-                revision++;
-                _refreshCounts();
-                console.log("[OrdersStore] Synced", arr.length, "orders from Firestore");
-            } else {
+        if (loadingMore) return;
+        loadingMore = true;
+        FirebaseService.query("orders", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false;
+            if (!ok || !result) {
                 console.warn("[OrdersStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return;
+            }
+            orders = orders.concat(_normalizeOrders(result.items));
+            revision++;
+            _refreshCounts();
+            hasMore = result.hasMore;
+            _cursor = result.nextCursor;
+            if (hasMore) {
+                // Keep paging until Firestore reports no more pages, so
+                // `orders` ends up complete either way -- just fetched in
+                // bounded chunks instead of one unbounded request.
+                _fetchFromFirebase();
+            } else {
+                console.log("[OrdersStore] Synced", orders.length, "orders from Firestore (all pages)");
             }
         });
     }
@@ -76,19 +121,7 @@ QtObject {
         });
     }
 
-    function _pushAllToFirebase() {
-        var obj = {};
-        for (var i = 0; i < orders.length; ++i)
-            obj[orders[i].orderId] = orders[i];
-        FirebaseService.put("orders", obj, function(ok) {
-            if (!ok)
-                console.warn("[OrdersStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[OrdersStore] Firestore bulk write ok, documents:", orders.length)
-        });
-    }
-
-    function syncFromFirebase() { _fetchFromFirebase(); }
+    function syncFromFirebase() { _resetAndFetch(); }
 
     function clear() {
         orders = []
@@ -302,11 +335,18 @@ QtObject {
         outOfStockCount = oos;
     }
 
-    function _commit(arr) {
+    // `changedOrder`, when provided, is the single order doc this mutation
+    // actually touched — persisted with one single-doc PUT instead of
+    // rebuilding the entire collection into one bulk :commit (which hard-fails
+    // past Firestore's 500-write-per-commit cap). Callers that legitimately
+    // touch several docs at once (approveAllPending) omit changedOrder here
+    // and persist via FirebaseService.putMany() themselves after calling this.
+    function _commit(arr, changedOrder) {
         orders = arr;
         revision++;
         _refreshCounts();
-        _pushAllToFirebase();
+        if (changedOrder)
+            _pushToFirebase(changedOrder);
     }
 
     function _clone() {
@@ -443,7 +483,7 @@ QtObject {
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         o.updatedAt = new Date().toISOString();
-        _commit(arr);
+        _commit(arr, o);
     }
 
     // Apply a return/exchange/modify adjustment: set the order's lines to the
@@ -485,16 +525,27 @@ QtObject {
         if (!Array.isArray(o.adjustments)) o.adjustments = [];
         o.adjustments.push(adjustmentRecord);
         o.updatedAt = new Date().toISOString();
-        _commit(arr);
+        _commit(arr, o);
     }
 
     function approveAllPending() {
         var arr = _clone();
+        var changedDocsById = {};
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].status === "pending")
+            if (arr[i].status === "pending") {
                 arr[i].status = "completed";
+                changedDocsById[arr[i].orderId] = arr[i];
+            }
         }
         _commit(arr);
+        var changedCount = Object.keys(changedDocsById).length;
+        if (changedCount === 0) return;
+        FirebaseService.putMany("orders", changedDocsById, function(ok, errorInfo) {
+            if (!ok)
+                console.warn("[OrdersStore] approveAllPending putMany failed", JSON.stringify(errorInfo));
+            else
+                console.log("[OrdersStore] approveAllPending putMany ok, documents:", changedCount);
+        });
     }
 
     // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
@@ -528,7 +579,7 @@ QtObject {
             }
         }
         var totals = computeOrderTotals(prods);
-        arr.push({ orderId: id, customer: customer,
+        var newOrder = { orderId: id, customer: customer,
                    items: prods.length > 0 ? totals.itemCount : items,
                    subtotal: totals.subtotal,
                    discount: totals.discount,
@@ -540,8 +591,9 @@ QtObject {
                    orderChannel: orderChannel || "",
                    staffId: staffId || "",
                    updatedAt: new Date().toISOString(),
-                   products: prods });
-        _commit(arr);
+                   products: prods };
+        arr.push(newOrder);
+        _commit(arr, newOrder);
     }
 
     function deleteOrder(orderId) {

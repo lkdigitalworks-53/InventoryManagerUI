@@ -13,6 +13,14 @@ QtObject {
     // array is ever reordered or synced async between add and read.
     property string lastAddedId: ""
 
+    // Bounded collection (capped by realistic business size) — the UI needs
+    // the full set (department lists, dropdowns), so we page to exhaustion
+    // rather than exposing a partial list. Same pattern as InventoryStore.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
     function _daysAgoText(dateStr) {
         var d = new Date(dateStr)
         if (isNaN(d.getTime()))
@@ -136,11 +144,17 @@ QtObject {
         var id = nextStaffId();
         var iso = Qt.formatDate(joinDate, 'yyyy-MM-dd');
         var arr = _clone();
-        arr.push({ staffId: id, name: name, role: role, department: department,
-                   email: email, phone: phone, joinDate: iso, status: status, salary: salary });
+        var newStaff = { staffId: id, name: name, role: role, department: department,
+                   email: email, phone: phone, joinDate: iso, status: status, salary: salary };
+        arr.push(newStaff);
         staff = arr;
         lastAddedId = id;
-        _pushAllToFirebase();
+        // Single-doc PUT — matches updateStaff/setAppUid's already-correct
+        // pattern; avoids the bulk-collection-overwrite path that hard-fails
+        // once staff count crosses Firestore's 500-write-per-commit cap.
+        FirebaseService.put("staff/" + id, newStaff, function(ok) {
+            if (!ok) console.warn("[StaffStore] Firestore write failed for", id)
+        })
         _rebuildActivities();
         ActivityLog.record("staff_added",
                            "Teammate added: " + name,
@@ -228,38 +242,52 @@ QtObject {
     }
 
     // ── Firebase sync ──
-    Component.onCompleted: _load()
+    // Only fetch here if tenant context is ALREADY known (lazy/warm
+    // creation). On cold start with a persisted session this singleton can
+    // be created (DashboardPage's staff KPI) before AuthStore.loadSession()
+    // has run, which would hit Firestore with an unscoped path and 403.
+    // Main.qml's onTenantContextReady already re-syncs every store once
+    // tenant context resolves — defer to that.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _load()
+    }
 
     function _load() {
+        _resetAndFetch()
+    }
+
+    function _resetAndFetch() {
         staff = []
         activities = []
+        hasMore = true
+        _cursor = null
         _fetchFromFirebase()
     }
 
     function _fetchFromFirebase() {
-        FirebaseService.get("staff", function(ok, data) {
-            if (ok) {
-                var arr = FirebaseService.toArray(data);
-                staff = arr;
-                _rebuildActivities();
-                console.log("[StaffStore] Synced", arr.length, "staff from Firestore");
-            } else {
+        if (loadingMore) return
+        loadingMore = true
+        FirebaseService.query("staff", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false
+            if (!ok || !result) {
                 console.warn("[StaffStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return
             }
-        });
+            staff = staff.concat(result.items)
+            hasMore = result.hasMore
+            _cursor = result.nextCursor
+            _rebuildActivities()
+            if (hasMore) {
+                // Bounded collection: keep paging until Firestore reports no
+                // more pages, so `staff` ends up complete either way — just
+                // fetched in bounded chunks instead of one unbounded request.
+                _fetchFromFirebase()
+            } else {
+                console.log("[StaffStore] Synced", staff.length, "staff from Firestore (all pages)")
+            }
+        })
     }
 
-    function _pushAllToFirebase() {
-        var obj = {};
-        for (var i = 0; i < staff.length; ++i)
-            obj[staff[i].staffId] = staff[i];
-        FirebaseService.put("staff", obj, function(ok) {
-            if (!ok)
-                console.warn("[StaffStore] Firestore bulk write failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[StaffStore] Firestore bulk write ok, documents:", staff.length)
-        });
-    }
-
-    function syncFromFirebase() { _fetchFromFirebase(); }
+    function syncFromFirebase() { _resetAndFetch() }
 }

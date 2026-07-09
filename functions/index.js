@@ -18,9 +18,29 @@
 
 const functions = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const { getFirestore } = require("firebase-admin/firestore");
+const RealisedMath = require("./lib/realisedMath");
+const BreakdownMath = require("./lib/breakdownMath");
 
 admin.initializeApp();
-const db = admin.firestore();
+
+// Mirrors qml/helper/EnvConfig.js's stage->env->databaseId resolution chain
+// (Skill 30) so the client and every Cloud Function agree on which of the
+// three per-env Firestore databases a request is scoped to. Constrained to
+// exactly these 3 known values -- never a client-supplied arbitrary database
+// id string -- and fails safe to prd on an unknown/missing env, same
+// fail-safe EnvConfig.js itself uses. `db` is now resolved PER REQUEST from
+// the client-declared `env`, not a module-level global: every handler below
+// calls `scopedDb(body.env)` instead of closing over one shared instance,
+// closing the gap where recordMutation/provisionMember/runCutover always
+// wrote to `(default)` regardless of which env the calling client was built
+// for (see README "Environments" / AGENTS SS8).
+const DATABASE_ID_FOR_ENV = { dev: "dev", test: "test", prd: "(default)" };
+
+function scopedDb(env) {
+    const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
+    return getFirestore(admin.app(), databaseId);
+}
 
 // P0 scope. `entity` → collection name under the tenant root. `inventory`
 // is working-tier (also client-writable); the rest are locked ledger
@@ -41,7 +61,7 @@ function send(res, status, body) {
     res.status(status).json(body);
 }
 
-async function deriveContext(uid) {
+async function deriveContext(db, uid) {
     // Tenant + role come from the server's own records, not the client.
     const userSnap = await db.doc("users/" + uid).get();
     if (!userSnap.exists) return null;
@@ -94,6 +114,7 @@ exports.recordMutation = functions.onRequest(
         const actorUid = decoded.uid;
 
         const body = req.body || {};
+        const db = scopedDb(body.env);
         const entity = String(body.entity || "");
         const entityId = String(body.entityId || "");
         const action = String(body.action || "");
@@ -116,7 +137,7 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(actorUid);
+        const ctx = await deriveContext(db, actorUid);
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -169,7 +190,7 @@ exports.recordMutation = functions.onRequest(
 // Server-side because the ledger collections are locked read-only to clients —
 // only the Admin SDK can delete them.
 
-async function deleteCollection(path) {
+async function deleteCollection(db, path) {
     const snap = await db.collection(path).get();
     let batch = db.batch();
     let n = 0;
@@ -249,14 +270,15 @@ exports.provisionMember = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(decoded.uid);
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+        const ctx = await deriveContext(db, decoded.uid);
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
         if (ctx.role !== "owner" && ctx.role !== "admin") {
             send(res, 403, { ok: false, error: "not-authorized" });
             return;
         }
 
-        const body = req.body || {};
         const email = String(body.email || "").trim().toLowerCase();
         const displayName = String(body.displayName || "").trim();
         const password = body.password ? String(body.password) : "";
@@ -375,22 +397,24 @@ exports.runCutover = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(decoded.uid);
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+        const ctx = await deriveContext(db, decoded.uid);
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
         if (ctx.role !== "owner") {
             send(res, 403, { ok: false, error: "owner-only" });
             return;
         }
-        if (String((req.body || {}).confirm || "") !== "CUTOVER") {
+        if (String(body.confirm || "") !== "CUTOVER") {
             send(res, 400, { ok: false, error: "confirmation-required" });
             return;
         }
 
         const root = "tenants/" + ctx.tenantId;
         try {
-            await deleteCollection(root + "/transactions");
-            await deleteCollection(root + "/stock_batches");
-            await deleteCollection(root + "/stock_movements");
+            await deleteCollection(db, root + "/transactions");
+            await deleteCollection(db, root + "/stock_batches");
+            await deleteCollection(db, root + "/stock_movements");
 
             // Zero every product's stock.
             const inv = await db.collection(root + "/inventory").get();
@@ -415,7 +439,7 @@ exports.runCutover = functions.onRequest(
                 before: null,
                 after: { note: "Fresh-start cutover: ledger wiped, stock zeroed." },
                 serverTimestamp: admin.firestore.FieldValue.serverTimestamp(),
-                clientTimestamp: (req.body || {}).clientTimestamp || null,
+                clientTimestamp: body.clientTimestamp || null,
                 requestId: markerId
             });
         } catch (e) {
@@ -425,3 +449,168 @@ exports.runCutover = functions.onRequest(
 
         send(res, 200, { ok: true });
     });
+
+// ── Analysis compute (Phase 2 of the scale-reads-writes-analytics design) ──
+// Runs the Revenue/Profit/Sold/Purchased aggregation server-side instead of
+// requiring the full transaction ledger resident in the QML client. Reuses
+// the SAME math as the client -- functions/lib/{orderMath,realisedMath,
+// breakdownMath}.js are ports of qml/helper/{OrderMath,RealisedMath,
+// BreakdownMath}.js, parity-tested against shared fixtures (functions/test/).
+//
+// Honest note on "paginated, not streaming": readAllPaged() below paginates
+// the READS (Admin SDK, <=500 docs per internal page) so a huge ledger never
+// hits a single-query response-size/timeout limit -- but the accumulated
+// result is still one in-memory array by the time RealisedMath/BreakdownMath
+// run, because those functions take a full `entries` array as their contract
+// (same as the QML originals). This is a deliberate, simpler first cut: even
+// fully materialized, a tenant's lifetime transaction history fits
+// comfortably in a Cloud Function's memory (far more headroom than a phone),
+// and the actual failure mode this fixes -- an unbounded read tripping
+// Firestore's response limits -- is solved either way. A true streaming/
+// incremental-reducer version of the math is a possible future refinement if
+// a ledger ever grows large enough for even server-side memory to matter;
+// not needed for this pass.
+
+const ANALYSIS_PAGE_SIZE = 500;
+
+async function readAllPaged(db, collectionPath, pageSize) {
+    pageSize = pageSize || ANALYSIS_PAGE_SIZE;
+    const out = [];
+    const base = db.collection(collectionPath).orderBy("__name__").limit(pageSize);
+    let lastDoc = null;
+    for (;;) {
+        const q = lastDoc ? base.startAfter(lastDoc) : base;
+        const snap = await q.get();
+        if (snap.empty) break;
+        for (const doc of snap.docs) out.push(doc.data());
+        if (snap.docs.length < pageSize) break;
+        lastDoc = snap.docs[snap.docs.length - 1];
+    }
+    return out;
+}
+
+function buildProductCategoryMap(products) {
+    const map = {};
+    for (const p of products) if (p && p.productId) map[p.productId] = p.category || "";
+    return map;
+}
+
+function buildSupplierNameMap(suppliers) {
+    const map = {};
+    for (const s of suppliers) if (s && s.supplierId) map[s.supplierId] = s.name || "";
+    return map;
+}
+
+function buildOrderLookup(orders) {
+    const map = {};
+    for (const o of orders) if (o && o.orderId) map[o.orderId] = o;
+    return function(orderId) { return map[orderId] || null; };
+}
+
+const ANALYSIS_VIEW_MODES = ["revenue", "profit", "sold", "purchased"];
+
+exports.computeAnalysis = functions.onRequest(
+    { region: "asia-southeast1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const authHeader = req.get("Authorization") || "";
+        const match = authHeader.match(/^Bearer\s+(.+)$/i);
+        if (!match) { send(res, 401, { ok: false, error: "missing-token" }); return; }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(match[1]);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+        const ctx = await deriveContext(db, decoded.uid);
+        if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
+
+        const viewMode = String(body.viewMode || "");
+        if (ANALYSIS_VIEW_MODES.indexOf(viewMode) < 0) {
+            send(res, 400, { ok: false, error: "unsupported-view-mode" });
+            return;
+        }
+        const period = Number.isInteger(body.period) ? body.period : 0;
+        const dims = Array.isArray(body.dims) && body.dims.length > 0
+            ? body.dims : ["category", "supplier"];
+        const scope = body.scope || {};
+        const periodScoped = !!body.periodScoped;
+
+        const tenantRoot = "tenants/" + ctx.tenantId;
+        const needsOrders = (viewMode === "revenue" || viewMode === "profit");
+
+        try {
+            const [entries, orders, products, suppliers] = await Promise.all([
+                readAllPaged(db, tenantRoot + "/transactions"),
+                needsOrders ? readAllPaged(db, tenantRoot + "/orders") : Promise.resolve([]),
+                readAllPaged(db, tenantRoot + "/inventory"),
+                readAllPaged(db, tenantRoot + "/suppliers")
+            ]);
+
+            const productCategoryMap = buildProductCategoryMap(products);
+            const supplierNameMap = buildSupplierNameMap(suppliers);
+            const categoryOf = function(pid) { return productCategoryMap[pid] || ""; };
+            const orderLookup = buildOrderLookup(orders);
+
+            const now = new Date();
+            const periodWin = BreakdownMath.periodWindow(period, now);
+            const explicitWin = (scope.window && scope.window.from && scope.window.to)
+                ? { from: new Date(scope.window.from), to: new Date(scope.window.to) }
+                : null;
+            const win = periodScoped
+                ? BreakdownMath.intersect(periodWin, explicitWin)
+                : explicitWin;
+
+            const realisedScope = {
+                window: win,
+                channel: scope.channel || "",
+                staffId: scope.staffId || "",
+                category: scope.category || "",
+                supplierId: scope.supplierId || ""
+            };
+            const lookups = { categoryOf: categoryOf, orderLookup: orderLookup };
+
+            let totals = null;
+            const byDimension = {};
+            const bucketWalk = {};
+
+            if (viewMode === "revenue" || viewMode === "profit") {
+                totals = RealisedMath.totals(entries, realisedScope, lookups);
+                for (const dim of dims) {
+                    const field = (dim === "supplier") ? "supplierId" : dim;
+                    byDimension[dim] = RealisedMath.byDimension(field, entries, realisedScope, lookups);
+                }
+                const metric = (viewMode === "revenue") ? "net" : "profit";
+                bucketWalk[metric] = RealisedMath.bucketWalk(
+                    metric, period, entries, realisedScope, now, lookups);
+            } else {
+                // sold / purchased -- unit metrics via BreakdownMath.
+                for (const dim of dims) {
+                    byDimension[dim] = BreakdownMath.breakdown({
+                        metric: viewMode, dim: dim,
+                        orders: orders, entries: entries, window: win,
+                        channel: realisedScope.channel, staffId: realisedScope.staffId,
+                        category: realisedScope.category, supplierId: realisedScope.supplierId,
+                        productCategory: productCategoryMap,
+                        supplierName: supplierNameMap
+                    });
+                }
+            }
+
+            send(res, 200, { ok: true, totals: totals, byDimension: byDimension, bucketWalk: bucketWalk });
+        } catch (e) {
+            console.error("computeAnalysis failed", e);
+            send(res, 500, { ok: false, error: "compute-failed" });
+        }
+    });
+

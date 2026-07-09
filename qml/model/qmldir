@@ -16,4 +16,5 @@ singleton MigrationService 1.0 MigrationService.qml
 singleton OrderChannelStore 1.0 OrderChannelStore.qml
 singleton OutboxStore 1.0 OutboxStore.qml
 singleton Gateway 1.0 Gateway.qml
+singleton AnalysisService 1.0 AnalysisService.qml
 singleton GoogleAuthService 1.0 GoogleAuthService.qml

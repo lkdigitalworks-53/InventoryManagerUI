@@ -19,43 +19,88 @@ QtObject {
     property int revision: 0
     onSuppliersChanged: revision++
 
-    Component.onCompleted: _load()
+    // Bounded collection (capped by realistic business size) — the UI needs
+    // the full set for search/dropdowns, so we page to exhaustion rather than
+    // exposing a partial list. Same pattern as InventoryStore/StaffStore.
+    // Ordered by Firestore's document name (the query() default), not
+    // createdAt — some legacy supplier docs predate that field entirely (see
+    // the "!s.createdAt" default below), and Firestore's orderBy silently
+    // EXCLUDES documents missing the ordered field from query results.
+    // __name__ is always present on every document, so nothing gets dropped.
+    readonly property int _pageSize: 50
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var _cursor: null
+
+    // Only fetch here if tenant context is ALREADY known (lazy/warm
+    // creation). On cold start with a persisted session this singleton could
+    // otherwise be created before AuthStore.loadSession() has run, hitting
+    // Firestore with an unscoped path and 403. Main.qml's
+    // onTenantContextReady already re-syncs every store once tenant context
+    // resolves — defer to that.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _load()
+    }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     function _load() {
+        _resetAndFetch()
+    }
+
+    function _resetAndFetch() {
         suppliers = []
+        hasMore = true
+        _cursor = null
         _fetchFromFirebase()
     }
 
+    function _normalizeSuppliers(arr) {
+        for (var i = 0; i < arr.length; ++i) {
+            var s = arr[i]
+            if (!s.supplierId) s.supplierId = s.id || ""
+            if (!s.name) s.name = ""
+            if (!s.contact) s.contact = ""
+            if (s.leadTimeDays === undefined || s.leadTimeDays === null) s.leadTimeDays = 0
+            if (!s.terms) s.terms = ""
+            if (!s.notes) s.notes = ""
+            if (!s.createdAt) s.createdAt = ""
+            if (!s.updatedAt) s.updatedAt = ""
+        }
+        return arr
+    }
+
     function _fetchFromFirebase() {
-        FirebaseService.get("suppliers", function(ok, data) {
-            if (!ok) {
+        if (loadingMore) return
+        loadingMore = true
+        FirebaseService.query("suppliers", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
+            loadingMore = false
+            if (!ok || !result) {
                 console.warn("[SupplierStore] Firestore sync failed",
                              FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return
             }
-            var arr = FirebaseService.toArray(data)
-            for (var i = 0; i < arr.length; ++i) {
-                var s = arr[i]
-                if (!s.supplierId) s.supplierId = s.id || ""
-                if (!s.name) s.name = ""
-                if (!s.contact) s.contact = ""
-                if (s.leadTimeDays === undefined || s.leadTimeDays === null) s.leadTimeDays = 0
-                if (!s.terms) s.terms = ""
-                if (!s.notes) s.notes = ""
-                if (!s.createdAt) s.createdAt = ""
-                if (!s.updatedAt) s.updatedAt = ""
-            }
+            var arr = suppliers.concat(_normalizeSuppliers(result.items))
             arr.sort(function(a, b) {
                 return (a.name || "").localeCompare(b.name || "")
             })
             suppliers = arr
-            console.log("[SupplierStore] Synced", arr.length, "suppliers")
+            hasMore = result.hasMore
+            _cursor = result.nextCursor
+            if (hasMore) {
+                // Bounded collection: keep paging until Firestore reports no
+                // more pages, so `suppliers` ends up complete either way —
+                // just fetched in bounded chunks instead of one unbounded
+                // request.
+                _fetchFromFirebase()
+            } else {
+                console.log("[SupplierStore] Synced", suppliers.length, "suppliers (all pages)")
+            }
         })
     }
 
-    function syncFromFirebase() { _fetchFromFirebase() }
+    function syncFromFirebase() { _resetAndFetch() }
 
     // Drop in-memory state. Used on sign-out so a relogin doesn't briefly
     // show the previous tenant's supplier list.

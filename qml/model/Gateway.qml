@@ -165,6 +165,10 @@ QtObject {
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
         xhr.send(JSON.stringify({
+            // Tells the Cloud Function which per-env Firestore database to
+            // read/write (Skill 30) -- pulled fresh at send time (not stored
+            // on the outbox item), since it's a build-time constant anyway.
+            env: FirebaseService.environment,
             entity: item.entity,
             entityId: item.entityId,
             action: item.action,
@@ -205,7 +209,11 @@ QtObject {
         xhr.open("POST", cutoverUrl)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
-        xhr.send(JSON.stringify({ confirm: "CUTOVER", clientTimestamp: new Date().toISOString() }))
+        xhr.send(JSON.stringify({
+            env: FirebaseService.environment,
+            confirm: "CUTOVER",
+            clientTimestamp: new Date().toISOString()
+        }))
     }
 
     // ── Member provisioning (owner/admin only) ──────────────────────────────
@@ -243,7 +251,9 @@ QtObject {
         xhr.open("POST", provisionMemberUrl)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
-        xhr.send(JSON.stringify(payload))
+        // Merge, don't mutate -- payload is the caller's (AuthService.qml)
+        // object, which it may reuse across calls.
+        xhr.send(JSON.stringify(Object.assign({}, payload, { env: FirebaseService.environment })))
     }
 
     function clear() {
