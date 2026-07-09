@@ -628,14 +628,20 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 0
+                            Text { text: SalesStore.formatNumber(InventoryStore.totalProducts()); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsTitle); font.bold: true }
+                            Text { text: qsTr("Products"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsCaption) }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
                             Text { text: SalesStore.formatNumber(InventoryStore.totalItems()); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsTitle); font.bold: true }
-                            Text { text: qsTr("Total items"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsCaption) }
+                            Text { text: qsTr("Items"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsCaption) }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 0
                             Text { text: String(root._distinctNames()); color: Constants.textPrimary; font.pixelSize: sp(Constants.fsTitle); font.bold: true }
-                            Text { text: qsTr("Products"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsCaption) }
+                            Text { text: qsTr("Unique names"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsCaption) }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
