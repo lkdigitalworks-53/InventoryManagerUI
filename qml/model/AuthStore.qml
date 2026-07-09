@@ -85,7 +85,6 @@ QtObject {
 
     function loadSession() {
         clear()
-        _settings.sessionJson = _settings.value("current_session")
         if (_settings.sessionJson && _settings.sessionJson.length > 2) {
             try {
                 var s = JSON.parse(_settings.sessionJson)
@@ -113,7 +112,7 @@ QtObject {
     }
 
     function saveSession() {
-        var json_str = JSON.stringify({
+        _settings.sessionJson = JSON.stringify({
             uid: uid,
             email: email,
             displayName: displayName,
@@ -130,8 +129,6 @@ QtObject {
             photoUrl: photoUrl,
             idToken: idToken
         })
-        _settings.sessionJson = json_str
-        _settings.setValue("current_session", json_str)
     }
 
     function applyAuth(auth) {
