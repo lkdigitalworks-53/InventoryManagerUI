@@ -34,7 +34,16 @@ QtObject {
     property bool loadingMore: false
     property var _cursor: null
 
-    Component.onCompleted: _resetAndFetch()
+    // Only fetch here if tenant context is ALREADY known (lazy/warm
+    // creation). On cold start with a persisted session this singleton could
+    // otherwise be created before AuthStore.loadSession() has run, hitting
+    // Firestore with an unscoped path and 403. Main.qml's
+    // onTenantContextReady already re-syncs every store once tenant context
+    // resolves — defer to that.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _resetAndFetch()
+    }
 
     function _resetAndFetch() {
         entries = []

@@ -29,7 +29,18 @@ QtObject {
 
     Component.onCompleted: {
         autoApproveEnabled = _settings.autoApprove
-        _load()
+        // Only fetch here if tenant context is ALREADY known (lazy/warm
+        // creation, well after login). On cold start with a persisted
+        // session, this singleton can be created (via DashboardPage's eager
+        // OrdersStore.revision binding) before AuthService's own
+        // Component.onCompleted has run AuthStore.loadSession() — firing
+        // here in that case would hit Firestore with an unscoped path
+        // (AuthStore.tenantId still "") and get a 403. Main.qml's
+        // onTenantContextReady already re-syncs every store unconditionally
+        // once tenant context resolves, so it's safe to just defer to that
+        // instead of racing it.
+        if (AuthStore.tenantId.length > 0)
+            _load()
     }
 
     onAutoApproveEnabledChanged: {

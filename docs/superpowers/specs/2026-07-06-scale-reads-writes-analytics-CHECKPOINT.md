@@ -177,6 +177,83 @@ Two open, undecided questions for Taher whenever he's ready:
 
 ## Session log
 
+**2026-07-09, session 2 — bug found in QA before merge (IN PROGRESS):**
+- Taher QA'd `feature/paginated-reads-phase1` before merging and found: on cold app open (persisted
+  session, not a fresh login), some of the six paginated stores randomly come back 403/empty; a
+  logout/login always fixes it. Not present on `main`.
+- **Root cause (confirmed via `superpowers:systematic-debugging`, code-evidence-based, no app run
+  needed — no Qt/Felgo toolchain in this container):**
+  1. All six stores fire their first Firestore read unconditionally from their own singleton's
+     `Component.onCompleted`. `DashboardPage.qml`'s eager property bindings
+     (`OrdersStore.revision`/`InventoryStore.revision`/`ActivityLog.revision` at lines ~200-202, plus
+     `StaffStore.staff` via a KPI card) force those singletons into existence — and thus fire their
+     first fetch — before `AuthService`'s `Component.onCompleted` (which calls
+     `AuthStore.loadSession()`, restoring `idToken`/`tenantId` from disk) has necessarily run.
+     `AuthService` is only pulled in via `Connections { target: AuthService }` / the explicit
+     `AuthService.ensureFreshToken()` call in `App.Component.onCompleted` (`Main.qml:37-39`) — no
+     earlier eager binding guarantees it goes first. With `AuthStore.tenantId == ""`,
+     `FirebaseService._resolvePath()` (`FirebaseService.qml:62-65`) returns the **unscoped** path,
+     which Firestore rules reject with 403 — matches the log exactly (`documents:runQuery` /
+     `documents/activity_log` with no `tenants/{id}/` prefix).
+  2. This part isn't random by itself — it happens every cold start. The **existing** safety net
+     (`Main.qml`'s `onTenantContextReady` handler, already in the codebase, re-syncs every store once
+     tenant context resolves) is what makes it *look* random: Phase 1 pagination added a
+     `loadingMore` single-flight guard (needed for the recursive page-loop) to
+     `OrdersStore`/`InventoryStore`/`StaffStore`/`TransactionStore`/`SupplierStore`/`StockBatchStore`.
+     If the resync's `syncFromFirebase()` call lands while the store's own doomed first request is
+     still in flight, `if (loadingMore) return` silently drops the resync — no new request is sent,
+     and `_resetAndFetch()` already cleared the array to `[]` moments earlier. Nothing then ever
+     repopulates the store until logout/login restarts the cycle with `loadingMore` already `false`.
+     Outcome depends purely on network timing (whether the tenant-context round trip finishes before
+     or after each store's own first request) — hence "random."
+  3. **Control case confirmed the mechanism**: `ActivityLog.qml` was *not* touched by pagination —
+     still plain `FirebaseService.get()`, no `loadingMore` guard — so its resync is never dropped.
+     That's exactly why the user's log shows `ActivityLog` fail-then-succeed on every run, while
+     `OrdersStore`/`InventoryStore`/`StaffStore` only ever showed the single failure.
+  4. Confirmed via diff (`d6b7717`) that pre-pagination `OrdersStore._fetchFromFirebase` used plain
+     `FirebaseService.get()` with no concurrency guard at all — the guard (and thus this failure
+     mode) is new in this branch, explaining why `main` doesn't show the bug.
+- **Fix direction chosen (root-cause level, not a retry-coalescing patch):** stop the six stores from
+  firing the premature, doomed first fetch at all. `onTenantContextReady` already unconditionally
+  re-syncs every one of them on both cold start and fresh login, so the `Component.onCompleted`
+  fetch only needs to run when `AuthStore.tenantId` is *already* known at that exact moment
+  (lazy/warm creation, well after tenant context resolved); otherwise defer entirely to the existing
+  `onTenantContextReady` resync. Removes the race instead of coordinating around it.
+- **Status:** root cause confirmed, fix direction agreed with Taher.
+  - [x] TDD step 1 (RED/GREEN proof): wrote a Node-runnable pure-logic reproduction (same technique
+    as `tst_AddStaffSyncClose.qml` — model the timing bug with a minimal object, since the real
+    singletons need the full Felgo App context and this container has no Qt toolchain). Confirms:
+    old code drops the retry when it races the first request (bug), old code self-heals when it
+    *doesn't* race (proves the "random" symptom is the same code, different timing), fixed code
+    never sends the doomed first request and is deterministic either way, fixed code has no
+    regression for warm/lazy store creation (tenantId already known at `Component.onCompleted`).
+    Scratch file `scratch_race_repro.js` at repo root, all 4 assertions pass — will be deleted
+    before commit (not part of the real test suite).
+  - [x] Ported the proof into `tests/tst_TenantContextRaceGuard.qml` (repo's real suite — same
+    "model the timing with a minimal object" technique as `tst_AddStaffSyncClose.qml`, since the real
+    singletons need the full Felgo App context and can't load under `qmltestrunner`; not run here for
+    the same reason — needs a real machine, per Skill 27). 4 cases: old-code drops the retry when
+    racing, old-code self-heals when it doesn't race (proves "random" = timing, not two code paths),
+    fixed-code never drops regardless of race timing, fixed-code has no regression for warm/lazy
+    creation (tenantId already known at `Component.onCompleted`).
+  - [x] Applied the fix to all six stores (`OrdersStore`, `InventoryStore`, `StaffStore`,
+    `TransactionStore`, `SupplierStore`, `StockBatchStore`) — same one-line change at each call site:
+    `Component.onCompleted` only calls `_load()`/`_resetAndFetch()` when `AuthStore.tenantId.length >
+    0`; otherwise defers entirely to the existing `onTenantContextReady` resync in `Main.qml`. No
+    change to `loadingMore`/pagination logic itself — this removes the race instead of coordinating
+    around it. `ActivityLog`/`OrderChannelStore`/`CategoryStore` have the same
+    `Component.onCompleted`-fires-a-fetch shape but were left untouched (out of scope for this bug —
+    `ActivityLog` has no `loadingMore` guard so it isn't actually broken today; flagging as an
+    optional follow-up, not bundling it in).
+  - [x] Linted the six changed files (`qt-qml-review` Phase 1 script, deterministic, no Qt needed):
+    zero findings within the exact lines this fix touched. (The full-file run surfaces many
+    pre-existing `var`/`==`/property-ordering findings elsewhere in these files — unrelated
+    pre-existing style, out of scope, not touched.)
+  - [x] Diff reviewed line-by-line in this session — six files, same single change repeated, no
+    unrelated edits.
+  - **Not committed yet** (standing rule: commit only after Taher's explicit confirmation; push only
+    with a fresh token). Diff shown to Taher in-conversation for review.
+
 **2026-07-06, session 1:**
 - Read `/mnt/skills/plugins/superpowers:brainstorming/SKILL.md`, followed its process for the design
   spec (context exploration -> clarifying questions -> approaches -> sectioned design -> write spec ->

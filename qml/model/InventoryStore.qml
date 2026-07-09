@@ -27,7 +27,16 @@ QtObject {
     property int revision: 0
     onProductsChanged: revision++
 
-    Component.onCompleted: _load()
+    // Only fetch here if tenant context is ALREADY known (lazy/warm
+    // creation). On cold start with a persisted session this singleton can
+    // be created (via DashboardPage's eager InventoryStore.revision binding)
+    // before AuthStore.loadSession() has run, which would hit Firestore with
+    // an unscoped path and 403. Main.qml's onTenantContextReady already
+    // re-syncs every store once tenant context resolves — defer to that.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _load()
+    }
 
     function _load() {
         _resetAndFetch();
