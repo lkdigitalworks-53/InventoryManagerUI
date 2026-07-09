@@ -912,15 +912,20 @@ PRODUCT_STAGE (CMakeLists.txt)
   → PRODUCT_STAGE_DEF  (target_compile_definitions)
   → APP_STAGE          (engine.rootContext()->setContextProperty in main.cpp)
   → EnvConfig.envForStage(APP_STAGE)  → "prd" | "test" | "dev"
-  → EnvConfig.databaseIdForEnv(env)   → "(default)" | "test" | "dev"
+  → EnvConfig.databaseIdForEnv(env)   → "(default)" | "test" | "dev1"
   → FirebaseService.databaseId / .databaseUrl   (every REST call builds off this)
 ```
 
 | `PRODUCT_STAGE` | env  | database    |
 |-----------------|------|-------------|
-| `dev`           | dev  | `dev`       |
+| `dev`           | dev  | `dev1`      |
 | `test`          | test | `test`      |
 | `publish`       | prd  | `(default)` |
+
+Note the **env name** (`dev`) and the **Firestore database id** (`dev1`) differ — Firestore
+database ids must be >=4 characters, so the 3-char `dev` is invalid and the actual database is
+named `dev1`. `databaseIdForEnv` is the only place this divergence lives; never assume env name
+== database id.
 
 ```qml
 // FirebaseService.qml — env resolved once; all get/put/patch/remove switch here.
@@ -1033,7 +1038,7 @@ Every Cloud Function (`recordMutation`, `provisionMember`, `runCutover`, `comput
 its Firestore database **per request**, not from a module-level global:
 
 ```js
-const DATABASE_ID_FOR_ENV = { dev: "dev", test: "test", prd: "(default)" };
+const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 
 function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;  // fail-safe to prd

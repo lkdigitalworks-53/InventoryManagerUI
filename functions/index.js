@@ -35,7 +35,9 @@ admin.initializeApp();
 // closing the gap where recordMutation/provisionMember/runCutover always
 // wrote to `(default)` regardless of which env the calling client was built
 // for (see README "Environments" / AGENTS SS8).
-const DATABASE_ID_FOR_ENV = { dev: "dev", test: "test", prd: "(default)" };
+// "dev" env resolves to Firestore database id "dev1" (not "dev" — Firestore
+// requires database ids to be >=4 characters). Must mirror qml/helper/EnvConfig.js.
+const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 
 function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
