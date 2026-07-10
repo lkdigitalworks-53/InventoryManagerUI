@@ -20,4 +20,47 @@ TestCase {
     function test_rename_double_digit() {
         compare(IM.renameSku("SKU", 11), "SKU-12")
     }
+
+    function test_taxable_yes_is_true() {
+        compare(IM.parseTaxableCell("Yes"), true)
+    }
+
+    function test_taxable_case_insensitive() {
+        compare(IM.parseTaxableCell("yES"), true)
+        compare(IM.parseTaxableCell("TRUE"), true)
+        compare(IM.parseTaxableCell("1"), true)
+    }
+
+    function test_taxable_no_is_false() {
+        compare(IM.parseTaxableCell("No"), false)
+    }
+
+    function test_taxable_blank_is_false() {
+        compare(IM.parseTaxableCell(""), false)
+        compare(IM.parseTaxableCell(undefined), false)
+    }
+
+    function test_taxable_unrecognized_defaults_false() {
+        compare(IM.parseTaxableCell("maybe"), false)
+    }
+
+    function test_taxable_trims_whitespace() {
+        compare(IM.parseTaxableCell("  Yes  "), true)
+    }
+
+    function test_taxpercent_zero_when_not_taxable() {
+        compare(IM.parseTaxPercentCell("18", false), 0)
+    }
+
+    function test_taxpercent_parses_number_when_taxable() {
+        compare(IM.parseTaxPercentCell("18", true), 18)
+    }
+
+    function test_taxpercent_blank_when_taxable_is_zero() {
+        compare(IM.parseTaxPercentCell("", true), 0)
+    }
+
+    function test_taxpercent_invalid_when_taxable_is_zero() {
+        compare(IM.parseTaxPercentCell("not a number", true), 0)
+    }
 }
