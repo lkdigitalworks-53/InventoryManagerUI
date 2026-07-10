@@ -76,6 +76,7 @@ Item {
                         id: heroAvatar
                         anchors.horizontalCenter: parent.horizontalCenter
                         size: "xl"
+                        imageSource: AuthStore.photoUrl ? AuthStore.photoUrl : ""
                         label: ((AuthStore.displayName || AuthStore.email || "?").charAt(0) || "?").toUpperCase()
                         palette: Constants.grad1
                     }
