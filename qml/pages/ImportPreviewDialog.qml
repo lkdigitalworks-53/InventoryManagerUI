@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import "../components"
 import "../helper"
+import "../helper/ImportMath.js" as ImportMath
 import "../model"
 
 // Generic import preview — bottom sheet. Caller picks the kind via `mode`
@@ -435,8 +436,7 @@ BottomSheet {
                 warns.push({ row: row, message: name + ": PID will be auto-generated" })
             }
 
-            // To-Do: There are no tax information getting exported.
-            // We need to export tax information as well with the product details.
+            var rowTaxable = ImportMath.parseTaxableCell(r["Taxable"])
             var rec = {
                 row: row,
                 productId: pid,
@@ -451,6 +451,9 @@ BottomSheet {
                 minStock: parseInt(r["Min Stock"]) || 0,
                 photoUrl: (r["Photo URL"] || "").toString().trim(),
                 supplier: (r["Supplier"] || "").toString().trim(),
+                size: (r["Size"] || "").toString().trim(),
+                taxable: rowTaxable,
+                taxPercent: ImportMath.parseTaxPercentCell(r["Tax %"], rowTaxable),
                 _conflictPolicy: "skip"
             }
             var hit = null
