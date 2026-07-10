@@ -42,6 +42,7 @@ BottomSheet {
         minStockField.text = ""
         taxableCombo.currentIndex = 0
         taxPercentField.text = ""
+        sizeField.text = ""
         // Build the supplier picker from SupplierStore. Index 0 stays empty
         // ("Select or add a supplier") so the user can leave it blank.
         dlg._refreshSuppliers("")
@@ -324,6 +325,13 @@ BottomSheet {
                         }
                     }
 
+                    AuthTextField {
+                        id: sizeField
+                        Layout.fillWidth: true
+                        label: qsTr("Size")
+                        placeholderText: qsTr("e.g. M, L, XL, 500ml")
+                    }
+
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: dp(Constants.space2)
@@ -501,7 +509,8 @@ BottomSheet {
         // as RestockDialog. Future "advanced" UI could expose this separately.
         var newId = InventoryStore.addProduct(nameField.text, skuField.text,
             categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
-            taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */)
+            taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */,
+            sizeField.text.trim())
         CategoryStore.setLastUsed(categoryCombo.currentText)
 
         if (pendingPhotoSource && pendingPhotoSource.length > 0 && newId) {
