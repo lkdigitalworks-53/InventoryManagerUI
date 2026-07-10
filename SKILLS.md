@@ -902,8 +902,10 @@ xlsx column-writer stay verified by the manual export→unzip→decode→reconci
 
 The app talks to an isolated Firestore database per environment, selected at **build time** —
 no runtime switcher. Each env is a **named Firestore database in the one project**
-(`inventorymanager-48392`, region `asia-southeast1`); Auth, Storage, and Cloud Functions are
-**shared**.
+(`inventorymanager-48392`, region `asia-south1`, confirmed via `gcloud firestore databases
+list` — corrected 2026-07-10 from an earlier wrong `asia-southeast1` assumption); Auth,
+Storage, and Cloud Functions are **shared**, and Cloud Functions now target `asia-south1` too
+for regional consistency.
 
 **Resolution chain (single source of truth):**
 
@@ -912,15 +914,20 @@ PRODUCT_STAGE (CMakeLists.txt)
   → PRODUCT_STAGE_DEF  (target_compile_definitions)
   → APP_STAGE          (engine.rootContext()->setContextProperty in main.cpp)
   → EnvConfig.envForStage(APP_STAGE)  → "prd" | "test" | "dev"
-  → EnvConfig.databaseIdForEnv(env)   → "(default)" | "test" | "dev"
+  → EnvConfig.databaseIdForEnv(env)   → "(default)" | "test" | "dev1"
   → FirebaseService.databaseId / .databaseUrl   (every REST call builds off this)
 ```
 
 | `PRODUCT_STAGE` | env  | database    |
 |-----------------|------|-------------|
-| `dev`           | dev  | `dev`       |
+| `dev`           | dev  | `dev1`      |
 | `test`          | test | `test`      |
 | `publish`       | prd  | `(default)` |
+
+Note the **env name** (`dev`) and the **Firestore database id** (`dev1`) differ — Firestore
+database ids must be >=4 characters, so the 3-char `dev` is invalid and the actual database is
+named `dev1`. `databaseIdForEnv` is the only place this divergence lives; never assume env name
+== database id.
 
 ```qml
 // FirebaseService.qml — env resolved once; all get/put/patch/remove switch here.
@@ -1033,14 +1040,14 @@ Every Cloud Function (`recordMutation`, `provisionMember`, `runCutover`, `comput
 its Firestore database **per request**, not from a module-level global:
 
 ```js
-const DATABASE_ID_FOR_ENV = { dev: "dev", test: "test", prd: "(default)" };
+const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 
 function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;  // fail-safe to prd
     return getFirestore(admin.app(), databaseId);
 }
 
-exports.someFunction = functions.onRequest({ region: "asia-southeast1", cors: true }, async (req, res) => {
+exports.someFunction = functions.onRequest({ region: "asia-south1", cors: true }, async (req, res) => {
     const body = req.body || {};
     const db = scopedDb(body.env);              // <-- parse body FIRST, before anything needing db
     const ctx = await deriveContext(db, decoded.uid);  // deriveContext takes db explicitly

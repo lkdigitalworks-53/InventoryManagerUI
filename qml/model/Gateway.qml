@@ -33,16 +33,16 @@ QtObject {
     // deployed and provisioning starts working.
     property bool provisioningAvailable: false
 
-    // recordMutation HTTPS endpoint (Gen-2 onRequest, asia-southeast1).
-    property string functionUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    // recordMutation HTTPS endpoint (Gen-2 onRequest, asia-south1).
+    property string functionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
-    property string cutoverUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/runCutover"
+    property string cutoverUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover"
     // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
     // teammate to the caller's tenant — creates the Auth account for a new
     // staff member, or attaches an existing account, writing both users/{uid}
     // and the member doc server-side (the client can't write another user's
     // profile under the Firestore rules).
-    property string provisionMemberUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/provisionMember"
+    property string provisionMemberUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/provisionMember"
 
     signal cutoverFinished(bool ok, string error)
 

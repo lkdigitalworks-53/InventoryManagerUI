@@ -308,12 +308,28 @@ On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
 > "This API method requires billing to be enabled". Until Blaze is on, build with
 > `PRODUCT_STAGE "publish"` (uses `(default)`).
 >
-> **Region must match `(default)`:** it is **`asia-south1`** (Mumbai) — a database's
-> location is immutable, so create the others in the same region.
+> **Region: `asia-south1` (Mumbai), consistently across the whole project.**
+> Confirmed via `gcloud firestore databases list --project=inventorymanager-48392`
+> that `(default)` is genuinely in `asia-south1` — not `asia-southeast1` as an
+> earlier version of this doc and `AGENTS.md` assumed. Cloud Functions
+> (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`) are not
+> yet deployed and have been reconfigured to also target `asia-south1`, so DB,
+> Functions, and every named environment database live in the same region —
+> data never leaves India, and no cross-region latency between Functions and
+> Firestore. (A non-default database's region does *not* have to match
+> `(default)`'s per Firestore's own rules — we're choosing to match here for
+> residency/latency consistency, not because it's required.)
+>
+> Note: `android/google-services.json`'s `firebase_url` field
+> (`...asia-southeast1.firebasedatabase.app`) is the **Realtime Database**
+> URL, an unrelated Firebase product this app doesn't use. It was the likely
+> source of the earlier asia-southeast1 confusion — ignore it when reasoning
+> about Firestore's region.
 >
 > **Database ids are 4–63 chars** (`[a-z0-9-]`), so `dev` (3 chars) is rejected —
-> use e.g. `dev1` or `development`. `test` is fine. If you change the id, update
-> the `PRODUCT_STAGE`→env→databaseId mapping in `qml/helper/EnvConfig.js` to match.
+> we use `dev1`. `test` is fine. The `PRODUCT_STAGE`→env→databaseId mapping in
+> `qml/helper/EnvConfig.js` (and its mirror in `functions/index.js`) already maps
+> the `dev` env to database id `dev1` — if you change the id again, update both.
 
 ```bash
 firebase firestore:databases:create test --location=asia-south1

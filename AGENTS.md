@@ -77,7 +77,12 @@ edit/delete; client forges identity & time). The fix:
   (client-only, run parallel to P0).
 - **P3** Legal docs & acceptance: ToS, Privacy Policy, DPA + versioned accept-record.
 - **P4** DPDP privacy core: consent capture/logs, privacy notice, grievance channel, 18+ gate,
-  data-residency decision (Firestore is `asia-southeast1`/Singapore — documented, allowed today).
+  data-residency decision (Firestore `(default)` is `asia-south1`/Mumbai, confirmed via
+  `gcloud firestore databases list` — corrected 2026-07-10 from an earlier, wrong assumption
+  of `asia-southeast1`/Singapore; Cloud Functions reconfigured to also target `asia-south1` for
+  consistency. Data + compute are now fully within India — see the compliance roadmap spec's
+  §5 correction note; the original DPDP §7 cross-border analysis no longer applies as written
+  and should be re-reviewed with whoever advised on it).
 - **P5** PII erasure & retention: terminated-staff deletion, Auth-account cascade (closes the
   `AuthService.cleanupStaffAuthDocs` TODO), backup-aware delete, 6/8-yr archival.
 - **P6** Breach detection & 72h notification (depends on P0).

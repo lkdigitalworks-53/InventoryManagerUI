@@ -35,7 +35,9 @@ admin.initializeApp();
 // closing the gap where recordMutation/provisionMember/runCutover always
 // wrote to `(default)` regardless of which env the calling client was built
 // for (see README "Environments" / AGENTS SS8).
-const DATABASE_ID_FOR_ENV = { dev: "dev", test: "test", prd: "(default)" };
+// "dev" env resolves to Firestore database id "dev1" (not "dev" — Firestore
+// requires database ids to be >=4 characters). Must mirror qml/helper/EnvConfig.js.
+const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 
 function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
@@ -89,7 +91,7 @@ async function deriveContext(db, uid) {
 }
 
 exports.recordMutation = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
@@ -250,7 +252,7 @@ async function findOrCreateAuthUser(email, password, displayName) {
 }
 
 exports.provisionMember = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
@@ -377,7 +379,7 @@ exports.provisionMember = functions.onRequest(
     });
 
 exports.runCutover = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
@@ -510,7 +512,7 @@ function buildOrderLookup(orders) {
 const ANALYSIS_VIEW_MODES = ["revenue", "profit", "sold", "purchased"];
 
 exports.computeAnalysis = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
