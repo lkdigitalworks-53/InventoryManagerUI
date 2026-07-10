@@ -17,7 +17,8 @@ namespace {
 // import. Keep in sync with the InventoryStore schema.
 const QStringList kProductHeaders = {
     "Product ID", "Name", "SKU", "Category", "Unit", "Description",
-    "Cost Price", "Selling Price", "Stock", "Min Stock", "Photo URL", "Supplier"
+    "Cost Price", "Selling Price", "Stock", "Min Stock", "Photo URL", "Supplier",
+    "Size", "Taxable", "Tax %"
 };
 
 // Canonical order columns — one row per line item. Order-level columns repeat
@@ -79,6 +80,9 @@ void writeProductsSheet(Document &doc, const QVariantList &products)
         doc.write(row, 10, static_cast<int>(variantToNumber(p.value("minStock"))));
         doc.write(row, 11, variantToString(p.value("photoUrl")));
         doc.write(row, 12, variantToString(p.value("supplier")));
+        doc.write(row, 13, variantToString(p.value("size")));
+        doc.write(row, 14, p.value("taxable").toBool() ? QStringLiteral("Yes") : QStringLiteral("No"));
+        doc.write(row, 15, variantToNumber(p.value("taxPercent")));
     }
 
     // Reasonable column widths
@@ -94,6 +98,9 @@ void writeProductsSheet(Document &doc, const QVariantList &products)
     doc.setColumnWidth(10, 12);
     doc.setColumnWidth(11, 32);
     doc.setColumnWidth(12, 20);
+    doc.setColumnWidth(13, 14);
+    doc.setColumnWidth(14, 10);
+    doc.setColumnWidth(15, 10);
 }
 
 void writeOrdersSheet(Document &doc, const QVariantList &orders)
@@ -240,6 +247,9 @@ void writeReadmeSheet(Document &doc, const QString &kind)
             {"Min Stock *",   "yes", "integer","Reorder threshold."},
             {"Photo URL",     "no",  "text",   "Public image URL. Leave empty to keep the existing photo."},
             {"Supplier",      "no",  "text",   "Supplier name. Creates an opening stock batch so by-supplier reports work."},
+            {"Size",          "no",  "text",   "Optional — e.g. clothing size, volume, dimension."},
+            {"Taxable",       "no",  "text",   "Yes/No. Defaults to No if blank or unrecognized."},
+            {"Tax %",         "no",  "number", "GST-style rate. Ignored (treated as 0) when Taxable is No."},
         };
         for (const R &r : rows) {
             doc.write(row, 1, QString::fromUtf8(r.col));
