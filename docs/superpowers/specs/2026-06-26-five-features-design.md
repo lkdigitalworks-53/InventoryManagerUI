@@ -190,6 +190,18 @@ This keeps the dialog's existing success/degrade handling (the `Connections` blo
 Run the app against isolated Firestore data per environment (`dev`, `test`, `prd`) so testing
 never touches production data. Switching is **build-time** via the existing `PRODUCT_STAGE`.
 
+> **Corrections (2026-07-10), applied in code, not reflected in the prose below:**
+> 1. The `dev` env's database id is **`dev1`**, not `dev` — Firestore requires ids ≥4 chars.
+> 2. The project region is **`asia-south1`** (Mumbai), not `asia-southeast1` — confirmed via
+>    `gcloud firestore databases list`; the original `asia-southeast1` assumption throughout
+>    this doc was wrong (likely inherited from `google-services.json`'s unrelated, unused
+>    Realtime Database URL). Cloud Functions (not yet deployed) were reconfigured to also
+>    target `asia-south1` for consistency.
+>
+> See `README.md`'s "Environments" section and `docs/superpowers/specs/2026-07-10-env-dev-database-id-fix-CHECKPOINT.md`
+> for the corrected, authoritative values. The rest of this section is left as originally
+> written for historical context.
+
 ### Strategy — named Firestore databases in the one existing project
 Firestore supports multiple **named databases** per project. Keep the single project
 (`inventorymanager-48392`, region `asia-southeast1`); add two databases alongside the existing

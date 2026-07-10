@@ -91,7 +91,7 @@ async function deriveContext(db, uid) {
 }
 
 exports.recordMutation = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
@@ -252,7 +252,7 @@ async function findOrCreateAuthUser(email, password, displayName) {
 }
 
 exports.provisionMember = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
@@ -379,7 +379,7 @@ exports.provisionMember = functions.onRequest(
     });
 
 exports.runCutover = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {
@@ -512,7 +512,7 @@ function buildOrderLookup(orders) {
 const ANALYSIS_VIEW_MODES = ["revenue", "profit", "sold", "purchased"];
 
 exports.computeAnalysis = functions.onRequest(
-    { region: "asia-southeast1", cors: true },
+    { region: "asia-south1", cors: true },
     async (req, res) => {
         if (req.method === "OPTIONS") { send(res, 204, {}); return; }
         if (req.method !== "POST") {

@@ -173,6 +173,17 @@ DPDP Act today (transfers permitted except to government-restricted countries). 
 **documented decision**; if the government later restricts, an India-region migration is required.
 Tracked formally in P4.
 
+> **Correction (2026-07-10):** the region claim above was wrong. `gcloud firestore databases list
+> --project=inventorymanager-48392` confirms `(default)` is actually in **`asia-south1` (Mumbai,
+> India)** — likely a stale assumption inherited from `android/google-services.json`'s Realtime
+> Database URL (an unused, unrelated Firebase product) which does sit in `asia-southeast1`. Cloud
+> Functions (not yet deployed) have been reconfigured to also target `asia-south1`, so as of this
+> date, Firestore + Cloud Functions + all named environment databases are consistently within
+> India. This changes the underlying fact pattern the DPDP §7 cross-border-transfer analysis above
+> was written against — data was never actually leaving India, so that specific analysis no longer
+> describes the real architecture. **Not resolving the compliance conclusion here** — whoever
+> advised on this roadmap should re-review given the corrected facts.
+
 ---
 
 ## 6. Out of Scope / Deferred

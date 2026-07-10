@@ -58,11 +58,48 @@ empty/unknown→`prd/(default)` all confirmed correct.
 2. On confirmation, commit is already in place locally — just needs Taher's go-ahead to
    push (needs a PAT with push access, not yet provided this session).
 3. **Still outstanding, infra not code** (this is the actual "gap" Taher confirmed):
-   - Run `gcloud firestore databases list --project=inventorymanager-48392` to confirm the
-     real `(default)` region (resolves the asia-south1 vs asia-southeast1 discrepancy).
-   - `firebase firestore:databases:create test --location=asia-southeast1`
-   - `firebase firestore:databases:create dev1 --location=asia-southeast1`
+   - ~~Run `gcloud firestore databases list --project=inventorymanager-48392` to confirm the
+     real `(default)` region~~ — **done, see below.**
+   - `firebase firestore:databases:create test --location=asia-south1`
+   - `firebase firestore:databases:create dev1 --location=asia-south1`
    - Apply `FIRESTORE_RULES.md` to both new databases.
    - End-to-end verify: build with `PRODUCT_STAGE "dev"`, confirm writes land in `dev1` and
      not `(default)`; same for `"test"`. (Per Taher's standing instruction: do not build/run
      until he explicitly asks.)
+
+## Update (2026-07-10, same session) — region consistency fix
+
+Taher ran `gcloud firestore databases list --project=inventorymanager-48392` — confirmed
+`(default)` is genuinely in **`asia-south1` (Mumbai)**. This contradicted `AGENTS.md`/the
+compliance spec's documented assumption of `asia-southeast1` (Singapore); root cause was
+likely `android/google-services.json`'s unrelated, unused Realtime Database URL (which *is*
+in `asia-southeast1` — confirmed this field has zero code consumers, app is Firestore-only).
+
+Taher's decision: **make every component consistent — same region everywhere.** Cloud
+Functions are confirmed **not yet deployed** (prepared, not pushed), so this was a clean,
+zero-risk change. Applied on this same branch:
+
+- `functions/index.js` — all 4 function `region` configs: `asia-southeast1` → `asia-south1`
+- `qml/model/Gateway.qml` — `functionUrl`/`cutoverUrl`/`provisionMemberUrl` → `asia-south1-...`
+- `qml/model/AnalysisService.qml` — `functionUrl` → `asia-south1-...`
+- `README.md` — Environments section rewritten: region is `asia-south1` everywhere, notes the
+  `google-services.json` red herring, `gcloud`/`firebase` commands updated
+- `AGENTS.md` — data-residency line corrected + notes the DPDP §7 analysis needs re-review
+- `SKILLS.md` — Skill 30 intro + Skill 33 code example region corrected
+- `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md` §5 — **append-only
+  correction addendum** added (original text preserved), flags the compliance conclusion
+  itself needs re-review by whoever advised on it — not something to resolve unilaterally
+- `docs/superpowers/specs/2026-06-26-five-features-design.md` — correction addendum added
+  (dev1 + asia-south1), original prose left as historical record
+- `docs/superpowers/plans/2026-06-26-five-features.md` — same treatment on Task 9's scaffold
+
+**Not touched, deliberately:** `android/google-services.json` — its `firebase_url` field is
+real but unused (Realtime Database, a different Firebase product); editing an auto-generated
+Firebase config file for a field the app doesn't read isn't warranted.
+
+**Still open:** the compliance spec's actual DPDP §7 *conclusion* was written against a wrong
+fact pattern (data assumed outside India, actually inside). Flagged for Taher to re-review
+with whoever advised on the original roadmap — not a call to make unilaterally in code.
+
+Next: provision `dev1`/`test` in `asia-south1` once Taher reviews this branch, then the
+end-to-end verification build (gated on his go-ahead).

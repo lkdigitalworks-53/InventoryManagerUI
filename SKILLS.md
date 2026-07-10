@@ -902,8 +902,10 @@ xlsx column-writer stay verified by the manual export→unzip→decode→reconci
 
 The app talks to an isolated Firestore database per environment, selected at **build time** —
 no runtime switcher. Each env is a **named Firestore database in the one project**
-(`inventorymanager-48392`, region `asia-southeast1`); Auth, Storage, and Cloud Functions are
-**shared**.
+(`inventorymanager-48392`, region `asia-south1`, confirmed via `gcloud firestore databases
+list` — corrected 2026-07-10 from an earlier wrong `asia-southeast1` assumption); Auth,
+Storage, and Cloud Functions are **shared**, and Cloud Functions now target `asia-south1` too
+for regional consistency.
 
 **Resolution chain (single source of truth):**
 
@@ -1045,7 +1047,7 @@ function scopedDb(env) {
     return getFirestore(admin.app(), databaseId);
 }
 
-exports.someFunction = functions.onRequest({ region: "asia-southeast1", cors: true }, async (req, res) => {
+exports.someFunction = functions.onRequest({ region: "asia-south1", cors: true }, async (req, res) => {
     const body = req.body || {};
     const db = scopedDb(body.env);              // <-- parse body FIRST, before anything needing db
     const ctx = await deriveContext(db, decoded.uid);  // deriveContext takes db explicitly

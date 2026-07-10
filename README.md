@@ -308,16 +308,23 @@ On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
 > "This API method requires billing to be enabled". Until Blaze is on, build with
 > `PRODUCT_STAGE "publish"` (uses `(default)`).
 >
-> **Region does NOT need to match `(default)`.** A database's location is immutable
-> once created, but per current Firestore docs, named (non-default) databases can be
-> created in *any* supported region independent of `(default)` — there is no
-> same-region requirement. We use **`asia-southeast1`** below to colocate with the
-> already-deployed Cloud Functions (`asia-southeast1-inventorymanager-48392.cloudfunctions.net`),
-> minimizing latency for Cloud Function → Firestore calls. This is a recommendation,
-> not a constraint. (Separately: `AGENTS.md` / the India-compliance spec say `(default)`
-> itself is in `asia-southeast1` — confirm your project's actual `(default)` region with
-> `gcloud firestore databases list --project=inventorymanager-48392` if you need to know it
-> for another reason; it doesn't affect where `dev1`/`test` can go.)
+> **Region: `asia-south1` (Mumbai), consistently across the whole project.**
+> Confirmed via `gcloud firestore databases list --project=inventorymanager-48392`
+> that `(default)` is genuinely in `asia-south1` — not `asia-southeast1` as an
+> earlier version of this doc and `AGENTS.md` assumed. Cloud Functions
+> (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`) are not
+> yet deployed and have been reconfigured to also target `asia-south1`, so DB,
+> Functions, and every named environment database live in the same region —
+> data never leaves India, and no cross-region latency between Functions and
+> Firestore. (A non-default database's region does *not* have to match
+> `(default)`'s per Firestore's own rules — we're choosing to match here for
+> residency/latency consistency, not because it's required.)
+>
+> Note: `android/google-services.json`'s `firebase_url` field
+> (`...asia-southeast1.firebasedatabase.app`) is the **Realtime Database**
+> URL, an unrelated Firebase product this app doesn't use. It was the likely
+> source of the earlier asia-southeast1 confusion — ignore it when reasoning
+> about Firestore's region.
 >
 > **Database ids are 4–63 chars** (`[a-z0-9-]`), so `dev` (3 chars) is rejected —
 > we use `dev1`. `test` is fine. The `PRODUCT_STAGE`→env→databaseId mapping in
@@ -325,8 +332,8 @@ On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
 > the `dev` env to database id `dev1` — if you change the id again, update both.
 
 ```bash
-firebase firestore:databases:create test --location=asia-southeast1
-firebase firestore:databases:create dev1 --location=asia-southeast1   # 'dev' is too short
+firebase firestore:databases:create test --location=asia-south1
+firebase firestore:databases:create dev1 --location=asia-south1   # 'dev' is too short
 ```
 
 Then apply the same security rules (`FIRESTORE_RULES.md`) to each database

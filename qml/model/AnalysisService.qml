@@ -17,9 +17,9 @@ import QtQuick
 QtObject {
     id: root
 
-    // computeAnalysis HTTPS endpoint (Gen-2 onRequest, asia-southeast1) --
+    // computeAnalysis HTTPS endpoint (Gen-2 onRequest, asia-south1) --
     // same project/region as Gateway's endpoints.
-    property string functionUrl: "https://asia-southeast1-inventorymanager-48392.cloudfunctions.net/computeAnalysis"
+    property string functionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/computeAnalysis"
 
     property bool loading: false
     property string lastError: ""

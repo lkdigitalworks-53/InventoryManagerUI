@@ -711,6 +711,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Document the one-time Firestore database creation**
 
+> **Correction (2026-07-10):** the scaffold below (written when this plan was drafted) uses
+> stale values — database id `dev` (invalid, <4 chars; actual id is `dev1`) and region
+> `asia-southeast1` (wrong; the project's actual region, confirmed via `gcloud firestore
+> databases list`, is `asia-south1`). The version actually shipped into `README.md` uses the
+> corrected `dev1`/`asia-south1` values — treat `README.md` as authoritative, not this excerpt.
+
 Append an "Environments" section to `README.md` with the exact `gcloud` commands (project `inventorymanager-48392`, region `asia-southeast1`):
 
 ```markdown
