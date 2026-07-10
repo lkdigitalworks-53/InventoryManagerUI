@@ -1,7 +1,7 @@
 # Session Checkpoint — Product tax export/import + Size field
 
 **Started:** 2026-07-10
-**Status:** Brainstorming in progress (no branch created yet — pending scope decisions)
+**Status:** Plan written and self-reviewed, awaiting commit confirmation + execution-approach choice
 
 ## Step log
 
@@ -81,8 +81,36 @@
    position wasn't explicit — now states the full 14-arg signature with `size` last.
 10. ✅ Created branch `feature/product-size-and-tax-export` off `main` (local only — not pushed;
     no PAT provided yet this session).
-11. ⏳ **Not committed yet.** Per standing rule ("only commit after explicit confirmation"),
-    showing Taher the spec for review now, before running `git add`/`git commit`.
+11. ✅ Committed to `feature/product-size-and-tax-export` (commit `009d17c`). Local git identity
+    set to match the repo's existing commit convention (`Taher <taher@lkdigitalworks.com>`) — noted
+    here for transparency; nothing pushed (no PAT provided this session).
+12. ✅ Handed off to `superpowers:writing-plans`. Re-verified exact current code for every file
+    before drafting (line numbers/content unchanged since initial clone — no edits made yet).
+    Found one more spec gap during this pass, fixed inline in the spec:
+    - `InventoryStore._clone()` (called by all 8 mutator functions) whitelists product fields when
+      rebuilding the array — `size` was missing from that whitelist. Without this fix, Size would
+      silently vanish the very next time *any* product anywhere gets mutated (add/edit/restock/
+      import). Added as its own explicit plan step + its own regression check in the on-device
+      test plan.
+    - Also confirmed `ImportPreviewDialog.qml` does **not** already import `ImportMath.js`
+      (verified via `qml/helper/qmldir` — not registered there either) — added as a concrete plan
+      step rather than an ambiguous "confirm if present" step.
+13. ✅ Wrote plan to `docs/superpowers/plans/2026-07-10-product-tax-export-size-field.md` — 7 tasks:
+    (1) `ImportMath.js` pure Taxable/Tax% parsers + TDD tests, (2) `InventoryStore.qml` schema +
+    bug fixes, (3) `XlsxService.cpp` export/import columns + README, (4) `AddProductDialog.qml`
+    Size UI, (5) `EditProductDialog.qml` Size UI + history label, (6) `ImportPreviewDialog.qml`
+    wiring, (7) on-device test plan doc. Self-review pass done (spec coverage, placeholder scan,
+    type consistency) — clean.
+14. ⏳ **Not committed yet** (spec amendment + plan file + checkpoint update). Awaiting Taher's
+    confirmation to commit, and his choice of execution approach (subagent-driven vs. inline).
+
+## Next steps
+
+- Commit spec amendment + plan + checkpoint once confirmed.
+- Execute the plan via whichever of `superpowers:subagent-driven-development` /
+  `superpowers:executing-plans` Taher picks, applying `qt-development-skills:qt-qml` and
+  `qt-development-skills:qt-ui-design` throughout per his instruction.
+- Do not build/run the Android app during implementation — only when Taher asks.
 
 ## Key files in scope so far
 

@@ -102,6 +102,16 @@ No hard-reject or warning needed — both columns are optional, absent/invalid d
 ### B. Size field, end-to-end
 
 **B1. Schema (`InventoryStore.qml`).**
+- **Critical, spec-missed detail found on re-verification:** `InventoryStore._clone()` (used by
+  `addProduct`, `updateProduct`, `upsertMany`, `restock`, and every other mutator — 8 call sites)
+  rebuilds the products array through an explicit field whitelist. `size` must be added there
+  (`size: p.size || ""`) or it will be **silently wiped on every subsequent mutation to any
+  product** — the field would appear to work right after creation, then vanish the next time any
+  product anywhere is edited/restocked/imported. This is the single most important line in this
+  workstream.
+- `InventoryStore._normalizeProducts()` (defaults for docs freshly synced from Firestore) needs
+  `if (!p.size) p.size = "";` alongside its existing `sku`/`category`/`description` defaults, so
+  legacy product docs created before this feature don't come back `undefined`.
 - `addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice,
   taxable, taxPercent, party, unitCost, size)` — `size` appended as the 14th and final parameter,
   defaulting to `""` when omitted/undefined.
