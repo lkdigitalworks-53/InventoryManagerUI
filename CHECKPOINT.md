@@ -101,16 +101,70 @@
     Size UI, (5) `EditProductDialog.qml` Size UI + history label, (6) `ImportPreviewDialog.qml`
     wiring, (7) on-device test plan doc. Self-review pass done (spec coverage, placeholder scan,
     type consistency) — clean.
-14. ⏳ **Not committed yet** (spec amendment + plan file + checkpoint update). Awaiting Taher's
-    confirmation to commit, and his choice of execution approach (subagent-driven vs. inline).
+15. ✅ Committed spec amendment + plan (`bf56079`). Taher confirmed: commit now, execution approach
+    = subagent-driven.
+16. ⚠️ **Environment limitation found and flagged before starting execution:** this chat interface
+    has no subagent-dispatch tool (no Task/agent-spawning primitive — only bash/view/str_replace/
+    create_file/etc.), so `superpowers:subagent-driven-development` as literally specified (fresh
+    isolated-context subagent per task + separate reviewer subagent) can't run here. Also flagged:
+    its "continuous execution, don't pause between tasks" directive conflicts with Taher's standing
+    "show full diff before action" rule anyway. **Adapted approach Taher approved:** I execute each
+    task myself (implement, run real tests where they exist, explicitly self-review the diff
+    against that task's spec section), then **stop and show the diff for review before each
+    commit** — no continuous unattended execution, no fabricated "subagent" narration.
+17. ✅ **Task 1 done** (`7e992d5`). Installed real Qt6 QML test tooling in the sandbox via apt
+    (`qml6-module-qttest` + transitive `QtQml.WorkerScript`/`QtQuick.Window` modules — Qt 6.4.2 vs.
+    project's 6.8.3, fine for pure-JS logic). Genuine TDD cycle: wrote 10 tests, ran → confirmed
+    red, implemented `parseTaxableCell`/`parseTaxPercentCell`, ran → all 15 pass.
+18. ℹ️ Taher: "commit and move ahead, I'll review at last after you push." This **overrides** the
+    earlier "stop before every commit" agreement — proceeding through Tasks 2–7 continuously,
+    committing each as I go, self-reviewing against the plan/spec but not pausing for interim
+    approval. Flagged to Taher: no PAT provided this session, so nothing can actually be pushed
+    yet regardless of how far I get.
+
+19. ✅ **All 7 tasks executed and committed**, continuously, per Taher's "commit and move ahead"
+    instruction:
+    - Task 1 (`7e992d5`): `ImportMath.js` Taxable/Tax% parsers — genuine TDD (red confirmed, then
+      green), 15/15 tests passing under a real `qmltestrunner` I installed via apt in this sandbox.
+    - Task 2 (`23c37b2`): `InventoryStore.qml` — size schema + the `_clone()` load-bearing fix +
+      the overwrite-path tax bug fix. qmllint clean (module-resolution noise only), brace/paren
+      balanced.
+    - Task 3 (`6f3976e`): `XlsxService.cpp` — Size/Taxable/Tax % columns, appended only, README
+      rows. Brace/paren balanced (no C++ compiler available in this sandbox — QXlsx/Firebase
+      headers aren't installed, and a full app build wasn't attempted per the standing
+      don't-build/run rule).
+    - Task 4 (`93db982`): `AddProductDialog.qml` Size field UI.
+    - Task 5 (`535d198`): `EditProductDialog.qml` Size field UI + history label.
+    - Task 6 (`6e1ee18`): `ImportPreviewDialog.qml` wiring — closes out both original TODOs.
+    - Task 7 (`090100a`): on-device test plan doc.
+    - Plan checkboxes marked complete (`11ee46a`).
+20. ✅ **Final holistic self-review done:** re-ran the ImportMath tests one more time (still 15/15
+    green after all later edits) — confirmed `DataModel.qml`/`Logic.qml`/`InventoryPage.qml`
+    genuinely untouched (diff against `main` is empty for all three, matching the spec's
+    out-of-scope list) — `size` reference counts across every touched file are sane and consistent
+    with the plan.
+21. ⚠️ **Nothing pushed.** No PAT provided this session. Branch `feature/product-size-and-tax-export`
+    is fully committed locally, ready for Taher's review and push whenever he provides credentials.
+
+## Honest limitations of this session's verification (for Taher's review)
+
+- Task 1's tests are real and genuinely green — the strongest verification in this session.
+- Tasks 2, 3: no automated tests exist for these files in this project (data-layer QML / C++
+  export service) — verified via qmllint/brace-balance sanity checks only, **not** a real
+  compile or app run. The on-device test plan (Task 7) is where the real verification happens,
+  and Taher hasn't run it yet.
+- Tasks 4, 5, 6: QML page-level UI/logic — same caveat, sanity-checked only, not run.
+- No subagent-driven review occurred (flagged and agreed earlier — this chat interface has no
+  subagent-dispatch tool). All "self-review" here was me re-checking my own work, not independent
+  review.
 
 ## Next steps
 
-- Commit spec amendment + plan + checkpoint once confirmed.
-- Execute the plan via whichever of `superpowers:subagent-driven-development` /
-  `superpowers:executing-plans` Taher picks, applying `qt-development-skills:qt-qml` and
-  `qt-development-skills:qt-ui-design` throughout per his instruction.
-- Do not build/run the Android app during implementation — only when Taher asks.
+- Taher reviews the full branch diff.
+- Taher runs the on-device test plan (`docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md`)
+  when he builds/runs the app (his call, not done automatically here).
+- Push once Taher provides a PAT.
+- Then `superpowers:finishing-a-development-branch` for the merge/PR decision.
 
 ## Key files in scope so far
 
