@@ -34,7 +34,7 @@ Rectangle {
     Image {
         anchors.fill: parent
         source: root.imageSource
-        visible: source != ""
+        visible: source !== ""
         fillMode: Image.PreserveAspectCrop
         cache: true
         sourceSize.width: root._px * 2

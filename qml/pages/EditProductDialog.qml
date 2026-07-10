@@ -968,7 +968,7 @@ BottomSheet {
         var stk = parseInt(stockField.text)
         if (isNaN(stk) || stk < 0) errs.push("Enter valid stock")
         var ms = parseInt(minStockField.text)
-        if (isNaN(ms) || ms < 0) errs.push("Enter valid minimum stock")
+        if (isNaN(ms) || ms < 0) ms = 0
         var taxable = taxableCombo.currentIndex === 1
         var taxPercent = 0
         if (taxable) {
