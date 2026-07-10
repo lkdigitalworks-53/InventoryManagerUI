@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: `ImportMath.parseTaxableCell(raw)` → `boolean`. `ImportMath.parseTaxPercentCell(raw, taxable)` → `number`. Both are pure functions with no QML context dependency — consumed by Task 6 (`ImportPreviewDialog.qml`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `tests/tst_ImportMath.qml`, inside the existing `TestCase { name: "ImportMath" ... }` block, after `test_rename_double_digit`:
 
@@ -78,12 +78,12 @@ Add to `tests/tst_ImportMath.qml`, inside the existing `TestCase { name: "Import
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `qmltestrunner -input tests` (or the `qt-development-skills:qt-qml-test-run` skill)
 Expected: FAIL — `TypeError: IM.parseTaxableCell is not a function` (and similarly for `parseTaxPercentCell`).
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 Add to `qml/helper/ImportMath.js`, after `renameSku`:
 
@@ -109,12 +109,12 @@ function parseTaxPercentCell(raw, taxable) {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `qmltestrunner -input tests`
 Expected: PASS — all `ImportMath` tests, including the 10 new ones, green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add qml/helper/ImportMath.js tests/tst_ImportMath.qml
@@ -134,7 +134,7 @@ git commit -m "feat(import): add pure Taxable/Tax% cell parsers to ImportMath.js
 
 No automated test for this task — it's data-layer plumbing across an existing untested store (no `tst_InventoryStore.qml` exists; page-level/store-level QML can't run headless per the existing project convention — see spec §5). Verified via the on-device test plan (Task 7).
 
-- [ ] **Step 1: Fix `_clone()` — the load-bearing fix**
+- [x] **Step 1: Fix `_clone()` — the load-bearing fix**
 
 `_clone()` is called by all 8 mutator functions (`addProduct`, `updateProduct`, `upsertMany`, `restock`, etc.). It currently rebuilds each product through an explicit field whitelist that does **not** include `size` — meaning without this fix, `size` would be silently wiped the next time *any* product anywhere is mutated. Find:
 
@@ -171,7 +171,7 @@ Replace with:
                       photoUpdatedAt: p.photoUpdatedAt || "" });
 ```
 
-- [ ] **Step 2: Default `size` on Firestore-synced docs**
+- [x] **Step 2: Default `size` on Firestore-synced docs**
 
 In `_normalizeProducts(arr)`, find:
 
@@ -190,7 +190,7 @@ Replace with:
             if (!p.photoUrl) p.photoUrl = "";
 ```
 
-- [ ] **Step 3: Add `size` to `addProduct()`**
+- [x] **Step 3: Add `size` to `addProduct()`**
 
 Find:
 
@@ -261,7 +261,7 @@ Replace with:
         }, supplierId);
 ```
 
-- [ ] **Step 4: Add `size` to `_bookImportedProduct()`'s snapshot**
+- [x] **Step 4: Add `size` to `_bookImportedProduct()`'s snapshot**
 
 Find:
 
@@ -292,7 +292,7 @@ Replace with:
         }, supplierId);
 ```
 
-- [ ] **Step 5: Fix the `upsertMany()` overwrite-path bug + add `size`**
+- [x] **Step 5: Fix the `upsertMany()` overwrite-path bug + add `size`**
 
 Find (the commented-out, buggy block):
 
@@ -342,7 +342,7 @@ Replace with:
                 counts.updated++;
 ```
 
-- [ ] **Step 6: Add `size` to `_normalizeRecord()`**
+- [x] **Step 6: Add `size` to `_normalizeRecord()`**
 
 Find:
 
@@ -401,7 +401,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 7: Add `size` to `updateProduct()`'s field whitelist**
+- [x] **Step 7: Add `size` to `updateProduct()`'s field whitelist**
 
 Find:
 
@@ -443,7 +443,7 @@ Replace with:
         if (fields.stock        !== undefined) { _maybe("stock", fields.stock); p.stock = fields.stock }
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add qml/model/InventoryStore.qml
@@ -463,7 +463,7 @@ git commit -m "feat(inventory): add size field + fix tax overwrite-path bug in i
 
 No automated test — no existing C++ test harness for `XlsxService` in this project (confirmed: no `tst_*` for it). Verified via the on-device test plan (Task 7).
 
-- [ ] **Step 1: Extend `kProductHeaders`**
+- [x] **Step 1: Extend `kProductHeaders`**
 
 Find:
 
@@ -484,7 +484,7 @@ const QStringList kProductHeaders = {
 };
 ```
 
-- [ ] **Step 2: Write the three new columns in `writeProductsSheet()`**
+- [x] **Step 2: Write the three new columns in `writeProductsSheet()`**
 
 Find:
 
@@ -505,7 +505,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 3: Widen the three new columns**
+- [x] **Step 3: Widen the three new columns**
 
 Find:
 
@@ -526,7 +526,7 @@ Replace with:
 }
 ```
 
-- [ ] **Step 4: Add README rows**
+- [x] **Step 4: Add README rows**
 
 Find:
 
@@ -547,7 +547,7 @@ Replace with:
         };
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/XlsxService.cpp
@@ -569,7 +569,7 @@ No automated test — QML page-level dialogs can't run under `qmltestrunner` in 
 
 Per `qt-development-skills:qt-ui-design`: this is a small edit to an existing design (adding one field to an existing form) — Jakob's Law and Proximity/Similarity favor a standalone full-width field next to the other classification attributes (Category, Unit) rather than cramming a 3rd combobox into the existing 2-column row.
 
-- [ ] **Step 1: Reset `sizeField` on open**
+- [x] **Step 1: Reset `sizeField` on open**
 
 Find:
 
@@ -586,7 +586,7 @@ Replace with:
         sizeField.text = ""
 ```
 
-- [ ] **Step 2: Add the Size field to the form**
+- [x] **Step 2: Add the Size field to the form**
 
 Find the Category/Unit row's closing brace, immediately followed by the Stock/Min-stock row:
 
@@ -637,7 +637,7 @@ Replace with (adds the new field immediately before this row):
                     }
 ```
 
-- [ ] **Step 3: Pass `size` into `addProduct()`**
+- [x] **Step 3: Pass `size` into `addProduct()`**
 
 Find:
 
@@ -656,7 +656,7 @@ Replace with:
             sizeField.text.trim())
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add qml/pages/AddProductDialog.qml
@@ -675,7 +675,7 @@ git commit -m "feat(product): add optional Size field to Add Product dialog"
 
 No automated test — same reasoning as Task 4. Verified via the on-device test plan (Task 7).
 
-- [ ] **Step 1: Populate `sizeField` in `openFor()`**
+- [x] **Step 1: Populate `sizeField` in `openFor()`**
 
 Find:
 
@@ -694,7 +694,7 @@ Replace with:
             photoUrl = p.photoUrl || ""
 ```
 
-- [ ] **Step 2: Add the Size field to the form**
+- [x] **Step 2: Add the Size field to the form**
 
 Find:
 
@@ -727,7 +727,7 @@ Replace with:
 
 (This places Size directly after the Category/Unit row and before Description, matching the placement in `AddProductDialog.qml` and the spec's B2 decision.)
 
-- [ ] **Step 3: Include `size` in the save handler**
+- [x] **Step 3: Include `size` in the save handler**
 
 Find:
 
@@ -766,7 +766,7 @@ Replace with:
         })
 ```
 
-- [ ] **Step 4: Add `"size"` to the edit-history field-label map**
+- [x] **Step 4: Add `"size"` to the edit-history field-label map**
 
 Find:
 
@@ -787,7 +787,7 @@ Replace with:
 
 (No change needed in `_fieldFormat()` — a size change falls through to the existing default string formatter, same as `category`/`description`.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add qml/pages/EditProductDialog.qml
@@ -806,7 +806,7 @@ git commit -m "feat(product): add optional Size field to Edit Product dialog + h
 
 No automated test — the row-validation function lives inline in a page (`ImportPreviewDialog.qml`), which can't run under `qmltestrunner` per the existing project convention; the parsing logic itself already carries a test via Task 1's `ImportMath.js` extraction. Verified via the on-device test plan (Task 7).
 
-- [ ] **Step 1: Add the `ImportMath` import**
+- [x] **Step 1: Add the `ImportMath` import**
 
 Verified: `ImportPreviewDialog.qml` does **not** currently import `ImportMath.js` (unlike
 `InventoryStore.qml`, which already does) — it's not registered in `qml/helper/qmldir` either
@@ -828,7 +828,7 @@ import "../helper/ImportMath.js" as ImportMath
 import "../model"
 ```
 
-- [ ] **Step 2: Read the three new columns into `rec`**
+- [x] **Step 2: Read the three new columns into `rec`**
 
 Find:
 
@@ -878,7 +878,7 @@ Replace with:
             }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add qml/pages/ImportPreviewDialog.qml
@@ -894,7 +894,7 @@ git commit -m "feat(import): read Size/Taxable/Tax % columns during product impo
 
 **Interfaces:** none — documentation only.
 
-- [ ] **Step 1: Write the on-device test plan**
+- [x] **Step 1: Write the on-device test plan**
 
 Create `docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md` (matching the naming/structure of the existing `2026-06-19-on-device-test-plan-revenue-reconciliation.md` and `2026-06-21-custome-device-test-plan.md`):
 
@@ -953,7 +953,7 @@ under `qmltestrunner`.
       the appended-column placement must not shift or corrupt any existing column's meaning.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md
