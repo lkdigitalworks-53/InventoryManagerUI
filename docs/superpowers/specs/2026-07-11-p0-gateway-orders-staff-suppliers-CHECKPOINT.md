@@ -110,6 +110,12 @@ Full task breakdown: `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.m
 - **Next:** A3 (runCutover CF tests), then A4–A6 (QML/rules tests, written-only), then Phase B
   (batch Gateway method), then Phase C (the actual store migrations).
 
+### 2026-07-11 — PUSHED to origin (3 commits: checkpoint, plan, gatewayLogic)
+User provided a PAT. First attempt failed (`401 Bad credentials` — verified via direct
+`curl` to `api.github.com`, not just git, before reporting back). Second regenerated token
+verified good, cached in `/home/claude/.git-credentials` (outside the repo tree) for the
+rest of the session so it doesn't need re-pasting for each subsequent push.
+
 ### 2026-07-11 — Phase A3 done: extracted + tested runCutover's core logic
 - New: `functions/lib/cutoverLogic.js` — `validateCutoverRequest`, `buildCutoverMarker`,
   `deleteCollection`, `zeroInventoryStock` (batch-chunk size injectable, so chunking behavior
@@ -121,4 +127,22 @@ Full task breakdown: `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.m
   to lock in the distinction. Full suite: **32/32 passing**.
 - Order agreed with user: A3 → Phase B (batch Gateway) → Phase C (store migrations) →
   circle back to A4–A6 (write-only QML/rules tests) at the end.
-- Committed locally, not yet pushed (will push with the rest of this slice or on request).
+- Committed locally (this and everything below, not yet pushed — will push per-store in
+  Phase C, or sooner on request).
+
+### 2026-07-11 — Phase B done: batch-aware Gateway method
+- New: `functions/lib/batchMutationLogic.js` — `validateBatchMutationRequest`,
+  `applyMutationsBatch`. `MAX_BATCH_SIZE = 200` (400 writes/txn, under Firestore's ~500 cap).
+  Per-item idempotency key: `<batchRequestId>:<entityId>`.
+- New: `functions/test/batchMutationLogic.test.js` — 13 tests. **Caught a test-fixture bug**
+  mid-TDD: used `entity: "order"` before it was registered in `ENTITY_COLLECTIONS` (that's a
+  Phase C task) — fixed by testing against `"inventory"` instead, since the batch mechanism
+  itself is entity-agnostic. Full suite: **45/45 passing**.
+- New CF endpoint `exports.recordMutationsBatch` in `functions/index.js`, mirroring
+  `recordMutation`'s structure exactly.
+- `qml/model/OutboxStore.qml`: added `enqueueBatch()` (new queue-item shape with an `items[]`
+  array; `dueItems`/`markSent`/`markFailed` needed no changes — already requestId-generic).
+- `qml/model/Gateway.qml`: added `recordMutations()`, `_writeDirectBatch()`, `_sendBatch()`,
+  `batchFunctionUrl`. `drainNow()` now dispatches by item shape (`Array.isArray(item.items)`).
+  Manually reviewed (no Qt toolchain here to run qmllint/qmltestrunner).
+- **Next:** Phase C — the actual Orders/Staff/Supplier store migrations.

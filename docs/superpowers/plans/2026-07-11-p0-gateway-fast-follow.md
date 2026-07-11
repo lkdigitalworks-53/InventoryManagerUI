@@ -55,17 +55,30 @@
 
 ## Phase B — Batch-aware Gateway method (needed by Orders' `approveAllPending`)
 
-- [ ] B1. Design: `Gateway.recordMutations(entity, items)`, `items = [{entityId, action, before,
+- [x] B1. Design: `Gateway.recordMutations(entity, items)`, `items = [{entityId, action, before,
       after}, ...]`. Direct mode → single `FirebaseService.putMany` (preserves today's
       performance). Gateway mode → new CF `recordMutationsBatch`: one Firestore batched write
       covering all N working-doc writes + N audit_log entries atomically (all-or-nothing —
       a compliance improvement over N independent writes). One outbox entry represents the
       whole batch (retried as a unit).
-- [ ] B2. CF: `recordMutationsBatch` in `functions/index.js` + `functions/test/` coverage
+      **DONE 2026-07-11.** Capped at `MAX_BATCH_SIZE = 200` items (400 writes/txn, under
+      Firestore's ~500-write transaction ceiling) — documented trade-off, not hidden: a caller
+      needing more must split into multiple calls, atomic within each chunk, not across chunks.
+- [x] B2. CF: `recordMutationsBatch` in `functions/index.js` + `functions/test/` coverage
       (rejects empty array, rejects a batch mixing entities beyond a sane cap, atomicity
       contract, per-item idempotency). TDD, verified in-sandbox. Commit.
-- [ ] B3. `Gateway.qml`: implement `recordMutations()`. Add coverage to `tst_Gateway.qml`.
+      **DONE 2026-07-11.** New `functions/lib/batchMutationLogic.js`
+      (`validateBatchMutationRequest`, `applyMutationsBatch`) + 13 tests. Per-item idempotency
+      key = `<batchRequestId>:<entityId>`. Full suite: 45/45 passing.
+- [x] B3. `Gateway.qml`: implement `recordMutations()`. Add coverage to `tst_Gateway.qml`.
       Written to convention; **not runnable in-sandbox**. Commit.
+      **DONE 2026-07-11** (implementation only — test coverage folded into the A4-A6 pass at
+      the end, since `tst_Gateway.qml`/`tst_OutboxStore.qml` don't exist yet and should cover
+      both original + batch behavior in one file, not be touched twice). `Gateway.recordMutations()`,
+      `_writeDirectBatch()`, `_sendBatch()` added; `OutboxStore.enqueueBatch()` added
+      (dueItems/markSent/markFailed already worked generically by requestId, no changes needed
+      there). Manually reviewed against qt-qml skill conventions (no toolchain to run
+      qmllint/qmltestrunner here).
 
 ## Phase C — Store migrations (one commit each, push-permission asked after each)
 

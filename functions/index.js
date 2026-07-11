@@ -23,6 +23,7 @@ const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
 const CutoverLogic = require("./lib/cutoverLogic");
+const BatchMutationLogic = require("./lib/batchMutationLogic");
 
 admin.initializeApp();
 
@@ -140,6 +141,69 @@ exports.recordMutation = functions.onRequest(
         }
 
         send(res, 200, { ok: true, entryId: validated.requestId });
+    });
+
+// New in this session (not in the original P0 spec — see
+// functions/lib/batchMutationLogic.js for the design rationale/cap).
+// One atomic transaction covering up to MAX_BATCH_SIZE items of the same
+// entity, e.g. OrdersStore.approveAllPending. One outbox entry on the
+// client represents the whole batch.
+exports.recordMutationsBatch = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const validated = BatchMutationLogic.validateBatchMutationRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        try {
+            await BatchMutationLogic.applyMutationsBatch(db, {
+                tenantId: ctx.tenantId,
+                actorUid: actorUid,
+                actorRole: ctx.role,
+                entity: validated.entity,
+                collection: validated.collection,
+                requestId: validated.requestId,
+                items: validated.items,
+                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } catch (e) {
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        send(res, 200, { ok: true, requestId: validated.requestId, count: validated.items.length });
     });
 
 // ── One-time fresh-start cutover (P0) ───────────────────────────────────────
