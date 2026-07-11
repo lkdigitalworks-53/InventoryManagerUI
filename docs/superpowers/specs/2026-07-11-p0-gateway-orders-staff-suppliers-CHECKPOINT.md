@@ -78,9 +78,34 @@ enum, §4.1).
    single branch, checkpoint updated after each, push-permission asked after each commit —
    confirm or adjust?
 
-## Not yet done / next steps
-- Nothing implemented yet. Waiting on the 3 decisions above.
-- Once confirmed: TDD per store (test-driven-development skill), update this checkpoint after
-  each, commit locally each time, ask permission before each push.
-- Explicitly NOT doing this session: deploying functions/rules, running cutover, flipping
-  `Gateway.mode`.
+## Decisions confirmed (2026-07-11)
+1. Close testing gaps for old (inventory/stock) AND new (orders/staff/suppliers) code.
+2. `approveAllPending` gets a batch-aware Gateway method, not a per-item loop.
+3. One commit per logical unit; push-permission requested after each.
+
+Full task breakdown: `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md`.
+
+## Sandbox verification constraints (discovered 2026-07-11, before implementing)
+- No Qt/QML toolchain here (no `qmltestrunner`/`qmake`/`cmake`) — same limitation as the
+  2026-07-10 checkpoint. All QML test files this plan produces are written correctly but
+  **not run here**; need a local `qmltestrunner` pass before merge.
+- No network egress to Firebase's emulator distribution — `@firebase/rules-unit-testing`
+  needs the Firestore emulator to run. The rules test file gets written but **not run here**.
+- Node/`node --test` for Cloud Functions **is** fully runnable and verified here — confirmed
+  working, used for real red→green TDD below.
+
+## Progress log
+
+### 2026-07-11 — Phase A1+A2 done: extracted + tested recordMutation's core logic
+- New: `functions/lib/gatewayLogic.js` — `parseBearerToken`, `validateMutationRequest`,
+  `applyMutation` (all pure/dependency-injected — `db` and `serverTimestamp` passed in, zero
+  Firebase SDK import in this file).
+- New: `functions/test/gatewayLogic.test.js` — 13 tests, real TDD (watched fail on missing
+  module first, then implemented, then green).
+- Edited: `functions/index.js` — `recordMutation` now calls `GatewayLogic.*`; removed the
+  now-duplicated `ENTITY_COLLECTIONS`/`ALLOWED_ACTIONS` consts (single source of truth is now
+  the lib file). Behavior-preserving — verified with `node --check` and a full `npm test` run:
+  **22/22 passing** (13 new + 9 pre-existing breakdownMath/realisedMath tests, all still green).
+- Committed locally (not pushed yet).
+- **Next:** A3 (runCutover CF tests), then A4–A6 (QML/rules tests, written-only), then Phase B
+  (batch Gateway method), then Phase C (the actual store migrations).

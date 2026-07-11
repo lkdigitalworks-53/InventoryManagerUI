@@ -22,15 +22,19 @@
 
 ## Phase A — Close gaps in already-shipped inventory/stock gateway code
 
-- [ ] A1. Extract testable request-validation logic (entity/action allowlist checks, idempotency
+- [x] A1. Extract testable request-validation logic (entity/action allowlist checks, idempotency
       key derivation, response shaping) out of `functions/index.js` into `functions/lib/gatewayLogic.js`
       — pure functions, no Admin SDK calls — mirroring the existing `lib/breakdownMath.js` pattern.
       Behavior-preserving refactor (safe: not yet deployed). TDD, verified in-sandbox. Commit.
-- [ ] A2. CF unit tests (`functions/test/gatewayLogic.test.js`) for `recordMutation`'s contract via
-      a hand-rolled fake Firestore/Auth (dependency-injected, not the real SDK): rejects
-      missing/invalid bearer token; rejects unknown entity; rejects disallowed action for an
-      entity; accepts a valid request and shapes the transaction write correctly; idempotency
-      (same requestId → no duplicate audit_log write). TDD, verified in-sandbox. Commit.
+      **DONE 2026-07-11.** `serverTimestamp` is passed in as a param (not computed inside the lib)
+      so `gatewayLogic.js` has zero Firebase SDK dependency of its own.
+- [x] A2. CF unit tests (`functions/test/gatewayLogic.test.js`) for `parseBearerToken`,
+      `validateMutationRequest`, and `applyMutation` via a hand-rolled fake Firestore
+      (dependency-injected `db`, not the real SDK): rejects unknown entity/disallowed
+      action/missing fields; correct working-doc set vs delete; correct audit_log shape;
+      idempotency (retried requestId → zero writes). 13 new tests, all passing; full suite
+      (22 tests) green. `index.js`'s `recordMutation` rewired to call this module — behavior
+      preserved, verified via `node --check` + full test run. **DONE 2026-07-11.**
 - [ ] A3. CF unit tests for `runCutover`: owner-only gate rejection; shape of the wipe operation
       (mocked). TDD, verified in-sandbox. Commit.
 - [ ] A4. `tests/tst_OutboxStore.qml`: enqueue → dueItems → markSent/markFailed; backoff schedule;

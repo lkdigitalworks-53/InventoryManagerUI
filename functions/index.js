@@ -21,6 +21,7 @@ const admin = require("firebase-admin");
 const { getFirestore } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
+const GatewayLogic = require("./lib/gatewayLogic");
 
 admin.initializeApp();
 
@@ -43,18 +44,6 @@ function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
     return getFirestore(admin.app(), databaseId);
 }
-
-// P0 scope. `entity` → collection name under the tenant root. `inventory`
-// is working-tier (also client-writable); the rest are locked ledger
-// collections only this function may write.
-const ENTITY_COLLECTIONS = {
-    inventory: "inventory",
-    stock_batch: "stock_batches",
-    stock_movement: "stock_movements",
-    transaction: "transactions"
-};
-
-const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];
 
 function send(res, status, body) {
     res.set("Access-Control-Allow-Origin", "*");
@@ -99,16 +88,15 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const authHeader = req.get("Authorization") || "";
-        const match = authHeader.match(/^Bearer\s+(.+)$/i);
-        if (!match) {
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
             send(res, 401, { ok: false, error: "missing-token" });
             return;
         }
 
         let decoded;
         try {
-            decoded = await admin.auth().verifyIdToken(match[1]);
+            decoded = await admin.auth().verifyIdToken(token);
         } catch (e) {
             send(res, 401, { ok: false, error: "invalid-token" });
             return;
@@ -117,25 +105,10 @@ exports.recordMutation = functions.onRequest(
 
         const body = req.body || {};
         const db = scopedDb(body.env);
-        const entity = String(body.entity || "");
-        const entityId = String(body.entityId || "");
-        const action = String(body.action || "");
-        const requestId = String(body.requestId || "");
-        const before = body.before === undefined ? null : body.before;
-        const after = body.after === undefined ? null : body.after;
-        const clientTimestamp = body.clientTimestamp || null;
 
-        const collection = ENTITY_COLLECTIONS[entity];
-        if (!collection) {
-            send(res, 400, { ok: false, error: "unsupported-entity" });
-            return;
-        }
-        if (ALLOWED_ACTIONS.indexOf(action) < 0) {
-            send(res, 400, { ok: false, error: "unsupported-action" });
-            return;
-        }
-        if (!entityId || !requestId) {
-            send(res, 400, { ok: false, error: "missing-fields" });
+        const validated = GatewayLogic.validateMutationRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
             return;
         }
 
@@ -145,42 +118,27 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const tenantRoot = "tenants/" + ctx.tenantId;
-        const auditRef = db.doc(tenantRoot + "/audit_log/" + requestId);
-        const workingRef = db.doc(tenantRoot + "/" + collection + "/" + entityId);
-
         try {
-            await db.runTransaction(async (txn) => {
-                const existing = await txn.get(auditRef);
-                if (existing.exists) return; // idempotent retry — already applied
-
-                if (action === "delete") {
-                    txn.delete(workingRef);
-                } else {
-                    txn.set(workingRef, after || {}, { merge: false });
-                }
-
-                txn.set(auditRef, {
-                    entryId: requestId,
-                    tenantId: ctx.tenantId,
-                    actorUid: actorUid,
-                    actorRole: ctx.role,
-                    action: action,
-                    entity: entity,
-                    entityId: entityId,
-                    before: before,
-                    after: after,
-                    serverTimestamp: admin.firestore.FieldValue.serverTimestamp(),
-                    clientTimestamp: clientTimestamp,
-                    requestId: requestId
-                });
+            await GatewayLogic.applyMutation(db, {
+                tenantId: ctx.tenantId,
+                actorUid: actorUid,
+                actorRole: ctx.role,
+                entity: validated.entity,
+                entityId: validated.entityId,
+                action: validated.action,
+                requestId: validated.requestId,
+                before: validated.before,
+                after: validated.after,
+                clientTimestamp: validated.clientTimestamp,
+                collection: validated.collection,
+                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
             });
         } catch (e) {
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
 
-        send(res, 200, { ok: true, entryId: requestId });
+        send(res, 200, { ok: true, entryId: validated.requestId });
     });
 
 // ── One-time fresh-start cutover (P0) ───────────────────────────────────────
