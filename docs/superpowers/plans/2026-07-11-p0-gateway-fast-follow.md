@@ -82,11 +82,23 @@
 
 ## Phase C — Store migrations (one commit each, push-permission asked after each)
 
-- [ ] C1. `OrdersStore.qml`: create (L116)/update (L184)/delete (L612) → `Gateway.recordMutation`;
+- [x] C1. `OrdersStore.qml`: create (L116)/update (L184)/delete (L612) → `Gateway.recordMutation`;
       `approveAllPending` (L543) → `Gateway.recordMutations`. Add `order`→`orders` to
       `ENTITY_COLLECTIONS` (functions) and `_collections` (Gateway.qml). Test coverage added to
       an orders test file (written; QML run not verifiable in-sandbox). Commit. **Ask push
       permission.**
+      **DONE 2026-07-11.** All 7 call sites migrated (create/update/delete/approveAllPending +
+      the `upsertMany` bulk-import create path, which the original audit missed since it wasn't
+      counted as one of the 4 "primary" sites). `_commit()` extended to take `action`/`before`
+      and route through `Gateway.recordMutation` (was calling the now-removed `_pushToFirebase`).
+      `order`→`orders` registered in both `ENTITY_COLLECTIONS` (CF, TDD'd) and `Gateway.qml`'s
+      `_collections`. **Test-coverage timing revised**: deferring OrdersStore's Gateway-wiring
+      test to the consolidated end-of-session QML pass alongside Gateway/Outbox (same reasoning
+      as the B3 deferral — a QtObject singleton with heavy cross-singleton dependencies
+      (Gateway/FirebaseService/InventoryStore/AuthStore/TransactionStore) is expensive to test
+      in isolation and, since none of it can be run/debugged here anyway, writing it once at the
+      end alongside Staff/Supplier keeps unverified QML work in one clearly-flagged place
+      instead of scattered partially-right files across commits.
 - [ ] C2. `StaffStore.qml`: create (L155)/update (L221, L234)/delete (L176) → `Gateway.recordMutation`.
       Add `staff`→`staff` mapping. Test coverage (written, unverifiable in-sandbox). Commit.
       **Ask push permission.**

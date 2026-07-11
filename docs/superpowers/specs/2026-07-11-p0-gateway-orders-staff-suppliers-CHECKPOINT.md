@@ -146,3 +146,24 @@ rest of the session so it doesn't need re-pasting for each subsequent push.
   `batchFunctionUrl`. `drainNow()` now dispatches by item shape (`Array.isArray(item.items)`).
   Manually reviewed (no Qt toolchain here to run qmllint/qmltestrunner).
 - **Next:** Phase C — the actual Orders/Staff/Supplier store migrations.
+
+### 2026-07-11 — Phase C1 done: OrdersStore.qml migrated to the gateway
+- All 7 write call sites now route through `Gateway.recordMutation`/`recordMutations`:
+  `_commit()` (used by `updateOrder`, `applyAdjustment`, `addOrder`), `approveAllPending`
+  (now uses the batch method from Phase B), `deleteOrder`, and the `upsertMany` bulk-import
+  create path (a site the original audit's "4 primary call sites" table didn't separately
+  count).
+  `before` snapshots captured via `Object.assign({}, ...)` — same idiom as
+  `InventoryStore.setPhoto`, for consistency.
+- Removed `_pushToFirebase` (dead code once `_commit` calls `Gateway.recordMutation` directly).
+- `order`→`orders` registered in `ENTITY_COLLECTIONS` (TDD: red on a new gatewayLogic test,
+  then green) and `Gateway.qml`'s `_collections`.
+- Zero direct `FirebaseService.put/patch/remove/putMany` calls remain in `OrdersStore.qml`
+  (verified by grep).
+- Test-coverage timing revised: OrdersStore's Gateway-wiring test deferred to the end-of-session
+  consolidated QML pass (with Gateway/Outbox/Staff/Supplier) rather than a separate file now —
+  singleton has heavy cross-store dependencies, and since nothing QML-side can be run here
+  anyway, keeping unverified test-writing in one clearly-flagged place beats scattering it.
+- Full CF suite still green (46/46 — the order-entity registration test included).
+- Committed locally. **Awaiting push permission (per the one-commit-per-store, ask-each-time
+  agreement).**
