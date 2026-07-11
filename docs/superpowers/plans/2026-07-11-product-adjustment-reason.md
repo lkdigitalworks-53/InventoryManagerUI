@@ -27,7 +27,7 @@
 
 No automated test — no `tst_TransactionStore.qml` exists (page/store-level QML can't run headless in this project); covered by the on-device test plan (Task 6).
 
-- [ ] **Step 1: `recordPurchase`**
+- [x] **Step 1: `recordPurchase`**
 
 Find:
 
@@ -76,7 +76,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 2: `recordFieldChange`**
+- [x] **Step 2: `recordFieldChange`**
 
 Find:
 
@@ -129,7 +129,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 3: `recordStockAdjustment`**
+- [x] **Step 3: `recordStockAdjustment`**
 
 Find:
 
@@ -188,7 +188,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add qml/model/TransactionStore.qml
@@ -205,7 +205,7 @@ git commit -m "feat(history): accept an optional reason on field/stock/purchase 
 
 No automated test — data-layer plumbing, no `tst_InventoryStore.qml` exists. Covered by the on-device test plan (Task 6).
 
-- [ ] **Step 1: `updateProduct` signature + reason-aware calls**
+- [x] **Step 1: `updateProduct` signature + reason-aware calls**
 
 Find:
 
@@ -257,7 +257,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 2: `restock` signature + reason-aware calls**
+- [x] **Step 2: `restock` signature + reason-aware calls**
 
 Find:
 
@@ -314,7 +314,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add qml/model/InventoryStore.qml
@@ -335,7 +335,7 @@ git commit -m "feat(inventory): thread reason through updateProduct and restock"
 
 No automated test — same reasoning as prior tasks. Covered by the on-device test plan (Task 6).
 
-- [ ] **Step 1: `EditProductDialog.qml` — signal declaration + doc comment**
+- [x] **Step 1: `EditProductDialog.qml` — signal declaration + doc comment**
 
 Find:
 
@@ -375,7 +375,7 @@ BottomSheet {
     signal productUpdateRequested(string productId, var fields, string reason)
 ```
 
-- [ ] **Step 2: `EditProductDialog.qml` — reset `reasonField` in `openFor()`**
+- [x] **Step 2: `EditProductDialog.qml` — reset `reasonField` in `openFor()`**
 
 Find:
 
@@ -408,7 +408,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 3: `EditProductDialog.qml` — clear `reasonField` on the View→Edit transition**
+- [x] **Step 3: `EditProductDialog.qml` — clear `reasonField` on the View→Edit transition**
 
 `openFor()` (Step 2) only resets it when the dialog is freshly opened. Tapping "Edit" from view mode
 doesn't call `openFor()` again — it just flips `editMode`, so a reason typed in a previous edit
@@ -430,7 +430,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 4: `EditProductDialog.qml` — add the Reason field to the form**
+- [x] **Step 4: `EditProductDialog.qml` — add the Reason field to the form**
 
 Find:
 
@@ -493,7 +493,7 @@ Replace with:
         }
 ```
 
-- [ ] **Step 5: `EditProductDialog.qml` — surface reason in `_detailFor()`**
+- [x] **Step 5: `EditProductDialog.qml` — surface reason in `_detailFor()`**
 
 Find:
 
@@ -549,7 +549,7 @@ enum-valued `reason` is never read by the new `"field_change"`/`"stock_adjustmen
 cases, and vice versa. No collision, just a naming coincidence worth knowing about if you're
 reading this code later.
 
-- [ ] **Step 6: `EditProductDialog.qml` — pass reason in `_submit()`**
+- [x] **Step 6: `EditProductDialog.qml` — pass reason in `_submit()`**
 
 Find:
 
@@ -587,7 +587,7 @@ Replace with:
         }, reasonField.text.trim())
 ```
 
-- [ ] **Step 7: `Main.qml` — relay reason**
+- [x] **Step 7: `Main.qml` — relay reason**
 
 Find:
 
@@ -605,7 +605,7 @@ Replace with:
         }
 ```
 
-- [ ] **Step 8: `Logic.qml` — signal signature**
+- [x] **Step 8: `Logic.qml` — signal signature**
 
 Find:
 
@@ -619,7 +619,7 @@ Replace with:
     signal updateProduct(string productId, var fields, string reason)
 ```
 
-- [ ] **Step 9: `DataModel.qml` — forward reason to InventoryStore**
+- [x] **Step 9: `DataModel.qml` — forward reason to InventoryStore**
 
 Find:
 
@@ -661,7 +661,7 @@ Replace with:
         }
 ```
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add qml/pages/EditProductDialog.qml qml/Main.qml qml/logic/Logic.qml qml/model/DataModel.qml
@@ -678,7 +678,7 @@ git commit -m "feat(product): add optional Reason field to Edit Product, relay t
 
 No automated test — same reasoning as prior tasks. Covered by the on-device test plan (Task 6).
 
-- [ ] **Step 1: Reset `reasonField` in `openFor()`**
+- [x] **Step 1: Reset `reasonField` in `openFor()`**
 
 Find:
 
@@ -699,7 +699,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 2: Pass reason into `InventoryStore.restock()`**
+- [x] **Step 2: Pass reason into `InventoryStore.restock()`**
 
 Find:
 
@@ -733,7 +733,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 3: Add the Reason field to the form**
+- [x] **Step 3: Add the Reason field to the form**
 
 Find (the end of the inline "Add new party" row, last thing in the `ColumnLayout`):
 
@@ -796,7 +796,7 @@ Replace with:
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add qml/pages/RestockDialog.qml
@@ -811,7 +811,7 @@ git commit -m "feat(restock): add optional Reason field"
 
 **Interfaces:** none — documentation only.
 
-- [ ] **Step 1: Write the on-device test plan**
+- [x] **Step 1: Write the on-device test plan**
 
 Create `docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md`:
 
@@ -864,7 +864,7 @@ or App-context stores that can't run under `qmltestrunner` regardless.
       disturbed the `_hasAnyRole` check ordering.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md
