@@ -59,13 +59,23 @@ will need a rebase before it merges.
      a natural fit for "type a reason, then Save".
 5. ✅ Branch `feature/product-adjustment-reason` created off latest `main` (Taher's explicit
    choice — new branch, not stacked on the still-unmerged tax/size branch).
-6. ⏳ Full design presented to Taher for approval next.
+6. ✅ Full design presented, approved by Taher without changes.
+7. ✅ Spec committed (`69e6411`).
+8. ✅ Wrote implementation plan to
+   `docs/superpowers/plans/2026-07-11-product-adjustment-reason.md` — 5 tasks: (1) TransactionStore
+   accepts/stores reason, (2) InventoryStore threads reason through updateProduct/restock,
+   (3) the 4-file Edit-Product relay (EditProductDialog/Main/Logic/DataModel) + Reason field UI +
+   History detail rendering, (4) RestockDialog Reason field UI, (5) on-device test plan doc.
+   Self-review done: re-viewed every "Find" block fresh in this branch (main had advanced since
+   last session) rather than trusting earlier exploration — confirmed no drift.
+9. ✅ Taher: commit plan, execute continuously (same mode as last feature).
 
 ## Next steps
 
-- Present design, get approval.
-- Write spec → `docs/superpowers/specs/2026-07-11-product-adjustment-reason-design.md`, commit
-  (after explicit confirmation, per standing rule).
-- Write implementation plan.
-- Execute — confirm with Taher whether the "commit and move ahead, review at the end" mode from
-  last session still applies, or whether to go back to stopping before each commit.
+- Commit plan.
+- Tasks 1 → 5, continuous, one commit each, no automated tests exist for this feature (no
+  ImportMath.js-style pure-logic extraction opportunity this time) — verification is brace/paren
+  sanity checks + careful diff review, same honesty caveat as last time about what "verified"
+  actually means here.
+- Final holistic self-review, report to Taher.
+- Push only once a new PAT is provided (previous one was single-use, Taher said he'd regenerate).
