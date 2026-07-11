@@ -69,13 +69,45 @@ will need a rebase before it merges.
    Self-review done: re-viewed every "Find" block fresh in this branch (main had advanced since
    last session) rather than trusting earlier exploration — confirmed no drift.
 9. ✅ Taher: commit plan, execute continuously (same mode as last feature).
+10. ✅ **All 5 tasks executed and committed**, continuously:
+    - Task 1 (`8322f86`): `TransactionStore.qml` — reason added to `recordFieldChange`/
+      `recordStockAdjustment`/`recordPurchase` doc literals.
+    - Task 2 (`8bd02c0`): `InventoryStore.qml` — reason threaded through `updateProduct`/`restock`,
+      appended to ActivityLog subtitles.
+    - Task 3 (`04a8162`): the 4-file Edit-Product relay (`EditProductDialog`/`Main`/`Logic`/
+      `DataModel`) + Reason field UI + `_detailFor()` gains `field_change`/`stock_adjustment`
+      cases (both previously blank) + `purchase`'s detail gets reason appended.
+    - Task 4 (`51fa3ad`): `RestockDialog.qml` Reason field UI.
+    - Task 5 (`c457246`): on-device test plan doc.
+    - Plan checkboxes marked complete (`cbec0c6`).
+11. ✅ **Final holistic self-review done:**
+    - Brace/paren balance clean on every touched file (all diffs = 0).
+    - Traced the full parameter order end-to-end across every hop of both chains — verified
+      identical `(productId, fields, reason)` / `(productId, amount, party, unitCost, reason)` at
+      every signal/function boundary, not just locally per-file.
+    - Confirmed the dead `Logic.restockProduct`/`addProduct` signals are genuinely untouched (diff
+      only shows the one live `updateProduct` signal line changed).
+    - Full branch diff since `main` (`6b6ad31..HEAD`): 11 files, 7 code files + 4 docs.
+12. ⚠️ **Nothing pushed.** Previous PAT was single-use (Taher said he'd regenerate) — no new PAT
+    provided this session. Branch `feature/product-adjustment-reason` fully committed locally.
+
+## Honest limitations of this session's verification (for Taher's review)
+
+- No automated tests exist for this feature (unlike the previous one — there was no pure-JS
+  parsing logic here to extract into a testable helper; reason is passed straight through as a
+  string with no parsing/validation).
+- Every touched file was sanity-checked via brace/paren balance + careful diff review against the
+  plan, not compiled or run. The on-device test plan
+  (`docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md`) is where real
+  verification happens — Taher hasn't run it yet.
+- No subagent-driven review occurred (same caveat as last session — no subagent-dispatch tool in
+  this chat interface). All "self-review" here was me re-checking my own work.
 
 ## Next steps
 
-- Commit plan.
-- Tasks 1 → 5, continuous, one commit each, no automated tests exist for this feature (no
-  ImportMath.js-style pure-logic extraction opportunity this time) — verification is brace/paren
-  sanity checks + careful diff review, same honesty caveat as last time about what "verified"
-  actually means here.
-- Final holistic self-review, report to Taher.
-- Push only once a new PAT is provided (previous one was single-use, Taher said he'd regenerate).
+- Taher reviews the full branch diff.
+- Taher runs the on-device test plan when he builds/runs the app.
+- Push once Taher provides a new PAT.
+- Then `superpowers:finishing-a-development-branch` for the merge/PR decision (for this branch and
+  the still-unmerged `feature/product-size-and-tax-export`, which needs a rebase onto the current
+  `main` first).
