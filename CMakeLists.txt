@@ -10,6 +10,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Felgo REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Network Gui)
 
+find_package(Git REQUIRED)
+if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+    message(STATUS "Initializing and updating git submodules...")
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE GIT_SUBMOD_RESULT
+    )
+    if(NOT GIT_SUBMOD_RESULT EQUAL 0)
+        message(FATAL_ERROR "Git submodule update failed with code: ${GIT_SUBMOD_RESULT}")
+    endif()
+endif()
+
 # Vendored QXlsx — read/write .xlsx workbooks for the import/export feature.
 # We exclude QXlsx's own examples to keep the build focused on the library.
 set(QXLSX_PARENTPATH "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/qxlsx-src/QXlsx/" CACHE STRING "")
@@ -40,19 +53,6 @@ file(GLOB_RECURSE QmlFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR
 # Find all non-QML/JS files in the qml and assets folder to add as resources:
 file(GLOB_RECURSE AssetsFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
 list(REMOVE_ITEM AssetsFiles ${QmlFiles})
-
-find_package(Git REQUIRED)
-if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
-    message(STATUS "Initializing and updating git submodules...")
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        RESULT_VARIABLE GIT_SUBMOD_RESULT
-    )
-    if(NOT GIT_SUBMOD_RESULT EQUAL 0)
-        message(FATAL_ERROR "Git submodule update failed with code: ${GIT_SUBMOD_RESULT}")
-    endif()
-endif()
 
 qt_add_executable(appBusinessManagement
     main.cpp
