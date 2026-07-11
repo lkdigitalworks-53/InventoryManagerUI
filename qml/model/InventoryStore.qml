@@ -636,7 +636,7 @@ QtObject {
     // name we'll auto-promote. `unitCost` is cost-per-unit at receipt time
     // and defaults to the product's cost field (`changed.price`) when the
     // caller didn't capture it (e.g. legacy restock paths).
-    function restock(productId, amount, party, unitCost) {
+    function restock(productId, amount, party, unitCost, reason) {
         var arr = _clone();
         var changed = null;
         var before = null;
@@ -655,16 +655,19 @@ QtObject {
         var supplierId = _resolveSupplierId(party);
         var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
         var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (changed.price || 0);
+        var reasonText = (reason || "").trim();
 
         ActivityLog.record("product_restocked",
                            "Restocked: " + changed.name,
                            "+" + addedQty + " · now " + changed.stock + " in stock"
-                               + (supplierName ? " · from " + supplierName : ""),
+                               + (supplierName ? " · from " + supplierName : "")
+                               + (reasonText ? " · " + reasonText : ""),
                            productId);
-        TransactionStore.recordPurchase(productId, addedQty, batchCost, changed.name, supplierId);
+        TransactionStore.recordPurchase(productId, addedQty, batchCost, changed.name, supplierId, reasonText);
         // The receipt also lands as a FIFO batch — this is what every
-        // subsequent sale will draw from in date order.
-        StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, "");
+        // subsequent sale will draw from in date order. The reason rides
+        // along in the batch's existing (currently unrendered) note field.
+        StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
         Gateway.recordMutation("inventory", productId, "update", before, changed);
     }
 
@@ -723,7 +726,7 @@ QtObject {
         return -1
     }
 
-    function updateProduct(productId, fields) {
+    function updateProduct(productId, fields, reason) {
         var idx = findIndexById(productId)
         if (idx < 0) return
         var arr = _clone()
@@ -767,16 +770,18 @@ QtObject {
         if (fields.stock        !== undefined) { _maybe("stock", fields.stock); p.stock = fields.stock }
         if (fields.minStock     !== undefined) { _maybe("minStock", fields.minStock); p.minStock = fields.minStock }
         products = arr
+        var reasonText = (reason || "").trim()
         ActivityLog.record("product_updated",
                            "Product updated: " + p.name,
-                           (p.sku ? p.sku + " · " : "") + "stock " + p.stock,
+                           (p.sku ? p.sku + " · " : "") + "stock " + p.stock
+                               + (reasonText ? " · " + reasonText : ""),
                            productId)
         for (var ci = 0; ci < fieldChanges.length; ++ci) {
             var c = fieldChanges[ci]
-            TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after)
+            TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText)
         }
         if (stockChange)
-            TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after)
+            TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText)
         Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
     }
 
