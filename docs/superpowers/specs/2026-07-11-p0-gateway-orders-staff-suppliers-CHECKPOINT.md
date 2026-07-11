@@ -179,3 +179,20 @@ rest of the session so it doesn't need re-pasting for each subsequent push.
 - Zero direct `FirebaseService.put/patch/remove/putMany` calls remain (verified by grep).
 - Full CF suite: 47/47 passing.
 - Committed locally. **Awaiting push permission.**
+
+### 2026-07-11 — PUSHED C2 (StaffStore) to origin
+
+### 2026-07-11 — Phase C3 done: SupplierStore.qml migrated to the gateway (Phase C complete)
+- All 3 write sites now route through `Gateway.recordMutation`: `addSupplier` (create),
+  `updateSupplier` (update, before captured), `removeSupplier` (delete, before captured).
+- `supplier`→`suppliers` registered in `ENTITY_COLLECTIONS` (TDD) and `Gateway.qml`'s
+  `_collections`.
+- Zero direct `FirebaseService.put/patch/remove/putMany` calls remain (verified by grep).
+- Full CF suite: **48/48 passing.**
+- **Phase C is done.** Every store the roadmap named — inventory, stock, orders, staff,
+  suppliers — now routes through `Gateway.recordMutation`/`recordMutations`. Still `mode:
+  "direct"` (unchanged, correct — cutover/deploy is out of scope this session).
+- Committed locally. **Awaiting push permission.**
+- **Remaining:** A4–A6 (Outbox/Gateway/rules QML+rules tests, write-only) — the consolidated
+  QML pass, covering Gateway/Outbox plus lightweight wiring smoke-tests for
+  Orders/Staff/Suppliers, deferred from C1–C3 as noted above.

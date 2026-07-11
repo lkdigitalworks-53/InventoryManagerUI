@@ -15,7 +15,8 @@ const ENTITY_COLLECTIONS = {
     stock_movement: "stock_movements",
     transaction: "transactions",
     order: "orders",
-    staff: "staff"
+    staff: "staff",
+    supplier: "suppliers"
 };
 
 const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];

@@ -108,9 +108,13 @@
       pre-delete snapshot). `staff`→`staff` registered (TDD'd on the CF side). Zero direct
       `FirebaseService` write calls remain (verified by grep). Test-coverage deferred to the
       consolidated QML pass, same as C1.
-- [ ] C3. `SupplierStore.qml`: create (L173)/update (L198)/delete (L216) → `Gateway.recordMutation`.
+- [x] C3. `SupplierStore.qml`: create (L173)/update (L198)/delete (L216) → `Gateway.recordMutation`.
       Add `supplier`→`suppliers` mapping. Test coverage (written, unverifiable in-sandbox).
       Commit. **Ask push permission.**
+      **DONE 2026-07-11.** All 3 sites migrated (`addSupplier`, `updateSupplier`,
+      `removeSupplier`). `supplier`→`suppliers` registered (TDD'd). Zero direct
+      `FirebaseService` calls remain. **This completes Phase C — every store the roadmap named
+      (inventory, stock, orders, staff, suppliers) now routes through the gateway.**
 
 ## Explicitly out of scope this session
 - Deploying Cloud Functions or Firestore rules.
