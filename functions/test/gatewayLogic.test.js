@@ -87,6 +87,12 @@ test("validateMutationRequest resolves order to the orders collection", () => {
     assert.equal(result.collection, "orders");
 });
 
+test("validateMutationRequest resolves staff to the staff collection", () => {
+    const result = GatewayLogic.validateMutationRequest(validBody({ entity: "staff" }));
+    assert.equal(result.ok, true);
+    assert.equal(result.collection, "staff");
+});
+
 // ── applyMutation ────────────────────────────────────────────────────────────
 // Fake Firestore double: minimal .doc()/.runTransaction() shape, records what
 // the transaction writes so we can assert on real decision logic (delete vs

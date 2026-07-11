@@ -167,3 +167,15 @@ rest of the session so it doesn't need re-pasting for each subsequent push.
 - Full CF suite still green (46/46 — the order-entity registration test included).
 - Committed locally. **Awaiting push permission (per the one-commit-per-store, ask-each-time
   agreement).**
+
+### 2026-07-11 — PUSHED C1 (OrdersStore) to origin
+
+### 2026-07-11 — Phase C2 done: StaffStore.qml migrated to the gateway
+- All 4 write sites now route through `Gateway.recordMutation`: `addStaff` (create),
+  `updateStaff` (update, before captured), `setAppUid` (update, before captured — a second
+  update site distinct from `updateStaff`), `deleteStaff` (delete — already had `removed`
+  captured as the pre-delete snapshot, reused directly).
+- `staff`→`staff` registered in `ENTITY_COLLECTIONS` (TDD) and `Gateway.qml`'s `_collections`.
+- Zero direct `FirebaseService.put/patch/remove/putMany` calls remain (verified by grep).
+- Full CF suite: 47/47 passing.
+- Committed locally. **Awaiting push permission.**

@@ -99,9 +99,15 @@
       in isolation and, since none of it can be run/debugged here anyway, writing it once at the
       end alongside Staff/Supplier keeps unverified QML work in one clearly-flagged place
       instead of scattered partially-right files across commits.
-- [ ] C2. `StaffStore.qml`: create (L155)/update (L221, L234)/delete (L176) → `Gateway.recordMutation`.
+- [x] C2. `StaffStore.qml`: create (L155)/update (L221, L234)/delete (L176) → `Gateway.recordMutation`.
       Add `staff`→`staff` mapping. Test coverage (written, unverifiable in-sandbox). Commit.
       **Ask push permission.**
+      **DONE 2026-07-11.** All 4 sites migrated (`addStaff`, `updateStaff`, `setAppUid` — a
+      second update site the original audit had folded into "L221, L234" without separately
+      naming it — and `deleteStaff`, which conveniently already captured `removed` as the
+      pre-delete snapshot). `staff`→`staff` registered (TDD'd on the CF side). Zero direct
+      `FirebaseService` write calls remain (verified by grep). Test-coverage deferred to the
+      consolidated QML pass, same as C1.
 - [ ] C3. `SupplierStore.qml`: create (L173)/update (L198)/delete (L216) → `Gateway.recordMutation`.
       Add `supplier`→`suppliers` mapping. Test coverage (written, unverifiable in-sandbox).
       Commit. **Ask push permission.**

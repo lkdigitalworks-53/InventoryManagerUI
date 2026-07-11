@@ -59,7 +59,8 @@ QtObject {
         "stock_batch": "stock_batches",
         "stock_movement": "stock_movements",
         "transaction": "transactions",
-        "order": "orders"
+        "order": "orders",
+        "staff": "staff"
     })
 
     property var _drainTimer: null

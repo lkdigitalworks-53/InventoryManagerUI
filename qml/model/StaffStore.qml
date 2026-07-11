@@ -149,12 +149,7 @@ QtObject {
         arr.push(newStaff);
         staff = arr;
         lastAddedId = id;
-        // Single-doc PUT — matches updateStaff/setAppUid's already-correct
-        // pattern; avoids the bulk-collection-overwrite path that hard-fails
-        // once staff count crosses Firestore's 500-write-per-commit cap.
-        FirebaseService.put("staff/" + id, newStaff, function(ok) {
-            if (!ok) console.warn("[StaffStore] Firestore write failed for", id)
-        })
+        Gateway.recordMutation("staff", id, "create", null, newStaff);
         _rebuildActivities();
         ActivityLog.record("staff_added",
                            "Teammate added: " + name,
@@ -173,9 +168,7 @@ QtObject {
         if (!removed) return
 
         // Per-doc DELETE — bulk PUT (commit/update) never removes documents.
-        FirebaseService.remove("staff/" + staffId, function(ok) {
-            if (!ok) console.warn("[StaffStore] Firestore delete failed for", staffId)
-        })
+        Gateway.recordMutation("staff", staffId, "delete", removed, null)
 
         // Cascade cleanup if this staff had app-login credentials.
         if (removed.appUid && removed.appUid.length > 0)
@@ -203,6 +196,7 @@ QtObject {
         if (idx < 0) return
         var arr = _clone()
         var s = arr[idx]
+        var before = Object.assign({}, s)
         if (fields.name       !== undefined) s.name = fields.name
         if (fields.email      !== undefined) s.email = fields.email
         if (fields.phone      !== undefined) s.phone = fields.phone
@@ -217,10 +211,7 @@ QtObject {
                            "Teammate updated: " + s.name,
                            (s.role ? s.role : "") + (s.status ? " · " + s.status : ""),
                            staffId)
-        // Single-doc PATCH correctly upserts; avoids the broken bulk-PUT path.
-        FirebaseService.put("staff/" + staffId, s, function(ok) {
-            if (!ok) console.warn("[StaffStore] Firestore update failed for", staffId)
-        })
+        Gateway.recordMutation("staff", staffId, "update", before, s)
     }
 
     // Stamp the Firebase Auth uid onto a staff record so deleteStaff can
@@ -229,11 +220,10 @@ QtObject {
         var idx = findIndexById(staffId)
         if (idx < 0) return
         var arr = _clone()
+        var before = Object.assign({}, arr[idx])
         arr[idx].appUid = appUid
         staff = arr
-        FirebaseService.put("staff/" + staffId, arr[idx], function(ok) {
-            if (!ok) console.warn("[StaffStore] Failed to persist appUid for", staffId)
-        })
+        Gateway.recordMutation("staff", staffId, "update", before, arr[idx])
     }
 
     function clear() {
