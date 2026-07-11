@@ -109,3 +109,16 @@ Full task breakdown: `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.m
 - Committed locally (not pushed yet).
 - **Next:** A3 (runCutover CF tests), then A4–A6 (QML/rules tests, written-only), then Phase B
   (batch Gateway method), then Phase C (the actual store migrations).
+
+### 2026-07-11 — Phase A3 done: extracted + tested runCutover's core logic
+- New: `functions/lib/cutoverLogic.js` — `validateCutoverRequest`, `buildCutoverMarker`,
+  `deleteCollection`, `zeroInventoryStock` (batch-chunk size injectable, so chunking behavior
+  is actually testable without 400 fake docs).
+- New: `functions/test/cutoverLogic.test.js` — 10 tests, real TDD.
+- Edited `functions/index.js`'s `runCutover` to use it. **Caught a real bug while rewiring**:
+  my first draft collapsed the original's distinct `no-tenant-context` (403) vs `owner-only`
+  (403) error strings into a single `owner-only` response — fixed before committing, test added
+  to lock in the distinction. Full suite: **32/32 passing**.
+- Order agreed with user: A3 → Phase B (batch Gateway) → Phase C (store migrations) →
+  circle back to A4–A6 (write-only QML/rules tests) at the end.
+- Committed locally, not yet pushed (will push with the rest of this slice or on request).

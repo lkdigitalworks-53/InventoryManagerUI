@@ -22,6 +22,7 @@ const { getFirestore } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
+const CutoverLogic = require("./lib/cutoverLogic");
 
 admin.initializeApp();
 
@@ -149,18 +150,6 @@ exports.recordMutation = functions.onRequest(
 //
 // Server-side because the ledger collections are locked read-only to clients —
 // only the Admin SDK can delete them.
-
-async function deleteCollection(db, path) {
-    const snap = await db.collection(path).get();
-    let batch = db.batch();
-    let n = 0;
-    for (const doc of snap.docs) {
-        batch.delete(doc.ref);
-        if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); }
-    }
-    if (n % 400 !== 0) await batch.commit();
-    return snap.size;
-}
 
 // ── Member provisioning (Admin SDK) ─────────────────────────────────────────
 // Adds a teammate to the caller's tenant, handling all three cases the client
@@ -360,48 +349,30 @@ exports.runCutover = functions.onRequest(
         const body = req.body || {};
         const db = scopedDb(body.env);
         const ctx = await deriveContext(db, decoded.uid);
-        if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
-        if (ctx.role !== "owner") {
-            send(res, 403, { ok: false, error: "owner-only" });
-            return;
-        }
-        if (String(body.confirm || "") !== "CUTOVER") {
-            send(res, 400, { ok: false, error: "confirmation-required" });
+
+        const validated = CutoverLogic.validateCutoverRequest(ctx, body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
             return;
         }
 
         const root = "tenants/" + ctx.tenantId;
         try {
-            await deleteCollection(db, root + "/transactions");
-            await deleteCollection(db, root + "/stock_batches");
-            await deleteCollection(db, root + "/stock_movements");
+            await CutoverLogic.deleteCollection(db, root + "/transactions");
+            await CutoverLogic.deleteCollection(db, root + "/stock_batches");
+            await CutoverLogic.deleteCollection(db, root + "/stock_movements");
+            await CutoverLogic.zeroInventoryStock(db, root);
 
-            // Zero every product's stock.
-            const inv = await db.collection(root + "/inventory").get();
-            let batch = db.batch();
-            let n = 0;
-            for (const doc of inv.docs) {
-                batch.update(doc.ref, { stock: 0 });
-                if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); }
-            }
-            if (n % 400 !== 0) await batch.commit();
-
-            // Single immutable cutover marker.
             const markerId = "cutover-" + Date.now();
-            await db.doc(root + "/audit_log/" + markerId).set({
-                entryId: markerId,
+            const marker = CutoverLogic.buildCutoverMarker({
+                markerId: markerId,
                 tenantId: ctx.tenantId,
                 actorUid: decoded.uid,
                 actorRole: ctx.role,
-                action: "cutover",
-                entity: "tenant",
-                entityId: ctx.tenantId,
-                before: null,
-                after: { note: "Fresh-start cutover: ledger wiped, stock zeroed." },
                 serverTimestamp: admin.firestore.FieldValue.serverTimestamp(),
-                clientTimestamp: body.clientTimestamp || null,
-                requestId: markerId
+                clientTimestamp: body.clientTimestamp || null
             });
+            await db.doc(root + "/audit_log/" + markerId).set(marker);
         } catch (e) {
             send(res, 500, { ok: false, error: "cutover-failed" });
             return;

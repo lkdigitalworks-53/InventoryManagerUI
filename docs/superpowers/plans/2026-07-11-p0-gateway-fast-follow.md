@@ -35,8 +35,14 @@
       idempotency (retried requestId → zero writes). 13 new tests, all passing; full suite
       (22 tests) green. `index.js`'s `recordMutation` rewired to call this module — behavior
       preserved, verified via `node --check` + full test run. **DONE 2026-07-11.**
-- [ ] A3. CF unit tests for `runCutover`: owner-only gate rejection; shape of the wipe operation
+- [x] A3. CF unit tests for `runCutover`: owner-only gate rejection; shape of the wipe operation
       (mocked). TDD, verified in-sandbox. Commit.
+      **DONE 2026-07-11.** Extracted to `functions/lib/cutoverLogic.js`
+      (`validateCutoverRequest`, `buildCutoverMarker`, `deleteCollection`, `zeroInventoryStock` —
+      all batch-chunking-size-injectable for testability). 10 new tests. Caught and fixed a real
+      behavior regression during rewiring: my first pass collapsed the original's distinct
+      `no-tenant-context` vs `owner-only` error strings into one — restored to match original
+      exactly before committing. Full suite: 32/32 passing.
 - [ ] A4. `tests/tst_OutboxStore.qml`: enqueue → dueItems → markSent/markFailed; backoff schedule;
       persistence across relaunch. Written to convention; **not runnable in-sandbox**. Commit.
 - [ ] A5. `tests/tst_Gateway.qml`: `mode:"direct"` falls through to a plain write (no audit call);
