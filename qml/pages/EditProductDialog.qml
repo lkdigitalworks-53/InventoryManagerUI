@@ -72,6 +72,7 @@ BottomSheet {
             minStockField.text = (p.minStock !== undefined) ? String(p.minStock) : "0"
             taxableCombo.currentIndex = p.taxable ? 1 : 0
             taxPercentField.text = (p.taxPercent !== undefined && p.taxPercent !== null) ? String(p.taxPercent) : "0"
+            sizeField.text = p.size || ""
             photoUrl = p.photoUrl || ""
 
             var cats = CategoryStore.categories
@@ -306,6 +307,13 @@ BottomSheet {
                     font.pixelSize: sp(Constants.fsBody)
                 }
             }
+        }
+
+        AuthTextField {
+            id: sizeField
+            Layout.fillWidth: true
+            label: "Size"
+            readOnly: !root.editMode
         }
 
         AuthTextField {
@@ -838,6 +846,7 @@ BottomSheet {
                 case "sellingPrice": return qsTr("Selling")
                 case "taxable":      return qsTr("Taxable")
                 case "taxPercent":   return qsTr("Tax %")
+                case "size":         return qsTr("Size")
                 case "minStock":     return qsTr("Min stock")
                 default:              return field || qsTr("Field")
                 }
@@ -990,6 +999,7 @@ BottomSheet {
             sellingPrice: sell,
             taxable: taxable,
             taxPercent: taxable ? taxPercent : 0,
+            size: sizeField.text.trim(),
             stock: stk,
             minStock: ms
         })

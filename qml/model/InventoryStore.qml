@@ -65,6 +65,7 @@ QtObject {
             if (p.sellingPrice === undefined || p.sellingPrice === null) p.sellingPrice = p.price || 0;
             if (p.taxable === undefined || p.taxable === null) p.taxable = false;
             if (p.taxPercent === undefined || p.taxPercent === null) p.taxPercent = 0;
+            if (!p.size) p.size = "";
             if (!p.photoUrl) p.photoUrl = "";
             if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
         }
@@ -110,6 +111,7 @@ QtObject {
                       price: p.price, sellingPrice: p.sellingPrice !== undefined ? p.sellingPrice : p.price,
                       taxable: !!p.taxable,
                       taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
+                      size: p.size || "",
                       unit: p.unit, description: p.description,
                       photoUrl: p.photoUrl || "",
                       photoUpdatedAt: p.photoUpdatedAt || "" });
@@ -345,16 +347,18 @@ QtObject {
     // `unitCost` is the cost-per-unit of the initial-stock batch (defaults
     // to product cost `price` when not supplied — matches the previous
     // implicit assumption).
-    function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost) {
+    function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size) {
         var id = nextProductId();
         var arr = _clone();
         var sp = (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price;
         var tx = !!taxable;
         var tp = (typeof taxPercent === "number" && !isNaN(taxPercent)) ? taxPercent : 0;
+        var sz = size || "";
         var doc = { productId: id, name: name, sku: sku, category: category,
                    stock: stock, minStock: minStock,
                    price: price, sellingPrice: sp,
                    taxable: tx, taxPercent: tp,
+                   size: sz,
                    unit: unit, description: description || "",
                    photoUrl: "", photoUpdatedAt: "" };
         arr.push(doc);
@@ -382,6 +386,7 @@ QtObject {
             sellingPrice: sp,
             taxable: tx,
             taxPercent: tp,
+            size: sz,
             minStock: minStock || 0,
             description: description || "",
             supplierId: supplierId
@@ -423,6 +428,7 @@ QtObject {
         TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
             sku: doc.sku || "", category: doc.category || "", unit: doc.unit || "",
             sellingPrice: doc.sellingPrice, taxable: doc.taxable, taxPercent: doc.taxPercent,
+            size: doc.size || "",
             minStock: doc.minStock || 0, description: doc.description || "",
             supplierId: supplierId, origin: "imported"
         }, supplierId);
@@ -495,11 +501,11 @@ QtObject {
                                   unit: r.unit,
                                   price: r.price,
                                   sellingPrice: r.sellingPrice,
-                                  // To-Do: There are no tax information getting exported.
-                                  // Keeping below lines, for future to uncomment when export of tax information implemented
-
-                                  // taxable: taxable,
-                                  // taxPercent: taxable ? taxPercent : 0,
+                                  taxable: !!r.taxable,
+                                  taxPercent: r.taxable
+                                      ? (typeof r.taxPercent === "number" ? r.taxPercent : parseCurrency(r.taxPercent))
+                                      : 0,
+                                  size: r.size || "",
                                   stock: r.stock,
                                   minStock: r.minStock
                               }})
@@ -547,6 +553,7 @@ QtObject {
             taxPercent: typeof r.taxPercent === "number"
                 ? r.taxPercent
                 : (r.taxPercent ? parseCurrency(r.taxPercent) : 0),
+            size: r.size || "",
             stock: parseInt(r.stock) || 0,
             minStock: parseInt(r.minStock) || 0,
             photoUrl: r.photoUrl || "",
@@ -732,6 +739,7 @@ QtObject {
             description: prev.description, unit: prev.unit,
             price: prev.price, sellingPrice: prev.sellingPrice,
             taxable: !!prev.taxable, taxPercent: prev.taxPercent || 0,
+            size: prev.size || "",
             stock: prev.stock, minStock: prev.minStock
         }
         // Per-field events recorded after the local mutation succeeds. The
@@ -755,6 +763,7 @@ QtObject {
         if (fields.sellingPrice !== undefined) { _maybe("sellingPrice", fields.sellingPrice); p.sellingPrice = fields.sellingPrice }
         if (fields.taxable      !== undefined) { _maybe("taxable", !!fields.taxable); p.taxable = !!fields.taxable }
         if (fields.taxPercent   !== undefined) { _maybe("taxPercent", fields.taxPercent); p.taxPercent = fields.taxPercent }
+        if (fields.size         !== undefined) { _maybe("size", fields.size); p.size = fields.size }
         if (fields.stock        !== undefined) { _maybe("stock", fields.stock); p.stock = fields.stock }
         if (fields.minStock     !== undefined) { _maybe("minStock", fields.minStock); p.minStock = fields.minStock }
         products = arr
