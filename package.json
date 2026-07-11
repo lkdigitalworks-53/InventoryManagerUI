@@ -1,0 +1,12 @@
+{
+  "name": "inventory-manager-ui-rules-tests",
+  "private": true,
+  "description": "Firestore security-rules tests for the P0 compliance gateway lockdown. Requires the Firebase emulator - this sandbox has no network egress to Google's emulator distribution, so these are written but not run here. Run locally or in CI with: firebase emulators:exec --only firestore \"node --test test/\"",
+  "scripts": {
+    "test:rules": "firebase emulators:exec --only firestore \"node --test test/\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.16.0"
+  }
+}

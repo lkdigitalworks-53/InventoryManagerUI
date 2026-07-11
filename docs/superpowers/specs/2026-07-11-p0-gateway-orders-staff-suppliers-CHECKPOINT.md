@@ -196,3 +196,31 @@ rest of the session so it doesn't need re-pasting for each subsequent push.
 - **Remaining:** A4–A6 (Outbox/Gateway/rules QML+rules tests, write-only) — the consolidated
   QML pass, covering Gateway/Outbox plus lightweight wiring smoke-tests for
   Orders/Staff/Suppliers, deferred from C1–C3 as noted above.
+
+### 2026-07-11 — Phase A4–A6 done: the consolidated QML + rules test pass (plan complete)
+- New `tests/tst_OutboxStore.qml` (15 tests) — enqueue/enqueueBatch, dueItems, markSent,
+  markFailed's exact backoff schedule, nextDueInMs, persistence across a simulated relaunch,
+  clear(). Fully deterministic, no network dependency.
+- New `tests/tst_Gateway.qml` (7 tests) — deliberately scoped: `_collectionFor` (all 7
+  entities + unknown), `mode` default, gateway-mode enqueue for both `recordMutation` and
+  `recordMutations`. Direct-mode's real `FirebaseService` calls are explicitly NOT exercised
+  (no mock HTTP/Firestore layer in this codebase) — documented as a known gap in the file
+  header, not silently skipped. Gateway-mode enqueue is safe to test specifically because
+  `_send`/`_sendBatch`'s missing-`idToken` guard stops `drainNow()`'s auto-trigger before any
+  real XHR — also documented, since that safety property depends on tests never setting
+  `AuthStore.idToken`.
+- New root `test/firestore.rules.test.js` (25 tests) — every ledger collection × read/write ×
+  member/non-member/anonymous, every working-tier collection × the same matrix, plus one test
+  isolating the wildcard match's ledger guard specifically. New root `package.json`
+  (`@firebase/rules-unit-testing@^5.0.0`, `firebase@^12.16.0` — versions confirmed current via
+  web search) + `firebase.json`'s `emulators.firestore` port. Run with
+  `firebase emulators:exec --only firestore "node --test test/"`.
+- None of the 3 new files could be executed here (no Qt toolchain, no emulator network access)
+  — syntax-checked where possible (`node --check` on the rules test; brace/paren balance check
+  on the QML files) as a partial substitute. All need a local run before merge.
+- Full CF suite re-verified clean: **48/48 passing.**
+- **This completes every task in the plan.** Summary: P0's inventory/stock gateway now has
+  real test coverage where it had none; Orders/Staff/Suppliers are fully migrated; a new
+  batch-mutation capability exists for `approveAllPending`; `Gateway.mode` is still `"direct"`
+  (unchanged, correct) — deploy/cutover remains a deliberate future decision, not something
+  done here.

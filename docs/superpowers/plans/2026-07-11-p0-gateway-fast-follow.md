@@ -43,15 +43,31 @@
       behavior regression during rewiring: my first pass collapsed the original's distinct
       `no-tenant-context` vs `owner-only` error strings into one — restored to match original
       exactly before committing. Full suite: 32/32 passing.
-- [ ] A4. `tests/tst_OutboxStore.qml`: enqueue → dueItems → markSent/markFailed; backoff schedule;
+- [x] A4. `tests/tst_OutboxStore.qml`: enqueue → dueItems → markSent/markFailed; backoff schedule;
       persistence across relaunch. Written to convention; **not runnable in-sandbox**. Commit.
-- [ ] A5. `tests/tst_Gateway.qml`: `mode:"direct"` falls through to a plain write (no audit call);
+      **DONE 2026-07-11.** 15 tests. Covers enqueue, enqueueBatch (Phase B), dueItems filtering,
+      markSent, markFailed's exact backoff schedule (2s/8s/30s/2m/10m, capped), nextDueInMs,
+      persistence across a simulated relaunch (`_load()` re-invoked against the real
+      Settings-backed store), and clear(). No network dependency — fully deterministic.
+- [x] A5. `tests/tst_Gateway.qml`: `mode:"direct"` falls through to a plain write (no audit call);
       `mode:"gateway"` routes through the outbox; `_collections` mapping correctness. Written to
       convention; **not runnable in-sandbox**. Commit.
-- [ ] A6. `firestore.rules.test.js` (new, root-level `test/` dir, `@firebase/rules-unit-testing`
+      **DONE 2026-07-11.** 7 tests, deliberately scoped: `_collectionFor` covers all 7 entities
+      + unknown-entity case; `mode` default; gateway-mode `recordMutation`/`recordMutations`
+      enqueue correctly (safe to exercise because `_send`/`_sendBatch`'s missing-idToken guard
+      keeps `drainNow()`'s auto-trigger from making a real XHR — documented explicitly in the
+      file header). Direct-mode's actual `FirebaseService` calls are NOT exercised — no mock
+      HTTP/Firestore layer exists in this codebase; flagged as a known gap, not silently skipped.
+- [x] A6. `firestore.rules.test.js` (new, root-level `test/` dir, `@firebase/rules-unit-testing`
       convention): ledger collections deny client writes; working-tier collections allow tenant
       members, deny non-members. Written to convention; **not runnable in-sandbox** (needs the
       Firestore emulator). Commit.
+      **DONE 2026-07-11.** New root `package.json` (devDeps: `@firebase/rules-unit-testing`
+      `^5.0.0`, `firebase` `^12.16.0` — versions confirmed current via web search, not guessed)
+      + `firebase.json`'s `emulators.firestore` port. 25 tests across all 4 ledger + all 4
+      working-tier collections (read/write × member/non-member/anonymous), plus one test
+      specifically isolating the wildcard match's ledger guard from the explicit per-collection
+      blocks. Run with `firebase emulators:exec --only firestore "node --test test/"`.
 
 ## Phase B — Batch-aware Gateway method (needed by Orders' `approveAllPending`)
 
