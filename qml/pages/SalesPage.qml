@@ -1333,14 +1333,14 @@ Item {
     // so the cards stay declarative.
     function _breakdownTitles() {
         switch (_viewMode) {
-        case _MODE_VALUE:     return { category: qsTr("Value by category"),          supplier: qsTr("Value by supplier") }
-        case _MODE_PURCHASED: return { category: qsTr("Purchased units by category"), supplier: qsTr("Purchased units by supplier") }
-        case _MODE_CURRENT:   return { category: qsTr("Stock by category"),           supplier: qsTr("Purchases by party") }
-        case _MODE_REVENUE:   return { category: qsTr("Revenue by category"),         supplier: qsTr("Revenue by supplier") }
-        case _MODE_SOLD:      return { category: qsTr("Units sold by category"),      supplier: qsTr("Units sold by supplier") }
-        case _MODE_PROFIT:    return { category: qsTr("Profit by category"),          supplier: qsTr("Profit by supplier") }
+        case _MODE_VALUE:     return { name: qsTr("Value by product"),          category: qsTr("Value by category"),          supplier: qsTr("Value by supplier") }
+        case _MODE_PURCHASED: return { name: qsTr("Purchased units by product"), category: qsTr("Purchased units by category"), supplier: qsTr("Purchased units by supplier") }
+        case _MODE_CURRENT:   return { name: qsTr("Stock by product"),          category: qsTr("Stock by category"),           supplier: qsTr("Purchases by party") }
+        case _MODE_REVENUE:   return { name: qsTr("Revenue by product"),        category: qsTr("Revenue by category"),         supplier: qsTr("Revenue by supplier") }
+        case _MODE_SOLD:      return { name: qsTr("Units sold by product"),     category: qsTr("Units sold by category"),      supplier: qsTr("Units sold by supplier") }
+        case _MODE_PROFIT:    return { name: qsTr("Profit by product"),         category: qsTr("Profit by category"),          supplier: qsTr("Profit by supplier") }
         }
-        return { category: qsTr("By category"), supplier: qsTr("By supplier") }
+        return { name: qsTr("By product"), category: qsTr("By category"), supplier: qsTr("By supplier") }
     }
 
     // True for views where a supplier breakdown is meaningful — so the card
