@@ -659,16 +659,16 @@ Item {
                 }
             }
 
-            // ── By-category breakdown (all views) ──
+            // ── By-name breakdown (all views) ──
             BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                visible: (root._breakdownByCategory || []).length > 0
-                title: root._breakdownTitles().category
-                model: root._breakdownByCategory
+                visible: (root._topByName || []).length > 0
+                title: root._breakdownTitles().name
+                model: root._topByName
                 currency: root._isCurrency
-                barTop: Constants.brand3
+                barTop: Constants.brand1
                 barBottom: Constants.brand2
             }
 
@@ -691,12 +691,29 @@ Item {
                            : qsTr("No supplier data for this period.")
             }
 
-            // Main breakdown — time series for Revenue/Sold/Purchased, top-N
-            // for Value/Profit, stock-health for Current. Title flips per view.
+            // ── By-category breakdown (all views) ──
             BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
+                visible: (root._breakdownByCategory || []).length > 0
+                title: root._breakdownTitles().category
+                model: root._breakdownByCategory
+                currency: root._isCurrency
+                barTop: Constants.brand3
+                barBottom: Constants.brand2
+            }
+
+            // Main breakdown — time series for Revenue/Sold/Purchased, stock-health
+            // for Current. Hidden for Value and Profit→Potential, where this would
+            // otherwise duplicate the by-name card above (both show the same
+            // top-8-by-name data in those two modes).
+            BreakdownBarCard {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                visible: !(root._viewMode === root._MODE_VALUE)
+                         && !(root._viewMode === root._MODE_PROFIT && root._profitMode === "Potential")
                 title: root._viewMode === root._MODE_CURRENT ? qsTr("Stock health") : qsTr("Breakdown")
                 model: root._breakdown
                 currency: root._isCurrency
