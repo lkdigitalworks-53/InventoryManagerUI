@@ -1298,6 +1298,9 @@ Item {
         var sup = SupplierStore.suppliers || []
         for (var sj = 0; sj < sup.length; ++sj)
             supplierName[sup[sj].supplierId] = sup[sj].name
+        var productName = {}
+        for (var pk = 0; pk < inv.length; ++pk)
+            productName[inv[pk].productId] = inv[pk].name || inv[pk].productId
 
         return BreakdownMath.breakdown({
             metric: metric,
@@ -1311,6 +1314,7 @@ Item {
             supplierId: _partyFilter !== "All" ? _supplierIdForName(_partyFilter) : "",
             productCategory: productCategory,
             supplierName: supplierName,
+            productName: productName,
             allocate: OrderMath.allocate
         })
     }
