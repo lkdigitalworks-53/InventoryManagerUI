@@ -19,6 +19,7 @@ TestCase {
         ]
         var productCategory = { P1: "Drinks", P2: "Snacks" }
         var supplierName = { S1: "Acme", S2: "Beta" }
+        var productName = { P1: "Cola", P2: "Chips" }
 
         var byCat = BM.breakdown({
             metric: "sold", dim: "category", entries: entries,
@@ -35,6 +36,14 @@ TestCase {
         })
         compare(bySup["Acme"], 3)
         compare(bySup["Beta"], 3)
+
+        var byName = BM.breakdown({
+            metric: "sold", dim: "name", entries: entries,
+            window: null, channel: "", staffId: "", category: "", supplierId: "",
+            productCategory: productCategory, supplierName: supplierName, productName: productName
+        })
+        compare(byName["Cola"], 3)
+        compare(byName["Chips"], 3)
     }
 
     function test_purchased_by_supplier() {
@@ -46,6 +55,7 @@ TestCase {
         ]
         var productCategory = { P1: "Drinks", P2: "Snacks" }
         var supplierName = { S1: "Acme", S2: "Beta" }
+        var productName = { P1: "Cola", P2: "Chips" }
 
         var byCat = BM.breakdown({
             metric: "purchased", dim: "category", entries: entries,
@@ -62,5 +72,13 @@ TestCase {
         })
         compare(bySup["Acme"], 25)
         compare(bySup["Beta"], 10)
+
+        var byName = BM.breakdown({
+            metric: "purchased", dim: "name", entries: entries,
+            window: null, channel: "", staffId: "", category: "", supplierId: "",
+            productCategory: productCategory, supplierName: supplierName, productName: productName
+        })
+        compare(byName["Cola"], 25)
+        compare(byName["Chips"], 10)
     }
 }
