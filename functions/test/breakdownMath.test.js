@@ -26,6 +26,14 @@ test("sold_by_category_nets_returns", () => {
         productCategory: f.productCategory, supplierName: f.supplierName
     });
     assert.deepEqual(bySup, f.expected.bySupplier);
+
+    const byNameResult = BreakdownMath.breakdown({
+        metric: "sold", dim: "name", entries: f.entries,
+        window: null, channel: "", staffId: "", category: "", supplierId: "",
+        productCategory: f.productCategory, supplierName: f.supplierName,
+        productName: f.productName
+    });
+    assert.deepEqual(byNameResult, f.expected.byName);
 });
 
 test("purchased_by_supplier", () => {
@@ -43,4 +51,12 @@ test("purchased_by_supplier", () => {
         productCategory: f.productCategory, supplierName: f.supplierName
     });
     assert.deepEqual(bySup, f.expected.bySupplier);
+
+    const byNameResult = BreakdownMath.breakdown({
+        metric: "purchased", dim: "name", entries: f.entries,
+        window: null, channel: "", staffId: "", category: "", supplierId: "",
+        productCategory: f.productCategory, supplierName: f.supplierName,
+        productName: f.productName
+    });
+    assert.deepEqual(byNameResult, f.expected.byName);
 });
