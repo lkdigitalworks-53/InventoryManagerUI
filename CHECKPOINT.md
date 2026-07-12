@@ -1,113 +1,82 @@
-# Session Checkpoint — Reason field for product adjustments
+# Session Checkpoint — By-name chart on all six Analysis reports
 
-**Started:** 2026-07-11 (continuation of the same conversation; new branch, unrelated feature)
-**Branch:** `feature/product-adjustment-reason` (off latest `main`, commit `6b6ad31`)
-**Status:** Design complete, writing spec next
-
-## Context carried over from the previous branch/session (for reference only)
-
-`feature/product-size-and-tax-export` (product tax export/import + Size field) was completed and
-pushed to GitHub last session — 7 tasks, all committed, PAT used once and not persisted. That
-branch is unrelated to this one and isn't touched here. Note: `main` gained 3 commits since that
-branch was cut, including a small fix to the same two dialog files this branch will also touch
-(`min stock` validation defaulting to 0) — no conflict with what's planned here, but that branch
-will need a rebase before it merges.
+**Started:** 2026-07-11
+**Branch:** `feature/analysis-by-name-chart-all-views`
+**Status:** Brainstorming — exploration done, awaiting Taher's answers on scope questions before design is finalized.
 
 ## Step log
 
-1. ✅ Fetched + pulled latest `main` (was 3 commits behind).
-2. ✅ New request via `/superpowers:brainstorming`: optional "Reason" field for product
-   adjustments — Edit Product dialog (any field edit, not just stock) and Restock dialog, surfaced
-   in the per-product History tab and the dashboard ActivityLog feed.
-3. ✅ Asked 3 scoping questions, all answered:
-   - Applies to **any field edit** in Edit Product dialog (not just stock) — plus Restock.
-   - **Free text**, not a fixed dropdown.
-   - **Optional**, not required.
-4. ✅ Explored the actual code before designing (not from memory):
-   - Existing precedent: order returns/price-adjustments already have a `reason` (short enum:
-     exchange/modify/other) vs. `note` (free text) distinction. Taher's answers point to the
-     `note`-style pattern, just literally labeled "Reason" in the UI.
-   - **Edit Product's save path is a 4-file relay**, not a direct call:
-     `EditProductDialog.productUpdateRequested` (signal) → `Main.qml` →
-     `Logic.qml updateProduct` (signal) → `DataModel.qml onUpdateProduct` (auth check + FIFO batch
-     reconciliation) → `InventoryStore.updateProduct()`. All 4 need `reason` threaded through.
-   - Restock is simpler: `RestockDialog` calls `InventoryStore.restock()` directly — no relay. The
-     parallel `Logic.restockProduct`/`DataModel.onRestockProduct` signal path is dead code (never
-     emitted, confirmed via grep) — same pattern as the dead `addProduct` signal found last
-     session. Not touching it.
-   - `_reconcileBatchesForStockEdit` (FIFO ledger rebalancing after a manual stock edit) doesn't
-     need reason — it's pure quantity math, not a history entry.
-   - `TransactionStore._push()`/`forProduct()` have **no field-whitelisting** (unlike
-     `InventoryStore._clone()`, which bit us last session) — adding `reason` to the three doc
-     literals (`recordFieldChange`/`recordStockAdjustment`/`recordPurchase`) is safe.
-   - `ActivityLog`'s schema fields ARE whitelisted in `markAllRead`/`dismiss`, but `subtitle` is
-     already one of the whitelisted fields — appending reason text into the existing subtitle
-     *string* avoids that whitelist risk entirely. No new ActivityLog field needed.
-   - `EditProductDialog._detailFor()` has **no case at all** for `"stock_adjustment"` or
-     `"field_change"` — both currently render blank detail text. Exactly where reason slots in.
-   - `StockBatchStore.addBatch()` already has an unused `note` param (always `""` for restocks
-     today) — threading reason into it is a one-line, low-cost win, even though the Batches tab
-     doesn't render batch notes in the UI yet (flagged as optional/out-of-scope-by-default,
-     matching last session's pattern for the product-list-card Size question).
-   - Reason field placement: **edit-mode-only visibility** (`visible: root.editMode`), not
-     `readOnly` toggling like persistent fields — there's no persistent "reason" value on the
-     product to show in view mode, unlike Size/Description. Insertion point in
-     `EditProductDialog.qml`: right after the edit-mode Supplier `ColumnLayout` closes, before
-     `errorLabel` — last field before Save.
-   - Photo changes explicitly **out of scope** — `setPhoto()` fires immediately, bypasses the
-     batched Save/reason flow entirely; a different UX (prompt-at-pick-time) would be needed, not
-     a natural fit for "type a reason, then Save".
-5. ✅ Branch `feature/product-adjustment-reason` created off latest `main` (Taher's explicit
-   choice — new branch, not stacked on the still-unmerged tax/size branch).
-6. ✅ Full design presented, approved by Taher without changes.
-7. ✅ Spec committed (`69e6411`).
-8. ✅ Wrote implementation plan to
-   `docs/superpowers/plans/2026-07-11-product-adjustment-reason.md` — 5 tasks: (1) TransactionStore
-   accepts/stores reason, (2) InventoryStore threads reason through updateProduct/restock,
-   (3) the 4-file Edit-Product relay (EditProductDialog/Main/Logic/DataModel) + Reason field UI +
-   History detail rendering, (4) RestockDialog Reason field UI, (5) on-device test plan doc.
-   Self-review done: re-viewed every "Find" block fresh in this branch (main had advanced since
-   last session) rather than trusting earlier exploration — confirmed no drift.
-9. ✅ Taher: commit plan, execute continuously (same mode as last feature).
-10. ✅ **All 5 tasks executed and committed**, continuously:
-    - Task 1 (`8322f86`): `TransactionStore.qml` — reason added to `recordFieldChange`/
-      `recordStockAdjustment`/`recordPurchase` doc literals.
-    - Task 2 (`8bd02c0`): `InventoryStore.qml` — reason threaded through `updateProduct`/`restock`,
-      appended to ActivityLog subtitles.
-    - Task 3 (`04a8162`): the 4-file Edit-Product relay (`EditProductDialog`/`Main`/`Logic`/
-      `DataModel`) + Reason field UI + `_detailFor()` gains `field_change`/`stock_adjustment`
-      cases (both previously blank) + `purchase`'s detail gets reason appended.
-    - Task 4 (`51fa3ad`): `RestockDialog.qml` Reason field UI.
-    - Task 5 (`c457246`): on-device test plan doc.
-    - Plan checkboxes marked complete (`cbec0c6`).
-11. ✅ **Final holistic self-review done:**
-    - Brace/paren balance clean on every touched file (all diffs = 0).
-    - Traced the full parameter order end-to-end across every hop of both chains — verified
-      identical `(productId, fields, reason)` / `(productId, amount, party, unitCost, reason)` at
-      every signal/function boundary, not just locally per-file.
-    - Confirmed the dead `Logic.restockProduct`/`addProduct` signals are genuinely untouched (diff
-      only shows the one live `updateProduct` signal line changed).
-    - Full branch diff since `main` (`6b6ad31..HEAD`): 11 files, 7 code files + 4 docs.
-12. ⚠️ **Nothing pushed.** Previous PAT was single-use (Taher said he'd regenerate) — no new PAT
-    provided this session. Branch `feature/product-adjustment-reason` fully committed locally.
+1. Cloned `InventoryManagerUI` fresh (`main`, up to date with origin, clean tree).
+   Note: repo cloned without any auth — currently reachable as public, contradicting last
+   session's memory note that it was "made private mid-development." Not investigated further
+   since it didn't block the session; flagged to Taher in chat.
+2. Found a stale root `CHECKPOINT.md` left over from the 2026-07-10 tax/size-field session
+   (mid-plan snapshot, not the final state — that feature is actually complete per memory).
+   Archived it to `docs/superpowers/specs/2026-07-10-product-tax-export-size-field-CHECKPOINT.md`
+   before starting this session's checkpoint, so nothing is lost.
+3. Created branch `feature/analysis-by-name-chart-all-views` off `main`.
+4. Read prior spec `docs/superpowers/specs/2026-06-15-analysis-category-supplier-reports-design.md`
+   — this is the design that originally added the by-category/by-supplier cards to all six views
+   and extracted `BreakdownBarCard.qml`. Directly reusable pattern for this feature.
+5. Traced `qml/pages/SalesPage.qml` (2317 lines) breakdown-building code (`_rebuildBreakdown()`)
+   for all six `_MODE_*` branches (Value, Purchased, Current, Revenue, Sold, Profit
+   [Realised + Potential submodes]). Findings:
+   - Only **3** `BreakdownBarCard` instances exist on the page today: by-category (always 1st),
+     by-supplier (always 2nd), and one overloaded "Breakdown" card (3rd) whose bound model
+     (`_breakdown`) means something different per view:
+     - Value: top-8 products by value (i.e. already "by name", just mislabeled "Breakdown")
+     - Profit -> Potential: top-8 products by profit (also already "by name")
+     - Profit -> Realised: period-bucketed profit trend (Day/Week/Month/Year bars) — NOT by-name
+     - Current: 3-bar "stock health" (In stock / Low / Out) — NOT by-name
+     - Sold / Purchased / Revenue: period-bucketed trend bars — NOT by-name
+   - A separate property `_topByName` already exists and is **already populated** for Value,
+     Current, and both Profit submodes (reusing existing per-mode aggregation) — it's just never
+     rendered as its own chart card today.
+   - `_topByName` is **never computed** for Sold, Purchased, or Revenue — this is the one place
+     genuine new aggregation logic is needed. Matches Taher's "some reports already have it, add
+     to the rest" — 3 of 6 modes have the data, 3 don't.
+   - The by-category/by-supplier aggregation for Sold/Purchased/Revenue goes through
+     `_breakdownByDimension()` -> `qml/helper/BreakdownMath.js` `breakdown({dim: "category"|"supplier"})`.
+     This file only supports those two dims today. Extending it with a `"product"` dim is
+     structurally easy — product id is already available at the line/event level for all three
+     metrics (no FIFO/consumption-level attribution needed, unlike the supplier dim), so it mirrors
+     the existing `category` branch in each of `_revenue`/`_sold`/`_purchased`.
+   - **Parity constraint found:** `qml/helper/BreakdownMath.js` has a byte-for-byte (module
+     boilerplate aside) Node.js mirror at `functions/lib/breakdownMath.js`, independently tested by
+     `functions/test/breakdownMath.test.js` against `functions/test/fixtures/breakdownMathFixtures.js`.
+     Confirmed via diff — logic is identical, semicolons/require() aside. Adding a `"product"` dim
+     to the QML file without mirroring it breaks that parity convention (silently — nothing enforces
+     it automatically today). Flagged to Taher as a scope decision.
+   - Existing QML tests to extend: `tests/tst_BreakdownMath.qml` (284 lines),
+     `tests/tst_BreakdownMathParityFixtures.qml` (66 lines) — good precedent for testing the new dim.
+6. Two scope questions asked and answered:
+   - 3rd card fate -> "Keep it as an untouched 4th card below the 3 mandatory ones."
+   - CF mirror -> "Yes, update the mirror + its Node tests too."
+7. Deeper investigation surfaced a real edge case the above answer didn't anticipate: for Value
+   and Profit->Potential, the old 3rd card is literally identical data to the new by-name card
+   (both already show top-8-by-name). Flagged to Taher as a follow-up question; recommended
+   suppressing the old card for just those two modes. Taher confirmed: "Suppress it for
+   Value/Profit->Potential only."
+8. Investigation also narrowed the aggregation scope favorably: only Sold/Purchased actually need
+   a new `dim: "name"` branch in `BreakdownMath.js` (and its Node mirror). Revenue's by-name data
+   reuses the already-existing, already-tested `InventoryStore.realisedProfitByDimension("productId", ...)`
+   call (same pattern Profit->Realised already uses), extracted via a new optional `field` param on
+   `_profitTopN()` — no `BreakdownMath.js` change needed for Revenue. Verified this is necessary:
+   `_breakdownByDimension()`'s revenue branch has a `field = dim === "supplier" ? "supplierId" : "category"`
+   ternary that would silently mis-resolve `dim: "name"` as `"category"` if naively extended —
+   documented as a guardrail in the spec.
+9. Design spec written and self-reviewed against actual source (line numbers, variable names,
+   and function signatures all verified by direct inspection, not assumed):
+   `docs/superpowers/specs/2026-07-11-analysis-by-name-chart-design.md`
+10. ⏳ Presenting spec to Taher for his review now (per standing convention: show full file
+    content before taking any action). Awaiting his go-ahead before `writing-plans` skill /
+    implementation.
 
-## Honest limitations of this session's verification (for Taher's review)
-
-- No automated tests exist for this feature (unlike the previous one — there was no pure-JS
-  parsing logic here to extract into a testable helper; reason is passed straight through as a
-  string with no parsing/validation).
-- Every touched file was sanity-checked via brace/paren balance + careful diff review against the
-  plan, not compiled or run. The on-device test plan
-  (`docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md`) is where real
-  verification happens — Taher hasn't run it yet.
-- No subagent-driven review occurred (same caveat as last session — no subagent-dispatch tool in
-  this chat interface). All "self-review" here was me re-checking my own work.
+## Open decisions
+- None outstanding — all resolved. Awaiting Taher's review of the written spec itself.
 
 ## Next steps
-
-- Taher reviews the full branch diff.
-- Taher runs the on-device test plan when he builds/runs the app.
-- Push once Taher provides a new PAT.
-- Then `superpowers:finishing-a-development-branch` for the merge/PR decision (for this branch and
-  the still-unmerged `feature/product-size-and-tax-export`, which needs a rebase onto the current
-  `main` first).
+- Taher reviews the spec file -> incorporate any changes -> `writing-plans` skill for the
+  implementation plan -> execute per build sequence in the spec -> tests -> Taher reviews diffs
+  -> commit (only after explicit confirmation) -> push (only with a session PAT).
+- Not committed to git yet (per standing instruction: commit only after explicit confirmation).
