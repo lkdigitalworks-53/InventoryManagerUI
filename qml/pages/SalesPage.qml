@@ -1242,6 +1242,7 @@ Item {
         }
         _breakdownByCategory = _topNFromMap(_breakdownByDimension("revenue", "category", false), 8)
         _breakdownBySupplier = _topNFromMap(_breakdownByDimension("revenue", "supplier", false), 8)
+        _topByName = _profitTopN(_namedProductMap(InventoryStore.realisedProfitByDimension("productId", periodScope)), 8, "", "revenue")
     }
 
     // Build the live opts bundle and delegate the grouping to BreakdownMath.
@@ -1719,10 +1720,11 @@ Item {
     // chart-ready rows sorted by profit descending. `filterKey` (when truthy)
     // restricts the result to a single key — used when the supplier filter
     // chip is active and we still want a single bar to render.
-    function _profitTopN(rows, n, filterKey) {
+    function _profitTopN(rows, n, filterKey, field) {
+        field = field || "profit"
         var keys = Object.keys(rows || {})
         if (filterKey) keys = keys.filter(function(k) { return k === filterKey })
-        keys.sort(function(a, b) { return (rows[b].profit || 0) - (rows[a].profit || 0) })
+        keys.sort(function(a, b) { return (rows[b][field] || 0) - (rows[a][field] || 0) })
         if (n && keys.length > n) keys = keys.slice(0, n)
         var out = []
         for (var i = 0; i < keys.length; ++i) {
@@ -1730,7 +1732,7 @@ Item {
             var lbl = k.length > 6 ? k.substring(0, 5) + "…" : k
             out.push({
                 label: lbl,
-                value: rows[k].profit,
+                value: rows[k][field],
                 fullLabel: k,
                 revenue: rows[k].revenue,
                 cogs: rows[k].cogs,
