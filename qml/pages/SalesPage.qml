@@ -1184,6 +1184,7 @@ Item {
             _periodCompare = qsTr("from completed orders") + partySuffix
             _breakdownByCategory = _topNFromMap(_breakdownByDimension("sold", "category", false), 8)
             _breakdownBySupplier = _topNFromMap(_breakdownByDimension("sold", "supplier", false), 8)
+            _topByName = _topNFromMap(_breakdownByDimension("sold", "name", false), 8)
             return
         }
 
@@ -1201,6 +1202,7 @@ Item {
             _periodCompare = qsTr("from restocks") + partySuffix
             _breakdownByCategory = _topNFromMap(_breakdownByDimension("purchased", "category", false), 8)
             _breakdownBySupplier = _topNFromMap(_breakdownByDimension("purchased", "supplier", false), 8)
+            _topByName = _topNFromMap(_breakdownByDimension("purchased", "name", false), 8)
             return
         }
 
