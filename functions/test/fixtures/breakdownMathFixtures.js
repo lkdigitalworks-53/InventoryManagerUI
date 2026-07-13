@@ -21,9 +21,11 @@ module.exports = [
         ],
         productCategory: { P1: "Drinks", P2: "Snacks" },
         supplierName: { S1: "Acme", S2: "Beta" },
+        productName: { P1: "Cola", P2: "Chips" },
         expected: {
             byCategory: { Drinks: 3, Snacks: 3 },
-            bySupplier: { Acme: 3, Beta: 3 }
+            bySupplier: { Acme: 3, Beta: 3 },
+            byName: { Cola: 3, Chips: 3 }
         }
     },
     {
@@ -36,9 +38,11 @@ module.exports = [
         ],
         productCategory: { P1: "Drinks", P2: "Snacks" },
         supplierName: { S1: "Acme", S2: "Beta" },
+        productName: { P1: "Cola", P2: "Chips" },
         expected: {
             byCategory: { Drinks: 25, Snacks: 10 },
-            bySupplier: { Acme: 25, Beta: 10 }
+            bySupplier: { Acme: 25, Beta: 10 },
+            byName: { Cola: 25, Chips: 10 }
         }
     }
 ];

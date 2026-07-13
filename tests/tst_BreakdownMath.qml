@@ -50,6 +50,7 @@ TestCase {
     // Shared fixtures ----------------------------------------------------
     function _productCategory() { return { "P1": "Drinks", "P2": "Snacks", "P3": "" } }
     function _supplierName()    { return { "S1": "Acme", "S2": "Beta" } }
+    function _productName()     { return { "P1": "Cola", "P2": "Chips", "P3": "Cola" } }
 
     // ── PURCHASED ───────────────────────────────────────────────────
     function test_purchased_by_category_and_supplier_sum_equal() {
@@ -62,7 +63,8 @@ TestCase {
         var opts = {
             metric:"purchased", entries:entries, orders:[],
             window:null, channel:"", staffId:"", category:"", supplierId:"",
-            productCategory:_productCategory(), supplierName:_supplierName()
+            productCategory:_productCategory(), supplierName:_supplierName(),
+            productName:_productName()
         }
         var byCat = BM.breakdown(Object.assign({}, opts, { dim:"category" }))
         var bySup = BM.breakdown(Object.assign({}, opts, { dim:"supplier" }))
@@ -73,6 +75,10 @@ TestCase {
         compare(bySup["Beta"], 5)
         compare(bySup["Unknown"], 3)   // empty supplierId rolls up to "Unknown"
         compare(_sum(byCat), _sum(bySup)) // 18 == 18
+        var byName = BM.breakdown(Object.assign({}, opts, { dim:"name" }))
+        compare(byName["Cola"], 13)  // P1(10) + P3(3), both resolve to "Cola"
+        compare(byName["Chips"], 5)
+        compare(_sum(byName), _sum(byCat)) // reconciliation invariant: 18 == 18
     }
 
     // ── SOLD (FIFO consumption) ─────────────────────────────────────
@@ -130,6 +136,56 @@ TestCase {
             productCategory:_productCategory(), supplierName:_supplierName()
         })
         compare(bySup["Acme"], 3)
+    }
+
+    // ── SOLD / PURCHASED — by-name (product) dim ────────────────────
+    function test_sold_by_name_collapses_multi_sku_and_reconciles() {
+        var entries = [
+            { kind:"sale", timestamp:"2026-06-15T10:00:00", productId:"P1", quantity:5,
+              orderChannel:"", staffId:"",
+              consumption:[ {supplierId:"S1", qtyConsumed:5} ] },
+            { kind:"sale", timestamp:"2026-06-15T11:00:00", productId:"P3", quantity:2,
+              orderChannel:"", staffId:"",
+              consumption:[ {supplierId:"S1", qtyConsumed:2} ] }
+        ]
+        var opts = {
+            metric:"sold", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(),
+            productName:_productName()
+        }
+        var byName = BM.breakdown(Object.assign({}, opts, { dim:"name" }))
+        var byCat  = BM.breakdown(Object.assign({}, opts, { dim:"category" }))
+        compare(byName["Cola"], 7)          // P1(5) + P3(2), both resolve to "Cola"
+        compare(_sum(byName), _sum(byCat))  // reconciliation invariant: 7 == 7
+    }
+
+    function test_sold_name_dim_with_supplier_filter() {
+        var entries = [
+            { kind:"sale", timestamp:"2026-06-15T10:00:00", productId:"P1", quantity:12,
+              orderChannel:"", staffId:"",
+              consumption:[ {supplierId:"S1", qtyConsumed:10}, {supplierId:"S2", qtyConsumed:2} ] }
+        ]
+        var byName = BM.breakdown({
+            metric:"sold", dim:"name", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"S1",
+            productCategory:_productCategory(), supplierName:_supplierName(),
+            productName:_productName()
+        })
+        compare(byName["Cola"], 10) // only S1's 10 units, not the full 12
+    }
+
+    function test_purchased_by_name_unresolved_product_falls_back() {
+        var entries = [
+            { kind:"purchase", timestamp:"2026-06-15T10:00:00", productId:"P9", party:"S1", quantity:4 }
+        ]
+        var byName = BM.breakdown({
+            metric:"purchased", dim:"name", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(),
+            productName:_productName()
+        })
+        compare(byName["(unnamed)"], 4) // P9 isn't in the productName map
     }
 
     // ── REVENUE ─────────────────────────────────────────────────────

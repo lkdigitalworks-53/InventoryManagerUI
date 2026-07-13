@@ -53,6 +53,11 @@ function _supplierKey(supplierName, supplierId) {
     return supplierName[supplierId] || "(removed)"
 }
 
+function _productNameKey(productName, productId) {
+    var n = productName[productId]
+    return (n && n.length) ? n : "(unnamed)"
+}
+
 function _add(out, key, value) {
     if (value === 0) return
     out[key] = (out[key] || 0) + value
@@ -61,7 +66,7 @@ function _add(out, key, value) {
 // Group + sum a metric by a dimension. Returns { key -> number }.
 // opts = {
 //   metric: "revenue"|"sold"|"purchased",
-//   dim:    "category"|"supplier",
+//   dim:    "category"|"supplier"|"name",
 //   orders: [],            // revenue
 //   entries: [],           // sold / purchased
 //   window: {from,to}|null,// period ∩ date-filter (already intersected)
@@ -70,7 +75,8 @@ function _add(out, key, value) {
 //   category: "",          // "" = all (cross-filter, product category)
 //   supplierId: "",        // "" = all (supplier filter, resolved id)
 //   productCategory: {},   // productId -> category string
-//   supplierName: {}       // supplierId -> display name
+//   supplierName: {},      // supplierId -> display name
+//   productName: {}        // productId -> display name (only needed when dim === "name")
 // }
 function breakdown(opts) {
     if (opts.metric === "revenue" || opts.metric === "tax" || opts.metric === "discount")
@@ -152,6 +158,16 @@ function _sold(o) {
                 if (o.supplierId && c.supplierId !== o.supplierId) continue
                 _add(out, _supplierKey(o.supplierName, c.supplierId), c.qtyConsumed || 0)
             }
+        } else if (o.dim === "name") {
+            var nameKey = _productNameKey(o.productName, e.productId)
+            if (o.supplierId) {
+                var matchedName = 0
+                for (var cn = 0; cn < cons.length; ++cn)
+                    if (cons[cn].supplierId === o.supplierId) matchedName += (cons[cn].qtyConsumed || 0)
+                _add(out, nameKey, matchedName)
+            } else {
+                _add(out, nameKey, e.quantity || 0)
+            }
         } else { // category
             if (o.supplierId) {
                 var matched = 0
@@ -179,8 +195,9 @@ function _purchased(o) {
         var cat = _categoryKey(o.productCategory, e.productId)
         if (o.category && cat !== o.category) continue
         var qty = e.quantity || 0
-        if (o.dim === "supplier") _add(out, _supplierKey(o.supplierName, pid), qty)
-        else                      _add(out, cat, qty)
+        if (o.dim === "supplier")      _add(out, _supplierKey(o.supplierName, pid), qty)
+        else if (o.dim === "name")     _add(out, _productNameKey(o.productName, e.productId), qty)
+        else                           _add(out, cat, qty)
     }
     return out
 }

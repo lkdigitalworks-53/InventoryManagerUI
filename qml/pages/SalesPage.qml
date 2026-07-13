@@ -659,16 +659,16 @@ Item {
                 }
             }
 
-            // ── By-category breakdown (all views) ──
+            // ── By-name breakdown (all views) ──
             BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                visible: (root._breakdownByCategory || []).length > 0
-                title: root._breakdownTitles().category
-                model: root._breakdownByCategory
+                visible: (root._topByName || []).length > 0
+                title: root._breakdownTitles().name
+                model: root._topByName
                 currency: root._isCurrency
-                barTop: Constants.brand3
+                barTop: Constants.brand1
                 barBottom: Constants.brand2
             }
 
@@ -691,12 +691,29 @@ Item {
                            : qsTr("No supplier data for this period.")
             }
 
-            // Main breakdown — time series for Revenue/Sold/Purchased, top-N
-            // for Value/Profit, stock-health for Current. Title flips per view.
+            // ── By-category breakdown (all views) ──
             BreakdownBarCard {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
+                visible: (root._breakdownByCategory || []).length > 0
+                title: root._breakdownTitles().category
+                model: root._breakdownByCategory
+                currency: root._isCurrency
+                barTop: Constants.brand3
+                barBottom: Constants.brand2
+            }
+
+            // Main breakdown — time series for Revenue/Sold/Purchased, stock-health
+            // for Current. Hidden for Value and Profit→Potential, where this would
+            // otherwise duplicate the by-name card above (both show the same
+            // top-8-by-name data in those two modes).
+            BreakdownBarCard {
+                Layout.fillWidth: true
+                Layout.leftMargin: dp(Constants.space4)
+                Layout.rightMargin: dp(Constants.space4)
+                visible: !(root._viewMode === root._MODE_VALUE)
+                         && !(root._viewMode === root._MODE_PROFIT && root._profitMode === "Potential")
                 title: root._viewMode === root._MODE_CURRENT ? qsTr("Stock health") : qsTr("Breakdown")
                 model: root._breakdown
                 currency: root._isCurrency
@@ -1184,6 +1201,7 @@ Item {
             _periodCompare = qsTr("from completed orders") + partySuffix
             _breakdownByCategory = _topNFromMap(_breakdownByDimension("sold", "category", false), 8)
             _breakdownBySupplier = _topNFromMap(_breakdownByDimension("sold", "supplier", false), 8)
+            _topByName = _topNFromMap(_breakdownByDimension("sold", "name", false), 8)
             return
         }
 
@@ -1201,6 +1219,7 @@ Item {
             _periodCompare = qsTr("from restocks") + partySuffix
             _breakdownByCategory = _topNFromMap(_breakdownByDimension("purchased", "category", false), 8)
             _breakdownBySupplier = _topNFromMap(_breakdownByDimension("purchased", "supplier", false), 8)
+            _topByName = _topNFromMap(_breakdownByDimension("purchased", "name", false), 8)
             return
         }
 
@@ -1242,6 +1261,7 @@ Item {
         }
         _breakdownByCategory = _topNFromMap(_breakdownByDimension("revenue", "category", false), 8)
         _breakdownBySupplier = _topNFromMap(_breakdownByDimension("revenue", "supplier", false), 8)
+        _topByName = _profitTopN(_namedProductMap(InventoryStore.realisedProfitByDimension("productId", periodScope)), 8, "", "revenue")
     }
 
     // Build the live opts bundle and delegate the grouping to BreakdownMath.
@@ -1298,6 +1318,9 @@ Item {
         var sup = SupplierStore.suppliers || []
         for (var sj = 0; sj < sup.length; ++sj)
             supplierName[sup[sj].supplierId] = sup[sj].name
+        var productName = {}
+        for (var pk = 0; pk < inv.length; ++pk)
+            productName[inv[pk].productId] = inv[pk].name || inv[pk].productId
 
         return BreakdownMath.breakdown({
             metric: metric,
@@ -1311,6 +1334,7 @@ Item {
             supplierId: _partyFilter !== "All" ? _supplierIdForName(_partyFilter) : "",
             productCategory: productCategory,
             supplierName: supplierName,
+            productName: productName,
             allocate: OrderMath.allocate
         })
     }
@@ -1326,14 +1350,14 @@ Item {
     // so the cards stay declarative.
     function _breakdownTitles() {
         switch (_viewMode) {
-        case _MODE_VALUE:     return { category: qsTr("Value by category"),          supplier: qsTr("Value by supplier") }
-        case _MODE_PURCHASED: return { category: qsTr("Purchased units by category"), supplier: qsTr("Purchased units by supplier") }
-        case _MODE_CURRENT:   return { category: qsTr("Stock by category"),           supplier: qsTr("Purchases by party") }
-        case _MODE_REVENUE:   return { category: qsTr("Revenue by category"),         supplier: qsTr("Revenue by supplier") }
-        case _MODE_SOLD:      return { category: qsTr("Units sold by category"),      supplier: qsTr("Units sold by supplier") }
-        case _MODE_PROFIT:    return { category: qsTr("Profit by category"),          supplier: qsTr("Profit by supplier") }
+        case _MODE_VALUE:     return { name: qsTr("Value by product"),          category: qsTr("Value by category"),          supplier: qsTr("Value by supplier") }
+        case _MODE_PURCHASED: return { name: qsTr("Purchased units by product"), category: qsTr("Purchased units by category"), supplier: qsTr("Purchased units by supplier") }
+        case _MODE_CURRENT:   return { name: qsTr("Stock by product"),          category: qsTr("Stock by category"),           supplier: qsTr("Purchases by party") }
+        case _MODE_REVENUE:   return { name: qsTr("Revenue by product"),        category: qsTr("Revenue by category"),         supplier: qsTr("Revenue by supplier") }
+        case _MODE_SOLD:      return { name: qsTr("Units sold by product"),     category: qsTr("Units sold by category"),      supplier: qsTr("Units sold by supplier") }
+        case _MODE_PROFIT:    return { name: qsTr("Profit by product"),         category: qsTr("Profit by category"),          supplier: qsTr("Profit by supplier") }
         }
-        return { category: qsTr("By category"), supplier: qsTr("By supplier") }
+        return { name: qsTr("By product"), category: qsTr("By category"), supplier: qsTr("By supplier") }
     }
 
     // True for views where a supplier breakdown is meaningful — so the card
@@ -1715,10 +1739,11 @@ Item {
     // chart-ready rows sorted by profit descending. `filterKey` (when truthy)
     // restricts the result to a single key — used when the supplier filter
     // chip is active and we still want a single bar to render.
-    function _profitTopN(rows, n, filterKey) {
+    function _profitTopN(rows, n, filterKey, field) {
+        field = field || "profit"
         var keys = Object.keys(rows || {})
         if (filterKey) keys = keys.filter(function(k) { return k === filterKey })
-        keys.sort(function(a, b) { return (rows[b].profit || 0) - (rows[a].profit || 0) })
+        keys.sort(function(a, b) { return (rows[b][field] || 0) - (rows[a][field] || 0) })
         if (n && keys.length > n) keys = keys.slice(0, n)
         var out = []
         for (var i = 0; i < keys.length; ++i) {
@@ -1726,7 +1751,7 @@ Item {
             var lbl = k.length > 6 ? k.substring(0, 5) + "…" : k
             out.push({
                 label: lbl,
-                value: rows[k].profit,
+                value: rows[k][field],
                 fullLabel: k,
                 revenue: rows[k].revenue,
                 cogs: rows[k].cogs,
