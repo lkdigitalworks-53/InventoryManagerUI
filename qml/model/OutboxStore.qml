@@ -13,9 +13,15 @@ import QtCore
 // Timer/Connections — Gateway owns the drain timer and calls drainDue()/
 // markSent()/markFailed() against this store.
 //
-// Queue item shape:
+// Queue item shape (single mutation):
 //   { requestId, entity, entityId, action, before, after,
 //     clientTimestamp, enqueuedAt, attempts, nextAttemptAt }
+// Queue item shape (batch mutation, via enqueueBatch — new this session,
+// backs Gateway.recordMutations):
+//   { requestId, entity, items: [{entityId, action, before, after}, ...],
+//     clientTimestamp, enqueuedAt, attempts, nextAttemptAt }
+// dueItems/markSent/markFailed/nextDueInMs only key off requestId, so both
+// shapes flow through them unchanged — only enqueue vs enqueueBatch differ.
 QtObject {
     id: root
 
@@ -67,6 +73,26 @@ QtObject {
             action: call.action,
             before: call.before === undefined ? null : call.before,
             after: call.after === undefined ? null : call.after,
+            clientTimestamp: call.clientTimestamp || new Date().toISOString(),
+            enqueuedAt: nowMs,
+            attempts: 0,
+            nextAttemptAt: nowMs
+        }
+        var arr = items.slice()
+        arr.push(item)
+        items = arr
+        _save()
+        return item
+    }
+
+    // Append a new batch call (Gateway.recordMutations) — one outbox item
+    // represents the WHOLE batch; it's retried as a unit, not per-sub-item.
+    function enqueueBatch(call) {
+        var nowMs = Date.now()
+        var item = {
+            requestId: call.requestId,
+            entity: call.entity,
+            items: call.items || [],
             clientTimestamp: call.clientTimestamp || new Date().toISOString(),
             enqueuedAt: nowMs,
             attempts: 0,

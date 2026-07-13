@@ -38,7 +38,7 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 | Write-path fix (no more collection-wide bulk overwrite on a single mutation) | ✅ Done |
 | `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
 | SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
-| India compliance roadmap (design) | 📋 Approved — see below |
+| India compliance roadmap (design) | 📋 Approved — P0 substantially implemented, see below |
 
 ---
 
@@ -96,6 +96,31 @@ already goes through `SupplierStore.updateSupplier` by stable `supplierId`, so n
 (gateway + immutable `audit_log`; transport = HTTPS-callable via existing XHR; optimistic UI + a
 persisted outbox/retry; P0 scope = inventory + stock only; fresh-start cutover wipes ledger
 collections and zeroes product stock).
+
+### P0 implementation status (updated 2026-07-11)
+
+**Code-complete, tested, NOT live.** All five working-tier stores (`InventoryStore`,
+`StockBatchStore`, `OrdersStore`, `StaffStore`, `SupplierStore`) now route every mutation through
+`Gateway.recordMutation` / `Gateway.recordMutations` (batch — new this session, see Skill 35 below)
+— zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. But:
+
+- **`Gateway.mode` still defaults to `"direct"`.** In this mode, `recordMutation` falls through to
+  a plain Firestore write — **no `audit_log` entry is written today, regardless of what code calls
+  it.** This is deliberate, not a bug: going live needs Cloud Functions deployed, the locked
+  Firestore rules deployed, `runCutover` run (irreversible — wipes the ledger, zeroes stock), and
+  only then `Gateway.mode` flipped to `"gateway"` — in that order. None of that has happened yet;
+  treat this whole subsystem as inert until a session explicitly does that sequence with real
+  Firebase project access.
+- CF-side gateway logic (`recordMutation`, `runCutover`, and the new batch endpoint
+  `recordMutationsBatch`) was extracted into `functions/lib/{gatewayLogic,cutoverLogic,
+  batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no
+  emulator needed; see Skill 35).
+- `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml`, and root `test/firestore.rules.test.js`
+  exist but were **written, not run** — this sandbox had no Qt toolchain and no network access to
+  Firebase's emulator distribution. They need a local `qmltestrunner` pass and
+  `firebase emulators:exec --only firestore "node --test test/"` respectively before being trusted.
+- Full trail: `docs/superpowers/specs/2026-07-11-p0-gateway-orders-staff-suppliers-CHECKPOINT.md`
+  and `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md`.
 
 ---
 
@@ -368,9 +393,11 @@ QtObject {
 
 **Purpose**: Owns the India compliance roadmap (P0–P7) — the immutable ledger tier, the Cloud
 Functions gateway, tax-identity fields, DPDP privacy, and retention.
-**Scope**: Cloud Functions (`functions/`, to be created), `FIRESTORE_RULES.md`, ledger stores
-(`TransactionStore`, `StockBatchStore`, new `AuditLogStore` / `StockMovementStore`), and the
-compliance design spec.
+**Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
+`firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
+`StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
+(`InventoryStore`, `StockBatchStore`, `OrdersStore`, `StaffStore`, `SupplierStore` — all migrated
+to the gateway as of 2026-07-11), and the compliance design spec.
 
 **Responsibilities**:
 - Maintain the **two-tier model**: ledger tier stays append-only and server-written; working tier
@@ -393,20 +420,32 @@ compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
-**Environment follow-up: done.** All 4 Cloud Functions (`recordMutation`, `provisionMember`,
-`runCutover`, and the new `computeAnalysis`) resolve their Firestore database **per request** via
-`scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33. `Gateway.qml` and
-`AnalysisService.qml` inject `env: FirebaseService.environment` into every request body. This was
-confirmed as a real, already-live gap (not hypothetical) before being fixed — `admin.firestore()`
-was previously called once at module load with no `databaseId`, so every Cloud Function always
-targeted `(default)` (prd) regardless of the calling client's actual env.
+**Environment follow-up: done.** All 5 Cloud Functions (`recordMutation`, `provisionMember`,
+`runCutover`, `computeAnalysis`, and the new `recordMutationsBatch`) resolve their Firestore
+database **per request** via `scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33.
+`Gateway.qml` and `AnalysisService.qml` inject `env: FirebaseService.environment` into every
+request body. This was confirmed as a real, already-live gap (not hypothetical) before being
+fixed — `admin.firestore()` was previously called once at module load with no `databaseId`, so
+every Cloud Function always targeted `(default)` (prd) regardless of the calling client's actual
+env.
 
 **Key Files**:
 - `docs/superpowers/specs/2026-06-06-india-compliance-roadmap-design.md` (master design)
 - `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` (pagination,
   write-path fix, env-awareness fix, `computeAnalysis` — builds on the P0 gateway)
-- `functions/` — Cloud Functions project (exists: `index.js`, `lib/` for ported pure math,
-  `test/` for parity tests, `package.json` with an `npm test` script)
+- `docs/superpowers/specs/2026-07-11-p0-gateway-orders-staff-suppliers-CHECKPOINT.md` +
+  `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md` (the fast-follow session: Orders/
+  Staff/Suppliers migration, batch-mutation capability, test-gap closure — full trail of what was
+  found, decided, and done)
+- `functions/` — Cloud Functions project: `index.js` (thin request/response handlers), `lib/`
+  (`gatewayLogic.js`, `cutoverLogic.js`, `batchMutationLogic.js` — pure, dependency-injected core
+  logic; see Skill 35) plus `breakdownMath.js`/`realisedMath.js`/`orderMath.js` (ported pure math),
+  `test/` (48 tests, `npm test` = `node --test`, no emulator needed), `package.json`
+- `test/firestore.rules.test.js` + root `package.json` — Firestore rules tests
+  (`@firebase/rules-unit-testing`; needs the emulator, `firebase emulators:exec --only firestore
+  "node --test test/"`)
+- `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — QML tests for the client-side gateway
+  bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`)
 - `FIRESTORE_RULES.md`
 - `qml/model/TransactionStore.qml`, `qml/model/StockBatchStore.qml`
 

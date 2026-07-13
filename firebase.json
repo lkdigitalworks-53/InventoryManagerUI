@@ -11,5 +11,10 @@
     "public": "firebase-hosting/public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": []
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    }
   }
 }

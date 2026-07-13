@@ -112,15 +112,6 @@ QtObject {
         });
     }
 
-    function _pushToFirebase(order) {
-        FirebaseService.put("orders/" + order.orderId, order, function(ok) {
-            if (!ok)
-                console.warn("[OrdersStore] Firestore write failed for", order.orderId, FirebaseService.lastStatusCode, FirebaseService.lastError)
-            else
-                console.log("[OrdersStore] Firestore write ok for", order.orderId)
-        });
-    }
-
     function syncFromFirebase() { _resetAndFetch(); }
 
     function clear() {
@@ -181,9 +172,7 @@ QtObject {
                 arr.push(doc);
                 byId[doc.orderId] = arr.length - 1;
                 addedIds.push(doc.orderId);
-                FirebaseService.put("orders/" + doc.orderId, doc, function(ok) {
-                    if (!ok) console.warn("[OrdersStore] import add failed");
-                });
+                Gateway.recordMutation("order", doc.orderId, "create", null, doc);
                 counts.added++;
             }
         }
@@ -336,17 +325,21 @@ QtObject {
     }
 
     // `changedOrder`, when provided, is the single order doc this mutation
-    // actually touched — persisted with one single-doc PUT instead of
-    // rebuilding the entire collection into one bulk :commit (which hard-fails
-    // past Firestore's 500-write-per-commit cap). Callers that legitimately
-    // touch several docs at once (approveAllPending) omit changedOrder here
-    // and persist via FirebaseService.putMany() themselves after calling this.
-    function _commit(arr, changedOrder) {
+    // actually touched — persisted through the gateway with one
+    // recordMutation call instead of rebuilding the entire collection into
+    // one bulk :commit (which hard-fails past Firestore's 500-write-per-
+    // commit cap). Callers that legitimately touch several docs at once
+    // (approveAllPending) omit changedOrder here and persist via
+    // Gateway.recordMutations() themselves after calling this.
+    // `action`/`before` are the P0 gateway's audit-trail fields — "update"
+    // and null before are safe defaults for existing callers that don't
+    // (yet) pass them explicitly.
+    function _commit(arr, changedOrder, action, before) {
         orders = arr;
         revision++;
         _refreshCounts();
         if (changedOrder)
-            _pushToFirebase(changedOrder);
+            Gateway.recordMutation("order", changedOrder.orderId, action || "update", before || null, changedOrder);
     }
 
     function _clone() {
@@ -462,6 +455,7 @@ QtObject {
         if (idx < 0) return;
         var arr = _clone();
         var o = arr[idx];
+        var before = Object.assign({}, o);
         if (fields.status        !== undefined) o.status        = fields.status;
         if (fields.customer      !== undefined) o.customer      = fields.customer;
         if (fields.email         !== undefined) o.email         = fields.email;
@@ -483,7 +477,7 @@ QtObject {
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         o.updatedAt = new Date().toISOString();
-        _commit(arr, o);
+        _commit(arr, o, "update", before);
     }
 
     // Apply a return/exchange/modify adjustment: set the order's lines to the
@@ -497,6 +491,7 @@ QtObject {
         if (idx < 0) return;
         var arr = _clone();
         var o = arr[idx];
+        var before = Object.assign({}, o);
         o.products = newLines || [];
         var t = computeOrderTotals(o.products);
         o.subtotal = t.subtotal;
@@ -525,27 +520,22 @@ QtObject {
         if (!Array.isArray(o.adjustments)) o.adjustments = [];
         o.adjustments.push(adjustmentRecord);
         o.updatedAt = new Date().toISOString();
-        _commit(arr, o);
+        _commit(arr, o, "update", before);
     }
 
     function approveAllPending() {
         var arr = _clone();
-        var changedDocsById = {};
+        var items = [];
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].status === "pending") {
+                var before = Object.assign({}, arr[i]);
                 arr[i].status = "completed";
-                changedDocsById[arr[i].orderId] = arr[i];
+                items.push({ entityId: arr[i].orderId, action: "update", before: before, after: arr[i] });
             }
         }
         _commit(arr);
-        var changedCount = Object.keys(changedDocsById).length;
-        if (changedCount === 0) return;
-        FirebaseService.putMany("orders", changedDocsById, function(ok, errorInfo) {
-            if (!ok)
-                console.warn("[OrdersStore] approveAllPending putMany failed", JSON.stringify(errorInfo));
-            else
-                console.log("[OrdersStore] approveAllPending putMany ok, documents:", changedCount);
-        });
+        if (items.length === 0) return;
+        Gateway.recordMutations("order", items);
     }
 
     // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
@@ -593,14 +583,15 @@ QtObject {
                    updatedAt: new Date().toISOString(),
                    products: prods };
         arr.push(newOrder);
-        _commit(arr, newOrder);
+        _commit(arr, newOrder, "create", null);
     }
 
     function deleteOrder(orderId) {
         var arr = _clone();
         var found = false
+        var before = null
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].orderId === orderId) { arr.splice(i, 1); found = true; break; }
+            if (arr[i].orderId === orderId) { before = Object.assign({}, arr[i]); arr.splice(i, 1); found = true; break; }
         }
         // Update local state without re-uploading the whole collection
         // (bulk PUT cannot delete documents — it only upserts).
@@ -609,9 +600,7 @@ QtObject {
         _refreshCounts()
         if (!found) return
 
-        FirebaseService.remove("orders/" + orderId, function(ok) {
-            if (!ok) console.warn("[OrdersStore] Firestore delete failed for", orderId)
-        })
+        Gateway.recordMutation("order", orderId, "delete", before, null)
     }
 
     function totalRevenue() {

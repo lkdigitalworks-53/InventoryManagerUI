@@ -21,6 +21,9 @@ const admin = require("firebase-admin");
 const { getFirestore } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
+const GatewayLogic = require("./lib/gatewayLogic");
+const CutoverLogic = require("./lib/cutoverLogic");
+const BatchMutationLogic = require("./lib/batchMutationLogic");
 
 admin.initializeApp();
 
@@ -43,18 +46,6 @@ function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
     return getFirestore(admin.app(), databaseId);
 }
-
-// P0 scope. `entity` → collection name under the tenant root. `inventory`
-// is working-tier (also client-writable); the rest are locked ledger
-// collections only this function may write.
-const ENTITY_COLLECTIONS = {
-    inventory: "inventory",
-    stock_batch: "stock_batches",
-    stock_movement: "stock_movements",
-    transaction: "transactions"
-};
-
-const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];
 
 function send(res, status, body) {
     res.set("Access-Control-Allow-Origin", "*");
@@ -99,16 +90,15 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const authHeader = req.get("Authorization") || "";
-        const match = authHeader.match(/^Bearer\s+(.+)$/i);
-        if (!match) {
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
             send(res, 401, { ok: false, error: "missing-token" });
             return;
         }
 
         let decoded;
         try {
-            decoded = await admin.auth().verifyIdToken(match[1]);
+            decoded = await admin.auth().verifyIdToken(token);
         } catch (e) {
             send(res, 401, { ok: false, error: "invalid-token" });
             return;
@@ -117,25 +107,10 @@ exports.recordMutation = functions.onRequest(
 
         const body = req.body || {};
         const db = scopedDb(body.env);
-        const entity = String(body.entity || "");
-        const entityId = String(body.entityId || "");
-        const action = String(body.action || "");
-        const requestId = String(body.requestId || "");
-        const before = body.before === undefined ? null : body.before;
-        const after = body.after === undefined ? null : body.after;
-        const clientTimestamp = body.clientTimestamp || null;
 
-        const collection = ENTITY_COLLECTIONS[entity];
-        if (!collection) {
-            send(res, 400, { ok: false, error: "unsupported-entity" });
-            return;
-        }
-        if (ALLOWED_ACTIONS.indexOf(action) < 0) {
-            send(res, 400, { ok: false, error: "unsupported-action" });
-            return;
-        }
-        if (!entityId || !requestId) {
-            send(res, 400, { ok: false, error: "missing-fields" });
+        const validated = GatewayLogic.validateMutationRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
             return;
         }
 
@@ -145,42 +120,90 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const tenantRoot = "tenants/" + ctx.tenantId;
-        const auditRef = db.doc(tenantRoot + "/audit_log/" + requestId);
-        const workingRef = db.doc(tenantRoot + "/" + collection + "/" + entityId);
-
         try {
-            await db.runTransaction(async (txn) => {
-                const existing = await txn.get(auditRef);
-                if (existing.exists) return; // idempotent retry — already applied
-
-                if (action === "delete") {
-                    txn.delete(workingRef);
-                } else {
-                    txn.set(workingRef, after || {}, { merge: false });
-                }
-
-                txn.set(auditRef, {
-                    entryId: requestId,
-                    tenantId: ctx.tenantId,
-                    actorUid: actorUid,
-                    actorRole: ctx.role,
-                    action: action,
-                    entity: entity,
-                    entityId: entityId,
-                    before: before,
-                    after: after,
-                    serverTimestamp: admin.firestore.FieldValue.serverTimestamp(),
-                    clientTimestamp: clientTimestamp,
-                    requestId: requestId
-                });
+            await GatewayLogic.applyMutation(db, {
+                tenantId: ctx.tenantId,
+                actorUid: actorUid,
+                actorRole: ctx.role,
+                entity: validated.entity,
+                entityId: validated.entityId,
+                action: validated.action,
+                requestId: validated.requestId,
+                before: validated.before,
+                after: validated.after,
+                clientTimestamp: validated.clientTimestamp,
+                collection: validated.collection,
+                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
             });
         } catch (e) {
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
 
-        send(res, 200, { ok: true, entryId: requestId });
+        send(res, 200, { ok: true, entryId: validated.requestId });
+    });
+
+// New in this session (not in the original P0 spec — see
+// functions/lib/batchMutationLogic.js for the design rationale/cap).
+// One atomic transaction covering up to MAX_BATCH_SIZE items of the same
+// entity, e.g. OrdersStore.approveAllPending. One outbox entry on the
+// client represents the whole batch.
+exports.recordMutationsBatch = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const validated = BatchMutationLogic.validateBatchMutationRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        try {
+            await BatchMutationLogic.applyMutationsBatch(db, {
+                tenantId: ctx.tenantId,
+                actorUid: actorUid,
+                actorRole: ctx.role,
+                entity: validated.entity,
+                collection: validated.collection,
+                requestId: validated.requestId,
+                items: validated.items,
+                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } catch (e) {
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        send(res, 200, { ok: true, requestId: validated.requestId, count: validated.items.length });
     });
 
 // ── One-time fresh-start cutover (P0) ───────────────────────────────────────
@@ -191,18 +214,6 @@ exports.recordMutation = functions.onRequest(
 //
 // Server-side because the ledger collections are locked read-only to clients —
 // only the Admin SDK can delete them.
-
-async function deleteCollection(db, path) {
-    const snap = await db.collection(path).get();
-    let batch = db.batch();
-    let n = 0;
-    for (const doc of snap.docs) {
-        batch.delete(doc.ref);
-        if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); }
-    }
-    if (n % 400 !== 0) await batch.commit();
-    return snap.size;
-}
 
 // ── Member provisioning (Admin SDK) ─────────────────────────────────────────
 // Adds a teammate to the caller's tenant, handling all three cases the client
@@ -402,48 +413,30 @@ exports.runCutover = functions.onRequest(
         const body = req.body || {};
         const db = scopedDb(body.env);
         const ctx = await deriveContext(db, decoded.uid);
-        if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
-        if (ctx.role !== "owner") {
-            send(res, 403, { ok: false, error: "owner-only" });
-            return;
-        }
-        if (String(body.confirm || "") !== "CUTOVER") {
-            send(res, 400, { ok: false, error: "confirmation-required" });
+
+        const validated = CutoverLogic.validateCutoverRequest(ctx, body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
             return;
         }
 
         const root = "tenants/" + ctx.tenantId;
         try {
-            await deleteCollection(db, root + "/transactions");
-            await deleteCollection(db, root + "/stock_batches");
-            await deleteCollection(db, root + "/stock_movements");
+            await CutoverLogic.deleteCollection(db, root + "/transactions");
+            await CutoverLogic.deleteCollection(db, root + "/stock_batches");
+            await CutoverLogic.deleteCollection(db, root + "/stock_movements");
+            await CutoverLogic.zeroInventoryStock(db, root);
 
-            // Zero every product's stock.
-            const inv = await db.collection(root + "/inventory").get();
-            let batch = db.batch();
-            let n = 0;
-            for (const doc of inv.docs) {
-                batch.update(doc.ref, { stock: 0 });
-                if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); }
-            }
-            if (n % 400 !== 0) await batch.commit();
-
-            // Single immutable cutover marker.
             const markerId = "cutover-" + Date.now();
-            await db.doc(root + "/audit_log/" + markerId).set({
-                entryId: markerId,
+            const marker = CutoverLogic.buildCutoverMarker({
+                markerId: markerId,
                 tenantId: ctx.tenantId,
                 actorUid: decoded.uid,
                 actorRole: ctx.role,
-                action: "cutover",
-                entity: "tenant",
-                entityId: ctx.tenantId,
-                before: null,
-                after: { note: "Fresh-start cutover: ledger wiped, stock zeroed." },
                 serverTimestamp: admin.firestore.FieldValue.serverTimestamp(),
-                clientTimestamp: body.clientTimestamp || null,
-                requestId: markerId
+                clientTimestamp: body.clientTimestamp || null
             });
+            await db.doc(root + "/audit_log/" + markerId).set(marker);
         } catch (e) {
             send(res, 500, { ok: false, error: "cutover-failed" });
             return;

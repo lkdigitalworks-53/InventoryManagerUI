@@ -622,6 +622,14 @@ FirebaseService.put("audit_log/" + id, entry, null)
 `TransactionStore` and `StockBatchStore` are **read models** over the ledger — read from them freely,
 but they no longer own writes once P0 lands.
 
+**Current status (2026-07-11):** all four working-tier stores now call the gateway — this is
+implemented, not aspirational. But `Gateway.mode` still defaults to `"direct"`, so the gateway
+call itself falls through to a plain write today; **no `audit_log` entries are actually being
+written in production yet.** Don't infer "the audit trail is live" from seeing
+`Gateway.recordMutation(...)` in a store — check `Gateway.mode` and whether Cloud Functions/rules
+have actually been deployed and cutover run. See AGENTS.md §8's "P0 implementation status" for
+the full picture.
+
 ---
 
 ## Skill 22: Audit Log Entry Shape
@@ -1122,4 +1130,50 @@ still local synchronous `RealisedMath`/`BreakdownMath` calls — cutting `SalesP
 a thin passthrough (those three functions are called synchronously at 15+ sites; `AnalysisService.
 compute` is necessarily async), and is deferred as its own separate, undesigned future project. See
 the design spec §9.1 before assuming this is a quick swap.
+
+---
+
+## Skill 35: Testable Cloud Functions — `lib/` extraction + dependency injection
+
+**Files**: `functions/lib/{gatewayLogic,cutoverLogic,batchMutationLogic}.js`,
+`functions/test/{gatewayLogic,cutoverLogic,batchMutationLogic}.test.js`
+
+`functions/index.js`'s exported handlers (`recordMutation`, `runCutover`, `recordMutationsBatch`)
+are thin: parse the request, verify the token, call into a `lib/*.js` function, shape the
+response. All the actual decision logic — request validation, the transactional read/write, the
+audit_log shape — lives in `lib/`, has **zero Firebase SDK dependency of its own**, and is unit
+tested with `node --test` against hand-rolled fakes. No emulator, no real Firestore, no network.
+
+```js
+// lib/gatewayLogic.js — db and serverTimestamp are PARAMETERS, not module-level admin.* calls
+async function applyMutation(db, params) {
+    await db.runTransaction(async (txn) => { /* ... */ })
+}
+
+// test/gatewayLogic.test.js — a fake satisfying just the .doc()/.runTransaction() shape used
+function makeFakeDb(existingAuditPaths) {
+    const writes = []
+    return { writes, doc(path) { return { path } }, async runTransaction(fn) { /* ... */ } }
+}
+```
+
+**Why this matters beyond style**: this pattern is what makes P0's compliance logic (which is
+exactly the code you most need to trust) actually verifiable in a plain CI runner or a sandbox
+with no Google Cloud network access — see the 2026-07-11 checkpoint, where this caught two real
+bugs (a collapsed error-code distinction in `runCutover`, and a test fixture using an
+unregistered entity) before either shipped.
+
+**When adding a new entity or Cloud Function to the gateway**: put the decision logic in `lib/`
+first, write its test first (watch it fail on the missing module — this is the actual Iron Law,
+not a suggestion), then wire `index.js` to call it. Don't add logic directly to an `exports.*`
+handler if it can be expressed as a pure/injected function instead — untestable-by-construction
+compliance code is a standing liability, not a shortcut.
+
+**Batch-mutation cap (`batchMutationLogic.js`)**: `MAX_BATCH_SIZE = 200` — not from the spec (P0's
+`recordMutation` contract is singular only; batch was added 2026-07-11 for
+`OrdersStore.approveAllPending`). Each item is 2 writes (working doc + audit_log), so 200 items =
+400 writes/transaction, safely under Firestore's ~500-write transaction ceiling. A caller needing
+more must split into multiple `recordMutations` calls client-side — atomicity holds within each
+chunk, not across chunks. This is a documented trade-off; don't raise the cap without re-deriving
+the arithmetic against Firestore's actual limit.
 

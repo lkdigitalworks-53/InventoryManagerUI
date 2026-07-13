@@ -35,6 +35,10 @@ QtObject {
 
     // recordMutation HTTPS endpoint (Gen-2 onRequest, asia-south1).
     property string functionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    // Batch counterpart of recordMutation (new this session) — one atomic
+    // transaction for up to MAX_BATCH_SIZE items of the same entity, e.g.
+    // OrdersStore.approveAllPending. See functions/lib/batchMutationLogic.js.
+    property string batchFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutationsBatch"
     // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
     property string cutoverUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover"
     // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
@@ -54,7 +58,10 @@ QtObject {
         "inventory": "inventory",
         "stock_batch": "stock_batches",
         "stock_movement": "stock_movements",
-        "transaction": "transactions"
+        "transaction": "transactions",
+        "order": "orders",
+        "staff": "staff",
+        "supplier": "suppliers"
     })
 
     property var _drainTimer: null
@@ -109,6 +116,68 @@ QtObject {
         })
     }
 
+    // Batch counterpart of recordMutation — one call for many items of the
+    // SAME entity, e.g. OrdersStore.approveAllPending. `items` is
+    // [{entityId, action, before, after}, ...]. Returns the batch requestId.
+    function recordMutations(entity, items) {
+        var collection = _collectionFor(entity)
+        if (!collection || !items || items.length === 0) {
+            console.warn("[Gateway] recordMutations: bad entity/items", entity)
+            return ""
+        }
+        var requestId = _nextRequestId()
+        var normalized = []
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            normalized.push({
+                entityId: it.entityId,
+                action: it.action,
+                before: it.before === undefined ? null : it.before,
+                after: it.after === undefined ? null : it.after
+            })
+        }
+
+        if (mode === "direct") {
+            _writeDirectBatch(collection, normalized)
+            return requestId
+        }
+
+        OutboxStore.enqueueBatch({
+            requestId: requestId,
+            entity: entity,
+            items: normalized,
+            clientTimestamp: new Date().toISOString()
+        })
+        drainNow()
+        return requestId
+    }
+
+    // direct-mode fallback for recordMutations — preserves today's single
+    // putMany-per-batch performance for creates/updates; deletes (which
+    // putMany has no form for) go one call each, same as _writeDirect.
+    function _writeDirectBatch(collection, items) {
+        var docsById = {}
+        var deleteIds = []
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.action === "delete") {
+                deleteIds.push(it.entityId)
+            } else {
+                docsById[it.entityId] = it.after || {}
+            }
+        }
+        if (Object.keys(docsById).length > 0) {
+            FirebaseService.putMany(collection, docsById, function(ok) {
+                if (!ok) console.warn("[Gateway:direct] batch write failed", collection)
+            })
+        }
+        for (var j = 0; j < deleteIds.length; ++j) {
+            FirebaseService.remove(collection + "/" + deleteIds[j], function(ok) {
+                if (!ok) console.warn("[Gateway:direct] batch delete failed", collection, deleteIds[j])
+            })
+        }
+    }
+
     // ── gateway mode (post-deploy) ──────────────────────────────────────────
 
     // Send every due outbox item, then reschedule the retry timer for the
@@ -120,8 +189,10 @@ QtObject {
             AuthService.ensureFreshToken()
 
         var due = OutboxStore.dueItems()
-        for (var i = 0; i < due.length; ++i)
-            _send(due[i])
+        for (var i = 0; i < due.length; ++i) {
+            if (Array.isArray(due[i].items)) _sendBatch(due[i])
+            else _send(due[i])
+        }
 
         _reschedule()
     }
@@ -175,6 +246,39 @@ QtObject {
             before: item.before,
             after: item.after,
             requestId: item.requestId,
+            clientTimestamp: item.clientTimestamp
+        }))
+    }
+
+    // Batch counterpart of _send — one outbox item, one HTTP call, whatever
+    // its `items` count. Same success/failure/backoff handling as _send.
+    function _sendBatch(item) {
+        if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
+            return
+        }
+        inFlight++
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            inFlight--
+            var ok = xhr.status >= 200 && xhr.status < 300
+            if (ok) {
+                OutboxStore.markSent(item.requestId)
+            } else {
+                console.warn("[Gateway] recordMutationsBatch failed", xhr.status,
+                             item.entity, item.items.length, xhr.responseText)
+                OutboxStore.markFailed(item.requestId)
+            }
+            _reschedule()
+        }
+        xhr.open("POST", batchFunctionUrl)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+        xhr.send(JSON.stringify({
+            env: FirebaseService.environment,
+            entity: item.entity,
+            requestId: item.requestId,
+            items: item.items,
             clientTimestamp: item.clientTimestamp
         }))
     }

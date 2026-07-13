@@ -170,10 +170,7 @@ QtObject {
         arr.push(doc)
         arr.sort(function(a, b) { return (a.name || "").localeCompare(b.name || "") })
         suppliers = arr
-        FirebaseService.put("suppliers/" + doc.supplierId, doc, function(ok) {
-            if (!ok) console.warn("[SupplierStore] write failed for", doc.supplierId,
-                                  FirebaseService.lastStatusCode, FirebaseService.lastError)
-        })
+        Gateway.recordMutation("supplier", doc.supplierId, "create", null, doc)
         return doc
     }
 
@@ -185,6 +182,7 @@ QtObject {
             if (suppliers[i].supplierId === supplierId) { idx = i; break }
         if (idx < 0) return null
         var arr = suppliers.slice()
+        var before = Object.assign({}, arr[idx])
         var s = Object.assign({}, arr[idx])
         if (fields.name !== undefined)         s.name = String(fields.name).trim()
         if (fields.contact !== undefined)      s.contact = fields.contact
@@ -195,9 +193,7 @@ QtObject {
         arr[idx] = s
         arr.sort(function(a, b) { return (a.name || "").localeCompare(b.name || "") })
         suppliers = arr
-        FirebaseService.put("suppliers/" + supplierId, s, function(ok) {
-            if (!ok) console.warn("[SupplierStore] update failed for", supplierId)
-        })
+        Gateway.recordMutation("supplier", supplierId, "update", before, s)
         return s
     }
 
@@ -207,14 +203,13 @@ QtObject {
     function removeSupplier(supplierId) {
         var arr = []
         var found = false
+        var before = null
         for (var i = 0; i < suppliers.length; ++i) {
-            if (suppliers[i].supplierId === supplierId) { found = true; continue }
+            if (suppliers[i].supplierId === supplierId) { found = true; before = Object.assign({}, suppliers[i]); continue }
             arr.push(suppliers[i])
         }
         if (!found) return
         suppliers = arr
-        FirebaseService.remove("suppliers/" + supplierId, function(ok) {
-            if (!ok) console.warn("[SupplierStore] delete failed for", supplierId)
-        })
+        Gateway.recordMutation("supplier", supplierId, "delete", before, null)
     }
 }
