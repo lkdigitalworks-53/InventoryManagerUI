@@ -169,6 +169,10 @@ Top-level collections (all tenant-scoped under `tenants/{tenantId}/...`):
 - `suppliers/` – supplier records
 - `transactions/` – immutable ledger event log (see `AGENTS.md`'s Compliance & Audit Agent)
 - `stock_batches/` – FIFO stock batches
+- `audit_log/` – compliance gateway's append-only mutation ledger, server-written only
+  (`Gateway.recordMutation`/`recordMutations` → Cloud Functions). All 5 working-tier stores now
+  route through it, but it's not actually receiving entries yet — `Gateway.mode` is still
+  `"direct"` pending deploy/cutover. See AGENTS.md §8's "P0 implementation status."
 - `activity_log/` – staff activity feed
 - `config/categories`, `config/orderChannels` – single-document settings, not paginated collections
 
@@ -312,10 +316,11 @@ On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
 > Confirmed via `gcloud firestore databases list --project=inventorymanager-48392`
 > that `(default)` is genuinely in `asia-south1` — not `asia-southeast1` as an
 > earlier version of this doc and `AGENTS.md` assumed. Cloud Functions
-> (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`) are not
-> yet deployed and have been reconfigured to also target `asia-south1`, so DB,
-> Functions, and every named environment database live in the same region —
-> data never leaves India, and no cross-region latency between Functions and
+> (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
+> `recordMutationsBatch`) are not yet deployed and have been reconfigured to
+> also target `asia-south1`, so DB, Functions, and every named environment
+> database live in the same region — data never leaves India, and no
+> cross-region latency between Functions and
 > Firestore. (A non-default database's region does *not* have to match
 > `(default)`'s per Firestore's own rules — we're choosing to match here for
 > residency/latency consistency, not because it's required.)
@@ -343,11 +348,12 @@ Then apply the same security rules (`FIRESTORE_RULES.md`) to each database
 Auth users, Storage, and Cloud Functions are **shared** across environments —
 only the Firestore database differs. `test`/`dev1` start empty (MVP fresh-data).
 
-All 4 Cloud Functions (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`) resolve
-their Firestore database **per request** from a client-declared `env` field (`scopedDb(env)` in
-`functions/index.js`), mirroring this exact resolution chain — see `SKILLS.md` Skill 33. This closes
-a real, confirmed gap: before this fix, every Cloud Function always read/wrote the `(default)` (prd)
-database regardless of which env the calling client was built for.
+All 5 Cloud Functions (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
+`recordMutationsBatch`) resolve their Firestore database **per request** from a client-declared
+`env` field (`scopedDb(env)` in `functions/index.js`), mirroring this exact resolution chain — see
+`SKILLS.md` Skill 33. This closes a real, confirmed gap: before this fix, every Cloud Function
+always read/wrote the `(default)` (prd) database regardless of which env the calling client was
+built for.
 
 ---
 
@@ -366,8 +372,14 @@ Two problems, fixed separately (full design: `docs/superpowers/specs/
   `SKILLS.md` Skill 32.
 - **Writes** — `OrdersStore`, `StaffStore.addStaff`, and `ActivityLog` used to rebuild their entire
   collection into one bulk Firestore commit on every single-record mutation, which hard-fails past
-  Firestore's 500-write-per-commit cap. Fixed to single-doc writes (`FirebaseService.putMany()` for
-  the rare genuinely-multi-doc action). See `SKILLS.md` Skill 12.
+  Firestore's 500-write-per-commit cap. Fixed to single-doc writes. See `SKILLS.md` Skill 12.
+  **Superseded 2026-07-11**: every store's mutations (`Inventory`/`StockBatch`/`Orders`/`Staff`/
+  `Supplier`) now route through the compliance gateway (`Gateway.recordMutation`/`recordMutations`
+  — see AGENTS.md §8, `SKILLS.md` Skill 35) instead of calling `FirebaseService` directly.
+  `approveAllPending`'s bulk update specifically now uses `Gateway.recordMutations` (one atomic
+  transaction, capped at 200 items) — the old `FirebaseService.putMany()` call there is gone.
+  Functionally unchanged today (`Gateway.mode` is still `"direct"`), but this is the current code
+  path, not the one described just above.
 - **Analytics** — a new `computeAnalysis` Cloud Function runs Revenue/Profit/Sold/Purchased
   aggregation server-side (ported `RealisedMath`/`BreakdownMath`, parity-tested against the QML
   originals via shared fixtures), so this no longer needs the full transaction ledger resident on
