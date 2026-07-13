@@ -103,13 +103,13 @@ No code written yet.
    in prose (no path prefix) were left as-is — harmless.
 
 ## Open decisions
-- None outstanding on design. Next: write the spec doc.
+- None outstanding on design. Spec written, self-reviewed, awaiting Taher's review.
 
 ## Next steps
-- Write spec to `docs/superpowers/specs/2026-07-13-enlarge-photo-and-order-detail-design.md`,
-  self-review it, then ask Taher to review before moving to the `writing-plans` skill.
-- On-device test plan for this feature will go in the new
-  `docs/superpowers/test-plans/` folder once implementation is planned.
-- Nothing committed yet — branch creation, checkpoint archive/creation, and the test-plans
-  reorg (5 moves + 4 stale-link fixes) are all local-only, pending Taher's go-ahead to commit
-  this housekeeping (separately from the feature work itself).
+- Taher reviews `docs/superpowers/specs/2026-07-13-enlarge-photo-and-order-detail-design.md`.
+- Once approved: commit the spec, then invoke `writing-plans` skill for the implementation
+  plan (per-task breakdown across the 7 files + 2 new components listed in the spec).
+- On-device test plan for this feature will go in `docs/superpowers/test-plans/` once
+  implementation is planned.
+- Nothing committed yet for the feature itself (housekeeping commit `e066fb3` is in). The spec
+  file above is written to disk but not committed, pending Taher's review.
