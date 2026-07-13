@@ -48,12 +48,11 @@ BottomSheet {
 
     // Units of a product already in the cart — so the picker can show what's
     // ACTUALLY still available (stock − in-cart), and refresh as qty changes.
-    function _inCartQty(productId, productName) {
+    function _inCartQty(productId) {
         var used = 0
         for (var i = 0; i < selectedProducts.length; ++i) {
             var sp = selectedProducts[i]
-            if ((productId && sp.productId === productId) || (!productId && sp.name === productName))
-                used += (sp.qty || 0)
+            if (sp.productId === productId) used += (sp.qty || 0)
         }
         return used
     }
@@ -62,7 +61,7 @@ BottomSheet {
     // cart (units aren't deducted until the order completes). Mirrors
     // OrderDetailDialog._availableStock for the pending case.
     function _availableStock(p) {
-        return Math.max(0, (p.stock || 0) - _inCartQty(p.productId, p.name))
+        return Math.max(0, (p.stock || 0) - _inCartQty(p.productId))
     }
 
     // (Re)build the picker labels with a live "avail N" that reflects the cart.
