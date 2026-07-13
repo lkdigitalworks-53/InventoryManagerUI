@@ -30,3 +30,57 @@ function parseTaxPercentCell(raw, taxable) {
     var n = parseFloat(raw)
     return isNaN(n) ? 0 : n
 }
+
+// Finds the line for `pid` in an order's `products` array, or null if the
+// order doesn't have that product yet (or `products` is null/empty — a
+// brand-new order being imported). Extracted so the search has its own
+// headless test: a previous inline version wrote
+//   for (...) { if (match) x = line; break }
+// with the `break` outside the `if`, so the loop always stopped after
+// checking index 0 — any match past the first line was silently missed.
+function findOrderLineByProductId(products, pid) {
+    if (!products) return null
+    for (var i = 0; i < products.length; ++i) {
+        if (products[i].productId === pid) return products[i]
+    }
+    return null
+}
+
+// Decides how an order-import row's requested quantity for one product
+// should be handled against current on-hand stock.
+//
+// Mirrors the app's completion-time stock philosophy used everywhere else
+// (NewOrderDialog/_tryCompleteOrder/completeImportedOrder): a pending or
+// processing order doesn't reserve stock, so only a row whose imported
+// Status is "completed" needs to fit in what's currently on hand.
+//
+// existingLineQty: quantity already booked for this product on the order
+//   being updated (from the currently-persisted order), or null when this
+//   is a brand-new order or a new product line being added to one.
+// currentStock: idToProduct[pid].stock at import time.
+// importedQty: the quantity requested by this import row.
+// isCompleting: true when this row's Status column is "completed".
+//
+// Returns { qty, reject, issue }:
+// - reject === true means the caller should drop this line entirely (only
+//   possible when existingLineQty is null — a brand-new line that can't be
+//   funded from stock has nothing safe to fall back to).
+// - reject === false with issue set means the line is kept, but `qty` was
+//   clamped back to what's already booked — an existing order's requested
+//   increase couldn't be funded, so we don't touch that line at all rather
+//   than risk selling stock that isn't there.
+function checkOrderLineStock(existingLineQty, currentStock, importedQty, isCompleting) {
+    if (!isCompleting) return { qty: importedQty, reject: false, issue: null }
+
+    var hasExisting = existingLineQty !== null && existingLineQty !== undefined
+    if (hasExisting) {
+        var delta = importedQty - existingLineQty
+        if (delta > 0 && currentStock - delta < 0)
+            return { qty: existingLineQty, reject: false, issue: "insufficient stock" }
+        return { qty: importedQty, reject: false, issue: null }
+    }
+
+    if (currentStock - importedQty < 0)
+        return { qty: importedQty, reject: true, issue: "insufficient stock" }
+    return { qty: importedQty, reject: false, issue: null }
+}
