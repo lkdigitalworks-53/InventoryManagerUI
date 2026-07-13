@@ -189,7 +189,7 @@ Item {
             logic.productAdded(InventoryStore.products[InventoryStore.products.length - 1].productId)
         }
 
-        function onUpdateProduct(productId, fields) {
+        function onUpdateProduct(productId, fields, reason) {
             if (!_hasAnyRole(["owner", "admin"])) {
                 logic.errorOccurred("auth", "Only owner/admin can update products")
                 return
@@ -200,7 +200,7 @@ Item {
             // Value / Potential-profit / by-supplier Analysis reports) drifts.
             var before = InventoryStore.getById(productId)
             var oldStock = before ? before.stock : undefined
-            InventoryStore.updateProduct(productId, fields)
+            InventoryStore.updateProduct(productId, fields, reason)
             _reconcileBatchesForStockEdit(productId, oldStock, fields.stock)
             logic.productUpdated(productId)
         }

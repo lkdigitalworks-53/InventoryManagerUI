@@ -7,7 +7,7 @@ import "../helper"
 import "../model"
 
 // Product detail / edit — bottom sheet. Public contract preserved:
-//   signal productUpdateRequested(productId, fields)
+//   signal productUpdateRequested(productId, fields, reason)
 //   function openFor(id, startInEdit)
 //   property string productId
 //   property bool editMode
@@ -19,7 +19,7 @@ BottomSheet {
     primaryAction: editMode ? "Save changes" : (AuthStore.canManageInventory ? "Edit" : "")
     secondaryAction: editMode ? "Cancel" : "Close"
 
-    signal productUpdateRequested(string productId, var fields)
+    signal productUpdateRequested(string productId, var fields, string reason)
     // The photo-source sheet is hoisted to the App root (Main.qml) — a Popup
     // declared inside this BottomSheet's body opens off-screen. Main opens the
     // shared sheet on request and routes its result back via the functions below.
@@ -89,6 +89,7 @@ BottomSheet {
         }
         errorLabel.text = ""
         photoBusy = false
+        reasonField.text = ""
         // Supplier picker — refresh the model from SupplierStore and select
         // by id rather than by combobox string (the underlying list sorts
         // alphabetically, so positions shift on every add).
@@ -120,7 +121,7 @@ BottomSheet {
     }
 
     onPrimaryClicked: {
-        if (!editMode) editMode = true
+        if (!editMode) { editMode = true; reasonField.text = "" }
         else _submit()
     }
     onSecondaryClicked: {
@@ -679,6 +680,19 @@ BottomSheet {
             }
         }
 
+        // Reason is transaction metadata, not a persistent product field —
+        // unlike every other field above, there's nothing to show back in
+        // view mode, so this is visible-only (not readOnly-toggled) and
+        // reset to blank at the start of every edit session (see openFor()
+        // and onPrimaryClicked above).
+        AuthTextField {
+            id: reasonField
+            Layout.fillWidth: true
+            visible: root.editMode
+            label: qsTr("Reason for this change (optional)")
+            placeholderText: qsTr("e.g. damaged stock, recount, price correction")
+        }
+
         Text {
             id: errorLabel
             Layout.fillWidth: true
@@ -936,11 +950,14 @@ BottomSheet {
                         bits.push(qsTr("Cost ") + InventoryStore.formatCurrency(d.unitCost) + qsTr(" each"))
                     return bits.join(" · ")
                 case "purchase":
-                    if (d.unitCost > 0)
-                        return qsTr("@ %1 each · total %2")
-                                .arg(InventoryStore.formatCurrency(d.unitCost))
-                                .arg(InventoryStore.formatCurrency(d.total || 0))
-                    return ""
+                    var purDetail = (d.unitCost > 0)
+                            ? qsTr("@ %1 each · total %2")
+                                    .arg(InventoryStore.formatCurrency(d.unitCost))
+                                    .arg(InventoryStore.formatCurrency(d.total || 0))
+                            : ""
+                    if (d.reason && d.reason.length > 0)
+                        purDetail += (purDetail ? " · " : "") + d.reason
+                    return purDetail
                 case "sale":
                     if (d.unitPrice > 0)
                         return qsTr("%1 × %2 = %3")
@@ -950,6 +967,10 @@ BottomSheet {
                     return ""
                 case "legacy_update":
                     return d.note || ""
+                case "field_change":
+                    return d.reason || ""
+                case "stock_adjustment":
+                    return d.reason || ""
                 case "return":
                     var rDetail = qsTr("%1 refunded").arg(InventoryStore.formatCurrency(Math.abs(d.total || 0)))
                     if (d.note && d.note.length > 0) rDetail += " · " + d.note
@@ -1002,7 +1023,7 @@ BottomSheet {
             size: sizeField.text.trim(),
             stock: stk,
             minStock: ms
-        })
+        }, reasonField.text.trim())
         errorLabel.text = ""
         editMode = false
         close()

@@ -106,7 +106,7 @@ QtObject {
         Gateway.recordMutation("transaction", doc.txId, "create", null, doc)
     }
 
-    function recordPurchase(productId, quantity, unitCost, productName, party) {
+    function recordPurchase(productId, quantity, unitCost, productName, party, reason) {
         if (!productId || !quantity || quantity <= 0) return
         var doc = {
             txId: _nextId("p"),
@@ -120,7 +120,8 @@ QtObject {
             unitCost: typeof unitCost === "number" ? unitCost : 0,
             unitPrice: 0,
             total: quantity * (typeof unitCost === "number" ? unitCost : 0),
-            orderId: ""
+            orderId: "",
+            reason: reason || ""
         }
         _push(doc)
     }
@@ -157,7 +158,7 @@ QtObject {
     // Single-field mutation. One row per changed field — keeps the product
     // history granular ("Selling: ₹100 → ₹150" stays a separate row from
     // "Description: old → new").
-    function recordFieldChange(productId, productName, field, before, after) {
+    function recordFieldChange(productId, productName, field, before, after, reason) {
         if (!productId || !field) return
         var doc = {
             txId: _nextId("f"),
@@ -173,14 +174,15 @@ QtObject {
             unitCost: 0,
             unitPrice: 0,
             total: 0,
-            orderId: ""
+            orderId: "",
+            reason: reason || ""
         }
         _push(doc)
     }
 
     // Direct stock edit through product details (distinct from restock).
     // before/after are absolute values; delta is the signed difference.
-    function recordStockAdjustment(productId, productName, before, after) {
+    function recordStockAdjustment(productId, productName, before, after, reason) {
         if (!productId) return
         var b = parseInt(before) || 0
         var a = parseInt(after) || 0
@@ -199,7 +201,8 @@ QtObject {
             unitCost: 0,
             unitPrice: 0,
             total: 0,
-            orderId: ""
+            orderId: "",
+            reason: reason || ""
         }
         _push(doc)
     }

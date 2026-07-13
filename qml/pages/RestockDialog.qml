@@ -68,6 +68,7 @@ BottomSheet {
 
         addPartyField.text = ""
         dlg._addPartyOpen = false
+        reasonField.text = ""
         dlg.open()
     }
 
@@ -77,7 +78,7 @@ BottomSheet {
                 : ""
         var unitCost = parseFloat(unitCostField.text)
         if (isNaN(unitCost) || unitCost < 0) unitCost = 0
-        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost)
+        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim())
         restockConfirmed(productId, qtyField.value)
         Toast.show("Restocked +" + qtyField.value + " units")
         dlg.close()
@@ -248,6 +249,19 @@ BottomSheet {
                     dlg._addPartyOpen = false
                 }
             }
+        }
+
+        Text {
+            text: qsTr("Reason (optional)")
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            font.bold: true
+            Layout.topMargin: dp(Constants.space2)
+        }
+        AuthTextField {
+            id: reasonField
+            Layout.fillWidth: true
+            placeholderText: qsTr("e.g. delayed shipment, emergency restock")
         }
     }
 }
