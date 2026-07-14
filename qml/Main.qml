@@ -715,8 +715,8 @@ App {
     ManageOrderChannelsDialog { id: manageChannelsDlg }
     EditProductDialog {
         id: editProductDlg
-        onProductUpdateRequested: function(pid, fields, reason) {
-            logic.updateProduct(pid, fields, reason)
+        onProductUpdateRequested: function(pid, fields, reason, kind) {
+            logic.updateProduct(pid, fields, reason, kind)
         }
         onPhotoPickRequested: function(hasExisting) { photoSourceSheet.openFor(editProductDlg, hasExisting) }
     }

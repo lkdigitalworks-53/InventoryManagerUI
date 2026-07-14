@@ -82,12 +82,21 @@
         the original sale out of "supply") then `"destroyed"` (the units are gone). Net zero
         stock effect, matches today's behavior; the ledger gets the accurate two-step picture.
       Commit.
-- [ ] 5. `InventoryStore.updateProduct()`'s stock-field edit path + its dialog (`EditProductDialog.qml`
+- [x] 5. `InventoryStore.updateProduct()`'s stock-field edit path + its dialog (`EditProductDialog.qml`
       or wherever the stock field lives): add a required `kind` picker (the 7
       `manualAdjustmentKinds`) that only appears/is-required when the new value is LESS than the
       old value; defaults silently to `"adjustment"` for increases. `updateProduct` gains a `kind`
       parameter, calls `StockMovementStore.recordMovement(...)` alongside its existing
       `TransactionStore.recordStockAdjustment` call. Commit.
+      **DONE 2026-07-11.** Threaded `kind` through the full chain: `EditProductDialog`'s new
+      `kindCombo` (visible/required only on a stock decrease, human-readable labels mapped by
+      index to `StockMovementStore.manualAdjustmentKinds`) → `productUpdateRequested` signal →
+      `Main.qml` → `Logic.updateProduct` signal → `DataModel.onUpdateProduct` →
+      `InventoryStore.updateProduct(productId, fields, reason, kind)`. Validation blocks submit
+      if stock decreases with no kind selected. `ImportPreviewDialog`'s bulk-edit call site
+      (2-arg, no reason/kind) still works unmodified — QML tolerates missing trailing signal
+      args, and `updateProduct`'s defensive fallback (`"adjustment"` + a console.warn) covers it
+      for the rare case a bulk-import correction happens to decrease stock.
 - [ ] 6. Manual review pass across all 5 wiring points (no Qt toolchain here to run anything) —
       re-read each call site once wired, confirm no double-booking, confirm sign conventions
       (qty negative for decreases) are consistent. Update checkpoint with final status. Commit.

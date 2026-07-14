@@ -7,7 +7,7 @@ import "../helper"
 import "../model"
 
 // Product detail / edit — bottom sheet. Public contract preserved:
-//   signal productUpdateRequested(productId, fields, reason)
+//   signal productUpdateRequested(productId, fields, reason, kind)
 //   function openFor(id, startInEdit)
 //   property string productId
 //   property bool editMode
@@ -19,7 +19,7 @@ BottomSheet {
     primaryAction: editMode ? "Save changes" : (AuthStore.canManageInventory ? "Edit" : "")
     secondaryAction: editMode ? "Cancel" : "Close"
 
-    signal productUpdateRequested(string productId, var fields, string reason)
+    signal productUpdateRequested(string productId, var fields, string reason, string kind)
     // The photo-source sheet is hoisted to the App root (Main.qml) — a Popup
     // declared inside this BottomSheet's body opens off-screen. Main opens the
     // shared sheet on request and routes its result back via the functions below.
@@ -55,6 +55,14 @@ BottomSheet {
                 : []
     }
     property bool _renaming: false
+    property int _originalStock: 0
+    // Labels shown in the picker; index N-1 maps to
+    // StockMovementStore.manualAdjustmentKinds[N-1] (index 0 is a
+    // "not selected yet" placeholder, not a valid submission value).
+    readonly property var _adjustmentKindLabels: [
+        qsTr("Select a reason…"), qsTr("Lost"), qsTr("Stolen"), qsTr("Damaged / Destroyed"),
+        qsTr("Written off"), qsTr("Free sample"), qsTr("Gift"), qsTr("Other adjustment")
+    ]
 
     function openFor(id, startInEdit) {
         productId = id
@@ -69,6 +77,7 @@ BottomSheet {
                 ? String(p.sellingPrice)
                 : (p.price !== undefined ? String(p.price) : "0")
             stockField.text = (p.stock !== undefined) ? String(p.stock) : "0"
+            _originalStock = (p.stock !== undefined) ? p.stock : 0
             minStockField.text = (p.minStock !== undefined) ? String(p.minStock) : "0"
             taxableCombo.currentIndex = p.taxable ? 1 : 0
             taxPercentField.text = (p.taxPercent !== undefined && p.taxPercent !== null) ? String(p.taxPercent) : "0"
@@ -90,6 +99,7 @@ BottomSheet {
         errorLabel.text = ""
         photoBusy = false
         reasonField.text = ""
+        kindCombo.currentIndex = 0
         // Supplier picker — refresh the model from SupplierStore and select
         // by id rather than by combobox string (the underlying list sorts
         // alphabetically, so positions shift on every add).
@@ -680,6 +690,24 @@ BottomSheet {
             }
         }
 
+        // Only shown for a stock DECREASE (compliance: CGST Rule 56(2) wants
+        // loss/theft/destroyed/write-off/free-sample/gift categorized —
+        // increases via this dialog are always recorded as a generic
+        // "adjustment", no picker needed for those).
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: dp(4)
+            visible: root.editMode && (parseInt(stockField.text) || 0) < root._originalStock
+            Text { text: qsTr("Reason category (required)"); color: Constants.textSecondary; font.pixelSize: sp(Constants.fsSmall); font.bold: true }
+            AppComboBox {
+                id: kindCombo
+                Layout.fillWidth: true
+                model: root._adjustmentKindLabels
+                enabled: root.editMode
+                font.pixelSize: sp(Constants.fsBody)
+            }
+        }
+
         // Reason is transaction metadata, not a persistent product field —
         // unlike every other field above, there's nothing to show back in
         // view mode, so this is visible-only (not readOnly-toggled) and
@@ -997,6 +1025,11 @@ BottomSheet {
         if (!isNaN(cost) && !isNaN(sell) && sell < cost) errs.push("Selling price must be ≥ cost")
         var stk = parseInt(stockField.text)
         if (isNaN(stk) || stk < 0) errs.push("Enter valid stock")
+        var movementKind = ""
+        if (!isNaN(stk) && stk < root._originalStock) {
+            if (kindCombo.currentIndex <= 0) errs.push("Select a reason category for the stock decrease")
+            else movementKind = StockMovementStore.manualAdjustmentKinds[kindCombo.currentIndex - 1]
+        }
         var ms = parseInt(minStockField.text)
         if (isNaN(ms) || ms < 0) ms = 0
         var taxable = taxableCombo.currentIndex === 1
@@ -1023,7 +1056,7 @@ BottomSheet {
             size: sizeField.text.trim(),
             stock: stk,
             minStock: ms
-        }, reasonField.text.trim())
+        }, reasonField.text.trim(), movementKind)
         errorLabel.text = ""
         editMode = false
         close()

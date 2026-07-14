@@ -53,7 +53,7 @@ Item {
     signal addProduct(string name, string sku, string category, string description,
                       var price, string unit, int stock, int minStock, var sellingPrice,
                       bool taxable, var taxPercent)
-    signal updateProduct(string productId, var fields, string reason)
+    signal updateProduct(string productId, var fields, string reason, string kind)
     signal restockProduct(string productId, int amount)
     signal deleteProduct(string productId)
 

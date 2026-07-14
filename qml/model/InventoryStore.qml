@@ -728,7 +728,7 @@ QtObject {
         return -1
     }
 
-    function updateProduct(productId, fields, reason) {
+    function updateProduct(productId, fields, reason, kind) {
         var idx = findIndexById(productId)
         if (idx < 0) return
         var arr = _clone()
@@ -782,8 +782,22 @@ QtObject {
             var c = fieldChanges[ci]
             TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText)
         }
-        if (stockChange)
+        if (stockChange) {
             TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText)
+            var delta = stockChange.after - stockChange.before
+            if (delta !== 0) {
+                // Decreases need a real kind (loss/theft/destroyed/write_off/
+                // free_sample/gift) — the dialog is expected to require one.
+                // Falling back to "adjustment" here is a defensive net, not
+                // the intended path: it means the UI-level requirement was
+                // somehow bypassed, which is worth knowing about.
+                var movementKind = delta < 0 ? (kind || "adjustment") : "adjustment"
+                if (delta < 0 && !kind)
+                    console.warn("[InventoryStore] updateProduct: stock decreased with no kind supplied for", productId)
+                StockMovementStore.recordMovement(movementKind, productId, delta, reasonText,
+                                                  Math.abs(delta) * (p.price || 0), null)
+            }
+        }
         Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
     }
 
