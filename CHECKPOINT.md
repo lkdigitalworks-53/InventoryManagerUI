@@ -82,10 +82,16 @@ existing codebase and clarifying scope with Taher.
   as already tracked on the roadmap. Not part of this branch.
 
 ## Next steps
-- Present full design (this + prior decisions) to Taher for section-by-section approval.
-- On approval: write `docs/superpowers/specs/2026-07-14-staff-login-provisioning-design.md`,
-  self-review, commit, ask Taher to review the file itself before moving to an implementation
-  plan (writing-plans skill).
+- ✅ Full design presented, Taher approved.
+- ✅ Design doc written to `docs/superpowers/specs/2026-07-14-staff-login-provisioning-design.md`,
+  self-reviewed (fixed two ambiguities: how `deprovisionMember` reads the target's current role
+  server-side rather than trusting client input, and the required call ordering — `Gateway.
+  deprovisionMember()` before the `members/{uid}` delete, not after), committed locally.
+- **Waiting on Taher to review the spec file itself** before moving to an implementation plan
+  (`superpowers:writing-plans` is the next skill, per the brainstorming skill's terminal state —
+  not invoked yet).
+- Nothing pushed yet. Local commits only: checkpoint (x2) + design spec, all on
+  `feature/staff-login-provisioning`.
 
 ## Not yet done
 - No code changes yet (hard gate: brainstorming skill blocks implementation until design is
