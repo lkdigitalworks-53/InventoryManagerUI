@@ -67,16 +67,21 @@ Item {
 
         // ── Orders ────────────────────────────────────────────────────────────
         function onAddOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId) {
-            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId)
-            _syncOrdersModel()
-            var newOrderId = OrdersStore.orders[OrdersStore.orders.length - 1].orderId
-            logic.orderAdded(newOrderId)
+            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId,
+                function(ok, newOrderId) {
+                    if (!ok) {
+                        logic.errorOccurred("network", "Could not add order — try again")
+                        return
+                    }
+                    _syncOrdersModel()
+                    logic.orderAdded(newOrderId)
 
-            if (OrdersStore.autoApproveEnabled) {
-                var success = _tryCompleteOrder(newOrderId)
-                if (!success)
-                    logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
-            }
+                    if (OrdersStore.autoApproveEnabled) {
+                        var success = _tryCompleteOrder(newOrderId)
+                        if (!success)
+                            logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
+                    }
+                })
         }
 
         function onUpdateOrder(orderId, fields) {
@@ -185,8 +190,14 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can add products")
                 return
             }
-            InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent)
-            logic.productAdded(InventoryStore.products[InventoryStore.products.length - 1].productId)
+            InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent,
+                undefined, undefined, undefined, function(ok, productId) {
+                    if (!ok) {
+                        logic.errorOccurred("network", "Could not add product — try again")
+                        return
+                    }
+                    logic.productAdded(productId)
+                })
         }
 
         function onUpdateProduct(productId, fields, reason) {
@@ -210,8 +221,13 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
-            InventoryStore.restock(productId, amount)
-            logic.productRestocked(productId)
+            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok) {
+                if (!ok) {
+                    logic.errorOccurred("network", "Could not restock — try again")
+                    return
+                }
+                logic.productRestocked(productId)
+            })
         }
 
         function onDeleteProduct(productId) {
@@ -246,8 +262,14 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can add staff")
                 return
             }
-            StaffStore.addStaff(name, email, phone, role, department, joinDate, status, salary)
-            logic.staffAdded(StaffStore.staff[StaffStore.staff.length - 1].staffId)
+            StaffStore.addStaff(name, email, phone, role, department, joinDate, status, salary,
+                function(ok, staffId) {
+                    if (!ok) {
+                        logic.errorOccurred("network", "Could not add staff — try again")
+                        return
+                    }
+                    logic.staffAdded(staffId)
+                })
         }
 
         function onUpdateStaff(staffId, fields) {

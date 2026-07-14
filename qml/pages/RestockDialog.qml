@@ -73,15 +73,20 @@ BottomSheet {
     }
 
     onPrimaryClicked: {
+        if (busy) return
         var supplierId = partyCombo.currentIndex > 0
                 ? dlg._supplierIds[partyCombo.currentIndex]
                 : ""
         var unitCost = parseFloat(unitCostField.text)
         if (isNaN(unitCost) || unitCost < 0) unitCost = 0
-        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim())
-        restockConfirmed(productId, qtyField.value)
-        Toast.show("Restocked +" + qtyField.value + " units")
-        dlg.close()
+        busy = true
+        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim(), function(ok) {
+            busy = false
+            if (!ok) { Toast.show("Could not restock — try again"); return }
+            restockConfirmed(productId, qtyField.value)
+            Toast.show("Restocked +" + qtyField.value + " units")
+            dlg.close()
+        })
     }
 
     ColumnLayout {
@@ -241,12 +246,15 @@ BottomSheet {
                 onClicked: {
                     var n = (addPartyField.text || "").trim()
                     if (n.length === 0) return
-                    // SupplierStore.addSupplier returns the existing record
-                    // when the name already exists, so we always have an id.
-                    var s = SupplierStore.addSupplier({ name: n })
-                    dlg._refreshSuppliers(s ? s.supplierId : "")
-                    addPartyField.text = ""
-                    dlg._addPartyOpen = false
+                    // SupplierStore.addSupplier calls back with the existing
+                    // record when the name already exists, so we always get an id.
+                    addPartyBtn.enabled = false
+                    SupplierStore.addSupplier({ name: n }, function(s) {
+                        addPartyBtn.enabled = true
+                        dlg._refreshSuppliers(s ? s.supplierId : "")
+                        addPartyField.text = ""
+                        dlg._addPartyOpen = false
+                    })
                 }
             }
         }

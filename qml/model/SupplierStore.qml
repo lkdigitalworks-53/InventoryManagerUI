@@ -111,13 +111,17 @@ QtObject {
 
     // ── Identity helpers ───────────────────────────────────────────────────
 
-    function nextSupplierId() {
-        var max = 0
+    // Async — see FirebaseService.mintCounterValue for why max(existing)+1
+    // isn't safe (id reuse after delete, concurrent-add collisions).
+    function nextSupplierId(callback) {
+        var seedMax = 0
         for (var i = 0; i < suppliers.length; ++i) {
             var num = parseInt(String(suppliers[i].supplierId).split('-')[1])
-            if (!isNaN(num) && num > max) max = num
+            if (!isNaN(num) && num > seedMax) seedMax = num
         }
-        return 'SUP-' + String(max + 1).padStart(3, '0')
+        FirebaseService.mintCounterValue("counters/suppliers", seedMax, function(ok, value) {
+            callback(ok ? ('SUP-' + String(value).padStart(3, '0')) : "")
+        })
     }
 
     function getById(id) {
@@ -144,34 +148,64 @@ QtObject {
 
     // ── CRUD ───────────────────────────────────────────────────────────────
 
-    // Adds a supplier (deduped case-insensitively by name). Returns the new
-    // record on success, or the existing record if the name already exists —
-    // callers can read `.supplierId` without branching.
-    function addSupplier(fields) {
-        if (!fields || !fields.name) return null
-        var trimmed = String(fields.name).trim()
-        if (trimmed.length === 0) return null
-        var existing = findByName(trimmed)
-        if (existing) return existing
-
+    // Creates a supplier record with an ALREADY-MINTED id (skips
+    // nextSupplierId's network round-trip). Used by bulk-import paths that
+    // batch-reserve many ids in ONE round-trip upfront (see
+    // InventoryStore.upsertMany) rather than minting once per row — the
+    // caller is responsible for having already deduped by name and for the
+    // id actually being reserved (via FirebaseService.mintCounterBatch).
+    function addSupplierWithId(id, name) {
+        var trimmed = String(name).trim()
         var nowIso = new Date().toISOString()
         var doc = {
-            supplierId: nextSupplierId(),
-            name: trimmed,
-            contact: fields.contact || "",
-            leadTimeDays: parseInt(fields.leadTimeDays) || 0,
-            terms: fields.terms || "",
-            notes: fields.notes || "",
-            createdAt: nowIso,
-            updatedAt: nowIso
+            supplierId: id, name: trimmed, contact: "", leadTimeDays: 0,
+            terms: "", notes: "", createdAt: nowIso, updatedAt: nowIso
         }
-
         var arr = suppliers.slice()
         arr.push(doc)
         arr.sort(function(a, b) { return (a.name || "").localeCompare(b.name || "") })
         suppliers = arr
         Gateway.recordMutation("supplier", doc.supplierId, "create", null, doc)
         return doc
+    }
+
+    // Adds a supplier (deduped case-insensitively by name). Async now — see
+    // FirebaseService.mintCounterValue. callback(record) — record is the
+    // EXISTING match if the name already existed (no network round-trip
+    // needed for that case), the newly-created record on success, or null if
+    // fields were invalid or minting failed.
+    function addSupplier(fields, callback) {
+        if (!fields || !fields.name) { if (callback) callback(null); return }
+        var trimmed = String(fields.name).trim()
+        if (trimmed.length === 0) { if (callback) callback(null); return }
+        var existing = findByName(trimmed)
+        if (existing) { if (callback) callback(existing); return }
+
+        nextSupplierId(function(id) {
+            if (!id) {
+                console.warn("[SupplierStore] could not mint a supplierId — add aborted")
+                if (callback) callback(null)
+                return
+            }
+            var nowIso = new Date().toISOString()
+            var doc = {
+                supplierId: id,
+                name: trimmed,
+                contact: fields.contact || "",
+                leadTimeDays: parseInt(fields.leadTimeDays) || 0,
+                terms: fields.terms || "",
+                notes: fields.notes || "",
+                createdAt: nowIso,
+                updatedAt: nowIso
+            }
+
+            var arr = suppliers.slice()
+            arr.push(doc)
+            arr.sort(function(a, b) { return (a.name || "").localeCompare(b.name || "") })
+            suppliers = arr
+            Gateway.recordMutation("supplier", doc.supplierId, "create", null, doc)
+            if (callback) callback(doc)
+        })
     }
 
     // Patch an existing supplier — only the keys present in `fields` are

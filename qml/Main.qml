@@ -33,6 +33,14 @@ App {
     // format-selected handler reads this when the user picks a format.
     property var _pendingAnalysisExport: null
 
+    // Cached "create a login too" details from AddStaffDialog, consumed once
+    // logic.staffAdded(id) confirms the real (server-minted) staffId — addStaff
+    // is now async (id minting is a Firestore round-trip), so credential
+    // provisioning can no longer read StaffStore.lastAddedId synchronously
+    // right after emitting logic.addStaff(...). Same handoff pattern as
+    // _pendingAnalysisExport above.
+    property var _pendingStaffLogin: null
+
     // app initialization
     Component.onCompleted: {
         AuthService.isOnline = isOnline
@@ -173,6 +181,18 @@ App {
                 message: dataModel.stockErrorMsg || qsTr("Cannot complete order due to insufficient stock."),
                 variant: "error"
             })
+        }
+
+        // Fires once StaffStore has actually minted+applied the new staffId
+        // (addStaff is async — see _pendingStaffLogin above for why this
+        // can't happen synchronously right after logic.addStaff(...)).
+        function onStaffAdded(staffId) {
+            var pending = app._pendingStaffLogin
+            app._pendingStaffLogin = null
+            if (!pending) return
+            AuthService.provisionStaffCredentials(pending.name, pending.email, pending.loginPassword,
+                                                  pending.phone, pending.department, pending.appRole,
+                                                  staffId)
         }
 
         function onErrorOccurred(context, message) {
@@ -902,17 +922,15 @@ App {
     AddStaffDialog {
         id: addStaffDlg
         onStaffCreated: function(payload) {
+            // addStaff is async now (id minting is a Firestore round-trip) —
+            // stash the login details and provision credentials once
+            // logic.staffAdded(id) confirms the real id (see onStaffAdded
+            // above). Reading StaffStore.lastAddedId synchronously right here
+            // would race the mint and either provision against a stale id
+            // from a previous add, or an empty one.
+            app._pendingStaffLogin = payload.createLogin ? payload : null
             logic.addStaff(payload.name, payload.email, payload.phone, payload.role,
                            payload.department, payload.joinDate, payload.status, payload.salary)
-
-            if (payload.createLogin) {
-                // Provision login against the id StaffStore just generated —
-                // robust under reordering / async sync, unlike "last element".
-                var staffId = StaffStore.lastAddedId
-                AuthService.provisionStaffCredentials(payload.name, payload.email, payload.loginPassword,
-                                                      payload.phone, payload.department, payload.appRole,
-                                                      staffId)
-            }
         }
     }
 

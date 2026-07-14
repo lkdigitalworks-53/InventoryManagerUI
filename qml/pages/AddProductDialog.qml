@@ -83,7 +83,7 @@ BottomSheet {
         return sp
     }
 
-    onPrimaryClicked: trySubmit()
+    onPrimaryClicked: { if (!busy) trySubmit() }
 
     ColumnLayout {
         Layout.fillWidth: true
@@ -451,10 +451,13 @@ BottomSheet {
                             onClicked: {
                                 var n = (addPartyField.text || "").trim()
                                 if (n.length === 0) return
-                                var s = SupplierStore.addSupplier({ name: n })
-                                dlg._refreshSuppliers(s ? s.supplierId : "")
-                                addPartyField.text = ""
-                                dlg._addPartyOpen = false
+                                addPartyBtn.enabled = false
+                                SupplierStore.addSupplier({ name: n }, function(s) {
+                                    addPartyBtn.enabled = true
+                                    dlg._refreshSuppliers(s ? s.supplierId : "")
+                                    addPartyField.text = ""
+                                    dlg._addPartyOpen = false
+                                })
                             }
                         }
                     }
@@ -507,20 +510,27 @@ BottomSheet {
         var supplierId = partyCombo.currentIndex > 0 ? dlg._supplierIds[partyCombo.currentIndex] : ""
         // Initial-batch unit cost defaults to product cost — same convention
         // as RestockDialog. Future "advanced" UI could expose this separately.
-        var newId = InventoryStore.addProduct(nameField.text, skuField.text,
+        busy = true
+        InventoryStore.addProduct(nameField.text, skuField.text,
             categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
             taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */,
-            sizeField.text.trim())
-        CategoryStore.setLastUsed(categoryCombo.currentText)
+            sizeField.text.trim(), function(ok, newId) {
+                busy = false
+                if (!ok) {
+                    errorLabel.text = "Could not add product — try again"
+                    return
+                }
+                CategoryStore.setLastUsed(categoryCombo.currentText)
 
-        if (pendingPhotoSource && pendingPhotoSource.length > 0 && newId) {
-            StorageService.uploadProductPhoto(newId, pendingPhotoSource, function(ok, photoUrl) {
-                if (ok) InventoryStore.setPhoto(newId, photoUrl)
+                if (pendingPhotoSource && pendingPhotoSource.length > 0 && newId) {
+                    StorageService.uploadProductPhoto(newId, pendingPhotoSource, function(uploadOk, photoUrl) {
+                        if (uploadOk) InventoryStore.setPhoto(newId, photoUrl)
+                    })
+                }
+
+                Toast.show("Product added")
+                productCreated()
+                dlg.close()
             })
-        }
-
-        Toast.show("Product added")
-        productCreated()
-        dlg.close()
     }
 }

@@ -54,6 +54,22 @@ BottomSheet {
         }
     }
 
+    // addStaff's id-minting step is a real network round-trip now (an atomic
+    // Firestore counter, not a local computation) — it can fail (offline,
+    // etc.) before AuthService.provisionStaffCredentials is ever reached, in
+    // which case the AuthService Connections above never fires. Without this,
+    // the sheet would stay stuck open + busy on that failure with no way for
+    // the user to dismiss it or retry.
+    Connections {
+        target: logic
+        enabled: dlg._provisioning
+        function onErrorOccurred(context, message) {
+            dlg._provisioning = false
+            dlg.busy = false
+            errorLabel.text = message || "Could not add staff"
+        }
+    }
+
     ColumnLayout {
         Layout.fillWidth: true
         spacing: dp(Constants.space3)

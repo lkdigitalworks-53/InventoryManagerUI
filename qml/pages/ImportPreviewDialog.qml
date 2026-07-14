@@ -21,7 +21,7 @@ BottomSheet {
 
     sheetTitle: mode === "products" ? "Import products" : "Import orders"
     primaryAction: "Import " + _effectiveCount() + " row" + (_effectiveCount() === 1 ? "" : "s")
-    primaryEnabled: _effectiveCount() > 0
+    primaryEnabled: _effectiveCount() > 0 && !busy
     secondaryAction: "Cancel"
 
     property string mode: "products"
@@ -557,6 +557,26 @@ BottomSheet {
                     continue
                 }
 
+                // Does this row's quantity fit in current stock? Only a
+                // completed-status row needs to fit in what's on hand —
+                // matches how the rest of the app (NewOrderDialog,
+                // completeImportedOrder) only enforces stock at completion
+                // time, not for pending/processing orders. For a product
+                // already on the order being updated, only the requested
+                // increase over what's already booked has to fit; a brand
+                // new line that doesn't fit is dropped rather than imported
+                // partially. See ImportMath.checkOrderLineStock.
+                var existingLine = ImportMath.findOrderLineByProductId(
+                    existingById[grp.key] ? existingById[grp.key].products : null, pid)
+                var stockCheck = ImportMath.checkOrderLineStock(
+                    existingLine ? existingLine.quantity : null, inv.stock, qty, status === allowed[2])
+                if (stockCheck.issue) {
+                    warns.push({ row: lineRow, message: inv.name + ": " + stockCheck.issue
+                        + (stockCheck.reject ? " — line skipped" : " — quantity kept unchanged") })
+                }
+                if (stockCheck.reject) continue
+                qty = stockCheck.qty
+
                 // DEFAULT+WARN: missing Unit Price
                 var unitPriceRaw = lineSrc["Unit Price"]
                 var unitPrice = parseFloat(unitPriceRaw)
@@ -648,34 +668,43 @@ BottomSheet {
     }
 
     function _apply() {
-        var counts, understocked = 0
+        busy = true
         if (mode === "products") {
-            counts = InventoryStore.upsertMany(_readyRows)
-            var updatedProducts = counts.updatedProducts || []
-            for (var i = 0; i < updatedProducts.length; ++i) {
-                logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields)
-            }
-        } else {
-            counts = OrdersStore.upsertMany(_readyRows)
-            // Book every newly-added COMPLETED order (anon orders got ids inside
-            // upsertMany — use the returned addedIds so we don't miss them).
-            var addedIds = counts.addedIds || []
-            var updateOrders = counts.updatedOrders || []
-            // Map added orders back to their source records to check status.
-            // Newly-added records are those not skipped; match by resulting order.
-            for (var i = 0; i < addedIds.length; ++i) {
-                var o = OrdersStore.getById(addedIds[i])
-                if (!o || o.status !== "completed") continue
-                if (dataModelRef) {
-                    var res = dataModelRef.completeImportedOrder(addedIds[i])
-                    if (res && res.understocked) understocked++
+            InventoryStore.upsertMany(_readyRows, function(counts) {
+                busy = false
+                var updatedProducts = counts.updatedProducts || []
+                for (var i = 0; i < updatedProducts.length; ++i) {
+                    logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields)
                 }
-            }
-            for (var j = 0; j < updateOrders.length; ++j) {
-                logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
-            }
+                _finishApply(counts, 0)
+            })
+        } else {
+            OrdersStore.upsertMany(_readyRows, function(counts) {
+                busy = false
+                var understocked = 0
+                // Book every newly-added COMPLETED order (anon orders got ids inside
+                // upsertMany — use the returned addedIds so we don't miss them).
+                var addedIds = counts.addedIds || []
+                var updateOrders = counts.updatedOrders || []
+                // Map added orders back to their source records to check status.
+                // Newly-added records are those not skipped; match by resulting order.
+                for (var i = 0; i < addedIds.length; ++i) {
+                    var o = OrdersStore.getById(addedIds[i])
+                    if (!o || o.status !== "completed") continue
+                    if (dataModelRef) {
+                        var res = dataModelRef.completeImportedOrder(addedIds[i])
+                        if (res && res.understocked) understocked++
+                    }
+                }
+                for (var j = 0; j < updateOrders.length; ++j) {
+                    logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
+                }
+                _finishApply(counts, understocked)
+            })
         }
+    }
 
+    function _finishApply(counts, understocked) {
         var n = counts.added + counts.updated
         var msg = "Imported " + n + " row" + (n === 1 ? "" : "s")
         if (counts.skipped > 0) msg += " · " + counts.skipped + " skipped"
