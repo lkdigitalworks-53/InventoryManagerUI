@@ -12,6 +12,7 @@ singleton TransactionStore 1.0 TransactionStore.qml
 singleton PartyStore 1.0 PartyStore.qml
 singleton SupplierStore 1.0 SupplierStore.qml
 singleton StockBatchStore 1.0 StockBatchStore.qml
+singleton StockMovementStore 1.0 StockMovementStore.qml
 singleton MigrationService 1.0 MigrationService.qml
 singleton OrderChannelStore 1.0 OrderChannelStore.qml
 singleton OutboxStore 1.0 OutboxStore.qml
