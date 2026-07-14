@@ -667,8 +667,10 @@ QtObject {
         // The receipt also lands as a FIFO batch — this is what every
         // subsequent sale will draw from in date order. The reason rides
         // along in the batch's existing (currently unrendered) note field.
-        StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
+        var batch = StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
         Gateway.recordMutation("inventory", productId, "update", before, changed);
+        StockMovementStore.recordMovement("receipt", productId, addedQty, reasonText,
+                                          addedQty * batchCost, batch ? batch.batchId : null);
     }
 
     function stockStatus(p) {
