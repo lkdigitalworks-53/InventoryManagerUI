@@ -97,9 +97,16 @@
       (2-arg, no reason/kind) still works unmodified — QML tolerates missing trailing signal
       args, and `updateProduct`'s defensive fallback (`"adjustment"` + a console.warn) covers it
       for the rare case a bulk-import correction happens to decrease stock.
-- [ ] 6. Manual review pass across all 5 wiring points (no Qt toolchain here to run anything) —
+- [x] 6. Manual review pass across all 5 wiring points (no Qt toolchain here to run anything) —
       re-read each call site once wired, confirm no double-booking, confirm sign conventions
       (qty negative for decreases) are consistent. Update checkpoint with final status. Commit.
+      **DONE 2026-07-11.** All 7 `recordMovement` call sites reviewed together: sign convention
+      is consistent throughout (positive = stock increasing, negative = decreasing) — `receipt`
+      +, `sale` −, `sales_return` +, `destroyed` −, manual `adjustment`/`kind` = signed `delta`
+      directly. Confirmed `_tryAdjustOrder`'s movement call sits outside the `if (restock)` block
+      so it fires for both branches. Tidied one redundant double-guard in
+      `_reverseCompletedOrder`. **Plan complete** — see the checkpoint doc for the full session
+      summary.
 
 ## Explicitly out of scope this session
 - The opening/closing-balance register report (P1's second deliverable per the spec).

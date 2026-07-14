@@ -69,3 +69,33 @@ alongside it.
 ## Not yet done / next steps
 
 Nothing implemented. Waiting on the 4 decisions above before any design/plan doc or code.
+
+---
+
+## Session complete — 2026-07-11
+
+All 6 plan tasks done. Summary:
+
+- **New `qml/model/StockMovementStore.qml`** — write-only this session, `recordMovement(kind,
+  productId, qty, reason, valueAtCost, batchRef)` → `Gateway.recordMutation("stock_movement",
+  ...)`. Registered in `qml/model/qmldir`.
+- **`kind` enum**: the spec's 8 values + `sales_return` (documented deviation — CGST Rule 56(2),
+  verified via web search, has no "return" column; a sales return is GST-mechanically a
+  reduction to "supply," not an independent event).
+- **All 5 wiring points done**: `restock()` → `receipt`; order completion (both
+  `_tryCompleteOrder` and `completeImportedOrder`) → `sale`, one movement per FIFO-consumed batch
+  portion, cost/batchRef free from `consumeFifo`'s own return shape; returns
+  (`_reverseCompletedOrder`, `_tryAdjustOrder`) → `sales_return`, plus an additional `destroyed`
+  for the damaged-goods branch — a real gap fix, that branch had zero ledger footprint before
+  today; manual stock-decrease adjustments (`EditProductDialog` → `updateProduct`) → a required
+  `kind` picker threaded through the full signal chain, enforced at the dialog's validation step.
+- **No new Cloud Function code** — `stock_movement` was already a registered entity from the
+  original P0 session. This means **none of this session's work is TDD-verified with
+  `node --test`** — it's all QML, and (same as P0) this sandbox has no Qt toolchain. Every file
+  touched was manually reviewed and brace/paren-balance-checked as a partial substitute; needs a
+  real `qmltestrunner` pass (or at minimum, a manual on-device pass through restock/sell/return/
+  edit-product flows) before merge.
+- **`Gateway.mode` is still `"direct"`** — nothing here changes that. These movements aren't
+  reaching a real `audit_log` yet, same caveat as every P0 entity.
+- **Explicitly not done**: the opening/closing-balance register report (P1's second deliverable,
+  deferred to its own future session per the agreed scope split).

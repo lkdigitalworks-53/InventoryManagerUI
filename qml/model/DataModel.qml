@@ -485,10 +485,10 @@ Item {
                 // Pre-FIFO line: no lineage — repair via topUpOldest.
                 StockBatchStore.topUpOldest(line.productId, qty)
             }
-            if (line.productId)
+            if (line.productId) {
                 InventoryStore.creditStockNoBatch(line.productId, qty)
-            if (line.productId)
                 _recordReturnMovements(line.productId, plan, qty, qsTr("Order reopened — sale reversed"), false)
+            }
             // Negating ledger event so realised revenue/sold/profit unwind exactly
             // what completion booked. Reason "reopened" surfaces it in history.
             TransactionStore.recordReturn(o, { productId: line.productId, name: line.name, price: line.price },
