@@ -88,7 +88,7 @@ BottomSheet {
             delegate: ListCard {
                 Layout.fillWidth: true
                 title: "Low stock: " + modelData.name
-                subtitle: (modelData.sku ? "SKU " + modelData.sku + " · " : "")
+                subtitle: modelData.productId + (modelData.sku ? " · SKU " + modelData.sku + " · " : "")
                           + "only " + modelData.stock + " left · reorder at " + modelData.minStock
                 onClicked: {
                     root.notificationItemClicked("low_stock", modelData.productId || "")

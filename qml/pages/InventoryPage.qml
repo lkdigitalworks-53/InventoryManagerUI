@@ -258,11 +258,11 @@ Item {
                     elide: Text.ElideRight
                 }
 
-                // Subtitle (SKU · Price)
+                // Subtitle (Product Id · SKU · Price)
                 Text {
                     Layout.fillWidth: true
                     text: card.product
-                        ? (card.product.sku ? card.product.sku + " · " : "") +
+                        ? card.product.productId + (card.product.sku ? " | SKU: " + card.product.sku + " | " : "") +
                           InventoryStore.formatCurrency(card.product.sellingPrice !== undefined ? card.product.sellingPrice : card.product.price)
                         : ""
                     color: Constants.textSecondary
