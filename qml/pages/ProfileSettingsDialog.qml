@@ -125,13 +125,45 @@ BottomSheet {
                         Layout.fillWidth: true
                         color: Constants.textPrimary
                         font.pixelSize: sp(Constants.fsBody)
-                        enabled: AuthStore.role !== "staff"
+                        enabled: AuthStore.role !== "staff" && editButton.editMode
                         background: Rectangle {
                             Layout.fillWidth: true
                             color: Constants.subtleBg
-                            border.color: workspaceName.enabled ? Constants.borderColor : ""
-                            border.width: workspaceName.enabled ? 1 : 0
+                            border.color: AuthStore.role !== "staff" ? Constants.borderColor : ""
+                            border.width: AuthStore.role !== "staff" ? 1 : 0
                             radius: width/2
+                        }
+                        onAccepted: {
+                            editButton.editMode = !editButton.editMode
+                            //To-Do: Need to call firestore api to change tenant name
+                        }
+                    }
+                    QQC.AbstractButton {
+                        id: editButton
+                        property bool editMode: false
+                        Layout.preferredWidth: dp(28)
+                        Layout.preferredHeight: dp(28)
+                        implicitWidth: dp(28)
+                        implicitHeight: dp(28)
+                        padding: 0
+                        topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
+                        visible: AuthStore.role !== "staff"
+                        background: Rectangle {
+                            anchors.fill: parent
+                            radius: dp(10)
+                            color: editButton.pressed ? Constants.borderColor : Constants.subtleBg
+                            border.color: Constants.borderColor
+                            border.width: 1
+                            opacity: editButton.enabled ? 1 : 0.5
+                            Behavior on color { ColorAnimation { duration: Constants.durFast } }
+                        }
+                        contentItem: Icon {
+                            name: editButton.editMode ? "close" : "edit"
+                            color: Constants.textPrimary
+                            size: sp(16)
+                        }
+                        onClicked: {
+                            editButton.editMode = !editButton.editMode
                         }
                     }
                 }
