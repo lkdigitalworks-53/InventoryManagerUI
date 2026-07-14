@@ -381,6 +381,7 @@ Item {
                         for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
                     }
                     InventoryStore.deductStock(invP.productId, qqty)
+                    _recordSaleMovements(invP.productId, consumption, "Order " + orderId)
                     console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
                                 "across", consumption.length, "batch(es)")
                 } else if (!invP) {
@@ -437,6 +438,7 @@ Item {
                         for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
                     }
                     InventoryStore.deductStock(invP.productId, qqty)
+                    _recordSaleMovements(invP.productId, consumption, "Imported order " + orderId)
                 } else if (!invP) {
                     console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
                 }
@@ -499,6 +501,20 @@ Item {
         if (!consumption) return 0
         for (var i = 0; i < consumption.length; ++i) s += (consumption[i].qtyConsumed || 0)
         return s
+    }
+
+    // Records one "sale" stock_movement per FIFO-consumed batch portion —
+    // gives each movement an accurate valueAtCost/batchRef for free, since
+    // StockBatchStore.consumeFifo already returns exactly this detail. Qty
+    // is negative (stock decreasing).
+    function _recordSaleMovements(productId, consumption, reason) {
+        if (!consumption) return
+        for (var i = 0; i < consumption.length; ++i) {
+            var c = consumption[i]
+            if (!c.qtyConsumed) continue
+            StockMovementStore.recordMovement("sale", productId, -c.qtyConsumed, reason || "",
+                                              c.qtyConsumed * (c.unitCost || 0), c.batchId || null)
+        }
     }
 
     // Reverse/adjust a COMPLETED order's lines. Diffs the edited lines vs the
