@@ -47,15 +47,45 @@ existing codebase and clarifying scope with Taher.
      no network route to any Firebase/GCP domain (confirmed against the allowed-domains list) and
      no project credentials. Same constraint prior sessions hit for the P0 rules/emulator tests.
 
-## Open decisions (asked, awaiting answers)
-- Q1: Has Blaze actually been turned on + anything deployed yet, or is that still fully pending?
-  (Shapes whether this session's output is "get you deploy-ready" vs. "post-deploy verification.")
+## Decisions made
+- **Deploy status:** Blaze is on; nothing deployed yet (functions or rules).
+- **Approach:** A — this branch preps + hardens + writes a deploy runbook; `Gateway.
+  provisioningAvailable` stays `false`. Flipping it is a separate, later session, run only
+  after Taher deploys and verifies. Not touching `Gateway.mode`/`runCutover` at all.
+- **Stale-password bug** (`findOrCreateAuthUser` never updates password when it finds an
+  existing Auth account): fix now. Refined during design: only reset the password when
+  `users/{uid}` doesn't exist (a truly orphaned identity) — if the account is an active member
+  of another tenant, leave their password alone. Otherwise Owner B could silently reset Owner
+  A's already-active staff member's password just by adding that email to Owner B's workspace.
+  Read `userSnap` once outside the transaction to decide, call `admin.auth().updateUser()` if
+  warranted, *then* run the transaction (side-effecting Auth calls don't belong inside a
+  Firestore transaction body).
+- **New finding, not previously tracked anywhere:** the locked `firestore.rules` have
+  `users/{uid}`: `allow delete: if false` (always) and `allow update: if request.auth.uid ==
+  uid` (self only). `AuthService.cleanupStaffAuthDocs()` tries to delete `users/{uid}` directly
+  from the client — that will start silently failing (only `console.warn`s) the instant the
+  locked rules deploy, which this feature requires regardless. Separately, the existing logic
+  deletes the whole `users/{uid}` doc rather than pruning just the departed tenant from
+  `tenants[]` — wrong for anyone in ≥2 workspaces at once (a real, designed-for state; see
+  `docs/superpowers/plans/2026-06-18-...multiworkspace...md` Feature 3). Not urgent today only
+  because no staff currently have a linked `appUid` (provisioning has never succeeded), so the
+  bug is dormant until `provisioningAvailable` flips — but must be fixed in this branch, before
+  that flip ever happens.
+- **Fix, scoped:** new `deprovisionMember` Cloud Function (Admin SDK, mirrors `provisionMember`'s
+  auth pattern: verify token, `isOwnerOrAdmin`, target role != owner, target != self — mirrors
+  the existing `members/{uid}` delete rule's own conditions). Prunes the departed tenant out of
+  `users/{uid}`.`tenants[]`, clears scalar `tenantId`/`tenantName`/`role` only if they matched
+  the removed tenant. **Taher's explicit instruction: never delete the whole `users/{uid}` doc,
+  even if `tenants[]` becomes empty.** `members/{uid}` deletion stays client-side, unchanged —
+  rules already permit it correctly, no need to touch it.
+- **Auth account (the actual Firebase Auth user record) deletion on removal:** deferred to P5,
+  as already tracked on the roadmap. Not part of this branch.
 
 ## Next steps
-- Get Taher's answer to Q1 (and follow-ups on scope: test coverage for `provisionMember`, Auth
-  cleanup-on-removal, whether to touch `Gateway.mode`/cutover — explicitly not by default).
-- Propose 2-3 approaches once scope is clear, then write the design spec per the brainstorming
-  skill (`docs/superpowers/specs/2026-07-14-staff-login-provisioning-design.md`).
+- Present full design (this + prior decisions) to Taher for section-by-section approval.
+- On approval: write `docs/superpowers/specs/2026-07-14-staff-login-provisioning-design.md`,
+  self-review, commit, ask Taher to review the file itself before moving to an implementation
+  plan (writing-plans skill).
 
 ## Not yet done
 - No code changes yet (hard gate: brainstorming skill blocks implementation until design is
