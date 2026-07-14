@@ -83,15 +83,15 @@ existing codebase and clarifying scope with Taher.
 
 ## Next steps
 - ✅ Full design presented, Taher approved.
-- ✅ Design doc written to `docs/superpowers/specs/2026-07-14-staff-login-provisioning-design.md`,
-  self-reviewed (fixed two ambiguities: how `deprovisionMember` reads the target's current role
-  server-side rather than trusting client input, and the required call ordering — `Gateway.
-  deprovisionMember()` before the `members/{uid}` delete, not after), committed locally.
-- **Waiting on Taher to review the spec file itself** before moving to an implementation plan
-  (`superpowers:writing-plans` is the next skill, per the brainstorming skill's terminal state —
-  not invoked yet).
-- Nothing pushed yet. Local commits only: checkpoint (x2) + design spec, all on
-  `feature/staff-login-provisioning`.
+- ✅ Design doc written, self-reviewed, committed, pushed to origin (Taher supplied PAT).
+- ✅ Implementation plan written to
+  `docs/superpowers/plans/2026-07-14-staff-login-provisioning.md` (7 tasks, TDD steps, full
+  code, self-reviewed). No subagent-dispatch tool available in this environment, so execution
+  will be inline (superpowers:executing-plans) rather than subagent-driven — noted to Taher.
+- **Waiting on Taher's explicit go-ahead before executing any task.** Do not start Task 1 until
+  told.
+- Everything through the plan doc is committed locally; pushing on this turn per Taher's
+  instruction.
 
 ## Not yet done
 - No code changes yet (hard gate: brainstorming skill blocks implementation until design is
