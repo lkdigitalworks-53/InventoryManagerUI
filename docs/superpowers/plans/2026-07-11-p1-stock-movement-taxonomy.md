@@ -112,3 +112,30 @@
 - The opening/closing-balance register report (P1's second deliverable per the spec).
 - Any Cloud Function changes (none needed — `stock_movement` entity already registered).
 - Deploying anything / flipping `Gateway.mode`.
+
+## Task 7 (added 2026-07-11, post-session review — NOT YET IMPLEMENTED)
+
+**Standing rule going forward: no feature ships without a test plan.** P1's data-model + wiring
+work shipped with zero automated coverage of any kind (unlike P0, which at least had CF-side
+`node --test` coverage) — flagged as a gap in the master test plan
+(`docs/superpowers/specs/2026-07-11-p0-p1-master-test-plan.md`) and now being closed here.
+
+- [ ] 7. `tests/tst_StockMovementStore.qml` (new) — same constraints as `tst_Gateway.qml`/
+      `tst_OutboxStore.qml`: **not runnable in this sandbox** (no Qt toolchain), gateway-mode-only
+      testing (direct mode's real `FirebaseService` call stays untested, same reasoning as P0).
+      Planned coverage:
+      - `recordMovement` rejects an unknown `kind` → returns `null`, nothing enqueued.
+      - `recordMovement` rejects a missing `productId` → returns `null`, nothing enqueued.
+      - A valid call (in `Gateway.mode = "gateway"`, so nothing hits the network — see
+        `tst_Gateway.qml`'s header for why that's safe) produces exactly one `OutboxStore` item
+        with `entity: "stock_movement"`, `action: "create"`, and a doc shape containing `id`
+        (the `MOV-<timestamp>-<random>` format), `productId`, `kind`, `qty`, `reason`,
+        `valueAtCost`, `batchRef`, `actorUid`, `clientTimestamp`.
+      - Defaults: omitted `reason` → `""`; omitted `batchRef` → `null`; non-numeric
+        `valueAtCost` → coerced to `0` via the same `parseFloat`-or-`0` pattern used elsewhere in
+        this codebase (`StockBatchStore.addBatch`, `InventoryStore.restock`).
+      - `manualAdjustmentKinds` contains exactly the 7 user-pickable kinds (not `receipt`/
+        `sale`/`sales_return`, which are never user-selected).
+
+**This task is a plan entry only — not implemented.** Waiting on explicit confirmation before
+writing `tst_StockMovementStore.qml` or touching any code.

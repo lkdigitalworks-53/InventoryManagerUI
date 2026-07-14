@@ -99,3 +99,9 @@ All 6 plan tasks done. Summary:
   reaching a real `audit_log` yet, same caveat as every P0 entity.
 - **Explicitly not done**: the opening/closing-balance register report (P1's second deliverable,
   deferred to its own future session per the agreed scope split).
+
+### 2026-07-11 — Post-session: standing rule added, Task 7 planned (not implemented)
+
+User: no feature ships without a test plan going forward (added to memory). P1 shipped with zero
+automated coverage — closing that gap is now Task 7 in the plan doc: `tests/tst_StockMovementStore.qml`.
+**Spec/plan only per explicit instruction — waiting for confirmation before writing any code.**

@@ -24,13 +24,17 @@ written (it isn't yet, on purpose).
 | `batchMutationLogic.test.js` | 13 | `recordMutationsBatch`'s validation, atomicity, idempotency |
 | `breakdownMath.test.js` / `realisedMath.test.js` | 9 | Pre-existing, unrelated, untouched — confirms no regression |
 
-### P1 — **none**
+### P1 — **none yet, but planned**
 
 No Cloud Function code changed for P1 (the `stock_movement` entity was already registered by the
 original P0 session), so there was nothing to add `node --test` coverage for. **100% of P1 is
-QML**, and this repo's sandbox has no Qt toolchain — so P1 has **zero automated verification of
-any kind** right now. Treat every P1 scenario below as something that has genuinely never been
-executed, not just "unit-tested but not integration-tested."
+QML**, and this repo's sandbox has no Qt toolchain — so P1 shipped with **zero automated
+verification of any kind**. Per the standing rule (no feature ships without a test plan),
+`tests/tst_StockMovementStore.qml` is now planned as Task 7 in
+`docs/superpowers/plans/2026-07-11-p1-stock-movement-taxonomy.md` — **not yet written**, spec/plan
+only pending explicit confirmation to implement. Until it exists, treat every P1 scenario below
+as something that has genuinely never been executed, not just "unit-tested but not
+integration-tested."
 
 ### Written but unverified (both features) — run before trusting
 
