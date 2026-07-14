@@ -487,6 +487,8 @@ Item {
             }
             if (line.productId)
                 InventoryStore.creditStockNoBatch(line.productId, qty)
+            if (line.productId)
+                _recordReturnMovements(line.productId, plan, qty, qsTr("Order reopened — sale reversed"), false)
             // Negating ledger event so realised revenue/sold/profit unwind exactly
             // what completion booked. Reason "reopened" surfaces it in history.
             TransactionStore.recordReturn(o, { productId: line.productId, name: line.name, price: line.price },
@@ -514,6 +516,33 @@ Item {
             if (!c.qtyConsumed) continue
             StockMovementStore.recordMovement("sale", productId, -c.qtyConsumed, reason || "",
                                               c.qtyConsumed * (c.unitCost || 0), c.batchId || null)
+        }
+    }
+
+    // Records "sales_return" (and, for damaged goods, an additional
+    // "destroyed") stock_movement(s) for a return/reversal — one per
+    // FIFO-restore-plan batch portion, using restorePlan's own per-batch
+    // qty/unitCost detail. `damaged` controls whether a matching "destroyed"
+    // movement is also recorded: the units are physically gone even though
+    // nothing is credited back to sellable stock (net stock effect stays
+    // zero, matching today's behavior) — this reverses the original sale
+    // out of "supply" while accurately showing the units as lost, not still
+    // counted as a completed sale. See the P1 plan doc for the reasoning.
+    function _recordReturnMovements(productId, plan, totalQty, reason, damaged) {
+        if (plan && plan.length > 0) {
+            for (var p = 0; p < plan.length; ++p) {
+                var portion = plan[p]
+                var value = portion.qty * (portion.unitCost || 0)
+                StockMovementStore.recordMovement("sales_return", productId, portion.qty, reason || "", value, portion.batchId || null)
+                if (damaged)
+                    StockMovementStore.recordMovement("destroyed", productId, -portion.qty, reason || "", value, portion.batchId || null)
+            }
+        } else if (productId && totalQty > 0) {
+            // Pre-FIFO legacy line: no batch lineage, so no cost basis is
+            // knowable here — 0 is honest, not a guess.
+            StockMovementStore.recordMovement("sales_return", productId, totalQty, reason || "", 0, null)
+            if (damaged)
+                StockMovementStore.recordMovement("destroyed", productId, -totalQty, reason || "", 0, null)
         }
     }
 
@@ -577,6 +606,8 @@ Item {
                 }
                 // Damaged: units are written off — batch ledger NOT credited and
                 // product.stock stays reduced (it already reflects the sale).
+                _recordReturnMovements(d.productId, plan, d.returnedQty,
+                                       note || reason || "", condition === "damaged")
                 TransactionStore.recordReturn(o, { productId: d.productId, name: d.name, price: d.oldPrice },
                                               d.returnedQty, reversed, reason, condition, note)
                 // Refund the returned units at the ORIGINAL-sale per-unit rate
