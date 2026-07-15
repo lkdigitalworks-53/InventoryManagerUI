@@ -84,3 +84,105 @@ function checkOrderLineStock(existingLineQty, currentStock, importedQty, isCompl
         return { qty: importedQty, reject: true, issue: "insufficient stock" }
     return { qty: importedQty, reject: false, issue: null }
 }
+
+// Scans `records` (each with a `.productId` and a `.row` for messaging) for
+// rows sharing the same explicit, non-empty productId within ONE import
+// file. Blank-productId rows (continuation lines) are never grouped with
+// each other — only an explicit repeated id counts.
+//
+// For each group of 2+ rows sharing a productId:
+//  - if every field in `compareFields` matches across the whole group, it's
+//    a harmless duplicate (e.g. a copy-pasted row) — safe to silently keep
+//    just the first and drop the rest.
+//  - if any field differs (e.g. a different price), the rows disagree and
+//    there's no safe way to pick a winner — reported as a conflict instead
+//    of silently letting the last one clobber the others.
+//
+// Returns { dropIndexes: [index,...], conflicts: [{productId, rows:[row,...]}] }
+// `dropIndexes` are indexes into `records` to remove (redundant duplicates).
+// `conflicts` describes groups the caller should reject entirely as issues.
+function findDuplicateProductRows(records, compareFields) {
+    var byId = {}
+    var order = []
+    for (var i = 0; i < records.length; ++i) {
+        var pid = records[i].productId
+        if (!pid) continue
+        if (!byId[pid]) { byId[pid] = []; order.push(pid) }
+        byId[pid].push(i)
+    }
+
+    var dropIndexes = []
+    var conflicts = []
+    for (var g = 0; g < order.length; ++g) {
+        var idxs = byId[order[g]]
+        if (idxs.length < 2) continue
+
+        var first = records[idxs[0]]
+        var identical = true
+        for (var j = 1; j < idxs.length; ++j) {
+            var r = records[idxs[j]]
+            for (var f = 0; f < compareFields.length; ++f) {
+                if (first[compareFields[f]] !== r[compareFields[f]]) { identical = false; break }
+            }
+            if (!identical) break
+        }
+
+        if (identical) {
+            for (var k = 1; k < idxs.length; ++k) dropIndexes.push(idxs[k])
+        } else {
+            var rows = []
+            for (var m = 0; m < idxs.length; ++m) rows.push(records[idxs[m]].row)
+            conflicts.push({ productId: order[g], rows: rows })
+        }
+    }
+    return { dropIndexes: dropIndexes, conflicts: conflicts }
+}
+
+// Merges the line items for ONE imported order (multiple file rows can
+// reference the same product). Enforces the same invariant
+// NewOrderDialog/OrderDetailDialog's interactive "add product" flow already
+// enforces (merge a re-added product into its existing line) — required
+// because OrderAdjust.diffLines and every productId-keyed lookup in
+// OrderDetailDialog explicitly assume order lines are unique per productId;
+// violating that at import time doesn't fail loudly there, it silently
+// corrupts totals/history the next time the order is edited.
+//
+// Lines with the same productId AND identical price/taxable/taxPercent/
+// discountType/discountValue are merged by SUMMING quantity — mathematically
+// equivalent to keeping them as separate lines, and removes the duplicate
+// safely. Lines with the same productId but differing price/tax/discount
+// can't be merged without guessing which is correct, so they're reported.
+//
+// Returns { lines: [...]|null, conflict: string|null }. When `conflict` is
+// set, `lines` is null and the caller should reject the whole order (same
+// as how an unresolved/unknown product already rejects the whole group).
+function mergeOrderLines(rawLines) {
+    var byPid = {}
+    var order = []
+    for (var i = 0; i < rawLines.length; ++i) {
+        var ln = rawLines[i]
+        var key = ln.productId
+        if (!byPid[key]) {
+            byPid[key] = { productId: ln.productId, name: ln.name, quantity: ln.quantity,
+                           price: ln.price, taxable: ln.taxable, taxPercent: ln.taxPercent,
+                           discountType: ln.discountType, discountValue: ln.discountValue }
+            order.push(key)
+            continue
+        }
+        var existing = byPid[key]
+        var sameTerms = existing.price === ln.price
+            && existing.taxable === ln.taxable
+            && existing.taxPercent === ln.taxPercent
+            && existing.discountType === ln.discountType
+            && existing.discountValue === ln.discountValue
+        if (!sameTerms) {
+            return { lines: null, conflict: "Product " + key + " appears more than once in "
+                + "this order with different price/tax/discount — resolve in the source file" }
+        }
+        existing.quantity = (existing.quantity || 0) + (ln.quantity || 0)
+    }
+
+    var merged = []
+    for (var g = 0; g < order.length; ++g) merged.push(byPid[order[g]])
+    return { lines: merged, conflict: null }
+}

@@ -461,6 +461,36 @@ BottomSheet {
             rec._conflictWith = hit ? (hit.productId + (hit.sku ? "/" + hit.sku : "")) : ""
             ready.push(rec)
         }
+
+        // Two rows in THIS file targeting the same Product ID used to let the
+        // second one silently clobber the first (if the id already existed and
+        // both got "overwrite") or silently vanish into the skip count with no
+        // explanation (if neither existed yet). Identical duplicate rows are
+        // harmless and safe to collapse to one; rows that disagree on any
+        // field can't be reconciled without guessing, so they're rejected as
+        // an issue instead — same "show it, don't guess" principle as every
+        // other validation error here.
+        var dupCompareFields = ["name", "sku", "category", "unit", "description", "price",
+                                "sellingPrice", "stock", "minStock", "photoUrl", "supplier",
+                                "size", "taxable", "taxPercent"]
+        var dup = ImportMath.findDuplicateProductRows(ready, dupCompareFields)
+        if (dup.dropIndexes.length > 0 || dup.conflicts.length > 0) {
+            var dropSet = {}
+            for (var di = 0; di < dup.dropIndexes.length; ++di) dropSet[dup.dropIndexes[di]] = true
+            var conflictIds = {}
+            for (var ci = 0; ci < dup.conflicts.length; ++ci) {
+                conflictIds[dup.conflicts[ci].productId] = true
+                issues.push({ row: dup.conflicts[ci].rows[0], message: "Product ID "
+                    + dup.conflicts[ci].productId + " appears on rows " + dup.conflicts[ci].rows.join(", ")
+                    + " with different details — resolve in the source file" })
+            }
+            var deduped = []
+            for (var ri = 0; ri < ready.length; ++ri) {
+                if (dropSet[ri] || conflictIds[ready[ri].productId]) continue
+                deduped.push(ready[ri])
+            }
+            ready = deduped
+        }
         _readyRows = ready
         _issueRows = issues
         _warnRows = warns
@@ -611,6 +641,22 @@ BottomSheet {
                 issues.push({ row: grp.firstRow, message: "Unknown product(s): " + unresolved.join("; ") })
                 continue
             }
+
+            // Two rows for the same product in ONE order used to become two
+            // separate line items that LOOK fine in preview but silently
+            // break the moment this order is later edited — OrderAdjust.
+            // diffLines and every productId-keyed lookup in OrderDetailDialog
+            // explicitly assume order lines are unique per productId (the
+            // same invariant NewOrderDialog/OrderDetailDialog's own "add
+            // product" flow already enforces by merging a re-added product
+            // into its existing line). Enforce it here too, at the one entry
+            // point that doesn't already go through that merge behavior.
+            var lineMerge = ImportMath.mergeOrderLines(prods)
+            if (lineMerge.conflict) {
+                issues.push({ row: grp.firstRow, message: lineMerge.conflict })
+                continue
+            }
+            prods = lineMerge.lines
 
             var rec = {
                 row: grp.firstRow,

@@ -162,4 +162,165 @@ TestCase {
         compare(r.reject, false)
         compare(r.issue, null)
     }
+
+    // --- findDuplicateProductRows -------------------------------------
+    // Bug found on-device: two rows in ONE import file with the same
+    // Product ID but different details silently let the second row clobber
+    // the first (or, if neither pre-existed, silently drop the second with
+    // no explanation). This is the pure dedup/conflict-detection logic used
+    // to catch that at validation time instead.
+
+    property var pFields: ["name", "price", "sellingPrice", "stock", "taxable", "taxPercent"]
+
+    function test_dup_no_duplicates_is_a_noop() {
+        var records = [
+            { row: 2, productId: "PRD-001", name: "A", price: 10 },
+            { row: 3, productId: "PRD-002", name: "B", price: 20 }
+        ]
+        var r = IM.findDuplicateProductRows(records, pFields)
+        compare(r.dropIndexes.length, 0)
+        compare(r.conflicts.length, 0)
+    }
+
+    function test_dup_blank_productId_rows_never_grouped() {
+        // Two continuation/blank-id rows must never be treated as
+        // duplicates of each other.
+        var records = [
+            { row: 2, productId: "", name: "A", price: 10 },
+            { row: 3, productId: "", name: "B", price: 20 }
+        ]
+        var r = IM.findDuplicateProductRows(records, pFields)
+        compare(r.dropIndexes.length, 0)
+        compare(r.conflicts.length, 0)
+    }
+
+    function test_dup_identical_rows_keep_first_drop_rest() {
+        var records = [
+            { row: 2, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 },
+            { row: 3, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 }
+        ]
+        var r = IM.findDuplicateProductRows(records, pFields)
+        compare(r.dropIndexes, [1])
+        compare(r.conflicts.length, 0)
+    }
+
+    function test_dup_three_identical_rows_drops_all_but_first() {
+        var records = [
+            { row: 2, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 },
+            { row: 3, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 },
+            { row: 4, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 }
+        ]
+        var r = IM.findDuplicateProductRows(records, pFields)
+        compare(r.dropIndexes, [1, 2])
+        compare(r.conflicts.length, 0)
+    }
+
+    function test_dup_conflicting_price_is_reported_not_guessed() {
+        var records = [
+            { row: 2, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 },
+            { row: 3, productId: "PRD-001", name: "Widget", price: 12, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 }
+        ]
+        var r = IM.findDuplicateProductRows(records, pFields)
+        compare(r.dropIndexes.length, 0)
+        compare(r.conflicts.length, 1)
+        compare(r.conflicts[0].productId, "PRD-001")
+        compare(r.conflicts[0].rows, [2, 3])
+    }
+
+    function test_dup_conflicting_stock_is_reported() {
+        var records = [
+            { row: 2, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 5, taxable: false, taxPercent: 0 },
+            { row: 3, productId: "PRD-001", name: "Widget", price: 10, sellingPrice: 15, stock: 9, taxable: false, taxPercent: 0 }
+        ]
+        var r = IM.findDuplicateProductRows(records, pFields)
+        compare(r.conflicts.length, 1)
+    }
+
+    // --- mergeOrderLines -------------------------------------------------
+    // Bug found on-device: two rows in one imported ORDER for the same
+    // product create two order lines with the same productId — which
+    // silently breaks OrderAdjust.diffLines and every productId-keyed
+    // lookup in OrderDetailDialog the moment that order is later edited
+    // (both explicitly assume order lines are unique per productId).
+    // mergeOrderLines enforces that invariant at the one entry point that
+    // doesn't already go through NewOrderDialog/OrderDetailDialog's own
+    // merge-on-duplicate "add product" behavior.
+
+    function test_merge_no_duplicates_passes_through_unchanged() {
+        var lines = [
+            { productId: "PRD-001", name: "A", quantity: 2, price: 10, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-002", name: "B", quantity: 1, price: 20, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        compare(r.conflict, null)
+        compare(r.lines.length, 2)
+    }
+
+    function test_merge_same_price_sums_quantity() {
+        var lines = [
+            { productId: "PRD-001", name: "Widget", quantity: 2, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "Widget", quantity: 3, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        compare(r.conflict, null)
+        compare(r.lines.length, 1)
+        compare(r.lines[0].quantity, 5)
+        compare(r.lines[0].price, 100)
+    }
+
+    function test_merge_three_same_price_lines_sums_all() {
+        var lines = [
+            { productId: "PRD-001", name: "Widget", quantity: 1, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "Widget", quantity: 2, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "Widget", quantity: 3, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        compare(r.conflict, null)
+        compare(r.lines.length, 1)
+        compare(r.lines[0].quantity, 6)
+    }
+
+    function test_merge_different_price_is_a_conflict_not_a_guess() {
+        // This is the EXACT scenario reported: same product, same order,
+        // different selling prices. Must not silently pick either price.
+        var lines = [
+            { productId: "PRD-001", name: "Widget", quantity: 2, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "Widget", quantity: 3, price: 150, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        verify(r.conflict !== null)
+        compare(r.lines, null)
+    }
+
+    function test_merge_different_tax_is_a_conflict() {
+        var lines = [
+            { productId: "PRD-001", name: "Widget", quantity: 2, price: 100, taxable: true, taxPercent: 5, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "Widget", quantity: 3, price: 100, taxable: true, taxPercent: 12, discountType: "flat", discountValue: 0 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        verify(r.conflict !== null)
+    }
+
+    function test_merge_different_discount_is_a_conflict() {
+        var lines = [
+            { productId: "PRD-001", name: "Widget", quantity: 2, price: 100, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "Widget", quantity: 3, price: 100, taxable: false, taxPercent: 0, discountType: "percent", discountValue: 10 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        verify(r.conflict !== null)
+    }
+
+    function test_merge_preserves_line_order_for_non_duplicates() {
+        var lines = [
+            { productId: "PRD-001", name: "A", quantity: 1, price: 10, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-002", name: "B", quantity: 1, price: 20, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 },
+            { productId: "PRD-001", name: "A", quantity: 4, price: 10, taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }
+        ]
+        var r = IM.mergeOrderLines(lines)
+        compare(r.conflict, null)
+        compare(r.lines.length, 2)
+        compare(r.lines[0].productId, "PRD-001")
+        compare(r.lines[0].quantity, 5)
+        compare(r.lines[1].productId, "PRD-002")
+    }
 }
