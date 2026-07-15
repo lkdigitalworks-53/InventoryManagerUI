@@ -327,19 +327,18 @@ Item {
         }
     }
 
-    // Resolve an order line item back to an inventory record. Prefer
-    // productId (stable) and fall back to name (older orders or external data
-    // may not carry an id).
+    // Resolve an order line item back to an inventory record by productId
+    // only. No name-based fallback: product names can legitimately duplicate
+    // across distinct products, so matching by name here could silently
+    // deduct stock from / attribute a sale to the wrong product. Every
+    // current order-creation path (NewOrderDialog, OrderDetailDialog,
+    // ImportPreviewDialog) always sets productId on a line item — a line
+    // missing it is either truly pre-productId legacy data or a data bug,
+    // and either way should surface as "not found" rather than be silently
+    // guessed at by name.
     function _resolveInventory(lineItem) {
-        if (lineItem.productId) {
-            var byId = InventoryStore.getById(lineItem.productId)
-            if (byId) return byId
-        }
-        if (lineItem.name) {
-            var byName = InventoryStore.findByName(lineItem.name)
-            if (byName) return byName
-        }
-        return null
+        if (!lineItem.productId) return null
+        return InventoryStore.getById(lineItem.productId)
     }
 
     function _lineQty(lineItem) {
@@ -564,7 +563,7 @@ Item {
 
             // ── Returned / removed units ─────────────────────────────────
             if (d.returnedQty > 0) {
-                var line = _findLine(o.products, d.productId, d.name)
+                var line = _findLine(o.products, d.productId)
                 var consumption = line && Array.isArray(line.consumption) ? line.consumption : []
                 var plan = OrderAdjust.restorePlan(consumption, d.returnedQty)
                 var reversed = []
@@ -657,7 +656,7 @@ Item {
         // event). Without this, an adjusted line loses consumption and the
         // Revenue supplier axis drops the whole order.
         var enrichedLines = (newLines || []).map(function(nl) {
-            var orig = _findLine(o.products, nl.productId, nl.name)
+            var orig = _findLine(o.products, nl.productId)
             var origCons = orig && Array.isArray(orig.consumption) ? orig.consumption : []
             var oldQ = orig ? (orig.quantity || 0) : 0
             var newQ = nl.quantity || 0
@@ -744,12 +743,12 @@ Item {
         return true
     }
 
-    // Find an order line by productId (preferred) or name.
-    function _findLine(lines, productId, name) {
+    // Find an order line by productId. No name fallback — see _resolveInventory
+    // above for why matching by name risks hitting a different product entirely.
+    function _findLine(lines, productId) {
         if (!lines) return null
         for (var i = 0; i < lines.length; ++i) {
-            if (productId && lines[i].productId === productId) return lines[i]
-            if (!productId && name && lines[i].name === name) return lines[i]
+            if (lines[i].productId === productId) return lines[i]
         }
         return null
     }

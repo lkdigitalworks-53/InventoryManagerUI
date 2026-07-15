@@ -915,12 +915,6 @@ QtObject {
         Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
     }
 
-    function findByName(name) {
-        for (var i = 0; i < products.length; ++i)
-            if (products[i].name === name) return products[i];
-        return null;
-    }
-
     function getById(productId) {
         for (var i = 0; i < products.length; ++i)
             if (products[i].productId === productId) return products[i];
