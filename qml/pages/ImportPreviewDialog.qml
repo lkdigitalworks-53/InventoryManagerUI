@@ -720,7 +720,8 @@ BottomSheet {
                 busy = false
                 var updatedProducts = counts.updatedProducts || []
                 for (var i = 0; i < updatedProducts.length; ++i) {
-                    logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields)
+                    logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields,
+                                        "Import conflict: Overwrite with conflicted data")
                 }
                 _finishApply(counts, 0)
             })
