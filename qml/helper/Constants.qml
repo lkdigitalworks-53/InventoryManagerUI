@@ -71,6 +71,11 @@ Item {
 
     // ── Layout / sizing ──────────────────────────────────────────────────────
     readonly property int compactBreakpoint: 520
+
+    // Below this width, the desktop sidebar shell gives way to the mobile
+    // bottom-tab shell — see qml/desktop/. Distinct from compactBreakpoint,
+    // which governs in-page layout density, not top-level navigation chrome.
+    readonly property int desktopShellBreakpoint: 1000
     // Bottom space every scrollable page must leave so its content clears the
     // floating tabbar. Wrap with dp() at the consumer.
     readonly property int tabbarClearance: 110
