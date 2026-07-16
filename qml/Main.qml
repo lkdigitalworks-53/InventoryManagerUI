@@ -10,6 +10,7 @@ import "logic"
 import "pages"
 import "helper"
 import "components"
+import "desktop"
 
 App {
     id: app
@@ -422,6 +423,13 @@ App {
         // Hide Felgo's framework footer too (belt-and-suspenders).
         footerView: Item { width: 1; height: 0 }
 
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.left: parent.left
+        anchors.topMargin: app.isDesktopShell ? desktopShell.topBarHeight : 0
+        anchors.leftMargin: app.isDesktopShell ? desktopShell.sidebarWidth : 0
+
         // ── Tab: Dashboard ──
         NavigationItem {
             title: qsTr("Home")
@@ -598,6 +606,7 @@ App {
                  && !profilePage.visible
                  && !staffPageOverlay.visible
                  && !activityPageOverlay.visible
+                 && !app.isDesktopShell
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -615,6 +624,28 @@ App {
         onTabChanged: function(idx) {
             if (navigation.currentIndex !== idx)
                 navigation.currentIndex = idx
+        }
+    }
+
+    DesktopShell {
+        id: desktopShell
+        anchors.fill: parent
+        visible: app.isDesktopShell && navigation.visible
+        navigationTarget: navigation
+        staffOverlay: staffPageOverlay
+        activityOverlay: activityPageOverlay
+        profileOverlay: profilePage
+        workspaceName: AuthStore.tenantName
+        userName: AuthStore.displayName
+        userRole: AuthStore.role
+        currentSection: {
+            switch (navigation.currentIndex) {
+                case 0: return "dashboard"
+                case 1: return "orders"
+                case 2: return "inventory"
+                case 3: return "analysis"
+                default: return desktopShell.currentSection
+            }
         }
     }
 
