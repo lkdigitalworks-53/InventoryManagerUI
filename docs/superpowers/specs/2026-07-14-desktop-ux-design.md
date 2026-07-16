@@ -1,7 +1,7 @@
 # Desktop UX Design — Karobar
 
 **Date:** 2026-07-14
-**Status:** Draft — pending Taher's review (step 8 of `superpowers:brainstorming`)
+**Status:** Approved by Taher 2026-07-16, no changes requested — moving to implementation planning
 **Branch:** `feature/desktop-ux-design`
 **Author:** Claude, in collaborative brainstorm with Taher (see `CHECKPOINT.md` for the full
 session trail — this doc is the distilled output, not a replacement for that log)
@@ -122,7 +122,7 @@ users to hunt through pills to compare numbers that desktop has room to show sim
 **Proposed design:** row of 6 compact metric cards (Value/Current/Sold/Purchased/Revenue/Profit),
 gradient-filled per `grad1-4`/`gradPrimary` conventions, always visible. Clicking a card expands a
 detail region below: trend chart + breakdown (by category/supplier/name — the "by name" dimension
-maps directly to the still-unmerged `feature/analysis-by-name-chart-all-views` branch). Respects
+maps to the same feature merged via `feature/analysis-by-name-chart-all-views`). Respects
 the existing `canViewFinancials` gate: without it, only Current and Sold render as cards, same
 layout, fewer cards — not a different design for that role.
 
@@ -189,6 +189,3 @@ after the fact:
 4. Hand off to `writing-plans` skill (step 9) once Taher signs off — inline execution, one task per
    commit, same adapted approach prior sessions in this chat environment have used (no
    subagent-dispatch tool available here).
-5. Still open from earlier in this session, unrelated to desktop but worth resolving before this
-   branch is done: the unmerged `feature/analysis-by-name-chart-all-views` branch, and confirming
-   the repo-visibility question raised in the by-name-chart checkpoint.

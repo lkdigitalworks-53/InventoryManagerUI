@@ -2,7 +2,8 @@
 
 **Started:** 2026-07-14
 **Branch:** `feature/desktop-ux-design`
-**Status:** Step 3 complete. Step 4 (propose 2-3 approaches + recommendation) — presented, awaiting Taher's pick.
+**Status:** Plan 1 (desktop shell foundation) written and self-reviewed. Awaiting Taher's choice
+of execution approach (subagent-driven vs. inline) before any code gets written.
 
 ## Step log
 
@@ -11,19 +12,13 @@
    once we reach implementation).
 2. Read `AGENTS.md`, root `CHECKPOINT.md` (by-name-chart session), the `docs/superpowers/`
    directory listing, and `KNOWN-ISSUES.md` before touching anything.
-3. Archived the by-name-chart session's root `CHECKPOINT.md` to
+3. Archived the prior session's root `CHECKPOINT.md` to
    `docs/superpowers/specs/2026-07-11-analysis-by-name-chart-CHECKPOINT.md`, matching the
-   convention already used for the 2026-07-10 tax/size-field and 2026-07-11 P0-gateway
-   checkpoints. Status preserved as-is (complete locally, awaiting Taher's diff review + a push
-   PAT) — NOT resolved or touched by this session.
+   convention already used for earlier archived checkpoints.
 4. Created branch `feature/desktop-ux-design` off `main`.
-5. Flagged two things unrelated to desktop scope, found during exploration:
-   - `feature/analysis-by-name-chart-all-views` is fully implemented, committed locally, and
-     waiting on Taher's review + a push PAT.
-   - The by-name-chart checkpoint's step log noted the repo is reachable with no auth despite an
-     earlier memory note saying it had been made private — never investigated. Taher called it
-     "the public repo" this session, which may settle it, but flagged for explicit confirmation
-     given it holds Firebase config and the compliance architecture.
+5. Flagged one thing unrelated to desktop scope, found during exploration: the repo being
+   reachable with no auth despite an earlier memory note saying it had been made private.
+   **Resolved 2026-07-16** — Taher confirmed the repo is deliberately public.
 6. Corrected scope understanding: this is a multi-tenant, 4-role RBAC (owner/admin/manager/staff)
    business-management app (branded **Karobar**) with an in-progress India compliance architecture
    (P0–P7: immutable audit ledger, GST/HSN fields, DPDP privacy work — P0 code-complete, not yet
@@ -60,16 +55,11 @@
     Recommended A, given (A)'s build path is already proven and (C) risks reimplementing
     compliance-critical logic in a second stack. Awaiting Taher's choice.
 
-## Files touched this session (not committed)
-- `CHECKPOINT.md` (this file, new)
-- `docs/superpowers/specs/2026-07-11-analysis-by-name-chart-CHECKPOINT.md` (moved from root,
-  content unchanged)
-
-## Open decisions
-- Commit cadence for this session's housekeeping (archive + this file) — asked previously
-  (checkpoint-doc commits vs. app-code commits), not yet answered. Holding uncommitted until
-  Taher weighs in, consistent with not assuming.
-- Repo visibility (see step 5) — flagged, not yet confirmed.
+## Resolved
+- Commit cadence — resolved 2026-07-16: Taher gave a direct commit+push instruction with a PAT;
+  committed and pushed as `5e4b6aa`. Push still requires an explicit go-ahead each time — the PAT
+  itself isn't persisted anywhere in this container or the repo.
+- Repo visibility — resolved 2026-07-16: confirmed deliberately public by Taher.
 
 13. Sketched the desktop shell as a visual (HTML mockup via Visualizer): persistent left sidebar,
     top bar with search/identity, master-detail pattern demonstrated on Orders (list left, detail
@@ -121,12 +111,34 @@
     accessibility checklist, and next steps. NOT committed yet (still no PAT, still no answer on
     commit cadence). Awaiting Taher's review (step 8).
 
+22. Taher (2026-07-16): by-name-chart work merged separately — cleaned the tangential references
+    out of steps 3 and 5 above (see "Resolved" section too). Confirmed repo visibility is
+    deliberately public. **Approved the spec as written — no changes requested.** Moving to step 9
+    of `superpowers:brainstorming`: hand off to `writing-plans` for implementation planning.
+    Also fixed a now-stale line in the spec itself (§6.2 called the by-name-chart branch
+    "still-unmerged" — no longer true, corrected).
+
+23. Read `superpowers:writing-plans` skill. Applied its scope-check: this needs multiple plans,
+    one per subsystem, not one giant plan — proposed sequence (shell → Orders → Analysis →
+    Inventory/Staff/Dashboard/Activity/Settings) to Taher, confirmed. Investigated `qml/Main.qml`
+    directly (grep + targeted `view` ranges, not the whole 1105-line file) before writing Task 3:
+    confirmed `Navigation{id:navigation}.currentIndex` 0-3 maps to Dashboard/Orders/Inventory/
+    Analysis (from the existing `onNavigateToOrders` etc. handlers), and that Staff/Activity are
+    full-screen overlays reached via `.open()` — mobile's bottom bar is explicitly 4 slots only
+    per a comment in Main.qml ("Staff tab removed... lives as a full-screen overlay"). Also found
+    `app.compact`/`Constants.compactBreakpoint` already exists as a width-breakpoint pattern —
+    reused that exact pattern for the new `isDesktopShell` property rather than inventing a
+    separate mechanism. Wrote and self-reviewed
+    `docs/superpowers/plans/2026-07-16-desktop-shell-foundation.md` (3 tasks: Sidebar, TopBar,
+    DesktopShell+Main.qml integration), each with real TDD steps and complete QML/JS code,
+    matching the existing `tst_StaffScope.qml` test-style convention. Self-review caught and fixed
+    one real bug (a circular property binding in the Main.qml integration snippet) before saving.
+    One item flagged as a genuine open verification, not a placeholder: `AuthStore`'s exact
+    property names for tenant/display-name/role were inferred from naming convention, not
+    directly confirmed — Task 3 Step 7d in the plan handles resolving this.
+
 ## Next steps
-- Awaiting Taher's answer to Q2 (replace-vs-coexist for Owner/Admin/Manager)
-- Q3 next (one at a time): desktop delivery target — Qt Quick (shared QML, Felgo) vs. Qt
-  Widgets (native desktop controls) vs. something else — informed by the existing `win/`/`macx/`
-  app-icon scaffolding (prepared, unused), the fact mobile is already Felgo/QML, and whatever Q2
-  reveals about sync/consistency needs
-- Continue steps 3–9 of `superpowers:brainstorming` from there
-- `qt-development-skills:qt-ui-design` gets pulled in once we're actually laying out screens, not
-  before (Taher noted the Qt/QML + UI/UX skills are installed and ready)
+- Awaiting Taher's execution-approach choice (subagent-driven vs. inline) for Plan 1
+- Once Plan 1 lands: Plan 2 (Orders master-detail), then Plan 3 (Analysis), per the approved
+  sequence — not yet written, deliberately, per the writing-plans skill's one-plan-per-subsystem
+  scope check
