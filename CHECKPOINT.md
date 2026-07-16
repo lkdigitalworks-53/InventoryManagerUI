@@ -2,8 +2,9 @@
 
 **Started:** 2026-07-14
 **Branch:** `feature/desktop-ux-design`
-**Status:** Plan 1 (desktop shell foundation) written and self-reviewed. Awaiting Taher's choice
-of execution approach (subagent-driven vs. inline) before any code gets written.
+**Status:** Plan 1 (desktop shell foundation) executed — all 3 tasks committed locally
+(`b2e4400`, `1ea5e0b`, `0e1db0f`, `bf8f397`). Not pushed. Awaiting Taher's manual verification on
+his Windows/Felgo build (this container has no toolchain) before anything further.
 
 ## Step log
 
@@ -137,8 +138,24 @@ of execution approach (subagent-driven vs. inline) before any code gets written.
     property names for tenant/display-name/role were inferred from naming convention, not
     directly confirmed — Task 3 Step 7d in the plan handles resolving this.
 
+24. Executed Plan 1 inline (no subagent-dispatch tool in this environment, confirmed again).
+    Verified no Qt/QML toolchain exists in this container (checked, not assumed) before starting.
+    All 3 tasks' files written exactly per the plan, each committed separately (`b2e4400` Sidebar,
+    `1ea5e0b` TopBar, `0e1db0f` DesktopNav.js, `bf8f397` DesktopShell+Main.qml). Test-run and
+    verify-pass steps explicitly left for Taher's machine, not fabricated.
+25. Before writing the Main.qml integration, resolved the plan's one flagged open item by reading
+    `qml/model/AuthStore.qml` directly: `displayName`/`tenantName`/`role` all exist exactly as
+    inferred. Also resolved spec §2's previously-unconfirmed `canViewFinancials` question as a
+    side effect — `role !== "staff"`, so Manager has it; spec updated to reflect this as confirmed
+    rather than open.
+26. Self-caught one real gap while wiring Main.qml that the written plan itself missed: the new
+    `qml/desktop/` module needed an `import "desktop"` added to Main.qml's existing import block
+    (alongside `model`/`logic`/`pages`/`helper`/`components`) — not in the plan, added and
+    committed as part of the same Main.qml commit, noted in the commit message.
+
 ## Next steps
-- Awaiting Taher's execution-approach choice (subagent-driven vs. inline) for Plan 1
-- Once Plan 1 lands: Plan 2 (Orders master-detail), then Plan 3 (Analysis), per the approved
-  sequence — not yet written, deliberately, per the writing-plans skill's one-plan-per-subsystem
-  scope check
+- All 4 commits are local only, not pushed — need Taher's go-ahead + PAT to push, same as before
+- Taher verifies on his Windows/Felgo build: resize behavior, all 7 sidebar sections route
+  correctly, existing test suite still green, per Task 3 Step 8 in the plan
+- Once verified: Plan 2 (Orders master-detail), then Plan 3 (Analysis) — not yet written,
+  deliberately, per the writing-plans skill's one-plan-per-subsystem scope check

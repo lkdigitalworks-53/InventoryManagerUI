@@ -31,10 +31,9 @@ architecture already satisfies this at the data layer; nothing new is needed the
 | Analysis page direction | Overview strip of all 6 metrics + click-to-drill-down (not a bigger version of mobile's one-at-a-time pills) | Confirmed by Taher |
 | Visual identity | Reuse `Constants.qml` tokens as-is; do not invent a parallel palette | Confirmed by Taher |
 
-**Not yet confirmed** — nav *visibility* is uniform across Owner/Admin/Manager, but *permissions*
-within a section may still differ (e.g. `canViewFinancials` already gates Value/Revenue/Purchased/
-Profit in the existing `SalesPage.qml`; whether Manager currently holds that flag is unknown and
-doesn't block this spec — it changes runtime behavior, not the design).
+**Confirmed since** — `qml/model/AuthStore.qml:48`: `canViewFinancials: role !== "staff"`. Manager
+has it. Only Staff (who don't get desktop at all, per §2) see the reduced 2-card version. The
+6-card overview strip in §6.2 applies unmodified to all three desktop roles.
 
 ## 3. Assumptions I'm naming rather than asking about
 
