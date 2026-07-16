@@ -2,9 +2,8 @@
 
 **Started:** 2026-07-14
 **Branch:** `feature/desktop-ux-design`
-**Status:** Plan 1 (desktop shell foundation) executed — all 3 tasks committed locally
-(`b2e4400`, `1ea5e0b`, `0e1db0f`, `bf8f397`). Not pushed. Awaiting Taher's manual verification on
-his Windows/Felgo build (this container has no toolchain) before anything further.
+**Status:** Plan 1 (desktop shell foundation) executed and pushed to
+`origin/feature/desktop-ux-design` (`7b8d7d2`). Awaiting Taher's pull + local build/test.
 
 ## Step log
 
