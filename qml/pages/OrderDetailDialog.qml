@@ -540,7 +540,7 @@ BottomSheet {
                     subtitle: {
                         var inv = model.productId ? InventoryStore.getById(model.productId) : null
                         var sku = inv && inv.sku ? inv.sku + " · " : ""
-                        return sku + OrdersStore.formatCurrency(model.price) + " × " + model.quantity
+                        return model.productId + " | " + sku + OrdersStore.formatCurrency(model.price) + " × " + model.quantity
                                 + " = " + OrdersStore.formatCurrency(model.price * model.quantity)
                     }
 
@@ -924,7 +924,7 @@ BottomSheet {
                         }
                         Text {
                             visible: ohRow._sku.length > 0
-                            text: qsTr("SKU: %1").arg(ohRow._sku)
+                            text: qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
                             color: Constants.textSecondary
                             font.pixelSize: sp(Constants.fsCaption)
                         }
