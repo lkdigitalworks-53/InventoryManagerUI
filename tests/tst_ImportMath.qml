@@ -95,6 +95,14 @@ TestCase {
         compare(IM.findOrderLineByProductId([], "P1"), null)
     }
 
+    function test_findLine_falsy_pid_never_matches_a_line_also_missing_productId() {
+        // Hardening: a line with no productId (legacy pre-productId data)
+        // must never spuriously match a falsy lookup argument.
+        var lines = [{ productId: undefined, name: "Legacy Widget" }]
+        compare(IM.findOrderLineByProductId(lines, undefined), null)
+        compare(IM.findOrderLineByProductId(lines, ""), null)
+    }
+
     // --- checkOrderLineStock --------------------------------------------
     // Regression coverage for the d915a7b crash: calling this with
     // existingLineQty === null (a brand-new order/line) must never throw,

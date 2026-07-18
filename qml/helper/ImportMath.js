@@ -39,7 +39,7 @@ function parseTaxPercentCell(raw, taxable) {
 // with the `break` outside the `if`, so the loop always stopped after
 // checking index 0 — any match past the first line was silently missed.
 function findOrderLineByProductId(products, pid) {
-    if (!products) return null
+    if (!products || !pid) return null
     for (var i = 0; i < products.length; ++i) {
         if (products[i].productId === pid) return products[i]
     }

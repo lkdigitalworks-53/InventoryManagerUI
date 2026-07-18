@@ -96,6 +96,7 @@ BottomSheet {
     // risk matching the wrong line's booked quantity/tax.
     function _findOriginalLine(productId) {
         var src = _originalLines || []
+        if (!productId) return null
         for (var i = 0; i < src.length; ++i) {
             if (src[i].productId === productId) return src[i]
         }

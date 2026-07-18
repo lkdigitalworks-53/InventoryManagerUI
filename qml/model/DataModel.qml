@@ -746,7 +746,7 @@ Item {
     // Find an order line by productId. No name fallback — see _resolveInventory
     // above for why matching by name risks hitting a different product entirely.
     function _findLine(lines, productId) {
-        if (!lines) return null
+        if (!lines || !productId) return null
         for (var i = 0; i < lines.length; ++i) {
             if (lines[i].productId === productId) return lines[i]
         }

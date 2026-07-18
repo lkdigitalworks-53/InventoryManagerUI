@@ -50,6 +50,7 @@ BottomSheet {
     // ACTUALLY still available (stock − in-cart), and refresh as qty changes.
     function _inCartQty(productId) {
         var used = 0
+        if (!productId) return used
         for (var i = 0; i < selectedProducts.length; ++i) {
             var sp = selectedProducts[i]
             if (sp.productId === productId) used += (sp.qty || 0)
