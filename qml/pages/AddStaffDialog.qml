@@ -35,7 +35,7 @@ BottomSheet {
         busy = false
     }
 
-    onPrimaryClicked: trySubmit()
+    onPrimaryClicked: { if (!busy) trySubmit() }
 
     // Result of the async staff-credential provision (only while _provisioning).
     Connections {
