@@ -85,6 +85,53 @@ function checkOrderLineStock(existingLineQty, currentStock, importedQty, isCompl
     return { qty: importedQty, reject: false, issue: null }
 }
 
+// Cross-order-batch-aware wrapper around checkOrderLineStock. A single import
+// file can contain several orders that all draw from the same product's
+// stock — checkOrderLineStock alone has no way to know that, since it only
+// ever sees one row's numbers. This wraps it: the accept/reject/clamp
+// decision is made against remainingStock (a running per-product tally the
+// caller decrements across every row in the batch, in the same order
+// completeImportedOrder will actually process them), while crossOrder tells
+// the caller *why* a failure happened — crossOrder: false means the product
+// genuinely doesn't have enough stock (same message as a single-row check);
+// crossOrder: true means this row would have fit against the product's real,
+// undiminished stock, and only failed because earlier rows in this same
+// import already claimed it — the caller should say so in the warning rather
+// than imply the product itself is short.
+//
+// netNew is the actual new draw this row makes on the shared pool, for the
+// caller to subtract from remainingStock: 0 for anything
+// rejected/clamped-back/non-completing, the full qty for an accepted new
+// line, and just the delta (which can be negative, freeing up the pool) for
+// an existing line's change.
+function checkOrderLineStockAcrossBatch(existingLineQty, fullStock, remainingStock, importedQty, isCompleting) {
+    var hasExisting = existingLineQty !== null && existingLineQty !== undefined
+    var remainingResult = checkOrderLineStock(existingLineQty, remainingStock, importedQty, isCompleting)
+
+    var netNew
+    if (!isCompleting) {
+        netNew = 0
+    } else if (!hasExisting) {
+        netNew = remainingResult.reject ? 0 : remainingResult.qty
+    } else {
+        netNew = remainingResult.qty - existingLineQty
+    }
+
+    var crossOrder = false
+    if (remainingResult.issue) {
+        var fullResult = checkOrderLineStock(existingLineQty, fullStock, importedQty, isCompleting)
+        crossOrder = !fullResult.reject && (!hasExisting || fullResult.qty === importedQty)
+    }
+
+    return {
+        qty: remainingResult.qty,
+        reject: remainingResult.reject,
+        issue: remainingResult.issue,
+        crossOrder: crossOrder,
+        netNew: netNew
+    }
+}
+
 // Scans `records` (each with a `.productId` and a `.row` for messaging) for
 // rows sharing the same explicit, non-empty productId within ONE import
 // file. Blank-productId rows (continuation lines) are never grouped with

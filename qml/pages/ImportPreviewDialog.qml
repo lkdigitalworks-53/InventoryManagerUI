@@ -510,6 +510,14 @@ BottomSheet {
             idToProduct[p.productId] = p
         }
 
+        // Per-product running tally, decremented as rows are processed below
+        // (in the same file/row order completeImportedOrder will later
+        // replay) — a single import file can contain several orders that all
+        // draw from the same product's stock, and a static idToProduct
+        // snapshot alone can't see that. Lazily seeded from the product's
+        // real stock the first time each productId is touched.
+        var remainingStock = {}
+
         // Group consecutive rows by Order ID. Rows missing an Order ID are
         // grouped with the previous row's order, so a multi-line order can
         // safely leave the order-header columns blank on continuation lines.
@@ -595,15 +603,24 @@ BottomSheet {
                 // already on the order being updated, only the requested
                 // increase over what's already booked has to fit; a brand
                 // new line that doesn't fit is dropped rather than imported
-                // partially. See ImportMath.checkOrderLineStock.
+                // partially. Checked against remainingStock (this product's
+                // running tally across the whole batch), not the static
+                // idToProduct snapshot, so two orders in the same file
+                // competing for the same stock can't both silently "pass".
+                // See ImportMath.checkOrderLineStockAcrossBatch.
                 var existingLine = ImportMath.findOrderLineByProductId(
                     existingById[grp.key] ? existingById[grp.key].products : null, pid)
-                var stockCheck = ImportMath.checkOrderLineStock(
-                    existingLine ? existingLine.quantity : null, inv.stock, qty, status === allowed[2])
+                if (remainingStock[pid] === undefined) remainingStock[pid] = inv.stock
+                var stockCheck = ImportMath.checkOrderLineStockAcrossBatch(
+                    existingLine ? existingLine.quantity : null, inv.stock, remainingStock[pid],
+                    qty, status === allowed[2])
                 if (stockCheck.issue) {
                     warns.push({ row: lineRow, message: inv.name + ": " + stockCheck.issue
+                        + (stockCheck.crossOrder ? " — only " + Math.max(0, remainingStock[pid])
+                            + " left after earlier rows in this import" : "")
                         + (stockCheck.reject ? " — line skipped" : " — quantity kept unchanged") })
                 }
+                remainingStock[pid] -= stockCheck.netNew
                 if (stockCheck.reject) continue
                 qty = stockCheck.qty
 

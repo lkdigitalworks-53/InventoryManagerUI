@@ -323,4 +323,78 @@ TestCase {
         compare(r.lines[0].quantity, 5)
         compare(r.lines[1].productId, "PRD-002")
     }
+
+    // --- checkOrderLineStockAcrossBatch: the cross-order-batch-aware wrapper ---
+    // (existingLineQty, fullStock, remainingStock, importedQty, isCompleting)
+
+    function test_acrossBatch_new_line_fits_both_full_and_remaining() {
+        var r = IM.checkOrderLineStockAcrossBatch(null, 10, 10, 5, true)
+        compare(r.qty, 5)
+        compare(r.reject, false)
+        compare(r.issue, null)
+        compare(r.crossOrder, false)
+        compare(r.netNew, 5)
+    }
+
+    function test_acrossBatch_new_line_fits_full_not_remaining_is_cross_order() {
+        // The EXACT scenario the whole fix exists for: three orders in one
+        // import file each want 5 units of a product with 10 in stock. By the
+        // time this (the 2nd or 3rd) row is checked, remainingStock has
+        // already been claimed by an earlier row — it would fit against the
+        // product's real stock (10), just not what's left (3).
+        var r = IM.checkOrderLineStockAcrossBatch(null, 10, 3, 5, true)
+        compare(r.qty, 5)
+        compare(r.reject, true)
+        compare(r.issue, "insufficient stock")
+        compare(r.crossOrder, true)
+        compare(r.netNew, 0)
+    }
+
+    function test_acrossBatch_new_line_does_not_fit_even_at_full_stock() {
+        var r = IM.checkOrderLineStockAcrossBatch(null, 3, 3, 5, true)
+        compare(r.reject, true)
+        compare(r.crossOrder, false)
+        compare(r.netNew, 0)
+    }
+
+    function test_acrossBatch_existing_line_increase_fits_netNew_is_delta_not_full_qty() {
+        var r = IM.checkOrderLineStockAcrossBatch(3, 10, 10, 5, true)
+        compare(r.qty, 5)
+        compare(r.reject, false)
+        compare(r.netNew, 2)
+    }
+
+    function test_acrossBatch_existing_line_increase_clamped_by_remaining_is_cross_order() {
+        var r = IM.checkOrderLineStockAcrossBatch(3, 10, 1, 5, true)
+        compare(r.qty, 3)
+        compare(r.issue, "insufficient stock")
+        compare(r.crossOrder, true)
+        compare(r.netNew, 0)
+    }
+
+    function test_acrossBatch_existing_line_increase_does_not_fit_even_at_full() {
+        var r = IM.checkOrderLineStockAcrossBatch(3, 1, 1, 5, true)
+        compare(r.crossOrder, false)
+        compare(r.netNew, 0)
+    }
+
+    function test_acrossBatch_existing_line_decrease_frees_up_the_pool() {
+        // netNew is negative here — a decrease should INCREASE what's left
+        // for later rows in the same batch, not just no-op.
+        var r = IM.checkOrderLineStockAcrossBatch(10, 0, 0, 3, true)
+        compare(r.qty, 3)
+        compare(r.reject, false)
+        compare(r.netNew, -7)
+    }
+
+    function test_acrossBatch_existing_line_unchanged_netNew_is_zero() {
+        var r = IM.checkOrderLineStockAcrossBatch(5, 0, 0, 5, true)
+        compare(r.netNew, 0)
+    }
+
+    function test_acrossBatch_non_completing_never_decrements() {
+        var r = IM.checkOrderLineStockAcrossBatch(null, 1, 1, 100, false)
+        compare(r.reject, false)
+        compare(r.netNew, 0)
+    }
 }
