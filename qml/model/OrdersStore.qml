@@ -154,7 +154,12 @@ QtObject {
             var existsAlready = !!(rr.orderId && byIdPre[rr.orderId]);
             if (existsAlready) {
                 if (pol === "rename") neededOrderIds++;
-            } else if (!rr.orderId || rr.orderId.length === 0) {
+            } else {
+                // Same reasoning as InventoryStore.upsertMany's pre-scan: a
+                // row that doesn't match an existing order is new, full
+                // stop, and always needs a freshly minted id — trusting a
+                // typed-but-unmatched orderId here is how two different
+                // rows can end up with the same id.
                 neededOrderIds++;
             }
         }
@@ -213,9 +218,9 @@ QtObject {
                         counts.updated++;
                     }
                 } else {
-                    if (!r.orderId || r.orderId.length === 0) {
-                        r.orderId = pullOrderId();
-                    }
+                    // New order — always mint a fresh id, same reasoning as
+                    // InventoryStore's new-row branch.
+                    r.orderId = pullOrderId();
                     var doc = _normalizeOrder(r);
                     arr.push(doc);
                     byId[doc.orderId] = arr.length - 1;

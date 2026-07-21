@@ -502,7 +502,14 @@ QtObject {
             var existsAlready = !!(rr.productId && byIdPre[rr.productId]);
             if (existsAlready) {
                 if (pol === "rename") neededProductIds++;
-            } else if (!rr.productId || rr.productId.length === 0) {
+            } else {
+                // A row that doesn't match an existing product is a new
+                // product, full stop — always needs a freshly minted id,
+                // whether the productId column was left blank (the normal
+                // case) or happened to have something typed in it that
+                // doesn't match anything yet. Trusting a typed-but-unknown
+                // id here is how two different rows can end up minting/
+                // keeping the exact same number.
                 neededProductIds++;
             }
             if (!rr.supplierId && rr.supplier) {
@@ -641,10 +648,10 @@ QtObject {
                               }})
                 counts.updated++;
             } else {
-                // New row
-                if (!r.productId || r.productId.length === 0) {
-                    r.productId = pullProductId();
-                }
+                // New row — always mint a fresh id (see the pre-scan above
+                // for why a typed-but-unmatched value in this column can't
+                // be trusted as authoritative).
+                r.productId = pullProductId();
                 if (!r.sku || r.sku.length === 0) {
                     // Generate SKU if empty, for a new row
                     r.sku = generateSku(r.name);
