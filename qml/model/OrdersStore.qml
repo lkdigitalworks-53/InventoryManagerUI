@@ -137,9 +137,11 @@ QtObject {
         var counts = { added: 0, updated: 0, skipped: 0 };
         var addedIds = [];
         var updatedOrders = [];
+        var updatedOrderFields = [];
         if (!records || records.length === 0) {
             counts.addedIds = addedIds;
             counts.updatedOrders = updatedOrders;
+            counts.updatedOrderFields = updatedOrderFields;
             if (callback) callback(counts);
             return;
         }
@@ -175,6 +177,7 @@ QtObject {
                 console.warn("[OrdersStore] could not reserve order ids — import aborted");
                 counts.addedIds = addedIds;
                 counts.updatedOrders = updatedOrders;
+                counts.updatedOrderFields = updatedOrderFields;
                 if (callback) callback(counts);
                 return;
             }
@@ -210,11 +213,29 @@ QtObject {
                         continue;
                     }
                     if (policy === "overwrite") {
-                        // For overwrite policy, we need to adjust the order data and calculate the inventory, discount, price, and sales matrics
-                        // Hence we will give back the updated orders and try to adjust the order.
+                        // Envelope fields (contact/date/notes/channel) have no
+                        // stock/FIFO/revenue interaction — they always update,
+                        // regardless of status. Products are different: a
+                        // completed order already booked stock/FIFO/revenue
+                        // against its current lines, so changing them needs
+                        // the stock-aware adjustment path (updatedOrders /
+                        // adjustOrder, unchanged below). A non-completed
+                        // order never booked anything, so its products can
+                        // just be overwritten directly alongside the rest of
+                        // the fields — OrdersStore.updateOrder recomputes
+                        // totals from whatever products it's given.
                         var order = OrdersStore.getById(r.orderId)
-                        if (!order || order.status !== "completed") continue;
-                        updatedOrders.push({orderId: r.orderId, products: r.products})
+                        if (!order) { counts.skipped++; continue; }
+                        var envelopeFields = {
+                            customer: r.customer, email: r.email, phone: r.phone,
+                            date: r.date, notes: r.notes, orderChannel: r.orderChannel
+                        };
+                        if (order.status === "completed") {
+                            updatedOrders.push({orderId: r.orderId, products: r.products})
+                        } else {
+                            envelopeFields.products = r.products;
+                        }
+                        updatedOrderFields.push({orderId: r.orderId, fields: envelopeFields})
                         counts.updated++;
                     }
                 } else {
@@ -236,6 +257,7 @@ QtObject {
             if (mutationItems.length > 0) Gateway.recordMutations("order", mutationItems);
             counts.addedIds = addedIds;
             counts.updatedOrders = updatedOrders;
+            counts.updatedOrderFields = updatedOrderFields;
             if (callback) callback(counts);
         });
     }
@@ -519,6 +541,7 @@ QtObject {
         if (fields.customer      !== undefined) o.customer      = fields.customer;
         if (fields.email         !== undefined) o.email         = fields.email;
         if (fields.phone         !== undefined) o.phone         = fields.phone;
+        if (fields.date          !== undefined) o.date          = fields.date;
         if (fields.items         !== undefined) o.items         = fields.items;
         if (fields.notes         !== undefined) o.notes         = fields.notes;
         if (fields.products      !== undefined) o.products      = fields.products;
