@@ -165,7 +165,15 @@ QtObject {
     // Record a new receipt. `qty` and `unitCost` are immutable on the doc
     // (later FIFO consumption only touches `qtyRemaining`). Returns the
     // batch document including its generated id.
-    function addBatch(productId, supplierId, qty, unitCost, note) {
+    //
+    // deferWrite: when true, skips the individual Gateway.recordMutation
+    // call but still performs the local `batches` update synchronously (so
+    // sequential _nextBatchId() numbering across many calls in the same
+    // loop stays collision-free, exactly as it already is today) — the
+    // caller is responsible for collecting the returned doc and passing it
+    // to addBatchMany() once the whole batch is built. Used by bulk import,
+    // which would otherwise fire one individual write per row.
+    function addBatch(productId, supplierId, qty, unitCost, note, deferWrite) {
         if (!productId || !qty || qty <= 0) return null
         var nowIso = new Date().toISOString()
         var doc = {
@@ -184,8 +192,20 @@ QtObject {
         var arr = batches.slice()
         arr.push(doc)
         batches = arr
-        Gateway.recordMutation("stock_batch", doc.batchId, "create", null, doc)
+        if (!deferWrite) Gateway.recordMutation("stock_batch", doc.batchId, "create", null, doc)
         return doc
+    }
+
+    // Companion to addBatch(..., true) — fires ONE Gateway.recordMutations()
+    // call for every doc collected across a bulk-import loop, instead of
+    // one recordMutation() per row.
+    function addBatchMany(docs) {
+        if (!docs || docs.length === 0) return
+        var mutationItems = []
+        for (var i = 0; i < docs.length; ++i) {
+            mutationItems.push({ entityId: docs[i].batchId, action: "create", before: null, after: docs[i] })
+        }
+        Gateway.recordMutations("stock_batch", mutationItems)
     }
 
     // FIFO walker. Decrements qtyRemaining on the oldest batches until the

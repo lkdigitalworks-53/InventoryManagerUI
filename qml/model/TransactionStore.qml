@@ -94,7 +94,13 @@ QtObject {
         return "tx-" + kind + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000)
     }
 
-    function _push(doc) {
+    // deferWrite: when true, skips the individual Gateway.recordMutation
+    // call but still performs the local `entries` update synchronously —
+    // the caller collects the returned doc and passes it to a *Many()
+    // batch companion once the whole set is built. See addBatch's identical
+    // pattern in StockBatchStore.qml for why (bulk import otherwise fires
+    // one individual write per row).
+    function _push(doc, deferWrite) {
         var arr = (entries || []).slice()
         arr.unshift(doc)
         entries = arr
@@ -103,7 +109,8 @@ QtObject {
         // compliance gateway so each one lands with an immutable audit_log
         // entry. In "direct" mode (pre-deploy) the gateway writes the doc
         // exactly as before.
-        Gateway.recordMutation("transaction", doc.txId, "create", null, doc)
+        if (!deferWrite) Gateway.recordMutation("transaction", doc.txId, "create", null, doc)
+        return doc
     }
 
     function recordPurchase(productId, quantity, unitCost, productName, party, reason) {
@@ -129,7 +136,8 @@ QtObject {
     // Product-creation event. Always recorded for new products, even when
     // initial stock is 0 (qty: 0 row stays informational). Counts toward the
     // Purchased analytics bucket via bucketsFor(["purchase","created"], ...).
-    function recordCreated(productId, productName, initialStockQty, unitCost, snapshot, party) {
+    // deferWrite: see _push() — used by bulk import via recordCreatedMany.
+    function recordCreated(productId, productName, initialStockQty, unitCost, snapshot, party, deferWrite) {
         if (!productId) return
         var qty = parseInt(initialStockQty) || 0
         var cost = typeof unitCost === "number" ? unitCost : 0
@@ -152,7 +160,19 @@ QtObject {
             orderId: "",
             snapshot: snap
         }
-        _push(doc)
+        return _push(doc, deferWrite)
+    }
+
+    // Companion to recordCreated(..., true) — fires ONE
+    // Gateway.recordMutations() call for every doc collected across a
+    // bulk-import loop, instead of one recordMutation() per row.
+    function recordCreatedMany(docs) {
+        if (!docs || docs.length === 0) return
+        var mutationItems = []
+        for (var i = 0; i < docs.length; ++i) {
+            mutationItems.push({ entityId: docs[i].txId, action: "create", before: null, after: docs[i] })
+        }
+        Gateway.recordMutations("transaction", mutationItems)
     }
 
     // Single-field mutation. One row per changed field — keeps the product

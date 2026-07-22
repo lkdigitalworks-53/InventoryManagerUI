@@ -439,18 +439,24 @@ QtObject {
     // Book the ledger side-effects for an imported product so analytics
     // (Value / Purchased / Profit / by-supplier) populate exactly as if the
     // product had been created in-app. Opening batch only when stock > 0.
-    function _bookImportedProduct(doc) {
+    // transactionItems/stockBatchItems: caller-provided arrays this pushes
+    // the built (but not-yet-written) docs into, instead of each call firing
+    // its own individual Gateway write — see addBatchMany/recordCreatedMany.
+    function _bookImportedProduct(doc, transactionItems, stockBatchItems) {
         var supplierId = doc.supplierId || "";
         var batchCost = (typeof doc.price === "number" && !isNaN(doc.price)) ? doc.price : 0;
-        TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
+        var txDoc = TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
             sku: doc.sku || "", category: doc.category || "", unit: doc.unit || "",
             sellingPrice: doc.sellingPrice, taxable: doc.taxable, taxPercent: doc.taxPercent,
             size: doc.size || "",
             minStock: doc.minStock || 0, description: doc.description || "",
             supplierId: supplierId, origin: "imported"
-        }, supplierId);
-        if (doc.stock > 0)
-            StockBatchStore.addBatch(doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock");
+        }, supplierId, true);
+        if (txDoc) transactionItems.push(txDoc);
+        if (doc.stock > 0) {
+            var batchDoc = StockBatchStore.addBatch(doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock", true);
+            if (batchDoc) stockBatchItems.push(batchDoc);
+        }
     }
 
     // Persist a photo URL on a product. Per-doc PATCH bypasses the bulk-PUT
@@ -599,6 +605,8 @@ QtObject {
         var byId = {};
         var updatedProducts = counts.updatedProducts;
         var mutationItems = [];
+        var transactionItems = [];
+        var stockBatchItems = [];
         for (var i = 0; i < arr.length; ++i) {
             byId[arr[i].productId] = i;
         }
@@ -623,7 +631,7 @@ QtObject {
                     arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
                     mutationItems.push({ entityId: renamedDoc.productId, action: "create", before: null, after: renamedDoc });
-                    _bookImportedProduct(renamedDoc);
+                    _bookImportedProduct(renamedDoc, transactionItems, stockBatchItems);
                     counts.added++;
                     continue;
                 }
@@ -661,13 +669,15 @@ QtObject {
                 arr.push(doc);
                 byId[doc.productId] = arr.length - 1;
                 mutationItems.push({ entityId: doc.productId, action: "create", before: null, after: doc });
-                _bookImportedProduct(doc);
+                _bookImportedProduct(doc, transactionItems, stockBatchItems);
                 counts.added++;
             }
         }
 
         products = arr;
         if (mutationItems.length > 0) Gateway.recordMutations("inventory", mutationItems);
+        if (transactionItems.length > 0) TransactionStore.recordCreatedMany(transactionItems);
+        if (stockBatchItems.length > 0) StockBatchStore.addBatchMany(stockBatchItems);
     }
 
     function _normalizeRecord(r) {
