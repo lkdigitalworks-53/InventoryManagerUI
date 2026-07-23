@@ -32,6 +32,12 @@ BottomSheet {
     property var _issueRows: []
     property var _warnRows: []
     property string _fileName: ""
+    // Raw (order-mode only) rows from the last _loadFile(), kept around so
+    // _setRowPolicy/_setAllPolicy can re-run _validateOrderRows with the
+    // now-known policy instead of leaving the preview's stock-check numbers
+    // computed under whatever assumption was in effect before any policy
+    // was chosen.
+    property var _rawOrderRows: []
 
     signal filePickRequested()
     signal importCompleted(string message)
@@ -373,8 +379,10 @@ BottomSheet {
         }
         if (mode === "products")
             _validateProductRows(rows)
-        else
-            _validateOrderRows(rows)
+        else {
+            _rawOrderRows = rows
+            _validateOrderRows(rows, {})
+        }
     }
 
     function _validateProductRows(rows) {
@@ -496,7 +504,8 @@ BottomSheet {
         _warnRows = warns
     }
 
-    function _validateOrderRows(rows) {
+    function _validateOrderRows(rows, policyByOrderId) {
+        policyByOrderId = policyByOrderId || {}
         var ready = []
         var issues = []
         var warns = []
@@ -599,20 +608,24 @@ BottomSheet {
                 // completed-status row needs to fit in what's on hand —
                 // matches how the rest of the app (NewOrderDialog,
                 // completeImportedOrder) only enforces stock at completion
-                // time, not for pending/processing orders. For a product
-                // already on the order being updated, only the requested
-                // increase over what's already booked has to fit; a brand
-                // new line that doesn't fit is dropped rather than imported
-                // partially. Checked against remainingStock (this product's
-                // running tally across the whole batch), not the static
-                // idToProduct snapshot, so two orders in the same file
-                // competing for the same stock can't both silently "pass".
-                // See ImportMath.checkOrderLineStockAcrossBatch.
+                // time, not for pending/processing orders. This is
+                // policy-aware: an "overwrite" row genuinely modifies the
+                // SAME existing order in place, so only the increase over
+                // what's already booked on it needs to fit. Anything else —
+                // rename (a brand-new, separate order; the existing one is
+                // left untouched and keeps its own booked stock), skip, or
+                // no policy chosen yet — represents the row's FULL quantity
+                // as new demand, since it isn't modifying that existing
+                // booking at all. Re-validated by _setRowPolicy/_setAllPolicy
+                // whenever the user actually picks a policy, so this always
+                // reflects what will really happen, not a guess made before
+                // the choice existed.
                 var existingLine = ImportMath.findOrderLineByProductId(
                     existingById[grp.key] ? existingById[grp.key].products : null, pid)
+                var isOverwrite = policyByOrderId[grp.key] === "overwrite"
                 if (remainingStock[pid] === undefined) remainingStock[pid] = inv.stock
                 var stockCheck = ImportMath.checkOrderLineStockAcrossBatch(
-                    existingLine ? existingLine.quantity : null, inv.stock, remainingStock[pid],
+                    (existingLine && isOverwrite) ? existingLine.quantity : null, inv.stock, remainingStock[pid],
                     qty, status === allowed[2])
                 if (stockCheck.issue) {
                     warns.push({ row: lineRow, message: inv.name + ": " + stockCheck.issue
@@ -675,9 +688,10 @@ BottomSheet {
             }
             prods = lineMerge.lines
 
+            var resolvedOrderId = grp.key.indexOf("_anon_") === 0 ? "" : grp.key
             var rec = {
                 row: grp.firstRow,
-                orderId: grp.key.indexOf("_anon_") === 0 ? "" : grp.key,
+                orderId: resolvedOrderId,
                 customer: customer,
                 email: (head["Email"] || "").toString().trim(),
                 phone: (head["Phone"] || "").toString().trim(),
@@ -685,7 +699,7 @@ BottomSheet {
                 date: orderDate,
                 notes: (head["Notes"] || "").toString(),
                 products: prods,
-                _conflictPolicy: "skip"
+                _conflictPolicy: policyByOrderId[resolvedOrderId] || "skip"
             }
             rec._conflictWith = (rec.orderId && existingById[rec.orderId]) ? rec.orderId : ""
             ready.push(rec)
@@ -703,6 +717,15 @@ BottomSheet {
             + (rec.date ? "  ·  " + rec.date : "")
     }
 
+    function _currentPolicyByOrderId() {
+        var map = {}
+        for (var i = 0; i < _readyRows.length; ++i) {
+            var r = _readyRows[i]
+            if (r.orderId) map[r.orderId] = r._conflictPolicy
+        }
+        return map
+    }
+
     function _setAllPolicy(policy) {
         var next = []
         for (var i = 0; i < _readyRows.length; ++i) {
@@ -712,6 +735,7 @@ BottomSheet {
             next.push(r)
         }
         _readyRows = next
+        if (mode !== "products") _validateOrderRows(_rawOrderRows, _currentPolicyByOrderId())
     }
 
     function _setRowPolicy(idx, policy) {
@@ -719,6 +743,7 @@ BottomSheet {
         var next = _readyRows.slice()
         next[idx]._conflictPolicy = policy
         _readyRows = next
+        if (mode !== "products") _validateOrderRows(_rawOrderRows, _currentPolicyByOrderId())
     }
 
     function _effectiveCount() {
