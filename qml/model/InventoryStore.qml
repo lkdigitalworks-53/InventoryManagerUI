@@ -554,11 +554,14 @@ QtObject {
                 }
 
                 var nameToSupplierId = {};
+                var supplierItems = [];
                 for (var ni = 0; ni < newSupplierNames.length; ++ni) {
                     var newSupId = 'SUP-' + String(supStart + ni + 1).padStart(3, '0');
-                    SupplierStore.addSupplierWithId(newSupId, newSupplierNames[ni]);
+                    var supDoc = SupplierStore.addSupplierWithId(newSupId, newSupplierNames[ni], true);
+                    if (supDoc) supplierItems.push(supDoc);
                     nameToSupplierId[newSupplierNames[ni].toLowerCase()] = newSupId;
                 }
+                if (supplierItems.length > 0) SupplierStore.addSupplierWithIdMany(supplierItems);
 
                 var mintedProductIdx = 0;
                 function pullProductId() {

@@ -154,7 +154,9 @@ QtObject {
     // InventoryStore.upsertMany) rather than minting once per row — the
     // caller is responsible for having already deduped by name and for the
     // id actually being reserved (via FirebaseService.mintCounterBatch).
-    function addSupplierWithId(id, name) {
+    // deferWrite: see StockBatchStore.addBatch's identical pattern for why
+    // (bulk import otherwise fires one individual write per new supplier).
+    function addSupplierWithId(id, name, deferWrite) {
         var trimmed = String(name).trim()
         var nowIso = new Date().toISOString()
         var doc = {
@@ -165,8 +167,20 @@ QtObject {
         arr.push(doc)
         arr.sort(function(a, b) { return (a.name || "").localeCompare(b.name || "") })
         suppliers = arr
-        Gateway.recordMutation("supplier", doc.supplierId, "create", null, doc)
+        if (!deferWrite) Gateway.recordMutation("supplier", doc.supplierId, "create", null, doc)
         return doc
+    }
+
+    // Companion to addSupplierWithId(..., true) — fires ONE
+    // Gateway.recordMutations() call for every doc collected across a
+    // bulk-import loop, instead of one recordMutation() per new supplier.
+    function addSupplierWithIdMany(docs) {
+        if (!docs || docs.length === 0) return
+        var mutationItems = []
+        for (var i = 0; i < docs.length; ++i) {
+            mutationItems.push({ entityId: docs[i].supplierId, action: "create", before: null, after: docs[i] })
+        }
+        Gateway.recordMutations("supplier", mutationItems)
     }
 
     // Adds a supplier (deduped case-insensitively by name). Async now — see
