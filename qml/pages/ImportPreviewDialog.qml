@@ -793,19 +793,31 @@ BottomSheet {
                 for (var f = 0; f < updateOrderFields.length; ++f) {
                     logic.updateOrder(updateOrderFields[f].orderId, updateOrderFields[f].fields)
                 }
+                var failedAdjustments = 0
                 for (var j = 0; j < updateOrders.length; ++j) {
-                    logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
+                    if (dataModelRef) {
+                        var adjRes = dataModelRef.adjustOrderForImport(
+                            updateOrders[j].orderId, updateOrders[j].products,
+                            "import orders", "", "Import conflict: Overwrite with conflicted data")
+                        if (!adjRes || !adjRes.ok) failedAdjustments++
+                    } else {
+                        // No direct DataModel reference available — fall back
+                        // to the signal path (no per-row failure visibility,
+                        // same as before this fix).
+                        logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
+                    }
                 }
-                _finishApply(counts, understocked)
+                _finishApply(counts, understocked, failedAdjustments)
             })
         }
     }
 
-    function _finishApply(counts, understocked) {
+    function _finishApply(counts, understocked, failedAdjustments) {
         var n = counts.added + counts.updated
         var msg = "Imported " + n + " row" + (n === 1 ? "" : "s")
         if (counts.skipped > 0) msg += " · " + counts.skipped + " skipped"
         if (understocked > 0) msg += " · " + understocked + " completed with insufficient stock"
+        if (failedAdjustments > 0) msg += " · " + failedAdjustments + " overwrite" + (failedAdjustments === 1 ? "" : "s") + " could not be applied (insufficient stock)"
         if (_warnRows.length > 0) msg += " · " + _warnRows.length + " warning(s)"
 
         ActivityLog.record("import",

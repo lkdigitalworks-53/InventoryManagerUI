@@ -476,6 +476,23 @@ Item {
         return { ok: true, understocked: understocked }
     }
 
+    // Import-facing counterpart to onAdjustOrder's signal handler. The
+    // signal path (logic.adjustOrder -> onAdjustOrder -> _tryAdjustOrder)
+    // is fire-and-forget: a bulk import applying several overwrite rows in
+    // a loop would have no way to know which ones failed a stock check, so
+    // failures would silently vanish into a single, likely-overwritten
+    // global error toast instead of the import's own per-row summary.
+    // Mirrors completeImportedOrder's existing precedent of calling
+    // straight into DataModel instead of through the signal for exactly
+    // this reason -- no RBAC check here either, matching that precedent,
+    // since import-level access is gated at the import entry point, not
+    // per adjustment operation.
+    function adjustOrderForImport(orderId, newLines, reason, condition, note) {
+        dataModel.stockErrorMsg = ""
+        var ok = _tryAdjustOrder(orderId, newLines, reason, condition, note)
+        return { ok: ok, message: ok ? "" : dataModel.stockErrorMsg }
+    }
+
     // Reverse a COMPLETED order back to an un-booked state. Mirrors a full
     // return on every line: restores each line's consumed batches to sellable
     // stock, credits product.stock, and appends a negating ledger event so the
@@ -540,6 +557,20 @@ Item {
             return false
         }
 
+        var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
+        for (var pf = 0; pf < deltas.length; ++pf) {
+            var pfd = deltas[pf]
+            if (pfd.addedQty > 0) {
+                var pfInv = InventoryStore.getById(pfd.productId)
+                var pfStock = pfInv ? pfInv.stock : 0
+                if (pfStock < pfd.addedQty) {
+                    dataModel.stockErrorMsg = (pfd.name || pfd.productId) + ": not enough stock to add "
+                        + pfd.addedQty + " more (only " + Math.max(0, pfStock) + " available)"
+                    return false
+                }
+            }
+        }
+
         var alloc = OrderMath.allocate(o)
         var allocByPid = {}
         for (var ai = 0; ai < alloc.perLine.length; ++ai) {
@@ -547,7 +578,6 @@ Item {
             allocByPid[pl.productId] = pl
         }
 
-        var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
         var refundAmount = 0
         var restock = (condition !== "damaged")
         // Capture FIFO lineage for any ADDED units (exchange replacement / qty
