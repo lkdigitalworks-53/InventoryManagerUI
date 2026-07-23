@@ -628,10 +628,28 @@ BottomSheet {
                     (existingLine && isOverwrite) ? existingLine.quantity : null, inv.stock, remainingStock[pid],
                     qty, status === allowed[2])
                 if (stockCheck.issue) {
-                    warns.push({ row: lineRow, message: inv.name + ": " + stockCheck.issue
-                        + (stockCheck.crossOrder ? " — only " + Math.max(0, remainingStock[pid])
-                            + " left after earlier rows in this import" : "")
-                        + (stockCheck.reject ? " — line skipped" : " — quantity kept unchanged") })
+                    var crossOrderNote = stockCheck.crossOrder
+                        ? " (only " + Math.max(0, remainingStock[pid]) + " left after earlier rows in this import)"
+                        : ""
+                    var stockMsg
+                    if (stockCheck.reject) {
+                        // rename/no-policy-yet: the row is brand-new demand
+                        // that doesn't fit at all — the whole row is dropped.
+                        stockMsg = inv.name + ": insufficient stock for " + qty + " units"
+                            + crossOrderNote + " — entire row will not be imported"
+                    } else {
+                        // overwrite: this order is being modified in place,
+                        // so only the requested INCREASE over what it
+                        // already has booked is new demand. Some or all of
+                        // that increase doesn't fit — show exactly how much,
+                        // and be explicit that it's being dropped (not the
+                        // whole line) because a completed order's stock
+                        // impact can't be revised by import beyond that.
+                        var shortfall = qty - stockCheck.qty
+                        stockMsg = inv.name + ": " + shortfall + " of the requested increase is out of stock"
+                            + crossOrderNote + " — will not be imported since this order is completed (kept at " + stockCheck.qty + ")"
+                    }
+                    warns.push({ row: lineRow, message: stockMsg })
                 }
                 remainingStock[pid] -= stockCheck.netNew
                 if (stockCheck.reject) continue
