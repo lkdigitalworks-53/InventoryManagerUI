@@ -573,6 +573,12 @@ BottomSheet {
 
             var prods = []
             var unresolved = []
+            // Set when a brand-new line's full quantity doesn't fit total
+            // stock at all — the order still gets imported (not dropped),
+            // but forced to pending instead of whatever status the file
+            // specified, so it never attempts to consume stock via
+            // completeImportedOrder. See the reject branch below.
+            var forcePending = false
             for (var rr = 0; rr < grp.rows.length; ++rr) {
                 var lineSrc = grp.rows[rr].raw
                 var lineRow = grp.rows[rr].row
@@ -633,10 +639,15 @@ BottomSheet {
                         : ""
                     var stockMsg
                     if (stockCheck.reject) {
-                        // rename/no-policy-yet: the row is brand-new demand
-                        // that doesn't fit at all — the whole row is dropped.
-                        stockMsg = inv.name + ": insufficient stock for " + qty + " units"
-                            + crossOrderNote + " — entire row will not be imported"
+                        // rename/no-policy-yet/genuinely-new-order: the full
+                        // quantity is new demand that doesn't fit at all.
+                        // Per Taher's explicit spec: don't drop the line and
+                        // don't complete it oversold either — keep the line
+                        // as requested, but force the whole order to pending
+                        // so it never attempts to consume stock at all.
+                        stockMsg = inv.name + ": insufficient stock for the full " + qty + " units requested"
+                            + crossOrderNote + " — order will still be imported, but as pending (not completed)"
+                        forcePending = true
                     } else {
                         // overwrite: this order is being modified in place,
                         // so only the requested INCREASE over what it
@@ -652,7 +663,6 @@ BottomSheet {
                     warns.push({ row: lineRow, message: stockMsg })
                 }
                 remainingStock[pid] -= stockCheck.netNew
-                if (stockCheck.reject) continue
                 qty = stockCheck.qty
 
                 // DEFAULT+WARN: missing Unit Price
@@ -713,7 +723,7 @@ BottomSheet {
                 customer: customer,
                 email: (head["Email"] || "").toString().trim(),
                 phone: (head["Phone"] || "").toString().trim(),
-                status: status,
+                status: forcePending ? "pending" : status,
                 date: orderDate,
                 notes: (head["Notes"] || "").toString(),
                 products: prods,
