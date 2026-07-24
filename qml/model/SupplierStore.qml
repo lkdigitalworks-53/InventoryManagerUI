@@ -229,6 +229,24 @@ QtObject {
         for (var i = 0; i < suppliers.length; ++i)
             if (suppliers[i].supplierId === supplierId) { idx = i; break }
         if (idx < 0) return null
+
+        if (fields.name !== undefined) {
+            // addSupplier already treats names as unique (finds-or-returns
+            // the existing one rather than creating a duplicate) — rename
+            // should honor the same rule instead of allowing two suppliers
+            // to end up sharing a name, which findByName's exact-match
+            // free-text resolution (import/restock/add-product) would then
+            // resolve inconsistently. Reject the whole update rather than
+            // partially applying other fields — simplest to reason about,
+            // matching how conflicts get handled elsewhere this session.
+            var trimmedName = String(fields.name).trim()
+            var lowerName = trimmedName.toLowerCase()
+            for (var ci = 0; ci < suppliers.length; ++ci) {
+                if (suppliers[ci].supplierId === supplierId) continue // itself is never a collision
+                if ((suppliers[ci].name || "").toLowerCase() === lowerName) return null
+            }
+        }
+
         var arr = suppliers.slice()
         var before = Object.assign({}, arr[idx])
         var s = Object.assign({}, arr[idx])
