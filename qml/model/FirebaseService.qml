@@ -487,6 +487,33 @@ QtObject {
     // pass the current max(existing ids) so a tenant with pre-existing data
     // doesn't restart numbering from 1. Once the doc exists, its stored
     // value is authoritative and `seedValue` is ignored on every later call.
+    // Exponential backoff with jitter for mint retries — see _delayedRetry.
+    // Deterministic given the same randomFn, so this piece alone is
+    // Node-testable; the actual Timer-based delay execution below isn't.
+    function _computeRetryDelayMs(attempt, baseMs, maxMs, randomFn) {
+        var rand = randomFn || Math.random
+        var exp = Math.min(maxMs, baseMs * Math.pow(2, attempt))
+        return Math.round(exp * (0.5 + rand()))
+    }
+
+    // Runs fn() after a jittered exponential-backoff delay instead of
+    // immediately — without this, several concurrent mint calls hitting the
+    // same precondition conflict would all retry in the same instant and
+    // likely collide again. Each call creates its own independent one-shot
+    // Timer (not a shared/reused one), so concurrent retries for different
+    // counters (e.g. "counters/products" and "counters/suppliers" minting
+    // at the same time) never interfere with each other.
+    function _delayedRetry(attempt, fn) {
+        var delayMs = _computeRetryDelayMs(attempt, 100, 2000)
+        var timer = Qt.createQmlObject(
+            'import QtQuick; Timer { interval: ' + delayMs + '; running: true; repeat: false }',
+            root, "mintRetryTimer")
+        timer.triggered.connect(function() {
+            timer.destroy()
+            fn()
+        })
+    }
+
     function mintCounterValue(path, seedValue, callback, _attempt) {
         var attempt = _attempt || 0
         if (attempt >= 8) {
@@ -528,7 +555,12 @@ QtObject {
                 // failure, quota, 5xx) is treated as potentially transient
                 // and retried with a fresh read, same as before. Firestore
                 // guarantees whoever committed first is reflected in it now.
-                mintCounterValue(path, seedValue, callback, attempt + 1)
+                // Waits a jittered backoff first — an immediate retry is
+                // exactly how several concurrent callers hitting the same
+                // conflict end up colliding again on the very next attempt.
+                _delayedRetry(attempt, function() {
+                    mintCounterValue(path, seedValue, callback, attempt + 1)
+                })
             })
         })
     }
@@ -571,7 +603,9 @@ QtObject {
                     if (callback) callback(false, 0)
                     return
                 }
-                mintCounterBatch(path, seedValue, count, callback, attempt + 1)
+                _delayedRetry(attempt, function() {
+                    mintCounterBatch(path, seedValue, count, callback, attempt + 1)
+                })
             })
         })
     }
