@@ -512,10 +512,21 @@ QtObject {
                 update: { name: docName, fields: _encodeDoc({ value: next }).fields },
                 currentDocument: exists ? { updateTime: doc.updateTime } : { exists: false }
             }
-            _request("POST", databaseUrl + ":commit", { writes: [write] }, function(commitOk) {
+            _request("POST", databaseUrl + ":commit", { writes: [write] }, function(commitOk, commitData, commitStatus, commitError) {
                 if (commitOk) { if (callback) callback(true, next); return }
-                // FAILED_PRECONDITION: someone else's write landed between our
-                // read and this commit. Retry with a fresh read — Firestore
+                // 401/403 will never succeed by retrying — same credentials,
+                // same result every time. Give up immediately instead of
+                // burning all 8 attempts (and the latency of 8 fresh
+                // GET+commit round trips) on something retrying can't fix.
+                if (commitStatus === 401 || commitStatus === 403) {
+                    console.warn("[Firestore] mintCounterValue non-retryable failure (status", commitStatus + "), giving up:", path, commitError)
+                    if (callback) callback(false, 0)
+                    return
+                }
+                // Anything else (400 FAILED_PRECONDITION — someone else's
+                // write landed between our read and this commit — network
+                // failure, quota, 5xx) is treated as potentially transient
+                // and retried with a fresh read, same as before. Firestore
                 // guarantees whoever committed first is reflected in it now.
                 mintCounterValue(path, seedValue, callback, attempt + 1)
             })
@@ -553,8 +564,13 @@ QtObject {
                 update: { name: docName, fields: _encodeDoc({ value: reservedThrough }).fields },
                 currentDocument: exists ? { updateTime: doc.updateTime } : { exists: false }
             }
-            _request("POST", databaseUrl + ":commit", { writes: [write] }, function(commitOk) {
+            _request("POST", databaseUrl + ":commit", { writes: [write] }, function(commitOk, commitData, commitStatus, commitError) {
                 if (commitOk) { if (callback) callback(true, current); return }
+                if (commitStatus === 401 || commitStatus === 403) {
+                    console.warn("[Firestore] mintCounterBatch non-retryable failure (status", commitStatus + "), giving up:", path, commitError)
+                    if (callback) callback(false, 0)
+                    return
+                }
                 mintCounterBatch(path, seedValue, count, callback, attempt + 1)
             })
         })
