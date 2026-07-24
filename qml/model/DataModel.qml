@@ -175,6 +175,17 @@ Item {
                 logic.errorOccurred("auth", "You do not have permission to delete orders")
                 return
             }
+            var order = OrdersStore.getById(orderId)
+            if (order && order.status === "completed") {
+                // A completed order has booked stock/FIFO/sale events —
+                // deleting it outright would orphan all of that with no
+                // reversal. Reopening (which already reverses everything,
+                // see onUpdateOrder's revert branch) before delete is the
+                // safe path; reject rather than silently cascade-reverse as
+                // a side effect of what the user asked for as a plain delete.
+                logic.errorOccurred("order", "Completed orders can't be deleted directly — reopen it to pending first, then delete")
+                return
+            }
             OrdersStore.deleteOrder(orderId)
             _syncOrdersModel()
             logic.orderDeleted(orderId)
