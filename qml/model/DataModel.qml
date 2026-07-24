@@ -114,9 +114,19 @@ Item {
                 }
             } else if (wasCompleted && fields.status !== undefined) {
                 // Reverting a COMPLETED order back to pending/processing (or any
-                // non-completed status). The completion deducted stock and booked
-                // sale events; reopening MUST reverse both or the inventory and
-                // the analysis reports permanently overcount (bug 1). This also
+                // non-completed status) reverses booked stock/FIFO/sale events —
+                // significant enough to gate the same way onAdjustOrder already
+                // does. Safe to add here without touching import: import's own
+                // field-update payload (OrdersStore.upsertMany's envelopeFields)
+                // never includes `status` at all, so it can never reach this
+                // branch regardless of who's running the import.
+                if (!_hasAnyRole(["owner", "admin", "manager"])) {
+                    logic.errorOccurred("auth", "You do not have permission to reopen a completed order")
+                    return
+                }
+                // The completion deducted stock and booked sale events;
+                // reopening MUST reverse both or the inventory and the
+                // analysis reports permanently overcount (bug 1). This also
                 // makes a later re-completion a clean, fresh deduction instead of
                 // a second one stacked on top (bug 2). Reversal reads the order's
                 // current consumption[] lineage, so it MUST run before the
