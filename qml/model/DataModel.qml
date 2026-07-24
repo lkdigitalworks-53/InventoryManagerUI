@@ -221,12 +221,15 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
-            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok) {
+            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed) {
                 if (!ok) {
                     logic.errorOccurred("network", "Could not restock — try again")
                     return
                 }
                 logic.productRestocked(productId)
+                if (supplierFailed) {
+                    logic.errorOccurred("network", "Restocked, but the supplier could not be recorded — edit it manually if needed")
+                }
             })
         }
 

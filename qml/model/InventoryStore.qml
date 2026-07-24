@@ -357,7 +357,12 @@ QtObject {
         // id/name resolves synchronously-fast via the callback), then mint
         // the productId, then build+persist the product. Both mints go
         // through FirebaseService.mintCounterValue (see its comment for why).
-        _resolveSupplierId(party, function(supplierId) {
+        _resolveSupplierId(party, function(supplierId, supplierFailed) {
+            if (supplierFailed) {
+                console.warn("[InventoryStore] could not create the requested supplier — add aborted")
+                if (callback) callback(false, "")
+                return
+            }
             nextProductId(function(id) {
                 if (!id) {
                     console.warn("[InventoryStore] could not mint a productId — add aborted")
@@ -421,18 +426,22 @@ QtObject {
     // records. Always calls back via the callback, even on the fast/already-
     // resolved paths, so callers don't have to special-case sync vs async.
     function _resolveSupplierId(party, callback) {
-        if (!party) { callback(""); return }
+        if (!party) { callback("", false); return }
         var raw = String(party);
         // Already an id?
         if (raw.indexOf("SUP-") === 0) {
             var byId = SupplierStore.getById(raw);
-            callback(byId ? byId.supplierId : raw);
+            callback(byId ? byId.supplierId : raw, false);
             return;
         }
         var byName = SupplierStore.findByName(raw);
-        if (byName) { callback(byName.supplierId); return; }
+        if (byName) { callback(byName.supplierId, false); return; }
         SupplierStore.addSupplier({ name: raw }, function(created) {
-            callback(created ? created.supplierId : "");
+            // `failed` is true only when the caller asked for a genuinely
+            // new supplier and creation didn't happen (network drop etc) —
+            // distinct from an empty party, which is a legitimate "no
+            // supplier requested" and never a failure.
+            callback(created ? created.supplierId : "", !created);
         });
     }
 
@@ -800,7 +809,7 @@ QtObject {
         products = arr;
         if (!changed) { if (callback) callback(false); return }
 
-        _resolveSupplierId(party, function(supplierId) {
+        _resolveSupplierId(party, function(supplierId, supplierFailed) {
             var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
             var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (changed.price || 0);
             var reasonText = (reason || "").trim();
@@ -817,7 +826,14 @@ QtObject {
             // along in the batch's existing (currently unrendered) note field.
             StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
             Gateway.recordMutation("inventory", productId, "update", before, changed);
-            if (callback) callback(true)
+            // Unlike addProduct, the stock change above is already committed
+            // (both locally at the top of this function and to Firestore on
+            // the line above) by the time supplier resolution's outcome is
+            // known — aborting here would leave local state ahead of what's
+            // persisted. So restock still succeeds even if supplier creation
+            // failed; supplierFailed just lets the caller surface a
+            // non-blocking notice that attribution specifically didn't stick.
+            if (callback) callback(true, supplierFailed)
         })
     }
 
