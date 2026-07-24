@@ -384,7 +384,7 @@ QtObject {
 
     // Reactive properties – UI binds directly to these
     property int revision: 0
-    property int pendingOrderCount: 2
+    property int pendingOrderCount: 0
     property int completedOrderCount: 0
     property int outOfStockCount: 0
     readonly property int count: orders.length

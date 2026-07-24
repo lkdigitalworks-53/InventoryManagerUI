@@ -628,7 +628,8 @@ QtObject {
             var policy = r._conflictPolicy || "skip";
             r.supplierId = resolveSupplierForRecord(r);
 
-            // Resolve conflict by id first, then by SKU
+            // Match an existing product by productId only — never by name
+            // or SKU (both can legitimately duplicate across products).
             var existingIdx = -1;
             if (r.productId && byId[r.productId] !== undefined)
                 existingIdx = byId[r.productId];
