@@ -74,6 +74,20 @@ BottomSheet {
 
     onPrimaryClicked: {
         if (busy) return
+        // Defense in depth: the Restock button itself is already hidden
+        // from non-owner/admin users (InventoryPage's canManage, bound to
+        // AuthStore.canManageInventory — same role set as onRestockProduct's
+        // gate), so this isn't reachable via the normal UI today. But this
+        // dialog calls InventoryStore.restock directly, bypassing the
+        // logic.restockProduct signal (and its RBAC check) entirely — if
+        // this dialog is ever opened from anywhere else, or the button's
+        // visibility binding is ever forgotten in a future refactor,
+        // nothing else stands in the way. Mirrors onRestockProduct's exact
+        // check rather than relying solely on the button being hidden.
+        if (!AuthStore.canManageInventory) {
+            Toast.show("Only owner/admin can restock products")
+            return
+        }
         var supplierId = partyCombo.currentIndex > 0
                 ? dlg._supplierIds[partyCombo.currentIndex]
                 : ""
