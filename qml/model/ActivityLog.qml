@@ -42,21 +42,65 @@ QtObject {
     Component.onCompleted: _fetchFromFirebase()
 
     function _fetchFromFirebase() {
-        FirebaseService.get("activity_log", function(ok, data) {
-            if (!ok) {
-                console.warn("[ActivityLog] Firestore sync failed",
-                             FirebaseService.lastStatusCode, FirebaseService.lastError)
-                return
-            }
-            var arr = FirebaseService.toArray(data)
-            arr.sort(function(a, b) {
-                return (b.timestamp || "").localeCompare(a.timestamp || "")
+        // Was FirebaseService.get("activity_log", ...) — fetched the ENTIRE
+        // collection every time, just to keep the newest 50 client-side.
+        // Harmless while the collection was small, but the collection was
+        // never actually pruned in Firestore (see _pruneOldEntries below),
+        // so this cost kept growing forever. query() with orderBy+limit
+        // fetches only what's needed directly.
+        FirebaseService.query("activity_log",
+            { orderBy: "timestamp", direction: "DESCENDING", limit: 50 },
+            function(ok, result) {
+                if (!ok || !result) {
+                    console.warn("[ActivityLog] Firestore sync failed",
+                                 FirebaseService.lastStatusCode, FirebaseService.lastError)
+                    return
+                }
+                entries = result.items || []
+                revision++
+                console.log("[ActivityLog] Synced", entries.length, "entries")
+                // Best-effort cleanup of anything beyond the 50-cap — runs on
+                // every sync (not just after record()), so a pre-existing
+                // backlog from before this fix starts converging on the very
+                // next app launch instead of waiting for new activity. Reuses
+                // this same query's result instead of firing a redundant
+                // duplicate first-stage query the way record()'s call has to.
+                _pruneFromCursor(result)
             })
-            if (arr.length > 50) arr = arr.slice(0, 50)
-            entries = arr
-            revision++
-            console.log("[ActivityLog] Synced", arr.length, "entries")
-        })
+    }
+
+    // Firestore itself was never pruned past the 50-cap — only the local
+    // `entries` array was. Every record() call added one more permanent
+    // document, forever, regardless of the client-side cap. Deletes
+    // anything Firestore actually holds beyond the newest 50 (by
+    // timestamp), a bounded batch at a time (20) rather than attempting a
+    // full cleanup in one pass — a large pre-existing backlog converges
+    // over several calls instead of risking one huge delete burst.
+    function _pruneOldEntries() {
+        FirebaseService.query("activity_log",
+            { orderBy: "timestamp", direction: "DESCENDING", limit: 50 },
+            function(ok, result) {
+                if (!ok || !result) return
+                _pruneFromCursor(result)
+            })
+    }
+
+    // Shared second stage: given a first-page query result (whichever
+    // caller already has one), fetches and deletes whatever lies beyond it.
+    function _pruneFromCursor(result) {
+        if (!result.hasMore || !result.nextCursor) return
+        FirebaseService.query("activity_log",
+            { orderBy: "timestamp", direction: "DESCENDING", limit: 20, startAfter: result.nextCursor },
+            function(ok2, overflow) {
+                if (!ok2 || !overflow || !overflow.items) return
+                for (var i = 0; i < overflow.items.length; ++i) {
+                    (function(staleId) {
+                        FirebaseService.remove("activity_log/" + staleId, function(ok3) {
+                            if (!ok3) console.warn("[ActivityLog] prune delete failed for", staleId)
+                        })
+                    })(overflow.items[i].id)
+                }
+            })
     }
 
     function syncFromFirebase() { _fetchFromFirebase() }
@@ -135,6 +179,7 @@ QtObject {
         entries = arr
         revision++
         _pushOneToFirebase(newEntry)
+        _pruneOldEntries()
     }
 
     function markAllRead() {
