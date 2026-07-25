@@ -791,7 +791,7 @@ BottomSheet {
                 var updatedProducts = counts.updatedProducts || []
                 for (var i = 0; i < updatedProducts.length; ++i) {
                     logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields,
-                                        "Import conflict: Overwrite with conflicted data")
+                                        "Import: overwrite")
                 }
                 _finishApply(counts, 0)
             })
@@ -826,13 +826,13 @@ BottomSheet {
                     if (dataModelRef) {
                         var adjRes = dataModelRef.adjustOrderForImport(
                             updateOrders[j].orderId, updateOrders[j].products,
-                            "import orders", "", "Import conflict: Overwrite with conflicted data")
+                            "import orders", "", "Import: overwrite")
                         if (!adjRes || !adjRes.ok) failedAdjustments++
                     } else {
                         // No direct DataModel reference available — fall back
                         // to the signal path (no per-row failure visibility,
                         // same as before this fix).
-                        logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
+                        logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import: overwrite")
                     }
                 }
                 _finishApply(counts, understocked, failedAdjustments)
