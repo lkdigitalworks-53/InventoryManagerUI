@@ -375,9 +375,15 @@ Item {
     function _filteredOrders() {
         var orders = _scopedOrders().slice()
         orders.sort(function(a, b) {
-            var ta = new Date(a.updatedAt || a.date).getTime() || 0
-            var tb = new Date(b.updatedAt || b.date).getTime() || 0
-            return tb - ta
+            //Note: changed the sorting to id based instead of time updated time based.
+            // Kept the code for future references.
+            // var ta = new Date(a.updatedAt || a.date).getTime() || 0
+            // var tb = new Date(b.updatedAt || b.date).getTime() || 0
+            // return tb - ta
+            var aId = parseInt(String(a.orderId).split('-')[1])
+            var bId = parseInt(String(b.orderId).split('-')[1])
+            return bId - aId
+
         })
         var q = (root._searchText || "").toLowerCase().trim()
         var statusFilter = root._statusFilter
@@ -410,7 +416,7 @@ Item {
         var scoped = _scopedOrders()
         var failed = []
         for (var i = 0; i < scoped.length; ++i) {
-            if (scoped[i].status === "pending") {
+            if (scoped[i].status === "pending" || scoped[i].status === "processing") {
                 if (!dataModel.tryCompleteOrder(scoped[i].orderId))
                     failed.push(scoped[i].orderId)
             }
