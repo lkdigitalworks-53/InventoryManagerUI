@@ -461,6 +461,155 @@ QtObject {
         runNext()
     }
 
+    // Atomically mints the next integer from a counter document at `path`
+    // (e.g. "counters/products", tenant-scoped like every other path this
+    // service handles). Returns callback(ok, mintedValue).
+    //
+    // Why this exists: nextProductId()/nextOrderId()/nextStaffId()/
+    // nextSupplierId() used to compute max(existing id numbers) + 1 from the
+    // locally-synced array. That reuses an id the moment the highest-numbered
+    // record is deleted (a new record can mint the SAME id a deleted one
+    // used to have, silently inheriting its orphaned transaction/batch
+    // history), and two devices computing max()+1 from stale local state at
+    // nearly the same moment can mint the SAME id, with the second write
+    // silently clobbering the first.
+    //
+    // This uses Firestore's documented optimistic-concurrency pattern for
+    // building a counter without a real transaction: read the counter doc
+    // (to get its current value AND updateTime), then commit a write guarded
+    // by a `currentDocument` precondition (updateTime must still match, or
+    // — for the very first mint — the doc must not exist yet). If another
+    // client's write landed in between, the precondition fails, the commit
+    // is rejected, and we retry with a fresh read. Firestore itself is the
+    // single source of truth serializing the race, not our client.
+    //
+    // `seedValue` is only used the FIRST time this counter doc is created —
+    // pass the current max(existing ids) so a tenant with pre-existing data
+    // doesn't restart numbering from 1. Once the doc exists, its stored
+    // value is authoritative and `seedValue` is ignored on every later call.
+    // Exponential backoff with jitter for mint retries — see _delayedRetry.
+    // Deterministic given the same randomFn, so this piece alone is
+    // Node-testable; the actual Timer-based delay execution below isn't.
+    function _computeRetryDelayMs(attempt, baseMs, maxMs, randomFn) {
+        var rand = randomFn || Math.random
+        var exp = Math.min(maxMs, baseMs * Math.pow(2, attempt))
+        return Math.round(exp * (0.5 + rand()))
+    }
+
+    // Runs fn() after a jittered exponential-backoff delay instead of
+    // immediately — without this, several concurrent mint calls hitting the
+    // same precondition conflict would all retry in the same instant and
+    // likely collide again. Each call creates its own independent one-shot
+    // Timer (not a shared/reused one), so concurrent retries for different
+    // counters (e.g. "counters/products" and "counters/suppliers" minting
+    // at the same time) never interfere with each other.
+    function _delayedRetry(attempt, fn) {
+        var delayMs = _computeRetryDelayMs(attempt, 100, 2000)
+        var timer = Qt.createQmlObject(
+            'import QtQuick; Timer { interval: ' + delayMs + '; running: true; repeat: false }',
+            root, "mintRetryTimer")
+        timer.triggered.connect(function() {
+            timer.destroy()
+            fn()
+        })
+    }
+
+    function mintCounterValue(path, seedValue, callback, _attempt) {
+        var attempt = _attempt || 0
+        if (attempt >= 8) {
+            console.warn("[Firestore] mintCounterValue gave up after", attempt, "attempts:", path)
+            if (callback) callback(false, 0)
+            return
+        }
+
+        var p = _splitPath(path)
+        if (!p.normalizedPath) { if (callback) callback(false, 0); return }
+        var docName = "projects/" + projectId + "/databases/" + databaseId + "/documents/" + p.normalizedPath
+
+        _request("GET", _docUrl(p.normalizedPath), null, function(getOk, doc, status) {
+            // A 404 (doc doesn't exist yet) is an expected first-run state,
+            // not a failure — only bail out on OTHER errors.
+            var exists = getOk && doc !== null
+            if (!getOk && status !== 404) { if (callback) callback(false, 0); return }
+
+            var current = exists ? (Number(_decodeDoc(doc).value) || 0) : (seedValue || 0)
+            var next = current + 1
+
+            var write = {
+                update: { name: docName, fields: _encodeDoc({ value: next }).fields },
+                currentDocument: exists ? { updateTime: doc.updateTime } : { exists: false }
+            }
+            _request("POST", databaseUrl + ":commit", { writes: [write] }, function(commitOk, commitData, commitStatus, commitError) {
+                if (commitOk) { if (callback) callback(true, next); return }
+                // 401/403 will never succeed by retrying — same credentials,
+                // same result every time. Give up immediately instead of
+                // burning all 8 attempts (and the latency of 8 fresh
+                // GET+commit round trips) on something retrying can't fix.
+                if (commitStatus === 401 || commitStatus === 403) {
+                    console.warn("[Firestore] mintCounterValue non-retryable failure (status", commitStatus + "), giving up:", path, commitError)
+                    if (callback) callback(false, 0)
+                    return
+                }
+                // Anything else (400 FAILED_PRECONDITION — someone else's
+                // write landed between our read and this commit — network
+                // failure, quota, 5xx) is treated as potentially transient
+                // and retried with a fresh read, same as before. Firestore
+                // guarantees whoever committed first is reflected in it now.
+                // Waits a jittered backoff first — an immediate retry is
+                // exactly how several concurrent callers hitting the same
+                // conflict end up colliding again on the very next attempt.
+                _delayedRetry(attempt, function() {
+                    mintCounterValue(path, seedValue, callback, attempt + 1)
+                })
+            })
+        })
+    }
+
+    // Same as mintCounterValue, but atomically reserves `count` consecutive
+    // values in ONE round-trip instead of one. callback(ok, startValue) —
+    // the caller owns the exclusive range [startValue+1 .. startValue+count].
+    // Needed by bulk import (upsertMany), which otherwise would need one
+    // mintCounterValue round-trip PER new row — slow, and awkward to splice
+    // into a loop that's synchronous everywhere else. Single-id minting
+    // (mintCounterValue) is just this with count=1.
+    function mintCounterBatch(path, seedValue, count, callback, _attempt) {
+        var attempt = _attempt || 0
+        if (count <= 0) { if (callback) callback(true, 0); return }
+        if (attempt >= 8) {
+            console.warn("[Firestore] mintCounterBatch gave up after", attempt, "attempts:", path)
+            if (callback) callback(false, 0)
+            return
+        }
+
+        var p = _splitPath(path)
+        if (!p.normalizedPath) { if (callback) callback(false, 0); return }
+        var docName = "projects/" + projectId + "/databases/" + databaseId + "/documents/" + p.normalizedPath
+
+        _request("GET", _docUrl(p.normalizedPath), null, function(getOk, doc, status) {
+            var exists = getOk && doc !== null
+            if (!getOk && status !== 404) { if (callback) callback(false, 0); return }
+
+            var current = exists ? (Number(_decodeDoc(doc).value) || 0) : (seedValue || 0)
+            var reservedThrough = current + count
+
+            var write = {
+                update: { name: docName, fields: _encodeDoc({ value: reservedThrough }).fields },
+                currentDocument: exists ? { updateTime: doc.updateTime } : { exists: false }
+            }
+            _request("POST", databaseUrl + ":commit", { writes: [write] }, function(commitOk, commitData, commitStatus, commitError) {
+                if (commitOk) { if (callback) callback(true, current); return }
+                if (commitStatus === 401 || commitStatus === 403) {
+                    console.warn("[Firestore] mintCounterBatch non-retryable failure (status", commitStatus + "), giving up:", path, commitError)
+                    if (callback) callback(false, 0)
+                    return
+                }
+                _delayedRetry(attempt, function() {
+                    mintCounterBatch(path, seedValue, count, callback, attempt + 1)
+                })
+            })
+        })
+    }
+
     function remove(path, callback) {
         var p = _splitPath(path)
         if (!p.normalizedPath || p.isCollection) {

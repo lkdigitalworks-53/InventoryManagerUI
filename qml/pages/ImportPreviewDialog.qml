@@ -21,7 +21,7 @@ BottomSheet {
 
     sheetTitle: mode === "products" ? "Import products" : "Import orders"
     primaryAction: "Import " + _effectiveCount() + " row" + (_effectiveCount() === 1 ? "" : "s")
-    primaryEnabled: _effectiveCount() > 0
+    primaryEnabled: _effectiveCount() > 0 && !busy
     secondaryAction: "Cancel"
 
     property string mode: "products"
@@ -32,6 +32,12 @@ BottomSheet {
     property var _issueRows: []
     property var _warnRows: []
     property string _fileName: ""
+    // Raw (order-mode only) rows from the last _loadFile(), kept around so
+    // _setRowPolicy/_setAllPolicy can re-run _validateOrderRows with the
+    // now-known policy instead of leaving the preview's stock-check numbers
+    // computed under whatever assumption was in effect before any policy
+    // was chosen.
+    property var _rawOrderRows: []
 
     signal filePickRequested()
     signal importCompleted(string message)
@@ -373,8 +379,10 @@ BottomSheet {
         }
         if (mode === "products")
             _validateProductRows(rows)
-        else
-            _validateOrderRows(rows)
+        else {
+            _rawOrderRows = rows
+            _validateOrderRows(rows, {})
+        }
     }
 
     function _validateProductRows(rows) {
@@ -461,12 +469,43 @@ BottomSheet {
             rec._conflictWith = hit ? (hit.productId + (hit.sku ? "/" + hit.sku : "")) : ""
             ready.push(rec)
         }
+
+        // Two rows in THIS file targeting the same Product ID used to let the
+        // second one silently clobber the first (if the id already existed and
+        // both got "overwrite") or silently vanish into the skip count with no
+        // explanation (if neither existed yet). Identical duplicate rows are
+        // harmless and safe to collapse to one; rows that disagree on any
+        // field can't be reconciled without guessing, so they're rejected as
+        // an issue instead — same "show it, don't guess" principle as every
+        // other validation error here.
+        var dupCompareFields = ["name", "sku", "category", "unit", "description", "price",
+                                "sellingPrice", "stock", "minStock", "photoUrl", "supplier",
+                                "size", "taxable", "taxPercent"]
+        var dup = ImportMath.findDuplicateProductRows(ready, dupCompareFields)
+        if (dup.dropIndexes.length > 0 || dup.conflicts.length > 0) {
+            var dropSet = {}
+            for (var di = 0; di < dup.dropIndexes.length; ++di) dropSet[dup.dropIndexes[di]] = true
+            var conflictIds = {}
+            for (var ci = 0; ci < dup.conflicts.length; ++ci) {
+                conflictIds[dup.conflicts[ci].productId] = true
+                issues.push({ row: dup.conflicts[ci].rows[0], message: "Product ID "
+                    + dup.conflicts[ci].productId + " appears on rows " + dup.conflicts[ci].rows.join(", ")
+                    + " with different details — resolve in the source file" })
+            }
+            var deduped = []
+            for (var ri = 0; ri < ready.length; ++ri) {
+                if (dropSet[ri] || conflictIds[ready[ri].productId]) continue
+                deduped.push(ready[ri])
+            }
+            ready = deduped
+        }
         _readyRows = ready
         _issueRows = issues
         _warnRows = warns
     }
 
-    function _validateOrderRows(rows) {
+    function _validateOrderRows(rows, policyByOrderId) {
+        policyByOrderId = policyByOrderId || {}
         var ready = []
         var issues = []
         var warns = []
@@ -479,6 +518,14 @@ BottomSheet {
             var p = InventoryStore.products[ip]
             idToProduct[p.productId] = p
         }
+
+        // Per-product running tally, decremented as rows are processed below
+        // (in the same file/row order completeImportedOrder will later
+        // replay) — a single import file can contain several orders that all
+        // draw from the same product's stock, and a static idToProduct
+        // snapshot alone can't see that. Lazily seeded from the product's
+        // real stock the first time each productId is touched.
+        var remainingStock = {}
 
         // Group consecutive rows by Order ID. Rows missing an Order ID are
         // grouped with the previous row's order, so a multi-line order can
@@ -526,6 +573,12 @@ BottomSheet {
 
             var prods = []
             var unresolved = []
+            // Set when a brand-new line's full quantity doesn't fit total
+            // stock at all — the order still gets imported (not dropped),
+            // but forced to pending instead of whatever status the file
+            // specified, so it never attempts to consume stock via
+            // completeImportedOrder. See the reject branch below.
+            var forcePending = false
             for (var rr = 0; rr < grp.rows.length; ++rr) {
                 var lineSrc = grp.rows[rr].raw
                 var lineRow = grp.rows[rr].row
@@ -556,6 +609,61 @@ BottomSheet {
                     warns.push({ row: lineRow, message: inv.name + ": line skipped — missing Quantity" })
                     continue
                 }
+
+                // Does this row's quantity fit in current stock? Only a
+                // completed-status row needs to fit in what's on hand —
+                // matches how the rest of the app (NewOrderDialog,
+                // completeImportedOrder) only enforces stock at completion
+                // time, not for pending/processing orders. This is
+                // policy-aware: an "overwrite" row genuinely modifies the
+                // SAME existing order in place, so only the increase over
+                // what's already booked on it needs to fit. Anything else —
+                // rename (a brand-new, separate order; the existing one is
+                // left untouched and keeps its own booked stock), skip, or
+                // no policy chosen yet — represents the row's FULL quantity
+                // as new demand, since it isn't modifying that existing
+                // booking at all. Re-validated by _setRowPolicy/_setAllPolicy
+                // whenever the user actually picks a policy, so this always
+                // reflects what will really happen, not a guess made before
+                // the choice existed.
+                var existingLine = ImportMath.findOrderLineByProductId(
+                    existingById[grp.key] ? existingById[grp.key].products : null, pid)
+                var isOverwrite = policyByOrderId[grp.key] === "overwrite"
+                if (remainingStock[pid] === undefined) remainingStock[pid] = inv.stock
+                var stockCheck = ImportMath.checkOrderLineStockAcrossBatch(
+                    (existingLine && isOverwrite) ? existingLine.quantity : null, inv.stock, remainingStock[pid],
+                    qty, status === allowed[2])
+                if (stockCheck.issue) {
+                    var crossOrderNote = stockCheck.crossOrder
+                        ? " (only " + Math.max(0, remainingStock[pid]) + " left after earlier rows in this import)"
+                        : ""
+                    var stockMsg
+                    if (stockCheck.reject) {
+                        // rename/no-policy-yet/genuinely-new-order: the full
+                        // quantity is new demand that doesn't fit at all.
+                        // Per Taher's explicit spec: don't drop the line and
+                        // don't complete it oversold either — keep the line
+                        // as requested, but force the whole order to pending
+                        // so it never attempts to consume stock at all.
+                        stockMsg = inv.name + ": insufficient stock for the full " + qty + " units requested"
+                            + crossOrderNote + " — order will still be imported, but as pending (not completed)"
+                        forcePending = true
+                    } else {
+                        // overwrite: this order is being modified in place,
+                        // so only the requested INCREASE over what it
+                        // already has booked is new demand. Some or all of
+                        // that increase doesn't fit — show exactly how much,
+                        // and be explicit that it's being dropped (not the
+                        // whole line) because a completed order's stock
+                        // impact can't be revised by import beyond that.
+                        var shortfall = qty - stockCheck.qty
+                        stockMsg = inv.name + ": " + shortfall + " of the requested increase is out of stock"
+                            + crossOrderNote + " — will not be imported since this order is completed (kept at " + stockCheck.qty + ")"
+                    }
+                    warns.push({ row: lineRow, message: stockMsg })
+                }
+                remainingStock[pid] -= stockCheck.netNew
+                qty = stockCheck.qty
 
                 // DEFAULT+WARN: missing Unit Price
                 var unitPriceRaw = lineSrc["Unit Price"]
@@ -592,17 +700,34 @@ BottomSheet {
                 continue
             }
 
+            // Two rows for the same product in ONE order used to become two
+            // separate line items that LOOK fine in preview but silently
+            // break the moment this order is later edited — OrderAdjust.
+            // diffLines and every productId-keyed lookup in OrderDetailDialog
+            // explicitly assume order lines are unique per productId (the
+            // same invariant NewOrderDialog/OrderDetailDialog's own "add
+            // product" flow already enforces by merging a re-added product
+            // into its existing line). Enforce it here too, at the one entry
+            // point that doesn't already go through that merge behavior.
+            var lineMerge = ImportMath.mergeOrderLines(prods)
+            if (lineMerge.conflict) {
+                issues.push({ row: grp.firstRow, message: lineMerge.conflict })
+                continue
+            }
+            prods = lineMerge.lines
+
+            var resolvedOrderId = grp.key.indexOf("_anon_") === 0 ? "" : grp.key
             var rec = {
                 row: grp.firstRow,
-                orderId: grp.key.indexOf("_anon_") === 0 ? "" : grp.key,
+                orderId: resolvedOrderId,
                 customer: customer,
                 email: (head["Email"] || "").toString().trim(),
                 phone: (head["Phone"] || "").toString().trim(),
-                status: status,
+                status: forcePending ? "pending" : status,
                 date: orderDate,
                 notes: (head["Notes"] || "").toString(),
                 products: prods,
-                _conflictPolicy: "skip"
+                _conflictPolicy: policyByOrderId[resolvedOrderId] || "skip"
             }
             rec._conflictWith = (rec.orderId && existingById[rec.orderId]) ? rec.orderId : ""
             ready.push(rec)
@@ -620,6 +745,15 @@ BottomSheet {
             + (rec.date ? "  ·  " + rec.date : "")
     }
 
+    function _currentPolicyByOrderId() {
+        var map = {}
+        for (var i = 0; i < _readyRows.length; ++i) {
+            var r = _readyRows[i]
+            if (r.orderId) map[r.orderId] = r._conflictPolicy
+        }
+        return map
+    }
+
     function _setAllPolicy(policy) {
         var next = []
         for (var i = 0; i < _readyRows.length; ++i) {
@@ -629,6 +763,7 @@ BottomSheet {
             next.push(r)
         }
         _readyRows = next
+        if (mode !== "products") _validateOrderRows(_rawOrderRows, _currentPolicyByOrderId())
     }
 
     function _setRowPolicy(idx, policy) {
@@ -636,6 +771,7 @@ BottomSheet {
         var next = _readyRows.slice()
         next[idx]._conflictPolicy = policy
         _readyRows = next
+        if (mode !== "products") _validateOrderRows(_rawOrderRows, _currentPolicyByOrderId())
     }
 
     function _effectiveCount() {
@@ -648,38 +784,69 @@ BottomSheet {
     }
 
     function _apply() {
-        var counts, understocked = 0
+        busy = true
+        busyMessage = qsTr("Importing %1 rows — this may take a moment").arg(_effectiveCount())
         if (mode === "products") {
-            counts = InventoryStore.upsertMany(_readyRows)
-            var updatedProducts = counts.updatedProducts || []
-            for (var i = 0; i < updatedProducts.length; ++i) {
-                logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields)
-            }
-        } else {
-            counts = OrdersStore.upsertMany(_readyRows)
-            // Book every newly-added COMPLETED order (anon orders got ids inside
-            // upsertMany — use the returned addedIds so we don't miss them).
-            var addedIds = counts.addedIds || []
-            var updateOrders = counts.updatedOrders || []
-            // Map added orders back to their source records to check status.
-            // Newly-added records are those not skipped; match by resulting order.
-            for (var i = 0; i < addedIds.length; ++i) {
-                var o = OrdersStore.getById(addedIds[i])
-                if (!o || o.status !== "completed") continue
-                if (dataModelRef) {
-                    var res = dataModelRef.completeImportedOrder(addedIds[i])
-                    if (res && res.understocked) understocked++
+            InventoryStore.upsertMany(_readyRows, function(counts) {
+                busy = false
+                var updatedProducts = counts.updatedProducts || []
+                for (var i = 0; i < updatedProducts.length; ++i) {
+                    logic.updateProduct(updatedProducts[i].productId, updatedProducts[i].fields,
+                                        "Import: overwrite")
                 }
-            }
-            for (var j = 0; j < updateOrders.length; ++j) {
-                logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import conflict: Overwrite with conflicted data")
-            }
+                _finishApply(counts, 0)
+            })
+        } else {
+            OrdersStore.upsertMany(_readyRows, function(counts) {
+                busy = false
+                var understocked = 0
+                // Book every newly-added COMPLETED order (anon orders got ids inside
+                // upsertMany — use the returned addedIds so we don't miss them).
+                var addedIds = counts.addedIds || []
+                var updateOrders = counts.updatedOrders || []
+                var updateOrderFields = counts.updatedOrderFields || []
+                // Map added orders back to their source records to check status.
+                // Newly-added records are those not skipped; match by resulting order.
+                for (var i = 0; i < addedIds.length; ++i) {
+                    var o = OrdersStore.getById(addedIds[i])
+                    if (!o || o.status !== "completed") continue
+                    if (dataModelRef) {
+                        var res = dataModelRef.completeImportedOrder(addedIds[i])
+                        if (res && res.understocked) understocked++
+                    }
+                }
+                // Envelope fields (contact/date/notes/channel, and products
+                // for a non-completed order) always update, regardless of
+                // status — this is the general field-update path, not the
+                // stock-aware adjustment one below.
+                for (var f = 0; f < updateOrderFields.length; ++f) {
+                    logic.updateOrder(updateOrderFields[f].orderId, updateOrderFields[f].fields)
+                }
+                var failedAdjustments = 0
+                for (var j = 0; j < updateOrders.length; ++j) {
+                    if (dataModelRef) {
+                        var adjRes = dataModelRef.adjustOrderForImport(
+                            updateOrders[j].orderId, updateOrders[j].products,
+                            "import orders", "", "Import: overwrite")
+                        if (!adjRes || !adjRes.ok) failedAdjustments++
+                    } else {
+                        // No direct DataModel reference available — fall back
+                        // to the signal path (no per-row failure visibility,
+                        // same as before this fix).
+                        logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import: overwrite")
+                    }
+                }
+                _finishApply(counts, understocked, failedAdjustments)
+            })
         }
+    }
 
+    function _finishApply(counts, understocked, failedAdjustments) {
         var n = counts.added + counts.updated
         var msg = "Imported " + n + " row" + (n === 1 ? "" : "s")
         if (counts.skipped > 0) msg += " · " + counts.skipped + " skipped"
         if (understocked > 0) msg += " · " + understocked + " completed with insufficient stock"
+        if (failedAdjustments > 0) msg += " · " + failedAdjustments + " overwrite" + (failedAdjustments === 1 ? "" : "s") + " could not be applied (insufficient stock)"
         if (_warnRows.length > 0) msg += " · " + _warnRows.length + " warning(s)"
 
         ActivityLog.record("import",

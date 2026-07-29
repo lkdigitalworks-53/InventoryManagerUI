@@ -275,7 +275,7 @@ void writeReadmeSheet(Document &doc, const QString &kind)
             {"Tax Collected",   "no",  "number", "Order tax total (pass-through; not part of revenue)."},
             {"Order Total",     "no",  "number", "Recomputed on import: Subtotal − Discount + Tax."},
             {"Product ID *",    "yes", "text",   "Required inventory PRD-NNN. Otherwise cannot resolve the product identification."},
-            {"SKU",             "no",  "text",   "Resolves the line to a product."},
+            {"SKU",             "no",  "text",   "Informational only — not used to resolve the line to a product."},
             {"Product Name",    "no",  "text",   "Display name; informational on import (resolved from inventory)."},
             {"Quantity *",      "yes", "integer","Per-line quantity. A line with no quantity is skipped on import."},
             {"Unit Price *",    "yes", "number", "Per-line price. Blank falls back to current selling price (may differ)."},

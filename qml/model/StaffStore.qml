@@ -131,30 +131,41 @@ QtObject {
         return result;
     }
 
-    function nextStaffId() {
-        var max = 0;
+    // Async — see FirebaseService.mintCounterValue for why max(existing)+1
+    // isn't safe (id reuse after delete, concurrent-add collisions).
+    function nextStaffId(callback) {
+        var seedMax = 0
         for (var i = 0; i < staff.length; ++i) {
-            var num = parseInt(String(staff[i].staffId).split('-')[1]);
-            if (!isNaN(num) && num > max) max = num;
+            var num = parseInt(String(staff[i].staffId).split('-')[1])
+            if (!isNaN(num) && num > seedMax) seedMax = num
         }
-        return 'STF-' + String(max + 1).padStart(3, '0');
+        FirebaseService.mintCounterValue("counters/staff", seedMax, function(ok, value) {
+            callback(ok ? ('STF-' + String(value).padStart(3, '0')) : "")
+        })
     }
 
-    function addStaff(name, email, phone, role, department, joinDate, status, salary) {
-        var id = nextStaffId();
-        var iso = Qt.formatDate(joinDate, 'yyyy-MM-dd');
-        var arr = _clone();
-        var newStaff = { staffId: id, name: name, role: role, department: department,
-                   email: email, phone: phone, joinDate: iso, status: status, salary: salary };
-        arr.push(newStaff);
-        staff = arr;
-        lastAddedId = id;
-        Gateway.recordMutation("staff", id, "create", null, newStaff);
-        _rebuildActivities();
-        ActivityLog.record("staff_added",
-                           "Teammate added: " + name,
-                           (role ? role : "") + (department ? " · " + department : ""),
-                           id);
+    function addStaff(name, email, phone, role, department, joinDate, status, salary, callback) {
+        nextStaffId(function(id) {
+            if (!id) {
+                console.warn("[StaffStore] could not mint a staffId — add aborted")
+                if (callback) callback(false, "")
+                return
+            }
+            var iso = Qt.formatDate(joinDate, 'yyyy-MM-dd');
+            var arr = _clone();
+            var newStaff = { staffId: id, name: name, role: role, department: department,
+                       email: email, phone: phone, joinDate: iso, status: status, salary: salary };
+            arr.push(newStaff);
+            staff = arr;
+            lastAddedId = id;
+            Gateway.recordMutation("staff", id, "create", null, newStaff);
+            _rebuildActivities();
+            ActivityLog.record("staff_added",
+                               "Teammate added: " + name,
+                               (role ? role : "") + (department ? " · " + department : ""),
+                               id);
+            if (callback) callback(true, id)
+        })
     }
 
     function deleteStaff(staffId) {

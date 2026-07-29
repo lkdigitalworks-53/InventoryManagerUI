@@ -73,15 +73,36 @@ BottomSheet {
     }
 
     onPrimaryClicked: {
+        if (busy) return
+        // Defense in depth: the Restock button itself is already hidden
+        // from non-owner/admin users (InventoryPage's canManage, bound to
+        // AuthStore.canManageInventory — same role set as onRestockProduct's
+        // gate), so this isn't reachable via the normal UI today. But this
+        // dialog calls InventoryStore.restock directly, bypassing the
+        // logic.restockProduct signal (and its RBAC check) entirely — if
+        // this dialog is ever opened from anywhere else, or the button's
+        // visibility binding is ever forgotten in a future refactor,
+        // nothing else stands in the way. Mirrors onRestockProduct's exact
+        // check rather than relying solely on the button being hidden.
+        if (!AuthStore.canManageInventory) {
+            Toast.show("Only owner/admin can restock products")
+            return
+        }
         var supplierId = partyCombo.currentIndex > 0
                 ? dlg._supplierIds[partyCombo.currentIndex]
                 : ""
         var unitCost = parseFloat(unitCostField.text)
         if (isNaN(unitCost) || unitCost < 0) unitCost = 0
-        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim())
-        restockConfirmed(productId, qtyField.value)
-        Toast.show("Restocked +" + qtyField.value + " units")
-        dlg.close()
+        busy = true
+        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim(), function(ok, supplierFailed) {
+            busy = false
+            if (!ok) { Toast.show("Could not restock — try again"); return }
+            restockConfirmed(productId, qtyField.value)
+            Toast.show(supplierFailed
+                ? "Restocked +" + qtyField.value + " units, but supplier could not be recorded"
+                : "Restocked +" + qtyField.value + " units")
+            dlg.close()
+        })
     }
 
     ColumnLayout {
@@ -241,12 +262,15 @@ BottomSheet {
                 onClicked: {
                     var n = (addPartyField.text || "").trim()
                     if (n.length === 0) return
-                    // SupplierStore.addSupplier returns the existing record
-                    // when the name already exists, so we always have an id.
-                    var s = SupplierStore.addSupplier({ name: n })
-                    dlg._refreshSuppliers(s ? s.supplierId : "")
-                    addPartyField.text = ""
-                    dlg._addPartyOpen = false
+                    // SupplierStore.addSupplier calls back with the existing
+                    // record when the name already exists, so we always get an id.
+                    addPartyBtn.enabled = false
+                    SupplierStore.addSupplier({ name: n }, function(s) {
+                        addPartyBtn.enabled = true
+                        dlg._refreshSuppliers(s ? s.supplierId : "")
+                        addPartyField.text = ""
+                        dlg._addPartyOpen = false
+                    })
                 }
             }
         }

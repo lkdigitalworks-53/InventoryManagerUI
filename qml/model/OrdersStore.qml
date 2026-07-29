@@ -125,64 +125,141 @@ QtObject {
     // `inventoryByName` and `inventoryBySku` are caller-supplied lookup tables
     // so we can resolve order-line products to a stable productId.
     // Returns { added, updated, skipped, addedIds } counts.
-    function upsertMany(records) {
+    // Async — callback({ added, updated, skipped, addedIds, updatedOrders }).
+    // Pre-scans the batch for how many fresh orderIds are needed and reserves
+    // them all in ONE round-trip via FirebaseService.mintCounterBatch (see
+    // InventoryStore.upsertMany's comment for why — a synchronous per-row
+    // loop can't await a network call mid-iteration, and one round-trip per
+    // row would be slow for a large import). New/renamed rows are collected
+    // into a single Gateway.recordMutations() batch call at the end instead
+    // of one recordMutation() per row, matching approveAllPending's pattern.
+    function upsertMany(records, callback) {
         var counts = { added: 0, updated: 0, skipped: 0 };
         var addedIds = [];
         var updatedOrders = [];
+        var updatedOrderFields = [];
         if (!records || records.length === 0) {
             counts.addedIds = addedIds;
-            return counts;
+            counts.updatedOrders = updatedOrders;
+            counts.updatedOrderFields = updatedOrderFields;
+            if (callback) callback(counts);
+            return;
         }
 
-        var arr = _clone();
-        var byId = {};
-        for (var i = 0; i < arr.length; ++i)
-            byId[arr[i].orderId] = i;
+        var byIdPre = {};
+        for (var pi = 0; pi < orders.length; ++pi) byIdPre[orders[pi].orderId] = true;
 
-        for (var k = 0; k < records.length; ++k) {
-            var r = records[k];
-            var policy = r._conflictPolicy || "skip";
-            var existingIdx = (r.orderId && byId[r.orderId] !== undefined) ? byId[r.orderId] : -1;
-
-            if (existingIdx >= 0) {
-                if (policy === "skip") { counts.skipped++; continue; }
-                if (policy === "rename") {
-                    orders = arr;  // ensure nextOrderId() sees latest
-                    r.orderId = nextOrderId();
-                    arr.push(_normalizeOrder(r));
-                    byId[r.orderId] = arr.length - 1;
-                    addedIds.push(r.orderId);
-                    counts.added++;
-                    continue;
-                }
-                if (policy === "overwrite") {
-                    // For overwrite policy, we need to adjust the order data and calculate the inventory, discount, price, and sales matrics
-                    // Hence we will give back the updated orders and try to adjust the order.
-                    var order = OrdersStore.getById(r.orderId)
-                    if (!order || order.status !== "completed") continue;
-                    updatedOrders.push({orderId: r.orderId, products: r.products})
-                    counts.updated++;
-                }
+        var neededOrderIds = 0;
+        for (var qi = 0; qi < records.length; ++qi) {
+            var rr = records[qi];
+            var pol = rr._conflictPolicy || "skip";
+            var existsAlready = !!(rr.orderId && byIdPre[rr.orderId]);
+            if (existsAlready) {
+                if (pol === "rename") neededOrderIds++;
             } else {
-                if (!r.orderId || r.orderId.length === 0) {
-                    orders = arr;  // align nextOrderId scope
-                    r.orderId = nextOrderId();
-                }
-                var doc = _normalizeOrder(r);
-                arr.push(doc);
-                byId[doc.orderId] = arr.length - 1;
-                addedIds.push(doc.orderId);
-                Gateway.recordMutation("order", doc.orderId, "create", null, doc);
-                counts.added++;
+                // Same reasoning as InventoryStore.upsertMany's pre-scan: a
+                // row that doesn't match an existing order is new, full
+                // stop, and always needs a freshly minted id — trusting a
+                // typed-but-unmatched orderId here is how two different
+                // rows can end up with the same id.
+                neededOrderIds++;
             }
         }
 
-        orders = arr;
-        revision++;
-        _refreshCounts();
-        counts.addedIds = addedIds;
-        counts.updatedOrders = updatedOrders
-        return counts;
+        var seedMax = 0;
+        for (var si = 0; si < orders.length; ++si) {
+            var num = parseInt(String(orders[si].orderId).split('-')[1]);
+            if (!isNaN(num) && num > seedMax) seedMax = num;
+        }
+
+        FirebaseService.mintCounterBatch("counters/orders", seedMax, neededOrderIds, function(ok, start) {
+            if (!ok) {
+                console.warn("[OrdersStore] could not reserve order ids — import aborted");
+                counts.addedIds = addedIds;
+                counts.updatedOrders = updatedOrders;
+                counts.updatedOrderFields = updatedOrderFields;
+                if (callback) callback(counts);
+                return;
+            }
+
+            var mintedIdx = 0;
+            function pullOrderId() {
+                mintedIdx++;
+                return 'ORD-' + String(start + mintedIdx).padStart(3, '0');
+            }
+
+            var arr = _clone();
+            var byId = {};
+            for (var i = 0; i < arr.length; ++i)
+                byId[arr[i].orderId] = i;
+
+            var mutationItems = [];
+
+            for (var k = 0; k < records.length; ++k) {
+                var r = records[k];
+                var policy = r._conflictPolicy || "skip";
+                var existingIdx = (r.orderId && byId[r.orderId] !== undefined) ? byId[r.orderId] : -1;
+
+                if (existingIdx >= 0) {
+                    if (policy === "skip") { counts.skipped++; continue; }
+                    if (policy === "rename") {
+                        r.orderId = pullOrderId();
+                        var renamedDoc = _normalizeOrder(r);
+                        arr.push(renamedDoc);
+                        byId[r.orderId] = arr.length - 1;
+                        addedIds.push(r.orderId);
+                        mutationItems.push({ entityId: renamedDoc.orderId, action: "create", before: null, after: renamedDoc });
+                        counts.added++;
+                        continue;
+                    }
+                    if (policy === "overwrite") {
+                        // Envelope fields (contact/date/notes/channel) have no
+                        // stock/FIFO/revenue interaction — they always update,
+                        // regardless of status. Products are different: a
+                        // completed order already booked stock/FIFO/revenue
+                        // against its current lines, so changing them needs
+                        // the stock-aware adjustment path (updatedOrders /
+                        // adjustOrder, unchanged below). A non-completed
+                        // order never booked anything, so its products can
+                        // just be overwritten directly alongside the rest of
+                        // the fields — OrdersStore.updateOrder recomputes
+                        // totals from whatever products it's given.
+                        var order = OrdersStore.getById(r.orderId)
+                        if (!order) { counts.skipped++; continue; }
+                        var envelopeFields = {
+                            customer: r.customer, email: r.email, phone: r.phone,
+                            date: r.date, notes: r.notes, orderChannel: r.orderChannel
+                        };
+                        if (order.status === "completed") {
+                            updatedOrders.push({orderId: r.orderId, products: r.products})
+                        } else {
+                            envelopeFields.products = r.products;
+                        }
+                        updatedOrderFields.push({orderId: r.orderId, fields: envelopeFields})
+                        counts.updated++;
+                    }
+                } else {
+                    // New order — always mint a fresh id, same reasoning as
+                    // InventoryStore's new-row branch.
+                    r.orderId = pullOrderId();
+                    var doc = _normalizeOrder(r);
+                    arr.push(doc);
+                    byId[doc.orderId] = arr.length - 1;
+                    addedIds.push(doc.orderId);
+                    mutationItems.push({ entityId: doc.orderId, action: "create", before: null, after: doc });
+                    counts.added++;
+                }
+            }
+
+            orders = arr;
+            revision++;
+            _refreshCounts();
+            if (mutationItems.length > 0) Gateway.recordMutations("order", mutationItems);
+            counts.addedIds = addedIds;
+            counts.updatedOrders = updatedOrders;
+            counts.updatedOrderFields = updatedOrderFields;
+            if (callback) callback(counts);
+        });
     }
 
     function _normalizeOrder(r) {
@@ -307,7 +384,7 @@ QtObject {
 
     // Reactive properties – UI binds directly to these
     property int revision: 0
-    property int pendingOrderCount: 2
+    property int pendingOrderCount: 0
     property int completedOrderCount: 0
     property int outOfStockCount: 0
     readonly property int count: orders.length
@@ -397,13 +474,17 @@ QtObject {
     function pendingCount() { return pendingOrderCount; }
     function completedThisMonth() { return completedOrderCount; }
 
-    function nextOrderId() {
-        var max = 0;
+    // Async — see FirebaseService.mintCounterValue for why max(existing)+1
+    // isn't safe (id reuse after delete, concurrent-add collisions).
+    function nextOrderId(callback) {
+        var seedMax = 0;
         for (var i = 0; i < orders.length; ++i) {
             var num = parseInt(String(orders[i].orderId).split('-')[1]);
-            if (!isNaN(num) && num > max) max = num;
+            if (!isNaN(num) && num > seedMax) seedMax = num;
         }
-        return 'ORD-' + String(max + 1).padStart(3, '0');
+        FirebaseService.mintCounterValue("counters/orders", seedMax, function(ok, value) {
+            callback(ok ? ('ORD-' + String(value).padStart(3, '0')) : "")
+        })
     }
 
     function parseCurrency(str) {
@@ -460,6 +541,7 @@ QtObject {
         if (fields.customer      !== undefined) o.customer      = fields.customer;
         if (fields.email         !== undefined) o.email         = fields.email;
         if (fields.phone         !== undefined) o.phone         = fields.phone;
+        if (fields.date          !== undefined) o.date          = fields.date;
         if (fields.items         !== undefined) o.items         = fields.items;
         if (fields.notes         !== undefined) o.notes         = fields.notes;
         if (fields.products      !== undefined) o.products      = fields.products;
@@ -543,47 +625,54 @@ QtObject {
     // caller doesn't supply them, so the Analysis page can detect
     // "(unspecified)" rows and bucket them out of per-channel/per-staff
     // breakdowns.
-    function addOrder(customer, items, total, status, date, email, phone, orderProducts, orderChannel, staffId) {
-        var id = nextOrderId();
-        var iso = Qt.formatDate(date, 'yyyy-MM-dd');
-        var arr = _clone();
-        var prods = [];
-        if (orderProducts) {
-            for (var k = 0; k < orderProducts.length; ++k) {
-                var pp = orderProducts[k];
-                var inv = pp.productId ? InventoryStore.getById(pp.productId) : null;
-                var taxable = pp.taxable !== undefined ? !!pp.taxable : (inv ? !!inv.taxable : false);
-                var taxPercent = pp.taxPercent !== undefined && pp.taxPercent !== null
-                    ? Number(pp.taxPercent)
-                    : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
-                prods.push({
-                    productId: pp.productId || "",
-                    name: pp.name,
-                    price: pp.price,
-                    quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0),
-                    taxable: taxable,
-                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
-                    discountType: pp.discountType === "percent" ? "percent" : "flat",
-                    discountValue: parseCurrency(pp.discountValue)
-                });
+    function addOrder(customer, items, total, status, date, email, phone, orderProducts, orderChannel, staffId, callback) {
+        nextOrderId(function(id) {
+            if (!id) {
+                console.warn("[OrdersStore] could not mint an orderId — add aborted")
+                if (callback) callback(false, "")
+                return
             }
-        }
-        var totals = computeOrderTotals(prods);
-        var newOrder = { orderId: id, customer: customer,
-                   items: prods.length > 0 ? totals.itemCount : items,
-                   subtotal: totals.subtotal,
-                   discount: totals.discount,
-                   tax: totals.tax,
-                   taxBreakdown: totals.taxBreakdown,
-                   total: prods.length > 0 ? totals.total : total,
-                   status: status, date: iso, notes: "",
-                   email: email || "", phone: phone || "",
-                   orderChannel: orderChannel || "",
-                   staffId: staffId || "",
-                   updatedAt: new Date().toISOString(),
-                   products: prods };
-        arr.push(newOrder);
-        _commit(arr, newOrder, "create", null);
+            var iso = Qt.formatDate(date, 'yyyy-MM-dd');
+            var arr = _clone();
+            var prods = [];
+            if (orderProducts) {
+                for (var k = 0; k < orderProducts.length; ++k) {
+                    var pp = orderProducts[k];
+                    var inv = pp.productId ? InventoryStore.getById(pp.productId) : null;
+                    var taxable = pp.taxable !== undefined ? !!pp.taxable : (inv ? !!inv.taxable : false);
+                    var taxPercent = pp.taxPercent !== undefined && pp.taxPercent !== null
+                        ? Number(pp.taxPercent)
+                        : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
+                    prods.push({
+                        productId: pp.productId || "",
+                        name: pp.name,
+                        price: pp.price,
+                        quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0),
+                        taxable: taxable,
+                        taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
+                        discountType: pp.discountType === "percent" ? "percent" : "flat",
+                        discountValue: parseCurrency(pp.discountValue)
+                    });
+                }
+            }
+            var totals = computeOrderTotals(prods);
+            var newOrder = { orderId: id, customer: customer,
+                       items: prods.length > 0 ? totals.itemCount : items,
+                       subtotal: totals.subtotal,
+                       discount: totals.discount,
+                       tax: totals.tax,
+                       taxBreakdown: totals.taxBreakdown,
+                       total: prods.length > 0 ? totals.total : total,
+                       status: status, date: iso, notes: "",
+                       email: email || "", phone: phone || "",
+                       orderChannel: orderChannel || "",
+                       staffId: staffId || "",
+                       updatedAt: new Date().toISOString(),
+                       products: prods };
+            arr.push(newOrder);
+            _commit(arr, newOrder, "create", null);
+            if (callback) callback(true, id)
+        })
     }
 
     function deleteOrder(orderId) {

@@ -321,13 +321,17 @@ QtObject {
         catch(e) { return '₹' + (Math.round(n * 10) / 10).toString(); }
     }
 
-    function nextProductId() {
-        var max = 0;
+    // Async — see FirebaseService.mintCounterValue for why max(existing)+1
+    // isn't safe (id reuse after delete, concurrent-add collisions).
+    function nextProductId(callback) {
+        var seedMax = 0;
         for (var i = 0; i < products.length; ++i) {
             var num = parseInt(String(products[i].productId).split('-')[1]);
-            if (!isNaN(num) && num > max) max = num;
+            if (!isNaN(num) && num > seedMax) seedMax = num;
         }
-        return 'PRD-' + String(max + 1).padStart(3, '0');
+        FirebaseService.mintCounterValue("counters/products", seedMax, function(ok, value) {
+            callback(ok ? ('PRD-' + String(value).padStart(3, '0')) : "")
+        })
     }
 
     function generateSku(name) {
@@ -347,93 +351,121 @@ QtObject {
     // `unitCost` is the cost-per-unit of the initial-stock batch (defaults
     // to product cost `price` when not supplied — matches the previous
     // implicit assumption).
-    function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size) {
-        var id = nextProductId();
-        var arr = _clone();
-        var sp = (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price;
-        var tx = !!taxable;
-        var tp = (typeof taxPercent === "number" && !isNaN(taxPercent)) ? taxPercent : 0;
-        var sz = size || "";
-        var doc = { productId: id, name: name, sku: sku, category: category,
-                   stock: stock, minStock: minStock,
-                   price: price, sellingPrice: sp,
-                   taxable: tx, taxPercent: tp,
-                   size: sz,
-                   unit: unit, description: description || "",
-                   photoUrl: "", photoUpdatedAt: "" };
-        arr.push(doc);
-        // Optimistic local update; persist this one product via the gateway
-        // (a per-doc create, not the legacy bulk PUT of the whole collection).
-        products = arr;
-        Gateway.recordMutation("inventory", id, "create", null, doc);
-        ActivityLog.record("product_added",
-                           "Product added: " + name,
-                           (sku ? sku + " · " : "") + "stock " + stock,
-                           id);
-        // Resolve the `party` arg into a stable supplierId. Accepts either
-        // an existing supplierId, a known name, or a brand-new name (which
-        // we promote to a SupplierStore record on the fly).
-        var supplierId = _resolveSupplierId(party);
-        var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (price || 0);
+    function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size, callback) {
+        // Resolve supplier first (only actually async when `party` is a
+        // brand-new name that needs a fresh supplierId minted — an existing
+        // id/name resolves synchronously-fast via the callback), then mint
+        // the productId, then build+persist the product. Both mints go
+        // through FirebaseService.mintCounterValue (see its comment for why).
+        _resolveSupplierId(party, function(supplierId, supplierFailed) {
+            if (supplierFailed) {
+                console.warn("[InventoryStore] could not create the requested supplier — add aborted")
+                if (callback) callback(false, "")
+                return
+            }
+            nextProductId(function(id) {
+                if (!id) {
+                    console.warn("[InventoryStore] could not mint a productId — add aborted")
+                    if (callback) callback(false, "")
+                    return
+                }
+                var arr = _clone();
+                var sp = (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price;
+                var tx = !!taxable;
+                var tp = (typeof taxPercent === "number" && !isNaN(taxPercent)) ? taxPercent : 0;
+                var sz = size || "";
+                var doc = { productId: id, name: name, sku: sku, category: category,
+                           stock: stock, minStock: minStock,
+                           price: price, sellingPrice: sp,
+                           taxable: tx, taxPercent: tp,
+                           size: sz,
+                           unit: unit, description: description || "",
+                           photoUrl: "", photoUpdatedAt: "" };
+                arr.push(doc);
+                // Optimistic local update; persist this one product via the gateway
+                // (a per-doc create, not the legacy bulk PUT of the whole collection).
+                products = arr;
+                Gateway.recordMutation("inventory", id, "create", null, doc);
+                ActivityLog.record("product_added",
+                                   "Product added: " + name,
+                                   (sku ? sku + " · " : "") + "stock " + stock,
+                                   id);
+                var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (price || 0);
 
-        // Always record creation (even with 0 initial stock) so the product
-        // details "History" section opens with a true creation row instead of
-        // looking like the product was restocked.
-        TransactionStore.recordCreated(id, name, stock, batchCost, {
-            sku: sku || "",
-            category: category || "",
-            unit: unit || "",
-            sellingPrice: sp,
-            taxable: tx,
-            taxPercent: tp,
-            size: sz,
-            minStock: minStock || 0,
-            description: description || "",
-            supplierId: supplierId
-        }, supplierId);
+                // Always record creation (even with 0 initial stock) so the product
+                // details "History" section opens with a true creation row instead of
+                // looking like the product was restocked.
+                TransactionStore.recordCreated(id, name, stock, batchCost, {
+                    sku: sku || "",
+                    category: category || "",
+                    unit: unit || "",
+                    sellingPrice: sp,
+                    taxable: tx,
+                    taxPercent: tp,
+                    size: sz,
+                    minStock: minStock || 0,
+                    description: description || "",
+                    supplierId: supplierId
+                }, supplierId);
 
-        // Initial stock is treated as the first FIFO batch. Skip when stock
-        // is 0 — there's nothing to consume from a zero-quantity batch.
-        if (stock > 0) {
-            StockBatchStore.addBatch(id, supplierId, stock, batchCost, "Initial stock");
-        }
-        return id;
+                // Initial stock is treated as the first FIFO batch. Skip when stock
+                // is 0 — there's nothing to consume from a zero-quantity batch.
+                if (stock > 0) {
+                    StockBatchStore.addBatch(id, supplierId, stock, batchCost, "Initial stock");
+                }
+                if (callback) callback(true, id)
+            })
+        })
     }
 
     // Internal: turn a free-text "party" argument into a stable supplierId.
-    // Empty input returns "". A name that already maps to a supplier returns
-    // that id. A new name promotes the supplier on the fly so legacy call
-    // sites (which haven't been updated to pass an id) still produce
-    // first-class supplier records.
-    function _resolveSupplierId(party) {
-        if (!party) return "";
+    // Empty input calls back with "". A name that already maps to a supplier
+    // calls back with that id. A new name promotes the supplier on the fly
+    // (async — see SupplierStore.addSupplier) so legacy call sites (which
+    // haven't been updated to pass an id) still produce first-class supplier
+    // records. Always calls back via the callback, even on the fast/already-
+    // resolved paths, so callers don't have to special-case sync vs async.
+    function _resolveSupplierId(party, callback) {
+        if (!party) { callback("", false); return }
         var raw = String(party);
         // Already an id?
         if (raw.indexOf("SUP-") === 0) {
             var byId = SupplierStore.getById(raw);
-            return byId ? byId.supplierId : raw;
+            callback(byId ? byId.supplierId : raw, false);
+            return;
         }
         var byName = SupplierStore.findByName(raw);
-        if (byName) return byName.supplierId;
-        var created = SupplierStore.addSupplier({ name: raw });
-        return created ? created.supplierId : "";
+        if (byName) { callback(byName.supplierId, false); return; }
+        SupplierStore.addSupplier({ name: raw }, function(created) {
+            // `failed` is true only when the caller asked for a genuinely
+            // new supplier and creation didn't happen (network drop etc) —
+            // distinct from an empty party, which is a legitimate "no
+            // supplier requested" and never a failure.
+            callback(created ? created.supplierId : "", !created);
+        });
     }
 
     // Book the ledger side-effects for an imported product so analytics
     // (Value / Purchased / Profit / by-supplier) populate exactly as if the
     // product had been created in-app. Opening batch only when stock > 0.
-    function _bookImportedProduct(doc) {
+    // transactionItems/stockBatchItems: caller-provided arrays this pushes
+    // the built (but not-yet-written) docs into, instead of each call firing
+    // its own individual Gateway write — see addBatchMany/recordCreatedMany.
+    function _bookImportedProduct(doc, transactionItems, stockBatchItems) {
         var supplierId = doc.supplierId || "";
         var batchCost = (typeof doc.price === "number" && !isNaN(doc.price)) ? doc.price : 0;
-        TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
+        var txDoc = TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
             sku: doc.sku || "", category: doc.category || "", unit: doc.unit || "",
             sellingPrice: doc.sellingPrice, taxable: doc.taxable, taxPercent: doc.taxPercent,
             size: doc.size || "",
             minStock: doc.minStock || 0, description: doc.description || "",
             supplierId: supplierId, origin: "imported"
-        }, supplierId);
-        if (doc.stock > 0)
-            StockBatchStore.addBatch(doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock");
+        }, supplierId, true);
+        if (txDoc) transactionItems.push(txDoc);
+        if (doc.stock > 0) {
+            var batchDoc = StockBatchStore.addBatch(doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock", true);
+            if (batchDoc) stockBatchItems.push(batchDoc);
+        }
     }
 
     // Persist a photo URL on a product. Per-doc PATCH bypasses the bulk-PUT
@@ -456,13 +488,137 @@ QtObject {
     // Bulk import / upsert. Records carry the same shape as products plus an
     // optional `_conflictPolicy` string ("skip" | "overwrite" | "rename").
     // Returns { added, updated, skipped } counts.
-    function upsertMany(records) {
-        var counts = { added: 0, updated: 0, skipped: 0 };
-        if (!records || records.length === 0) return counts;
+    // Bulk import / upsert. Records carry the same shape as products plus an
+    // optional `_conflictPolicy` string ("skip" | "overwrite" | "rename").
+    // Async — callback({ added, updated, skipped, updatedProducts }).
+    //
+    // A synchronous per-row loop can't call the (now-async) id minters
+    // mid-iteration, and minting one id per row over the network would be
+    // slow for a big import anyway — so this pre-scans the batch for how
+    // many fresh productIds and NEW supplier names it needs, reserves both
+    // in ONE round-trip each via FirebaseService.mintCounterBatch, then runs
+    // the original loop synchronously again against those pre-reserved
+    // pools. All new/renamed rows are collected into a single
+    // Gateway.recordMutations() call at the end instead of one
+    // recordMutation() per row, matching approveAllPending's pattern.
+    function upsertMany(records, callback) {
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] };
+        if (!records || records.length === 0) { if (callback) callback(counts); return; }
 
+        var byIdPre = {};
+        for (var pi = 0; pi < products.length; ++pi) byIdPre[products[pi].productId] = true;
+
+        var neededProductIds = 0;
+        var newSupplierNames = []; // unique, first-seen order
+        var seenNames = {};
+        for (var qi = 0; qi < records.length; ++qi) {
+            var rr = records[qi];
+            var pol = rr._conflictPolicy || "skip";
+            var existsAlready = !!(rr.productId && byIdPre[rr.productId]);
+            if (existsAlready) {
+                if (pol === "rename") neededProductIds++;
+            } else {
+                // A row that doesn't match an existing product is a new
+                // product, full stop — always needs a freshly minted id,
+                // whether the productId column was left blank (the normal
+                // case) or happened to have something typed in it that
+                // doesn't match anything yet. Trusting a typed-but-unknown
+                // id here is how two different rows can end up minting/
+                // keeping the exact same number.
+                neededProductIds++;
+            }
+            if (!rr.supplierId && rr.supplier) {
+                var key = String(rr.supplier).trim().toLowerCase();
+                if (key.length > 0 && !seenNames[key] && !SupplierStore.findByName(rr.supplier)) {
+                    seenNames[key] = true;
+                    newSupplierNames.push(String(rr.supplier).trim());
+                }
+            }
+        }
+
+        var seedProductMax = 0;
+        for (var si = 0; si < products.length; ++si) {
+            var n1 = parseInt(String(products[si].productId).split('-')[1]);
+            if (!isNaN(n1) && n1 > seedProductMax) seedProductMax = n1;
+        }
+        var seedSupplierMax = 0;
+        for (var sj = 0; sj < SupplierStore.suppliers.length; ++sj) {
+            var n2 = parseInt(String(SupplierStore.suppliers[sj].supplierId).split('-')[1]);
+            if (!isNaN(n2) && n2 > seedSupplierMax) seedSupplierMax = n2;
+        }
+
+        FirebaseService.mintCounterBatch("counters/products", seedProductMax, neededProductIds,
+            function(prodOk, prodStart) {
+            if (!prodOk) {
+                console.warn("[InventoryStore] could not reserve product ids — import aborted");
+                if (callback) callback(counts);
+                return;
+            }
+            FirebaseService.mintCounterBatch("counters/suppliers", seedSupplierMax, newSupplierNames.length,
+                function(supOk, supStart) {
+                if (!supOk) {
+                    console.warn("[InventoryStore] could not reserve supplier ids — import aborted");
+                    if (callback) callback(counts);
+                    return;
+                }
+
+                var nameToSupplierId = {};
+                var supplierItems = [];
+                for (var ni = 0; ni < newSupplierNames.length; ++ni) {
+                    var newSupId = 'SUP-' + String(supStart + ni + 1).padStart(3, '0');
+                    var supDoc = SupplierStore.addSupplierWithId(newSupId, newSupplierNames[ni], true);
+                    if (supDoc) supplierItems.push(supDoc);
+                    nameToSupplierId[newSupplierNames[ni].toLowerCase()] = newSupId;
+                }
+                if (supplierItems.length > 0) SupplierStore.addSupplierWithIdMany(supplierItems);
+
+                var mintedProductIdx = 0;
+                function pullProductId() {
+                    mintedProductIdx++;
+                    return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0');
+                }
+                function resolveSupplierForRecord(r) {
+                    if (r.supplierId) return r.supplierId;
+                    if (!r.supplier) return "";
+                    var byId = _resolveSupplierIdSyncKnown(r.supplier);
+                    if (byId) return byId;
+                    return nameToSupplierId[String(r.supplier).trim().toLowerCase()] || "";
+                }
+
+                _upsertManySync(records, pullProductId, resolveSupplierForRecord, counts);
+                if (callback) callback(counts);
+            });
+        });
+    }
+
+    // Resolves `party` synchronously using ONLY already-known suppliers (an
+    // existing SUP- id, or a name that already matches an existing
+    // supplier) — never mints. Used by the upsertMany batch path, where
+    // brand-new names are resolved from the pre-minted nameToSupplierId map
+    // instead (see resolveSupplierForRecord above).
+    function _resolveSupplierIdSyncKnown(party) {
+        if (!party) return "";
+        var raw = String(party);
+        if (raw.indexOf("SUP-") === 0) {
+            var byId = SupplierStore.getById(raw);
+            return byId ? byId.supplierId : raw;
+        }
+        var byName = SupplierStore.findByName(raw);
+        return byName ? byName.supplierId : "";
+    }
+
+    // The original synchronous upsert loop, pulling ids from the pools
+    // upsertMany already reserved instead of minting inline. Collects every
+    // new/renamed row into `mutationItems` and fires ONE
+    // Gateway.recordMutations() call at the end instead of one
+    // recordMutation() per row.
+    function _upsertManySync(records, pullProductId, resolveSupplierForRecord, counts) {
         var arr = _clone();
         var byId = {};
-        var updatedProducts = []
+        var updatedProducts = counts.updatedProducts;
+        var mutationItems = [];
+        var transactionItems = [];
+        var stockBatchItems = [];
         for (var i = 0; i < arr.length; ++i) {
             byId[arr[i].productId] = i;
         }
@@ -470,8 +626,10 @@ QtObject {
         for (var k = 0; k < records.length; ++k) {
             var r = records[k];
             var policy = r._conflictPolicy || "skip";
+            r.supplierId = resolveSupplierForRecord(r);
 
-            // Resolve conflict by id first, then by SKU
+            // Match an existing product by productId only — never by name
+            // or SKU (both can legitimately duplicate across products).
             var existingIdx = -1;
             if (r.productId && byId[r.productId] !== undefined)
                 existingIdx = byId[r.productId];
@@ -479,14 +637,14 @@ QtObject {
             if (existingIdx >= 0) {
                 if (policy === "skip") { counts.skipped++; continue; }
                 if (policy === "rename") {
-                    // Treat as new: assign fresh id and unique SKU
-                    r.productId = nextProductId();
+                    // Treat as new: assign fresh id (pre-reserved) and unique SKU
+                    r.productId = pullProductId();
                     if (r.sku) r.sku = ImportMath.renameSku(r.sku, counts.added);
                     var renamedDoc = _normalizeRecord(r);
                     arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
-                    Gateway.recordMutation("inventory", renamedDoc.productId, "create", null, renamedDoc);
-                    _bookImportedProduct(renamedDoc);
+                    mutationItems.push({ entityId: renamedDoc.productId, action: "create", before: null, after: renamedDoc });
+                    _bookImportedProduct(renamedDoc, transactionItems, stockBatchItems);
                     counts.added++;
                     continue;
                 }
@@ -511,13 +669,10 @@ QtObject {
                               }})
                 counts.updated++;
             } else {
-                // New row
-                if (!r.productId || r.productId.length === 0) {
-                    // Reserve next id without recursing into nextProductId on the
-                    // mutated arr (safe — nextProductId reads `products` only).
-                    products = arr;
-                    r.productId = nextProductId();
-                }
+                // New row — always mint a fresh id (see the pre-scan above
+                // for why a typed-but-unmatched value in this column can't
+                // be trusted as authoritative).
+                r.productId = pullProductId();
                 if (!r.sku || r.sku.length === 0) {
                     // Generate SKU if empty, for a new row
                     r.sku = generateSku(r.name);
@@ -526,15 +681,16 @@ QtObject {
                 var doc = _normalizeRecord(r);
                 arr.push(doc);
                 byId[doc.productId] = arr.length - 1;
-                Gateway.recordMutation("inventory", doc.productId, "create", null, doc);
-                _bookImportedProduct(doc);
+                mutationItems.push({ entityId: doc.productId, action: "create", before: null, after: doc });
+                _bookImportedProduct(doc, transactionItems, stockBatchItems);
                 counts.added++;
             }
         }
 
         products = arr;
-        counts.updatedProducts = updatedProducts;
-        return counts;
+        if (mutationItems.length > 0) Gateway.recordMutations("inventory", mutationItems);
+        if (transactionItems.length > 0) TransactionStore.recordCreatedMany(transactionItems);
+        if (stockBatchItems.length > 0) StockBatchStore.addBatchMany(stockBatchItems);
     }
 
     function _normalizeRecord(r) {
@@ -558,7 +714,9 @@ QtObject {
             minStock: parseInt(r.minStock) || 0,
             photoUrl: r.photoUrl || "",
             photoUpdatedAt: r.photoUpdatedAt || "",
-            supplierId: r.supplierId || (r.supplier ? _resolveSupplierId(r.supplier) : "")
+            // Already resolved (existing id/name, or pre-minted-for-this-batch
+            // name) by _upsertManySync before _normalizeRecord is called.
+            supplierId: r.supplierId || ""
         };
     }
 
@@ -636,7 +794,7 @@ QtObject {
     // name we'll auto-promote. `unitCost` is cost-per-unit at receipt time
     // and defaults to the product's cost field (`changed.price`) when the
     // caller didn't capture it (e.g. legacy restock paths).
-    function restock(productId, amount, party, unitCost, reason) {
+    function restock(productId, amount, party, unitCost, reason, callback) {
         var arr = _clone();
         var changed = null;
         var before = null;
@@ -650,25 +808,34 @@ QtObject {
             }
         }
         products = arr;
-        if (!changed) return
+        if (!changed) { if (callback) callback(false); return }
 
-        var supplierId = _resolveSupplierId(party);
-        var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
-        var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (changed.price || 0);
-        var reasonText = (reason || "").trim();
+        _resolveSupplierId(party, function(supplierId, supplierFailed) {
+            var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
+            var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (changed.price || 0);
+            var reasonText = (reason || "").trim();
 
-        ActivityLog.record("product_restocked",
-                           "Restocked: " + changed.name,
-                           "+" + addedQty + " · now " + changed.stock + " in stock"
-                               + (supplierName ? " · from " + supplierName : "")
-                               + (reasonText ? " · " + reasonText : ""),
-                           productId);
-        TransactionStore.recordPurchase(productId, addedQty, batchCost, changed.name, supplierId, reasonText);
-        // The receipt also lands as a FIFO batch — this is what every
-        // subsequent sale will draw from in date order. The reason rides
-        // along in the batch's existing (currently unrendered) note field.
-        StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
-        Gateway.recordMutation("inventory", productId, "update", before, changed);
+            ActivityLog.record("product_restocked",
+                               "Restocked: " + changed.name,
+                               "+" + addedQty + " · now " + changed.stock + " in stock"
+                                   + (supplierName ? " · from " + supplierName : "")
+                                   + (reasonText ? " · " + reasonText : ""),
+                               productId);
+            TransactionStore.recordPurchase(productId, addedQty, batchCost, changed.name, supplierId, reasonText);
+            // The receipt also lands as a FIFO batch — this is what every
+            // subsequent sale will draw from in date order. The reason rides
+            // along in the batch's existing (currently unrendered) note field.
+            StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
+            Gateway.recordMutation("inventory", productId, "update", before, changed);
+            // Unlike addProduct, the stock change above is already committed
+            // (both locally at the top of this function and to Firestore on
+            // the line above) by the time supplier resolution's outcome is
+            // known — aborting here would leave local state ahead of what's
+            // persisted. So restock still succeeds even if supplier creation
+            // failed; supplierFailed just lets the caller surface a
+            // non-blocking notice that attribution specifically didn't stick.
+            if (callback) callback(true, supplierFailed)
+        })
     }
 
     function stockStatus(p) {
@@ -783,12 +950,6 @@ QtObject {
         if (stockChange)
             TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText)
         Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
-    }
-
-    function findByName(name) {
-        for (var i = 0; i < products.length; ++i)
-            if (products[i].name === name) return products[i];
-        return null;
     }
 
     function getById(productId) {

@@ -40,3 +40,5 @@ graphify-out/*
 
 scripts/node_modules/
 scripts/.icns-tmp.png
+
+android/.gradle

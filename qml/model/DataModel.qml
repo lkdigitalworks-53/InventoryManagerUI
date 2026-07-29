@@ -67,16 +67,21 @@ Item {
 
         // ── Orders ────────────────────────────────────────────────────────────
         function onAddOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId) {
-            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId)
-            _syncOrdersModel()
-            var newOrderId = OrdersStore.orders[OrdersStore.orders.length - 1].orderId
-            logic.orderAdded(newOrderId)
+            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId,
+                function(ok, newOrderId) {
+                    if (!ok) {
+                        logic.errorOccurred("network", "Could not add order — try again")
+                        return
+                    }
+                    _syncOrdersModel()
+                    logic.orderAdded(newOrderId)
 
-            if (OrdersStore.autoApproveEnabled) {
-                var success = _tryCompleteOrder(newOrderId)
-                if (!success)
-                    logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
-            }
+                    if (OrdersStore.autoApproveEnabled) {
+                        var success = _tryCompleteOrder(newOrderId)
+                        if (!success)
+                            logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
+                    }
+                })
         }
 
         function onUpdateOrder(orderId, fields) {
@@ -109,9 +114,19 @@ Item {
                 }
             } else if (wasCompleted && fields.status !== undefined) {
                 // Reverting a COMPLETED order back to pending/processing (or any
-                // non-completed status). The completion deducted stock and booked
-                // sale events; reopening MUST reverse both or the inventory and
-                // the analysis reports permanently overcount (bug 1). This also
+                // non-completed status) reverses booked stock/FIFO/sale events —
+                // significant enough to gate the same way onAdjustOrder already
+                // does. Safe to add here without touching import: import's own
+                // field-update payload (OrdersStore.upsertMany's envelopeFields)
+                // never includes `status` at all, so it can never reach this
+                // branch regardless of who's running the import.
+                if (!_hasAnyRole(["owner", "admin", "manager"])) {
+                    logic.errorOccurred("auth", "You do not have permission to reopen a completed order")
+                    return
+                }
+                // The completion deducted stock and booked sale events;
+                // reopening MUST reverse both or the inventory and the
+                // analysis reports permanently overcount (bug 1). This also
                 // makes a later re-completion a clean, fresh deduction instead of
                 // a second one stacked on top (bug 2). Reversal reads the order's
                 // current consumption[] lineage, so it MUST run before the
@@ -160,6 +175,17 @@ Item {
                 logic.errorOccurred("auth", "You do not have permission to delete orders")
                 return
             }
+            var order = OrdersStore.getById(orderId)
+            if (order && order.status === "completed") {
+                // A completed order has booked stock/FIFO/sale events —
+                // deleting it outright would orphan all of that with no
+                // reversal. Reopening (which already reverses everything,
+                // see onUpdateOrder's revert branch) before delete is the
+                // safe path; reject rather than silently cascade-reverse as
+                // a side effect of what the user asked for as a plain delete.
+                logic.errorOccurred("order", "Completed orders can't be deleted directly — reopen it to pending first, then delete")
+                return
+            }
             OrdersStore.deleteOrder(orderId)
             _syncOrdersModel()
             logic.orderDeleted(orderId)
@@ -185,8 +211,14 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can add products")
                 return
             }
-            InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent)
-            logic.productAdded(InventoryStore.products[InventoryStore.products.length - 1].productId)
+            InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent,
+                undefined, undefined, undefined, function(ok, productId) {
+                    if (!ok) {
+                        logic.errorOccurred("network", "Could not add product — try again")
+                        return
+                    }
+                    logic.productAdded(productId)
+                })
         }
 
         function onUpdateProduct(productId, fields, reason) {
@@ -210,8 +242,16 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
-            InventoryStore.restock(productId, amount)
-            logic.productRestocked(productId)
+            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed) {
+                if (!ok) {
+                    logic.errorOccurred("network", "Could not restock — try again")
+                    return
+                }
+                logic.productRestocked(productId)
+                if (supplierFailed) {
+                    logic.errorOccurred("network", "Restocked, but the supplier could not be recorded — edit it manually if needed")
+                }
+            })
         }
 
         function onDeleteProduct(productId) {
@@ -246,8 +286,14 @@ Item {
                 logic.errorOccurred("auth", "Only owner/admin can add staff")
                 return
             }
-            StaffStore.addStaff(name, email, phone, role, department, joinDate, status, salary)
-            logic.staffAdded(StaffStore.staff[StaffStore.staff.length - 1].staffId)
+            StaffStore.addStaff(name, email, phone, role, department, joinDate, status, salary,
+                function(ok, staffId) {
+                    if (!ok) {
+                        logic.errorOccurred("network", "Could not add staff — try again")
+                        return
+                    }
+                    logic.staffAdded(staffId)
+                })
         }
 
         function onUpdateStaff(staffId, fields) {
@@ -305,19 +351,18 @@ Item {
         }
     }
 
-    // Resolve an order line item back to an inventory record. Prefer
-    // productId (stable) and fall back to name (older orders or external data
-    // may not carry an id).
+    // Resolve an order line item back to an inventory record by productId
+    // only. No name-based fallback: product names can legitimately duplicate
+    // across distinct products, so matching by name here could silently
+    // deduct stock from / attribute a sale to the wrong product. Every
+    // current order-creation path (NewOrderDialog, OrderDetailDialog,
+    // ImportPreviewDialog) always sets productId on a line item — a line
+    // missing it is either truly pre-productId legacy data or a data bug,
+    // and either way should surface as "not found" rather than be silently
+    // guessed at by name.
     function _resolveInventory(lineItem) {
-        if (lineItem.productId) {
-            var byId = InventoryStore.getById(lineItem.productId)
-            if (byId) return byId
-        }
-        if (lineItem.name) {
-            var byName = InventoryStore.findByName(lineItem.name)
-            if (byName) return byName
-        }
-        return null
+        if (!lineItem.productId) return null
+        return InventoryStore.getById(lineItem.productId)
     }
 
     function _lineQty(lineItem) {
@@ -455,6 +500,23 @@ Item {
         return { ok: true, understocked: understocked }
     }
 
+    // Import-facing counterpart to onAdjustOrder's signal handler. The
+    // signal path (logic.adjustOrder -> onAdjustOrder -> _tryAdjustOrder)
+    // is fire-and-forget: a bulk import applying several overwrite rows in
+    // a loop would have no way to know which ones failed a stock check, so
+    // failures would silently vanish into a single, likely-overwritten
+    // global error toast instead of the import's own per-row summary.
+    // Mirrors completeImportedOrder's existing precedent of calling
+    // straight into DataModel instead of through the signal for exactly
+    // this reason -- no RBAC check here either, matching that precedent,
+    // since import-level access is gated at the import entry point, not
+    // per adjustment operation.
+    function adjustOrderForImport(orderId, newLines, reason, condition, note) {
+        dataModel.stockErrorMsg = ""
+        var ok = _tryAdjustOrder(orderId, newLines, reason, condition, note)
+        return { ok: ok, message: ok ? "" : dataModel.stockErrorMsg }
+    }
+
     // Reverse a COMPLETED order back to an un-booked state. Mirrors a full
     // return on every line: restores each line's consumed batches to sellable
     // stock, credits product.stock, and appends a negating ledger event so the
@@ -519,6 +581,20 @@ Item {
             return false
         }
 
+        var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
+        for (var pf = 0; pf < deltas.length; ++pf) {
+            var pfd = deltas[pf]
+            if (pfd.addedQty > 0) {
+                var pfInv = InventoryStore.getById(pfd.productId)
+                var pfStock = pfInv ? pfInv.stock : 0
+                if (pfStock < pfd.addedQty) {
+                    dataModel.stockErrorMsg = (pfd.name || pfd.productId) + ": not enough stock to add "
+                        + pfd.addedQty + " more (only " + Math.max(0, pfStock) + " available)"
+                    return false
+                }
+            }
+        }
+
         var alloc = OrderMath.allocate(o)
         var allocByPid = {}
         for (var ai = 0; ai < alloc.perLine.length; ++ai) {
@@ -526,7 +602,6 @@ Item {
             allocByPid[pl.productId] = pl
         }
 
-        var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
         var refundAmount = 0
         var restock = (condition !== "damaged")
         // Capture FIFO lineage for any ADDED units (exchange replacement / qty
@@ -542,7 +617,7 @@ Item {
 
             // ── Returned / removed units ─────────────────────────────────
             if (d.returnedQty > 0) {
-                var line = _findLine(o.products, d.productId, d.name)
+                var line = _findLine(o.products, d.productId)
                 var consumption = line && Array.isArray(line.consumption) ? line.consumption : []
                 var plan = OrderAdjust.restorePlan(consumption, d.returnedQty)
                 var reversed = []
@@ -635,7 +710,7 @@ Item {
         // event). Without this, an adjusted line loses consumption and the
         // Revenue supplier axis drops the whole order.
         var enrichedLines = (newLines || []).map(function(nl) {
-            var orig = _findLine(o.products, nl.productId, nl.name)
+            var orig = _findLine(o.products, nl.productId)
             var origCons = orig && Array.isArray(orig.consumption) ? orig.consumption : []
             var oldQ = orig ? (orig.quantity || 0) : 0
             var newQ = nl.quantity || 0
@@ -722,12 +797,12 @@ Item {
         return true
     }
 
-    // Find an order line by productId (preferred) or name.
-    function _findLine(lines, productId, name) {
-        if (!lines) return null
+    // Find an order line by productId. No name fallback — see _resolveInventory
+    // above for why matching by name risks hitting a different product entirely.
+    function _findLine(lines, productId) {
+        if (!lines || !productId) return null
         for (var i = 0; i < lines.length; ++i) {
-            if (productId && lines[i].productId === productId) return lines[i]
-            if (!productId && name && lines[i].name === name) return lines[i]
+            if (lines[i].productId === productId) return lines[i]
         }
         return null
     }

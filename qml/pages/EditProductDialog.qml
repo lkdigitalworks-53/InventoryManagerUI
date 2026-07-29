@@ -669,7 +669,11 @@ BottomSheet {
                         var sid = root._supplierIds[idx]
                         var newName = (renameField.text || "").trim()
                         if (!sid || !newName) { root._renaming = false; return }
-                        SupplierStore.updateSupplier(sid, { name: newName })
+                        var renamed = SupplierStore.updateSupplier(sid, { name: newName })
+                        if (!renamed) {
+                            errorLabel.text = "A supplier named \"" + newName + "\" already exists"
+                            return
+                        }
                         // Refresh model + restore selection by id (the new
                         // name reshuffles the alphabetical sort order).
                         root._refreshSupplierPicker(sid)

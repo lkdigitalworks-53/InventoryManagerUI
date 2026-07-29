@@ -90,13 +90,15 @@ BottomSheet {
     }
 
     // Find a line in the captured original-order snapshot (_originalLines) by
-    // productId (preferred) or name. Used by the completed-order stock guard to
-    // know how many units a line already held before this edit.
-    function _findOriginalLine(productId, name) {
+    // productId. Used by the completed-order stock guard to know how many
+    // units a line already held before this edit. productId-only: names can
+    // duplicate across distinct products, so a name-based fallback here would
+    // risk matching the wrong line's booked quantity/tax.
+    function _findOriginalLine(productId) {
         var src = _originalLines || []
+        if (!productId) return null
         for (var i = 0; i < src.length; ++i) {
-            if (productId && src[i].productId === productId) return src[i]
-            if (!productId && name && src[i].name === name) return src[i]
+            if (src[i].productId === productId) return src[i]
         }
         return null
     }
@@ -123,9 +125,8 @@ BottomSheet {
             var dominantRate = 0   // the rate the user most recently applied (for the row label)
             for (var i = 0; i < lineArr.length; ++i) {
                 var ln = lineArr[i]
-                var booked = _findOriginalLine(ln.productId, ln.name)
+                var booked = _findOriginalLine(ln.productId)
                 var inv = ln.productId ? InventoryStore.getById(ln.productId) : null
-                if (!inv && ln.name) inv = InventoryStore.findByName(ln.name)
                 var curRate = (inv && inv.taxable) ? (inv.taxPercent || 0) : 0
                 vintageTax += OrderMath.lineTax(ln, {
                         originalQty: booked ? (booked.quantity || 0) : 0,
@@ -150,23 +151,24 @@ BottomSheet {
         var names = []
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
-            var avail = _availableStock(p.name)
+            var avail = _availableStock(p.productId)
             var sellPrice = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             cat.push({ name: p.name, price: sellPrice, productId: p.productId,
                          taxable: !!p.taxable, taxPercent: p.taxPercent || 0 })
-            names.push(p.name + " — " + InventoryStore.formatCurrency(sellPrice) + " · avail " + avail)
+            var productId = p.productId ? "[" + p.productId + "] " : ""
+            names.push(productId + p.name + " — " + InventoryStore.formatCurrency(sellPrice) + " · avail " + avail)
         }
         catalog = cat
         catalogNames = names
     }
 
-    function _availableStock(productName) {
-        var inv = InventoryStore.findByName(productName)
+    function _availableStock(productId) {
+        var inv = InventoryStore.getById(productId)
         if (!inv) return 0
         // Current qty for this product in the edit form.
         var used = 0
         for (var i = 0; i < products.count; ++i)
-            if (products.get(i).name === productName)
+            if (products.get(i).productId === productId)
                 used = products.get(i).quantity
         if (_orderStatus === "completed") {
             // Completed orders already deducted their ORIGINAL units from
@@ -174,7 +176,7 @@ BottomSheet {
             // reducing below the original qty (and − units pulled by adding
             // above it). So reducing a line raises the count, adding lowers it,
             // and at the unchanged baseline available == true on-hand.
-            var orig = _findOriginalLine("", productName)
+            var orig = _findOriginalLine(productId)
             var origQty = orig ? (orig.quantity || 0) : 0
             return Math.max(0, inv.stock + (origQty - used))
         }
@@ -308,7 +310,7 @@ BottomSheet {
                            discountType: p.discountType === "percent" ? "percent" : "flat",
                            discountValue: p.discountValue || 0,
                            taxable: taxable, taxPercent: taxPercent })
-            var inv = InventoryStore.findByName(p.name)
+            var inv = InventoryStore.getById(p.productId)
             // Stock check is only about units that must come OUT of on-hand
             // stock on save. For a pending order that's the whole line. For a
             // COMPLETED order the original units were already deducted at
@@ -317,7 +319,7 @@ BottomSheet {
             // trips the guard even when on-hand is now low.
             var needFromStock = p.quantity
             if (_orderStatus === "completed") {
-                var origLine = _findOriginalLine(p.productId, p.name)
+                var origLine = _findOriginalLine(p.productId)
                 var origQty = origLine ? (origLine.quantity || 0) : 0
                 needFromStock = Math.max(0, p.quantity - origQty)
             }
@@ -483,10 +485,15 @@ BottomSheet {
                     var idx = productCombo.currentIndex
                     if (idx < 0 || idx >= dlg.catalog.length) return
                     var p = dlg.catalog[idx]
-                    var avail = dlg._availableStock(p.name)
+                    var avail = dlg._availableStock(p.productId)
                     if (avail <= 0) return
+                    // Match the existing cart row by productId, not name — two
+                    // distinct products can legitimately share a display name,
+                    // and matching by name here would silently bump the WRONG
+                    // product's quantity (and its price/tax) instead of adding
+                    // this one as its own line.
                     for (var i = 0; i < products.count; ++i) {
-                        if (products.get(i).name === p.name) {
+                        if (products.get(i).productId === p.productId) {
                             products.setProperty(i, "quantity", products.get(i).quantity + 1)
                             dlg.recomputeSubtotal()
                             return
@@ -499,7 +506,7 @@ BottomSheet {
                     // overstate the total. Genuinely new products (no booked line)
                     // and pending orders use the current catalog rate.
                     var booked = dlg._orderStatus === "completed"
-                            ? dlg._findOriginalLine(p.productId, p.name) : null
+                            ? dlg._findOriginalLine(p.productId) : null
                     var addTaxable = booked ? !!booked.taxable : !!p.taxable
                     var addTaxPercent = booked ? (booked.taxPercent || 0) : (p.taxPercent || 0)
                     products.append({ productId: p.productId, name: p.name, price: p.price, quantity: 1,
@@ -533,11 +540,9 @@ BottomSheet {
                     Layout.fillWidth: true
                     title: model.name
                     subtitle: {
-                        var inv = null
-                        if (model.productId) inv = InventoryStore.getById(model.productId)
-                        if (!inv && model.name) inv = InventoryStore.findByName(model.name)
+                        var inv = model.productId ? InventoryStore.getById(model.productId) : null
                         var sku = inv && inv.sku ? inv.sku + " · " : ""
-                        return sku + OrdersStore.formatCurrency(model.price) + " × " + model.quantity
+                        return model.productId + " | " + sku + OrdersStore.formatCurrency(model.price) + " × " + model.quantity
                                 + " = " + OrdersStore.formatCurrency(model.price * model.quantity)
                     }
 
@@ -651,11 +656,11 @@ BottomSheet {
                                 // (inv.stock + origQty). Capping at inv.stock
                                 // alone would wrongly snap qty DOWN when the
                                 // line already exceeds depleted on-hand.
-                                var inv = InventoryStore.findByName(model.name)
+                                var inv = model.productId ? InventoryStore.getById(model.productId) : null
                                 var onHand = inv ? inv.stock : model.quantity + 1
                                 var maxQ = onHand
                                 if (dlg._orderStatus === "completed") {
-                                    var orig = dlg._findOriginalLine(model.productId, model.name)
+                                    var orig = dlg._findOriginalLine(model.productId)
                                     maxQ = onHand + (orig ? (orig.quantity || 0) : 0)
                                 }
                                 var q = Math.min(maxQ, model.quantity + 1)
@@ -921,7 +926,7 @@ BottomSheet {
                         }
                         Text {
                             visible: ohRow._sku.length > 0
-                            text: qsTr("SKU: %1").arg(ohRow._sku)
+                            text: qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
                             color: Constants.textSecondary
                             font.pixelSize: sp(Constants.fsCaption)
                         }
