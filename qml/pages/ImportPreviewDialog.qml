@@ -785,6 +785,7 @@ BottomSheet {
 
     function _apply() {
         busy = true
+        busyMessage = qsTr("Importing %1 rows — this may take a moment").arg(_effectiveCount())
         if (mode === "products") {
             InventoryStore.upsertMany(_readyRows, function(counts) {
                 busy = false

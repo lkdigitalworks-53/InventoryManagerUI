@@ -74,14 +74,26 @@ App {
     }
 
     function _handleBack() {
-        // 1. Open modal sheet / dialog → close the first open one.
+        // 1. Open modal sheet / dialog → close the first open one, unless
+        // it's busy with an operation in flight — then swallow the back
+        // press entirely rather than falling through to close something
+        // else or navigate away; the busy dialog stays in the way, same
+        // rationale as the X/Cancel/tap-outside guards added to BottomSheet
+        // itself. Dialogs that don't expose `busy` (not BottomSheet-derived)
+        // read as undefined here, which is falsy, so they close exactly as
+        // before — this only changes behavior for dialogs that actually
+        // have something to guard.
         var dialogs = [photoSourceSheet, addProductDlg, editProductDlg,
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
-                       forgotPasswordDlg, confirmDlg, stockErrorDlg, permissionErrorDlg]
+                       forgotPasswordDlg, confirmDlg, stockErrorDlg, permissionErrorDlg,
+                       importDlg]
         for (var i = 0; i < dialogs.length; ++i) {
-            if (dialogs[i] && dialogs[i].opened) { dialogs[i].close(); return }
+            if (dialogs[i] && dialogs[i].opened) {
+                if (!dialogs[i].busy) dialogs[i].close()
+                return
+            }
         }
         // 2. Full-screen overlay visible → close back to Dashboard.
         if (profilePage.visible)         { profilePage.close();         return }
