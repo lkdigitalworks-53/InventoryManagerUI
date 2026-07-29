@@ -104,7 +104,7 @@ Item {
                         text: (AuthStore.role ? _formatRole(AuthStore.role) + " · " : "")
                               + (AuthStore.tenantName || "Workspace")
                         color: Constants.textSecondary
-                        font.pixelSize: sp(Constants.fsSmall)
+                        font.pixelSize: sp(Constants.fsBodyLg)
                     }
                 }
 

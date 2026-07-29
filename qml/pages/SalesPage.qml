@@ -2308,7 +2308,9 @@ Item {
         // Show the order number alongside the product on sale-cycle rows (bug 13)
         // so a recent-sales line ties back to its order at a glance.
         if (d.orderId && (d.kind === "sale" || d.kind === "return" || d.kind === "price_adjust"))
-            return name + "  ·  #" + d.orderId
+            name = name + "  ·  #" + d.orderId + " · " + d.productId
+        else
+            name = name + " · " + d.productId
         return name
     }
 
@@ -2333,7 +2335,7 @@ Item {
         var skuTail = ""
         if (d.productId && (d.kind === "sale" || d.kind === "return" || d.kind === "price_adjust")) {
             var inv = InventoryStore.getById(d.productId)
-            if (inv && inv.sku) skuTail = "  ·  " + qsTr("SKU %1").arg(inv.sku)
+            if (inv && inv.sku) skuTail = "  ·  " + qsTr("SKU: %1").arg(inv.sku)
         }
         var party = d.party || (d.snapshot ? d.snapshot.party || "" : "")
         var partyTail = party ? "  ·  " + qsTr("from %1").arg(party) : ""
