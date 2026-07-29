@@ -21,7 +21,7 @@ QtObject {
     id: root
 
     // "direct" until the Cloud Function + locked rules are deployed.
-    property string mode: "direct"
+    property string mode: "gateway"
 
     // Member/staff credential provisioning needs the Admin-SDK Cloud Function
     // (provisionMember) — it CANNOT fall back to a direct client write, because
