@@ -155,7 +155,8 @@ BottomSheet {
             var sellPrice = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             cat.push({ name: p.name, price: sellPrice, productId: p.productId,
                          taxable: !!p.taxable, taxPercent: p.taxPercent || 0 })
-            names.push(p.name + " — " + InventoryStore.formatCurrency(sellPrice) + " · avail " + avail)
+            var productId = p.productId ? "[" + p.productId + "] " : ""
+            names.push(productId + p.name + " — " + InventoryStore.formatCurrency(sellPrice) + " · avail " + avail)
         }
         catalog = cat
         catalogNames = names
