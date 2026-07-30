@@ -73,10 +73,12 @@ what changed against `AuthStore`, and coordinates the necessary writes.
 | Workspace mirror changed | Patch `users/{uid}.tenantName` | Included in the profile update |
 
 Both documents are updated with `FirebaseService.patch`, never rebuilt and
-overwritten. This preserves `ownerId`, plan information, timestamps, and any
-future tenant metadata. `AuthStore.updateProfile` must use the correctly
-spelled `profileData.tenantName` property when applying the successful mirror
-update.
+overwritten. `FirebaseService.patch` must send Firestore `updateMask` field
+paths for the keys it receives; its current alias to `put` does not make a
+field-selective REST update. This preserves `ownerId`, plan information,
+timestamps, and any future tenant metadata. `AuthStore.updateProfile` must
+use the correctly spelled `profileData.tenantName` property when applying the
+successful mirror update.
 
 The service creates a single logical completion condition:
 
@@ -108,6 +110,8 @@ The service creates a single logical completion condition:
   validation display, and a single call to the coordinated service API.
 - `qml/model/AuthService.qml`: validation and all completion/error
   orchestration for profile settings persistence.
+- `qml/model/FirebaseService.qml`: ensure `patch()` emits Firestore update
+  masks so a partial payload cannot replace unrelated document fields.
 - `qml/model/AuthStore.qml`: retain one canonical in-memory workspace name and
   session persistence; correct the existing `profileData. tenantName`
   expression to `profileData.tenantName` while integrating the service flow.
