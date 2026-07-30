@@ -97,20 +97,19 @@ already goes through `SupplierStore.updateSupplier` by stable `supplierId`, so n
 persisted outbox/retry; P0 scope = inventory + stock only; fresh-start cutover wipes ledger
 collections and zeroes product stock).
 
-### P0 implementation status (updated 2026-07-11)
+### P0 implementation status (updated 2026-07-29)
 
-**Code-complete, tested, NOT live.** All five working-tier stores (`InventoryStore`,
+**Code-complete, tested, LIVE.** All five working-tier stores (`InventoryStore`,
 `StockBatchStore`, `OrdersStore`, `StaffStore`, `SupplierStore`) now route every mutation through
 `Gateway.recordMutation` / `Gateway.recordMutations` (batch — new this session, see Skill 35 below)
-— zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. But:
+— zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. Status:
 
-- **`Gateway.mode` still defaults to `"direct"`.** In this mode, `recordMutation` falls through to
-  a plain Firestore write — **no `audit_log` entry is written today, regardless of what code calls
-  it.** This is deliberate, not a bug: going live needs Cloud Functions deployed, the locked
-  Firestore rules deployed, `runCutover` run (irreversible — wipes the ledger, zeroes stock), and
-  only then `Gateway.mode` flipped to `"gateway"` — in that order. None of that has happened yet;
-  treat this whole subsystem as inert until a session explicitly does that sequence with real
-  Firebase project access.
+- **`Gateway.mode` now defaults to `"gateway"`** (flipped 2026-07-29, commit `649046d`). Cloud
+  Functions and the locked Firestore rules are deployed and confirmed working (per Taher) —
+  `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry
+  atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
+  the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
+  confirmed in a session — don't assume historical ledger/stock data was reset without checking.
 - CF-side gateway logic (`recordMutation`, `runCutover`, and the new batch endpoint
   `recordMutationsBatch`) was extracted into `functions/lib/{gatewayLogic,cutoverLogic,
   batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no

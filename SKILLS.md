@@ -622,13 +622,13 @@ FirebaseService.put("audit_log/" + id, entry, null)
 `TransactionStore` and `StockBatchStore` are **read models** over the ledger — read from them freely,
 but they no longer own writes once P0 lands.
 
-**Current status (2026-07-11):** all four working-tier stores now call the gateway — this is
-implemented, not aspirational. But `Gateway.mode` still defaults to `"direct"`, so the gateway
-call itself falls through to a plain write today; **no `audit_log` entries are actually being
-written in production yet.** Don't infer "the audit trail is live" from seeing
-`Gateway.recordMutation(...)` in a store — check `Gateway.mode` and whether Cloud Functions/rules
-have actually been deployed and cutover run. See AGENTS.md §8's "P0 implementation status" for
-the full picture.
+**Current status (updated 2026-07-29):** all working-tier stores call the gateway, and
+`Gateway.mode` now defaults to `"gateway"` (flipped 2026-07-29, `649046d`) — Cloud Functions +
+the locked Firestore rules are deployed and confirmed working. `audit_log` entries are now
+actually being written for every `recordMutation`/`recordMutations` call. Whether `runCutover`
+(the one-time ledger wipe / stock zero-out) was also run as part of this rollout was not
+independently confirmed this session — verify before assuming historical ledger data was reset.
+See AGENTS.md §8's "P0 implementation status" for the full picture.
 
 ---
 
