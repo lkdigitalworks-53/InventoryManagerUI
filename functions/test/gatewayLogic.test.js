@@ -129,6 +129,44 @@ function makeFakeDb(existingAuditPaths) {
     };
 }
 
+// Like makeFakeDb, but tracks real document DATA per path (not just
+// existence), so tests can assert on read-then-compute logic (CAS, delta)
+// that needs to see what's actually stored at workingRef. `docs` is
+// { path: data }. Matches the real Firestore DocumentSnapshot shape:
+// `.exists` is a boolean, `.data()` is a method.
+function makeFakeDbWithData(docs, existingAuditPaths) {
+    const writes = [];
+    const store = Object.assign({}, docs || {});
+    const existingAudit = new Set(existingAuditPaths || []);
+    return {
+        writes,
+        store,
+        doc(path) {
+            return { path };
+        },
+        async runTransaction(fn) {
+            const txn = {
+                async get(ref) {
+                    if (ref.path.indexOf("/audit_log/") >= 0) {
+                        return { exists: existingAudit.has(ref.path) };
+                    }
+                    const has = Object.prototype.hasOwnProperty.call(store, ref.path);
+                    return { exists: has, data: () => (has ? store[ref.path] : undefined) };
+                },
+                set(ref, data, options) {
+                    writes.push({ type: "set", path: ref.path, data, options });
+                    store[ref.path] = data;
+                },
+                delete(ref) {
+                    writes.push({ type: "delete", path: ref.path });
+                    delete store[ref.path];
+                }
+            };
+            return fn(txn);
+        }
+    };
+}
+
 function baseParams(overrides) {
     return Object.assign({
         tenantId: "tenant-1",
@@ -193,4 +231,125 @@ test("applyMutation is a no-op when the requestId was already applied (idempoten
     await GatewayLogic.applyMutation(db, baseParams());
 
     assert.equal(db.writes.length, 0, "a retried requestId must not write anything again");
+});
+
+// ── applyDelta ───────────────────────────────────────────────────────────────
+// Atomic server-side numeric field adjustments (Component 4 of the async-write-
+// sequencing design). Unlike applyMutation, this never compares against a
+// client-supplied `before` — it reads the current value inside the same
+// transaction and computes current+delta, so it's safe regardless of what
+// else may have changed the doc concurrently.
+
+function deltaParams(overrides) {
+    return Object.assign({
+        tenantId: "tenant-1",
+        actorUid: "uid-1",
+        actorRole: "owner",
+        entity: "stock_batch",
+        entityId: "batch-1",
+        requestId: "req-delta-1",
+        deltas: { qtyRemaining: -3 },
+        floors: {},
+        clientTimestamp: 12345,
+        collection: "stock_batches",
+        serverTimestamp: "SERVER_TIMESTAMP_SENTINEL"
+    }, overrides || {});
+}
+
+test("applyDelta applies a single-field delta to the current stored value", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 10 } });
+    await GatewayLogic.applyDelta(db, deltaParams());
+
+    const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/stock_batches/batch-1");
+    assert.ok(workingWrite, "expected a write to the working-tier doc");
+    assert.equal(workingWrite.data.qtyRemaining, 7);
+});
+
+test("applyDelta writes an audit_log entry with the server-observed before/after values", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 10 } });
+    await GatewayLogic.applyDelta(db, deltaParams());
+
+    const auditWrite = db.writes.find((w) => w.path === "tenants/tenant-1/audit_log/req-delta-1");
+    assert.ok(auditWrite, "expected a write to the audit_log doc");
+    assert.deepEqual(auditWrite.data.before, { qtyRemaining: 10 });
+    assert.deepEqual(auditWrite.data.after, { qtyRemaining: 7 });
+    assert.equal(auditWrite.data.entryId, "req-delta-1");
+    assert.equal(auditWrite.data.entity, "stock_batch");
+    assert.equal(auditWrite.data.entityId, "batch-1");
+});
+
+test("applyDelta rejects when a floor would be violated, writing nothing at all", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 2 } });
+    const result = await GatewayLogic.applyDelta(
+        db, deltaParams({ deltas: { qtyRemaining: -5 }, floors: { qtyRemaining: 0 } }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.error, "insufficient-quantity");
+    assert.equal(result.field, "qtyRemaining");
+    assert.equal(result.current, 2);
+    assert.equal(db.writes.length, 0, "a rejected delta must write nothing, not even a partial field");
+});
+
+test("applyDelta succeeds when a delta brings a field to exactly its floor", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 5 } });
+    const result = await GatewayLogic.applyDelta(
+        db, deltaParams({ deltas: { qtyRemaining: -5 }, floors: { qtyRemaining: 0 } }));
+
+    assert.equal(result.ok, true);
+    const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/stock_batches/batch-1");
+    assert.equal(workingWrite.data.qtyRemaining, 0);
+});
+
+test("applyDelta rejects the whole call when ANY field would violate its floor, even if others wouldn't", async () => {
+    const db = makeFakeDbWithData({
+        "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 1, qtyReceived: 100 }
+    });
+    const result = await GatewayLogic.applyDelta(db, deltaParams({
+        deltas: { qtyRemaining: -5, qtyReceived: -1 },
+        floors: { qtyRemaining: 0, qtyReceived: 0 }
+    }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.field, "qtyRemaining");
+    assert.equal(db.writes.length, 0, "qtyReceived must not be written either — all-or-nothing");
+});
+
+test("applyDelta returns not-found and writes nothing when the working doc doesn't exist", async () => {
+    const db = makeFakeDbWithData({});
+    const result = await GatewayLogic.applyDelta(db, deltaParams());
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 404);
+    assert.equal(result.error, "not-found");
+    assert.equal(db.writes.length, 0);
+});
+
+test("applyDelta treats a missing field on the current doc as a zero baseline", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/stock_batches/batch-1": { note: "no qty field yet" } });
+    await GatewayLogic.applyDelta(db, deltaParams({ deltas: { qtyRemaining: 4 } }));
+
+    const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/stock_batches/batch-1");
+    assert.equal(workingWrite.data.qtyRemaining, 4);
+});
+
+test("applyDelta applies multiple fields atomically in one call", async () => {
+    const db = makeFakeDbWithData({
+        "tenants/tenant-1/stock_batches/batch-1": { qtyReceived: 20, qtyRemaining: 5 }
+    });
+    await GatewayLogic.applyDelta(db, deltaParams({ deltas: { qtyReceived: 8, qtyRemaining: 8 } }));
+
+    const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/stock_batches/batch-1");
+    assert.equal(workingWrite.data.qtyReceived, 28);
+    assert.equal(workingWrite.data.qtyRemaining, 13);
+});
+
+test("applyDelta is a no-op when the requestId was already applied (idempotent retry)", async () => {
+    const db = makeFakeDbWithData(
+        { "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 10 } },
+        ["tenants/tenant-1/audit_log/req-delta-1"]
+    );
+    await GatewayLogic.applyDelta(db, deltaParams());
+
+    assert.equal(db.writes.length, 0, "a retried delta requestId must not write anything again");
 });

@@ -212,22 +212,52 @@ primary mechanism, since the lock should make it fire only in genuine edge cases
 3. Whether the newly-found authorization gap (no server-side role/ownership enforcement at all) is
    in scope now or explicitly deferred as its own future item.
 
-## Next steps (not started)
-- Await Taher's review of the design doc + test plan (both written this step, see below).
-- Once approved: still-open decisions to resolve first (design doc §6 reject-vs-clamp on
-  insufficient stock; supplier edit dialog's exact filename; TTL/heartbeat numbers sanity-check;
-  §7.3 real-schema audit for server-auto-stamped fields that could break whole-record CAS).
-- Then: implementation, following `superpowers:test-driven-development`, in the rollout order
-  design doc §8 proposes (Component 4 → 3 → 1 → 2). Commit/push only with Taher's explicit
-  go-ahead (not given yet this session).
+## Implementation progress (this step)
+**Component 4 (atomic deltas) — server-side logic done, full TDD, all green.**
+- Resolved open items 3/4 from round 3 along the way: no dedicated supplier dialog exists —
+  `updateSupplier()` is called from inside `EditProductDialog.qml` (already gated by
+  `canManageInventory`), so "supplier" doesn't need its own lock entry point, it shares the
+  product-edit one. TTL/heartbeat kept at the proposed 90s/30s (no evidence found to change it).
+  Auto-stamped-fields concern (open item 2) checked: `applyMutation` never adds anything to the
+  working doc beyond the client's `after` — no server-side auto-stamping exists today, so the CAS
+  false-positive risk is currently theoretical, not observed. Still worth a final check when CAS
+  actually lands (Component 3), noted there.
+- **Not yet resolved:** open item 1 (reject-vs-clamp on insufficient stock) — implemented the
+  `floors` mechanism as reject-on-violation (my recommended default from the design doc), but this
+  is what a caller passing `floors: {stock: 0}` would get; **Taher has not explicitly confirmed
+  this is what he wants for `deductStock` specifically** — flagging again before wiring
+  `InventoryStore.deductStock` to actually pass that floor.
+- `functions/lib/gatewayLogic.js`: added `applyDelta(db, params)` — reads current value(s) inside
+  the transaction, computes `current + delta` per field, all-or-nothing floor rejection, writes
+  server-observed before/after to `audit_log`. Extracted `_refs()` shared helper (refactor step,
+  no behavior change) since `applyMutation` had the same ref-construction duplicated.
+- `functions/test/gatewayLogic.test.js`: added `makeFakeDbWithData()` (a second fake Firestore
+  double that tracks real document data, not just existence — needed for CAS/delta, unlike the
+  original `makeFakeDb` which only tracked existence). 9 new tests for `applyDelta`, all written
+  RED-first and verified failing for the right reason before implementing: single-field delta,
+  audit_log before/after, floor violation (all-or-nothing), floor-exactly-met boundary, not-found,
+  missing-field-as-zero, multi-field atomicity, idempotent retry.
+- Verified: `node --test test/gatewayLogic.test.js` → 25/25 pass. Full `functions/` suite
+  (`node --test test/*.test.js`) → 55/55 pass, no regressions in `batchMutationLogic`,
+  `cutoverLogic`, `breakdownMath`, `realisedMath`.
 
-## Design doc + test plan written (this step)
-- `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md` — full design, all 4
-  components, verified against actual current code (`OutboxStore.qml`, `Gateway.qml`,
-  `gatewayLogic.js`, `InventoryStore.qml`, `StockBatchStore.qml`, `AuthStore.qml`,
-  `OrderDetailDialog.qml` all re-read in full or in precise excerpt before writing this, not
-  written from memory of earlier-session summaries).
-- `docs/superpowers/specs/2026-07-29-async-write-sequencing-test-plan.md` — per-component unit/
-  regression/functional/negative/edge case plan, standing rule (test plan before code) satisfied.
-- Neither committed/pushed yet — still local-only on `docs/async-write-sequencing-design`, no push
-  permission given this session.
+## Not yet done (explicitly, so a resumed session knows exactly where this stopped)
+- `applyDelta` is NOT yet wired into `functions/index.js` as an actual HTTP endpoint, NOT deployed.
+  No `validateDeltaRequest` request-parsing/validation function written yet (mirroring
+  `validateMutationRequest`) — needed before wiring.
+- Component 3 (CAS backstop in `applyMutation`) — not started.
+- Component 1 (client single-flight in `OutboxStore.qml`/`Gateway.qml`) — not started. Can't be
+  executed/verified in this sandbox (no Qt toolchain) — will be written against the test plan and
+  flagged as unexecuted, same honesty precedent as `tst_ImportMath.qml` history in this repo.
+- Component 2 (locking) — not started, same QML-execution caveat as above, plus its Cloud Function
+  half (`lockLogic.js`) which CAN be node-tested here the same way `applyDelta` was.
+- Callers (`InventoryStore.deductStock`/`restock`, `StockBatchStore.consumeFifo`/`topUpOldest`/
+  `restoreFifo`) not yet switched from `recordMutation` to `recordDelta` — blocked on Taher's
+  reject-vs-clamp answer above, and on `Gateway.recordDelta()` existing client-side (Component 1
+  work).
+- Nothing committed yet this step (paused here to check in before continuing further).
+
+## Next steps
+- Report progress to Taher; get the outstanding reject-vs-clamp answer.
+- Continue in rollout order: Component 3 (CAS backstop) next — same node --test approach, fully
+  executable in this sandbox, same TDD rigor.
