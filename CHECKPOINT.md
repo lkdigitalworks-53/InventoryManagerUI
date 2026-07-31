@@ -150,3 +150,25 @@ packages, `functions/`: 230 packages). Re-ran `functions/node --test`: 48/48 pas
 (`4993cc7`).
 
 Next: Task 2 (workflow file + `qml-tests` job).
+
+**Task 2 — DONE.** Created `.github/workflows/pr-checks.yml` with trigger + `qml-tests` job.
+Validated YAML syntax. Re-ran `qmltestrunner -input tests -platform offscreen -o
+results.xml,junitxml` locally: same result as during planning (268 tests, 3 failures, exit code
+3). Committed (`6d29b8f`).
+
+**Task 3 — DONE.** Appended `functions-tests` job. Validated YAML. Re-confirmed
+`node --test --test-reporter=junit --test-reporter-destination=...`: exit 0, 48 testcases in the
+XML. Committed (`bb2b832`).
+
+**Task 4 — DONE.** Appended `firestore-rules-tests` job. Validated YAML (all 3 jobs present, step
+counts match plan: 5/6/8). Installed `firebase-tools` (15.25.1) for real and ran the actual
+`firebase emulators:exec` command — confirmed it's syntactically/structurally correct and gets as
+far as `downloading cloud-firestore-emulator-v1.22.0.jar...` before hitting the same known
+sandbox network wall as prior sessions (no route to the emulator's download host). This is the
+expected, documented limit — not a new problem. Committed (`f23ca93`).
+
+**Tasks 1-4 complete.** Full workflow at `.github/workflows/pr-checks.yml`, 3 jobs, all committed
+locally on `ci/github-actions-pr-checks`. Nothing pushed yet.
+
+Next: Task 5 — needs Taher's explicit go-ahead + PAT to push and open the real PR. Cannot proceed
+without that.
