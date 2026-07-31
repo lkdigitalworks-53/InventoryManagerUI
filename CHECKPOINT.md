@@ -139,3 +139,14 @@ no workflow YAML written yet.
 - Present execution options to Taher (subagent-driven vs inline) per `writing-plans`.
 - Execute the plan once Taher picks an approach.
 - Task 5 (push + real PR) needs Taher's explicit PAT go-ahead — cannot be skipped or simulated.
+
+## 2026-07-31 (continued) — Executing the plan (inline, per Taher's choice)
+
+**Task 1 — DONE.** Added a root `node_modules/` gitignore rule (flagged to Taher: root had none
+before, only `functions/` and `scripts/` did — this was going to bite someone the first time
+`npm install` ran at root, which is exactly what this task does). Removed the
+`*package-lock.json` rule. Regenerated + verified `npm ci` against both lockfiles (root: 87
+packages, `functions/`: 230 packages). Re-ran `functions/node --test`: 48/48 pass. Committed
+(`4993cc7`).
+
+Next: Task 2 (workflow file + `qml-tests` job).
