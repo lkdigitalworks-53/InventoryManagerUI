@@ -1,0 +1,43 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  qml-tests:
+    name: QML Tests
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          modules: 'qtdeclarative'
+
+      - name: Run QML tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FORCE_STDERR_LOGGING: 1
+          QT_LOGGING_TO_CONSOLE: 1
+        run: qmltestrunner -input tests -platform offscreen -o results.xml,junitxml
+
+      - name: Upload QML test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qml-test-results
+          path: results.xml
+
+      - name: Report QML test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: QML Tests
+          path: results.xml
+          reporter: java-junit
