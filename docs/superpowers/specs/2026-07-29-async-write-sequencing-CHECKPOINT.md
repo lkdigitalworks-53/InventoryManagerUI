@@ -297,7 +297,7 @@ result before proceeding to the order-status/sale/transaction steps. This is als
 first ask from the start of this session (synchronized calls + a real busy indicator) actually
 gets delivered, for this one flow.
 
-## Not yet done (updated)
+## Not yet done (as of the Component 3 commit)
 - `applyDelta`/`applyMutation`'s new CAS/floor logic NOT yet wired into `functions/index.js` as
   deployable endpoints, NOT deployed. No `validateDeltaRequest` written yet.
 - `_tryCompleteOrder` async/await sequencing (round 4 consequence, above) — not started.
@@ -305,5 +305,50 @@ gets delivered, for this one flow.
 - Component 2 (locking) — not started. `lockLogic.js` half is node-testable here like the above;
   the QML half is not.
 - Callers (`deductStock`/`restock`/FIFO functions) not yet switched to `recordDelta`.
-- Nothing pushed (2 local commits so far: docs, then Component 4). This step's Component 3 work
-  not committed yet — doing that next, then reporting back.
+
+## Pushed (round 5)
+Taher provided a one-time GitHub PAT, asked to push, said he'd regenerate it immediately after.
+Pushed `docs/async-write-sequencing-design` to `origin` (3 commits: docs+design+test-plan,
+Component 4, Component 3). Used the token directly in the push URL rather than a stored
+credential file (the `credential.helper store` approach failed outright — "could not read
+Username" — direct-URL push worked). Confirmed `~/.git-credentials` and `credential.helper` are
+both clean afterward. Taher is now reviewing/testing on a real device in parallel; told to
+continue working meanwhile.
+
+## Component 1 (client single-flight-per-record) — written, NOT executable in this sandbox
+- `OutboxStore.qml`: added `_inFlightKeys` (ephemeral, requestId-valued map keyed
+  `"entity/entityId"`), `markInFlight(item)`/`clearInFlight(item)` (take the item object itself,
+  not a requestId — avoids a real bug where looking the item back up by requestId AFTER
+  `markSent` already removed it would silently leak the in-flight key forever), `enqueue()` now
+  coalesces into a matching NOT-in-flight item instead of always appending, `dueItems()` excludes
+  any item whose key is currently blocked. Added `enqueueDelta()` (backs Component 4's
+  `Gateway.recordDelta`) — same coalescing shape but **sums** deltas instead of taking-latest, per
+  the design doc's explicit note that this is the one place the merge rule differs by kind.
+- `Gateway.qml`: `drainNow()` now marks every due item in-flight before dispatching;
+  `_send`/`_sendBatch` clear it in every exit path including the no-auth guard (verified this
+  specific path via a new test — forgetting it there would permanently strand any item enqueued
+  before first sign-in). Added `deltaFunctionUrl` (aspirational, endpoint not deployed yet), a new
+  `_deltaCallbacks` map (ephemeral, NOT persisted), `recordDelta(entity, entityId, deltas, floors,
+  callback)` following the existing `provisionMember(payload, callback)` precedent already in this
+  codebase — the one Gateway call that isn't fire-and-forget, since `_tryCompleteOrder` needs the
+  real outcome. Requires `mode === "gateway"` — fails fast with an explanatory error via callback
+  rather than silently no-op'ing. New `_sendDelta` dispatch function distinguishes a **terminal**
+  outcome (success, or a 409/404 the server explicitly explained) from a **transient** one
+  (network/5xx/unparseable) — only terminal outcomes remove the item and fire callbacks; transient
+  failures retry with backoff exactly like every other outbox item, callbacks staying pending.
+- Tests added: `tests/tst_OutboxStore.qml` (+15 cases: coalescing, in-flight exclusion,
+  batch-locks-members, delta-sums-on-coalesce) and `tests/tst_Gateway.qml` (+6 cases: recordDelta's
+  enqueue/mode-guard/unknown-entity paths, in-flight-doesn't-leak regression) — both extending
+  existing files, matching their established header/scope-note convention.
+- **Honesty check performed:** confirmed no `qmllint`/`qmltestrunner`/`qml` binary exists in this
+  sandbox (only unrelated Qt5 runtime libs as transitive deps of something else) — nothing here has
+  been executed, only brace-balance-checked (52/52, 94/94, 127/127, 34/34 across the 4 files) and
+  manually re-read. Not the same kind of "done" as the CF-side work.
+
+## Next steps
+- Commit Component 1's work (not committed yet as of writing this).
+- `lockLogic.js` (Component 2's server half) — next, fully node-testable like Components 3/4.
+- Then the QML-only remainder: `_tryCompleteOrder` sequencing, caller swaps to `recordDelta`,
+  `LockManager.qml` + dialog wiring for Component 2 — all written-not-executed like Component 1.
+- `index.js` wiring/deployment for all new endpoints — explicitly held for Taher's own action,
+  not something to do unilaterally against a live system.

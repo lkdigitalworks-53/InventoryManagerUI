@@ -5,8 +5,10 @@ import "../qml/model"
 // Regression tests for the P0 compliance gateway's persisted outbox queue.
 // Covers the spec's "Outbox: enqueue→drain→dequeue; persistence across
 // relaunch; backoff" requirement (docs/superpowers/specs/2026-06-06-P0-
-// compliance-gateway-design.md §6) plus the new-this-session batch item
-// shape (enqueueBatch, backs Gateway.recordMutations).
+// compliance-gateway-design.md §6), the batch item shape (enqueueBatch,
+// backs Gateway.recordMutations), and — new this session — single-flight-
+// per-record coalescing and in-flight tracking (Component 1 of
+// docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md §3).
 //
 // NOT covered here: actually sending (Gateway._send/_sendBatch) — that's a
 // real XHR call with no mock HTTP layer in this codebase, so it's out of
@@ -14,7 +16,9 @@ import "../qml/model"
 // IS safely testable around the send path (the auth-token guard means
 // gateway-mode enqueue+drain is safe to exercise without hitting the
 // network; direct-mode's FirebaseService calls are not, so those aren't
-// exercised here either).
+// exercised here either). Everything in this file is pure data-structure
+// logic (enqueue, dueItems, markInFlight/clearInFlight, coalescing) with no
+// network dependency at all, so it's fully reviewable even unexecuted.
 //
 // NOT RUN IN THIS SANDBOX — no Qt/qmltestrunner toolchain available.
 // Written to convention and manually reviewed; needs a local
@@ -183,5 +187,159 @@ TestCase {
         compare(OutboxStore.hasPending(), true)
         OutboxStore.markSent("req-1")
         compare(OutboxStore.hasPending(), false)
+    }
+
+    // ── Component 1: single-flight-per-record coalescing ────────────────────
+
+    function test_enqueue_coalesces_second_call_for_same_key_when_not_in_flight() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1", action: "update",
+                               before: { status: "pending" }, after: { status: "pending" } })
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o1", action: "update",
+                               before: { status: "pending" }, after: { status: "completed" } })
+
+        compare(OutboxStore.items.length, 1, "two calls for the same order should merge into one item")
+        compare(OutboxStore.items[0].requestId, "r1", "keeps the FIRST item's requestId/before/action")
+        compare(OutboxStore.items[0].before.status, "pending")
+        compare(OutboxStore.items[0].after.status, "completed", "takes the LATEST after")
+    }
+
+    function test_enqueue_does_not_coalesce_calls_for_different_keys() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1", action: "update",
+                               before: {}, after: { status: "completed" } })
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o2", action: "update",
+                               before: {}, after: { status: "completed" } })
+
+        compare(OutboxStore.items.length, 2, "different entityIds must never merge")
+    }
+
+    function test_enqueue_does_not_coalesce_calls_for_different_entities_same_id_string() {
+        // Defends the key format itself (entity + "/" + entityId) — two
+        // different entities that happen to share an id string must not
+        // collide onto the same key.
+        OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "1", action: "update",
+                               before: {}, after: { a: 1 } })
+        OutboxStore.enqueue({ requestId: "r2", entity: "staff", entityId: "1", action: "update",
+                               before: {}, after: { b: 2 } })
+
+        compare(OutboxStore.items.length, 2)
+    }
+
+    function test_markInFlight_then_dueItems_excludes_that_item() {
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1",
+                                          action: "update", before: {}, after: { status: "completed" } })
+        OutboxStore.markInFlight(item)
+
+        compare(OutboxStore.dueItems().length, 0, "an in-flight item must not be picked up again")
+    }
+
+    function test_clearInFlight_makes_the_item_due_again() {
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1",
+                                          action: "update", before: {}, after: { status: "completed" } })
+        OutboxStore.markInFlight(item)
+        OutboxStore.clearInFlight(item)
+
+        compare(OutboxStore.dueItems().length, 1)
+    }
+
+    function test_enqueue_does_not_mutate_an_in_flight_items_payload() {
+        // The critical bug this design fixes: a second call arriving while
+        // the first is already dispatched must NOT rewrite the in-flight
+        // item's `after` — that payload is already on the wire. It must be
+        // appended as a separate, held item instead.
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1",
+                                          action: "update", before: { status: "pending" },
+                                          after: { status: "pending" } })
+        OutboxStore.markInFlight(item)
+
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o1", action: "update",
+                               before: { status: "pending" }, after: { status: "completed" } })
+
+        compare(OutboxStore.items.length, 2, "in-flight item + one held item, not merged")
+        var inFlightItem = OutboxStore.items[0]
+        compare(inFlightItem.requestId, "r1")
+        compare(inFlightItem.after.status, "pending",
+                "the in-flight item's payload must be untouched by the later arrival")
+    }
+
+    function test_multiple_arrivals_during_a_hold_collapse_into_one_held_item() {
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1",
+                                          action: "update", before: {}, after: { n: 1 } })
+        OutboxStore.markInFlight(item)
+
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o1", action: "update",
+                               before: {}, after: { n: 2 } })
+        OutboxStore.enqueue({ requestId: "r3", entity: "order", entityId: "o1", action: "update",
+                               before: {}, after: { n: 3 } })
+        OutboxStore.enqueue({ requestId: "r4", entity: "order", entityId: "o1", action: "update",
+                               before: {}, after: { n: 4 } })
+
+        compare(OutboxStore.items.length, 2,
+                "three arrivals during one hold must collapse into a single held item, not pile up")
+        var held = OutboxStore.items[1]
+        compare(held.after.n, 4, "the held item reflects only the LATEST arrival")
+    }
+
+    function test_held_item_becomes_sendable_the_instant_the_predecessor_clears() {
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "order", entityId: "o1",
+                                          action: "update", before: {}, after: { n: 1 } })
+        OutboxStore.markInFlight(item)
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o1", action: "update",
+                               before: {}, after: { n: 2 } })
+        compare(OutboxStore.dueItems().length, 0, "held item must not be sendable while r1 is in flight")
+
+        OutboxStore.markSent("r1") // r1 succeeded and was removed from the queue
+        OutboxStore.clearInFlight(item)
+
+        var due = OutboxStore.dueItems()
+        compare(due.length, 1)
+        compare(due[0].after.n, 2)
+    }
+
+    function test_batch_in_flight_blocks_a_single_item_enqueue_for_a_member_entityId() {
+        var batch = OutboxStore.enqueueBatch({
+            requestId: "b1", entity: "order",
+            items: [{ entityId: "o1", action: "update", before: {}, after: { status: "completed" } },
+                    { entityId: "o2", action: "update", before: {}, after: { status: "completed" } }]
+        })
+        OutboxStore.markInFlight(batch)
+
+        OutboxStore.enqueue({ requestId: "r-solo", entity: "order", entityId: "o2",
+                               action: "update", before: {}, after: { status: "cancelled" } })
+
+        compare(OutboxStore.dueItems().length, 0,
+                "a single-item mutation for a member of an in-flight batch must wait for the whole batch")
+    }
+
+    // ── Component 1: delta calls (enqueueDelta) — sums on coalesce, not latest-wins ──
+    // (design doc §3/§6 note: the one place the merge rule differs by kind —
+    // two stock deductions queued together should both apply, not one clobber the other)
+
+    function test_enqueueDelta_stores_deltas_and_floors() {
+        var item = OutboxStore.enqueueDelta({ requestId: "d1", entity: "stock_batch", entityId: "b1",
+                                               deltas: { qtyRemaining: -3 }, floors: { qtyRemaining: 0 } })
+        compare(item.deltas.qtyRemaining, -3)
+        compare(item.floors.qtyRemaining, 0)
+    }
+
+    function test_enqueueDelta_sums_when_coalesced_instead_of_taking_latest() {
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "stock_batch", entityId: "b1",
+                                    deltas: { qtyRemaining: -3 }, floors: { qtyRemaining: 0 } })
+        OutboxStore.enqueueDelta({ requestId: "d2", entity: "stock_batch", entityId: "b1",
+                                    deltas: { qtyRemaining: -2 }, floors: { qtyRemaining: 0 } })
+
+        compare(OutboxStore.items.length, 1)
+        compare(OutboxStore.items[0].deltas.qtyRemaining, -5, "deltas for the same key sum, they don't replace")
+    }
+
+    function test_enqueueDelta_does_not_mutate_an_in_flight_deltas_payload() {
+        var item = OutboxStore.enqueueDelta({ requestId: "d1", entity: "stock_batch", entityId: "b1",
+                                               deltas: { qtyRemaining: -3 }, floors: { qtyRemaining: 0 } })
+        OutboxStore.markInFlight(item)
+        OutboxStore.enqueueDelta({ requestId: "d2", entity: "stock_batch", entityId: "b1",
+                                    deltas: { qtyRemaining: -2 }, floors: { qtyRemaining: 0 } })
+
+        compare(OutboxStore.items.length, 2)
+        compare(OutboxStore.items[0].deltas.qtyRemaining, -3, "in-flight delta payload must be untouched")
+        compare(OutboxStore.items[1].deltas.qtyRemaining, -2, "held as a separate item, not merged in")
     }
 }

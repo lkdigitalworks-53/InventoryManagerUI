@@ -17,6 +17,18 @@ import QtQuick
 //
 // Flip `mode` to "gateway" only after `functions/` is deployed and the
 // locked Firestore rules are live.
+//
+// Single-flight-per-record (Component 1, async-write-sequencing design §3):
+// drainNow() marks every due item in-flight (OutboxStore.markInFlight)
+// before dispatching it, and each _send*/clears it once the request
+// resolves — OutboxStore uses this to stop a second enqueue() for the same
+// entity+entityId from ever touching an already-dispatched item's payload,
+// and to stop the same item being sent twice concurrently.
+//
+// recordDelta (Component 4) is the one Gateway call that ISN'T fire-and-
+// forget — its callback fires with the real server outcome, since callers
+// (order completion) need to branch on success vs. insufficient-quantity
+// before proceeding. Everything else stays fire-and-forget by design.
 QtObject {
     id: root
 
@@ -39,6 +51,12 @@ QtObject {
     // transaction for up to MAX_BATCH_SIZE items of the same entity, e.g.
     // OrdersStore.approveAllPending. See functions/lib/batchMutationLogic.js.
     property string batchFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutationsBatch"
+    // Atomic-delta endpoint (Component 4, async-write-sequencing design) —
+    // NOT YET DEPLOYED, this URL is aspirational until index.js wires up
+    // GatewayLogic.applyDelta and it's actually deployed. recordDelta()
+    // below is safe to call before then; it'll just retry with backoff like
+    // any other outbox item until the endpoint exists.
+    property string deltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
     // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
     property string cutoverUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover"
     // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
@@ -51,6 +69,17 @@ QtObject {
     signal cutoverFinished(bool ok, string error)
 
     property int inFlight: 0
+
+    // Pending recordDelta callbacks, keyed by outbox requestId — NOT
+    // persisted (callbacks are JS functions, can't survive relaunch or
+    // coalescing-across-restart anyway). One requestId can map to MULTIPLE
+    // callbacks if OutboxStore.enqueueDelta coalesced several recordDelta
+    // calls into one held item — all of them fire with that item's single
+    // outcome. If the app relaunches mid-flight, any never-fired callbacks
+    // are simply lost with the closure that held them — callers that care
+    // about that (order completion) hold their own busy/timeout state, this
+    // is not a durability mechanism the way the outbox itself is.
+    property var _deltaCallbacks: ({})
 
     // entity → working-tier collection. Mirrors ENTITY_COLLECTIONS in
     // functions/index.js; the two MUST stay in sync.
@@ -101,7 +130,52 @@ QtObject {
         return requestId
     }
 
-    // ── direct mode (pre-deploy, behaviour-preserving) ──────────────────────
+    // Atomic server-side delta (Component 4) — for quantity fields where two
+    // legitimate concurrent writers should both apply, not race each other.
+    // Unlike every other Gateway call, this is NOT fire-and-forget: callback
+    // fires once the real outcome is known — success, or a definitive
+    // rejection (insufficient-quantity) — following the same shape as
+    // provisionMember's callback. Requires gateway mode; delta semantics
+    // need server-side read-then-write, which "direct" mode has no way to
+    // do (it's just a client-side FirebaseService.put of an absolute value).
+    // If two recordDelta calls for the same record coalesce into one held
+    // outbox item (OutboxStore.enqueueDelta), BOTH callbacks fire with that
+    // item's single outcome — see _deltaCallbacks above.
+    function recordDelta(entity, entityId, deltas, floors, callback) {
+        var collection = _collectionFor(entity)
+        if (!collection || !entityId) {
+            console.warn("[Gateway] recordDelta: bad entity/id", entity, entityId)
+            if (callback) callback({ ok: false, error: "bad-request" })
+            return ""
+        }
+        if (mode !== "gateway") {
+            console.warn("[Gateway] recordDelta: requires gateway mode, got", mode)
+            if (callback) callback({ ok: false, error: "delta-requires-gateway-mode" })
+            return ""
+        }
+        var requestId = _nextRequestId()
+        var item = OutboxStore.enqueueDelta({
+            requestId: requestId,
+            entity: entity,
+            entityId: entityId,
+            deltas: deltas || {},
+            floors: floors || {},
+            clientTimestamp: new Date().toISOString()
+        })
+        // item.requestId is the SURVIVING requestId — may belong to an
+        // earlier call this one just coalesced into, not `requestId` above.
+        if (callback) {
+            var existing = _deltaCallbacks[item.requestId] || []
+            existing.push(callback)
+            var map = Object.assign({}, _deltaCallbacks)
+            map[item.requestId] = existing
+            _deltaCallbacks = map
+        }
+        drainNow()
+        return item.requestId
+    }
+
+
 
     function _writeDirect(collection, entityId, action, after) {
         var path = collection + "/" + entityId
@@ -190,7 +264,9 @@ QtObject {
 
         var due = OutboxStore.dueItems()
         for (var i = 0; i < due.length; ++i) {
+            OutboxStore.markInFlight(due[i])
             if (Array.isArray(due[i].items)) _sendBatch(due[i])
+            else if (due[i].deltas) _sendDelta(due[i])
             else _send(due[i])
         }
 
@@ -215,6 +291,7 @@ QtObject {
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
+            OutboxStore.clearInFlight(item)
             return
         }
         inFlight++
@@ -230,6 +307,7 @@ QtObject {
                              item.entity, item.entityId, xhr.responseText)
                 OutboxStore.markFailed(item.requestId)
             }
+            OutboxStore.clearInFlight(item)
             _reschedule()
         }
         xhr.open("POST", functionUrl)
@@ -254,6 +332,7 @@ QtObject {
     // its `items` count. Same success/failure/backoff handling as _send.
     function _sendBatch(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
+            OutboxStore.clearInFlight(item)
             return
         }
         inFlight++
@@ -269,6 +348,7 @@ QtObject {
                              item.entity, item.items.length, xhr.responseText)
                 OutboxStore.markFailed(item.requestId)
             }
+            OutboxStore.clearInFlight(item)
             _reschedule()
         }
         xhr.open("POST", batchFunctionUrl)
@@ -279,6 +359,66 @@ QtObject {
             entity: item.entity,
             requestId: item.requestId,
             items: item.items,
+            clientTimestamp: item.clientTimestamp
+        }))
+    }
+
+    // Delta counterpart of _send (Component 4). Unlike _send/_sendBatch,
+    // distinguishes a definitive server outcome (success, or a 409
+    // insufficient-quantity rejection) from a transient failure: only the
+    // former is terminal — removed from the outbox and its callback(s)
+    // fired. A transient/network failure retries with backoff like any
+    // other item, WITHOUT firing callbacks yet — they stay pending for
+    // whichever attempt eventually resolves.
+    function _sendDelta(item) {
+        if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
+            OutboxStore.clearInFlight(item)
+            return
+        }
+        inFlight++
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            inFlight--
+            var result = null
+            try { result = JSON.parse(xhr.responseText) } catch (e) { result = null }
+
+            // Success, or a definitive rejection the server understood
+            // (insufficient-quantity / not-found) — both are terminal.
+            // Anything else (network error, 5xx, unparseable body) is
+            // transient and retries.
+            var terminal = (xhr.status >= 200 && xhr.status < 300) ||
+                            ((xhr.status === 409 || xhr.status === 404) && result && result.error)
+
+            if (terminal) {
+                OutboxStore.markSent(item.requestId)
+            } else {
+                console.warn("[Gateway] recordDelta failed", xhr.status,
+                             item.entity, item.entityId, xhr.responseText)
+                OutboxStore.markFailed(item.requestId)
+            }
+            OutboxStore.clearInFlight(item)
+
+            if (terminal) {
+                var callbacks = _deltaCallbacks[item.requestId] || []
+                var map = Object.assign({}, _deltaCallbacks)
+                delete map[item.requestId]
+                _deltaCallbacks = map
+                for (var i = 0; i < callbacks.length; ++i)
+                    callbacks[i](result || { ok: xhr.status >= 200 && xhr.status < 300 })
+            }
+            _reschedule()
+        }
+        xhr.open("POST", deltaFunctionUrl)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+        xhr.send(JSON.stringify({
+            env: FirebaseService.environment,
+            entity: item.entity,
+            entityId: item.entityId,
+            deltas: item.deltas,
+            floors: item.floors,
+            requestId: item.requestId,
             clientTimestamp: item.clientTimestamp
         }))
     }
@@ -362,6 +502,7 @@ QtObject {
 
     function clear() {
         OutboxStore.clear()
+        _deltaCallbacks = ({})
         if (_drainTimer) _drainTimer.stop()
     }
 }

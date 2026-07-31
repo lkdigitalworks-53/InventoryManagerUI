@@ -21,7 +21,13 @@ import "../qml/model"
 //     or that safety property no longer holds.
 // A real mock-HTTP layer to test _send/_sendBatch's actual request/response
 // handling would need new test infrastructure this session didn't build —
-// flagging as a known gap rather than a silently-passing fake test.
+// flagging as a known gap rather than a silently-passing fake test. Same
+// applies to _sendDelta (Component 4) and its callback firing on a REAL
+// terminal response — only the enqueue-and-callback-stays-pending path is
+// testable here, not the actual success/conflict branch inside the XHR
+// handler. That branch is exercised indirectly by gatewayLogic.test.js
+// (node --test, fully executable in this sandbox) against the SERVER-side
+// logic it calls into — this file only covers the client dispatch shape.
 //
 // NOT RUN IN THIS SANDBOX — no Qt/qmltestrunner toolchain available.
 // Written to convention and manually reviewed; needs a local
@@ -106,5 +112,65 @@ TestCase {
         var requestId = Gateway.recordMutations("order", [])
         compare(requestId, "")
         compare(OutboxStore.pendingCount, 0)
+    }
+
+    // ── Component 1: in-flight tracking doesn't leak when nothing sends ─────
+    // (the _send/_sendDelta no-auth guard must still clear in-flight, or
+    // every item enqueued during a test run — or in a real not-yet-signed-in
+    // app launch — would be permanently stuck "blocked" and never drain
+    // once a real session does arrive)
+
+    function test_drainNow_does_not_leave_an_item_stuck_in_flight_when_unauthenticated() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("order", "o1", "update", null, { status: "approved" })
+        // drainNow() already ran once inside recordMutation(); call again to
+        // prove the item is actually drainable, not silently stuck blocked.
+        Gateway.drainNow()
+
+        compare(OutboxStore.dueItems().length, 1,
+                "the no-auth guard must clear in-flight, or this item can never be picked up again")
+    }
+
+    // ── Component 4: recordDelta ─────────────────────────────────────────────
+
+    function test_recordDelta_in_gateway_mode_enqueues_a_delta_item() {
+        Gateway.mode = "gateway"
+        var requestId = Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, { qtyRemaining: 0 }, null)
+
+        verify(requestId.length > 0)
+        compare(OutboxStore.pendingCount, 1)
+        var item = OutboxStore.items[0]
+        compare(item.requestId, requestId)
+        compare(item.deltas.qtyRemaining, -3)
+        compare(item.floors.qtyRemaining, 0)
+    }
+
+    function test_recordDelta_requires_gateway_mode() {
+        Gateway.mode = "direct" // delta has no direct-mode equivalent — needs server-side read-then-write
+        var calledWith = null
+        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, function(result) { calledWith = result })
+
+        compare(OutboxStore.pendingCount, 0, "must not enqueue anything in direct mode")
+        verify(calledWith !== null, "callback must fire synchronously with an explanatory error, not hang")
+        compare(calledWith.ok, false)
+        compare(calledWith.error, "delta-requires-gateway-mode")
+    }
+
+    function test_recordDelta_returns_empty_string_for_an_unknown_entity() {
+        Gateway.mode = "gateway"
+        var requestId = Gateway.recordDelta("widget", "w1", { qty: -1 }, {}, null)
+        compare(requestId, "")
+        compare(OutboxStore.pendingCount, 0)
+    }
+
+    function test_recordDelta_callback_is_not_invoked_before_any_response() {
+        // With AuthStore.idToken empty (see init()), _sendDelta's guard
+        // returns before any XHR fires — the callback must stay pending,
+        // not fire with a fabricated success/failure.
+        Gateway.mode = "gateway"
+        var callCount = 0
+        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, function(result) { callCount++ })
+
+        compare(callCount, 0, "no server response has happened yet — the callback must not fire")
     }
 }
