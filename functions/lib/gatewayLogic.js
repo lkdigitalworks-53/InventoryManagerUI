@@ -148,7 +148,7 @@ async function applyDelta(db, params) {
 
     return db.runTransaction(async (txn) => {
         const existing = await txn.get(auditRef);
-        if (existing.exists) return { ok: true, idempotentReplay: true };
+        if (existing.exists) return { ok: true, idempotentReplay: true, after: existing.data().after };
 
         const currentSnap = await txn.get(workingRef);
         if (!currentSnap.exists) return { ok: false, status: 404, error: "not-found" };
@@ -182,7 +182,7 @@ async function applyDelta(db, params) {
             clientTimestamp: params.clientTimestamp,
             requestId: params.requestId
         });
-        return { ok: true };
+        return { ok: true, after: after };
     });
 }
 

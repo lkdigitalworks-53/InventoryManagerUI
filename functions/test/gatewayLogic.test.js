@@ -137,7 +137,12 @@ function makeFakeDb(existingAuditPaths) {
 function makeFakeDbWithData(docs, existingAuditPaths) {
     const writes = [];
     const store = Object.assign({}, docs || {});
-    const existingAudit = new Set(existingAuditPaths || []);
+    // Convenience seeding for "this audit_log entry already exists" tests
+    // that don't care about its contents — only fills in a path not
+    // already given real data via `docs`.
+    for (const path of (existingAuditPaths || [])) {
+        if (!Object.prototype.hasOwnProperty.call(store, path)) store[path] = {};
+    }
     return {
         writes,
         store,
@@ -147,9 +152,6 @@ function makeFakeDbWithData(docs, existingAuditPaths) {
         async runTransaction(fn) {
             const txn = {
                 async get(ref) {
-                    if (ref.path.indexOf("/audit_log/") >= 0) {
-                        return { exists: existingAudit.has(ref.path) };
-                    }
                     const has = Object.prototype.hasOwnProperty.call(store, ref.path);
                     return { exists: has, data: () => (has ? store[ref.path] : undefined) };
                 },
@@ -422,4 +424,28 @@ test("applyMutation's CAS compare is not sensitive to object key insertion order
     }));
 
     assert.equal(result.ok, true, "key order alone must never cause a spurious conflict");
+});
+
+test("applyDelta's success result includes the computed new field values, not just ok:true", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 10 } });
+    const result = await GatewayLogic.applyDelta(db, deltaParams());
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.after, { qtyRemaining: 7 },
+        "callers need the server-authoritative new value, not just success/failure, to avoid local drift");
+});
+
+test("applyDelta's idempotent-replay result also includes the original after values", async () => {
+    const db = makeFakeDbWithData(
+        { "tenants/tenant-1/stock_batches/batch-1": { qtyRemaining: 7 } },
+        []
+    );
+    // Seed the audit_log entry as if a prior attempt already succeeded.
+    db.store["tenants/tenant-1/audit_log/req-delta-1"] = { after: { qtyRemaining: 7 } };
+    const result = await GatewayLogic.applyDelta(db, deltaParams());
+
+    assert.equal(result.ok, true);
+    assert.equal(result.idempotentReplay, true);
+    assert.deepEqual(result.after, { qtyRemaining: 7 },
+        "a retried request must still tell the caller the real outcome, not just that it was a replay");
 });
