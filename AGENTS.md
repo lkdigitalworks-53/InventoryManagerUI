@@ -23,7 +23,7 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 | Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
 | Analysis filters (date / supplier / channel / staff / category) + xlsx export | ✅ Done |
 | Staff activities from real data | ✅ Done |
-| Profile Settings dialog | ✅ Done |
+| Profile Settings dialog | ✅ Done — owner-only workspace rename, coordinated multi-doc save (2026-07-31, Skill 36) |
 | Member management dialog | ✅ Done |
 | Empty-state UI for Analysis page | ✅ Done |
 | Success toast for key operations | ✅ Done |
@@ -261,6 +261,10 @@ App (Main.qml)
 - Register new stores in `qml/model/qmldir`
 - Keep `FirebaseService` REST helpers (`get`, `query`, `put`, `putMany`, `patch`, `remove`, `toArray`)
   up to date
+- `patch()` sends a real field-masked Firestore update (`updateMask.fieldPaths` per key) — it does
+  **not** alias `put()` anymore (fixed 2026-07-31, see SKILLS Skill 36). Use `patch()` for a
+  partial update to a document with fields the caller doesn't own or know about; use `put()` only
+  when the caller intends to write/replace the whole document.
 - `FirebaseService.databaseUrl`/`databaseId` are environment-aware (resolved from
   `PRODUCT_STAGE` via `EnvConfig.js`); never hard-code `databases/(default)` — it
   bypasses dev/test/prd routing. All REST calls already build URLs from these.

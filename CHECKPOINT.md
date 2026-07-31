@@ -3,8 +3,9 @@
 **Started:** 2026-07-31
 **Branch:** `pr_taher_bug_fixes` (existing branch, not newly created — plan/spec were
 already authored and committed here by Taher before this session)
-**Status:** Executing `docs/superpowers/plans/2026-07-30-workspace-name-edit.md` via the
-executing-plans skill. In progress.
+**Status:** All 4 plan tasks complete and committed locally. Docs (SKILLS.md, AGENTS.md) updated.
+Awaiting Taher's diff review, then commit confirmation (already committed per-task on this
+branch, see below) and a push PAT before merging/pushing to origin.
 
 ## Step log
 
@@ -61,28 +62,85 @@ executing-plans skill. In progress.
      border, matching the accent color `AuthTextField` already uses for its link/active states
      elsewhere in the same dialog family. Flagged to Taher; proceeding with this substitution
      unless redirected.
-7. Starting Task 1 (pure `ProfileSettingsMath.js` helper + `tst_ProfileSettingsMath.qml`).
+7. **Task 1** (`750f110`): `qml/helper/ProfileSettingsMath.js` + `tests/tst_ProfileSettingsMath.qml`
+   (5 tests) written per plan verbatim. Verified by stripping the `.pragma library` directive and
+   running the real function body in Node against equivalent assertions — 19/19 pass.
+8. **Task 2** (`f945162`): Appended the 6th test (empty-value patch) — confirmed it already passed
+   against Task 1's helper (the helper uses `_trim()`-based presence tracking, never `||`, so the
+   falsy-value bug the test guards against never existed in this file). Made `FirebaseService.patch()`
+   field-selective (`updateMask.fieldPaths` per key) — confirmed zero existing callers before
+   changing its semantics. Replaced `updateUserProfile`/`updateTenantName` with a single
+   `saveProfileSettings()` that computes the change set via the Task 1 helper, issues only the
+   needed `patch()` calls, and emits `profileUpdated()`/`profileUpdateFailed(reason)` only after
+   every issued write settles (added the plan-specified `AuthStore.tenantId` guard before issuing
+   a tenant patch). Fixed `AuthStore.updateProfile()` to apply fields via `!== undefined` presence
+   checks instead of `||` fallbacks. Verified: brace/paren balance on all 3 edited files, `pending`
+   count can never be 0 when writes are needed (traced through `ProfileSettingsMath`'s invariant
+   that `tenantName` is always in `userPatch` whenever `tenantPatch` is non-null), confirmed
+   `users/`/`tenants/`-prefixed paths bypass `FirebaseService`'s tenant-scoping prefix (so the new
+   `patch()` calls hit the right documents).
+9. **Task 3** (`64e608e`): Rewrote `ProfileSettingsDialog.qml`'s workspace row —
+   `canRenameWorkspace: AuthStore.role === "owner"` gates both the edit button's visibility and the
+   field's `enabled` state (previously `role !== "staff"`, which wrongly let admin/manager unlock
+   the field client-side even though Firestore rules reject their write). Routed Save through the
+   single `saveProfileSettings(...)` call; added the `onProfileUpdateFailed` handler that sets
+   `errorMessage` without closing the sheet. Edit-button toggle now relocks and restores
+   `workspaceOriginalName` without any network call. Removed the stale `onAccepted` TODO — Enter no
+   longer submits, dialog Save remains the sole persistence action.
+   **Deviation from the plan, flagged to Taher before writing this task:** Step 3 specifies
+   `Constants.brand` for the active-edit border; that property does not exist in `Constants.qml`
+   (only `brand1`..`brand5` + aliases). Substituted `Constants.primaryBlue` (= `brand1`, indigo),
+   matching the accent color `AuthTextField` already uses for its active/link states elsewhere in
+   this same dialog family, plus `Constants.cardBg` (white) for the active-state background per
+   "normal card background" in the plan text, vs. `Constants.subtleBg` when locked.
+   Step 5 (device/desktop manual QA) explicitly **not done** — no build/run per standing
+   instruction; this remains open for Taher's own verification pass.
+10. **Task 4** (no commit — no correction was needed): ran the plan's static checks (adapted —
+    `rg` isn't installed in this container, used `grep -nE` instead). Confirmed
+    `updateTenantName`/`updateUserProfile` no longer appear anywhere in the repo. The plan's
+    `FirebaseService\.put\("tenants/" \+ AuthStore\.tenantId` grep pattern matched 2 lines in
+    `AuthService.qml` (687, 719) — traced these and confirmed they're pre-existing, unrelated
+    `tenants/{tenantId}/members/{uid}` staff-roster writes that only share the pattern's unanchored
+    prefix; a precise anchored check confirms zero full-tenant-document overwrites remain anywhere.
+    `git diff --check` flagged one pre-existing trailing-whitespace line in the design doc
+    (intentional markdown line-break syntax, not something this session introduced or should
+    "fix"). `git status --short` clean. Per the plan's own instruction, no empty/no-op commit was
+    created since no correction was actually required.
+11. Doc updates (this commit): Added **SKILLS.md Skill 36** (coordinated multi-document save
+    pattern, the `patch()` dead-code-to-real-fix finding, and the `Constants.brand` gotcha).
+    Updated **AGENTS.md**'s feature-status table row for Profile Settings dialog and the Store &
+    Firebase Agent section's note on `patch()`'s corrected semantics. Reviewed **README.md** —
+    no build/architecture/env-setup content is affected by this change, so left unmodified.
 
-## Verification approach in this environment
-No Qt/Felgo toolchain is available in this container (consistent with prior-session memory).
-Per the same approach used in the last analysis-by-name-chart session:
-- **Pure JS helper logic** (`ProfileSettingsMath.js`): verified by stripping `.pragma library`
-  and executing the actual, unmodified function bodies in Node against equivalent assertions
-  translated from the QML `TestCase` file's `compare()` calls. This exercises the real shipped
-  logic, not a reimplementation.
-- **QML files** (`ProfileSettingsDialog.qml`, `AuthService.qml`, `AuthStore.qml`,
-  `FirebaseService.qml`): reviewed by direct source inspection only. `qmltestrunner` and
-  `qmllint` commands in the plan cannot be run here. This will be stated plainly in the final
-  handoff — not converted into a passing claim, per Taher's standing instruction on honesty.
-- The plan's Task 4 static `rg` grep checks (no leftover `updateTenantName`/`updateUserProfile`
-  call sites, no accidental full-document tenant overwrite) **can** run here and will be run for
-  real.
+## Files changed (this branch, since `main`)
+`qml/helper/ProfileSettingsMath.js` (new), `tests/tst_ProfileSettingsMath.qml` (new),
+`qml/model/AuthService.qml`, `qml/model/AuthStore.qml`, `qml/model/FirebaseService.qml`,
+`qml/pages/ProfileSettingsDialog.qml`, `SKILLS.md`, `AGENTS.md`, plus this checkpoint and the
+already-existing spec/plan docs from before this session.
+
+## What's verified vs. not
+- **Verified by real execution in this session:** `ProfileSettingsMath.js`'s actual logic, via
+  direct Node execution of the unmodified source (only the `.pragma library` directive stripped) —
+  all 6 test scenarios / 22 assertions pass. Static structural checks (brace/paren balance,
+  no leftover old function names, no full-tenant-document overwrite, `git diff --check`,
+  `git status`) on all 4 changed QML files.
+- **Not verified in this session (no Qt/Felgo toolchain in this container):** a real
+  `qmltestrunner` pass of `tests/tst_ProfileSettingsMath.qml`, `qmllint` on the 4 changed QML
+  files, and any on-device rendering/interaction with `ProfileSettingsDialog.qml`'s new edit-state
+  styling — Taher hasn't asked for a build yet, per his standing instruction not to build/run
+  until requested.
 
 ## Open decisions
-- `Constants.primaryBlue` substitution for the plan's nonexistent `Constants.brand` (see above) —
-  proceeding with it, open to Taher overriding the color choice when reviewing the diff.
+- The `Constants.primaryBlue`/`Constants.cardBg` substitution for the plan's nonexistent
+  `Constants.brand` (Task 3, item 9 above) — implemented, open to Taher overriding the color
+  choice when reviewing the diff.
 
 ## Next steps
-- Execute Task 1 → Task 2 → Task 3 → Task 4 per plan, one commit per task (local only — no `git
-  push` without an explicit PAT + go-ahead from Taher this session).
-- Surface the Task 3 color substitution again at that point, briefly, before writing the QML edit.
+- Taher reviews the accumulated diff (`git diff eb272d7..HEAD` plus this checkpoint) and decides
+  whether to push (needs a session PAT) or request changes.
+- When Taher next builds: run `qmltestrunner -platform offscreen -input tests/tst_ProfileSettingsMath.qml`
+  and `qmllint -I qml qml/pages/ProfileSettingsDialog.qml qml/model/AuthService.qml
+  qml/model/AuthStore.qml qml/model/FirebaseService.qml`, then walk the 5-point manual QA checklist
+  in the plan's Task 3 Step 5 (owner unlock/relock, trim+persist+preserve-other-fields, cancel
+  doesn't write, failure keeps dialog open with no success toast, admin/manager/staff see a
+  read-only field).

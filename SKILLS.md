@@ -1245,3 +1245,37 @@ forever.
 before writing, but silently breaks anything that does (caught this converting 2 pre-existing
 `applyMutation` tests when adding the CAS check — they used `makeFakeDb` with a non-null `before`,
 which read as a false conflict once the function started actually checking current state).
+
+## Skill 37: Coordinated multi-document saves — `ProfileSettingsMath.js` + a real `patch()`
+
+**Files**: `qml/helper/ProfileSettingsMath.js`, `tests/tst_ProfileSettingsMath.qml`,
+`qml/model/AuthService.qml` (`saveProfileSettings`), `qml/model/FirebaseService.qml` (`patch`)
+
+When one user action must write to two documents (here: `users/{uid}` and `tenants/{tenantId}`)
+and the UI should only see one success/failure, don't fire two independent requests with two
+independent success signals — that's a race. Instead:
+
+1. A pure helper (no QML, no singletons) computes the **full change set** up front: what changed,
+   whether the request is even authorized (owner-only workspace rename), and the exact per-document
+   patch payloads. It returns `null`/`error` for invalid input instead of letting a bad write reach
+   the network.
+2. The orchestrating function counts how many writes are actually needed, issues them all, and
+   only emits the terminal success/failure signal once every issued write has settled — first
+   failure wins, but every callback still runs.
+3. The local store (`AuthStore.updateProfile`) applies fields with `!== undefined` presence checks,
+   not `value || fallback`. `||` silently keeps the old value when a field is legitimately cleared
+   to `""` — a real, non-obvious bug distinct from a `.pragma library` re-export bug.
+
+**`FirebaseService.patch()` was dead code before this**: it aliased straight to `put()`, and
+`put()`'s Firestore REST call is a `PATCH` **without** `updateMask.fieldPaths`, which Firestore
+treats as "replace the document with exactly these fields" — not a partial update. Grep for
+callers before trusting `patch()`'s name; here there were zero, so redefining it to send real
+`updateMask.fieldPaths` per key was zero-risk. If a future `patch()` caller exists, confirm it
+actually wanted masked semantics before changing it again.
+
+**Verify `Constants.qml` tokens exist before writing them into a design doc or plan.** A prior plan
+for this feature specified `Constants.brand` for an active-edit-state border; no such property
+exists (only `brand1`..`brand5` and semantic aliases like `primaryBlue: brand1`). Referencing an
+undefined singleton property doesn't fail to compile — it silently binds `undefined`, which is a
+much harder bug to spot than a QML syntax error. `grep -n "property color" qml/helper/Constants.qml`
+before using any `Constants.*` token you haven't seen used elsewhere first.
