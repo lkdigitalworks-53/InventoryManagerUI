@@ -346,9 +346,37 @@ continue working meanwhile.
   manually re-read. Not the same kind of "done" as the CF-side work.
 
 ## Next steps
-- Commit Component 1's work (not committed yet as of writing this).
-- `lockLogic.js` (Component 2's server half) — next, fully node-testable like Components 3/4.
+- `lockLogic.js` (Component 2's server half) — **done, see below.**
 - Then the QML-only remainder: `_tryCompleteOrder` sequencing, caller swaps to `recordDelta`,
   `LockManager.qml` + dialog wiring for Component 2 — all written-not-executed like Component 1.
 - `index.js` wiring/deployment for all new endpoints — explicitly held for Taher's own action,
   not something to do unilaterally against a live system.
+
+## Component 2 (locking) — server-side logic done, full TDD, all green
+- New `functions/lib/lockLogic.js`: `acquireLock(db, params)` — transactionally grants if no lock
+  exists, the existing one is expired (`expiresAt <= now`, boundary tested explicitly), or it's
+  already held by the same `actorUid` (renewal, pushes `expiresAt` out from `now`, not the old
+  value — tested explicitly since that's an easy off-by-one). Rejects with `{status:409,
+  holder:{name,role,expiresAt}}` otherwise, writing nothing. `releaseLock(db, params)` deletes only
+  if `holderUid` matches what's stored — a stale/duplicate release (e.g. from a session whose lock
+  already expired and was taken by someone else) is a silent no-op, never an error, and never
+  touches the new holder's lock (tested explicitly — this is the guard against a late release
+  stealing someone else's freshly-acquired lock).
+- `now`/`ttlMs` are injected params, not `Date.now()` calls inside the module — same
+  dependency-injection convention as `gatewayLogic.js`'s `serverTimestamp`/`clientTimestamp`,
+  keeps the logic deterministic and fully testable.
+- 8 tests, all RED-verified before implementing: grant-when-missing, grant-when-expired,
+  renew-when-same-holder, reject-when-held-by-someone-else, expiry-boundary, and the 3
+  releaseLock cases above.
+- Verified: `node --test test/lockLogic.test.js` → 8/8. Full `functions/` suite → 69/69, no
+  regressions anywhere else.
+- **Known, intentionally unaddressed limitation:** identity is `actorUid` only, not per-device/
+  session. If the same staff member has the same account open on two devices, the second device's
+  acquire would "renew" (same holder) rather than being told the record is in use elsewhere —
+  Taher's stated scenarios were all about different roles/people contesting a record, not one
+  person's own multiple devices, so this wasn't built. Flagging so it isn't mistaken for an
+  oversight if it comes up.
+- **Not yet done for Component 2:** `LockManager.qml` (client — heartbeat renewal timer, the
+  dialog-open integration points from the design doc §7.1 table) — QML, not started, will be
+  written-not-executed like Component 1. `index.js` wiring for `acquireLock`/`releaseLock` as
+  actual HTTP endpoints — not started, not deployed.
