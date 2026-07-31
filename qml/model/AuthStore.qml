@@ -151,12 +151,12 @@ QtObject {
     }
 
     function updateProfile(profileData) {
-        phone = profileData.phone || phone
-        address = profileData.address || address
-        city = profileData.city || city
-        country = profileData.country || country
-        postalCode = profileData.postalCode || postalCode
-        tenantName = profileData. tenantName || tenantName
+        if (profileData.phone !== undefined) phone = profileData.phone
+        if (profileData.address !== undefined) address = profileData.address
+        if (profileData.city !== undefined) city = profileData.city
+        if (profileData.country !== undefined) country = profileData.country
+        if (profileData.postalCode !== undefined) postalCode = profileData.postalCode
+        if (profileData.tenantName !== undefined) tenantName = profileData.tenantName
         saveSession()
     }
 }

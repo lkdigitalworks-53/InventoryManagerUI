@@ -1,6 +1,8 @@
 pragma Singleton
 import QtQuick
 
+import "../helper/ProfileSettingsMath.js" as ProfileSettingsMath
+
 QtObject {
     id: root
 
@@ -29,6 +31,7 @@ QtObject {
     signal tokenRefreshed()
     signal signedOut()
     signal profileUpdated()
+    signal profileUpdateFailed(string reason)
     signal passwordResetSent(string email)
 
     onIsOnlineChanged: {
@@ -919,67 +922,67 @@ QtObject {
         })
     }
 
-    function updateUserProfile(phone, address, city, country, postalCode, tenantName) {
+    function saveProfileSettings(phone, address, city, country, postalCode, workspaceName) {
+        if (busy) return
         if (!AuthStore.isAuthenticated || !AuthStore.uid) {
-            authFailed("Not authenticated")
+            profileUpdateFailed("Not authenticated")
             return
         }
 
-        var profileUpdate = {
-            phone: phone || AuthStore.phone,
-            address: address || AuthStore.address,
-            city: city || AuthStore.city,
-            country: country || AuthStore.country,
-            postalCode: postalCode || AuthStore.postalCode,
-            lastUpdatedAt: new Date().toISOString(),
-            tenantName: tenantName
+        var current = {
+            phone: AuthStore.phone, address: AuthStore.address, city: AuthStore.city,
+            country: AuthStore.country, postalCode: AuthStore.postalCode,
+            tenantName: AuthStore.tenantName
+        }
+        var draft = {
+            phone: phone, address: address, city: city, country: country,
+            postalCode: postalCode, tenantName: workspaceName
+        }
+        var changeSet = ProfileSettingsMath.buildChangeSet(current, draft, AuthStore.role)
+        if (changeSet.error.length > 0) {
+            profileUpdateFailed(changeSet.error)
+            return
+        }
+        if (!changeSet.hasChanges) {
+            profileUpdated()
+            return
+        }
+        if (changeSet.workspaceChanged && (!AuthStore.tenantId || AuthStore.tenantId.length === 0)) {
+            profileUpdateFailed("Workspace context is unavailable")
+            return
         }
 
-        FirebaseService.get("users/" + AuthStore.uid, function(ok, existingUser) {
-            if (!ok || !existingUser) {
-                authFailed("User profile not found")
+        var pending = (Object.keys(changeSet.userPatch).length > 0 ? 1 : 0)
+                      + (changeSet.tenantPatch !== null ? 1 : 0)
+        var failureReason = ""
+        busy = true
+        function settled(ok, reason) {
+            if (!ok && failureReason.length === 0)
+                failureReason = reason
+            pending -= 1
+            if (pending > 0) return
+            busy = false
+            if (failureReason.length > 0) {
+                profileUpdateFailed(failureReason)
                 return
             }
+            AuthStore.updateProfile(changeSet.profileState)
+            profileUpdated()
+        }
 
-            var updatedDoc = existingUser
-            updatedDoc.phone = phone || existingUser.phone
-            updatedDoc.address = address || existingUser.address
-            updatedDoc.city = city || existingUser.city
-            updatedDoc.country = country || existingUser.country
-            updatedDoc.postalCode = postalCode || existingUser.postalCode
-            updatedDoc.lastUpdatedAt = new Date().toISOString()
-            updatedDoc.tenantName = tenantName
-
-            FirebaseService.put("users/" + AuthStore.uid, updatedDoc, function(ok) {
-                if (!ok) {
-                    authFailed("Failed to update profile")
-                    return
-                }
-                AuthStore.updateProfile(profileUpdate)
-                profileUpdated()
+        if (Object.keys(changeSet.userPatch).length > 0) {
+            var userPatch = Object.assign({}, changeSet.userPatch,
+                                          { lastUpdatedAt: new Date().toISOString() })
+            FirebaseService.patch("users/" + AuthStore.uid, userPatch, function(ok) {
+                settled(ok, "Failed to update profile")
             })
-        })
-    }
-    function updateTenantName(tenantName) {
-        FirebaseService.get("tenants/" + AuthStore.tenantId, function(ok, tenantDoc) {
-            if (!ok) {
-                authFailed("Failed to get tenant info")
-                return
-            }
-            var doc = {
-                tenantId: tenantDoc.tenantId,
-                name: tenantName,
-                ownerId: tenantDoc.uid,
-                plan: tenantDoc.plan,
-                createdAt: tenantDoc.createdAt,
-                updatedAt: new Date().toISOString()
-            }
-            FirebaseService.put("tenants/" + AuthStore.tenantId, doc, function(ok) {
-                if (!ok) {
-                    authFailed("Failed to update tenant name")
-                    return
-                }
+        }
+        if (changeSet.tenantPatch !== null) {
+            var tenantPatch = Object.assign({}, changeSet.tenantPatch,
+                                            { updatedAt: new Date().toISOString() })
+            FirebaseService.patch("tenants/" + AuthStore.tenantId, tenantPatch, function(ok) {
+                settled(ok, "Failed to update workspace name")
             })
-        })
+        }
     }
 }

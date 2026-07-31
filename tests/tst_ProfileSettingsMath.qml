@@ -52,4 +52,12 @@ TestCase {
         compare(r.userPatch.city, "Mumbai")
         compare(r.tenantPatch, null)
     }
+
+    function test_empty_optional_contact_value_is_a_real_patch() {
+        var draft = Object.assign({}, current, { address: "" })
+        var r = ProfileSettingsMath.buildChangeSet(current, draft, "owner")
+        compare(r.error, "")
+        compare(r.userPatch.address, "")
+        compare(r.profileState.address, "")
+    }
 }
