@@ -66,6 +66,23 @@ function validateMutationRequest(body, entityCollections) {
     };
 }
 
+// Order-insensitive deep equality for plain JSON-shaped objects (what every
+// working-tier doc is). Deliberately not a naive JSON.stringify compare —
+// key insertion order must never affect the result.
+function _deepEqual(a, b) {
+    if (a === b) return true;
+    if (a === null || b === null) return a === b;
+    if (typeof a !== "object" || typeof b !== "object") return a === b;
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+        if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+        if (!_deepEqual(a[key], b[key])) return false;
+    }
+    return true;
+}
+
 // Shared doc-ref construction for both applyMutation and applyDelta.
 function _refs(db, params) {
     const tenantRoot = "tenants/" + params.tenantId;
@@ -79,12 +96,23 @@ function _refs(db, params) {
 // and appends exactly one audit_log entry, in a single transaction. The
 // audit_log doc id IS the requestId, so a retried call with the same
 // requestId is a no-op (idempotent retry protection for the outbox).
+//
+// Backstop CAS check: rejects (writes nothing) if the record's current
+// server state doesn't match the mutation's claimed `before` — defense in
+// depth against a stale client, on top of locking (Component 2) which is
+// meant to make this the rare, exceptional path rather than the norm.
 async function applyMutation(db, params) {
     const { auditRef, workingRef } = _refs(db, params);
 
-    await db.runTransaction(async (txn) => {
+    return db.runTransaction(async (txn) => {
         const existing = await txn.get(auditRef);
-        if (existing.exists) return; // idempotent retry — already applied
+        if (existing.exists) return { ok: true, idempotentReplay: true }; // idempotent retry
+
+        const currentSnap = await txn.get(workingRef);
+        const current = currentSnap.exists ? currentSnap.data() : null;
+        if (!_deepEqual(current, params.before)) {
+            return { ok: false, status: 409, conflict: true, current: current };
+        }
 
         if (params.action === "delete") {
             txn.delete(workingRef);
@@ -106,6 +134,7 @@ async function applyMutation(db, params) {
             clientTimestamp: params.clientTimestamp,
             requestId: params.requestId
         });
+        return { ok: true };
     });
 }
 

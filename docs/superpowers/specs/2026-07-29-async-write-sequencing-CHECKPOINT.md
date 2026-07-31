@@ -257,7 +257,53 @@ primary mechanism, since the lock should make it fire only in genuine edge cases
   work).
 - Nothing committed yet this step (paused here to check in before continuing further).
 
-## Next steps
-- Report progress to Taher; get the outstanding reject-vs-clamp answer.
-- Continue in rollout order: Component 3 (CAS backstop) next — same node --test approach, fully
-  executable in this sandbox, same TDD rigor.
+## Implementation progress (continued)
+**Component 3 (CAS backstop) — server-side logic done, full TDD, all green.**
+- `applyMutation` now reads `workingRef` inside the transaction and compares to `params.before`
+  via a new order-insensitive `_deepEqual` helper (not a naive `JSON.stringify` compare — key
+  insertion order must never cause a spurious conflict, tested explicitly). Rejects with
+  `{ok:false, status:409, conflict:true, current}` on mismatch, writing nothing. Idempotency check
+  still runs first, confirmed via an explicit ordering test (a retry is never rejected as a
+  conflict against its own prior result).
+- **Introduced and then fixed a real regression, noting honestly rather than glossing over it:**
+  adding the CAS read broke 2 pre-existing tests (`applyMutation writes the working doc...` /
+  `...deletes the working doc...`), because they used the original `makeFakeDb` (existence-only,
+  no real document data) with a non-null `before` — once `applyMutation` actually reads current
+  state, that fake always returning "doesn't exist" made every such test look like a false
+  conflict. Fixed by switching those two tests to `makeFakeDbWithData` seeded with the state their
+  own `before` claims — correctly modeling reality now that the function depends on it, not
+  papering over the failure.
+- 8 new tests total (mismatch rejection, claimed-create-when-exists, claimed-update-when-missing
+  with no crash, matches-proceeds, idempotency-before-CAS ordering, key-order insensitivity, plus
+  the 2 fixed pre-existing ones).
+- `applyMutation`'s return value changed from `undefined` to a result object (matching
+  `applyDelta`'s shape) — checked `index.js`'s only call site, it currently `await`s and ignores
+  the return value entirely, so this is non-breaking as-is, but `index.js` will need to actually
+  read this result to send `409` instead of always `200` once wired up (still not done, see below).
+- Verified: `node --test test/gatewayLogic.test.js` → 31/31. Full `functions/` suite → 61/61, no
+  regressions elsewhere.
+
+## Round 4 decision incorporated into the design (not yet implemented)
+Taher: reject (not clamp) on insufficient stock — order rejected, status → "out of stock", error
+shown on UI. Implemented the `floors` mechanism in `applyDelta` to support this (done, §Component
+4 above). But actually delivering "reject the order" requires `_tryCompleteOrder` to **await** the
+stock-deduction result before marking the order completed, instead of today's fire-and-forget-
+everything-at-once — this is QML-side, not yet started, and can't be executed in this sandbox
+(no Qt toolchain). Design doc §7 (Component 4 subsection) and test plan updated with the concrete
+shape: `Gateway.recordDelta(..., callback)` following the existing `provisionMember(payload,
+callback)` precedent already in this codebase, callback fires for ALL coalesced callers if
+Component 1 merges two calls into one outbox item, `_tryCompleteOrder` branches on the callback's
+result before proceeding to the order-status/sale/transaction steps. This is also where the very
+first ask from the start of this session (synchronized calls + a real busy indicator) actually
+gets delivered, for this one flow.
+
+## Not yet done (updated)
+- `applyDelta`/`applyMutation`'s new CAS/floor logic NOT yet wired into `functions/index.js` as
+  deployable endpoints, NOT deployed. No `validateDeltaRequest` written yet.
+- `_tryCompleteOrder` async/await sequencing (round 4 consequence, above) — not started.
+- Component 1 (client single-flight) — not started.
+- Component 2 (locking) — not started. `lockLogic.js` half is node-testable here like the above;
+  the QML half is not.
+- Callers (`deductStock`/`restock`/FIFO functions) not yet switched to `recordDelta`.
+- Nothing pushed (2 local commits so far: docs, then Component 4). This step's Component 3 work
+  not committed yet — doing that next, then reporting back.

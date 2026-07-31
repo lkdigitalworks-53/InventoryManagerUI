@@ -181,9 +181,27 @@ implementation time) to assert the new `recordDelta` call shape.
   bug that motivated Component 4 in the first place.
 
 **Negative**
-- `deductStock` requesting more than available stock — behavior depends on the still-open
-  reject-vs-clamp decision in the design doc §6; write the test to match whichever Taher confirms,
-  not both speculatively.
+- `deductStock` requesting more than available stock — **resolved (round 4): reject, not clamp.**
+  `_tryCompleteOrder` must await the real result before marking the order completed, then: on
+  rejection, set order status to `"out of stock"` and populate `dataModel.stockErrorMsg` (the same
+  field/path the existing synchronous pre-check already uses — verify both paths converge on
+  identical UI behavior, not two subtly different error displays); on success, proceed to the
+  order-status/sale/transaction steps as today.
+
+**New — callback propagation (follows directly from the reject decision)**
+- `Gateway.recordDelta(entity, entityId, deltas, floors, callback)` — callback fires with the real
+  Cloud Function result once the request resolves, following the existing `provisionMember`
+  callback precedent in this codebase (not fire-and-forget like `recordMutation`).
+- If Component 1's coalescing merges two `recordDelta` calls for the same key into one outbox
+  item, **both original callbacks fire** with the merged item's single outcome — test this
+  explicitly, it's an easy place to accidentally drop one caller's callback.
+- `_tryCompleteOrder` sequencing: stock-deduction callback must resolve (success or rejection)
+  *before* `OrdersStore.updateOrder(..., {status: "completed"})` is ever called — verify via a
+  fake/mock `Gateway.recordDelta` that the order-status call literally does not happen until the
+  callback fires, not just that the end state happens to look right.
+- Busy overlay: this is the first flow where the busy indicator is tied to a real network
+  acknowledgment rather than a decorative local flag — verify the overlay clears only after the
+  callback fires (success or rejection), not immediately after the local optimistic step.
 
 **Edge cases**
 - Delta of exactly `0` — still goes through the same transaction path, idempotent, no spurious

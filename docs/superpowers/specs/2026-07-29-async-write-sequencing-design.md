@@ -244,13 +244,34 @@ is the one place where the Component-1 merge rule differs by mutation kind).
 - `StockBatchStore.topUpOldest` → `recordDelta("stock_batch", batchId, {qtyReceived: +deficit, qtyRemaining: +deficit})`
 - `StockBatchStore.restoreFifo` → `recordDelta("stock_batch", batchId, {qtyRemaining: +qty})`
 
-**Open business-rule decision, not yet made — flagging explicitly, not deciding silently:** today's
-client code clamps at 0 (`Math.max(0, arr[i].stock - qty)`) and silently under-deducts if there
-isn't enough stock. The floor mechanism above makes it possible to instead **reject** the delta
-("insufficient stock") when it would go negative, which is more correct (you can't silently sell
-inventory that isn't there) but is a behavior change with real consequences for what happens to an
-order whose completion fails at this exact step. Recommend reject-not-clamp, but this needs
-Taher's explicit sign-off since it changes what a cashier sees at checkout, not just the data model.
+**Resolved by Taher (round 4):** reject, don't clamp — when a delta would take stock below its
+floor, the order should be rejected, its status set to `"out of stock"`, and the user shown an
+error. Implemented in `applyDelta` as the `floors` mechanism (§6 above, done, tested).
+
+**This answer implies more than a floor check, though — flagging the consequence explicitly.**
+`DataModel._tryCompleteOrder` today fires all four of its steps (stock deduct, order-status
+update, sale record, transaction record) synchronously and fire-and-forget — none of them wait for
+the network response of the one before it. For "reject the order and show an error" to actually
+work, the stock-deduction step's *real, server-confirmed* outcome has to be known **before** the
+order gets marked completed, not sometime later after completion has already been optimistically
+shown. That means:
+- `Gateway.recordDelta` needs a callback that fires with the real result once the Cloud Function
+  responds — not fire-and-forget like every other Gateway call. There's already a precedent for
+  this in the codebase: `Gateway.provisionMember(payload, callback)` follows exactly this shape.
+- `_tryCompleteOrder` needs to actually **await** that callback before proceeding to the
+  order-status/sale/transaction steps, branching to `status: "out of stock"` + the existing
+  `dataModel.stockErrorMsg` mechanism (already used for the synchronous pre-check — the same UI
+  path, now also reachable from this later, async check) on rejection, and to the normal
+  completion path on success.
+- If the coalescing rule in Component 1 merges two deltas for the same key into one outbox item,
+  the merged item needs to carry an *array* of pending callbacks, not one — all of them fire with
+  the same outcome when that one item's request resolves.
+- This is the concrete, scoped piece of "workflow sequencing" this design ended up needing — not
+  the full general compensating-transaction rollback deferred in §2, just this one specific,
+  well-defined wait-then-branch for order completion's stock step. It also directly closes the
+  loop on the very first thing asked for at the start of this whole session: synchronized calls
+  with a real busy indicator, rather than the decorative one that exists today (§4 of the original
+  busy-overlay design) — this is where that finally gets wired to something real, for this flow.
 
 ## 7. Cross-cutting notes
 

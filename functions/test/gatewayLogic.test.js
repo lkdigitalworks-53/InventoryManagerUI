@@ -185,7 +185,7 @@ function baseParams(overrides) {
 }
 
 test("applyMutation writes the working doc and an audit_log entry for an update", async () => {
-    const db = makeFakeDb();
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
     await GatewayLogic.applyMutation(db, baseParams());
 
     assert.equal(db.writes.length, 2);
@@ -213,7 +213,7 @@ test("applyMutation writes the working doc and an audit_log entry for an update"
 });
 
 test("applyMutation deletes the working doc (not the audit entry) for a delete action", async () => {
-    const db = makeFakeDb();
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
     await GatewayLogic.applyMutation(db, baseParams({ action: "delete", after: null }));
 
     const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/inventory/sku-1");
@@ -352,4 +352,74 @@ test("applyDelta is a no-op when the requestId was already applied (idempotent r
     await GatewayLogic.applyDelta(db, deltaParams());
 
     assert.equal(db.writes.length, 0, "a retried delta requestId must not write anything again");
+});
+
+// ── applyMutation: whole-record compare-and-swap backstop ─────────────────────
+// Component 3 of the async-write-sequencing design. A defense-in-depth check,
+// expected to fire rarely once locking (Component 2) is in place — but still
+// required, since Firestore's own transaction retry only protects against
+// truly simultaneous commits, not a client whose `before` went stale seconds
+// ago because something else already committed since.
+
+test("applyMutation rejects when 'before' doesn't match the current server state, writing nothing", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 99 } });
+    const result = await GatewayLogic.applyMutation(db, baseParams({ before: { qty: 1 } }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.conflict, true);
+    assert.deepEqual(result.current, { qty: 99 });
+    assert.equal(db.writes.length, 0, "a rejected mutation must not touch the working doc or write an audit entry");
+});
+
+test("applyMutation rejects a claimed 'create' (before: null) when the doc already exists", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 5 } });
+    const result = await GatewayLogic.applyMutation(db, baseParams({ action: "create", before: null }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.conflict, true);
+});
+
+test("applyMutation rejects an 'update' with a non-null 'before' when the doc doesn't exist, without crashing", async () => {
+    const db = makeFakeDbWithData({});
+    const result = await GatewayLogic.applyMutation(db, baseParams({ before: { qty: 1 } }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.conflict, true);
+    assert.equal(result.current, null);
+});
+
+test("applyMutation proceeds normally when 'before' matches the current server state", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+    const result = await GatewayLogic.applyMutation(db, baseParams());
+
+    assert.equal(result.ok, true);
+    const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/inventory/sku-1");
+    assert.deepEqual(workingWrite.data, { qty: 2 });
+});
+
+test("applyMutation's idempotency short-circuit runs before the CAS check — a retry is never rejected as a conflict against its own prior result", async () => {
+    const db = makeFakeDbWithData(
+        { "tenants/tenant-1/inventory/sku-1": { qty: 2 } }, // already the post-mutation state
+        ["tenants/tenant-1/audit_log/req-1"]
+    );
+    // before:{qty:1} would mismatch current:{qty:2} if CAS ran — but this is a
+    // retry of an already-applied request, so it must short-circuit first.
+    const result = await GatewayLogic.applyMutation(db, baseParams());
+
+    assert.equal(result.ok, true);
+    assert.equal(result.idempotentReplay, true);
+    assert.equal(db.writes.length, 0);
+});
+
+test("applyMutation's CAS compare is not sensitive to object key insertion order", async () => {
+    const db = makeFakeDbWithData({
+        "tenants/tenant-1/inventory/sku-1": { b: 2, a: 1 } // constructed key order: b, then a
+    });
+    const result = await GatewayLogic.applyMutation(db, baseParams({
+        before: { a: 1, b: 2 }, // same object, keys written in the opposite order
+        after: { a: 1, b: 3 }
+    }));
+
+    assert.equal(result.ok, true, "key order alone must never cause a spurious conflict");
 });
