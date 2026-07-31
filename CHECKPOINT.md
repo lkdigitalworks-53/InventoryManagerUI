@@ -95,9 +95,15 @@ no workflow YAML written yet.
    workflow has to fall back to `npm install` (works, but not reproducible/cacheable the same
    way). Asked Taher which way he wants to go.
 
+8. Lockfile decision: commit `package-lock.json` for root + `functions/`, remove the
+   `*package-lock.json` rule from `.gitignore`, use `npm ci` in CI.
+9. Presented the full concrete design (trigger, 3 job specs, reporting, lockfile handling, risks
+   to expect) conversationally; Taher approved.
+10. Wrote and committed the design spec:
+    `docs/superpowers/specs/2026-07-31-github-actions-pr-checks-design.md`.
+
 ## Next steps
 
-- Get Taher's decision on the lockfile question.
-- Write the design spec to `docs/superpowers/specs/`, walk through it section by section, get
-  final approval.
+- Taher reviews the written spec doc itself (not just the chat summary) and confirms/adjusts.
 - Hand off to `writing-plans` for the implementation plan.
+- Implementation not started — no workflow YAML, no lockfiles, no `.gitignore` edit yet.
