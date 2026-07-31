@@ -48,13 +48,56 @@ no workflow YAML written yet.
    `PRODUCT_LICENSE_KEY` hardcoded in plaintext, committed to a public repo. Raised to Taher for
    awareness; out of scope for the CI task unless he wants it addressed.
 
-5. Presented findings to Taher; awaiting answers to scoping questions before proposing approaches.
+5. Presented findings to Taher; asked scoping questions one at a time. Answers:
+   - **Build**: skip real compile entirely. CI covers tests only (no Felgo, no self-hosted
+     runner, no Felgo Cloud Builds — those stay out of scope for this workflow).
+   - **Fork/trust model**: PRs are same-repo only (Taher + trusted collaborators), no external
+     forks. This means the default `pull_request`-triggered `GITHUB_TOKEN` has full write
+     permissions — no need for the more complex fork-safe two-workflow pattern.
+   - **Result reporting**: rich — a PR check showing which specific tests failed, not just a
+     pass/fail summary. Requires JUnit XML + a reporting action (`dorny/test-reporter`).
+   - **Structure**: confirmed **Approach A** — three independent parallel jobs (`qml-tests`,
+     `functions-tests`, `firestore-rules-tests`), one check per surface. Rejected a single
+     sequential job (strictly slower, no benefit) and path-filtered conditional jobs (real risk
+     given documented QML/Node math-parity fixtures that must stay in sync — a path filter could
+     let a parity break through undetected).
+
+6. **Empirically verified feasibility instead of trusting docs/assumptions** (installed Qt6 +
+   Node tooling directly in the sandbox — network egress allows `archive.ubuntu.com` and
+   `registry.npmjs.org`):
+   - `functions/test`: ran for real, **48/48 pass**. Confirmed Node's built-in
+     `--test-reporter=junit --test-reporter-destination=<file>` produces valid JUnit XML — this
+     is the reporting mechanism the `functions-tests` and `firestore-rules-tests` jobs will use.
+   - `tests/*.qml`: ran for real via `qmltestrunner -input tests -platform offscreen` after
+     installing `qt6-declarative-dev-tools` + `qml6-module-qtqml-workerscript` +
+     `qml6-module-qtquick-window` + `qml6-module-qtcore` from apt (Ubuntu noble ships Qt 6.4.2).
+     Result: **265/268 pass, no Felgo involved at all** — confirms the hypothesis that this suite
+     is genuinely Felgo-independent. The 3 failures are exactly the 3 suites `AGENTS.md` flagged
+     as never having been run (`tst_ActivityLog`, `tst_Gateway`, `tst_OutboxStore`) — but the
+     cause is a **Qt version gap**, not a real test bug or a Felgo dependency: `AuthStore.qml`
+     uses `import QtCore`'s `Settings` type, which Ubuntu noble's Qt 6.4.2 doesn't have yet (it
+     landed in a later Qt 6.5+ minor). This is concrete evidence for pinning a newer Qt via
+     `jurplel/install-qt-action` (can't confirm the exact fix in-sandbox — `download.qt.io` isn't
+     in the allowed egress list here — but the diagnosis is solid and the fix is standard).
+   - `test/firestore.rules.test.js`: not run this session either (same known sandbox limitation
+     as prior sessions — no egress to the Firestore emulator's download host). Real GitHub Actions
+     runners have full internet access, so this should work there, but it genuinely will be
+     exercised for the very first time in CI.
+   - Cleaned up: removed scratch verification files, confirmed `git status` clean before
+     continuing. `functions/node_modules` created locally for the test run; already covered by
+     `functions/.gitignore`.
+
+7. **Found and flagged an existing, deliberate repo convention that conflicts with the "rich
+   reporting" design**: `.gitignore` has `*package-lock.json` — lockfiles for both root and
+   `functions/` are intentionally excluded, not an oversight (the rule was reinforced, not
+   accidental, per `git log -p .gitignore`). This matters because `npm ci` (the standard,
+   reproducible, cacheable CI install command) requires a committed lockfile; without one the
+   workflow has to fall back to `npm install` (works, but not reproducible/cacheable the same
+   way). Asked Taher which way he wants to go.
 
 ## Next steps
 
-- Get Taher's answers on scope (what "build" should mean given the Felgo constraint; which of the
-  three test surfaces to wire up; self-hosted runner appetite; how to handle the exposed license
-  key).
-- Propose 2-3 approaches with trade-offs.
-- Present design, write spec to `docs/superpowers/specs/`, get approval.
+- Get Taher's decision on the lockfile question.
+- Write the design spec to `docs/superpowers/specs/`, walk through it section by section, get
+  final approval.
 - Hand off to `writing-plans` for the implementation plan.
