@@ -107,3 +107,35 @@ no workflow YAML written yet.
 - Taher reviews the written spec doc itself (not just the chat summary) and confirms/adjusts.
 - Hand off to `writing-plans` for the implementation plan.
 - Implementation not started — no workflow YAML, no lockfiles, no `.gitignore` edit yet.
+
+## 2026-07-31 (continued) — Plan written
+
+11. Wrote the implementation plan via `superpowers:writing-plans`:
+    `docs/superpowers/plans/2026-07-31-github-actions-pr-checks.md`. 5 tasks: (1) fix `.gitignore`
+    + commit real lockfiles, (2) workflow file + `qml-tests` job, (3) `functions-tests` job,
+    (4) `firestore-rules-tests` job, (5) push + verify against a real PR (can't be done from a
+    sandbox — needs Taher's PAT go-ahead).
+12. While drafting, re-verified everything empirically rather than writing from memory:
+    - Regenerated real lockfiles: root `package-lock.json` (87 packages), `functions/package-lock.json`
+      (230 packages). Confirmed `npm ci` works cleanly against both.
+    - Confirmed `qmltestrunner -input tests -platform offscreen -o results.xml,junitxml` produces
+      valid JUnit XML (268 testcases, 3 failures, matches the earlier 265/268 finding) and that
+      `qmltestrunner`'s real exit code is non-zero on failure (3, matching the failure count) —
+      confirmed this properly via a non-piped exit-code check, not just visual output (a piped
+      `| tail` check would have masked this). This is why the plan's QML step has no
+      `continue-on-error` and relies on `if: always()` on the two steps after it instead.
+    - Confirmed `node --test --test-reporter=junit --test-reporter-destination=<file>` on the
+      `functions/` suite produces valid JUnit XML.
+    - Drafted the full 3-job workflow YAML and validated it parses with `python3 -c "import
+      yaml..."` (no `act`/Docker available in this sandbox to actually run it — GitHub API rate
+      limited the sandbox IP when attempting to fetch `actionlint` for deeper validation, so YAML
+      syntax validation is as far as pre-push verification goes).
+    - Left the working tree's generated `node_modules`/lockfiles uncommitted during this
+      exploration — Task 1 of the plan is what actually produces and commits them; kept the
+      plan-vs-execute boundary clean rather than jumping ahead.
+
+## Next steps
+
+- Present execution options to Taher (subagent-driven vs inline) per `writing-plans`.
+- Execute the plan once Taher picks an approach.
+- Task 5 (push + real PR) needs Taher's explicit PAT go-ahead — cannot be skipped or simulated.
