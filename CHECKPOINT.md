@@ -217,3 +217,21 @@ token from the prior push (Taher explicitly authorized reuse for this fix-and-pu
 
 **Still open:** re-run the checks on the PR with these fixes and confirm all three go green (or
 surface the next real thing to fix/triage).
+
+## 2026-07-31 (continued) — All 3 checks passed on PR. New feature: also run on push to main
+
+PR checks all green (`functions-tests`, `qml-tests`, `firestore-rules-tests`). PR not yet merged
+(`main` still at `96a84e6` — verified via `git fetch origin main`), so continuing on the same
+branch/PR rather than opening a new one for this extension.
+
+Taher asked for the same checks to also run after a PR merges, against latest `main`, same
+results pattern. Presented 3 structural options (same-file two-trigger / separate duplicated
+file / reusable workflow_call split) with trade-offs; Taher picked same-file. Also confirmed no
+extra alerting needed beyond the existing Checks-tab pattern.
+
+Implemented: renamed workflow `PR Checks` → `Checks` (file `pr-checks.yml` → `checks.yml`, git
+detected as a rename) since it's no longer PR-only. Added `push: branches: [main]` alongside the
+existing `pull_request` trigger. Confirmed this can't double-fire on merge: the `pull_request`
+trigger only listens for `[opened, synchronize, reopened]`, not `closed`, so a merge produces
+exactly one `push` event → one workflow run. Committed (`4fcdf8e`). **Not pushed yet** — no valid
+token in hand for this round; waiting on Taher.
