@@ -188,3 +188,32 @@ create`).
 first time — the real Task 5 verification. Waiting on Taher to open it (link:
 https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/new/ci/github-actions-pr-checks) and
 report back what the checks show.
+
+## 2026-07-31 (continued) — First real CI run: 2 of 3 checks failed, debugged and fixed
+
+Taher opened the PR. Results: `functions-tests` passed (as expected — fully verified
+end-to-end beforehand). Two failures, both root-caused and fixed locally before pushing again
+(didn't want to guess and burn another round-trip):
+
+1. **`qml-tests`**: `jurplel/install-qt-action` failed —
+   `ERROR: The packages ['qtdeclarative'] were not found while parsing XML of package
+   information!`. Cause: `qtdeclarative` is part of Qt's default essential package set, not an
+   addon module — passing it via `modules:` makes aqt look for it in the addon-module XML, where
+   it doesn't exist. Confirmed via web search (other install-qt-action users hit the identical
+   error for the identical reason — requesting an already-default package through `modules:`).
+   Fix: removed the `modules: 'qtdeclarative'` line entirely; the default install already
+   includes it.
+
+2. **`firestore-rules-tests`**: `Could not find '.../--test-reporter=junit'`. Cause: the command
+   put the positional `test/` path before the `--test-reporter=*` flags — Node's `--test` CLI
+   doesn't parse flags after a positional argument, so it treated `--test-reporter=junit` as
+   another file path to load. **Reproduced this exact failure mode locally** (got the analogous
+   "cannot find module" error), then verified the fix (flags moved before the path) gets past
+   argument parsing and into actual test execution — it only fails locally due to no live
+   emulator in this sandbox, the same known limitation as before, not this bug.
+
+Committed both fixes as `e7664b7` with the reasoning in the commit message. Pushed using the same
+token from the prior push (Taher explicitly authorized reuse for this fix-and-push round).
+
+**Still open:** re-run the checks on the PR with these fixes and confirm all three go green (or
+surface the next real thing to fix/triage).
