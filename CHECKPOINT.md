@@ -233,5 +233,9 @@ Implemented: renamed workflow `PR Checks` → `Checks` (file `pr-checks.yml` →
 detected as a rename) since it's no longer PR-only. Added `push: branches: [main]` alongside the
 existing `pull_request` trigger. Confirmed this can't double-fire on merge: the `pull_request`
 trigger only listens for `[opened, synchronize, reopened]`, not `closed`, so a merge produces
-exactly one `push` event → one workflow run. Committed (`4fcdf8e`). **Not pushed yet** — no valid
-token in hand for this round; waiting on Taher.
+exactly one `push` event → one workflow run. Committed (`4fcdf8e`). Pushed (`006c815`), using the
+still-valid token per Taher's confirmation.
+
+**Still open:** the actual push-to-main behavior can only be confirmed once this PR is merged —
+that's the only way to produce a real push event against `main`. Told Taher to check the Actions
+tab for a "Checks" run against the merge commit after merging.
