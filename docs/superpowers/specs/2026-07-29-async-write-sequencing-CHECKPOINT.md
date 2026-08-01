@@ -345,12 +345,40 @@ continue working meanwhile.
   been executed, only brace-balance-checked (52/52, 94/94, 127/127, 34/34 across the 4 files) and
   manually re-read. Not the same kind of "done" as the CF-side work.
 
+## Rebase onto latest main (round 6) — done locally, push BLOCKED on auth
+Taher asked to rebase onto main (other PRs merged meanwhile) and push again, using the same token
+from before. Split the working tree first: committed the consistent slice (clamp-mode floors for
+`recordDelta`, client+server, `f460fa5`) separately from the genuinely incomplete WIP
+(`_tryCompleteOrder`/`deductStock` round-4 sequencing — `completeImportedOrder` and the
+order-adjustment/exchange flow's `deductStock` calls, plus 5 callers of `_tryCompleteOrder`/
+`tryCompleteOrder`, are NOT yet updated to the new signatures) via `git stash push -- <2 files>`,
+so nothing broken got committed. `git fetch origin main` + `git rebase origin/main` — clean, no
+conflicts, all 7 commits now sit on `58891f7`. Full `functions/` suite re-verified post-rebase:
+73/73. Stash popped back afterward — WIP is back in the working tree, not committed.
+
+**Push is failing — 401 Unauthorized on git-receive-pack specifically**, confirmed via
+`GIT_CURL_VERBOSE`: the server rejects the token for the push (write) service even though
+`git ls-remote` (read) succeeds with the identical token — expected regardless of token validity
+since this is a public repo (reads don't need auth at all). The token Taher provided no longer
+works for writes; asked him for a fresh one rather than continuing to retry blindly. Remote branch
+tip is still `4fa10ef` (the lockLogic commit, pre-rebase) — nothing since has landed there.
+**Verified via ls-remote (read-only, works regardless of auth) — not from a stale local tracking ref.**
+
+**Valuable find while investigating this:** the newly-merged CI (`ci/github-actions-pr-checks`)
+includes a real `qml-tests` job — installs actual Qt 6.8, runs `qmltestrunner` against `tests/`,
+on every PR open/sync. This is the missing verification for everything flagged "written but not
+executed" all session (`tst_OutboxStore.qml`, `tst_Gateway.qml`, and whatever else gets written).
+Once pushed, opening a PR (even a draft) would give real signal on all of it — flagged to Taher
+as worth doing before going further into the harder-to-verify remaining pieces.
+
 ## Next steps
-- `lockLogic.js` (Component 2's server half) — **done, see below.**
-- Then the QML-only remainder: `_tryCompleteOrder` sequencing, caller swaps to `recordDelta`,
-  `LockManager.qml` + dialog wiring for Component 2 — all written-not-executed like Component 1.
-- `index.js` wiring/deployment for all new endpoints — explicitly held for Taher's own action,
-  not something to do unilaterally against a live system.
+- Blocked on a fresh push token from Taher.
+- Meanwhile: continue the WIP that doesn't need push access — finish `completeImportedOrder`
+  (needs `clampInsteadOfReject=true` + callback) and the order-adjustment/exchange flow's
+  `deductStock` call (currently both still call the OLD 2-arg signature, which no longer exists —
+  this is a real, uncommitted breakage right now, not just an incompleteness), then the 5 callers
+  of `_tryCompleteOrder`/`tryCompleteOrder` (4 in DataModel.qml, 1 in OrdersPage.qml's
+  `_approveAllPending` loop) that still expect a synchronous boolean return.
 
 ## Component 2 (locking) — server-side logic done, full TDD, all green
 - New `functions/lib/lockLogic.js`: `acquireLock(db, params)` — transactionally grants if no lock
