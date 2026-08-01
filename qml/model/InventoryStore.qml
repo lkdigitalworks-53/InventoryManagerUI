@@ -847,25 +847,47 @@ QtObject {
         return Math.min(1.0, p.stock / maxStock);
     }
 
-    function deductStock(productId, qty) {
+    // Deducts qty from product.stock via an atomic server-side delta
+    // (Component 4, async-write-sequencing design) — NOT the old optimistic-
+    // local-then-fire-and-forget pattern. Local `products[]` is updated only
+    // once the callback confirms the real, server-computed outcome, using
+    // the server's authoritative new value (result.after.stock) rather than
+    // recomputing locally — avoids drifting from whatever else may have
+    // touched this product concurrently.
+    //
+    // `clampInsteadOfReject` (default false — reject): order completion
+    // wants insufficient stock to FAIL the deduction (Taher's round-4
+    // decision: reject the order, don't silently under-sell). Pass true for
+    // completeImportedOrder's deliberately different "complete + report
+    // shortfall" business rule, which must keep succeeding the way it
+    // always has — same atomicity/race-safety either way, only the
+    // floor-crossing behavior differs.
+    function deductStock(productId, qty, callback, clampInsteadOfReject) {
         var arr = _clone();
-        var changed = null;
-        var before = null;
+        var exists = false;
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].productId === productId) {
-                before = Object.assign({}, arr[i]);
-                arr[i].stock = Math.max(0, arr[i].stock - qty);
-                changed = arr[i];
-                break;
-            }
+            if (arr[i].productId === productId) { exists = true; break; }
         }
-        products = arr;
-        if (!changed) {
+        if (!exists) {
             console.warn("[InventoryStore] deductStock: no product with id", productId)
+            if (callback) callback({ ok: false, error: "not-found" })
             return
         }
-        // Each deduction is an auditable update routed through the gateway.
-        Gateway.recordMutation("inventory", productId, "update", before, changed);
+        var floors = clampInsteadOfReject ? {} : { stock: 0 }
+        var clamps = clampInsteadOfReject ? { stock: 0 } : {}
+        Gateway.recordDelta("inventory", productId, { stock: -qty }, floors, clamps, function(result) {
+            if (result && result.ok && result.after && result.after.stock !== undefined) {
+                var arr2 = _clone()
+                for (var j = 0; j < arr2.length; ++j) {
+                    if (arr2[j].productId === productId) {
+                        arr2[j].stock = result.after.stock
+                        break
+                    }
+                }
+                products = arr2
+            }
+            if (callback) callback(result)
+        })
     }
 
     // Increment product.stock WITHOUT creating a batch or purchase event. Used by

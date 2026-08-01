@@ -25,8 +25,8 @@ Item {
 
     // ── Public methods for direct page access ──────────────────────────────
 
-    function tryCompleteOrder(orderId) {
-        return _tryCompleteOrder(orderId)
+    function tryCompleteOrder(orderId, callback) {
+        _tryCompleteOrder(orderId, callback)
     }
 
     function syncOrdersModel() {
@@ -77,9 +77,10 @@ Item {
                     logic.orderAdded(newOrderId)
 
                     if (OrdersStore.autoApproveEnabled) {
-                        var success = _tryCompleteOrder(newOrderId)
-                        if (!success)
-                            logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
+                        _tryCompleteOrder(newOrderId, function(success) {
+                            if (!success)
+                                logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
+                        })
                     }
                 })
         }
@@ -102,14 +103,16 @@ Item {
                     if (Object.keys(nonStatusFields).length > 0)
                         OrdersStore.updateOrder(orderId, nonStatusFields)
                     // Now delegate to the orchestrated completion path.
-                    var success = _tryCompleteOrder(orderId)
-                    if (!success) {
-                        logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
-                        _updateOrderInModel(orderId)
-                        return
-                    }
-                    _updateOrderInModel(orderId)
-                    logic.orderUpdated(orderId)
+                    // _tryCompleteOrder already calls _updateOrderInModel
+                    // internally on both the success and failure paths — not
+                    // repeated here.
+                    _tryCompleteOrder(orderId, function(success) {
+                        if (!success) {
+                            logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
+                            return
+                        }
+                        logic.orderUpdated(orderId)
+                    })
                     return
                 }
             } else if (wasCompleted && fields.status !== undefined) {
@@ -159,10 +162,11 @@ Item {
         }
 
         function onCompleteOrder(orderId) {
-            var success = _tryCompleteOrder(orderId)
-            if (!success) {
-                logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
-            }
+            _tryCompleteOrder(orderId, function(success) {
+                if (!success) {
+                    logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
+                }
+            })
         }
 
         function onApproveAllPending() {
@@ -378,10 +382,26 @@ Item {
     // If the batch ledger drifts below product.stock (manual edit, import,
     // legacy data), we top up the oldest batch silently so the sale still
     // succeeds — never fail a customer-facing flow on a bookkeeping mismatch.
-    function _tryCompleteOrder(orderId) {
+    //
+    // ASYNC as of the async-write-sequencing design (round 4): stock
+    // deduction now goes through Gateway.recordDelta, which can be
+    // genuinely rejected server-side (another device already sold the last
+    // units since step 1's local pre-check ran) — so this can no longer
+    // return a synchronous true/false the way it used to. `callback(ok)`
+    // fires once every line's deduction has actually resolved. On a
+    // deduction rejection: the order is set to "out of stock" (same as
+    // step 1's synchronous pre-check path) and stockErrorMsg is populated,
+    // exactly like the old synchronous-failure path — callers that already
+    // handled `if (!success) { ...stockErrorMsg... }` need no changes
+    // beyond reading that result from the callback instead of a return
+    // value. This is also where the ORIGINAL ask that started this whole
+    // design — synchronized calls with a real busy indicator instead of a
+    // decorative one — actually gets delivered, for this one flow: the
+    // caller now has a genuine "still working" window to show one in.
+    function _tryCompleteOrder(orderId, callback) {
         var o = OrdersStore.getById(orderId)
-        if (!o) return false
-        if (o.status === "completed") return true
+        if (!o) { if (callback) callback(false); return }
+        if (o.status === "completed") { if (callback) callback(true); return }
 
         // ── 1. Stock validation (against product.stock) ──────────────────
         var errs = []
@@ -398,21 +418,65 @@ Item {
             OrdersStore.updateOrder(orderId, { status: "out of stock" })
             dataModel.stockErrorMsg = errs.join("\n")
             _updateOrderInModel(orderId)
-            return false
+            if (callback) callback(false)
+            return
         }
 
         // ── 2. FIFO consumption + deduct stock ───────────────────────────
         // Build a parallel `linesWithConsumption` array so the post-deduct
         // updateOrder call can stamp the per-batch lineage onto each line
         // item — that's what lets per-supplier sold/revenue/margin queries
-        // work later.
-        var linesWithConsumption = []
-        if (o.products && o.products.length > 0) {
-            for (var j = 0; j < o.products.length; ++j) {
-                var pp = o.products[j]
+        // work later. Every line's deductStock is fired up front (they're
+        // independent products — no reason to serialize them against each
+        // other) and this function waits for ALL of them before proceeding,
+        // failing the whole order if ANY of them comes back rejected.
+        var lines = o.products || []
+        var linesWithConsumption = new Array(lines.length)
+        var deltaFailed = false
+        var deltaFailMsg = ""
+
+        function _afterAllDeltas() {
+            if (deltaFailed) {
+                OrdersStore.updateOrder(orderId, { status: "out of stock" })
+                dataModel.stockErrorMsg = deltaFailMsg
+                _updateOrderInModel(orderId)
+                if (callback) callback(false)
+                return
+            }
+            // ── 3. Persist the order with consumption + record sale events ──
+            OrdersStore.updateOrder(orderId, {
+                status: "completed",
+                products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
+            })
+            SalesStore.recordSale(o.total, o.items)
+            // The persisted order now carries `consumption[]` per line — read it
+            // back so TransactionStore writes the same lineage to every sale doc.
+            TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
+            _updateOrderInModel(orderId)
+            if (callback) callback(true)
+        }
+
+        // Extra "loop not finished yet" token (released after the loop
+        // below, not inside it) — without this, a deductStock callback
+        // that happens to fire SYNCHRONOUSLY (e.g. InventoryStore's
+        // no-such-product guard) for an early line could bring the count to
+        // zero and trigger _afterAllDeltas() before later lines in the same
+        // loop have even been dispatched.
+        var pending = 1
+        function _oneResolved() {
+            pending--
+            if (pending === 0) _afterAllDeltas()
+        }
+
+        for (var j = 0; j < lines.length; ++j) {
+            (function(j) {
+                var pp = lines[j]
                 var qqty = _lineQty(pp)
                 var invP = _resolveInventory(pp)
                 var consumption = []
+                var line = {}
+                for (var k in pp) line[k] = pp[k]
+
                 if (invP && qqty > 0) {
                     consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
                     var consumed = _sumConsumed(consumption)
@@ -425,32 +489,30 @@ Item {
                         var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
                         for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
                     }
-                    InventoryStore.deductStock(invP.productId, qqty)
+                    pending++
+                    InventoryStore.deductStock(invP.productId, qqty, function(result) {
+                        if (!result || !result.ok) {
+                            deltaFailed = true
+                            deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
+                                (invP.name + ": " + (result && result.error === "insufficient-quantity"
+                                    ? "stock ran out before this order could complete"
+                                    : "could not update stock — try again"))
+                        }
+                        line.consumption = consumption
+                        linesWithConsumption[j] = line
+                        _oneResolved()
+                    }, false /* reject, don't clamp — round-4 decision for order completion */)
                     console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
                                 "across", consumption.length, "batch(es)")
-                } else if (!invP) {
-                    console.warn("[DataModel] Could not resolve line item to inventory:", JSON.stringify(pp))
+                } else {
+                    if (!invP) console.warn("[DataModel] Could not resolve line item to inventory:", JSON.stringify(pp))
+                    line.consumption = consumption
+                    linesWithConsumption[j] = line
                 }
-                // Clone the line and stamp consumption — never mutate the
-                // OrdersStore row in place since it's shared state.
-                var line = {}
-                for (var k in pp) line[k] = pp[k]
-                line.consumption = consumption
-                linesWithConsumption.push(line)
-            }
+            })(j)
         }
 
-        // ── 3. Persist the order with consumption + record sale events ────
-        OrdersStore.updateOrder(orderId, {
-            status: "completed",
-            products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
-        })
-        SalesStore.recordSale(o.total, o.items)
-        // The persisted order now carries `consumption[]` per line — read it
-        // back so TransactionStore writes the same lineage to every sale doc.
-        TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
-        _updateOrderInModel(orderId)
-        return true
+        _oneResolved() // release the loop-not-finished token
     }
 
     // Complete an imported order that arrived with status "completed".
@@ -481,7 +543,16 @@ Item {
                         var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
                         for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
                     }
-                    InventoryStore.deductStock(invP.productId, qqty)
+                    // Fire-and-forget by design here (unlike _tryCompleteOrder):
+                    // this function's contract never branches on the deduction's
+                    // outcome — `understocked` is already decided above from the
+                    // pre-check, and clamp mode (not reject) means the delta is
+                    // never rejected anyway. Local products[] still gets the
+                    // authoritative post-deduction value once the callback runs.
+                    InventoryStore.deductStock(invP.productId, qqty, function(result) {
+                        if (!result || !result.ok)
+                            console.warn("[DataModel] completeImportedOrder: deductStock did not confirm", JSON.stringify(result))
+                    }, true /* clamp, don't reject — "complete + report shortfall" business rule */)
                 } else if (!invP) {
                     console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
                 }
@@ -663,7 +734,25 @@ Item {
                         var retry = StockBatchStore.consumeFifo(d.productId, d.addedQty - consumed)
                         for (var rr = 0; rr < retry.length; ++rr) cons.push(retry[rr])
                     }
-                    InventoryStore.deductStock(d.productId, d.addedQty)
+                    // NOT awaited, unlike _tryCompleteOrder — _tryAdjustOrder's
+                    // control flow is not (yet) restructured for async stock
+                    // confirmation the way order completion was for round 4.
+                    // Its synchronous pre-check above (pfStock < pfd.addedQty)
+                    // catches the common case, but the SAME race this whole
+                    // design exists to close is still possible here: stock
+                    // could run out between that check and this delta actually
+                    // landing. Reject mode (not clamp) at least matches this
+                    // flow's existing intent (don't silently under-fulfill an
+                    // exchange) and the failure gets logged, not silently
+                    // swallowed — but nothing here rolls the adjustment back if
+                    // it happens. Flagged in the checkpoint as follow-up work
+                    // deserving the same treatment as order completion got,
+                    // not solved in this pass.
+                    InventoryStore.deductStock(d.productId, d.addedQty, function(result) {
+                        if (!result || !result.ok)
+                            console.warn("[DataModel] _tryAdjustOrder: deductStock rejected for", d.productId,
+                                         JSON.stringify(result))
+                    }, false /* reject, matching this flow's own pre-check intent */)
                     // Tax the ADDED units at the product's CURRENT setting (bug 3).
                     // The original units' sale event is immutable and keeps the
                     // tax booked at completion, so "originals unchanged, added

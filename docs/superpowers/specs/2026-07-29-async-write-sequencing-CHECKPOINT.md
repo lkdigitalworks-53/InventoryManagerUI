@@ -371,14 +371,49 @@ executed" all session (`tst_OutboxStore.qml`, `tst_Gateway.qml`, and whatever el
 Once pushed, opening a PR (even a draft) would give real signal on all of it — flagged to Taher
 as worth doing before going further into the harder-to-verify remaining pieces.
 
-## Next steps
-- Blocked on a fresh push token from Taher.
-- Meanwhile: continue the WIP that doesn't need push access — finish `completeImportedOrder`
-  (needs `clampInsteadOfReject=true` + callback) and the order-adjustment/exchange flow's
-  `deductStock` call (currently both still call the OLD 2-arg signature, which no longer exists —
-  this is a real, uncommitted breakage right now, not just an incompleteness), then the 5 callers
-  of `_tryCompleteOrder`/`tryCompleteOrder` (4 in DataModel.qml, 1 in OrdersPage.qml's
-  `_approveAllPending` loop) that still expect a synchronous boolean return.
+## Round 4 sequencing work — completed (still uncommitted at time of writing, see below)
+Finished what was WIP when the rebase request came in:
+- `InventoryStore.deductStock(productId, qty, callback, clampInsteadOfReject)` — converted to
+  `Gateway.recordDelta`, updates local `products[]` only from the callback's server-authoritative
+  `result.after.stock` (not local arithmetic). `clampInsteadOfReject` picks reject-mode (`floors`)
+  vs clamp-mode (`clamps`) per caller.
+- `_tryCompleteOrder(orderId, callback)` — fully async now. Fires one `deductStock` call per line
+  item up front (independent products, no reason to serialize them against each other), waits for
+  ALL of them via a counter with a "loop not finished yet" extra token (see code comment — without
+  it, a SYNCHRONOUS callback for an early line, e.g. InventoryStore's not-found guard, could
+  trigger completion before later lines in the same loop even get dispatched; caught this via
+  careful reasoning, not execution, since I can't run any of this). On ANY line's rejection: order
+  → "out of stock", `stockErrorMsg` populated (aggregated across lines if more than one fails),
+  callback(false) — matching Taher's round-4 instruction exactly. On full success: same 3 steps as
+  before (order → completed, sale record, transaction record), callback(true).
+- `completeImportedOrder` — fixed its now-broken `deductStock` call. Kept fire-and-forget
+  (this function never branched on the deduction's outcome anyway — `understocked` is decided by
+  its own pre-check), clamp mode (matches its explicit "complete + report shortfall" business rule,
+  documented in its own header comment already).
+- `_tryAdjustOrder`'s exchange/added-units `deductStock` call — fixed the signature, reject mode
+  (matches this flow's own existing pre-check intent), failure now logged instead of silently
+  swallowed. **Deliberately NOT given the full async-await treatment** `_tryCompleteOrder` got —
+  that would mean restructuring a ~230-line function handling returns/damaged-goods/exchange/refund
+  math I'd be doing blind. Flagging explicitly: this flow has the SAME underlying race exposure
+  order completion had, just not fixed in this pass. Real follow-up work, not forgotten scope.
+- 5 callers converted from synchronous-return to callback: `tryCompleteOrder` (public wrapper),
+  `onAddOrder`'s auto-approve branch, `onUpdateOrder`'s completion delegation, `onCompleteOrder`,
+  and `OrdersPage._approveAllPending`'s bulk-approve loop — the last one rewritten from a synchronous
+  `for` loop into a sequential (not parallel — orders can share products) async chain via an
+  index-based `_next()` recursion.
+- **Caught and fixed a real structural bug via careful re-reading, not execution:** an early
+  str_replace on `_approveAllPending` left a stray orphaned closing brace (old function's trailing
+  `}` no longer matched to anything once the replacement changed the surrounding structure) —
+  found it by viewing the actual file content after the edit, not by trusting the edit succeeded.
+  Also investigated an apparent paren-count imbalance in the same file via a naive brace/paren
+  checker; traced it to a PRE-EXISTING off-by-one artifact in the original file (confirmed against
+  `git show HEAD:...`, delta from my edit was a clean +7/+7) — not something I introduced, but
+  worth documenting that I checked rather than assumed.
+- Brace AND paren balance re-verified across every touched file after all of the above.
+
+## Push retry after new token
+Taher regenerated the token (his account/SSO issue, not something on my end) and asked to push
+everything + continue. Attempting push with the new token now.
 
 ## Component 2 (locking) — server-side logic done, full TDD, all green
 - New `functions/lib/lockLogic.js`: `acquireLock(db, params)` — transactionally grants if no lock

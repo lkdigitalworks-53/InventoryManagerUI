@@ -412,23 +412,42 @@ Item {
         return _countByStatus("pending")
     }
 
+    // Sequential, not parallel, on purpose: these orders can share products,
+    // and tryCompleteOrder is no longer synchronous (round 4 of the
+    // async-write-sequencing design) — processing one at a time means each
+    // order's stock deduction is fully resolved before the next one even
+    // starts, rather than firing N concurrent completions that could race
+    // each other over the same inventory within this SAME bulk action.
     function _approveAllPending() {
         var scoped = _scopedOrders()
-        var failed = []
+        var toApprove = []
         for (var i = 0; i < scoped.length; ++i) {
-            if (scoped[i].status === "pending" || scoped[i].status === "processing") {
-                if (!dataModel.tryCompleteOrder(scoped[i].orderId))
-                    failed.push(scoped[i].orderId)
-            }
+            if (scoped[i].status === "pending" || scoped[i].status === "processing")
+                toApprove.push(scoped[i].orderId)
         }
-        dataModel.syncOrdersModel()
-        if (failed.length > 0) {
-            var errorMsg = qsTr("Could not approve orders: %1\n\nInsufficient stock available.").arg(failed.join(", "))
-            stockErrorDlg.show({
-                title: qsTr("Insufficient Inventory"),
-                message: errorMsg,
-                variant: "error"
+        var failed = []
+        var idx = 0
+
+        function _next() {
+            if (idx >= toApprove.length) {
+                dataModel.syncOrdersModel()
+                if (failed.length > 0) {
+                    var errorMsg = qsTr("Could not approve orders: %1\n\nInsufficient stock available.").arg(failed.join(", "))
+                    stockErrorDlg.show({
+                        title: qsTr("Insufficient Inventory"),
+                        message: errorMsg,
+                        variant: "error"
+                    })
+                }
+                return
+            }
+            var orderId = toApprove[idx]
+            idx++
+            dataModel.tryCompleteOrder(orderId, function(success) {
+                if (!success) failed.push(orderId)
+                _next()
             })
         }
+        _next()
     }
 }
