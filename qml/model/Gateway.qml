@@ -141,7 +141,17 @@ QtObject {
     // If two recordDelta calls for the same record coalesce into one held
     // outbox item (OutboxStore.enqueueDelta), BOTH callbacks fire with that
     // item's single outcome — see _deltaCallbacks above.
-    function recordDelta(entity, entityId, deltas, floors, callback) {
+    //
+    // `floors` (field -> min value) REJECTS the whole call if any field
+    // would cross it — use for "this must never silently under-apply"
+    // (order completion's stock deduction: insufficient stock should fail
+    // the order, not silently sell inventory that isn't there).
+    // `clamps` (field -> min value) instead caps the result AT that value
+    // and still succeeds — use for "always apply, just don't go negative"
+    // (completeImportedOrder's deliberate "complete + report shortfall"
+    // business rule — rejecting would break its designed behavior). A field
+    // should only ever appear in one of the two maps, never both.
+    function recordDelta(entity, entityId, deltas, floors, clamps, callback) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordDelta: bad entity/id", entity, entityId)
@@ -160,6 +170,7 @@ QtObject {
             entityId: entityId,
             deltas: deltas || {},
             floors: floors || {},
+            clamps: clamps || {},
             clientTimestamp: new Date().toISOString()
         })
         // item.requestId is the SURVIVING requestId — may belong to an
@@ -418,6 +429,7 @@ QtObject {
             entityId: item.entityId,
             deltas: item.deltas,
             floors: item.floors,
+            clamps: item.clamps,
             requestId: item.requestId,
             clientTimestamp: item.clientTimestamp
         }))

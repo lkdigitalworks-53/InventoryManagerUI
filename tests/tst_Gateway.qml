@@ -135,7 +135,7 @@ TestCase {
 
     function test_recordDelta_in_gateway_mode_enqueues_a_delta_item() {
         Gateway.mode = "gateway"
-        var requestId = Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, { qtyRemaining: 0 }, null)
+        var requestId = Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, { qtyRemaining: 0 }, {}, null)
 
         verify(requestId.length > 0)
         compare(OutboxStore.pendingCount, 1)
@@ -148,7 +148,7 @@ TestCase {
     function test_recordDelta_requires_gateway_mode() {
         Gateway.mode = "direct" // delta has no direct-mode equivalent — needs server-side read-then-write
         var calledWith = null
-        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, function(result) { calledWith = result })
+        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, {}, function(result) { calledWith = result })
 
         compare(OutboxStore.pendingCount, 0, "must not enqueue anything in direct mode")
         verify(calledWith !== null, "callback must fire synchronously with an explanatory error, not hang")
@@ -158,7 +158,7 @@ TestCase {
 
     function test_recordDelta_returns_empty_string_for_an_unknown_entity() {
         Gateway.mode = "gateway"
-        var requestId = Gateway.recordDelta("widget", "w1", { qty: -1 }, {}, null)
+        var requestId = Gateway.recordDelta("widget", "w1", { qty: -1 }, {}, {}, null)
         compare(requestId, "")
         compare(OutboxStore.pendingCount, 0)
     }
@@ -169,7 +169,7 @@ TestCase {
         // not fire with a fabricated success/failure.
         Gateway.mode = "gateway"
         var callCount = 0
-        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, function(result) { callCount++ })
+        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, {}, function(result) { callCount++ })
 
         compare(callCount, 0, "no server response has happened yet — the callback must not fire")
     }

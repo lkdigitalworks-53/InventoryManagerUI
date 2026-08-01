@@ -221,7 +221,8 @@ QtObject {
 
             arr[i] = Object.assign({}, candidate, {
                 deltas: summed,
-                floors: call.floors || candidate.floors
+                floors: call.floors || candidate.floors,
+                clamps: call.clamps || candidate.clamps
             })
             items = arr
             _save()
@@ -234,6 +235,7 @@ QtObject {
             entityId: call.entityId,
             deltas: call.deltas || {},
             floors: call.floors || {},
+            clamps: call.clamps || {},
             clientTimestamp: call.clientTimestamp || new Date().toISOString(),
             enqueuedAt: nowMs,
             attempts: 0,

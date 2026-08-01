@@ -449,3 +449,27 @@ test("applyDelta's idempotent-replay result also includes the original after val
     assert.deepEqual(result.after, { qtyRemaining: 7 },
         "a retried request must still tell the caller the real outcome, not just that it was a replay");
 });
+
+test("applyDelta clamps at a floor instead of rejecting when the field is in 'clamps' not 'floors'", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { stock: 2 } });
+    const result = await GatewayLogic.applyDelta(db, deltaParams({
+        entity: "inventory", entityId: "sku-1", collection: "inventory",
+        deltas: { stock: -5 }, floors: {}, clamps: { stock: 0 }
+    }));
+
+    assert.equal(result.ok, true, "clamp mode must succeed, not reject, unlike floors mode");
+    assert.equal(result.after.stock, 0, "clamped at the floor, not driven negative");
+    const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/inventory/sku-1");
+    assert.equal(workingWrite.data.stock, 0);
+});
+
+test("applyDelta clamp mode still succeeds normally (no clamping) when the delta doesn't cross the floor", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { stock: 10 } });
+    const result = await GatewayLogic.applyDelta(db, deltaParams({
+        entity: "inventory", entityId: "sku-1", collection: "inventory",
+        deltas: { stock: -3 }, floors: {}, clamps: { stock: 0 }
+    }));
+
+    assert.equal(result.ok, true);
+    assert.equal(result.after.stock, 7);
+});

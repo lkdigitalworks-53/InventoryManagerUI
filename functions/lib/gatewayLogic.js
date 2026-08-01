@@ -157,11 +157,15 @@ async function applyDelta(db, params) {
         const before = {};
         const after = {};
         const floors = params.floors || {};
+        const clamps = params.clamps || {};
         for (const field in params.deltas) {
             const curVal = current[field] || 0;
-            const nextVal = curVal + params.deltas[field];
+            var nextVal = curVal + params.deltas[field];
             if (Object.prototype.hasOwnProperty.call(floors, field) && nextVal < floors[field]) {
                 return { ok: false, status: 409, error: "insufficient-quantity", field: field, current: curVal };
+            }
+            if (Object.prototype.hasOwnProperty.call(clamps, field) && nextVal < clamps[field]) {
+                nextVal = clamps[field];
             }
             before[field] = curVal;
             after[field] = nextVal;
