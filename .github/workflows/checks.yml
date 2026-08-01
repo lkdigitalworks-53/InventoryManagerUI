@@ -1,8 +1,10 @@
-name: PR Checks
+name: Checks
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
 
 jobs:
   qml-tests:
