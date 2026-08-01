@@ -1,0 +1,126 @@
+name: Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+jobs:
+  qml-tests:
+    name: QML Tests
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+
+      - name: Run QML tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FORCE_STDERR_LOGGING: 1
+          QT_LOGGING_TO_CONSOLE: 1
+        run: qmltestrunner -input tests -platform offscreen -o results.xml,junitxml
+
+      - name: Upload QML test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qml-test-results
+          path: results.xml
+
+      - name: Report QML test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: QML Tests
+          path: results.xml
+          reporter: java-junit
+
+  functions-tests:
+    name: Functions Tests
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Run functions tests
+        working-directory: functions
+        run: node --test --test-reporter=junit --test-reporter-destination=results.xml
+
+      - name: Upload functions test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functions-test-results
+          path: functions/results.xml
+
+      - name: Report functions test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Functions Tests
+          path: functions/results.xml
+          reporter: java-junit
+
+  firestore-rules-tests:
+    name: Firestore Rules Tests
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools
+
+      - name: Run Firestore rules tests
+        run: firebase emulators:exec --only firestore "node --test --test-reporter=junit --test-reporter-destination=results.xml test/"
+
+      - name: Upload rules test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-rules-test-results
+          path: results.xml
+
+      - name: Report rules test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Firestore Rules Tests
+          path: results.xml
+          reporter: java-junit

@@ -29,8 +29,9 @@ build/
 
 .claude/
 
-*package-lock.json
 .vscode/*
+
+node_modules/
 
 graphify-out/*
 
