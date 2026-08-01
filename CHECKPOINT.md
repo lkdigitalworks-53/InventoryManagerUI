@@ -172,3 +172,19 @@ locally on `ci/github-actions-pr-checks`. Nothing pushed yet.
 
 Next: Task 5 — needs Taher's explicit go-ahead + PAT to push and open the real PR. Cannot proceed
 without that.
+
+## 2026-07-31 (continued) — Pushed
+
+First push attempt failed: `refusing to allow a Personal Access Token to create or update
+workflow ... without workflow scope` — the initial PAT lacked the `workflow` scope required by
+GitHub for any push touching `.github/workflows/*`. Nothing was pushed (rejected atomically).
+Taher generated a new PAT with `workflow` scope; second push succeeded. Branch
+`ci/github-actions-pr-checks` is now live on GitHub (5 commits: lockfiles/gitignore, then one
+commit per job, then two checkpoint commits). Taher is regenerating this second token now that
+the push succeeded, per his stated plan — not reusing it for anything further (e.g. `gh pr
+create`).
+
+**Still open:** opening the actual PR against `main` and watching the three checks run for the
+first time — the real Task 5 verification. Waiting on Taher to open it (link:
+https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/new/ci/github-actions-pr-checks) and
+report back what the checks show.
