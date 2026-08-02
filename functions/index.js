@@ -24,6 +24,7 @@ const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
 const CutoverLogic = require("./lib/cutoverLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
+const LockLogic = require("./lib/lockLogic");
 
 admin.initializeApp();
 
@@ -63,11 +64,13 @@ async function deriveContext(db, uid) {
     if (!tenantId) return null;
 
     let role = user.role || "";
+    let actorName = user.name || user.displayName || "";
     const memberSnap = await db.doc(
         "tenants/" + tenantId + "/members/" + uid).get();
     if (memberSnap.exists) {
         const member = memberSnap.data() || {};
         role = member.role || role;
+        actorName = member.name || actorName;
         if (member.status && member.status !== "active") return null;
     }
     // Tenant display name — preferred from the tenant doc, falling back to
@@ -78,7 +81,7 @@ async function deriveContext(db, uid) {
         const t = tenantSnap.data() || {};
         tenantName = t.name || t.tenantName || tenantName;
     }
-    return { tenantId: tenantId, role: role, tenantName: tenantName };
+    return { tenantId: tenantId, role: role, tenantName: tenantName, actorName: actorName };
 }
 
 exports.recordMutation = functions.onRequest(
@@ -120,8 +123,9 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
+        let result;
         try {
-            await GatewayLogic.applyMutation(db, {
+            result = await GatewayLogic.applyMutation(db, {
                 tenantId: ctx.tenantId,
                 actorUid: actorUid,
                 actorRole: ctx.role,
@@ -140,7 +144,220 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
+        // Component 3 (async-write-sequencing design): applyMutation now
+        // returns a result instead of always succeeding — a CAS conflict
+        // must actually reach the client as a 409, or the whole backstop
+        // is silently inert (this was the exact gap this session found and
+        // is now closing). `current` rides along so the client can
+        // reconcile that one record without a second round trip.
+        if (result && result.ok === false) {
+            send(res, result.status || 409, { ok: false, error: "conflict", current: result.current });
+            return;
+        }
+
         send(res, 200, { ok: true, entryId: validated.requestId });
+    });
+
+// Component 4 (async-write-sequencing design). Atomic server-side numeric
+// deltas — see functions/lib/gatewayLogic.js's applyDelta for why this is a
+// separate mutation kind from recordMutation rather than a CAS variant.
+exports.recordDelta = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const validated = GatewayLogic.validateDeltaRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        let result;
+        try {
+            result = await GatewayLogic.applyDelta(db, {
+                tenantId: ctx.tenantId,
+                actorUid: actorUid,
+                actorRole: ctx.role,
+                entity: validated.entity,
+                entityId: validated.entityId,
+                requestId: validated.requestId,
+                deltas: validated.deltas,
+                floors: validated.floors,
+                clamps: validated.clamps,
+                clientTimestamp: validated.clientTimestamp,
+                collection: validated.collection,
+                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } catch (e) {
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        if (result && result.ok === false) {
+            send(res, result.status || 409, {
+                ok: false, error: result.error, field: result.field, current: result.current
+            });
+            return;
+        }
+
+        send(res, 200, { ok: true, entryId: validated.requestId, after: result.after });
+    });
+
+// Component 2 (async-write-sequencing design). Pessimistic record locking —
+// see functions/lib/lockLogic.js for the acquire/renew/reject semantics and
+// why this needs no cleanup job (TTL expiry is the safety net, not an
+// explicit release). Both endpoints are intentionally symmetric with
+// recordMutation/recordDelta's auth+parsing shape.
+const LOCK_TTL_MS = 90000; // 90s, with a client-side ~30s renewal heartbeat
+
+exports.acquireLock = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        // TTL is server-decided, never client-supplied — a client can ask to
+        // acquire, but not dictate how long it gets to hold the lock for.
+        const validated = LockLogic.validateAcquireRequest(
+            Object.assign({}, body, { ttlMs: LOCK_TTL_MS }));
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        let result;
+        try {
+            result = await LockLogic.acquireLock(db, {
+                tenantId: ctx.tenantId,
+                entity: validated.entity,
+                entityId: validated.entityId,
+                requestId: validated.requestId,
+                ttlMs: validated.ttlMs,
+                actorUid: actorUid,
+                actorName: ctx.actorName,
+                actorRole: ctx.role,
+                now: Date.now()
+            });
+        } catch (e) {
+            send(res, 500, { ok: false, error: "lock-failed" });
+            return;
+        }
+
+        if (!result.ok) {
+            send(res, result.status || 409, { ok: false, holder: result.holder });
+            return;
+        }
+
+        send(res, 200, { ok: true, expiresAt: result.expiresAt });
+    });
+
+exports.releaseLock = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const validated = LockLogic.validateReleaseRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        try {
+            await LockLogic.releaseLock(db, {
+                tenantId: ctx.tenantId,
+                entity: validated.entity,
+                entityId: validated.entityId,
+                holderUid: actorUid
+            });
+        } catch (e) {
+            send(res, 500, { ok: false, error: "release-failed" });
+            return;
+        }
+
+        send(res, 200, { ok: true });
     });
 
 // New in this session (not in the original P0 spec — see

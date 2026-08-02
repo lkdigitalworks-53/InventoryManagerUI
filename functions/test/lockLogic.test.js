@@ -160,3 +160,42 @@ test("releaseLock is a silent no-op when there is no lock doc to release", async
     assert.equal(result.ok, true);
     assert.equal(db.writes.length, 0);
 });
+
+// ── validateAcquireRequest / validateReleaseRequest ─────────────────────────
+
+test("validateAcquireRequest rejects missing entity/entityId", () => {
+    const result = LockLogic.validateAcquireRequest({ requestId: "r1", ttlMs: 90000 });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "missing-fields");
+});
+
+test("validateAcquireRequest rejects a missing requestId", () => {
+    const result = LockLogic.validateAcquireRequest({ entity: "order", entityId: "o1", ttlMs: 90000 });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "missing-fields");
+});
+
+test("validateAcquireRequest rejects a non-positive ttlMs", () => {
+    const result = LockLogic.validateAcquireRequest({ entity: "order", entityId: "o1", requestId: "r1", ttlMs: 0 });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "invalid-ttl");
+});
+
+test("validateAcquireRequest accepts a valid request", () => {
+    const result = LockLogic.validateAcquireRequest({ entity: "order", entityId: "o1", requestId: "r1", ttlMs: 90000 });
+    assert.equal(result.ok, true);
+    assert.equal(result.entity, "order");
+    assert.equal(result.ttlMs, 90000);
+});
+
+test("validateReleaseRequest rejects missing entity/entityId", () => {
+    const result = LockLogic.validateReleaseRequest({});
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "missing-fields");
+});
+
+test("validateReleaseRequest accepts a valid request", () => {
+    const result = LockLogic.validateReleaseRequest({ entity: "order", entityId: "o1" });
+    assert.equal(result.ok, true);
+});

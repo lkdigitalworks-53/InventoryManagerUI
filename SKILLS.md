@@ -1177,3 +1177,71 @@ more must split into multiple `recordMutations` calls client-side — atomicity 
 chunk, not across chunks. This is a documented trade-off; don't raise the cap without re-deriving
 the arithmetic against Firestore's actual limit.
 
+## Skill 36: Async write sequencing — single-flight, locking, CAS, and atomic deltas
+
+**Files**: `qml/model/{OutboxStore,Gateway,LockManager}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`,
+full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`
+
+Four related but distinct correctness mechanisms, easy to conflate — know which one actually
+fixes which bug before reaching for any of them:
+
+**1. Single-flight-per-record (`OutboxStore`)** — fixes a device racing its OWN sequential writes.
+`enqueue()` coalesces a second call for the same `entity+entityId` into an existing NOT-in-flight
+item (keeps earliest `before`/`action`, takes latest `after`); if the existing item IS in flight,
+the new call is held separately rather than mutating a payload already on the wire. Client-only,
+no server involvement, no deploy risk.
+
+**2. Pessimistic locking (`LockManager` + `acquireLock`/`releaseLock`)** — fixes wasted work: lets
+a second device find out a record's being edited BEFORE doing any work, not after. A lock is just
+another Firestore document (`locks/{entity}_{entityId}`), acquired/released via the same
+transaction primitive as everything else — no custom mutex machinery. TTL (90s) + client renewal
+heartbeat (30s) means an abandoned/crashed session self-heals via expiry; there is no cleanup job
+and there shouldn't need to be one. Gates the EDIT entry point only (entering edit mode / opening
+directly into it) — never a plain view, reads are always unrestricted.
+
+**3. Server-side compare-and-swap (`applyMutation`'s CAS check)** — the actual correctness
+backstop for whole-record writes, independent of whether locking "worked": rejects if the record's
+current server state doesn't match the mutation's claimed `before`. With locking in place this
+should fire rarely — if it fires often, that's a signal locking isn't actually being acquired
+somewhere it should be, not a reason to remove the check.
+
+**4. Atomic server-side deltas (`applyDelta`, `Gateway.recordDelta`)** — a DIFFERENT mutation kind
+for quantity fields, not a CAS variant. Reads the current value INSIDE the transaction and computes
+`current + delta`, so it's correct regardless of what else touched the doc concurrently — two
+legitimate concurrent stock deductions on the same product both apply. `floors` (reject) vs
+`clamps` (cap and still succeed) — pick based on the caller's actual business rule
+(`InventoryStore.deductStock` rejects for order completion, `completeImportedOrder` clamps because
+its whole point is "complete anyway, report the shortfall"). **Don't use CAS/locking for a
+quantity field a delta could handle instead** — whole-record CAS on a stock field would spuriously
+reject two perfectly-compatible concurrent decrements; that's not a conflict, it's ordinary
+concurrent business, and rejecting it is a correctness regression, not caution.
+
+```js
+// gatewayLogic.js — the actual bug that motivated #4: computing a new value
+// from a possibly-stale LOCAL read is unsafe no matter how carefully it's
+// guarded client-side. The fix reads inside the SAME transaction that writes:
+async function applyDelta(db, params) {
+    return db.runTransaction(async (txn) => {
+        const current = (await txn.get(workingRef)).data()
+        const next = (current[field] || 0) + params.deltas[field]   // computed HERE, not client-side
+        txn.set(workingRef, Object.assign({}, current, { [field]: next }))
+    })
+}
+```
+
+**A subtlety that cost a genuine near-bug**: naive "coalesce a queued mutation into an existing
+item" (mechanism #1) is unsafe if it doesn't distinguish QUEUED from IN-FLIGHT — merging into an
+item whose payload was already serialized onto an outbound request silently discards whatever the
+merge was supposed to add, once that in-flight request's own completion handler removes the
+(now-corrupted) entry by its original requestId. `OutboxStore.markInFlight(item)`/`clearInFlight(item)`
+take the item object itself (not a requestId) specifically to sidestep a related bug: looking an
+item back up by requestId AFTER `markSent` has already deleted it silently leaks the in-flight key
+forever.
+
+**Test-tooling note**: `functions/test/gatewayLogic.test.js`'s fake Firestore double
+(`makeFakeDbWithData`) tracks real document DATA per path, not just existence — needed once
+`applyMutation`/`applyDelta` actually read current state to decide anything. The original
+`makeFakeDb` (existence-only, Skill 35's example above) is still fine for logic that never reads
+before writing, but silently breaks anything that does (caught this converting 2 pre-existing
+`applyMutation` tests when adding the CAS check — they used `makeFakeDb` with a non-null `before`,
+which read as a false conflict once the function started actually checking current state).

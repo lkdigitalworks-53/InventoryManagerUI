@@ -66,6 +66,47 @@ function validateMutationRequest(body, entityCollections) {
     };
 }
 
+// Validates + normalizes a recordDelta request body. Returns
+// { ok: true, ...normalizedFields } or { ok: false, status, error }.
+function validateDeltaRequest(body, entityCollections) {
+    const collections = entityCollections || ENTITY_COLLECTIONS;
+    const entity = String(body.entity || "");
+    const entityId = String(body.entityId || "");
+    const requestId = String(body.requestId || "");
+    const deltas = (body.deltas && typeof body.deltas === "object") ? body.deltas : null;
+    const floors = (body.floors && typeof body.floors === "object") ? body.floors : {};
+    const clamps = (body.clamps && typeof body.clamps === "object") ? body.clamps : {};
+    const clientTimestamp = body.clientTimestamp || null;
+
+    const collection = collections[entity];
+    if (!collection) {
+        return { ok: false, status: 400, error: "unsupported-entity" };
+    }
+    if (!entityId || !requestId) {
+        return { ok: false, status: 400, error: "missing-fields" };
+    }
+    if (!deltas || Object.keys(deltas).length === 0) {
+        return { ok: false, status: 400, error: "missing-deltas" };
+    }
+    for (const field in deltas) {
+        if (typeof deltas[field] !== "number" || !isFinite(deltas[field])) {
+            return { ok: false, status: 400, error: "invalid-delta-value" };
+        }
+    }
+
+    return {
+        ok: true,
+        entity: entity,
+        entityId: entityId,
+        requestId: requestId,
+        deltas: deltas,
+        floors: floors,
+        clamps: clamps,
+        clientTimestamp: clientTimestamp,
+        collection: collection
+    };
+}
+
 // Order-insensitive deep equality for plain JSON-shaped objects (what every
 // working-tier doc is). Deliberately not a naive JSON.stringify compare —
 // key insertion order must never affect the result.
@@ -195,6 +236,7 @@ module.exports = {
     ALLOWED_ACTIONS,
     parseBearerToken,
     validateMutationRequest,
+    validateDeltaRequest,
     applyMutation,
     applyDelta
 };

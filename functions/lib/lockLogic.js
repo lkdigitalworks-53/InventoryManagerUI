@@ -66,4 +66,34 @@ async function releaseLock(db, params) {
     });
 }
 
-module.exports = { acquireLock, releaseLock };
+// Validates + normalizes an acquireLock request body. Returns
+// { ok: true, entity, entityId, requestId, ttlMs } or { ok: false, status, error }.
+function validateAcquireRequest(body) {
+    const entity = String(body.entity || "");
+    const entityId = String(body.entityId || "");
+    const requestId = String(body.requestId || "");
+    const ttlMs = Number(body.ttlMs);
+
+    if (!entity || !entityId || !requestId) {
+        return { ok: false, status: 400, error: "missing-fields" };
+    }
+    if (!isFinite(ttlMs) || ttlMs <= 0) {
+        return { ok: false, status: 400, error: "invalid-ttl" };
+    }
+
+    return { ok: true, entity: entity, entityId: entityId, requestId: requestId, ttlMs: ttlMs };
+}
+
+// Validates + normalizes a releaseLock request body.
+function validateReleaseRequest(body) {
+    const entity = String(body.entity || "");
+    const entityId = String(body.entityId || "");
+
+    if (!entity || !entityId) {
+        return { ok: false, status: 400, error: "missing-fields" };
+    }
+
+    return { ok: true, entity: entity, entityId: entityId };
+}
+
+module.exports = { acquireLock, releaseLock, validateAcquireRequest, validateReleaseRequest };

@@ -439,7 +439,86 @@ everything + continue. Attempting push with the new token now.
   Taher's stated scenarios were all about different roles/people contesting a record, not one
   person's own multiple devices, so this wasn't built. Flagging so it isn't mistaken for an
   oversight if it comes up.
-- **Not yet done for Component 2:** `LockManager.qml` (client — heartbeat renewal timer, the
-  dialog-open integration points from the design doc §7.1 table) — QML, not started, will be
-  written-not-executed like Component 1. `index.js` wiring for `acquireLock`/`releaseLock` as
-  actual HTTP endpoints — not started, not deployed.
+- **Not yet done for Component 2 (at that point):** `LockManager.qml` and `index.js` wiring —
+  see below, now done.
+
+## Final round — "complete all the work"
+
+**index.js wiring, verified beyond pure syntax:**
+- `validateDeltaRequest` (gatewayLogic.js) + `validateAcquireRequest`/`validateReleaseRequest`
+  (lockLogic.js) added via TDD, matching `validateMutationRequest`'s existing pattern.
+- `exports.recordDelta`, `exports.acquireLock`, `exports.releaseLock` added to `index.js`,
+  mirroring `recordMutation`'s exact auth/parsing/response shape. `deriveContext` extended to
+  resolve the actor's own display name (`actorName`, from `member.name`/`user.name`) — needed for
+  lock holder info shown in denial messages.
+- **Real fix, not cosmetic:** `recordMutation`'s handler was calling `applyMutation` and completely
+  ignoring its return value — always responding `200` regardless of what Component 3's CAS check
+  actually decided. This made the whole backstop inert despite being fully tested at the `lib/`
+  level. Fixed to check the result and return 409 with `current` on conflict.
+- Ran `npm install` in `functions/` (npmjs.org is an allowed domain) and confirmed the module
+  actually **loads** — `require('./index.js')` succeeds, every one of the 8 exported Cloud
+  Functions resolves to a real function. This is real signal beyond `node --check`'s pure syntax
+  pass, though still short of an actual HTTP-level integration test (would need mocking
+  `admin.auth().verifyIdToken`, which `index.js` calls directly rather than via injection — noted
+  as a gap, not solved). `node_modules/` is gitignored, confirmed, not committed.
+- `node --test test/*.test.js`: 85/85 (up from 73 — the new validate* tests).
+
+**LockManager.qml (Component 2, client half) — written, not executable, same caveat as everything
+else QML this session:**
+- New singleton, registered in `qml/model/qmldir`. Mirrors `Gateway.qml`'s dynamically-created-
+  Timer pattern (`Qt.createQmlObject`) since `QtObject` has no declarative Timer-child support.
+  `acquire(entity, entityId, callback)`, `release(entity, entityId)`, `isHeldByMe(...)`, `clear()`
+  (sign-out hygiene, hooked into `Main.qml` next to `Gateway.clear()`). One held lock at a time —
+  documented assumption, not enforced against a hypothetical multi-pane future.
+- Renewal heartbeat every 30s against a 90s server-side TTL (`LOCK_TTL_MS` in `index.js`) — 3x
+  margin. A renewal that gets rejected (rare, real network jitter) just stops silently; the dialog
+  keeps working locally and Component 3's CAS check is still there underneath if it tries to save.
+
+**Dialog wiring — 3 of the design doc's 4 lock points done, 1 deliberately skipped with reason:**
+- `OrderDetailDialog`: single `_save()` function handles every kind of order edit (status change
+  including completion, field edits, line changes routed to adjust) — no separate "Complete
+  button," so the lock is acquired in the background at `openFor()` (viewing is never blocked) and
+  only gates `_save()` itself. Denial shows the holder's name if available.
+- `EditProductDialog`, `StaffDetailDialog`: both already had an explicit `editMode` toggle
+  (`openFor(id, startInEdit)` + an in-dialog "Edit" button) — cleaner fit than OrderDetailDialog's
+  single-save-does-everything shape. New `_enterEditMode()`/`_leaveEditMode()` helpers acquire/
+  release around that existing toggle. Had to handle `onSecondaryClicked` calling `openFor(id,
+  false)` directly (not through `close()`) as its own release path, or the lock would leak on
+  Cancel.
+- `RestockDialog`: **deliberately not locked.** Restocking is additive and already goes through
+  `Gateway.recordDelta` (Component 4) — two concurrent restocks of the same product both apply
+  correctly without any lock. Adding one would be UX friction with no correctness benefit. Flagged
+  as a reasoned decision, not an oversight.
+- **Known gap, consistent with the earlier `_tryAdjustOrder` flag:** `OrderDetailDialog`'s lock is
+  released the instant it closes (right after emitting `adjustRequested`), which is BEFORE
+  `ConfirmReturnSheet`'s confirmation step — the lock doesn't actually span the window where
+  `_tryAdjustOrder` runs. Same follow-up item as `_tryAdjustOrder`'s missing async-await treatment,
+  now noted in both places (design doc, README) rather than only one.
+
+**Docs updated (per the standing rule — after implementation, update agent/skill/README docs):**
+- `README.md`: fixed 2 MORE stale `Gateway.mode: "direct"` references that the earlier doc-fix
+  pass (KNOWN-ISSUES/AGENTS/SKILLS) had missed, and added a new "Concurrency & Conflict
+  Resolution" section summarizing all 4 components with a pointer to the full design doc.
+- `SKILLS.md`: new Skill 36 — when to reach for which of the 4 mechanisms (they're easy to
+  conflate), the coalescing-into-an-in-flight-item near-bug, and the `makeFakeDbWithData` fake-db
+  gotcha (existence-only fakes silently break once code starts actually reading current state).
+- `AGENTS.md`: "Environment follow-up" note updated to include the 3 new endpoints (all already
+  correctly `scopedDb(env)`-scoped); added a one-line pointer in the Compliance & Audit Agent
+  section distinguishing this concurrency work from P0 compliance proper, so the two don't get
+  conflated when someone's reasoning about `functions/` later.
+
+**Verification ceiling, stated plainly:** everything in `functions/lib/` + `functions/index.js`'s
+loadability is genuinely verified. Every QML file (`LockManager.qml`, all 3 dialog files,
+`Main.qml`, `qmldir`) is brace/paren-balanced against its own pre-edit baseline (not just checked
+in isolation) and manually re-read, but **not executed** — no Qt toolchain in this sandbox, same
+caveat stated at every step this session. A real device/build pass is still the actual bar before
+this ships, not anything achievable from here.
+
+## Next steps
+- Commit and push everything from this final round.
+- Real Qt build + device test (Taher's own action — sandbox can't do this).
+- Deploy the 3 new/changed Cloud Functions (`recordMutation` fix, `recordDelta`, `acquireLock`,
+  `releaseLock`) — also Taher's own action, not attempted from here.
+- Open a PR to get the new `qml-tests` CI job's real `qmltestrunner` signal on everything flagged
+  written-but-unexecuted above — still the single highest-value next step for closing the
+  verification gap this whole checkpoint has been honest about.

@@ -473,3 +473,56 @@ test("applyDelta clamp mode still succeeds normally (no clamping) when the delta
     assert.equal(result.ok, true);
     assert.equal(result.after.stock, 7);
 });
+
+// ── validateDeltaRequest ────────────────────────────────────────────────────
+
+function validDeltaBody(overrides) {
+    return Object.assign({
+        entity: "stock_batch",
+        entityId: "batch-1",
+        requestId: "req-delta-1",
+        deltas: { qtyRemaining: -3 },
+        floors: { qtyRemaining: 0 },
+        clamps: {},
+        clientTimestamp: 12345
+    }, overrides || {});
+}
+
+test("validateDeltaRequest rejects an unknown entity", () => {
+    const result = GatewayLogic.validateDeltaRequest(validDeltaBody({ entity: "widget" }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "unsupported-entity");
+});
+
+test("validateDeltaRequest rejects a missing entityId", () => {
+    const result = GatewayLogic.validateDeltaRequest(validDeltaBody({ entityId: "" }));
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "missing-fields");
+});
+
+test("validateDeltaRequest rejects a missing requestId", () => {
+    const result = GatewayLogic.validateDeltaRequest(validDeltaBody({ requestId: "" }));
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "missing-fields");
+});
+
+test("validateDeltaRequest rejects an empty deltas object", () => {
+    const result = GatewayLogic.validateDeltaRequest(validDeltaBody({ deltas: {} }));
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "missing-deltas");
+});
+
+test("validateDeltaRequest rejects a non-numeric delta value", () => {
+    const result = GatewayLogic.validateDeltaRequest(validDeltaBody({ deltas: { qtyRemaining: "3" } }));
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "invalid-delta-value");
+});
+
+test("validateDeltaRequest accepts a valid request and resolves the collection", () => {
+    const result = GatewayLogic.validateDeltaRequest(validDeltaBody());
+    assert.equal(result.ok, true);
+    assert.equal(result.collection, "stock_batches");
+    assert.deepEqual(result.deltas, { qtyRemaining: -3 });
+    assert.deepEqual(result.floors, { qtyRemaining: 0 });
+});

@@ -391,7 +391,11 @@ QtObject {
 ### 8. Compliance & Audit Agent
 
 **Purpose**: Owns the India compliance roadmap (P0–P7) — the immutable ledger tier, the Cloud
-Functions gateway, tax-identity fields, DPDP privacy, and retention.
+Functions gateway, tax-identity fields, DPDP privacy, and retention. **Adjacent, not part of P0
+itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, atomic deltas —
+`docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, README's "Concurrency &
+Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files but is a correctness
+concern, not a compliance one — don't conflate the two when reasoning about this directory.
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
 `StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
@@ -419,11 +423,12 @@ to the gateway as of 2026-07-11), and the compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
-**Environment follow-up: done.** All 5 Cloud Functions (`recordMutation`, `provisionMember`,
-`runCutover`, `computeAnalysis`, and the new `recordMutationsBatch`) resolve their Firestore
+**Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 8 Cloud
+Functions (`recordMutation`, `recordDelta`, `acquireLock`, `releaseLock`, `provisionMember`,
+`runCutover`, `computeAnalysis`, `recordMutationsBatch`) resolve their Firestore
 database **per request** via `scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33.
-`Gateway.qml` and `AnalysisService.qml` inject `env: FirebaseService.environment` into every
-request body. This was confirmed as a real, already-live gap (not hypothetical) before being
+`Gateway.qml`, `LockManager.qml`, and `AnalysisService.qml` inject `env: FirebaseService.environment`
+into every request body. This was confirmed as a real, already-live gap (not hypothetical) before being
 fixed — `admin.firestore()` was previously called once at module load with no `databaseId`, so
 every Cloud Function always targeted `(default)` (prd) regardless of the calling client's actual
 env.

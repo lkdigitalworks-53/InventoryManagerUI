@@ -31,6 +31,17 @@ BottomSheet {
     property string orderId: ""
     property int orderIndex: -1
 
+    // Component 2 (async-write-sequencing design §4/§7.1): a lock is
+    // acquired in the background as soon as the dialog opens (viewing is
+    // never gated — only _save() checks this) and released whenever the
+    // dialog closes, however it closes (onClosed already covers Save,
+    // Cancel, and tap-outside uniformly). "pending" is the brief window
+    // before the acquire call's response comes back; _save() treats it as
+    // not-yet-safe-to-save rather than silently proceeding OR falsely
+    // reporting someone else holds it.
+    property string _lockState: "pending" // "pending" | "granted" | "denied"
+    property var _lockHolder: null
+
     property var catalog: []
     property var catalogNames: []
 
@@ -273,6 +284,20 @@ BottomSheet {
         recomputeSubtotal()
         productCombo.currentIndex = 0
         stockErrorLabel.text = ""
+
+        // Acquire in the background — the dialog opens and shows the order
+        // immediately either way (reads are never gated). Only _save()
+        // actually checks _lockState; a denial here just means Save will
+        // report it when the user gets there, not that viewing is blocked.
+        _lockState = "pending"
+        _lockHolder = null
+        var openedOrderId = id
+        LockManager.acquire("order", id, function(granted, holder) {
+            if (dlg.orderId !== openedOrderId) return // dialog moved on to a different order
+            _lockState = granted ? "granted" : "denied"
+            _lockHolder = holder
+        })
+
         open()
     }
 
@@ -281,6 +306,9 @@ BottomSheet {
     // notably the available-stock count, which derives from products +
     // _originalLines + _orderStatus.
     onClosed: {
+        LockManager.release("order", orderId)
+        _lockState = "pending"
+        _lockHolder = null
         products.clear()
         _originalLines = []
         _orderStatus = ""
@@ -290,6 +318,14 @@ BottomSheet {
     onPrimaryClicked: _save()
 
     function _save() {
+        if (_lockState !== "granted") {
+            stockErrorLabel.text = _lockState === "denied"
+                ? (_lockHolder && _lockHolder.name
+                    ? qsTr("%1 is currently updating this order — try again shortly").arg(_lockHolder.name)
+                    : qsTr("This order is currently being updated elsewhere — try again shortly"))
+                : qsTr("Still confirming this order is free to edit — try again in a moment")
+            return
+        }
         var itemCount = 0
         var prods = []
         var stockErrors = []

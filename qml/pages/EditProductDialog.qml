@@ -28,6 +28,39 @@ BottomSheet {
     property string productId: ""
     property bool editMode: false
     property string photoUrl: ""
+
+    // Component 2 (async-write-sequencing design §4/§7.1). Acquired when
+    // entering edit mode (either via the in-dialog "Edit" button or opening
+    // directly into edit mode via openFor(id, true)) — never on a plain
+    // view. Released whenever edit mode is left, however that happens
+    // (Cancel, successful save+close, or dismissing the sheet outright).
+    property string _lockState: "pending" // "pending" | "granted" | "denied"
+    property var _lockHolder: null
+
+    function _enterEditMode() {
+        editMode = true
+        reasonField.text = ""
+        _lockState = "pending"
+        _lockHolder = null
+        var lockedProductId = productId
+        LockManager.acquire("inventory", productId, function(granted, holder) {
+            if (root.productId !== lockedProductId) return // moved on already
+            _lockState = granted ? "granted" : "denied"
+            _lockHolder = holder
+            if (!granted) {
+                errorLabel.text = holder && holder.name
+                    ? qsTr("%1 is currently editing this product — try again shortly").arg(holder.name)
+                    : qsTr("This product is currently being edited elsewhere — try again shortly")
+            }
+        })
+    }
+
+    function _leaveEditMode() {
+        if (editMode) LockManager.release("inventory", productId)
+        editMode = false
+        _lockState = "pending"
+        _lockHolder = null
+    }
     property bool photoBusy: false
 
     // Supplier banner state — `_currentSupplierId` resolves to the most
@@ -57,8 +90,15 @@ BottomSheet {
     property bool _renaming: false
 
     function openFor(id, startInEdit) {
+        // Release whatever this dialog held for the PREVIOUS product before
+        // switching — covers both "cancel edit" (onSecondaryClicked calls
+        // openFor(productId, false) directly, without going through close())
+        // and simply opening a different product while mid-edit.
+        if (editMode) LockManager.release("inventory", productId)
         productId = id
-        editMode = !!startInEdit
+        editMode = false
+        _lockState = "pending"
+        _lockHolder = null
         var p = InventoryStore.getById(id)
         if (p) {
             nameField.text = p.name || ""
@@ -96,6 +136,7 @@ BottomSheet {
         root._refreshSupplierPicker(TransactionStore.lastSupplierFor(id) || "")
         root._renaming = false
         renameField.text = ""
+        if (startInEdit) _enterEditMode()
         open()
     }
 
@@ -121,11 +162,14 @@ BottomSheet {
     }
 
     onPrimaryClicked: {
-        if (!editMode) { editMode = true; reasonField.text = "" }
+        if (!editMode) { _enterEditMode() }
         else _submit()
     }
     onSecondaryClicked: {
         if (editMode) openFor(productId, false)
+    }
+    onClosed: {
+        if (editMode) LockManager.release("inventory", productId)
     }
 
     // Photo-source result handlers — invoked by Main.qml after the shared,
@@ -991,6 +1035,14 @@ BottomSheet {
     }
 
     function _submit() {
+        if (_lockState !== "granted") {
+            errorLabel.text = _lockState === "denied"
+                ? (_lockHolder && _lockHolder.name
+                    ? qsTr("%1 is currently editing this product — try again shortly").arg(_lockHolder.name)
+                    : qsTr("This product is currently being edited elsewhere — try again shortly"))
+                : qsTr("Still confirming this product is free to edit — try again in a moment")
+            return
+        }
         var errs = []
         if (!nameField.text || nameField.text.trim().length < 2) errs.push("Enter a valid name")
         if (!skuField.text || skuField.text.trim().length === 0) errs.push("Enter SKU")
@@ -1029,6 +1081,7 @@ BottomSheet {
             minStock: ms
         }, reasonField.text.trim())
         errorLabel.text = ""
+        LockManager.release("inventory", productId)
         editMode = false
         close()
     }

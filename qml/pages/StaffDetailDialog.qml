@@ -25,9 +25,34 @@ BottomSheet {
     property bool editMode: false
     property bool _populating: false
 
+    // Component 2 (async-write-sequencing design §4/§7.1). Same shape as
+    // EditProductDialog — acquired entering edit mode, released leaving it.
+    property string _lockState: "pending" // "pending" | "granted" | "denied"
+    property var _lockHolder: null
+
+    function _enterEditMode() {
+        editMode = true
+        _lockState = "pending"
+        _lockHolder = null
+        var lockedStaffId = staffId
+        LockManager.acquire("staff", staffId, function(granted, holder) {
+            if (root.staffId !== lockedStaffId) return
+            _lockState = granted ? "granted" : "denied"
+            _lockHolder = holder
+            if (!granted) {
+                errorText.text = holder && holder.name
+                    ? qsTr("%1 is currently editing this profile — try again shortly").arg(holder.name)
+                    : qsTr("This profile is currently being edited elsewhere — try again shortly")
+            }
+        })
+    }
+
     function openFor(id, startInEdit) {
+        if (editMode) LockManager.release("staff", staffId)
         staffId = id
-        editMode = !!startInEdit
+        editMode = false
+        _lockState = "pending"
+        _lockHolder = null
         var s = StaffStore.getById(id)
         _populating = true
         if (s) {
@@ -42,11 +67,12 @@ BottomSheet {
         }
         errorText.text = ""
         _populating = false
+        if (startInEdit) _enterEditMode()
         open()
     }
 
     onPrimaryClicked: {
-        if (!editMode) editMode = true
+        if (!editMode) { _enterEditMode() }
         else _submit()
     }
     onSecondaryClicked: {
@@ -54,6 +80,9 @@ BottomSheet {
             // Discard edits — repopulate from store and switch out of edit mode.
             openFor(staffId, false)
         }
+    }
+    onClosed: {
+        if (editMode) LockManager.release("staff", staffId)
     }
 
     ColumnLayout {
@@ -207,6 +236,14 @@ BottomSheet {
     }
 
     function _submit() {
+        if (_lockState !== "granted") {
+            errorText.text = _lockState === "denied"
+                ? (_lockHolder && _lockHolder.name
+                    ? qsTr("%1 is currently editing this profile — try again shortly").arg(_lockHolder.name)
+                    : qsTr("This profile is currently being edited elsewhere — try again shortly"))
+                : qsTr("Still confirming this profile is free to edit — try again in a moment")
+            return
+        }
         var errs = []
         if (!nameField.text || nameField.text.trim().length < 2) errs.push("Enter a valid name")
         if (!emailField.text || emailField.text.indexOf("@") < 0) errs.push("Enter a valid email")
@@ -233,6 +270,7 @@ BottomSheet {
             status: statusVal
         })
         errorText.text = ""
+        LockManager.release("staff", staffId)
         editMode = false
         close()
     }
