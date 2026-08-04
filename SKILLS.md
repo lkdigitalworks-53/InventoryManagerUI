@@ -622,13 +622,13 @@ FirebaseService.put("audit_log/" + id, entry, null)
 `TransactionStore` and `StockBatchStore` are **read models** over the ledger — read from them freely,
 but they no longer own writes once P0 lands.
 
-**Current status (2026-07-11):** all four working-tier stores now call the gateway — this is
-implemented, not aspirational. But `Gateway.mode` still defaults to `"direct"`, so the gateway
-call itself falls through to a plain write today; **no `audit_log` entries are actually being
-written in production yet.** Don't infer "the audit trail is live" from seeing
-`Gateway.recordMutation(...)` in a store — check `Gateway.mode` and whether Cloud Functions/rules
-have actually been deployed and cutover run. See AGENTS.md §8's "P0 implementation status" for
-the full picture.
+**Current status (updated 2026-07-29):** all working-tier stores call the gateway, and
+`Gateway.mode` now defaults to `"gateway"` (flipped 2026-07-29, `649046d`) — Cloud Functions +
+the locked Firestore rules are deployed and confirmed working. `audit_log` entries are now
+actually being written for every `recordMutation`/`recordMutations` call. Whether `runCutover`
+(the one-time ledger wipe / stock zero-out) was also run as part of this rollout was not
+independently confirmed this session — verify before assuming historical ledger data was reset.
+See AGENTS.md §8's "P0 implementation status" for the full picture.
 
 ---
 
@@ -1177,3 +1177,105 @@ more must split into multiple `recordMutations` calls client-side — atomicity 
 chunk, not across chunks. This is a documented trade-off; don't raise the cap without re-deriving
 the arithmetic against Firestore's actual limit.
 
+## Skill 36: Async write sequencing — single-flight, locking, CAS, and atomic deltas
+
+**Files**: `qml/model/{OutboxStore,Gateway,LockManager}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`,
+full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`
+
+Four related but distinct correctness mechanisms, easy to conflate — know which one actually
+fixes which bug before reaching for any of them:
+
+**1. Single-flight-per-record (`OutboxStore`)** — fixes a device racing its OWN sequential writes.
+`enqueue()` coalesces a second call for the same `entity+entityId` into an existing NOT-in-flight
+item (keeps earliest `before`/`action`, takes latest `after`); if the existing item IS in flight,
+the new call is held separately rather than mutating a payload already on the wire. Client-only,
+no server involvement, no deploy risk.
+
+**2. Pessimistic locking (`LockManager` + `acquireLock`/`releaseLock`)** — fixes wasted work: lets
+a second device find out a record's being edited BEFORE doing any work, not after. A lock is just
+another Firestore document (`locks/{entity}_{entityId}`), acquired/released via the same
+transaction primitive as everything else — no custom mutex machinery. TTL (90s) + client renewal
+heartbeat (30s) means an abandoned/crashed session self-heals via expiry; there is no cleanup job
+and there shouldn't need to be one. Gates the EDIT entry point only (entering edit mode / opening
+directly into it) — never a plain view, reads are always unrestricted.
+
+**3. Server-side compare-and-swap (`applyMutation`'s CAS check)** — the actual correctness
+backstop for whole-record writes, independent of whether locking "worked": rejects if the record's
+current server state doesn't match the mutation's claimed `before`. With locking in place this
+should fire rarely — if it fires often, that's a signal locking isn't actually being acquired
+somewhere it should be, not a reason to remove the check.
+
+**4. Atomic server-side deltas (`applyDelta`, `Gateway.recordDelta`)** — a DIFFERENT mutation kind
+for quantity fields, not a CAS variant. Reads the current value INSIDE the transaction and computes
+`current + delta`, so it's correct regardless of what else touched the doc concurrently — two
+legitimate concurrent stock deductions on the same product both apply. `floors` (reject) vs
+`clamps` (cap and still succeed) — pick based on the caller's actual business rule
+(`InventoryStore.deductStock` rejects for order completion, `completeImportedOrder` clamps because
+its whole point is "complete anyway, report the shortfall"). **Don't use CAS/locking for a
+quantity field a delta could handle instead** — whole-record CAS on a stock field would spuriously
+reject two perfectly-compatible concurrent decrements; that's not a conflict, it's ordinary
+concurrent business, and rejecting it is a correctness regression, not caution.
+
+```js
+// gatewayLogic.js — the actual bug that motivated #4: computing a new value
+// from a possibly-stale LOCAL read is unsafe no matter how carefully it's
+// guarded client-side. The fix reads inside the SAME transaction that writes:
+async function applyDelta(db, params) {
+    return db.runTransaction(async (txn) => {
+        const current = (await txn.get(workingRef)).data()
+        const next = (current[field] || 0) + params.deltas[field]   // computed HERE, not client-side
+        txn.set(workingRef, Object.assign({}, current, { [field]: next }))
+    })
+}
+```
+
+**A subtlety that cost a genuine near-bug**: naive "coalesce a queued mutation into an existing
+item" (mechanism #1) is unsafe if it doesn't distinguish QUEUED from IN-FLIGHT — merging into an
+item whose payload was already serialized onto an outbound request silently discards whatever the
+merge was supposed to add, once that in-flight request's own completion handler removes the
+(now-corrupted) entry by its original requestId. `OutboxStore.markInFlight(item)`/`clearInFlight(item)`
+take the item object itself (not a requestId) specifically to sidestep a related bug: looking an
+item back up by requestId AFTER `markSent` has already deleted it silently leaks the in-flight key
+forever.
+
+**Test-tooling note**: `functions/test/gatewayLogic.test.js`'s fake Firestore double
+(`makeFakeDbWithData`) tracks real document DATA per path, not just existence — needed once
+`applyMutation`/`applyDelta` actually read current state to decide anything. The original
+`makeFakeDb` (existence-only, Skill 35's example above) is still fine for logic that never reads
+before writing, but silently breaks anything that does (caught this converting 2 pre-existing
+`applyMutation` tests when adding the CAS check — they used `makeFakeDb` with a non-null `before`,
+which read as a false conflict once the function started actually checking current state).
+
+## Skill 37: Coordinated multi-document saves — `ProfileSettingsMath.js` + a real `patch()`
+
+**Files**: `qml/helper/ProfileSettingsMath.js`, `tests/tst_ProfileSettingsMath.qml`,
+`qml/model/AuthService.qml` (`saveProfileSettings`), `qml/model/FirebaseService.qml` (`patch`)
+
+When one user action must write to two documents (here: `users/{uid}` and `tenants/{tenantId}`)
+and the UI should only see one success/failure, don't fire two independent requests with two
+independent success signals — that's a race. Instead:
+
+1. A pure helper (no QML, no singletons) computes the **full change set** up front: what changed,
+   whether the request is even authorized (owner-only workspace rename), and the exact per-document
+   patch payloads. It returns `null`/`error` for invalid input instead of letting a bad write reach
+   the network.
+2. The orchestrating function counts how many writes are actually needed, issues them all, and
+   only emits the terminal success/failure signal once every issued write has settled — first
+   failure wins, but every callback still runs.
+3. The local store (`AuthStore.updateProfile`) applies fields with `!== undefined` presence checks,
+   not `value || fallback`. `||` silently keeps the old value when a field is legitimately cleared
+   to `""` — a real, non-obvious bug distinct from a `.pragma library` re-export bug.
+
+**`FirebaseService.patch()` was dead code before this**: it aliased straight to `put()`, and
+`put()`'s Firestore REST call is a `PATCH` **without** `updateMask.fieldPaths`, which Firestore
+treats as "replace the document with exactly these fields" — not a partial update. Grep for
+callers before trusting `patch()`'s name; here there were zero, so redefining it to send real
+`updateMask.fieldPaths` per key was zero-risk. If a future `patch()` caller exists, confirm it
+actually wanted masked semantics before changing it again.
+
+**Verify `Constants.qml` tokens exist before writing them into a design doc or plan.** A prior plan
+for this feature specified `Constants.brand` for an active-edit-state border; no such property
+exists (only `brand1`..`brand5` and semantic aliases like `primaryBlue: brand1`). Referencing an
+undefined singleton property doesn't fail to compile — it silently binds `undefined`, which is a
+much harder bug to spot than a QML syntax error. `grep -n "property color" qml/helper/Constants.qml`
+before using any `Constants.*` token you haven't seen used elsewhere first.

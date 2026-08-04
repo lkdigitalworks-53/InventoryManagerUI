@@ -325,6 +325,7 @@ App {
             // Drop any queued gateway writes so a pending tenant's mutations
             // never replay under the next account.
             Gateway.clear()
+            LockManager.clear()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }

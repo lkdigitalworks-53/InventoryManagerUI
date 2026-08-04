@@ -20,6 +20,9 @@ BottomSheet {
     signal profileSaved()
 
     property string errorMessage: ""
+    property string workspaceOriginalName: ""
+    property bool workspaceEditMode: false
+    readonly property bool canRenameWorkspace: AuthStore.role === "owner"
 
     // Pre-populate fields every time sheet opens.
     onOpened: {
@@ -30,21 +33,22 @@ BottomSheet {
         cityField.text        = AuthStore.city
         countryField.text     = AuthStore.country
         postalField.text      = AuthStore.postalCode
+        workspaceOriginalName = AuthStore.tenantName
+        workspaceName.text    = workspaceOriginalName
+        workspaceEditMode     = false
         errorMessage = ""
     }
 
     onPrimaryClicked: {
         if (!busy) {
-            if (AuthStore.tenantName !== workspaceName.text) {
-                AuthService.updateTenantName(workspaceName.text.trim())
-            }
-            AuthService.updateUserProfile(
+            errorMessage = ""
+            AuthService.saveProfileSettings(
                 phoneField.text.trim(),
                 addressField.text.trim(),
                 cityField.text.trim(),
                 countryField.text.trim(),
                 postalField.text.trim(),
-                workspaceName.text.trim()
+                workspaceName.text
             )
         }
     }
@@ -54,6 +58,9 @@ BottomSheet {
         function onProfileUpdated() {
             root.profileSaved()
             root.close()
+        }
+        function onProfileUpdateFailed(reason) {
+            root.errorMessage = reason
         }
     }
 
@@ -122,32 +129,29 @@ BottomSheet {
                     QQC.TextField {
                         id: workspaceName
                         text: AuthStore.tenantName || "(none)"
+                        placeholderText: "Workspace name"
                         Layout.fillWidth: true
                         color: Constants.textPrimary
                         font.pixelSize: sp(Constants.fsBody)
-                        enabled: AuthStore.role !== "staff" && editButton.editMode
+                        enabled: root.canRenameWorkspace && root.workspaceEditMode
+                        onTextEdited: root.errorMessage = ""
                         background: Rectangle {
                             Layout.fillWidth: true
-                            color: Constants.subtleBg
-                            border.color: AuthStore.role !== "staff" ? Constants.borderColor : ""
-                            border.width: AuthStore.role !== "staff" ? 1 : 0
-                            radius: width/2
-                        }
-                        onAccepted: {
-                            editButton.editMode = !editButton.editMode
-                            //To-Do: Need to call firestore api to change tenant name
+                            color: workspaceName.enabled ? Constants.cardBg : Constants.subtleBg
+                            border.color: workspaceName.enabled ? Constants.primaryBlue : Constants.borderColor
+                            border.width: 1
+                            radius: workspaceName.enabled ? dp(Constants.radiusSm) : width / 2
                         }
                     }
                     QQC.AbstractButton {
                         id: editButton
-                        property bool editMode: false
                         Layout.preferredWidth: dp(28)
                         Layout.preferredHeight: dp(28)
                         implicitWidth: dp(28)
                         implicitHeight: dp(28)
                         padding: 0
                         topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
-                        visible: AuthStore.role !== "staff"
+                        visible: root.canRenameWorkspace
                         background: Rectangle {
                             anchors.fill: parent
                             radius: dp(10)
@@ -158,12 +162,18 @@ BottomSheet {
                             Behavior on color { ColorAnimation { duration: Constants.durFast } }
                         }
                         contentItem: Icon {
-                            name: editButton.editMode ? "close" : "edit"
+                            name: root.workspaceEditMode ? "close" : "edit"
                             color: Constants.textPrimary
                             size: sp(16)
                         }
                         onClicked: {
-                            editButton.editMode = !editButton.editMode
+                            if (root.workspaceEditMode) {
+                                workspaceName.text = root.workspaceOriginalName
+                                root.workspaceEditMode = false
+                                return
+                            }
+                            root.workspaceEditMode = true
+                            Qt.callLater(function() { workspaceName.forceActiveFocus() })
                         }
                     }
                 }

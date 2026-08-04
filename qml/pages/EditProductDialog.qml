@@ -28,6 +28,45 @@ BottomSheet {
     property string productId: ""
     property bool editMode: false
     property string photoUrl: ""
+
+    // Component 2 (async-write-sequencing design §4/§7.1). Acquired when
+    // entering edit mode (either via the in-dialog "Edit" button or opening
+    // directly into edit mode via openFor(id, true)) — never on a plain
+    // view. Released whenever edit mode is left, however that happens
+    // (Cancel, successful save+close, or dismissing the sheet outright).
+    // "error" (added 2026-07-29, real bug report) is distinct from
+    // "denied" — couldn't get a real answer (network/undeployed endpoint)
+    // vs. a genuine other holder. Conflating the two showed a lone tester
+    // "someone else is editing this" when nobody else was.
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
+    property var _lockHolder: null
+
+    function _enterEditMode() {
+        editMode = true
+        reasonField.text = ""
+        _lockState = "pending"
+        _lockHolder = null
+        var lockedProductId = productId
+        LockManager.acquire("inventory", productId, function(result) {
+            if (root.productId !== lockedProductId) return // moved on already
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+            if (!result.granted) {
+                errorLabel.text = result.reason === "denied"
+                    ? (result.holder && result.holder.name
+                        ? qsTr("%1 is currently editing this product — try again shortly").arg(result.holder.name)
+                        : qsTr("This product is currently being edited elsewhere — try again shortly"))
+                    : qsTr("Couldn't confirm this product is free to edit (connection issue) — try again")
+            }
+        })
+    }
+
+    function _leaveEditMode() {
+        if (editMode) LockManager.release("inventory", productId)
+        editMode = false
+        _lockState = "pending"
+        _lockHolder = null
+    }
     property bool photoBusy: false
 
     // Supplier banner state — `_currentSupplierId` resolves to the most
@@ -57,8 +96,15 @@ BottomSheet {
     property bool _renaming: false
 
     function openFor(id, startInEdit) {
+        // Release whatever this dialog held for the PREVIOUS product before
+        // switching — covers both "cancel edit" (onSecondaryClicked calls
+        // openFor(productId, false) directly, without going through close())
+        // and simply opening a different product while mid-edit.
+        if (editMode) LockManager.release("inventory", productId)
         productId = id
-        editMode = !!startInEdit
+        editMode = false
+        _lockState = "pending"
+        _lockHolder = null
         var p = InventoryStore.getById(id)
         if (p) {
             nameField.text = p.name || ""
@@ -96,6 +142,7 @@ BottomSheet {
         root._refreshSupplierPicker(TransactionStore.lastSupplierFor(id) || "")
         root._renaming = false
         renameField.text = ""
+        if (startInEdit) _enterEditMode()
         open()
     }
 
@@ -121,11 +168,14 @@ BottomSheet {
     }
 
     onPrimaryClicked: {
-        if (!editMode) { editMode = true; reasonField.text = "" }
+        if (!editMode) { _enterEditMode() }
         else _submit()
     }
     onSecondaryClicked: {
         if (editMode) openFor(productId, false)
+    }
+    onClosed: {
+        if (editMode) LockManager.release("inventory", productId)
     }
 
     // Photo-source result handlers — invoked by Main.qml after the shared,
@@ -991,6 +1041,18 @@ BottomSheet {
     }
 
     function _submit() {
+        if (_lockState !== "granted") {
+            if (_lockState === "denied") {
+                errorLabel.text = _lockHolder && _lockHolder.name
+                    ? qsTr("%1 is currently editing this product — try again shortly").arg(_lockHolder.name)
+                    : qsTr("This product is currently being edited elsewhere — try again shortly")
+            } else if (_lockState === "error") {
+                errorLabel.text = qsTr("Couldn't confirm this product is free to edit (connection issue) — try again")
+            } else {
+                errorLabel.text = qsTr("Still confirming this product is free to edit — try again in a moment")
+            }
+            return
+        }
         var errs = []
         if (!nameField.text || nameField.text.trim().length < 2) errs.push("Enter a valid name")
         if (!skuField.text || skuField.text.trim().length === 0) errs.push("Enter SKU")
@@ -1029,6 +1091,7 @@ BottomSheet {
             minStock: ms
         }, reasonField.text.trim())
         errorLabel.text = ""
+        LockManager.release("inventory", productId)
         editMode = false
         close()
     }

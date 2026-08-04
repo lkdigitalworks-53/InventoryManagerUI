@@ -170,9 +170,12 @@ Top-level collections (all tenant-scoped under `tenants/{tenantId}/...`):
 - `transactions/` – immutable ledger event log (see `AGENTS.md`'s Compliance & Audit Agent)
 - `stock_batches/` – FIFO stock batches
 - `audit_log/` – compliance gateway's append-only mutation ledger, server-written only
-  (`Gateway.recordMutation`/`recordMutations` → Cloud Functions). All 5 working-tier stores now
-  route through it, but it's not actually receiving entries yet — `Gateway.mode` is still
-  `"direct"` pending deploy/cutover. See AGENTS.md §8's "P0 implementation status."
+  (`Gateway.recordMutation`/`recordMutations`/`recordDelta` → Cloud Functions). All 5 working-tier
+  stores route through it, and it's live — `Gateway.mode` is `"gateway"` (flipped 2026-07-29). See
+  AGENTS.md §8's "P0 implementation status."
+- `locks/` – short-lived pessimistic locks (Component 2 of the async-write-sequencing design,
+  below), server-written only. Not part of P0's compliance scope — a concurrency-control aid, not
+  ledger data.
 - `activity_log/` – staff activity feed
 - `config/categories`, `config/orderChannels` – single-document settings, not paginated collections
 
@@ -378,8 +381,11 @@ Two problems, fixed separately (full design: `docs/superpowers/specs/
   — see AGENTS.md §8, `SKILLS.md` Skill 35) instead of calling `FirebaseService` directly.
   `approveAllPending`'s bulk update specifically now uses `Gateway.recordMutations` (one atomic
   transaction, capped at 200 items) — the old `FirebaseService.putMany()` call there is gone.
-  Functionally unchanged today (`Gateway.mode` is still `"direct"`), but this is the current code
-  path, not the one described just above.
+  Functionally live as of 2026-07-29 (`Gateway.mode` is `"gateway"`), and this is the current code
+  path, not the one described just above. As of the async-write-sequencing design (below),
+  `InventoryStore.deductStock`/`StockBatchStore`'s FIFO functions route through
+  `Gateway.recordDelta` instead — an atomic server-side delta, not a client-computed absolute value
+  — for the same reason `approveAllPending` needed a batch endpoint: naive per-write races.
 - **Analytics** — a new `computeAnalysis` Cloud Function runs Revenue/Profit/Sold/Purchased
   aggregation server-side (ported `RealisedMath`/`BreakdownMath`, parity-tested against the QML
   originals via shared fixtures), so this no longer needs the full transaction ledger resident on
@@ -388,5 +394,35 @@ Two problems, fixed separately (full design: `docs/superpowers/specs/
   synchronously at 15+ call sites, and `AnalysisService.compute` is necessarily async, so the
   cutover is a real rewrite of that page's data flow, deferred as its own future project (spec §9.1).
   See `SKILLS.md` Skill 34.
+
+---
+
+## Concurrency & Conflict Resolution
+
+Full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`. Four pieces,
+addressing three separate bugs found while investigating one reported symptom (an order silently
+reverting from "completed" to "pending"):
+
+- **Client single-flight-per-record** (`OutboxStore`/`Gateway.qml`) — a device's own outbox no
+  longer fires overlapping writes at itself for the same record; a second write arriving while the
+  first is still in flight coalesces into a held follow-up instead of racing it.
+- **Pessimistic record locking** (`locks/` collection, `Gateway.acquireLock`/`releaseLock` Cloud
+  Functions, `LockManager.qml`) — proactive cross-device conflict avoidance: opening an editable
+  dialog (product, staff, order) acquires a lock first, so a second device finds out immediately
+  rather than doing real edit work only to be rejected at save time. TTL + client renewal, no
+  cleanup job — an abandoned session just expires.
+- **Server-side compare-and-swap** (`applyMutation` in `gatewayLogic.js`) — a backstop, not the
+  primary mechanism now that locking exists: rejects a mutation whose `before` doesn't match the
+  record's actual current state, instead of blindly overwriting.
+- **Atomic server-side deltas** (`applyDelta`, `Gateway.recordDelta`) — quantity fields
+  (`inventory.stock`, `stock_batch.qtyRemaining`/`qtyReceived`) are adjusted by a server-computed
+  delta inside the Firestore transaction, not a client-computed absolute value — two legitimate
+  concurrent stock movements on the same product both apply correctly instead of one clobbering
+  the other. Supports either rejecting (`floors`) or clamping (`clamps`) at a boundary, per caller.
+
+**Known, deliberately unfinished piece:** `DataModel._tryAdjustOrder` (order returns/exchanges)
+was NOT given the same async-await treatment `_tryCompleteOrder` got, and `OrderDetailDialog`'s
+order-level lock doesn't span into the subsequent `ConfirmReturnSheet` confirmation step — both
+flagged as real follow-up work in the design doc, not solved in this pass.
 
 ---

@@ -406,8 +406,35 @@ QtObject {
         }, authToken)
     }
 
+    // Field-selective update: sends one updateMask.fieldPaths query parameter
+    // per supplied key so unlisted fields on the remote document are left
+    // untouched. Unlike put(), which PATCHes without a mask and therefore
+    // replaces the whole document with just the given fields, this is safe
+    // for partial updates to documents with fields the caller doesn't know
+    // about (e.g. tenants/{tenantId}'s ownerId, plan, createdAt).
     function patch(path, data, callback) {
-        put(path, data, callback)
+        var p = _splitPath(path)
+        if (!p.normalizedPath || p.isCollection) {
+            if (callback) callback(false)
+            return
+        }
+
+        var keys = Object.keys(data || {})
+        if (keys.length === 0) {
+            if (callback) callback(true)
+            return
+        }
+
+        var url = _docUrl(p.normalizedPath)
+        for (var i = 0; i < keys.length; ++i)
+            url += (i === 0 ? "?" : "&")
+                   + "updateMask.fieldPaths=" + encodeURIComponent(keys[i])
+
+        _request("PATCH", url, _encodeDoc(data), function(ok) {
+            if (!ok)
+                console.warn("[Firestore] PATCH failed", path)
+            if (callback) callback(ok)
+        })
     }
 
     // Bulk upsert of ONLY the docs the caller actually changed (not a

@@ -7,32 +7,21 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ## Leave-workspace: self-leave rule staged but not deployed
 
-**Status:** Partially shipped (2026-06-12). Re-login bug is fixed in code now; clean
-member-doc auto-removal awaits a Firestore rules deploy.
+**Status:** Update (2026-07-29) — the deploy this entry was blocked on has now happened.
+`Gateway.mode` flipped to `"gateway"` (commit `649046d`), and Taher confirms Cloud Functions +
+`firestore.rules` are deployed and working. Since `firestore.rules` ships as one unit, the
+self-leave clause described below should now be live for free. **Not independently re-verified
+in a session** (i.e. nobody has confirmed the leaver's member doc actually gets auto-removed
+post-deploy) — treat as likely-resolved, not confirmed-resolved, until someone checks it on
+live data.
 
-**What works without any deploy:** `leaveCurrentTenant()` clears the tenant pointer
-(`tenantId`/`role`/`tenants[]`) on the leaver's own `users/{uid}` doc — a self-write
-allowed by current live rules. This fixes the main bug (re-login no longer rejoins the
-empty workspace; the user correctly lands on onboarding).
-
-**What's deferred (needs a rules deploy):** `firestore.rules` adds a clause letting a
-member delete their OWN non-owner membership (`tenants/{tid}/members/{uid}` where
-`uid == request.auth.uid`). Until `firebase deploy --only firestore:rules` runs, that
-self-delete is denied (403), so the leaver's member doc lingers as `status: active`.
-Cosmetic only — the owner can remove the ghost member via Member Management under
-current rules.
-
-**Why not deployed now:** the repo `firestore.rules` also carries the **P0 ledger
-lockdown** (`audit_log`/`transactions`/`stock_batches`/`stock_movements` → `write: if
-false`). `Gateway.mode` is still `"direct"`, so the client writes those collections
-directly today; deploying the repo rules before the P0 cutover would DENY those writes
-and break restock/stock ops. Rules deploy is free (Spark) — the blocker is functional
-(P0 not cut over), NOT the Blaze/Cloud-Functions billing requirement (functions are a
-separate `--only functions` deploy).
-
-**When to deploy:** at the P0 cutover, when `firestore.rules` ships as a unit and
-`Gateway.mode` flips to `"gateway"`. The self-leave clause goes live then for free. See
-the P0 compliance gateway spec.
+**Original issue (2026-06-12), kept for context:** Re-login bug was fixed in code from the start
+(`leaveCurrentTenant()` clears the tenant pointer on the leaver's own `users/{uid}` doc — a
+self-write allowed even under the old rules). What was blocked on this deploy specifically: a
+`firestore.rules` clause letting a member delete their OWN non-owner membership
+(`tenants/{tid}/members/{uid}` where `uid == request.auth.uid`); before this deploy, that
+self-delete was denied (403) and the leaver's member doc lingered as `status: active` (cosmetic
+only — the owner could always remove the ghost member manually via Member Management).
 
 ---
 

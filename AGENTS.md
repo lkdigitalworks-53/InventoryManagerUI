@@ -23,7 +23,7 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 | Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
 | Analysis filters (date / supplier / channel / staff / category) + xlsx export | ✅ Done |
 | Staff activities from real data | ✅ Done |
-| Profile Settings dialog | ✅ Done |
+| Profile Settings dialog | ✅ Done — owner-only workspace rename, coordinated multi-doc save (2026-07-31, Skill 36) |
 | Member management dialog | ✅ Done |
 | Empty-state UI for Analysis page | ✅ Done |
 | Success toast for key operations | ✅ Done |
@@ -97,20 +97,19 @@ already goes through `SupplierStore.updateSupplier` by stable `supplierId`, so n
 persisted outbox/retry; P0 scope = inventory + stock only; fresh-start cutover wipes ledger
 collections and zeroes product stock).
 
-### P0 implementation status (updated 2026-07-11)
+### P0 implementation status (updated 2026-07-29)
 
-**Code-complete, tested, NOT live.** All five working-tier stores (`InventoryStore`,
+**Code-complete, tested, LIVE.** All five working-tier stores (`InventoryStore`,
 `StockBatchStore`, `OrdersStore`, `StaffStore`, `SupplierStore`) now route every mutation through
 `Gateway.recordMutation` / `Gateway.recordMutations` (batch — new this session, see Skill 35 below)
-— zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. But:
+— zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. Status:
 
-- **`Gateway.mode` still defaults to `"direct"`.** In this mode, `recordMutation` falls through to
-  a plain Firestore write — **no `audit_log` entry is written today, regardless of what code calls
-  it.** This is deliberate, not a bug: going live needs Cloud Functions deployed, the locked
-  Firestore rules deployed, `runCutover` run (irreversible — wipes the ledger, zeroes stock), and
-  only then `Gateway.mode` flipped to `"gateway"` — in that order. None of that has happened yet;
-  treat this whole subsystem as inert until a session explicitly does that sequence with real
-  Firebase project access.
+- **`Gateway.mode` now defaults to `"gateway"`** (flipped 2026-07-29, commit `649046d`). Cloud
+  Functions and the locked Firestore rules are deployed and confirmed working (per Taher) —
+  `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry
+  atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
+  the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
+  confirmed in a session — don't assume historical ledger/stock data was reset without checking.
 - CF-side gateway logic (`recordMutation`, `runCutover`, and the new batch endpoint
   `recordMutationsBatch`) was extracted into `functions/lib/{gatewayLogic,cutoverLogic,
   batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no
@@ -262,6 +261,10 @@ App (Main.qml)
 - Register new stores in `qml/model/qmldir`
 - Keep `FirebaseService` REST helpers (`get`, `query`, `put`, `putMany`, `patch`, `remove`, `toArray`)
   up to date
+- `patch()` sends a real field-masked Firestore update (`updateMask.fieldPaths` per key) — it does
+  **not** alias `put()` anymore (fixed 2026-07-31, see SKILLS Skill 36). Use `patch()` for a
+  partial update to a document with fields the caller doesn't own or know about; use `put()` only
+  when the caller intends to write/replace the whole document.
 - `FirebaseService.databaseUrl`/`databaseId` are environment-aware (resolved from
   `PRODUCT_STAGE` via `EnvConfig.js`); never hard-code `databases/(default)` — it
   bypasses dev/test/prd routing. All REST calls already build URLs from these.
@@ -392,7 +395,11 @@ QtObject {
 ### 8. Compliance & Audit Agent
 
 **Purpose**: Owns the India compliance roadmap (P0–P7) — the immutable ledger tier, the Cloud
-Functions gateway, tax-identity fields, DPDP privacy, and retention.
+Functions gateway, tax-identity fields, DPDP privacy, and retention. **Adjacent, not part of P0
+itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, atomic deltas —
+`docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, README's "Concurrency &
+Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files but is a correctness
+concern, not a compliance one — don't conflate the two when reasoning about this directory.
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
 `StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
@@ -420,11 +427,12 @@ to the gateway as of 2026-07-11), and the compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
-**Environment follow-up: done.** All 5 Cloud Functions (`recordMutation`, `provisionMember`,
-`runCutover`, `computeAnalysis`, and the new `recordMutationsBatch`) resolve their Firestore
+**Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 8 Cloud
+Functions (`recordMutation`, `recordDelta`, `acquireLock`, `releaseLock`, `provisionMember`,
+`runCutover`, `computeAnalysis`, `recordMutationsBatch`) resolve their Firestore
 database **per request** via `scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33.
-`Gateway.qml` and `AnalysisService.qml` inject `env: FirebaseService.environment` into every
-request body. This was confirmed as a real, already-live gap (not hypothetical) before being
+`Gateway.qml`, `LockManager.qml`, and `AnalysisService.qml` inject `env: FirebaseService.environment`
+into every request body. This was confirmed as a real, already-live gap (not hypothetical) before being
 fixed — `admin.firestore()` was previously called once at module load with no `databaseId`, so
 every Cloud Function always targeted `(default)` (prd) regardless of the calling client's actual
 env.

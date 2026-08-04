@@ -38,6 +38,7 @@ graphify-out/*
 .agent-skills
 
 .superpowers/
+.worktrees/
 
 scripts/node_modules/
 scripts/.icns-tmp.png

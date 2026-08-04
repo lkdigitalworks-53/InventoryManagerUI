@@ -21,7 +21,13 @@ import "../qml/model"
 //     or that safety property no longer holds.
 // A real mock-HTTP layer to test _send/_sendBatch's actual request/response
 // handling would need new test infrastructure this session didn't build —
-// flagging as a known gap rather than a silently-passing fake test.
+// flagging as a known gap rather than a silently-passing fake test. Same
+// applies to _sendDelta (Component 4) and its callback firing on a REAL
+// terminal response — only the enqueue-and-callback-stays-pending path is
+// testable here, not the actual success/conflict branch inside the XHR
+// handler. That branch is exercised indirectly by gatewayLogic.test.js
+// (node --test, fully executable in this sandbox) against the SERVER-side
+// logic it calls into — this file only covers the client dispatch shape.
 //
 // NOT RUN IN THIS SANDBOX — no Qt/qmltestrunner toolchain available.
 // Written to convention and manually reviewed; needs a local
@@ -106,5 +112,111 @@ TestCase {
         var requestId = Gateway.recordMutations("order", [])
         compare(requestId, "")
         compare(OutboxStore.pendingCount, 0)
+    }
+
+    // ── Component 1: in-flight tracking doesn't leak when nothing sends ─────
+    // (the _send/_sendDelta no-auth guard must still clear in-flight, or
+    // every item enqueued during a test run — or in a real not-yet-signed-in
+    // app launch — would be permanently stuck "blocked" and never drain
+    // once a real session does arrive)
+
+    function test_drainNow_does_not_leave_an_item_stuck_in_flight_when_unauthenticated() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("order", "o1", "update", null, { status: "approved" })
+        // drainNow() already ran once inside recordMutation(); call again to
+        // prove the item is actually drainable, not silently stuck blocked.
+        Gateway.drainNow()
+
+        compare(OutboxStore.dueItems().length, 1,
+                "the no-auth guard must clear in-flight, or this item can never be picked up again")
+    }
+
+    // ── Component 4: recordDelta ─────────────────────────────────────────────
+
+    function test_recordDelta_in_gateway_mode_enqueues_a_delta_item() {
+        Gateway.mode = "gateway"
+        var requestId = Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, { qtyRemaining: 0 }, {}, null)
+
+        verify(requestId.length > 0)
+        compare(OutboxStore.pendingCount, 1)
+        var item = OutboxStore.items[0]
+        compare(item.requestId, requestId)
+        compare(item.deltas.qtyRemaining, -3)
+        compare(item.floors.qtyRemaining, 0)
+    }
+
+    function test_recordDelta_requires_gateway_mode() {
+        Gateway.mode = "direct" // delta has no direct-mode equivalent — needs server-side read-then-write
+        var calledWith = null
+        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, {}, function(result) { calledWith = result })
+
+        compare(OutboxStore.pendingCount, 0, "must not enqueue anything in direct mode")
+        verify(calledWith !== null, "callback must fire synchronously with an explanatory error, not hang")
+        compare(calledWith.ok, false)
+        compare(calledWith.error, "delta-requires-gateway-mode")
+    }
+
+    function test_recordDelta_returns_empty_string_for_an_unknown_entity() {
+        Gateway.mode = "gateway"
+        var requestId = Gateway.recordDelta("widget", "w1", { qty: -1 }, {}, {}, null)
+        compare(requestId, "")
+        compare(OutboxStore.pendingCount, 0)
+    }
+
+    function test_recordDelta_callback_is_not_invoked_before_any_response() {
+        // With AuthStore.idToken empty (see init()), _sendDelta's guard
+        // returns before any XHR fires — the callback must stay pending,
+        // not fire with a fabricated success/failure.
+        Gateway.mode = "gateway"
+        var callCount = 0
+        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, {}, function(result) { callCount++ })
+
+        compare(callCount, 0, "no server response has happened yet — the callback must not fire")
+    }
+
+    // ── _classifyDeltaResponse — regression tests for the 2026-07-29 bug ────
+    // (systematic-debugging session: an undeployed recordDelta endpoint's
+    // 404 was being treated as "transient, retry forever" — which is
+    // actually correct in isolation, but meant order completion's callback
+    // NEVER fired, silently stranding the order at "pending" forever. The
+    // classification itself wasn't wrong so much as it was fragile: it
+    // happened to work by accident for a body-less 404, but the underlying
+    // logic didn't express the real distinction it needed to.)
+
+    function test_classifyDeltaResponse_treats_a_malformed_body_as_non_terminal() {
+        // What an undeployed Cloud Function's 404 actually looks like:
+        // JSON.parse already failed upstream, so body is null here.
+        var result = Gateway._classifyDeltaResponse(404, null)
+        compare(result.terminal, false,
+                "no real decision was made — must retry, not report a false rejection")
+    }
+
+    function test_classifyDeltaResponse_treats_a_body_without_ok_as_non_terminal() {
+        // Some infra-level error responses ARE valid JSON, just not OUR
+        // envelope shape (e.g. a generic platform error object).
+        var result = Gateway._classifyDeltaResponse(404, { error: { code: 404, message: "not found" } })
+        compare(result.terminal, false)
+    }
+
+    function test_classifyDeltaResponse_treats_a_genuine_success_as_terminal() {
+        var result = Gateway._classifyDeltaResponse(200, { ok: true, after: { stock: 7 } })
+        compare(result.terminal, true)
+        compare(result.result.after.stock, 7)
+    }
+
+    function test_classifyDeltaResponse_treats_a_genuine_4xx_rejection_as_terminal() {
+        var result = Gateway._classifyDeltaResponse(409, { ok: false, error: "insufficient-quantity", field: "stock" })
+        compare(result.terminal, true)
+        compare(result.result.error, "insufficient-quantity")
+    }
+
+    function test_classifyDeltaResponse_treats_a_well_formed_5xx_as_non_terminal() {
+        // Our OWN code produced this body (see index.js's catch block: even
+        // an unhandled exception sends {ok:false, error:"write-failed"}) —
+        // but a 5xx could be a transient issue on our side, worth retrying,
+        // unlike a 4xx which is a definitive decision. Must not give up
+        // immediately just because the body happens to be well-formed.
+        var result = Gateway._classifyDeltaResponse(500, { ok: false, error: "write-failed" })
+        compare(result.terminal, false)
     }
 }

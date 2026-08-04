@@ -66,18 +66,94 @@ function validateMutationRequest(body, entityCollections) {
     };
 }
 
+// Validates + normalizes a recordDelta request body. Returns
+// { ok: true, ...normalizedFields } or { ok: false, status, error }.
+function validateDeltaRequest(body, entityCollections) {
+    const collections = entityCollections || ENTITY_COLLECTIONS;
+    const entity = String(body.entity || "");
+    const entityId = String(body.entityId || "");
+    const requestId = String(body.requestId || "");
+    const deltas = (body.deltas && typeof body.deltas === "object") ? body.deltas : null;
+    const floors = (body.floors && typeof body.floors === "object") ? body.floors : {};
+    const clamps = (body.clamps && typeof body.clamps === "object") ? body.clamps : {};
+    const clientTimestamp = body.clientTimestamp || null;
+
+    const collection = collections[entity];
+    if (!collection) {
+        return { ok: false, status: 400, error: "unsupported-entity" };
+    }
+    if (!entityId || !requestId) {
+        return { ok: false, status: 400, error: "missing-fields" };
+    }
+    if (!deltas || Object.keys(deltas).length === 0) {
+        return { ok: false, status: 400, error: "missing-deltas" };
+    }
+    for (const field in deltas) {
+        if (typeof deltas[field] !== "number" || !isFinite(deltas[field])) {
+            return { ok: false, status: 400, error: "invalid-delta-value" };
+        }
+    }
+
+    return {
+        ok: true,
+        entity: entity,
+        entityId: entityId,
+        requestId: requestId,
+        deltas: deltas,
+        floors: floors,
+        clamps: clamps,
+        clientTimestamp: clientTimestamp,
+        collection: collection
+    };
+}
+
+// Order-insensitive deep equality for plain JSON-shaped objects (what every
+// working-tier doc is). Deliberately not a naive JSON.stringify compare —
+// key insertion order must never affect the result.
+function _deepEqual(a, b) {
+    if (a === b) return true;
+    if (a === null || b === null) return a === b;
+    if (typeof a !== "object" || typeof b !== "object") return a === b;
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+        if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+        if (!_deepEqual(a[key], b[key])) return false;
+    }
+    return true;
+}
+
+// Shared doc-ref construction for both applyMutation and applyDelta.
+function _refs(db, params) {
+    const tenantRoot = "tenants/" + params.tenantId;
+    return {
+        auditRef: db.doc(tenantRoot + "/audit_log/" + params.requestId),
+        workingRef: db.doc(tenantRoot + "/" + params.collection + "/" + params.entityId)
+    };
+}
+
 // Applies one mutation atomically: writes (or deletes) the working-tier doc
 // and appends exactly one audit_log entry, in a single transaction. The
 // audit_log doc id IS the requestId, so a retried call with the same
 // requestId is a no-op (idempotent retry protection for the outbox).
+//
+// Backstop CAS check: rejects (writes nothing) if the record's current
+// server state doesn't match the mutation's claimed `before` — defense in
+// depth against a stale client, on top of locking (Component 2) which is
+// meant to make this the rare, exceptional path rather than the norm.
 async function applyMutation(db, params) {
-    const tenantRoot = "tenants/" + params.tenantId;
-    const auditRef = db.doc(tenantRoot + "/audit_log/" + params.requestId);
-    const workingRef = db.doc(tenantRoot + "/" + params.collection + "/" + params.entityId);
+    const { auditRef, workingRef } = _refs(db, params);
 
-    await db.runTransaction(async (txn) => {
+    return db.runTransaction(async (txn) => {
         const existing = await txn.get(auditRef);
-        if (existing.exists) return; // idempotent retry — already applied
+        if (existing.exists) return { ok: true, idempotentReplay: true }; // idempotent retry
+
+        const currentSnap = await txn.get(workingRef);
+        const current = currentSnap.exists ? currentSnap.data() : null;
+        if (!_deepEqual(current, params.before)) {
+            return { ok: false, status: 409, conflict: true, current: current };
+        }
 
         if (params.action === "delete") {
             txn.delete(workingRef);
@@ -99,6 +175,59 @@ async function applyMutation(db, params) {
             clientTimestamp: params.clientTimestamp,
             requestId: params.requestId
         });
+        return { ok: true };
+    });
+}
+
+// Applies one or more numeric-field deltas atomically: reads the current
+// stored value(s) inside the transaction and writes current+delta, so it's
+// safe regardless of what else changed the doc concurrently — no comparison
+// against a client `before` (see applyMutation for that). Same idempotency
+// guarantee via the requestId-keyed audit_log entry.
+async function applyDelta(db, params) {
+    const { auditRef, workingRef } = _refs(db, params);
+
+    return db.runTransaction(async (txn) => {
+        const existing = await txn.get(auditRef);
+        if (existing.exists) return { ok: true, idempotentReplay: true, after: existing.data().after };
+
+        const currentSnap = await txn.get(workingRef);
+        if (!currentSnap.exists) return { ok: false, status: 404, error: "not-found" };
+        const current = currentSnap.data();
+
+        const before = {};
+        const after = {};
+        const floors = params.floors || {};
+        const clamps = params.clamps || {};
+        for (const field in params.deltas) {
+            const curVal = current[field] || 0;
+            var nextVal = curVal + params.deltas[field];
+            if (Object.prototype.hasOwnProperty.call(floors, field) && nextVal < floors[field]) {
+                return { ok: false, status: 409, error: "insufficient-quantity", field: field, current: curVal };
+            }
+            if (Object.prototype.hasOwnProperty.call(clamps, field) && nextVal < clamps[field]) {
+                nextVal = clamps[field];
+            }
+            before[field] = curVal;
+            after[field] = nextVal;
+        }
+
+        txn.set(workingRef, Object.assign({}, current, after), { merge: false });
+        txn.set(auditRef, {
+            entryId: params.requestId,
+            tenantId: params.tenantId,
+            actorUid: params.actorUid,
+            actorRole: params.actorRole,
+            action: "delta",
+            entity: params.entity,
+            entityId: params.entityId,
+            before: before,
+            after: after,
+            serverTimestamp: params.serverTimestamp,
+            clientTimestamp: params.clientTimestamp,
+            requestId: params.requestId
+        });
+        return { ok: true, after: after };
     });
 }
 
@@ -107,5 +236,7 @@ module.exports = {
     ALLOWED_ACTIONS,
     parseBearerToken,
     validateMutationRequest,
-    applyMutation
+    validateDeltaRequest,
+    applyMutation,
+    applyDelta
 };
