@@ -34,7 +34,11 @@ BottomSheet {
     // directly into edit mode via openFor(id, true)) — never on a plain
     // view. Released whenever edit mode is left, however that happens
     // (Cancel, successful save+close, or dismissing the sheet outright).
-    property string _lockState: "pending" // "pending" | "granted" | "denied"
+    // "error" (added 2026-07-29, real bug report) is distinct from
+    // "denied" — couldn't get a real answer (network/undeployed endpoint)
+    // vs. a genuine other holder. Conflating the two showed a lone tester
+    // "someone else is editing this" when nobody else was.
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
     property var _lockHolder: null
 
     function _enterEditMode() {
@@ -43,14 +47,16 @@ BottomSheet {
         _lockState = "pending"
         _lockHolder = null
         var lockedProductId = productId
-        LockManager.acquire("inventory", productId, function(granted, holder) {
+        LockManager.acquire("inventory", productId, function(result) {
             if (root.productId !== lockedProductId) return // moved on already
-            _lockState = granted ? "granted" : "denied"
-            _lockHolder = holder
-            if (!granted) {
-                errorLabel.text = holder && holder.name
-                    ? qsTr("%1 is currently editing this product — try again shortly").arg(holder.name)
-                    : qsTr("This product is currently being edited elsewhere — try again shortly")
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+            if (!result.granted) {
+                errorLabel.text = result.reason === "denied"
+                    ? (result.holder && result.holder.name
+                        ? qsTr("%1 is currently editing this product — try again shortly").arg(result.holder.name)
+                        : qsTr("This product is currently being edited elsewhere — try again shortly"))
+                    : qsTr("Couldn't confirm this product is free to edit (connection issue) — try again")
             }
         })
     }
@@ -1036,11 +1042,15 @@ BottomSheet {
 
     function _submit() {
         if (_lockState !== "granted") {
-            errorLabel.text = _lockState === "denied"
-                ? (_lockHolder && _lockHolder.name
+            if (_lockState === "denied") {
+                errorLabel.text = _lockHolder && _lockHolder.name
                     ? qsTr("%1 is currently editing this product — try again shortly").arg(_lockHolder.name)
-                    : qsTr("This product is currently being edited elsewhere — try again shortly"))
-                : qsTr("Still confirming this product is free to edit — try again in a moment")
+                    : qsTr("This product is currently being edited elsewhere — try again shortly")
+            } else if (_lockState === "error") {
+                errorLabel.text = qsTr("Couldn't confirm this product is free to edit (connection issue) — try again")
+            } else {
+                errorLabel.text = qsTr("Still confirming this product is free to edit — try again in a moment")
+            }
             return
         }
         var errs = []

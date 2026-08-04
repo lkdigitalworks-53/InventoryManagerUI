@@ -173,4 +173,50 @@ TestCase {
 
         compare(callCount, 0, "no server response has happened yet — the callback must not fire")
     }
+
+    // ── _classifyDeltaResponse — regression tests for the 2026-07-29 bug ────
+    // (systematic-debugging session: an undeployed recordDelta endpoint's
+    // 404 was being treated as "transient, retry forever" — which is
+    // actually correct in isolation, but meant order completion's callback
+    // NEVER fired, silently stranding the order at "pending" forever. The
+    // classification itself wasn't wrong so much as it was fragile: it
+    // happened to work by accident for a body-less 404, but the underlying
+    // logic didn't express the real distinction it needed to.)
+
+    function test_classifyDeltaResponse_treats_a_malformed_body_as_non_terminal() {
+        // What an undeployed Cloud Function's 404 actually looks like:
+        // JSON.parse already failed upstream, so body is null here.
+        var result = Gateway._classifyDeltaResponse(404, null)
+        compare(result.terminal, false,
+                "no real decision was made — must retry, not report a false rejection")
+    }
+
+    function test_classifyDeltaResponse_treats_a_body_without_ok_as_non_terminal() {
+        // Some infra-level error responses ARE valid JSON, just not OUR
+        // envelope shape (e.g. a generic platform error object).
+        var result = Gateway._classifyDeltaResponse(404, { error: { code: 404, message: "not found" } })
+        compare(result.terminal, false)
+    }
+
+    function test_classifyDeltaResponse_treats_a_genuine_success_as_terminal() {
+        var result = Gateway._classifyDeltaResponse(200, { ok: true, after: { stock: 7 } })
+        compare(result.terminal, true)
+        compare(result.result.after.stock, 7)
+    }
+
+    function test_classifyDeltaResponse_treats_a_genuine_4xx_rejection_as_terminal() {
+        var result = Gateway._classifyDeltaResponse(409, { ok: false, error: "insufficient-quantity", field: "stock" })
+        compare(result.terminal, true)
+        compare(result.result.error, "insufficient-quantity")
+    }
+
+    function test_classifyDeltaResponse_treats_a_well_formed_5xx_as_non_terminal() {
+        // Our OWN code produced this body (see index.js's catch block: even
+        // an unhandled exception sends {ok:false, error:"write-failed"}) —
+        // but a 5xx could be a transient issue on our side, worth retrying,
+        // unlike a 4xx which is a definitive decision. Must not give up
+        // immediately just because the body happens to be well-formed.
+        var result = Gateway._classifyDeltaResponse(500, { ok: false, error: "write-failed" })
+        compare(result.terminal, false)
+    }
 }

@@ -38,8 +38,12 @@ BottomSheet {
     // Cancel, and tap-outside uniformly). "pending" is the brief window
     // before the acquire call's response comes back; _save() treats it as
     // not-yet-safe-to-save rather than silently proceeding OR falsely
-    // reporting someone else holds it.
-    property string _lockState: "pending" // "pending" | "granted" | "denied"
+    // reporting someone else holds it. "error" (added 2026-07-29, found via
+    // a real bug report) is distinct from "denied" — it means we couldn't
+    // get a real answer at all (network issue, endpoint not deployed),
+    // not that someone else genuinely has it. Conflating the two showed a
+    // lone tester "someone else is editing this" when nobody else was.
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
     property var _lockHolder: null
 
     property var catalog: []
@@ -292,10 +296,10 @@ BottomSheet {
         _lockState = "pending"
         _lockHolder = null
         var openedOrderId = id
-        LockManager.acquire("order", id, function(granted, holder) {
+        LockManager.acquire("order", id, function(result) {
             if (dlg.orderId !== openedOrderId) return // dialog moved on to a different order
-            _lockState = granted ? "granted" : "denied"
-            _lockHolder = holder
+            _lockState = result.granted ? "granted" : result.reason // "denied" or "error"
+            _lockHolder = result.holder
         })
 
         open()
@@ -319,11 +323,15 @@ BottomSheet {
 
     function _save() {
         if (_lockState !== "granted") {
-            stockErrorLabel.text = _lockState === "denied"
-                ? (_lockHolder && _lockHolder.name
+            if (_lockState === "denied") {
+                stockErrorLabel.text = _lockHolder && _lockHolder.name
                     ? qsTr("%1 is currently updating this order — try again shortly").arg(_lockHolder.name)
-                    : qsTr("This order is currently being updated elsewhere — try again shortly"))
-                : qsTr("Still confirming this order is free to edit — try again in a moment")
+                    : qsTr("This order is currently being updated elsewhere — try again shortly")
+            } else if (_lockState === "error") {
+                stockErrorLabel.text = qsTr("Couldn't confirm this order is free to edit (connection issue) — try again")
+            } else {
+                stockErrorLabel.text = qsTr("Still confirming this order is free to edit — try again in a moment")
+            }
             return
         }
         var itemCount = 0

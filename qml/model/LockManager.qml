@@ -50,7 +50,7 @@ QtObject {
             entity: heldNow.entity,
             entityId: heldNow.entityId,
             requestId: heldNow.requestId
-        }, function(status) {
+        }, function(status, body) {
             // A renewal that gets rejected — someone else's acquire won a
             // race after ours expired, which the 3x TTL/heartbeat margin
             // makes rare but not impossible under real network jitter —
@@ -58,8 +58,14 @@ QtObject {
             // safety one: whatever dialog is open keeps working locally,
             // and if it tries to SAVE after this, the normal recordMutation/
             // recordDelta conflict path (Component 3's CAS backstop) is
-            // still there underneath to catch it for real.
-            if (status < 200 || status >= 300) {
+            // still there underneath to catch it for real. Same
+            // classification as acquire() for consistency — an
+            // infrastructure hiccup during renewal shouldn't be treated
+            // differently from a real denial here; either way we just stop
+            // renewing and let the next real save attempt be the source of
+            // truth.
+            var classified = _classifyAcquireResponse(status, body)
+            if (!classified.granted) {
                 console.warn("[LockManager] renewal failed, no longer holding",
                              heldNow.entity, heldNow.entityId)
                 if (_held === heldNow) _held = null
@@ -68,13 +74,33 @@ QtObject {
         })
     }
 
+    // Classifies an acquireLock HTTP response. Pure function, no XHR — same
+    // fix and same reasoning as Gateway._classifyDeltaResponse (2026-07-29
+    // systematic-debugging session): a genuine denial (someone else holds
+    // it) is only ever a well-formed `{ok:false, holder:{...}}` from OUR
+    // code. An undeployed endpoint's 404, or any other infrastructure-level
+    // failure, must never be presented to the user as "someone else is
+    // editing this" — that's not what happened, and saying so is actively
+    // misleading (this was the reported bug: a lone tester seeing that
+    // message with nobody else on the system at all).
+    function _classifyAcquireResponse(status, body) {
+        var isRealResponse = body !== null && typeof body === "object" && typeof body.ok === "boolean"
+        if (!isRealResponse) return { granted: false, holder: null, reason: "error" }
+        if (body.ok === true) return { granted: true, holder: null, reason: null }
+        return { granted: false, holder: body.holder || null, reason: "denied" }
+    }
+
     // Acquire a lock before opening an edit action (never before a plain
-    // view — reads are always allowed, per the design). callback(granted,
-    // holder) — `holder` ({name, role, expiresAt}) is only meaningful when
-    // granted is false, letting the UI say who's editing it.
+    // view — reads are always allowed, per the design). callback(result)
+    // where result is { granted, holder, reason }. `reason` is only set
+    // when granted is false: "denied" means a real holder has it (`holder`
+    // carries {name, role, expiresAt}); "error" means we couldn't even get
+    // a real decision (network issue, endpoint not deployed, etc.) — the
+    // caller should show a different, honest message for that case, not
+    // claim someone else is editing when we don't actually know that.
     function acquire(entity, entityId, callback) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
-            if (callback) callback(false, null)
+            if (callback) callback({ granted: false, holder: null, reason: "error" })
             return
         }
         var requestId = _nextRequestId()
@@ -83,13 +109,12 @@ QtObject {
             entityId: entityId,
             requestId: requestId
         }, function(status, body) {
-            if (status >= 200 && status < 300) {
+            var classified = _classifyAcquireResponse(status, body)
+            if (classified.granted) {
                 _held = { entity: entity, entityId: entityId, requestId: requestId }
                 _renewTimerInstance().restart()
-                if (callback) callback(true, null)
-            } else {
-                if (callback) callback(false, body && body.holder ? body.holder : null)
             }
+            if (callback) callback(classified)
         })
     }
 

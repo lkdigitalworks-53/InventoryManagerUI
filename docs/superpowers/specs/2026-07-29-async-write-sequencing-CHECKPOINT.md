@@ -522,3 +522,52 @@ this ships, not anything achievable from here.
 - Open a PR to get the new `qml-tests` CI job's real `qmltestrunner` signal on everything flagged
   written-but-unexecuted above — still the single highest-value next step for closing the
   verification gap this whole checkpoint has been honest about.
+
+## Bug fix round — /superpowers:systematic-debugging session
+
+Taher reported two symptoms testing on a real device: (1) marking an order completed, alone,
+threw "this order is currently being updated elsewhere" — also broke "Approve all"; (2) with
+auto-approve on, a new order stayed "pending" instead of completing.
+
+**Phase 1 investigation, evidence-based before any fix:** re-read the actual committed
+`LockManager.acquire`/`Gateway._sendDelta` code (not from memory). Both had the same shape of bug:
+any non-2xx HTTP response was treated as a genuine server decision. Traced through what an
+undeployed Cloud Function's 404 actually looks like (no real JSON body, `result` parses to null)
+— `LockManager` funnels that into the same branch as a real "someone else holds it" 409, showing
+the misleading message. `Gateway._sendDelta`'s old check (`(status===409||404) && result &&
+result.error`) happened to correctly classify a body-less 404 as non-terminal, but that meant
+`_tryCompleteOrder`'s stock-deduction callback simply never fired — order stuck at "pending"
+forever, not erroring. One root cause (functions not deployed) explaining both symptoms via the
+same class of bug (failure/decision conflation), confirmed by asking directly rather than assuming.
+Taher confirmed: not deployed.
+
+**Fix — extracted pure, testable classification functions, not just tightened the inline checks:**
+- `Gateway._classifyDeltaResponse(status, body)`: a real decision from OUR code is only ever valid
+  JSON with a boolean `ok` field. Anything else (malformed/absent body) is an infrastructure
+  failure, never terminal, regardless of HTTP status. Refined further: a well-formed 4xx (`ok:
+  false`) is a definitive decision (terminal, no retry); a well-formed 5xx is treated as possibly
+  transient (still not terminal) even though the body is real — index.js's catch-all handler
+  always sends `{ok:false, error:"write-failed"}` on an unhandled exception, and that's not
+  necessarily worth giving up on immediately the way a 409 conflict is. Preserves the pre-fix
+  retry-on-5xx behavior; only the malformed-body case actually changes.
+- `LockManager._classifyAcquireResponse(status, body)`: same shape. `acquire()`'s callback
+  signature changed from `callback(granted, holder)` to `callback(result)` where
+  `result = {granted, holder, reason}` — `reason` is `"denied"` (real other holder) or `"error"`
+  (couldn't get a real answer), letting callers show an honest, different message for each rather
+  than always claiming a specific person is editing.
+- All 3 dialogs (`OrderDetailDialog`, `EditProductDialog`, `StaffDetailDialog`) updated for the new
+  callback shape and the 3-state `_lockState` (`pending`/`granted`/`denied`/`error`), each with its
+  own honest "connection issue" message for the error case, distinct from the "X is editing this"
+  message for a real denial.
+- New `tests/tst_LockManager.qml` (didn't exist before — the design plan called for it, effort
+  constraints skipped it during the main implementation push). New tests in `tests/tst_Gateway.qml`
+  for `_classifyDeltaResponse` covering the malformed-body, well-formed-4xx, and well-formed-5xx
+  cases explicitly.
+- Deliberately did NOT also build a max-retry/give-up-and-surface-an-error mechanism for the
+  "genuinely still not deployed, will retry forever" case — that's a real, separate UX gap (once
+  deployed, retrying is correct; the "hangs forever pre-deployment" symptom resolves on its own
+  once deployment happens, verified by re-reading `_tryCompleteOrder`'s control flow independently
+  and finding no bug there) — flagged as a related but distinct concern, not bundled into this fix
+  per the debugging skill's "one change at a time."
+- `node --test test/*.test.js`: 85/85, unaffected (this fix is entirely client-side QML). Brace/
+  paren balance re-verified against pre-fix baselines for every touched file.

@@ -374,13 +374,46 @@ QtObject {
         }))
     }
 
-    // Delta counterpart of _send (Component 4). Unlike _send/_sendBatch,
-    // distinguishes a definitive server outcome (success, or a 409
-    // insufficient-quantity rejection) from a transient failure: only the
-    // former is terminal — removed from the outbox and its callback(s)
-    // fired. A transient/network failure retries with backoff like any
-    // other item, WITHOUT firing callbacks yet — they stay pending for
-    // whichever attempt eventually resolves.
+    // Classifies a recordDelta HTTP response. Pure function, no XHR — this
+    // is what actually decides terminal-vs-transient, extracted specifically
+    // so it's unit-testable without a mock HTTP layer (see tst_Gateway.qml).
+    //
+    // Bug this fixes (found 2026-07-29, systematic-debugging session): the
+    // original inline check was `(status===409||status===404) && result &&
+    // result.error`, treating ANY response with a truthy `.error`-shaped
+    // field as terminal. An undeployed Cloud Function's 404 has no
+    // meaningful body at all — JSON.parse throws, `result` is null — so
+    // that check correctly filtered it out, but landed on "transient,
+    // retry forever" with no way to ever resolve, since the endpoint
+    // categorically doesn't exist yet. The real fix isn't a smarter status-
+    // code check; it's recognizing that a genuine decision from OUR code
+    // is only ever valid JSON matching OUR response envelope (a boolean
+    // `ok` field) — anything else, regardless of HTTP status, is an
+    // infrastructure failure, not a business rejection, and must not be
+    // presented to the caller as one.
+    function _classifyDeltaResponse(status, body) {
+        var isRealResponse = body !== null && typeof body === "object" && typeof body.ok === "boolean"
+        if (!isRealResponse) return { terminal: false, result: null }
+        if (body.ok === true) return { terminal: true, result: body }
+        // A real ok:false response. A 4xx from our own code means the
+        // server made a definitive decision (conflict, insufficient stock,
+        // bad request) that retrying with the same data won't change —
+        // terminal. A 5xx, even with a well-formed body, means something
+        // went wrong on OUR side that could be transient (a Firestore
+        // hiccup, say) — worth retrying rather than giving up immediately,
+        // same as before this fix.
+        var definitive = status >= 400 && status < 500
+        return { terminal: definitive, result: definitive ? body : null }
+    }
+
+    // Delta counterpart of _send (Component 4). Distinguishes a definitive
+    // server outcome (success, or a rejection the server actually decided
+    // on) from an infrastructure-level failure (network error, undeployed
+    // endpoint, 5xx that never reached our function code) via
+    // _classifyDeltaResponse above — only the former is terminal, removed
+    // from the outbox with its callback(s) fired. Anything else retries
+    // with backoff like any other item, callbacks staying pending for
+    // whichever attempt eventually resolves for real.
     function _sendDelta(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             OutboxStore.clearInFlight(item)
@@ -391,17 +424,11 @@ QtObject {
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             inFlight--
-            var result = null
-            try { result = JSON.parse(xhr.responseText) } catch (e) { result = null }
+            var body = null
+            try { body = JSON.parse(xhr.responseText) } catch (e) { body = null }
+            var classified = _classifyDeltaResponse(xhr.status, body)
 
-            // Success, or a definitive rejection the server understood
-            // (insufficient-quantity / not-found) — both are terminal.
-            // Anything else (network error, 5xx, unparseable body) is
-            // transient and retries.
-            var terminal = (xhr.status >= 200 && xhr.status < 300) ||
-                            ((xhr.status === 409 || xhr.status === 404) && result && result.error)
-
-            if (terminal) {
+            if (classified.terminal) {
                 OutboxStore.markSent(item.requestId)
             } else {
                 console.warn("[Gateway] recordDelta failed", xhr.status,
@@ -410,13 +437,13 @@ QtObject {
             }
             OutboxStore.clearInFlight(item)
 
-            if (terminal) {
+            if (classified.terminal) {
                 var callbacks = _deltaCallbacks[item.requestId] || []
                 var map = Object.assign({}, _deltaCallbacks)
                 delete map[item.requestId]
                 _deltaCallbacks = map
                 for (var i = 0; i < callbacks.length; ++i)
-                    callbacks[i](result || { ok: xhr.status >= 200 && xhr.status < 300 })
+                    callbacks[i](classified.result)
             }
             _reschedule()
         }

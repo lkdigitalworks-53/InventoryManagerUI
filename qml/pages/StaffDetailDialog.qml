@@ -27,7 +27,9 @@ BottomSheet {
 
     // Component 2 (async-write-sequencing design §4/§7.1). Same shape as
     // EditProductDialog — acquired entering edit mode, released leaving it.
-    property string _lockState: "pending" // "pending" | "granted" | "denied"
+    // "error" (added 2026-07-29, real bug report) distinguishes "couldn't
+    // get a real answer" from "denied" — a genuine other holder.
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
     property var _lockHolder: null
 
     function _enterEditMode() {
@@ -35,14 +37,16 @@ BottomSheet {
         _lockState = "pending"
         _lockHolder = null
         var lockedStaffId = staffId
-        LockManager.acquire("staff", staffId, function(granted, holder) {
+        LockManager.acquire("staff", staffId, function(result) {
             if (root.staffId !== lockedStaffId) return
-            _lockState = granted ? "granted" : "denied"
-            _lockHolder = holder
-            if (!granted) {
-                errorText.text = holder && holder.name
-                    ? qsTr("%1 is currently editing this profile — try again shortly").arg(holder.name)
-                    : qsTr("This profile is currently being edited elsewhere — try again shortly")
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+            if (!result.granted) {
+                errorText.text = result.reason === "denied"
+                    ? (result.holder && result.holder.name
+                        ? qsTr("%1 is currently editing this profile — try again shortly").arg(result.holder.name)
+                        : qsTr("This profile is currently being edited elsewhere — try again shortly"))
+                    : qsTr("Couldn't confirm this profile is free to edit (connection issue) — try again")
             }
         })
     }
@@ -237,11 +241,15 @@ BottomSheet {
 
     function _submit() {
         if (_lockState !== "granted") {
-            errorText.text = _lockState === "denied"
-                ? (_lockHolder && _lockHolder.name
+            if (_lockState === "denied") {
+                errorText.text = _lockHolder && _lockHolder.name
                     ? qsTr("%1 is currently editing this profile — try again shortly").arg(_lockHolder.name)
-                    : qsTr("This profile is currently being edited elsewhere — try again shortly"))
-                : qsTr("Still confirming this profile is free to edit — try again in a moment")
+                    : qsTr("This profile is currently being edited elsewhere — try again shortly")
+            } else if (_lockState === "error") {
+                errorText.text = qsTr("Couldn't confirm this profile is free to edit (connection issue) — try again")
+            } else {
+                errorText.text = qsTr("Still confirming this profile is free to edit — try again in a moment")
+            }
             return
         }
         var errs = []
