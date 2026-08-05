@@ -571,3 +571,103 @@ Taher confirmed: not deployed.
   per the debugging skill's "one change at a time."
 - `node --test test/*.test.js`: 85/85, unaffected (this fix is entirely client-side QML). Brace/
   paren balance re-verified against pre-fix baselines for every touched file.
+
+## Severe bug found by Taher's own debugging — CAS before/after shape mismatch
+
+Taher found this independently, testing against the real design: creating an order doesn't send
+an `adjustments` field, and a subsequent CAS-check `before` snapshot ends up disagreeing with the
+actual Firestore document's shape ("a problem in length" — `_deepEqual`'s key-count check). He
+also flagged `updatedAt` as a suspect, and asked for a systematic audit across every entity type
+rather than a one-off order fix.
+
+**Root cause, traced precisely (not guessed):** `OrdersStore._clone()` reconstructs every order
+with an EXPLICIT field whitelist that defaults `adjustments` to `[]` if absent — but `addOrder`'s
+creation payload never included `adjustments` at all. The moment `_clone()` runs for ANY
+subsequent operation (every update calls it), the local cache silently gains a phantom
+`adjustments: []` the real Firestore document never has. Symmetrically, `addOrder`'s payload DID
+include `updatedAt`, but `_clone()`'s reconstruction never listed that field at all — so it got
+silently DROPPED from the local cache on the very next clone. Either direction produces the same
+outcome: `before` (built from the drifted local cache) has a different key count than the server's
+actual `current` doc, and Component 3's CAS check (`_deepEqual`) rejects a completely ordinary,
+single-user, no-race edit as a conflict. **This would have fired on the second touch of nearly
+every order, once the CAS check was actually live** — not a rare race condition, closer to a
+near-certainty. Severity: much higher than the earlier lock-message bug.
+
+**Fix:** extracted `OrdersStore._normalizeOrder(o)` — the single canonical shape, used by BOTH
+`_clone()` (reading/rebuilding the local cache) and `addOrder` (constructing the create payload)
+— so the very first Firestore write already matches what any later clone will produce. Verified
+every other order-mutation function (`updateOrder`, `applyAdjustment`, `approveAllPending`,
+`deleteOrder`) already derives `before` from `_clone()`'s output, so this one fix closes the gap
+for the whole store.
+
+**Audited all 4 other stores per Taher's request, not just patched orders and moved on:**
+- `InventoryStore`: `addProduct`'s create payload already matches `_clone()`'s field list exactly.
+  No bug. Added an invariant comment to `_clone()` flagging the exact failure mode if this ever
+  drifts, referencing this incident.
+- `StaffStore`: `addStaff`'s payload matches `_clone()` (both omit `createdAt`, both handle the
+  conditional `appUid` the same way). No bug. Same invariant comment added.
+- `SupplierStore`, `StockBatchStore`: **structurally immune to this specific bug class** — neither
+  has a `_clone()`-style reconstruction with an explicit field whitelist; both build `before`/
+  `after` via a plain shallow copy (`suppliers.slice()` / `Object.assign({}, b, ...)`) of whatever
+  the array element currently holds, so there's no separate "default" logic that could diverge
+  from what creation sends. `_normalizeSuppliers`/`_normalizeBatches` are legacy-data defaults for
+  docs predating certain fields, not a reshaping step in the mutation path. Documented this
+  distinction directly in both files so a future `_clone()`-style refactor doesn't accidentally
+  introduce the bug.
+
+**Separately re-confirmed, not newly found:** `StockBatchStore`'s `consumeFifo`/`topUpOldest`/
+`restoreFifo` still route through the OLD whole-record `Gateway.recordMutation`, not
+`Gateway.recordDelta` — this was already flagged as pending (Component 4's caller conversion was
+completed for `InventoryStore.deductStock`/`restock` but never for StockBatchStore) and remains
+open. Worth noting here since it's adjacent: these functions are IMMUNE to the shape-mismatch bug
+(shallow-copy pattern, confirmed above) but are still exposed to the ORIGINAL concurrent-quantity-
+clobber problem Component 4 exists to solve, until that conversion happens.
+
+Verified: brace/paren balance re-checked against pre-edit baselines for all 5 touched files
+(`OrdersStore.qml`, `InventoryStore.qml`, `StaffStore.qml`, `SupplierStore.qml`,
+`StockBatchStore.qml`) — all internally balanced, deltas symmetric or comment-only.
+
+## _tryAdjustOrder completed (the last explicitly-flagged follow-up from round 4)
+
+Finished the async-await conversion that was deliberately deferred when `_tryCompleteOrder` got
+it — this function is ~275 lines handling returns, damaged-goods write-offs, exchanges, and
+discount/price-adjustment math, and doing it blind felt like too much risk to bundle into the
+initial push. Converted surgically rather than as a full rewrite: only the ADDED-units branch
+(exchange replacement / qty-up) touches the network via `deductStock`, so only that branch is
+deferred and awaited — returns and price/discount changes stay synchronous exactly as before,
+since they never touch `Gateway` at all. `_tryAdjustOrder(orderId, newLines, reason, condition,
+note, callback)` now fires every added-unit deduction up front, waits for all of them via the same
+counter-with-extra-token pattern as `_tryCompleteOrder`, and only then folds in their sale
+records/refund impact and finalizes via `applyAdjustment`.
+
+**Known, deliberately kept limitation:** if an added-unit deduction is rejected, the return/price-
+adjust side effects that already ran earlier in the SAME call are not rolled back. Full
+compensating-write rollback across a multi-step flow was explicitly scoped OUT of the whole
+design (§2) from round 1 — this fix reports the real outcome via callback instead of always
+claiming success, which is the bounded, honest improvement that was actually in scope; it doesn't
+pretend to solve transactional rollback.
+
+3 callers updated: `onAdjustOrder` (DataModel signal handler), `adjustOrderForImport` (public
+wrapper, now callback-based instead of returning `{ok,message}` synchronously), and
+`ImportPreviewDialog`'s bulk-adjustment loop (converted to the same sequential-not-parallel async
+chain pattern as `OrdersPage._approveAllPending` — orders can share products, so one-at-a-time is
+deliberate, not just easier).
+
+**Still genuinely open, not solved here:** `OrderDetailDialog`'s lock still releases the instant
+the dialog closes, before `ConfirmReturnSheet`'s confirmation step actually runs the (now-async)
+`_tryAdjustOrder`. The lock doesn't span that window. This is the one piece of the original design
+doc's plan that remains unfinished — noted in README, not silently dropped.
+
+## Session status as of this checkpoint entry
+
+All originally-planned components (1-4), the locking mechanism, the two bugs found via Taher's own
+testing and via `/superpowers:systematic-debugging`, and the `_tryAdjustOrder` follow-up are now
+implemented. Verified: `node --test` 85/85 across `functions/`, `index.js` loads cleanly with all
+8 exports resolving, brace/paren balance checked against pre-edit baselines for every touched QML
+file this entire session. NOT verified: any of it executed on a real Qt build — that ceiling
+hasn't moved, and won't from this sandbox. Remaining open items, all documented in README's
+"Concurrency & Conflict Resolution" section: the `ConfirmReturnSheet` lock-span gap above, and
+`StockBatchStore`'s FIFO functions still routing through whole-record `recordMutation` rather than
+`recordDelta` (Component 4's caller conversion was completed for `InventoryStore` but never
+extended to `StockBatchStore` — confirmed still open during this session's audit, not newly
+introduced).

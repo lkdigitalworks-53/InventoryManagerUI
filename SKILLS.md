@@ -1245,3 +1245,33 @@ forever.
 before writing, but silently breaks anything that does (caught this converting 2 pre-existing
 `applyMutation` tests when adding the CAS check — they used `makeFakeDb` with a non-null `before`,
 which read as a false conflict once the function started actually checking current state).
+
+**Two real bugs found post-implementation (2026-07-30), both worth internalizing as patterns, not
+just as one-off fixes:**
+
+1. **Never let "the request failed" and "the server decided no" share a code path.** The original
+   `LockManager.acquire`/`Gateway._sendDelta` treated any non-2xx HTTP response as a genuine server
+   decision. An undeployed Cloud Function's 404 has no real body — but the code couldn't tell that
+   apart from a real `409 someone-else-has-this`, so a lone tester saw "someone else is editing
+   this" with nobody else on the system. The fix pattern: a real decision from YOUR OWN code is
+   only ever valid JSON matching YOUR OWN response envelope (here, a boolean `ok` field) — anything
+   else, regardless of HTTP status number, is infrastructure noise and must never be presented to a
+   user as a business outcome. Extract this as a pure `_classify*Response(status, body)` function
+   so it's unit-testable without a mock HTTP layer (see `_classifyDeltaResponse`/
+   `_classifyAcquireResponse`).
+
+2. **Whole-record CAS is only as safe as your create-vs-reconstruct symmetry.** `OrdersStore`'s
+   `_clone()` (used to build `before` for every update) had a field whitelist that DIDN'T match
+   `addOrder`'s create payload — `adjustments` got silently added by `_clone()`'s defaulting,
+   `updatedAt` got silently dropped since `_clone()`'s whitelist never listed it. Every clone after
+   creation reshaped the local cache away from the real Firestore document, so `applyMutation`'s
+   CAS check would reject a completely ordinary single-user edit as a false conflict — not a rare
+   race, close to guaranteed on the second touch of any record. **The lesson generalizes past
+   orders**: any store with a reconstructing `_clone()`-style function (explicit field list with
+   defaults) needs that list to be IDENTICAL to what its create function sends — extract one
+   `_normalizeX(raw)` function and use it in both places, don't maintain two field lists that have
+   to be kept in sync by hand. Stores that instead build `before`/`after` via a plain shallow copy
+   of the live array element (`arr.slice()` + `Object.assign`) — `SupplierStore`, `StockBatchStore`
+   — are structurally immune to this specific bug, since there's no separate defaulting step that
+   can diverge from creation. When auditing a store for this, check which pattern it uses first;
+   only the reconstructing kind needs the create/clone symmetry check at all.

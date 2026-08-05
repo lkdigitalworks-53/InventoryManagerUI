@@ -102,6 +102,17 @@ QtObject {
         products = []
     }
 
+    // INVARIANT (added 2026-07-30, after a real bug found in OrdersStore's
+    // equivalent function): this field list must exactly match every field
+    // addProduct's `doc` sends at creation — no more, no less. If they ever
+    // drift (a field this whitelist defaults that creation doesn't send, or
+    // vice versa), the very next clone silently reshapes the local cache
+    // away from what's actually in Firestore, and the CAS backstop in
+    // applyMutation (Component 3, async-write-sequencing design) will
+    // reject a completely ordinary single-user edit as a false conflict —
+    // not a rare race, a near-certainty on the second touch of any record.
+    // Verified consistent as of this date; re-check both functions together
+    // whenever either one changes.
     function _clone() {
         var a = [];
         for (var i = 0; i < products.length; ++i) {
