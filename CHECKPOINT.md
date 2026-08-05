@@ -173,3 +173,17 @@
     touch, applies cleanly (the two branches' hunks are far enough apart in the file). Reporting this
     to Taher with rebase-vs-merge-vs-defer trade-offs before touching anything further; not resolving
     it myself.
+
+28. Taher chose: rebase onto latest `main` now; keep this branch's `CHECKPOINT.md` on any conflict
+    there; abort and hand back manually on any conflict in any other file. Ran the real rebase (not
+    a trial this time) with exactly that policy enforced mechanically (checked conflicting-file list
+    at every step; would have run `git rebase --abort` and stopped immediately had anything besides
+    `CHECKPOINT.md` conflicted). Result matched the trial exactly: one conflict, at the first
+    replayed commit (`6bf1205` → now `7b63a32`), `CHECKPOINT.md` only, resolved by taking this
+    branch's version throughout. All 9 commits (the original Plan-1 work + this session's checkpoint
+    commit) replayed cleanly on top of current `main` — verified `qml/Main.qml` contains both main's
+    `LockManager.clear()` call and this branch's desktop-shell wiring. Working tree clean, nothing
+    else touched. Branch now diverges from `origin/feature/desktop-ux-design` (history rewritten —
+    old SHAs `b2e4400`/`1ea5e0b`/`0e1db0f`/`bf8f397`/`7b8d7d2` no longer exist on this branch,
+    replaced by rebased equivalents). About to force-push with a PAT Taher provided in-session
+    (redacted from all logged output per convention; Taher will regenerate after this session).
