@@ -158,3 +158,18 @@
   correctly, existing test suite still green, per Task 3 Step 8 in the plan
 - Once verified: Plan 2 (Orders master-detail), then Plan 3 (Analysis) — not yet written,
   deliberately, per the writing-plans skill's one-plan-per-subsystem scope check
+
+27. **New session (2026-08-05).** Cloned fresh, checked out `feature/desktop-ux-design`, read this
+    file. No trace in this file of the aborted-rebase attempt a prior session's memory referenced —
+    consistent with an aborted rebase leaving no commit. `git status` on the branch is clean; the 4
+    Plan-1 commits are still local-only per the last real status line above (nothing here confirms
+    Taher pulled/verified on his Windows/Felgo build yet — treating that as unconfirmed, not done).
+    Diverged from `main`: 8 commits ahead (Plan 1 work), 20 commits behind (main picked up
+    async-write-sequencing/locking, gateway concurrency control, `patch()` semantics fix, workspace
+    name editing — none of it touches desktop code). Ran a throwaway trial rebase (`_trial-rebase-check`,
+    deleted after, nothing pushed) to see the real conflict surface before proposing a strategy:
+    only `CHECKPOINT.md` conflicts, at the very first replayed commit, and only because both branches
+    heavily rewrote it independently — every code file, including `qml/Main.qml` which both branches
+    touch, applies cleanly (the two branches' hunks are far enough apart in the file). Reporting this
+    to Taher with rebase-vs-merge-vs-defer trade-offs before touching anything further; not resolving
+    it myself.
