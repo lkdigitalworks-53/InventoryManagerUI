@@ -262,6 +262,43 @@ QtObject {
         });
     }
 
+    // `changedOrder`, when provided, is the single order doc this mutation
+    // actually touched — persisted through the gateway with one
+    // recordMutation call instead of rebuilding the entire collection into
+    // one bulk :commit (which hard-fails past Firestore's 500-write-per-
+    // commit cap). Callers that legitimately touch several docs at once
+    // (approveAllPending) omit changedOrder here and persist via
+    // Gateway.recordMutations() themselves after calling this.
+    // `action`/`before` are the P0 gateway's audit-trail fields — "update"
+    // and null before are safe defaults for existing callers that don't
+    // (yet) pass them explicitly.
+    // Canonical order shape — the ONE place every field an order document
+    // can carry gets listed, with its default. Used both when rebuilding
+    // the local cache (_clone, per order) and when constructing the
+    // payload for a brand-new order (addOrder) — using two different field
+    // lists for "the same object" is exactly what caused the bug this
+    // fixes (see the 2026-07-30 note below), so there must only ever be
+    // one.
+    //
+    // BUG THIS FIXES (found by Taher, 2026-07-30): addOrder's create
+    // payload didn't include `adjustments`, while _clone()'s reconstruction
+    // always defaulted it to `[]` — so the moment ANY subsequent operation
+    // called _clone() (which every update does, to build `before`), the
+    // local cache silently gained a phantom `adjustments: []` that the
+    // actual Firestore document never had. Symmetrically, addOrder DID
+    // send `updatedAt`, but _clone()'s reconstruction never included that
+    // field at all — so it got silently DROPPED from the local cache on
+    // the very next clone. Either direction produces the same failure: the
+    // CAS check's whole-record compare sees a `before` with a different
+    // key count than the server's actual `current` doc, and rejects a
+    // completely ordinary, single-user, no-race edit as a conflict. Once
+    // Component 3's CAS check is actually live (post-deployment), this
+    // would have fired on nearly every order touched more than once — not
+    // a rare race, a near-certainty. The fix isn't a smarter compare, it's
+    // making sure `before` can never disagree with reality in the first
+    // place: one normalization function, used at creation AND at every
+    // later read, so the shape sent to Firestore on day one is identical
+    // to what the client will ever reconstruct locally afterward.
     function _normalizeOrder(r) {
         var prods = [];
         var rawProducts = r.products || [];
@@ -275,6 +312,22 @@ QtObject {
                 : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
             var lnType = lp.discountType === "percent" ? "percent" : "flat";
             var lnVal = parseCurrency(lp.discountValue);
+            // Keep productId on every line item — _tryCompleteOrder
+            // uses it to deduct stock against the right inventory row.
+            // Deep-copy consumption[] so consumers can mutate their
+            // own clones without bleeding into the live store array.
+            var consClone = [];
+            if (Array.isArray(inv.consumption)) {
+                for (var ci = 0; ci < inv.consumption.length; ++ci) {
+                    var c = inv.consumption[ci];
+                    consClone.push({
+                        batchId: c.batchId || "",
+                        supplierId: c.supplierId || "",
+                        qtyConsumed: c.qtyConsumed || 0,
+                        unitCost: c.unitCost || 0
+                    });
+                }
+            }
             prods.push({
                 productId: lp.productId || "",
                 name: lp.name || "",
@@ -285,7 +338,7 @@ QtObject {
                 discountType: lnType,
                 discountValue: lnVal,
                 // FIFO batch lineage stamped by DataModel on order completion
-                consumption: Array.isArray(lp.consumption) ? lp.consumption.slice() : []
+                consumption: consClone
             });
         }
 
@@ -308,6 +361,7 @@ QtObject {
             notes: r.notes || "",
             orderChannel: r.orderChannel || "",
             staffId: r.staffId || "",
+            adjustments: Array.isArray(r.adjustments) ? r.adjustments.slice() : [],
             products: prods
         };
     }
@@ -399,91 +453,6 @@ QtObject {
         pendingOrderCount = p;
         completedOrderCount = c;
         outOfStockCount = oos;
-    }
-
-    // `changedOrder`, when provided, is the single order doc this mutation
-    // actually touched — persisted through the gateway with one
-    // recordMutation call instead of rebuilding the entire collection into
-    // one bulk :commit (which hard-fails past Firestore's 500-write-per-
-    // commit cap). Callers that legitimately touch several docs at once
-    // (approveAllPending) omit changedOrder here and persist via
-    // Gateway.recordMutations() themselves after calling this.
-    // `action`/`before` are the P0 gateway's audit-trail fields — "update"
-    // and null before are safe defaults for existing callers that don't
-    // (yet) pass them explicitly.
-    // Canonical order shape — the ONE place every field an order document
-    // can carry gets listed, with its default. Used both when rebuilding
-    // the local cache (_clone, per order) and when constructing the
-    // payload for a brand-new order (addOrder) — using two different field
-    // lists for "the same object" is exactly what caused the bug this
-    // fixes (see the 2026-07-30 note below), so there must only ever be
-    // one.
-    //
-    // BUG THIS FIXES (found by Taher, 2026-07-30): addOrder's create
-    // payload didn't include `adjustments`, while _clone()'s reconstruction
-    // always defaulted it to `[]` — so the moment ANY subsequent operation
-    // called _clone() (which every update does, to build `before`), the
-    // local cache silently gained a phantom `adjustments: []` that the
-    // actual Firestore document never had. Symmetrically, addOrder DID
-    // send `updatedAt`, but _clone()'s reconstruction never included that
-    // field at all — so it got silently DROPPED from the local cache on
-    // the very next clone. Either direction produces the same failure: the
-    // CAS check's whole-record compare sees a `before` with a different
-    // key count than the server's actual `current` doc, and rejects a
-    // completely ordinary, single-user, no-race edit as a conflict. Once
-    // Component 3's CAS check is actually live (post-deployment), this
-    // would have fired on nearly every order touched more than once — not
-    // a rare race, a near-certainty. The fix isn't a smarter compare, it's
-    // making sure `before` can never disagree with reality in the first
-    // place: one normalization function, used at creation AND at every
-    // later read, so the shape sent to Firestore on day one is identical
-    // to what the client will ever reconstruct locally afterward.
-    function _normalizeOrder(o) {
-        var prods = [];
-        if (o.products) {
-            for (var j = 0; j < o.products.length; ++j) {
-                var p = o.products[j];
-                // Keep productId on every line item — _tryCompleteOrder
-                // uses it to deduct stock against the right inventory row.
-                // Deep-copy consumption[] so consumers can mutate their
-                // own clones without bleeding into the live store array.
-                var consClone = [];
-                if (Array.isArray(p.consumption)) {
-                    for (var ci = 0; ci < p.consumption.length; ++ci) {
-                        var c = p.consumption[ci];
-                        consClone.push({
-                            batchId: c.batchId || "",
-                            supplierId: c.supplierId || "",
-                            qtyConsumed: c.qtyConsumed || 0,
-                            unitCost: c.unitCost || 0
-                        });
-                    }
-                }
-                prods.push({ productId: p.productId || "", name: p.name, price: p.price, quantity: p.quantity,
-                             taxable: !!p.taxable,
-                             taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
-                             discountType: p.discountType === "percent" ? "percent" : "flat",
-                             discountValue: typeof p.discountValue === "number" ? p.discountValue : parseCurrency(p.discountValue),
-                             consumption: consClone });
-            }
-        }
-        var bd = [];
-        if (o.taxBreakdown) {
-            for (var k = 0; k < o.taxBreakdown.length; ++k)
-                bd.push({ rate: o.taxBreakdown[k].rate, amount: o.taxBreakdown[k].amount });
-        }
-        return { orderId: o.orderId, customer: o.customer, items: o.items,
-                  subtotal: o.subtotal || 0,
-                  discount: o.discount || 0,
-                  tax: o.tax || 0,
-                  taxBreakdown: bd,
-                  total: o.total, status: o.status, date: o.date,
-                  notes: o.notes, email: o.email, phone: o.phone,
-                  orderChannel: o.orderChannel || "",
-                  staffId: o.staffId || "",
-                  adjustments: Array.isArray(o.adjustments) ? o.adjustments.slice() : [],
-                  updatedAt: o.updatedAt || "",
-                  products: prods };
     }
 
     function _commit(arr, changedOrder, action, before) {
@@ -588,7 +557,7 @@ QtObject {
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         o.updatedAt = new Date().toISOString();
-        _commit(arr, o, "update", before);
+        _commit(arr, _normalizeOrder(o), "update", before);
     }
 
     // Apply a return/exchange/modify adjustment: set the order's lines to the
