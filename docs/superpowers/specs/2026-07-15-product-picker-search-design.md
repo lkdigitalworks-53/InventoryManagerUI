@@ -17,19 +17,28 @@ becomes slow. Taher asked for search by product ID, SKU, and name.
 While tracing the existing picker to add search, a more serious problem surfaced: **both dialogs
 select a product via `productCombo.currentIndex`, using it as a raw array position** —
 
-- **Add Order** (`NewOrderDialog.qml`): `_rebuildPickerNames()` builds the dropdown's display
-  strings by looping `InventoryStore.products` and skipping any product with `stock <= 0`.
-  `addSelectedProduct()` then takes `productCombo.currentIndex` and indexes directly into the
-  *unfiltered* `InventoryStore.products`. Whenever any product in the catalog is out of stock,
-  these two arrays are no longer positionally aligned — `addSelectedProduct()` can silently add
-  the wrong product. This is a live bug today, independent of this feature.
+- **Add Order** (`NewOrderDialog.qml`): as of this branch's original base, `_rebuildPickerNames()`
+  hard-skipped any product with `stock <= 0`, misaligning the display array against the unfiltered
+  `InventoryStore.products` it was indexed into. *(Update after rebasing onto latest `main`: this
+  specific filter was independently removed in `93f8398` — "include product ID in order dialogs
+  and remove stock check" — so the two arrays are positionally aligned again today. The underlying
+  fragility is unchanged: nothing currently filters the picker's list, so nothing currently exposes
+  the misalignment. Search is the first thing that filters it — the exact same bug reappears the
+  moment we add it, just via a different trigger than before.)*
 - **Edit Order** (`OrderDetailDialog.qml`): `_rebuildCatalog()` builds `catalog` (objects) and
-  `catalogNames` (display strings) together in one unfiltered loop, so the indices happen to
-  agree today — but only because nothing filters the list.
+  `catalogNames` (display strings) together in one unfiltered loop, so the indices happen to agree
+  today — but, same as above, only because nothing filters the list yet.
 
 Any search feature filters the visible list, which breaks position-based indexing in both dialogs
-regardless of the bug above. Fixing selection to be ID-based is therefore part of this feature,
-not a separate follow-up.
+regardless of either bug's current live/dormant status. Fixing selection to be ID-based is
+therefore part of this feature, not a separate follow-up.
+
+Also confirmed live today, independent of the above: **tapping "add" on an out-of-stock product
+already silently does nothing** in both dialogs (`if (p.stock <= 0) return` in
+`NewOrderDialog.addSelectedProduct()`; `if (avail <= 0) return` in `OrderDetailDialog`'s add
+handler) — both dialogs already show 0-stock products in their picker lists today (Add Order
+converged to Edit Order's long-standing behavior via `93f8398`), so this silent failure is
+reachable right now, not just a risk this feature introduces.
 
 ---
 
@@ -38,8 +47,8 @@ not a separate follow-up.
 | # | Decision |
 |---|---|
 | UI shape | A nested **"Select product" sheet**, opened by tapping a compact trigger field where the `ComboBox` used to be. Reuses the existing `BottomSheet` pattern and the existing `SearchField` component — not an editable `ComboBox`, not an inline embedded list. |
-| Out-of-stock products | Shown normally and selectable in the sheet, for **both** dialogs (standardizes on Edit Order's existing, more permissive rule; Add Order's hard-reject of 0-stock products is removed). |
-| Tapping a 0-stock row | Stays tappable — does **not** silently no-op. Shows `Toast.show(qsTr("Out of stock"))`, does not add anything, sheet stays open. |
+| Out-of-stock products | Shown normally and selectable in the sheet, for **both** dialogs. This is already true of both dialogs today (Add Order converged to Edit Order's long-standing behavior via `93f8398`, confirmed on rebase) — we're preserving current behavior, not introducing it. |
+| Tapping a 0-stock row | Stays tappable — does **not** silently no-op, fixing a bug confirmed live in both dialogs today. Shows `Toast.show(qsTr("Out of stock"))`, does not add anything, sheet stays open. |
 | Tapping an in-stock row | Adds the product immediately (no separate "+" confirmation step) and closes the sheet. Matches how "+" already adds without any confirmation step today — nothing is lost by collapsing select+add into one tap, since qty/price/discount remain editable in the cart list afterward either way. |
 | Search fields | Substring match against `name`, `sku`, and `productId` — case-insensitive, live as you type. Extends the exact convention already used by `InventoryPage._filteredProducts()` (which matches `name + sku + category`), adding `productId`. |
 | Default (empty query) view | Shows the full catalog, same as today's dropdown — search narrows the list, it doesn't gate access to it. |
@@ -89,8 +98,12 @@ A `BottomSheet`-based component, shared by both dialogs.
 - List built via `ProductSearch.filterProducts(InventoryStore.products, searchText)`, bound
   declaratively (`model: ProductSearch.filterProducts(...)`, not an imperative `.model =`
   reassignment — matches the existing documented convention for picker dropdowns in `SKILLS.md`).
-- Each row shows two lines: `[SKU] Name` (primary), and `₹price · N left` (secondary, reusing the
-  exact "N left" wording already used in today's picker labels). Rows where `availableStockFor()`
+- Each row shows two lines: `[productId] Name` (primary — matches the display convention both
+  dialogs already switched to in `93f8398`, e.g. `[PRD-001] Widget`), and `₹price · N left`
+  (secondary, reusing the exact "N left"/"avail N" wording already in today's picker labels).
+  Search still matches against `name`, `sku`, and `productId` per §3 regardless of what's shown in
+  brackets — `sku` just isn't part of the visible label anymore, following the dialogs' own
+  existing convention. Rows where `availableStockFor()`
   is `0` get a muted/secondary visual treatment (existing `Constants.textMuted` token) so it's
   visually clear before tapping — but the row stays enabled and tappable per the decision above.
 - On row tap: compute `avail = availableStockFor(product)`. If `avail <= 0`,
@@ -133,18 +146,23 @@ A `BottomSheet`-based component, shared by both dialogs.
   `RowLayout { AppComboBox { id: productCombo ... }; IconActionButton { iconName: "add" ... } }`
   block.
 - Add `ProductSearchSheet { id: productSearchSheet }`, wired:
-  - `availableStockFor: function(p) { return dlg._availableStock(p.name) }` — thin wrapper; the
-    existing `_availableStock(productName)` (with its completed-order-aware math) is unchanged and
-    reused as-is.
+  - `availableStockFor: function(p) { return dlg._availableStock(p.productId) }` — thin wrapper;
+    `_availableStock(productId)` now takes a product ID directly (changed from a name-based lookup
+    by `4c7429e`'s neighboring work, confirmed on rebase), reused as-is.
   - `onProductChosen: function(p) { /* existing add-to-cart body from the old "+" handler,
     parameterized on p instead of dlg.catalog[idx] */ }`.
 - **`catalog` is kept** — confirmed by inspection it's used outside the picker, to seed
-  `products` for legacy orders that have no stored `products` array (`_seedLegacyOrder`-style
-  logic around lines 256-268, referencing `catalog[0]`/`catalog[1]`). Only the picker-facing half
-  of `_rebuildCatalog()` is removed: the `names.push(...)` line and the `catalogNames` property
+  `products` for legacy orders that have no stored `products` array (the `catalog[0]`/`catalog[1]`
+  seeding logic, referenced by content rather than line number since the file has shifted once
+  already this session and may again before implementation). Only the picker-facing half of
+  `_rebuildCatalog()` is removed: the `names.push(...)` line and the `catalogNames` property
   (confirmed to have no other consumer).
 - The existing `if (avail <= 0) return` guard in the old "+" handler is removed for the same
   reason as §5 — `ProductSearchSheet` already enforces this before `productChosen` ever fires.
+- Checked whether the new pessimistic-locking system (`4c7429e`, wired into this dialog) interacts
+  with our change — it doesn't. The lock is acquired in the background at `openFor()` and only
+  checked in `_save()`; individual add-to-cart actions (today's "+", and our sheet's
+  `productChosen`) are local `products` ListModel mutations, ungated by lock state either way.
 
 ---
 

@@ -2,7 +2,13 @@
 
 **Started:** 2026-07-15
 **Branch:** `feature/product-picker-search`
-**Status:** Brainstorming phase — exploring codebase, no design approved yet, no commits made.
+**Status:** Design spec committed & pushed (`2254ac3`); later rebased onto latest `main` (clean,
+no conflicts anywhere) and spec corrected to match what changed there. Not yet
+committed/pushed this round — awaiting Taher's go-ahead + a fresh PAT, since the rebase rewrote
+history (force-push needed). *(Note: a small status-line edit made after the original commit was
+never itself committed and got lost when the sandbox reset between turns — harmless, just a
+reminder that anything worth keeping needs to actually land in a commit, not sit as an uncommitted
+local edit.)*
 
 ## Step log
 
@@ -136,8 +142,56 @@
   standard for pure helpers.
 
 ## Open decisions
-- Awaiting Taher's final "does this look right" approval on the consolidated design above. Once
-  approved: write the design doc to
-  `docs/superpowers/specs/2026-07-15-product-picker-search-design.md`, self-review, get Taher's
-  review of the written spec, THEN invoke `writing-plans` for the implementation plan.
-- No design doc written yet, no plan written, no code written, no commits made.
+- Taher approved the consolidated design. Spec written to
+  `docs/superpowers/specs/2026-07-15-product-picker-search-design.md`, self-reviewed (found/fixed
+  one duplicate section-numbering issue, no placeholders), committed (`2254ac3`,
+  "docs(product-picker-search): archive prior checkpoint, add design spec") and pushed to
+  `origin/feature/product-picker-search` using Taher's session PAT passed directly in the push URL
+  — token was one-time, already asked Taher to revoke it.
+- **Sandbox reset between turns** (fresh clone, branch re-checked-out from origin — nothing lost
+  since everything above was already pushed).
+- Taher asked for a rebase onto latest `main`, with a scoped conflict-resolution rule: keep this
+  branch's changes if the conflict is in root `CHECKPOINT.md`, abort and hand back for manual
+  resolution for any other file conflict.
+  - Checked what changed on `main` first (~80 commits since this branch's base — substantial:
+    a new pessimistic-locking gateway system, CI workflow, workspace-name editing, and — directly
+    relevant — Taher's own `93f8398` "include product ID in order dialogs and remove stock check",
+    which touched both `NewOrderDialog.qml` and `OrderDetailDialog.qml`).
+  - Ran the rebase: **clean, zero conflicts anywhere** (root `CHECKPOINT.md` doesn't even exist on
+    `main`'s current tip — some other session already archived it away). Verified: no leftover
+    conflict markers repo-wide, working tree clean, all three of this branch's files intact.
+  - Given how much of `main` moved, re-verified the spec's premises against the live post-rebase
+    files rather than trust what was written pre-rebase — found real drift and corrected the spec
+    in place (not a rewrite, targeted fixes):
+    - §1 Problem statement: the positional-index bug's specific pre-rebase trigger (Add Order's
+      0-stock hard-reject) was independently removed by `93f8398` — no longer a live repro, though
+      the underlying fragility (breaks the instant something filters the list) is unchanged and is
+      exactly what this feature is about to do. Reworded to state this precisely instead of
+      claiming an active bug that no longer reproduces that way.
+    - Confirmed instead, as now-live-and-verified rather than hypothetical: both dialogs already
+      show 0-stock products in their pickers today, and both already silently no-op on add attempt
+      — strengthens rather than weakens the toast-fix decision.
+    - §2 decisions table: reworded the out-of-stock-visibility row to reflect it's already true of
+      both dialogs today (for two independent historical reasons), not a change this feature makes.
+    - §4: row display format updated from `[SKU] Name` to `[productId] Name`, matching the
+      convention `93f8398` already switched both dialogs to. Search still matches
+      name/sku/productId regardless of what's shown in the label.
+    - §6: fixed `availableStockFor` wiring — `OrderDetailDialog._availableStock()`'s signature
+      changed from a name-based lookup to `(productId)` (changed alongside the new locking work,
+      confirmed on rebase); spec's wrapper was calling it with `.name`, corrected to `.productId`.
+      Also removed two stale line-number citations (`_rebuildCatalog`'s legacy-order-seeding
+      usage) in favor of describing it by content, since the file has already reflowed once this
+      session.
+    - Checked whether the new `LockManager`/pessimistic-locking wiring in `OrderDetailDialog`
+      (`4c7429e`) interacts with this feature — it doesn't: the lock is acquired at dialog-open and
+      only checked at `_save()`, and product-add is a local `products` ListModel mutation either
+      way. Noted in the spec as a checked-and-clear item, not left silent.
+  - Re-ran the section-numbering/placeholder self-review after the edits — still sequential 1-9,
+    no placeholders introduced.
+- **Not yet committed or pushed this round.** The rebase rewrote this branch's history (local vs.
+  `origin/feature/product-picker-search` now show as diverged — expected, a force-push will be
+  needed). Waiting on Taher to review the corrections and provide a fresh PAT before committing +
+  force-pushing.
+- Still true: no implementation code exists yet (`ProductSearch.js`, `ProductSearchSheet.qml`) —
+  spec only. Next step after this round is committed: invoke `superpowers:writing-plans` for the
+  implementation plan.
