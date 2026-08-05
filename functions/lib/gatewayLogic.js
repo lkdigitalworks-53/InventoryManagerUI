@@ -151,6 +151,9 @@ async function applyMutation(db, params) {
 
         const currentSnap = await txn.get(workingRef);
         const current = currentSnap.exists ? currentSnap.data() : null;
+		console.log("[applyMutation]: calling _deepEqual");
+		console.log("[applyMutation]: current - ", JSON.stringify(current));
+		console.log("[applyMutation]: before - ", JSON.stringify(params.before));
         if (!_deepEqual(current, params.before)) {
             return { ok: false, status: 409, conflict: true, current: current };
         }

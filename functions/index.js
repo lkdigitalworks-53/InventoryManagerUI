@@ -124,6 +124,7 @@ exports.recordMutation = functions.onRequest(
         }
 
         let result;
+		console.log("[recordMutation]: calling applyMutation");
         try {
             result = await GatewayLogic.applyMutation(db, {
                 tenantId: ctx.tenantId,
