@@ -65,6 +65,11 @@ QtObject {
         _fetchFromFirebase()
     }
 
+    // Legacy-data defaults for docs predating these fields — same "not a
+    // reshaping risk" note as SupplierStore's _normalizeSuppliers: every
+    // update function here builds before/after via Object.assign({}, b,
+    // ...) off the raw `batches` array, not a whitelisting clone(). Keep
+    // it that way (see OrdersStore's 2026-07-30 note for why it matters).
     function _normalizeBatches(arr) {
         for (var i = 0; i < arr.length; ++i) {
             var b = arr[i]

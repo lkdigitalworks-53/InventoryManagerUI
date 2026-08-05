@@ -56,6 +56,13 @@ QtObject {
         _fetchFromFirebase()
     }
 
+    // Legacy-data defaults for docs predating these fields — NOT a create-
+    // vs-clone reshaping risk the way OrdersStore's old _clone() was (see
+    // that file's 2026-07-30 note): updateSupplier/addSupplier both build
+    // before/after from a plain `suppliers.slice()` + `Object.assign`, no
+    // explicit field whitelist that could drift from what creation sends.
+    // Keep it that way — don't introduce a reconstructing clone() here
+    // without re-reading that note first.
     function _normalizeSuppliers(arr) {
         for (var i = 0; i < arr.length; ++i) {
             var s = arr[i]

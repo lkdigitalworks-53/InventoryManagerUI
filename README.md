@@ -420,9 +420,34 @@ reverting from "completed" to "pending"):
   concurrent stock movements on the same product both apply correctly instead of one clobbering
   the other. Supports either rejecting (`floors`) or clamping (`clamps`) at a boundary, per caller.
 
-**Known, deliberately unfinished piece:** `DataModel._tryAdjustOrder` (order returns/exchanges)
-was NOT given the same async-await treatment `_tryCompleteOrder` got, and `OrderDetailDialog`'s
-order-level lock doesn't span into the subsequent `ConfirmReturnSheet` confirmation step — both
-flagged as real follow-up work in the design doc, not solved in this pass.
+**Update 2026-07-30:** `DataModel._tryAdjustOrder` (order returns/exchanges) now gets the same
+async-await treatment `_tryCompleteOrder` got — added-unit stock deductions are confirmed before
+the adjustment is finalized, reported honestly via callback instead of always claiming success.
+Returns and price/discount changes stay synchronous (no network dependency). Known limitation kept
+from the original scoping: if an added-unit deduction is rejected, the return/price-adjust side
+effects already applied earlier in the same call are not rolled back — full compensating-write
+rollback across a multi-step flow was explicitly scoped out of this whole design (§2) as a
+separate initiative, not something this fix attempts.
+
+**Still open:** `OrderDetailDialog`'s lock releases the instant the dialog closes, which is before
+`ConfirmReturnSheet`'s confirmation step actually runs the adjustment — the lock doesn't span that
+window. Flagged in the design doc, not solved in this pass.
+
+**Also found and fixed 2026-07-30 (Taher's own testing, then confirmed via
+`/superpowers:systematic-debugging`):** two real bugs, more serious than either sounds in
+isolation —
+1. `LockManager`/`Gateway._sendDelta` treated ANY failed request (including an undeployed Cloud
+   Function's 404) as if the server had made a real decision, showing a lone tester a false
+   "someone else is editing this" message and silently stranding orders at "pending" forever.
+   Fixed by extracting pure `_classify*Response()` functions that only treat a response as
+   decisive when it's actually valid JSON matching this app's own envelope shape.
+2. `OrdersStore._clone()`'s field-reconstruction whitelist didn't match `addOrder`'s create
+   payload — `adjustments` got silently added, `updatedAt` got silently dropped, on the very next
+   clone after any order was created. This meant Component 3's CAS check would reject a
+   completely ordinary single-user edit as a false conflict on the second touch of nearly every
+   order, once live — not a rare race, closer to a certainty. Fixed with a single
+   `_normalizeOrder()` used by both functions; audited all 4 other stores for the same pattern
+   (only Orders had it — see SKILLS Skill 36 for the full mechanism and why the other stores were
+   already safe).
 
 ---

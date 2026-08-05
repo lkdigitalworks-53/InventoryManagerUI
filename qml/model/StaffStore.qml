@@ -73,6 +73,11 @@ QtObject {
         }
     }
 
+    // INVARIANT (added 2026-07-30, after a real bug found in OrdersStore's
+    // equivalent function — see the note there for the full mechanism):
+    // this field list, including the conditional appUid, must exactly
+    // match what addStaff's `newStaff` sends at creation. Verified
+    // consistent as of this date.
     function _clone() {
         var a = [];
         for (var i = 0; i < staff.length; ++i) {
