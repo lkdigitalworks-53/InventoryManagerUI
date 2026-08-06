@@ -3,7 +3,10 @@
 **Started:** 2026-08-06
 **Branch:** `review/async-write-sequencing-audit` (created off `docs/async-write-sequencing-design`
 at commit `b51779b`, local only — not pushed, no go-ahead given this session).
-**Status:** Review in progress. Round 1 complete and written up; round 2 not started.
+**Status:** Review COMPLETE. Round 1 and round 2 both done and written up in
+`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md` (8 Critical, 5 Important
+findings, plus test-suite/lint/ponytail sections). Nothing implemented yet — review-only session so
+far, awaiting Taher's direction on what to fix and in what order.
 **Skills invoked:** `superpowers:using-superpowers` (implicit), `superpowers:requesting-code-review`,
 `qt-development-skills:qt-qml-review`, `ponytail:ponytail-review`.
 
@@ -69,20 +72,48 @@ decisions, act as a senior engineer trying to make this the best-written code in
 - I3 — `lockLogic.js`'s `validateAcquireRequest` doesn't check `entity` against the known entity
   allowlist, unlike its `gatewayLogic.js` siblings.
 
-## Not yet done (round 2 — resuming immediately)
+## Round 2 findings (added to the same review doc)
 
-- Review the three lock-wired dialogs (`OrderDetailDialog`, `EditProductDialog`,
-  `StaffDetailDialog`) — acquire/release correctness, the already-flagged `ConfirmReturnSheet`
-  lock-span gap, `_lockState` wiring against C4.
-- Review `_tryAdjustOrder`'s exchange/added-units path.
-- Audit `functions/test/gatewayLogic.test.js`, `lockLogic.test.js`, and every touched
-  `tests/tst_*.qml` file — do they actually exercise C1/C3/C4, or would they pass today despite
-  those bugs (i.e., are the tests themselves gapped, not just the implementation)?
-- Run the deterministic QML lint (`qt_qml_lint.py`) across every touched `.qml` file.
-- `ponytail-review` pass (over-engineering/duplication) — C5's duplicate "approve all" paths are
-  an obvious candidate.
-- Independently verify `firestore.rules` actually locks `locks/**` down as the design doc claims.
-- Finalize the review doc, update `SKILLS.md`/`AGENTS.md`/`README.md` per the standing
-  after-implementation doc rule IF Taher wants fixes made in this session (not yet asked for —
-  this session so far is review-only, no code changes).
-- Nothing pushed yet — local commits only, no go-ahead/PAT given this session.
+Reviewed the three lock-wired dialogs, `_tryAdjustOrder`'s exchange path, `firestore.rules`, every
+relevant `tests/tst_*.qml` file plus `functions/test/lockLogic.test.js`, a full QML lint pass
+(`qt_qml_lint.py`) over all 11 touched files, and a ponytail duplication pass. Two new Critical
+findings surfaced that outrank everything from round 1 in severity:
+
+- **New C1 (top severity):** `OrdersStore._normalizeOrder` (rewritten in the branch's very last
+  commit, `b51779b`, by Taher directly — not through an AI-reviewed session) reads
+  `inv.consumption` instead of `lp.consumption` — `inv` is the product/inventory record, which has
+  no `consumption` field. Result: FIFO lineage silently wiped on every single order normalization
+  (universal, not edge-case), AND a hard TypeError crash whenever an order line's product is
+  `null`/deleted/missing (`InventoryStore.getById` returns `null`, `null.consumption` throws). The
+  existing `tests/tst_OrdersStore_normalization.qml` (added one commit earlier) will hit this crash
+  the moment it's actually run, before reaching its own assertions — good news, since it means the
+  fix is self-verifying once `qmltestrunner` finally runs.
+- **New C2:** `firestore.rules` was never updated to lock down the new `locks/**` collection (design
+  doc §4 explicitly calls for this, same pattern as the existing `audit_log`/`transactions` lockdown)
+  — confirmed via `git log` that the rules file is untouched anywhere in this branch's 13 commits.
+  The generic tenant-collection fallback rule means any signed-in tenant member can read/write lock
+  docs directly from the client, completely bypassing `acquireLock`/`releaseLock`. This makes
+  Component 2 (the largest single piece of this whole feature) an unenforced convention today, not
+  an actual guarantee.
+
+All round-1 findings (previously C1–C6, I1–I3) carried forward, renumbered C3–C8 in the final doc,
+plus two new Important findings: dialogs' "try again" messaging doesn't actually retry lock
+acquisition (all 3 dialogs, same pattern), and the test-suite gap analysis showing exactly why C3/C6
+(client-side bugs) slipped past an otherwise-solid 85/85 server-side test suite — both test files
+exist and are well-written, they just never vary the one input (HTTP status on a well-formed body)
+that the bugs live in.
+
+Final doc also includes: a direct "regressions / gaps / pending implementation" section answering
+Taher's questions explicitly, a severity-ordered fix-priority list, and a ponytail section
+(duplicate approve-all paths, duplicate classify-response logic that already diverged once).
+
+## Explicitly not done this session (deferred, not forgotten)
+
+- No code changes made — this was a review-only session per the task as given. Nothing in
+  `SKILLS.md`/`AGENTS.md`/`README.md` needed updating since nothing was implemented; that update
+  will happen alongside whichever fixes Taher greenlights next.
+- Full read of `functions/test/gatewayLogic.test.js` was partial (spot-checked, not line-by-line) —
+  lower priority since C1/C3/C6 are all client-side and the server-side suite's 85/85 status was
+  taken as reliable per the prior session's own verification.
+- Nothing pushed. Local commits only (`review/async-write-sequencing-audit` branch, 2 commits so
+  far), no go-ahead/PAT given this session.
