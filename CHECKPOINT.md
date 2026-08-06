@@ -187,3 +187,40 @@
     old SHAs `b2e4400`/`1ea5e0b`/`0e1db0f`/`bf8f397`/`7b8d7d2` no longer exist on this branch,
     replaced by rebased equivalents). About to force-push with a PAT Taher provided in-session
     (redacted from all logged output per convention; Taher will regenerate after this session).
+    Force-pushed successfully (`--force-with-lease` pinned to the exact expected remote SHA, not a
+    blind force); confirmed `origin/feature/desktop-ux-design` landed at `329a552`.
+
+29. **Taher tested Plan 1 on his Windows/Felgo build.** Verdict: "looks good overall," 3 nitpicks —
+    (a) didn't like the TopBar search field's look, (b) search field "not working", (c) "all the info
+    pills and buttons look unnecessarily stretched horizontally." Investigated each in code before
+    touching anything (no toolchain here to visually confirm by running it):
+    - **(a) fixed.** `qml/desktop/TopBar.qml` was using a bare `QtQuick.Controls.TextField` with zero
+      Constants theming - no background, no radius, no icon, default OS chrome. Swapped it for the
+      existing `qml/components/SearchField.qml` (already used on Orders/Inventory/Staff mobile pages,
+      and MemberManagementDialog) - rounded `Constants.cardBg` background, leading magnifier `Icon`,
+      clear button, all free from an existing shared component. `objectName: "topBarSearchField"` and
+      the `searchRequested(text)` contract kept identical, so `tests/tst_TopBar.qml`'s 3 existing
+      tests should still pass unmodified (not verified locally - no Qt/Felgo toolchain in this
+      sandbox; needs CI or Taher's build to confirm). Committed as `b1f4593`.
+    - **(b) not a bug - reported honestly as such, not fixed.** `docs/superpowers/plans/2026-07-16-desktop-shell-foundation.md`
+      lines 248-250, verbatim intent: the field emits `searchRequested` correctly and is tested
+      (`test_accepting_search_emits_searchRequested`) - nothing downstream *consumes* the signal yet,
+      explicitly deferred to a later plan, not an oversight. Asked Taher whether to scope real search
+      now (cross-store: orders/products/staff, needs its own brainstorm - what it searches, where
+      results render, keyboard nav, cross-nav into sections) or keep it deferred as planned.
+    - **(c) diagnosed, not fixed - needs Taher's call before editing shared files.** Grepped every
+      `StatusPill`/`StatusBadge` instantiation in the codebase (10 sites) - none use
+      `Layout.fillWidth` on themselves; all correctly hug content via `Layout.alignment` or spacer
+      items. So "pills" stretching isn't StatusPill. Strongest confirmed culprit: `DashboardPage.qml`'s
+      "Quick actions" row (4 `ActionTile`s, each explicitly commented "Square Quick-Action tile" with
+      `implicitWidth: dp(80)`) - all four have `Layout.fillWidth: true` inside a `RowLayout`, which
+      divides the *entire* row width evenly among them. Fine by coincidence at mobile widths (~84dp/
+      tile vs the intended 80dp), badly stretched at the spec's own 1280-1920px desktop range
+      (~220-320dp/tile). Likely second culprit: the 2×2 `GradientKpiCard` `GridLayout` (also
+      `Layout.fillWidth: true`, only 2 columns) - plausible candidate for "info pills" in Taher's
+      phrasing even though internally these are cards, not pills; flagged as unconfirmed pending
+      Taher pointing at the actual element. Not touched yet - `DashboardPage.qml` is a **shared**
+      mobile+desktop file (Approach A reuses it unmodified), so an uninformed edit risks a mobile
+      regression. Presented Taher three fix-strategy options (cap content width for reused pages /
+      surgically fix the specific fillWidth instances / defer to a proper desktop-native Dashboard
+      redesign later) with trade-offs, asked which he wants before touching it.
