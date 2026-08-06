@@ -224,3 +224,33 @@
       regression. Presented Taher three fix-strategy options (cap content width for reused pages /
       surgically fix the specific fillWidth instances / defer to a proper desktop-native Dashboard
       redesign later) with trade-offs, asked which he wants before touching it.
+
+30. Taher's response: `/superpowers:brainstorming /qt-development-skills:qt-ui-design` — no
+    temporary fixes, follow the finalized design/plan, adjust the plan itself if there's a real
+    discrepancy. Correctly reads all 3 of my proposed options from step 29 as band-aids and rejects
+    that framing entirely. Went back to the **already-approved** spec instead of inventing a new fix
+    strategy, and found the actual answer was sitting there unused: `docs/superpowers/specs/2026-07-14-desktop-ux-design.md`
+    §7 already specifies Dashboard as **its own desktop-native composition** — "a smaller version of
+    the Analysis overview strip... plus a recent-activity feed and any low-stock alerts" — explicitly
+    *not* a reuse of the mobile page. Confirmed via `qml/desktop/DesktopNav.js`
+    (`STACK_SECTIONS.dashboard: 0`) that Plan 1 currently points the "Dashboard" nav item at
+    `navigationTarget.currentIndex = 0` — the literal same mobile `DashboardPage.qml` StackView
+    entry mobile uses, unmodified. Same is true for `inventory`/`analysis` (indices 2/3) and the
+    `staff`/`activity`/`settings` overlays - **every section currently shows the raw mobile page**,
+    not because Plan 1 got it wrong, but because Plan 1's actual scope was chrome-only (confirmed
+    against `docs/superpowers/plans/2026-07-16-desktop-shell-foundation.md`) and per-section
+    desktop-native replacement was always separate follow-on work - Orders' turn is Plan 2 (already
+    queued), Dashboard's is described at pattern-level in §7 but was never brainstormed to a full
+    spec (§7 itself says "full visual treatment happens in the Figma pass," which
+    `docs/superpowers/specs/` confirms hasn't happened yet).
+    **Conclusion: the stretching isn't a Plan 1 defect to patch - it's spec-acknowledged, not-yet-
+    built future work.** Editing `DashboardPage.qml` right now, by any of the 3 strategies I offered
+    last step, would itself be the "temporary fix" Taher just ruled out - it would produce a second,
+    undocumented, throwaway Dashboard treatment that gets discarded the moment the real §7 design
+    gets built. Not touching the file. Surfacing the real fork instead: does Dashboard's real design
+    get brainstormed and built now (jumping ahead of the already-agreed Plan 2/Orders sequencing), or
+    does the established Plan 2 (Orders) → Plan 3 (Analysis) → ... sequence continue, with Dashboard
+    (and Inventory/Staff/Activity/Settings, same interim state) waiting their turn? Asked Taher this
+    as a single multiple-choice brainstorming question per the skill's one-question-at-a-time rule,
+    per superpowers:brainstorming's hard gate: no code, no plan, until he answers and a design is
+    approved.
