@@ -22,6 +22,59 @@ import "../qml/model"
 TestCase {
     name: "OrdersStore_normalization"
 
+    // Regression coverage for a second bug (2026-08-06 review, fixed same
+    // session): _normalizeOrder was reading FIFO consumption lineage off
+    // `inv` (the InventoryStore/product record via getById) instead of
+    // `lp` (the raw order line being normalized). InventoryStore product
+    // records never carry a `consumption` field — only order lines do — so
+    // this silently wiped FIFO lineage on every single order (consClone
+    // always []), and threw a TypeError whenever getById returned null
+    // (line item's product deleted from inventory, or productId missing).
+    // Isolate InventoryStore's global state per test so these don't leak
+    // into the other tests above/below or into each other.
+    function init() { InventoryStore.products = [] }
+    function cleanup() { InventoryStore.products = [] }
+
+    function test_normalizeOrder_preserves_line_item_consumption_lineage() {
+        // Product exists in inventory but — correctly — has no
+        // `consumption` field of its own; only the order line does.
+        InventoryStore.products = [{ productId: "SKU-1", taxable: false, taxPercent: 0 }]
+        var raw = _rawNewOrder()
+        raw.products[0].consumption = [
+            { batchId: "BATCH-1", supplierId: "SUP-1", qtyConsumed: 2, unitCost: 5 }
+        ]
+
+        var normalized = OrdersStore._normalizeOrder(raw)
+
+        compare(normalized.products[0].consumption.length, 1,
+                "FIFO consumption lineage must survive normalization, not be silently dropped")
+        compare(normalized.products[0].consumption[0].batchId, "BATCH-1")
+        compare(normalized.products[0].consumption[0].qtyConsumed, 2)
+    }
+
+    function test_normalizeOrder_does_not_throw_when_line_items_product_is_missing_from_inventory() {
+        // Simulates a historical order whose product was later deleted
+        // from inventory (InventoryStore.deleteProduct), or a legacy line
+        // that never had a productId — InventoryStore.getById returns null
+        // in both cases. Normalization must degrade gracefully, not crash.
+        InventoryStore.products = [] // product is NOT present
+        var raw = _rawNewOrder()
+        raw.products[0].productId = "SKU-DELETED"
+        raw.products[0].consumption = [{ batchId: "BATCH-2", supplierId: "SUP-2", qtyConsumed: 1, unitCost: 3 }]
+
+        var normalized
+        var threw = false
+        try {
+            normalized = OrdersStore._normalizeOrder(raw)
+        } catch (e) {
+            threw = true
+        }
+
+        verify(!threw, "_normalizeOrder must not throw when a line item's product is absent from InventoryStore")
+        compare(normalized.products[0].consumption.length, 1,
+                "consumption lineage must still come from the line item itself, not the (absent) inventory record")
+    }
+
     // A freshly-created order's raw shape, as addOrder would build it
     // BEFORE running it through _normalizeOrder — deliberately omits
     // `adjustments` (addOrder never included it) to prove normalization
