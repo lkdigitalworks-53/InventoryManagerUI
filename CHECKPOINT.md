@@ -107,13 +107,17 @@ Final doc also includes: a direct "regressions / gaps / pending implementation" 
 Taher's questions explicitly, a severity-ordered fix-priority list, and a ponytail section
 (duplicate approve-all paths, duplicate classify-response logic that already diverged once).
 
-## Explicitly not done this session (deferred, not forgotten)
+## Pending review item closed out
 
-- No code changes made — this was a review-only session per the task as given. Nothing in
-  `SKILLS.md`/`AGENTS.md`/`README.md` needed updating since nothing was implemented; that update
-  will happen alongside whichever fixes Taher greenlights next.
-- Full read of `functions/test/gatewayLogic.test.js` was partial (spot-checked, not line-by-line) —
-  lower priority since C1/C3/C6 are all client-side and the server-side suite's 85/85 status was
-  taken as reliable per the prior session's own verification.
-- Nothing pushed. Local commits only (`review/async-write-sequencing-audit` branch, 2 commits so
-  far), no go-ahead/PAT given this session.
+Did the full (not spot-checked) read of `functions/test/gatewayLogic.test.js` (528 lines) and
+`functions/test/lockLogic.test.js` (201 lines) I'd flagged as outstanding. Both are genuinely
+thorough — CAS backstop (reject/accept/idempotency/key-order-insensitivity), delta floor/clamp
+behavior, lock grant/expired/renew/reject/boundary, and every `validate*` happy/unhappy path are
+all covered well. No new findings. This does confirm I3 precisely as suspected: there's no test for
+`validateAcquireRequest` against an unrecognized `entity` value, consistent with the implementation
+itself not checking it either — already captured in the review doc, nothing to add.
+
+**Review is now fully closed out** — both rounds, plus this final coverage check. Pushed to origin
+(`review/async-write-sequencing-audit`, 2 commits) using a one-time PAT Taher provided and is
+rotating afterward, per the standing per-push permission rule. Waiting on Taher's direction for
+which findings to actually implement, and in what order — no code changes made this session.
