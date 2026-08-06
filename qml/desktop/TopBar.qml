@@ -1,6 +1,6 @@
 import QtQuick
-import QtQuick.Controls
 import "../helper"
+import "../components"
 
 Item {
     id: root
@@ -40,13 +40,13 @@ Item {
             color: Constants.textMuted
         }
 
-        TextField {
+        SearchField {
             id: searchField
             objectName: "topBarSearchField"
             anchors.verticalCenter: parent.verticalCenter
-            width: dp(230)
-            placeholderText: qsTr("Search orders, products, staff")
-            font.pixelSize: dp(12)
+            width: dp(260)
+            height: dp(32)
+            placeholder: qsTr("Search orders, products, staff")
             onAccepted: root.searchRequested(text)
         }
     }
