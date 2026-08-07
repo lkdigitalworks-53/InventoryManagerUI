@@ -317,9 +317,9 @@ QtObject {
             // Deep-copy consumption[] so consumers can mutate their
             // own clones without bleeding into the live store array.
             var consClone = [];
-            if (Array.isArray(inv.consumption)) {
-                for (var ci = 0; ci < inv.consumption.length; ++ci) {
-                    var c = inv.consumption[ci];
+            if (Array.isArray(lp.consumption)) {
+                for (var ci = 0; ci < lp.consumption.length; ++ci) {
+                    var c = lp.consumption[ci];
                     consClone.push({
                         batchId: c.batchId || "",
                         supplierId: c.supplierId || "",
