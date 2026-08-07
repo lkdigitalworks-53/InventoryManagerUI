@@ -50,6 +50,41 @@ QtObject {
     Component.onCompleted: {
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06) — see
+    // OrdersStore._onMutationConflicted for the full explanation. This is
+    // the store most likely to actually see this signal fire in practice:
+    // consumeFifo/topUpOldest/restoreFifo still mutate an existing batch's
+    // qtyRemaining via plain recordMutation (the still-open, separately-
+    // tracked gap noted in the review — not yet converted to recordDelta),
+    // so a genuine two-devices-selling-the-same-product race can produce a
+    // real CAS conflict here, unlike a pure recordDelta caller which can't
+    // conflict this way. Reuses _normalizeBatches (same as _load()).
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "stock_batch") return
+        var arr = batches.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].batchId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeBatches([current])[0]
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized)
+        } else if (idx >= 0) {
+            arr.splice(idx, 1)
+        }
+        batches = arr
+        // Deliberately no Toast here, unlike the other four stores: batch
+        // writes are an internal accounting side effect of an order/restock
+        // action the user already got feedback on (or, for restoreFifo, of
+        // a rollback that's itself invisible to begin with) — surfacing a
+        // second, separate toast about the ledger row underneath that
+        // action would be confusing rather than helpful. The cache still
+        // gets reconciled; the user just isn't told about this specific
+        // layer of it.
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────

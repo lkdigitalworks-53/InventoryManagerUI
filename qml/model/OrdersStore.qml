@@ -41,6 +41,34 @@ QtObject {
         // instead of racing it.
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06): a
+    // recordMutation for an order was rejected because someone else's write
+    // landed first (before was stale). Gateway has already dropped the
+    // queued write without retrying — this reconciles the local cache with
+    // the server's actual current document, same shape as a real sync
+    // (_normalizeOrder), and tells the user so they don't keep looking at a
+    // version that silently never saved.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "order") return
+        var arr = orders.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].orderId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeOrder(current)
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized) // rare: conflict on what we thought was a create
+        } else if (idx >= 0) {
+            arr.splice(idx, 1) // deleted elsewhere
+        }
+        orders = arr
+        revision++
+        _refreshCounts()
+        Toast.show(qsTr("This order was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     onAutoApproveEnabledChanged: {

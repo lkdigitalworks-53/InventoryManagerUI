@@ -36,6 +36,30 @@ QtObject {
     Component.onCompleted: {
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06) — see
+    // OrdersStore._onMutationConflicted for the full explanation. Only
+    // applies to plain recordMutation edits (name/price/category/etc via
+    // updateProduct); deductStock/restock/creditStockNoBatch already go
+    // through recordDelta, which doesn't use CAS and can't conflict this way.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "inventory") return
+        var arr = products.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].productId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeProducts([current])[0]
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized)
+        } else if (idx >= 0) {
+            arr.splice(idx, 1)
+        }
+        products = arr
+        Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     function _load() {

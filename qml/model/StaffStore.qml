@@ -257,6 +257,29 @@ QtObject {
     Component.onCompleted: {
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06) — see
+    // OrdersStore._onMutationConflicted for the full explanation. StaffStore
+    // stores fetched records raw (no per-item normalize step — see
+    // _resetAndFetch's `staff.concat(result.items)` above), so `current`
+    // is spliced in as-is, matching that same convention.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "staff") return
+        var arr = staff.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].staffId === entityId) { idx = i; break }
+        }
+        if (current) {
+            if (idx >= 0) arr[idx] = current
+            else arr.push(current)
+        } else if (idx >= 0) {
+            arr.splice(idx, 1)
+        }
+        staff = arr
+        Toast.show(qsTr("This staff record was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     function _load() {

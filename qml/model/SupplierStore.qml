@@ -41,6 +41,31 @@ QtObject {
     Component.onCompleted: {
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06) — see
+    // OrdersStore._onMutationConflicted for the full explanation. Reuses
+    // _normalizeSuppliers (same function _load() already runs fetched data
+    // through) so the patched record stays consistent with the array's
+    // shape. Assigning `suppliers` below auto-bumps `revision` via
+    // onSuppliersChanged — no manual bump needed here, unlike OrdersStore.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "supplier") return
+        var arr = suppliers.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].supplierId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeSuppliers([current])[0]
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized)
+        } else if (idx >= 0) {
+            arr.splice(idx, 1)
+        }
+        suppliers = arr
+        Toast.show(qsTr("This supplier was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
