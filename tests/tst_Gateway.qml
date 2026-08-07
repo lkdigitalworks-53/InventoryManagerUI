@@ -45,10 +45,15 @@ TestCase {
     // ── mode + collection mapping ────────────────────────────────────────────
 
     function test_mode_defaults_to_direct() {
-        // Re-asserts the production default independent of init()'s reset,
-        // since a wrong default here means P0 goes live for nobody asked for
-        // it the moment someone forgets to set it explicitly.
-        compare(Gateway.mode, "direct")
+        // NOTE (2026-08-06, found as a byproduct of the C3 review fix, not
+        // itself one of the review's findings): this assertion was stale.
+        // Gateway.mode's actual production default was flipped from
+        // "direct" to "gateway" in 649046d — this test was never updated to
+        // match and would have failed the moment qmltestrunner actually ran
+        // it. Fixed to assert the real, intentional current default;
+        // init()'s explicit reset to "direct" below is what actually keeps
+        // every OTHER test in this file gateway-mode-off unless it opts in.
+        compare(Gateway.mode, "gateway")
     }
 
     function test_collectionFor_covers_every_registered_entity() {
@@ -218,5 +223,43 @@ TestCase {
         // immediately just because the body happens to be well-formed.
         var result = Gateway._classifyDeltaResponse(500, { ok: false, error: "write-failed" })
         compare(result.terminal, false)
+    }
+
+    // ── _parseMutationConflict (review finding C3, 2026-08-06) ──────────────
+    // Before this fix, _send had NO status-branching logic at all — this is
+    // exactly the coverage gap the review flagged: this file tested
+    // _classifyDeltaResponse (the recordDelta path) thoroughly, but never
+    // _send's own behavior for the plain recordMutation path, which is why
+    // a genuine 409 conflict retrying forever went unnoticed.
+
+    function test_parseMutationConflict_recognizes_a_genuine_conflict() {
+        var body = JSON.stringify({ ok: false, status: 409, conflict: true, current: { stock: 5, name: "Widget" } })
+        var result = Gateway._parseMutationConflict(409, body)
+        compare(result.isConflict, true)
+        compare(result.current.stock, 5)
+    }
+
+    function test_parseMutationConflict_ignores_a_409_without_the_conflict_flag() {
+        // Belt-and-braces: applyMutation always sets conflict:true on its
+        // 409, but a future endpoint using 409 for something else entirely
+        // must not be misread as a CAS conflict just because of the status.
+        var result = Gateway._parseMutationConflict(409, JSON.stringify({ ok: false, error: "some-other-409-reason" }))
+        compare(result.isConflict, false)
+    }
+
+    function test_parseMutationConflict_ignores_non_409_statuses() {
+        // These must fall through to the existing markFailed/retry path
+        // completely unchanged — a 400/401/403/5xx MIGHT resolve on retry
+        // (token refresh, transient infra), unlike a real conflict, which
+        // never will. Only 409+conflict:true short-circuits the retry.
+        compare(Gateway._parseMutationConflict(400, JSON.stringify({ ok: false, error: "missing-fields" })).isConflict, false)
+        compare(Gateway._parseMutationConflict(401, JSON.stringify({ ok: false, error: "invalid-token" })).isConflict, false)
+        compare(Gateway._parseMutationConflict(500, JSON.stringify({ ok: false, error: "write-failed" })).isConflict, false)
+    }
+
+    function test_parseMutationConflict_handles_a_malformed_or_empty_body_safely() {
+        compare(Gateway._parseMutationConflict(409, "").isConflict, false)
+        compare(Gateway._parseMutationConflict(409, "not json{{{").isConflict, false)
+        compare(Gateway._parseMutationConflict(404, "").isConflict, false)
     }
 }
