@@ -433,6 +433,23 @@ Item {
 
         function _afterAllDeltas() {
             if (deltaFailed) {
+                // FIFO consumption for every line already ran (synchronously,
+                // up front, before any deductStock callback could resolve —
+                // see the loop below) regardless of whether THIS order ends
+                // up completing. Undo it here so a rejected order doesn't
+                // leave stock_batches permanently decremented for units no
+                // sale actually accounts for (review finding C5, 2026-08-06).
+                // Uses the same restoreFifo the returns flow already relies
+                // on for exactly this purpose (see _tryAdjustOrder's return
+                // path above).
+                for (var li = 0; li < linesWithConsumption.length; ++li) {
+                    var restoreLine = linesWithConsumption[li]
+                    if (!restoreLine || !Array.isArray(restoreLine.consumption)) continue
+                    for (var ri = 0; ri < restoreLine.consumption.length; ++ri) {
+                        var rc = restoreLine.consumption[ri]
+                        StockBatchStore.restoreFifo(rc.batchId, restoreLine.productId, rc.qtyConsumed)
+                    }
+                }
                 OrdersStore.updateOrder(orderId, { status: "out of stock" })
                 dataModel.stockErrorMsg = deltaFailMsg
                 _updateOrderInModel(orderId)
@@ -909,6 +926,18 @@ Item {
                                     (dCaptured.name + ": " + (result && result.error === "insufficient-quantity"
                                         ? "stock ran out before this exchange could complete"
                                         : "could not update stock — try again"))
+                                // consCaptured already ran (consumeFifo/topUpOldest
+                                // above are synchronous, before this callback can
+                                // fire) and its writes already landed — undo them,
+                                // same fix and reasoning as _tryCompleteOrder above
+                                // (review finding C5, 2026-08-06). NOT pushing to
+                                // pendingAdditions already correctly keeps this
+                                // line's sale/refund impact out of _finishAdjustment;
+                                // this closes the matching gap on the batch ledger.
+                                for (var rci = 0; rci < consCaptured.length; ++rci) {
+                                    var rc2 = consCaptured[rci]
+                                    StockBatchStore.restoreFifo(rc2.batchId, dCaptured.productId, rc2.qtyConsumed)
+                                }
                             } else {
                                 pendingAdditions.push({ d: dCaptured, invA: invACaptured, cons: consCaptured })
                             }
