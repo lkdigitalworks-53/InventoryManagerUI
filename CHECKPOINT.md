@@ -87,36 +87,53 @@ messages; use single quotes for inline command mentions instead.
 
 ## Open decisions, waiting on Taher (not proceeding further without them)
 
-1. ~~**C4 scope**~~ — RESOLVED: Taher said fold `creditStockNoBatch` in. Done, see below.
-2. **C3 scope:** the client-side conflict-handling signal (`Gateway.mutationConflicted`) needs to
-   be wired into every store that calls `Gateway.recordMutation` to actually be useful. Which
-   stores, this pass — just `OrdersStore`/`InventoryStore` (the two most contended per the design
-   doc's own examples), or all of them (`StaffStore`, `SupplierStore`, `StockBatchStore`,
-   `TransactionStore` too)? **Still unanswered as of this checkpoint — this is the only thing
-   blocking C3, the last Critical fix.**
+1. ~~**C4 scope**~~ — RESOLVED: Taher said fold `creditStockNoBatch` in. Done (`49e498f`).
+2. ~~**C3 scope**~~ — RESOLVED: Taher said all 5 stores. Done (`5230af8`, `6c24418`).
 
-## C4 — done, verified, committed (`49e498f`)
+## C3 and C4 — both done, verified, committed
 
-Converted both `restock()` and `creditStockNoBatch()` (folded in per Taher's decision — identical
-bug to `restock`, found while implementing) to `recordDelta`. Local `products[]` now updates only
-on server confirmation (`result.after.stock`), not optimistically — so `restock()`'s
-ActivityLog/TransactionStore/StockBatchStore.addBatch side effects now fire based on confirmed
-outcome too, matching `deductStock`'s already-correct pattern. `creditStockNoBatch()` stays
-fire-and-forget from its callers (no signature change, matches the existing `restoreFifo`
-convention in the returns flow it feeds).
+**C4** (`49e498f`): converted `restock()` and `creditStockNoBatch()` (folded in per Taher's
+decision) to `recordDelta`. Local `products[]` now updates only on server confirmation, matching
+`deductStock`'s already-correct pattern. Verified end-to-end against the real, unmodified
+`applyDelta` (pure-addition delta, empty floors/clamps applies correctly, is idempotent, stacks
+correctly with a second genuine addition) plus a full `functions/` suite re-run (87/87).
 
-**Verification, real not simulated:** used the actual, unmodified `functions/lib/gatewayLogic.js`
-`applyDelta` (requirable directly in Node, no Qt needed) with the same fake-db pattern the real
-test suite uses, to confirm the exact new call shape (pure-addition delta, empty floors/clamps)
-applies correctly, is idempotent on a retried `requestId`, and stacks correctly with a second
-genuine addition. Full `functions/` suite re-run after: still 87/87.
+**C3** (`5230af8` + `6c24418`, two commits): the largest remaining piece.
+- Part 1: added `Gateway.mutationConflicted(entity, entityId, current)` signal and a new pure
+  `_parseMutationConflict(status, responseText)` helper. Deliberately narrow, not a full
+  status-classification rewrite like C6's: only the specific `409 + conflict:true` shape gets
+  special handling (drop, don't retry, emit signal) — every other non-2xx keeps using the existing
+  retry path unchanged, since those might genuinely resolve on retry where a real conflict never
+  will. Scope decision made and explained, not silently applied: `_sendBatch` does NOT get the
+  same treatment, since `batchMutationLogic.js` has no CAS check at all (review finding I1) — a
+  conflict check there would be untestable, unreachable code. Verified via Node repro (6 cases)
+  before touching the QML file; added as real tests in `tst_Gateway.qml`. Also fixed an unrelated
+  stale test found as a byproduct (`test_mode_defaults_to_direct` asserted the wrong default).
+- Part 2: wired all 5 stores (`OrdersStore`/`InventoryStore`/`StaffStore`/`SupplierStore`/
+  `StockBatchStore`) to the signal, per Taher's "all five" decision. Each reconciles its local
+  cache using the same normalize function its own sync already uses (or raw splice for
+  `StaffStore`, which has no normalize step, matching its own existing convention). Four show a
+  `Toast`; `StockBatchStore` deliberately doesn't (explained in its own comment — batch writes are
+  an internal side effect of an action the user already got feedback on elsewhere). Verified the
+  shared find/replace/append/remove logic via a 4-case Node simulation. Not added, flagged as a
+  reasonable follow-up: dedicated QML-level tests for these 5 handlers specifically.
 
-## Next steps
+**All 8 Critical findings from the 2026-08-06 review are now fixed.** Pushed to origin as of
+`6c24418`.
 
-- **Blocking: get Taher's answer on C3's scope** (see open decision #2 above) before starting it.
-- Implement C3 once scoped — the last Critical fix, and the largest piece of remaining work.
-- Push once complete (a fresh PAT was provided and used for the push after C5 — 7 commits landed
-  on origin as of that push; C4's commit `49e498f` and this checkpoint update are local-only until
-  the next push).
-- After C3 lands: update `SKILLS.md`/`AGENTS.md`/`README.md` per the standing after-implementation
-  documentation rule (deliberately deferred until the full fix set is complete).
+## Documentation updated (standing rule: update skills/agent/readme after completing work)
+
+`SKILLS.md` Skill 36, `README.md`'s Concurrency & Conflict Resolution section, and `AGENTS.md`'s
+Compliance & Audit Agent cross-reference all updated to reflect the actual current state — see
+commit `40873ae` for the full rationale. Each doc now explicitly lists what's still genuinely open
+(StockBatchStore's FIFO functions still on `recordMutation`, `recordMutationsBatch` still has no
+CAS, bulk-approve still doesn't lock, `ConfirmReturnSheet`'s lock-span gap, the partial-multi-line
+gap found during C5) so nothing is silently implied as more finished than it is.
+
+## Session status: implementation complete
+
+All 8 Critical fixes (C1–C8) done, verified (real test runs where possible — `functions/`'s 87/87
+suite and the real `applyDelta`/`applyMutation` server-side logic directly; Node-simulated repros
+for every QML-side pure-logic change, since no Qt toolchain exists in this sandbox), committed, and
+pushed. Documentation updated to match. 5 Important findings (I1–I5) from the review remain
+unaddressed — not asked for this round, tracked in the docs above for a future session.
