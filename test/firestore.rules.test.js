@@ -139,3 +139,41 @@ test("the wildcard match's ledger guard denies a member write to audit_log even 
     // wildcard's guard) is still covered by an explicitly-named test.
     await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/audit_log/doc1`), { tampered: true }));
 });
+
+// ── Server-only tier: not even a member can read or write (review C2) ──────
+// locks/** is written/read exclusively by acquireLock/releaseLock (Cloud
+// Functions, Admin SDK) — clients never touch it directly. Unlike the
+// ledger tier above, this collection has no legitimate client read either,
+// so this covers both directions, not just write.
+
+test("locks: a member can neither read nor write, even their own tenant's lock docs", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/locks`, "order_ORD-1", {
+        holderUid: MEMBER_UID,
+        holderName: "Test Owner",
+        acquiredAt: Date.now(),
+        expiresAt: Date.now() + 60000
+    });
+
+    await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/locks/order_ORD-1`)));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/locks/order_ORD-1`), { tampered: true }));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/locks/order_ORD-2`), { holderUid: MEMBER_UID }));
+    await assertFails(deleteDoc(doc(memberDb(), `tenants/${TENANT}/locks/order_ORD-1`)));
+});
+
+test("locks: an owner/admin can neither read nor write — no role bypasses this", async () => {
+    // Deliberately distinct from the member test above: proves this isn't
+    // gated by role at all (isServerOnlyCollection has no role check), so a
+    // future "let owners see locks for support purposes" change would need
+    // to touch this rule explicitly, not just grant a role somewhere else.
+    await seedAsAdmin(`tenants/${TENANT}/locks`, "order_ORD-1", { holderUid: MEMBER_UID });
+    await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/locks/order_ORD-1`)));
+});
+
+test("the wildcard match's server-only guard denies locks access even in isolation", async () => {
+    // Mirrors the ledger-guard-in-isolation test above: if a future refactor
+    // ever adds an explicit /locks/{lockId} block that accidentally allows
+    // something, or removes the dedicated block entirely, the wildcard's
+    // own isServerOnlyCollection guard must still deny this on its own.
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/locks/doc1`), { holderUid: MEMBER_UID }));
+    await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/locks/doc1`)));
+});

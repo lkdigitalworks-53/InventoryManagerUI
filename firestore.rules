@@ -47,6 +47,19 @@ service cloud.firestore {
       return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
     }
 
+    // Server-only tier: unlike the ledger collections above (readable for
+    // display, write-locked), clients have no legitimate reason to touch
+    // this collection AT ALL, not even to read — every access goes through
+    // LockManager -> the acquireLock/releaseLock Cloud Functions, which use
+    // the Admin SDK and bypass these rules entirely. NOTE: the generic
+    // fallback's `allow read` below is not gated by isLedgerCollection, so
+    // adding a name to isLedgerCollection alone would NOT block reads —
+    // Firestore grants a request if ANY matching rule allows it, so the
+    // fallback's read rule has to carve this out explicitly too.
+    function isServerOnlyCollection(name) {
+      return name in ['locks'];
+    }
+
     // users/{uid}
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
@@ -124,15 +137,25 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Server-only: acquireLock/releaseLock (Cloud Functions, Admin SDK)
+      // are the only things that ever touch this. No client read either —
+      // see isServerOnlyCollection's comment for why that has to be
+      // explicit and can't just ride on isLedgerCollection.
+      match /locks/{lockId} {
+        allow read, write: if false;
+      }
+
       // Working-tier domain collections (orders, inventory, sales, staff,
       // suppliers, ...). Inventory/stock writes will route through the
       // gateway once P0 cutover flips Gateway.mode to "gateway"; until then
       // clients write directly. The explicit ledger guard keeps a ledger
-      // collection from ever matching this writable fallback.
+      // collection from ever matching this writable fallback; the
+      // server-only guard does the same for both read and write.
       match /{collection}/{docId} {
-        allow read: if isMember(tenantId);
+        allow read: if isMember(tenantId) && !isServerOnlyCollection(collection);
         allow create, update, delete: if isMember(tenantId)
-                                      && !isLedgerCollection(collection);
+                                      && !isLedgerCollection(collection)
+                                      && !isServerOnlyCollection(collection);
       }
     }
   }
