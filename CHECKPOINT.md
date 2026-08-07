@@ -87,22 +87,36 @@ messages; use single quotes for inline command mentions instead.
 
 ## Open decisions, waiting on Taher (not proceeding further without them)
 
-1. **C4 scope:** fold `InventoryStore.creditStockNoBatch` into the same pass as `restock` (same
-   root cause, same fix shape — convert both to `recordDelta`), or keep C4 scoped exactly as the
-   review documented (`restock` only) and track `creditStockNoBatch` separately?
+1. ~~**C4 scope**~~ — RESOLVED: Taher said fold `creditStockNoBatch` in. Done, see below.
 2. **C3 scope:** the client-side conflict-handling signal (`Gateway.mutationConflicted`) needs to
    be wired into every store that calls `Gateway.recordMutation` to actually be useful. Which
    stores, this pass — just `OrdersStore`/`InventoryStore` (the two most contended per the design
    doc's own examples), or all of them (`StaffStore`, `SupplierStore`, `StockBatchStore`,
-   `TransactionStore` too)?
+   `TransactionStore` too)? **Still unanswered as of this checkpoint — this is the only thing
+   blocking C3, the last Critical fix.**
+
+## C4 — done, verified, committed (`49e498f`)
+
+Converted both `restock()` and `creditStockNoBatch()` (folded in per Taher's decision — identical
+bug to `restock`, found while implementing) to `recordDelta`. Local `products[]` now updates only
+on server confirmation (`result.after.stock`), not optimistically — so `restock()`'s
+ActivityLog/TransactionStore/StockBatchStore.addBatch side effects now fire based on confirmed
+outcome too, matching `deductStock`'s already-correct pattern. `creditStockNoBatch()` stays
+fire-and-forget from its callers (no signature change, matches the existing `restoreFifo`
+convention in the returns flow it feeds).
+
+**Verification, real not simulated:** used the actual, unmodified `functions/lib/gatewayLogic.js`
+`applyDelta` (requirable directly in Node, no Qt needed) with the same fake-db pattern the real
+test suite uses, to confirm the exact new call shape (pure-addition delta, empty floors/clamps)
+applies correctly, is idempotent on a retried `requestId`, and stacks correctly with a second
+genuine addition. Full `functions/` suite re-run after: still 87/87.
 
 ## Next steps
 
-- Get Taher's answers to the two decisions above.
-- Implement C4 (scope per Taher's answer).
-- Implement C3 (scope per Taher's answer) — the largest remaining piece.
-- Push everything once a fresh PAT is provided (none given this phase; the review-round token was
-  explicitly being rotated).
-- After all fixes land: update `SKILLS.md`/`AGENTS.md`/`README.md` per the standing
-  after-implementation documentation rule (not done yet — deliberately deferred until the fix set
-  is complete, so the docs update happens once, accurately, rather than in fragments).
+- **Blocking: get Taher's answer on C3's scope** (see open decision #2 above) before starting it.
+- Implement C3 once scoped — the last Critical fix, and the largest piece of remaining work.
+- Push once complete (a fresh PAT was provided and used for the push after C5 — 7 commits landed
+  on origin as of that push; C4's commit `49e498f` and this checkpoint update are local-only until
+  the next push).
+- After C3 lands: update `SKILLS.md`/`AGENTS.md`/`README.md` per the standing after-implementation
+  documentation rule (deliberately deferred until the full fix set is complete).
