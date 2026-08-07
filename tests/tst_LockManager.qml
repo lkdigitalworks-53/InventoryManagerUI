@@ -62,6 +62,43 @@ TestCase {
         compare(result.holder, null)
     }
 
+    // Regression coverage for review finding C6 (2026-08-06): the function
+    // used to classify EVERY well-formed ok:false body as "denied",
+    // regardless of status — so a 400/401/403/500 (none of which mean
+    // "someone else holds this lock") showed the user a fabricated
+    // "someone else is editing this" message. Only 409 is a real denial;
+    // everything else well-formed-but-not-ok must be "error", same bucket
+    // as a malformed body. These four cases all returned "denied" before
+    // the fix — this is the coverage that would have caught it, and the
+    // gap tst_LockManager.qml had until now (every prior case here only
+    // ever used status 404 or 409, never a well-formed body at any other
+    // status).
+    function test_classifyAcquireResponse_400_missing_fields_is_error_not_denied() {
+        var result = LockManager._classifyAcquireResponse(400, { ok: false, error: "missing-fields" })
+        compare(result.reason, "error")
+        compare(result.granted, false)
+    }
+
+    function test_classifyAcquireResponse_401_invalid_token_is_error_not_denied() {
+        var result = LockManager._classifyAcquireResponse(401, { ok: false, error: "invalid-token" })
+        compare(result.reason, "error")
+    }
+
+    function test_classifyAcquireResponse_403_no_tenant_context_is_error_not_denied() {
+        var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context" })
+        compare(result.reason, "error")
+    }
+
+    function test_classifyAcquireResponse_500_lock_failed_is_error_not_denied() {
+        // Same reasoning _classifyDeltaResponse already applies on the
+        // delta path: a 5xx, even with a well-formed body, is an
+        // infrastructure problem on OUR side (here, acquireLock's own
+        // transaction catch block), not a definitive "someone else has
+        // it" decision — worth being told apart, not treated as a denial.
+        var result = LockManager._classifyAcquireResponse(500, { ok: false, error: "lock-failed" })
+        compare(result.reason, "error")
+    }
+
     function test_acquire_with_no_auth_token_reports_error_not_denied() {
         var originalToken = AuthStore.idToken
         AuthStore.idToken = ""
