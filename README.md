@@ -420,18 +420,58 @@ reverting from "completed" to "pending"):
   concurrent stock movements on the same product both apply correctly instead of one clobbering
   the other. Supports either rejecting (`floors`) or clamping (`clamps`) at a boundary, per caller.
 
+**Update 2026-08-06:** a dedicated code review (`docs/superpowers/specs/
+2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important findings) found every
+mechanism above was individually correct but not fully wired end-to-end — the server-side CAS
+backstop, for instance, was fully implemented and tested, but the client never actually handled its
+409 conflict response, so a real conflict retried forever instead of resolving. All 8 Critical
+findings are now fixed:
+- The client now handles a CAS conflict properly: `Gateway.mutationConflicted(entity, entityId,
+  current)` fires when a write is dropped (not retried) due to a conflict, and all five stores that
+  call `recordMutation` (`OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`,
+  `StockBatchStore`) reconcile their local cache from `current` and notify the user.
+- `InventoryStore.restock`/`creditStockNoBatch` are now genuinely converted to `recordDelta` (a
+  prior checkpoint had asserted `restock` was already converted — it wasn't).
+- `firestore.rules` now denies client read/write on the `locks/**` collection — previously
+  unenforced, despite the design calling for it; any client could read/write lock documents
+  directly, bypassing `acquireLock`/`releaseLock` entirely.
+- `StockBatchStore.consumeFifo`/`topUpOldest` now roll back via `restoreFifo` when the
+  corresponding stock delta is rejected, in both `_tryCompleteOrder` and `_tryAdjustOrder` — FIFO
+  batches no longer stay decremented for units no completed sale/exchange accounts for.
+- `LockManager._classifyAcquireResponse` is now status-aware (only a real 409 means "someone else
+  holds this lock" — a 400/401/403/500 no longer shows a fabricated version of that message).
+- A regression introduced the same day it landed: `OrdersStore._normalizeOrder` was reading FIFO
+  consumption lineage off the wrong object, silently discarding it on every order and crashing on
+  any line whose product had been deleted — found and fixed same-session.
+- Removed a dead, dangerous duplicate order-approval code path that bypassed every mechanism above.
+
+See SKILLS Skill 36 for the full mechanism-by-mechanism detail and the reusable lessons from this
+round.
+
 **Update 2026-07-30:** `DataModel._tryAdjustOrder` (order returns/exchanges) now gets the same
 async-await treatment `_tryCompleteOrder` got — added-unit stock deductions are confirmed before
 the adjustment is finalized, reported honestly via callback instead of always claiming success.
 Returns and price/discount changes stay synchronous (no network dependency). Known limitation kept
-from the original scoping: if an added-unit deduction is rejected, the return/price-adjust side
-effects already applied earlier in the same call are not rolled back — full compensating-write
-rollback across a multi-step flow was explicitly scoped out of this whole design (§2) as a
-separate initiative, not something this fix attempts.
+from the original scoping, **narrowed as of 2026-08-06**: the FIFO batch consumption itself now
+rolls back correctly on a rejected delta (see above) — what's still explicitly out of scope is the
+broader order-level side effects (refund amounts, price-adjustment ledger entries) not rolling
+back; full compensating-write rollback across the whole multi-step flow remains a separate
+initiative (§2 of the design doc), not something either fix round attempts.
 
-**Still open:** `OrderDetailDialog`'s lock releases the instant the dialog closes, which is before
-`ConfirmReturnSheet`'s confirmation step actually runs the adjustment — the lock doesn't span that
-window. Flagged in the design doc, not solved in this pass.
+**Still open** (Important-severity, tracked in the 2026-08-06 review, not silently dropped):
+- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` still route through the old whole-record
+  `recordMutation`, not `recordDelta` — still exposed to the original concurrent-clobber bug for
+  the batch ledger specifically (unlike `InventoryStore`, which is now fully converted).
+- `recordMutationsBatch` (`functions/lib/batchMutationLogic.js`) has no CAS check at all — the CAS
+  guarantee isn't uniform across every write path in the app.
+- Bulk order approval never acquires a per-order lock.
+- `OrderDetailDialog`'s lock releases the instant the dialog closes, which is before
+  `ConfirmReturnSheet`'s confirmation step actually runs the adjustment — the lock doesn't span
+  that window. Flagged in the design doc, still not solved.
+- When one order line's stock delta succeeds and a sibling line's is rejected, the successful
+  line's delta stays applied even though the whole order reports failure — a partial-completion
+  gap found while fixing the FIFO rollback above, needing a compensating delta call, deliberately
+  left out of that fix's scope.
 
 **Also found and fixed 2026-07-30 (Taher's own testing, then confirmed via
 `/superpowers:systematic-debugging`):** two real bugs, more serious than either sounds in

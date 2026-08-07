@@ -1179,8 +1179,10 @@ the arithmetic against Firestore's actual limit.
 
 ## Skill 36: Async write sequencing — single-flight, locking, CAS, and atomic deltas
 
-**Files**: `qml/model/{OutboxStore,Gateway,LockManager}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`,
-full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`
+**Files**: `qml/model/{OutboxStore,Gateway,LockManager,OrdersStore,InventoryStore,StaffStore,
+SupplierStore,StockBatchStore}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`, `firestore.rules`,
+full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, review:
+`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`
 
 Four related but distinct correctness mechanisms, easy to conflate — know which one actually
 fixes which bug before reaching for any of them:
@@ -1203,7 +1205,12 @@ directly into it) — never a plain view, reads are always unrestricted.
 backstop for whole-record writes, independent of whether locking "worked": rejects if the record's
 current server state doesn't match the mutation's claimed `before`. With locking in place this
 should fire rarely — if it fires often, that's a signal locking isn't actually being acquired
-somewhere it should be, not a reason to remove the check.
+somewhere it should be, not a reason to remove the check. **The client half matters just as much as
+the server half** (see the 2026-08-06 section below): a server that correctly rejects a stale write
+is only a real backstop if the client actually stops retrying it and reconciles — `Gateway.
+mutationConflicted(entity, entityId, current)` is that other half, and every store that calls
+`recordMutation` needs to be connected to it, not just the one or two that happen to get exercised
+in testing.
 
 **4. Atomic server-side deltas (`applyDelta`, `Gateway.recordDelta`)** — a DIFFERENT mutation kind
 for quantity fields, not a CAS variant. Reads the current value INSIDE the transaction and computes
@@ -1275,6 +1282,98 @@ just as one-off fixes:**
    — are structurally immune to this specific bug, since there's no separate defaulting step that
    can diverge from creation. When auditing a store for this, check which pattern it uses first;
    only the reconstructing kind needs the create/clone symmetry check at all.
+**2026-08-06: full code review + fix round.** A dedicated review of the whole feature (`docs/
+superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important
+findings) found the design was individually correct in every piece but had never actually been
+wired end-to-end — several mechanisms above were server-tested but client-inert, or converted for
+one caller and silently not another. All 8 Critical findings are now fixed (`fix/
+async-write-sequencing-review-fixes` branch). Patterns worth internalizing, not just the specific
+bugs:
+
+1. **A mechanism "existing" server-side and being "wired up" client-side are two different claims
+   — verify both separately.** Component 3's CAS check (#3 above) was fully implemented and
+   unit-tested in `gatewayLogic.js`, but `Gateway._send`/`_sendBatch` never actually handled a 409
+   conflict response — it fell into the exact same retry-forever bucket as a plain network
+   timeout, defeating the entire point of the backstop. Fixed with a narrow, deliberately-scoped
+   `_parseMutationConflict(status, responseText)` (pure, unit-tested) that only special-cases the
+   specific `409 + conflict:true` shape — every OTHER failure (400/401/403/5xx/network error) keeps
+   going through the existing retry path unchanged, since those might genuinely resolve on retry
+   (token refresh, transient infra) where a real conflict never will. Then wired
+   `Gateway.mutationConflicted(entity, entityId, current)` into **every** store that calls
+   `recordMutation` (`OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`,
+   `StockBatchStore`) — each patches its local array for that `entityId` from `current` (removing
+   it if `current` is null — deleted elsewhere) and shows a `Toast`, except `StockBatchStore`,
+   which patches silently since batch writes are an internal accounting side effect of an action
+   the user already got feedback on elsewhere.
+
+2. **"Converted caller X and Y" in a checkpoint is a claim to re-verify, not a fact to inherit.**
+   The prior checkpoint asserted `InventoryStore.deductStock`/`restock` were both converted to
+   `recordDelta` (#4 above) — only `deductStock` actually was; `restock` (and, found during this
+   fix, `creditStockNoBatch`, same bug) were still computing the new stock value from a local
+   snapshot and sending it via the old whole-record CAS path. `grep -rn "recordDelta(" qml/` is the
+   fast way to independently confirm a delta-conversion claim rather than trusting prose about it.
+
+3. **A "reject on rejection" delta path needs the SAME care about what already ran before it as a
+   "reject on rejection" mutation path does.** `StockBatchStore.consumeFifo`/`topUpOldest` run
+   synchronously and unconditionally, before the corresponding `deductStock` delta call resolves,
+   in both `_tryCompleteOrder` and `_tryAdjustOrder`. On a genuine rejection (the exact scenario
+   `floors` exists to produce), the FIFO batches had already been decremented with no rollback.
+   Fixed by calling the already-existing `StockBatchStore.restoreFifo` on every already-touched
+   batch when the delta fails — no new primitive needed, the returns flow already had one for
+   exactly this purpose. **Left open, flagged rather than silently expanded into**: when one line
+   item's delta succeeds and a sibling's fails, the successful line's `product.stock` delta stays
+   applied even though the whole order reports failure — a partial-completion gap beyond FIFO,
+   needing a compensating delta call, out of scope for the FIFO-specific fix.
+
+4. **A sibling function needs the SAME fix as its twin, not just a similar one.** The 2026-07-30
+   `_classify*Response` fix (lesson 1 above) was applied to `_classifyDeltaResponse` but
+   `LockManager._classifyAcquireResponse` never got the equivalent status-range check — it treated
+   every well-formed `{ok:false}` body as `"denied"` regardless of status, so a 400/401/403/500
+   (none of which mean "someone else holds this lock") produced a fabricated "someone else is
+   editing this" message. When a bug's fix pattern applies to more than one function, grep for
+   every function that shares the pattern, not just the one that was reported.
+
+5. **`firestore.rules` needing a lockdown and `firestore.rules` HAVING a lockdown are two different
+   git commits — check the actual diff, not just the design doc's intent.** The design doc called
+   for `locks/**` to be denied to clients the same way `audit_log`/`transactions`/etc. are — this
+   was never actually done; `git log` confirmed the rules file was untouched across the entire
+   13-commit branch. Fixed with a new `isServerOnlyCollection` tier, distinct from the existing
+   `isLedgerCollection` tier: the ledger tier is readable-but-write-locked (clients display that
+   data), `locks` needs BOTH denied since no client ever has a legitimate reason to touch it.
+   **Subtlety worth remembering**: Firestore grants access if ANY matching rule allows it — the
+   generic wildcard fallback's `allow read` line isn't gated by `isLedgerCollection` at all, so
+   adding a name to that list alone would NOT have blocked reads. The fallback's read rule needed
+   its own explicit carve-out.
+
+6. **A "fix by consolidating two duplicate functions into one" commit needs the same scrutiny as
+   any other fix.** `OrdersStore._normalizeOrder` existed as two drifted-apart copies (the root
+   cause of lesson 2's bug above); consolidating them into one was the right instinct, but the
+   merge read `inv.consumption` (the just-looked-up inventory/product record, which never has a
+   `consumption` field) instead of `lp.consumption` (the order line itself) — silently wiping FIFO
+   lineage on every order, and crashing with a TypeError whenever a line's product was deleted from
+   inventory (`InventoryStore.getById` returns `null`; `null.consumption` throws). The existing
+   `tests/tst_OrdersStore_normalization.qml` (added specifically for the OTHER bug this same commit
+   fixed) caught this by accident, via an unseeded `InventoryStore` in its test fixture — not by
+   design. Two explicit regression tests were added for both failure modes so it's no longer an
+   accident that this is covered.
+
+**Still genuinely open after the 2026-08-06 round** (Important-severity findings, not Critical —
+tracked, not silently dropped):
+- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` still route through the old whole-record
+  `recordMutation`, not `recordDelta` — unlike `InventoryStore`'s three functions, which are all
+  converted as of this round. Still exposed to the original concurrent-clobber bug #4 above exists
+  to prevent, specifically for the batch ledger.
+- `functions/lib/batchMutationLogic.js` (`recordMutationsBatch`) has no CAS check at all — blind
+  writes, same as `applyMutation` before Component 3 existed. Not this feature's regression (the
+  file predates it and wasn't touched), but it means the CAS guarantee isn't actually uniform
+  across every write path in the app.
+- Bulk order approval (`OrdersPage._approveAllPending`) never acquires a per-order lock — calls
+  `dataModel.tryCompleteOrder` directly, bypassing `OrderDetailDialog`'s lock acquisition entirely.
+- `OrderDetailDialog`'s lock releases the instant the dialog closes, before `ConfirmReturnSheet`'s
+  confirmation step actually runs the adjustment — the lock doesn't span that window. Flagged in
+  the original design doc, still not solved.
+- The partial-multi-line-completion gap noted in lesson 3 above (one line's successful delta
+  staying applied when a sibling's fails).
    
 ## Skill 37: Coordinated multi-document saves — `ProfileSettingsMath.js` + a real `patch()`
 
