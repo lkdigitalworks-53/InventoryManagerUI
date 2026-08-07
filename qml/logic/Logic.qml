@@ -40,7 +40,6 @@ Item {
     signal updateOrder(string orderId, var fields)
     signal adjustOrder(string orderId, var newLines, string reason, string condition, string note)
     signal completeOrder(string orderId)
-    signal approveAllPending()
     signal deleteOrder(string orderId)
 
     // ── Orders feedback (DataModel → UI) ─────────────────────────────────────

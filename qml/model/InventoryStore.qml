@@ -511,7 +511,7 @@ QtObject {
     // the original loop synchronously again against those pre-reserved
     // pools. All new/renamed rows are collected into a single
     // Gateway.recordMutations() call at the end instead of one
-    // recordMutation() per row, matching approveAllPending's pattern.
+    // recordMutation() per row, matching SupplierStore.upsertMany's pattern.
     function upsertMany(records, callback) {
         var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] };
         if (!records || records.length === 0) { if (callback) callback(counts); return; }

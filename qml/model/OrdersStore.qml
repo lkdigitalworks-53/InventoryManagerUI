@@ -132,7 +132,7 @@ QtObject {
     // loop can't await a network call mid-iteration, and one round-trip per
     // row would be slow for a large import). New/renamed rows are collected
     // into a single Gateway.recordMutations() batch call at the end instead
-    // of one recordMutation() per row, matching approveAllPending's pattern.
+    // of one recordMutation() per row, matching InventoryStore.upsertMany's pattern.
     function upsertMany(records, callback) {
         var counts = { added: 0, updated: 0, skipped: 0 };
         var addedIds = [];
@@ -266,9 +266,12 @@ QtObject {
     // actually touched — persisted through the gateway with one
     // recordMutation call instead of rebuilding the entire collection into
     // one bulk :commit (which hard-fails past Firestore's 500-write-per-
-    // commit cap). Callers that legitimately touch several docs at once
-    // (approveAllPending) omit changedOrder here and persist via
-    // Gateway.recordMutations() themselves after calling this.
+    // commit cap). A caller that legitimately touches several docs at once
+    // would omit changedOrder here and persist via Gateway.recordMutations()
+    // itself after calling this — no current caller in this file needs
+    // that (the one that did, approveAllPending, was deleted 2026-08-06;
+    // see the note further down), but the parameter stays optional for
+    // whichever future bulk-write caller needs it.
     // `action`/`before` are the P0 gateway's audit-trail fields — "update"
     // and null before are safe defaults for existing callers that don't
     // (yet) pass them explicitly.
@@ -603,20 +606,20 @@ QtObject {
         _commit(arr, o, "update", before);
     }
 
-    function approveAllPending() {
-        var arr = _clone();
-        var items = [];
-        for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].status === "pending") {
-                var before = Object.assign({}, arr[i]);
-                arr[i].status = "completed";
-                items.push({ entityId: arr[i].orderId, action: "update", before: before, after: arr[i] });
-            }
-        }
-        _commit(arr);
-        if (items.length === 0) return;
-        Gateway.recordMutations("order", items);
-    }
+    // NOTE: there used to be an approveAllPending() here, wired to
+    // Logic.approveAllPending (a signal nothing ever emitted — confirmed
+    // dead via a full-repo grep, 2026-08-06 review). It flipped order
+    // status straight to "completed" via one batch mutation, bypassing
+    // stock deduction, FIFO consumption, sale/transaction recording,
+    // locking, and CAS entirely. The real "Approve all" button
+    // (OrdersPage._approveAllPending) always called
+    // dataModel.tryCompleteOrder() per order directly, never this. Deleted
+    // rather than fixed or guarded: it duplicated a name close enough to
+    // the real path (approveAllPending vs. _approveAllPending) to be a
+    // standing invitation for a future refactor to wire the button to the
+    // wrong one. If a genuine "bulk approve without the full completion
+    // pipeline" need shows up later, it should be designed on purpose, not
+    // resurrected from here.
 
     // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
     // (the salesperson) are optional — empty strings are persisted when the

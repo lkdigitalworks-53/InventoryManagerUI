@@ -169,11 +169,6 @@ Item {
             })
         }
 
-        function onApproveAllPending() {
-            OrdersStore.approveAllPending()
-            _syncOrdersModel()
-        }
-
         function onDeleteOrder(orderId) {
             if (!_hasAnyRole(["owner", "admin", "manager"])) {
                 logic.errorOccurred("auth", "You do not have permission to delete orders")

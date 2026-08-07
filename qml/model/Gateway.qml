@@ -49,7 +49,7 @@ QtObject {
     property string functionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     // Batch counterpart of recordMutation (new this session) — one atomic
     // transaction for up to MAX_BATCH_SIZE items of the same entity, e.g.
-    // OrdersStore.approveAllPending. See functions/lib/batchMutationLogic.js.
+    // InventoryStore.upsertMany. See functions/lib/batchMutationLogic.js.
     property string batchFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutationsBatch"
     // Atomic-delta endpoint (Component 4, async-write-sequencing design) —
     // NOT YET DEPLOYED, this URL is aspirational until index.js wires up
@@ -202,7 +202,7 @@ QtObject {
     }
 
     // Batch counterpart of recordMutation — one call for many items of the
-    // SAME entity, e.g. OrdersStore.approveAllPending. `items` is
+    // SAME entity, e.g. InventoryStore.upsertMany. `items` is
     // [{entityId, action, before, after}, ...]. Returns the batch requestId.
     function recordMutations(entity, items) {
         var collection = _collectionFor(entity)
