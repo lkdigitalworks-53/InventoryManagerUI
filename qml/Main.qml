@@ -10,6 +10,7 @@ import "logic"
 import "pages"
 import "helper"
 import "components"
+import "desktop"
 
 App {
     id: app
@@ -18,6 +19,7 @@ App {
     licenseKey: "7DE3BC3AD3A76DE396F0C706C3CB0BF4683B3E0DFDA541CA89163CB320232DE3F86B5062338D5EC6739022887374C5F67D7D2608B2E60C244858D28D69BB55949A55CE835EEA6F1B9CCA4CFC5030EBA41123AF6A00DB2A89E6F13061B4C31BC756EC3DB9CB23FA3605E16FF8FE4A5814B8FC94195D2F19D84568E267062B7B0E26B6298502A3F2AB250ED082D7228E2C486F1C5B04D9116774011ADE0F175FB5337E55BA899802D721D9B37943F48D1E53CA15FFDA0BB8F3B52AC658860DD9F53ECC1DEAA17E636ECEB4886B002C92BBAD11C9F1AE2E76C545879DA62CA6849A66C8A9B8E179E188D9B46A4C26719827EEB8FD4ED222FDBC81A6F21268A155BB43FF7CE4DEE3A1AB8A408B8AD9A9EA56F523E6287B16B80C17BC0E354FEEA087E09E85A624960560FF4F7221F0203C3FC1C329865ED4D2CDB50BD99C53C1FB4B"
 
     property bool compact: width < dp(Constants.compactBreakpoint)
+    property bool isDesktopShell: width >= dp(Constants.desktopShellBreakpoint)
     property string authErrorMessage: ""
     property string permissionErrorMessage: ""
     property string memberErrorMessage: ""
@@ -421,6 +423,13 @@ App {
         // Hide Felgo's framework footer too (belt-and-suspenders).
         footerView: Item { width: 1; height: 0 }
 
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.left: parent.left
+        anchors.topMargin: app.isDesktopShell ? desktopShell.topBarHeight : 0
+        anchors.leftMargin: app.isDesktopShell ? desktopShell.sidebarWidth : 0
+
         // ── Tab: Dashboard ──
         NavigationItem {
             title: qsTr("Home")
@@ -597,6 +606,7 @@ App {
                  && !profilePage.visible
                  && !staffPageOverlay.visible
                  && !activityPageOverlay.visible
+                 && !app.isDesktopShell
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -614,6 +624,28 @@ App {
         onTabChanged: function(idx) {
             if (navigation.currentIndex !== idx)
                 navigation.currentIndex = idx
+        }
+    }
+
+    DesktopShell {
+        id: desktopShell
+        anchors.fill: parent
+        visible: app.isDesktopShell && navigation.visible
+        navigationTarget: navigation
+        staffOverlay: staffPageOverlay
+        activityOverlay: activityPageOverlay
+        profileOverlay: profilePage
+        workspaceName: AuthStore.tenantName
+        userName: AuthStore.displayName
+        userRole: AuthStore.role
+        currentSection: {
+            switch (navigation.currentIndex) {
+                case 0: return "dashboard"
+                case 1: return "orders"
+                case 2: return "inventory"
+                case 3: return "analysis"
+                default: return desktopShell.currentSection
+            }
         }
     }
 
