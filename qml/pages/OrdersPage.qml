@@ -426,16 +426,26 @@ Item {
                 toApprove.push(scoped[i].orderId)
         }
         var failed = []
+        // review I2: this loop used to call tryCompleteOrder with zero
+        // locking -- a concurrent edit via OrderDetailDialog (which DOES
+        // lock) could race with a bulk-approve completing the same order.
+        // Tracked separately from `failed` because "insufficient inventory"
+        // would be an actively wrong explanation for a lock denial.
+        var lockedOut = []
         var idx = 0
 
         function _next() {
             if (idx >= toApprove.length) {
                 dataModel.syncOrdersModel()
-                if (failed.length > 0) {
-                    var errorMsg = qsTr("Could not approve orders: %1\n\nInsufficient stock available.").arg(failed.join(", "))
+                if (failed.length > 0 || lockedOut.length > 0) {
+                    var parts = []
+                    if (failed.length > 0)
+                        parts.push(qsTr("Insufficient inventory: %1").arg(failed.join(", ")))
+                    if (lockedOut.length > 0)
+                        parts.push(qsTr("Being edited elsewhere, try again shortly: %1").arg(lockedOut.join(", ")))
                     stockErrorDlg.show({
-                        title: qsTr("Insufficient Inventory"),
-                        message: errorMsg,
+                        title: qsTr("Some Orders Weren't Approved"),
+                        message: parts.join("\n\n"),
                         variant: "error"
                     })
                 }
@@ -443,9 +453,22 @@ Item {
             }
             var orderId = toApprove[idx]
             idx++
-            dataModel.tryCompleteOrder(orderId, function(success) {
-                if (!success) failed.push(orderId)
-                _next()
+            // Headless equivalent of OrderDetailDialog's acquire/release —
+            // same lock, no dialog UI since this runs as a background batch
+            // action. One attempt per order, no retry (matches this app's
+            // existing no-cancel-button, no-row-counter busy-overlay
+            // philosophy for bulk operations).
+            LockManager.acquire("order", orderId, function(result) {
+                if (!result.granted) {
+                    lockedOut.push(orderId)
+                    _next()
+                    return
+                }
+                dataModel.tryCompleteOrder(orderId, function(success) {
+                    LockManager.release("order", orderId)
+                    if (!success) failed.push(orderId)
+                    _next()
+                })
             })
         }
         _next()
