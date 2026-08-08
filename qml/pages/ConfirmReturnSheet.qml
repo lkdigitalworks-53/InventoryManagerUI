@@ -84,6 +84,16 @@ BottomSheet {
         close()
     }
 
+    // Lock-span fix (known gap, review round 2). OrderDetailDialog hands off
+    // the order lock to this sheet instead of releasing it on its own close
+    // (see OrderDetailDialog._save()'s _lockHandoffPending) so the lock stays
+    // held through the user's actual confirm/cancel decision here, not just
+    // until the originating dialog closed. Release whenever THIS sheet
+    // closes — covers Confirm (onPrimaryClicked calls close() above), Cancel
+    // (BottomSheet's secondary button auto-closes), and tap-outside-dismiss,
+    // identically.
+    onClosed: LockManager.release("order", orderId)
+
     ColumnLayout {
         Layout.fillWidth: true
         spacing: dp(Constants.space3)

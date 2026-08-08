@@ -45,6 +45,11 @@ BottomSheet {
     // lone tester "someone else is editing this" when nobody else was.
     property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
     property var _lockHolder: null
+    // Set right before dlg.close() when handing the lock off to
+    // ConfirmReturnSheet (see the linesChanged branch in _save() below) so
+    // onClosed skips its normal release — ConfirmReturnSheet now owns it and
+    // releases when IT closes. Reset immediately after being read.
+    property bool _lockHandoffPending: false
 
     property var catalog: []
     property var catalogNames: []
@@ -310,7 +315,11 @@ BottomSheet {
     // notably the available-stock count, which derives from products +
     // _originalLines + _orderStatus.
     onClosed: {
-        LockManager.release("order", orderId)
+        if (_lockHandoffPending) {
+            _lockHandoffPending = false // ConfirmReturnSheet now owns this lock
+        } else {
+            LockManager.release("order", orderId)
+        }
         _lockState = "pending"
         _lockHolder = null
         products.clear()
@@ -408,6 +417,14 @@ BottomSheet {
             // routed through the adjust/ledger path (per-line discount event).
             var linesChanged = JSON.stringify(_lineKeys(prods)) !== JSON.stringify(_lineKeys(_originalLines))
             if (linesChanged) {
+                // Lock-span fix (known gap, review round 2): ConfirmReturnSheet
+                // needs the order locked through its own confirm/cancel, not
+                // just until THIS dialog closes. Hand off ownership instead of
+                // releasing here — _lockHandoffPending tells onClosed below to
+                // skip its release, and ConfirmReturnSheet.onClosed releases
+                // once the handoff sheet itself closes (confirm, cancel, or
+                // tap-outside-dismiss, alike).
+                _lockHandoffPending = true
                 dlg.adjustRequested(dlg.orderId, prods, dlg._originalLines)
                 dlg.close()
                 return
