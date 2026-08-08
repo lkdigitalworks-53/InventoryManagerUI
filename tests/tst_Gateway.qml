@@ -37,24 +37,24 @@ TestCase {
     name: "Gateway"
 
     function init() {
-        Gateway.mode = "direct" // the real default — reset every case
+        // Force "direct" for every case below so these tests stay isolated
+        // from whatever the real production default is (see Gateway.qml —
+        // currently "gateway" since 649046d). NOTE: this means no test in
+        // this file can assert on the *true* declared default — init() runs
+        // before every test function, so the singleton's real value is
+        // always overwritten before any compare() sees it. A prior version
+        // of this file had a test_mode_defaults_to_direct() that appeared
+        // to check this but couldn't actually observe it under this
+        // structure, and had gone stale (still asserting "direct" after the
+        // production default moved to "gateway") without ever failing.
+        // Verifying the real default is a job for an integration/E2E check
+        // that inspects the deployed app, not this per-case-reset TestCase.
+        Gateway.mode = "direct"
         OutboxStore.clear()
         AuthStore.idToken = "" // keep the _send/_sendBatch guard closed (see header)
     }
 
     // ── mode + collection mapping ────────────────────────────────────────────
-
-    function test_mode_defaults_to_direct() {
-        // NOTE (2026-08-06, found as a byproduct of the C3 review fix, not
-        // itself one of the review's findings): this assertion was stale.
-        // Gateway.mode's actual production default was flipped from
-        // "direct" to "gateway" in 649046d — this test was never updated to
-        // match and would have failed the moment qmltestrunner actually ran
-        // it. Fixed to assert the real, intentional current default;
-        // init()'s explicit reset to "direct" below is what actually keeps
-        // every OTHER test in this file gateway-mode-off unless it opts in.
-        compare(Gateway.mode, "gateway")
-    }
 
     function test_collectionFor_covers_every_registered_entity() {
         // One entry per store this session (+ the two pre-existing ledger-

@@ -5,18 +5,17 @@ import QtQuick
 // account mutation in P0 scope (inventory + stock). Stores call
 // `recordMutation(...)` instead of writing Firestore directly.
 //
-// Two modes (so the app keeps working before the Cloud Function is
-// deployed):
-//   "direct"  — DEFAULT. Writes the working-tier doc via FirebaseService,
-//               exactly as the stores did before P0. No ledger entry. This
-//               is behaviour-preserving: nothing changes until you deploy.
-//   "gateway" — Enqueues the call in the durable OutboxStore and POSTs it to
-//               the recordMutation Cloud Function (Bearer idToken), which
-//               atomically writes the working doc + an immutable audit_log
-//               entry. Failed/offline calls stay queued and retry w/ backoff.
-//
-// Flip `mode` to "gateway" only after `functions/` is deployed and the
-// locked Firestore rules are live.
+// Two modes:
+//   "direct"  — Writes the working-tier doc via FirebaseService, exactly as
+//               the stores did before P0. No ledger entry. Behaviour-
+//               preserving fallback for when the Cloud Function/locked
+//               rules aren't deployed (e.g. a fresh `dev`/`test` env).
+//   "gateway" — DEFAULT since 649046d (Cloud Function + locked rules are
+//               live in production). Enqueues the call in the durable
+//               OutboxStore and POSTs it to the recordMutation Cloud
+//               Function (Bearer idToken), which atomically writes the
+//               working doc + an immutable audit_log entry. Failed/offline
+//               calls stay queued and retry w/ backoff.
 //
 // Single-flight-per-record (Component 1, async-write-sequencing design §3):
 // drainNow() marks every due item in-flight (OutboxStore.markInFlight)
@@ -32,7 +31,8 @@ import QtQuick
 QtObject {
     id: root
 
-    // "direct" until the Cloud Function + locked rules are deployed.
+    // "gateway" in production (649046d). "direct" remains available as a
+    // manual fallback for envs without the Cloud Function/locked rules.
     property string mode: "gateway"
 
     // Member/staff credential provisioning needs the Admin-SDK Cloud Function
