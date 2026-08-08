@@ -398,13 +398,18 @@ QtObject {
 Functions gateway, tax-identity fields, DPDP privacy, and retention. **Adjacent, not part of P0
 itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, atomic deltas —
 `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, its 2026-08-06 review at
-`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, README's "Concurrency &
-Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files but is a correctness
-concern, not a compliance one — don't conflate the two when reasoning about this directory. Worth
-knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to `firestore.rules` (a new
-`isServerOnlyCollection` tier, distinct from the ledger tier below — locks needs read AND write
-denied, not just write) — if touching `firestore.rules` for compliance work, be aware this tier
-exists and follow the same pattern for any other collection that should never be client-reachable.
+`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, its 2026-08-08 round-2
+closure of the remaining findings at `docs/superpowers/specs/2026-08-08-review-round2-design.md`,
+README's "Concurrency & Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files
+but is a correctness concern, not a compliance one — don't conflate the two when reasoning about
+this directory. Worth knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to
+`firestore.rules` (a new `isServerOnlyCollection` tier, distinct from the ledger tier below — locks
+needs read AND write denied, not just write) — if touching `firestore.rules` for compliance work,
+be aware this tier exists and follow the same pattern for any other collection that should never be
+client-reachable. Also worth knowing: `functions/lib/batchMutationLogic.js`'s `applyMutationsBatch`
+(the live path for every bulk import) now has a CAS check as of 2026-08-08 — if adding a new bulk
+write path anywhere, check whether it should route through this rather than a bespoke batch write
+that would reintroduce the same gap.
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
 `StockMovementStore` are still future P1 work, not yet created), all five working-tier stores

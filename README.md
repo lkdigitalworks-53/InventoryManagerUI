@@ -420,6 +420,35 @@ reverting from "completed" to "pending"):
   concurrent stock movements on the same product both apply correctly instead of one clobbering
   the other. Supports either rejecting (`floors`) or clamping (`clamps`) at a boundary, per caller.
 
+**Update 2026-08-08:** the 5 Important findings from the 2026-08-06 review (I1-I5) plus 2 known
+gaps and 1 newly-discovered gap are now all closed too (`fix/async-write-sequencing-review-fixes`
+branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
+- `functions/lib/batchMutationLogic.js`'s `applyMutationsBatch` now has a CAS check, matching
+  `applyMutation`'s — this is the live path for every bulk import (Supplier/Order/StockBatch/
+  Inventory/Transaction), not dead code as it first appeared. Whole batch rejects on any item
+  conflicting, matching the module's own all-or-nothing design. The client (`Gateway._sendBatch`)
+  now handles the resulting 409 the same way `_send` already handles a single-item conflict, reusing
+  the same `mutationConflicted` signal every store already listens to.
+- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` are now `recordDelta`-based (full async
+  rewrite, not the smaller mechanical-swap alternative — chosen to close the per-batch attribution
+  race under concurrency, not just the CAS-clobber risk). Rippled into `DataModel.qml`'s three
+  retry-loop call sites and forced `completeImportedOrder` off its prior synchronous
+  `return {ok, understocked}` contract.
+- Bulk order approval (`OrdersPage._approveAllPending`) now acquires the per-order lock before
+  completing each order, same as `OrderDetailDialog`.
+- `acquireLock`/`releaseLock` now validate `entity` against the known allowlist (previously any
+  string was accepted).
+- All 3 dialogs' (`OrderDetailDialog`, `EditProductDialog`, `StaffDetailDialog`) "try again"
+  lock-denial message now actually retries the lock acquisition, instead of re-showing the same
+  stale message forever.
+- `ConfirmReturnSheet` now holds the order lock through the user's actual confirm/cancel decision,
+  not just until `OrderDetailDialog` closes.
+- The partial-multi-line-completion gap (one line's successful stock deduction staying applied when
+  a sibling line's fails) is fixed at both sites it occurs: `_tryCompleteOrder` and
+  `_tryAdjustOrder`'s exchange path.
+
+See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
+
 **Update 2026-08-06:** a dedicated code review (`docs/superpowers/specs/
 2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important findings) found every
 mechanism above was individually correct but not fully wired end-to-end — the server-side CAS

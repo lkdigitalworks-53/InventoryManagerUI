@@ -1358,24 +1358,77 @@ bugs:
    accident that this is covered.
 
 **Still genuinely open after the 2026-08-06 round** (Important-severity findings, not Critical —
-tracked, not silently dropped):
-- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` still route through the old whole-record
-  `recordMutation`, not `recordDelta` — unlike `InventoryStore`'s three functions, which are all
-  converted as of this round. Still exposed to the original concurrent-clobber bug #4 above exists
-  to prevent, specifically for the batch ledger.
-- `functions/lib/batchMutationLogic.js` (`recordMutationsBatch`) has no CAS check at all — blind
-  writes, same as `applyMutation` before Component 3 existed. Not this feature's regression (the
-  file predates it and wasn't touched), but it means the CAS guarantee isn't actually uniform
-  across every write path in the app.
-- Bulk order approval (`OrdersPage._approveAllPending`) never acquires a per-order lock — calls
-  `dataModel.tryCompleteOrder` directly, bypassing `OrderDetailDialog`'s lock acquisition entirely.
-- `OrderDetailDialog`'s lock releases the instant the dialog closes, before `ConfirmReturnSheet`'s
-  confirmation step actually runs the adjustment — the lock doesn't span that window. Flagged in
-  the original design doc, still not solved.
-- The partial-multi-line-completion gap noted in lesson 3 above (one line's successful delta
-  staying applied when a sibling's fails).
-   
-## Skill 37: Coordinated multi-document saves — `ProfileSettingsMath.js` + a real `patch()`
+tracked, not silently dropped): none — see 2026-08-08 below. All five were closed, plus the two
+new/known gaps also tracked here (StockBatchStore recordDelta conversion, ConfirmReturnSheet
+lock-span) and one more discovered mid-round (partial-multi-line-completion, lesson 3 above).
+
+**2026-08-08: round 2 — I1–I4 + 3 known/new gaps, all closed** (`fix/
+async-write-sequencing-review-fixes` branch, design doc: `docs/superpowers/specs/
+2026-08-08-review-round2-design.md`). Scoped via `/superpowers:brainstorming` — Taher was shown the
+real blast radius of the StockBatchStore option (5 call sites, 3 with retry-loop coupling) before
+choosing the full rewrite over the smaller mechanical-swap alternative. New patterns worth
+internalizing, distinct from the 2026-08-06 lessons above (see there first — several round-2 bugs
+are second instances of those same lesson categories, cross-referenced rather than re-derived):
+
+1. **`floors` and `clamps` are not interchangeable "don't go negative" options — they have opposite
+   failure semantics, and picking wrong quietly reintroduces the attribution gap you're trying to
+   close.** `floors` on `applyDelta` REJECTS the whole delta if it would cross the floor (ok:false,
+   zero applied) — the delta either fully lands or doesn't happen at all, no partial state.
+   `clamps` caps the result at the boundary and still succeeds — a partial amount can silently
+   apply. `StockBatchStore.consumeFifo`'s async rewrite deliberately uses `floors`, not `clamps`,
+   specifically because exact-or-nothing per batch is what makes the returned `consumption[]`
+   trustworthy — with `clamps`, a successful response could still mean "less than planned was
+   actually taken," reintroducing ambiguity about which batch really contributed what.
+
+2. **(Second instance of the 2026-08-06 lesson 2 pattern — "verify caller-conversion claims,
+   don't inherit them.")** The round-2 design doc scoped `completeImportedOrder`'s `consumeFifo`
+   conversion as "simpler — no failure path." That was true for the failure-handling logic, but
+   missed that the function had a synchronous `return {ok, understocked}` contract its
+   `ImportPreviewDialog` caller depended on in a tight loop — converting the function to async
+   forced restructuring that loop too. **A function's own body being simple doesn't mean its
+   conversion is small — check what its RETURN VALUE'S caller does with it before scoping.**
+
+3. **A "hand off ownership" fix needs the actual event ordering traced, not assumed.** First
+   instinct for the `ConfirmReturnSheet` lock-span gap was having the sheet re-acquire its own
+   lock in `openFor()` — simpler, self-contained. Wrong: `openFor()` runs SYNCHRONOUSLY, inside the
+   same call stack as `OrderDetailDialog._save()`'s `adjustRequested` handler, which fires BEFORE
+   `dlg.close()` on the next line. A re-acquire there would resolve, then `OrderDetailDialog`'s own
+   release (fired moments later by `close()`) would delete the SAME lock document the re-acquire
+   just claimed — the two are both async network calls racing on one doc, and there's no ordering
+   guarantee release loses. Fixed with an explicit handoff flag instead (`_lockHandoffPending`) so
+   the original owner's `onClosed` skips its release rather than relying on a second acquire
+   winning a race it might not win. **When two components both touch the same server-side
+   resource across an async boundary, trace the actual call-stack ordering before assuming a
+   "simpler" independent-acquire design is safe.**
+
+4. **(Second instance of 2026-08-06 lesson 1 — "existing" and "wired up" are different claims.)**
+   The Cloud Function endpoint (`functions/index.js`'s `recordMutationsBatch`) was calling
+   `applyMutationsBatch` and discarding its return value entirely, always sending `200 {ok:true}`
+   regardless of what the transaction did. Adding the CAS check itself (I1) would have been
+   silently inert without also fixing this — the transaction would correctly refuse to write, but
+   the client would be told it succeeded, which is WORSE than doing nothing (a caller that thinks
+   an import landed when it didn't is a worse bug than the original no-CAS-check gap). Grep for
+   every place a function's result is called and check whether the CALLER actually branches on it,
+   not just whether the function itself returns something meaningful.
+
+5. **A fake DB double built for one query shape breaks silently once the code starts reading a
+   DIFFERENT ref.** `batchMutationLogic.test.js`'s `makeFakeDb` only ever modeled `auditRef`
+   existence (all `applyMutationsBatch` needed to check before I1). Adding the CAS check meant
+   reading `workingRef`s too — the existing 5 tests would have started reporting false conflicts
+   (fake working docs "don't exist" by default, but `validItem()`'s fixture `before` claims
+   `{status:"pending"}`) had the fake not been extended to model working-doc state and the existing
+   tests updated to pass matching state. Same root pattern as the 2026-07-30 `makeFakeDbWithData`
+   note above — a fake that's "good enough" for what the code currently reads needs re-auditing
+   every time the code starts reading something new, not assumed to still be sufficient.
+
+All 7 remaining findings from the 2026-08-06 review are closed as of this round: I1 (batch CAS,
+plus the endpoint wiring gap it surfaced), I2 (bulk-approve locking), I3 (lock entity allowlist),
+I4 (dialogs' dead "try again" retry, all 3), StockBatchStore's full async rewrite, the
+`ConfirmReturnSheet` lock-span handoff, and the partial-multi-line-completion gap (found mid-round
+during the 2026-08-06 fix, fixed at two sites: `_tryCompleteOrder` and `_tryAdjustOrder`'s exchange
+path — the second site wasn't in any prior finding list, found while implementing the first).
+
+
 
 **Files**: `qml/helper/ProfileSettingsMath.js`, `tests/tst_ProfileSettingsMath.qml`,
 `qml/model/AuthService.qml` (`saveProfileSettings`), `qml/model/FirebaseService.qml` (`patch`)
