@@ -430,6 +430,10 @@ Item {
         var linesWithConsumption = new Array(lines.length)
         var deltaFailed = false
         var deltaFailMsg = ""
+        // New (review round 2, partial-multi-line-completion gap): tracks
+        // which lines' deductStock actually succeeded, so a sibling line's
+        // failure can credit them back — see _afterAllDeltas below.
+        var succeededLines = []
 
         function _afterAllDeltas() {
             if (deltaFailed) {
@@ -449,6 +453,17 @@ Item {
                         var rc = restoreLine.consumption[ri]
                         StockBatchStore.restoreFifo(rc.batchId, restoreLine.productId, rc.qtyConsumed)
                     }
+                }
+                // C5 above only restores the batch ledger. It doesn't touch
+                // product.stock itself for lines whose deductStock already
+                // succeeded before a SIBLING line's deductStock failed — that
+                // stock stays decremented for an order that never completed.
+                // Credit it back with the same primitive the returns flow
+                // already uses for exactly this "credit stock, batches already
+                // handled separately" shape (creditStockNoBatch, recordDelta-
+                // based since C4).
+                for (var si = 0; si < succeededLines.length; ++si) {
+                    InventoryStore.creditStockNoBatch(succeededLines[si].productId, succeededLines[si].qty)
                 }
                 OrdersStore.updateOrder(orderId, { status: "out of stock" })
                 dataModel.stockErrorMsg = deltaFailMsg
@@ -510,6 +525,8 @@ Item {
                                 (invP.name + ": " + (result && result.error === "insufficient-quantity"
                                     ? "stock ran out before this order could complete"
                                     : "could not update stock — try again"))
+                        } else {
+                            succeededLines.push({ productId: invP.productId, qty: qqty })
                         }
                         line.consumption = consumption
                         linesWithConsumption[j] = line
@@ -728,6 +745,21 @@ Item {
 
         function _finishAdjustment() {
             if (deltaFailed) {
+                // Same gap as _tryCompleteOrder's partial-multi-line-completion
+                // fix above, second site: pendingAdditions holds every ADDED-
+                // units line whose deductStock already succeeded before a
+                // SIBLING addition failed. Their FIFO consumption and
+                // product.stock deduction already landed and were never
+                // reversed — undo both here, same primitives as the single-
+                // line failure path just above (restoreFifo + creditStockNoBatch).
+                for (var pf2 = 0; pf2 < pendingAdditions.length; ++pf2) {
+                    var failedEntry = pendingAdditions[pf2]
+                    for (var fci = 0; fci < failedEntry.cons.length; ++fci) {
+                        var fc = failedEntry.cons[fci]
+                        StockBatchStore.restoreFifo(fc.batchId, failedEntry.d.productId, fc.qtyConsumed)
+                    }
+                    InventoryStore.creditStockNoBatch(failedEntry.d.productId, failedEntry.d.addedQty)
+                }
                 dataModel.stockErrorMsg = deltaFailMsg
                 if (callback) callback(false)
                 return
