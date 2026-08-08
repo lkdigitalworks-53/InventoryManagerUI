@@ -319,6 +319,23 @@ BottomSheet {
         stockErrorLabel.text = ""
     }
 
+    // review I4: fires from _save() when the user taps Save while not
+    // granted. Doesn't auto-continue the save on success — deliberately
+    // requires a second tap, so a slow/late acquire response can never save
+    // on the user's behalf without them re-confirming. Same
+    // openedOrderId guard as the initial acquire in onOpened, for the same
+    // reason: the dialog may have moved on to a different order by the time
+    // this resolves.
+    function _retryLockAcquire() {
+        if (_lockState === "granted") return
+        var openedOrderId = orderId
+        LockManager.acquire("order", orderId, function(result) {
+            if (dlg.orderId !== openedOrderId) return
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+        })
+    }
+
     onPrimaryClicked: _save()
 
     function _save() {
@@ -332,6 +349,10 @@ BottomSheet {
             } else {
                 stockErrorLabel.text = qsTr("Still confirming this order is free to edit — try again in a moment")
             }
+            // review I4: "try again" used to mean nothing — tapping Save again
+            // just re-showed the same stale message forever. Actually retry the
+            // acquisition in the background so the NEXT tap has a fresh answer.
+            _retryLockAcquire()
             return
         }
         var itemCount = 0

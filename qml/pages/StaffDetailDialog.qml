@@ -51,6 +51,19 @@ BottomSheet {
         })
     }
 
+    // review I4: same guard shape as _enterEditMode's own acquire. Doesn't
+    // auto-continue the submit on success; the user taps Save again once the
+    // state's fresh.
+    function _retryLockAcquire() {
+        if (_lockState === "granted") return
+        var lockedStaffId = staffId
+        LockManager.acquire("staff", staffId, function(result) {
+            if (root.staffId !== lockedStaffId) return
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+        })
+    }
+
     function openFor(id, startInEdit) {
         if (editMode) LockManager.release("staff", staffId)
         staffId = id
@@ -250,6 +263,9 @@ BottomSheet {
             } else {
                 errorText.text = qsTr("Still confirming this profile is free to edit — try again in a moment")
             }
+            // review I4: actually retry the acquisition so the next tap has a
+            // fresh answer, instead of "try again" meaning nothing.
+            _retryLockAcquire()
             return
         }
         var errs = []
