@@ -189,6 +189,16 @@ test("validateAcquireRequest accepts a valid request", () => {
     assert.equal(result.ttlMs, 90000);
 });
 
+// review I3: entity wasn't checked against the known allowlist — any string
+// was accepted, letting a buggy/malicious client create junk lock docs under
+// an entity name nothing else recognizes.
+test("validateAcquireRequest rejects an entity outside the known allowlist", () => {
+    const result = LockLogic.validateAcquireRequest({ entity: "not-a-real-entity", entityId: "x1", requestId: "r1", ttlMs: 90000 });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "unsupported-entity");
+});
+
 test("validateReleaseRequest rejects missing entity/entityId", () => {
     const result = LockLogic.validateReleaseRequest({});
     assert.equal(result.ok, false);
@@ -198,4 +208,12 @@ test("validateReleaseRequest rejects missing entity/entityId", () => {
 test("validateReleaseRequest accepts a valid request", () => {
     const result = LockLogic.validateReleaseRequest({ entity: "order", entityId: "o1" });
     assert.equal(result.ok, true);
+});
+
+// review I3: same allowlist gap existed in validateReleaseRequest.
+test("validateReleaseRequest rejects an entity outside the known allowlist", () => {
+    const result = LockLogic.validateReleaseRequest({ entity: "not-a-real-entity", entityId: "x1" });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "unsupported-entity");
 });
