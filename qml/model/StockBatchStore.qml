@@ -248,63 +248,97 @@ QtObject {
         Gateway.recordMutations("stock_batch", mutationItems)
     }
 
-    // FIFO walker. Decrements qtyRemaining on the oldest batches until the
-    // requested qty is satisfied (or batches run out). Returns the list of
-    // touched batches as `[{ batchId, supplierId, qtyConsumed, unitCost }]`
-    // so callers can stamp the consumption onto an order line / sale event.
+    // FIFO walker — full async rewrite (review round 2, chosen over the
+    // smaller mechanical-swap alternative specifically to close the
+    // per-batch attribution race under concurrency, not just the CAS-clobber
+    // risk). Selection stays client-side (walking local batches[] oldest-
+    // first, deciding a take-per-batch plan) — that's business logic, not
+    // something to push into the Cloud Function. Persistence per touched
+    // batch is now Gateway.recordDelta with floors:{qtyRemaining:0}, NOT
+    // clamps — floors reject the delta ENTIRELY if it would go negative
+    // (ok:false, zero applied), where clamps would partially apply it. The
+    // floor choice is deliberate: it means every successful delta took
+    // EXACTLY `take` units, no ambiguity, so the consumption[] this returns
+    // is always an exact record of what actually happened server-side, not
+    // a locally-planned guess that might not match reality under a race.
     //
-    // Stops early when batches are exhausted — caller is expected to repair
-    // the invariant via `topUpOldest` and re-call. Validation (does the
-    // product even have enough total stock?) lives in DataModel; this
-    // function trusts the caller and just accounts.
-    function consumeFifo(productId, qty) {
-        if (!productId || !qty || qty <= 0) return []
+    // Processes batches ONE AT A TIME (not fired in parallel) so that if
+    // batch[i]'s delta is rejected (someone else drained it since our last
+    // read), we can extend further into the FIFO-ordered list to cover the
+    // shortfall from batch[i+1] onward — a plan built once, up front, from a
+    // single local snapshot can't do that. Real added latency for a multi-
+    // batch consumption, accepted: a single order-line's FIFO span is
+    // normally 1-2 batches, and this runs inside an already-async, already-
+    // spinner-gated order-completion flow, not a hot loop.
+    //
+    // Calls back with { consumption, shortfall } — shortfall > 0 means
+    // batches ran out (locally known ones exhausted, or drained faster than
+    // planned) before qty was satisfied. Same contract as the old
+    // synchronous "stops early" behavior, callers still repair via
+    // topUpOldest + re-call, just from inside the callback now instead of
+    // immediately after a synchronous return.
+    function consumeFifo(productId, qty, callback) {
+        if (!productId || !qty || qty <= 0) { callback({ consumption: [], shortfall: 0 }); return }
         var ordered = forProduct(productId)
-        if (ordered.length === 0) return []
+        if (ordered.length === 0) { callback({ consumption: [], shortfall: qty }); return }
 
         var remaining = qty
         var consumption = []
-        var touched = []
-        var touchedBefore = []   // pre-consumption snapshot, index-aligned with `touched`
-        for (var i = 0; i < ordered.length && remaining > 0; ++i) {
-            var b = ordered[i]
-            var avail = b.qtyRemaining || 0
-            if (avail <= 0) continue
-            var take = Math.min(avail, remaining)
-            var updated = Object.assign({}, b, {
-                qtyRemaining: avail - take,
-                updatedAt: new Date().toISOString()
-            })
-            touched.push(updated)
-            touchedBefore.push(Object.assign({}, b))
-            consumption.push({
-                batchId: b.batchId,
-                supplierId: b.supplierId || "",
-                qtyConsumed: take,
-                unitCost: b.unitCost || 0
-            })
-            remaining -= take
-        }
+        var idx = 0
 
-        // Apply touched updates back to the local array in one swap so the
-        // `revision` bump fires once per call rather than per batch.
-        if (touched.length > 0) {
-            var touchedById = {}
-            for (var t = 0; t < touched.length; ++t) touchedById[touched[t].batchId] = touched[t]
-            var next = []
-            for (var j = 0; j < batches.length; ++j) {
-                var current = batches[j]
-                next.push(touchedById[current.batchId] || current)
+        function _tryNext() {
+            if (remaining <= 0 || idx >= ordered.length) {
+                callback({ consumption: consumption, shortfall: remaining })
+                return
             }
-            batches = next
-            // Each FIFO decrement is an auditable update — route through the
-            // gateway with before/after so the consumption is traceable.
-            for (var u = 0; u < touched.length; ++u) {
-                Gateway.recordMutation("stock_batch", touched[u].batchId, "update",
-                                       touchedBefore[u], touched[u])
-            }
+            var b = ordered[idx]
+            idx++
+            var avail = b.qtyRemaining || 0
+            if (avail <= 0) { _tryNext(); return }
+            var take = Math.min(avail, remaining)
+
+            Gateway.recordDelta("stock_batch", b.batchId, { qtyRemaining: -take }, { qtyRemaining: 0 }, {},
+                function(result) {
+                    if (result && result.ok) {
+                        var updated = Object.assign({}, b, {
+                            qtyRemaining: result.after.qtyRemaining,
+                            updatedAt: new Date().toISOString()
+                        })
+                        var arr = []
+                        for (var k = 0; k < batches.length; ++k)
+                            arr.push(batches[k].batchId === b.batchId ? updated : batches[k])
+                        batches = arr
+                        consumption.push({
+                            batchId: b.batchId,
+                            supplierId: b.supplierId || "",
+                            qtyConsumed: take,
+                            unitCost: b.unitCost || 0
+                        })
+                        remaining -= take
+                    } else if (result && result.current !== undefined) {
+                        // Rejected — floor would've gone negative, someone
+                        // else drained this batch since our last read. Zero
+                        // units taken from here. Reconcile the stale local
+                        // copy with the server's answer so a subsequent
+                        // consumeFifo call isn't planning off the same
+                        // stale number, then move on to the next batch for
+                        // the shortfall.
+                        var reconciled = Object.assign({}, b, { qtyRemaining: result.current })
+                        var arr2 = []
+                        for (var k2 = 0; k2 < batches.length; ++k2)
+                            arr2.push(batches[k2].batchId === b.batchId ? reconciled : batches[k2])
+                        batches = arr2
+                    }
+                    // Any other failure (network, non-insufficient-quantity
+                    // error) also falls through to "zero taken, try next" —
+                    // matches this module's own stated design goal (see
+                    // topUpOldest's doc comment): a sale should never fail
+                    // because the batch ledger had trouble, only because
+                    // there genuinely isn't enough stock.
+                    _tryNext()
+                })
         }
-        return consumption
+        _tryNext()
     }
 
     // Invariant repair. When `product.stock` says there are N units but the
@@ -314,31 +348,49 @@ QtObject {
     // This is deliberately permissive: we never want a sale to fail because
     // the batch ledger drifted. Manual edits to product.stock, imports, or
     // legacy data are the typical causes.
-    function topUpOldest(productId, deficit) {
-        if (!productId || !deficit || deficit <= 0) return
+    //
+    // callback is optional — fires once the top-up is confirmed (or
+    // immediately, synchronously, for the create-a-synthetic-batch path,
+    // which goes through addBatch's existing fire-and-forget create — a
+    // create has no CAS/attribution concern the way an existing-doc delta
+    // does, so it wasn't part of this round's async rewrite).
+    function topUpOldest(productId, deficit, callback) {
+        if (!productId || !deficit || deficit <= 0) { if (callback) callback(); return }
         var ordered = forProduct(productId)
         if (ordered.length === 0) {
             // No batches at all — synthesize one labelled "Adjustment".
             addBatch(productId, "", deficit, 0, "Adjustment (drift repair)")
+            if (callback) callback()
             return
         }
         // Top up the newest batch — assumption: drift came from an unrecorded
         // restock or import, and the most recent supplier is the best guess.
         var newest = ordered[ordered.length - 1]
-        var before = Object.assign({}, newest)
-        var updated = Object.assign({}, newest, {
-            qtyReceived: (newest.qtyReceived || 0) + deficit,
-            qtyRemaining: (newest.qtyRemaining || 0) + deficit,
-            updatedAt: new Date().toISOString(),
-            note: (newest.note ? newest.note + " · " : "") + "drift +" + deficit
-        })
-        var next = []
-        for (var i = 0; i < batches.length; ++i)
-            next.push(batches[i].batchId === updated.batchId ? updated : batches[i])
-        batches = next
-        Gateway.recordMutation("stock_batch", updated.batchId, "update", before, updated)
-        console.warn("[StockBatchStore] Topped up batch", updated.batchId, "by", deficit,
-                     "to repair drift on product", productId)
+        // review round 2: this used to also splice a "drift +N" note onto
+        // the batch via the same write as the qty change. A delta call can
+        // only touch numeric fields (see Gateway.recordDelta/applyDelta),
+        // and a SEPARATE mutation call for just the note would reintroduce
+        // the exact same two-writes-racing-on-one-doc hazard this whole
+        // round is closing. The note was cosmetic (audit-trail-readable,
+        // not correctness-critical) — dropped rather than worked around.
+        Gateway.recordDelta("stock_batch", newest.batchId,
+            { qtyReceived: deficit, qtyRemaining: deficit }, {}, {},
+            function(result) {
+                if (result && result.ok) {
+                    var updated = Object.assign({}, newest, {
+                        qtyReceived: result.after.qtyReceived,
+                        qtyRemaining: result.after.qtyRemaining,
+                        updatedAt: new Date().toISOString()
+                    })
+                    var next = []
+                    for (var i = 0; i < batches.length; ++i)
+                        next.push(batches[i].batchId === updated.batchId ? updated : batches[i])
+                    batches = next
+                    console.warn("[StockBatchStore] Topped up batch", updated.batchId, "by", deficit,
+                                 "to repair drift on product", productId)
+                }
+                if (callback) callback()
+            })
     }
 
     // Inverse of consumeFifo: credit `qty` back onto a specific batch (used when
@@ -347,22 +399,36 @@ QtObject {
     // so a fully-consumed batch is still present and gets its qtyRemaining
     // restored. If the batch id can't be found (rare: ledger drift), fall back to
     // topUpOldest so stock isn't silently lost.
-    function restoreFifo(batchId, productId, qty) {
-        if (!qty || qty <= 0) return
+    //
+    // callback is optional. Every existing call site (C5's order-completion
+    // rollback, the partial-multi-line-completion fix, the returns flow) is a
+    // fire-and-forget best-effort repair that doesn't gate a user-facing
+    // decision the way consumeFifo's forward path does — no floor risk
+    // either (a restore is purely additive), so there's no correctness
+    // reason to make every rollback loop await each call before firing the
+    // next. Kept firing all N "in parallel" (immediately, one after another
+    // without waiting), same as before this round's rewrite.
+    function restoreFifo(batchId, productId, qty, callback) {
+        if (!qty || qty <= 0) { if (callback) callback(); return }
         var b = getById(batchId)
         if (!b) {
-            if (productId) topUpOldest(productId, qty)
+            if (productId) topUpOldest(productId, qty, callback)
+            else if (callback) callback()
             return
         }
-        var before = Object.assign({}, b)
-        var updated = Object.assign({}, b, {
-            qtyRemaining: (b.qtyRemaining || 0) + qty,
-            updatedAt: new Date().toISOString()
-        })
-        var next = []
-        for (var i = 0; i < batches.length; ++i)
-            next.push(batches[i].batchId === batchId ? updated : batches[i])
-        batches = next
-        Gateway.recordMutation("stock_batch", batchId, "update", before, updated)
+        Gateway.recordDelta("stock_batch", batchId, { qtyRemaining: qty }, {}, {},
+            function(result) {
+                if (result && result.ok) {
+                    var updated = Object.assign({}, b, {
+                        qtyRemaining: result.after.qtyRemaining,
+                        updatedAt: new Date().toISOString()
+                    })
+                    var next = []
+                    for (var i = 0; i < batches.length; ++i)
+                        next.push(batches[i].batchId === batchId ? updated : batches[i])
+                    batches = next
+                }
+                if (callback) callback()
+            })
     }
 }

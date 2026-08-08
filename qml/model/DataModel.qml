@@ -501,42 +501,54 @@ Item {
                 var pp = lines[j]
                 var qqty = _lineQty(pp)
                 var invP = _resolveInventory(pp)
-                var consumption = []
                 var line = {}
                 for (var k in pp) line[k] = pp[k]
 
                 if (invP && qqty > 0) {
-                    consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
-                    var consumed = _sumConsumed(consumption)
-                    // Drift guard: if batches couldn't satisfy the qty even
-                    // though product.stock said they should, top up the oldest
-                    // batch by the deficit and try again. Logged inside the
-                    // store; we only retry once because topUp guarantees enough.
-                    if (consumed < qqty) {
-                        StockBatchStore.topUpOldest(invP.productId, qqty - consumed)
-                        var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
-                        for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
-                    }
                     pending++
-                    InventoryStore.deductStock(invP.productId, qqty, function(result) {
-                        if (!result || !result.ok) {
-                            deltaFailed = true
-                            deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
-                                (invP.name + ": " + (result && result.error === "insufficient-quantity"
-                                    ? "stock ran out before this order could complete"
-                                    : "could not update stock — try again"))
-                        } else {
-                            succeededLines.push({ productId: invP.productId, qty: qqty })
+                    StockBatchStore.consumeFifo(invP.productId, qqty, function(fifoResult) {
+                        var consumption = fifoResult.consumption
+                        var shortfall = fifoResult.shortfall
+
+                        function _afterConsumption() {
+                            InventoryStore.deductStock(invP.productId, qqty, function(result) {
+                                if (!result || !result.ok) {
+                                    deltaFailed = true
+                                    deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
+                                        (invP.name + ": " + (result && result.error === "insufficient-quantity"
+                                            ? "stock ran out before this order could complete"
+                                            : "could not update stock — try again"))
+                                } else {
+                                    succeededLines.push({ productId: invP.productId, qty: qqty })
+                                }
+                                line.consumption = consumption
+                                linesWithConsumption[j] = line
+                                _oneResolved()
+                            }, false /* reject, don't clamp — round-4 decision for order completion */)
+                            console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
+                                        "across", consumption.length, "batch(es)")
                         }
-                        line.consumption = consumption
-                        linesWithConsumption[j] = line
-                        _oneResolved()
-                    }, false /* reject, don't clamp — round-4 decision for order completion */)
-                    console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
-                                "across", consumption.length, "batch(es)")
+
+                        if (shortfall > 0) {
+                            // Drift guard: batches couldn't satisfy the qty
+                            // even though product.stock said they should.
+                            // Top up the oldest batch by the deficit and try
+                            // once more — topUp guarantees enough, so a
+                            // single retry suffices.
+                            StockBatchStore.topUpOldest(invP.productId, shortfall, function() {
+                                StockBatchStore.consumeFifo(invP.productId, shortfall, function(retryResult) {
+                                    for (var r = 0; r < retryResult.consumption.length; ++r)
+                                        consumption.push(retryResult.consumption[r])
+                                    _afterConsumption()
+                                })
+                            })
+                        } else {
+                            _afterConsumption()
+                        }
+                    })
                 } else {
                     if (!invP) console.warn("[DataModel] Could not resolve line item to inventory:", JSON.stringify(pp))
-                    line.consumption = consumption
+                    line.consumption = []
                     linesWithConsumption[j] = line
                 }
             })(j)
@@ -553,52 +565,81 @@ Item {
     // the caller. The import flow (ImportPreviewDialog) calls this for each
     // freshly-added order whose status is "completed".
     //   returns { ok: bool, understocked: bool }
-    function completeImportedOrder(orderId) {
+    // review round 2: was synchronous (`return {ok, understocked}`) — its
+    // ImportPreviewDialog caller looped over every newly-completed imported
+    // order and used the return value immediately. consumeFifo's async
+    // rewrite forced this to become callback-based too. Mirrors
+    // adjustOrderForImport's existing precedent just below (already made
+    // async in round 4 of the original async-write-sequencing project) —
+    // same shape, not a new pattern for this file.
+    function completeImportedOrder(orderId, callback) {
         var o = OrdersStore.getById(orderId)
-        if (!o) return { ok: false, understocked: false }
+        if (!o) { if (callback) callback({ ok: false, understocked: false }); return }
         var understocked = false
         var linesWithConsumption = []
-        if (o.products && o.products.length > 0) {
-            for (var j = 0; j < o.products.length; ++j) {
-                var pp = o.products[j]
-                var qqty = _lineQty(pp)
-                var invP = _resolveInventory(pp)
-                var consumption = []
-                if (invP && qqty > 0) {
-                    if ((invP.stock || 0) < qqty) understocked = true
-                    consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
-                    var consumed = _sumConsumed(consumption)
-                    if (consumed < qqty) {
-                        StockBatchStore.topUpOldest(invP.productId, qqty - consumed)
-                        var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
-                        for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
-                    }
-                    // Fire-and-forget by design here (unlike _tryCompleteOrder):
-                    // this function's contract never branches on the deduction's
-                    // outcome — `understocked` is already decided above from the
-                    // pre-check, and clamp mode (not reject) means the delta is
-                    // never rejected anyway. Local products[] still gets the
-                    // authoritative post-deduction value once the callback runs.
-                    InventoryStore.deductStock(invP.productId, qqty, function(result) {
-                        if (!result || !result.ok)
-                            console.warn("[DataModel] completeImportedOrder: deductStock did not confirm", JSON.stringify(result))
-                    }, true /* clamp, don't reject — "complete + report shortfall" business rule */)
-                } else if (!invP) {
-                    console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
-                }
+        var products = o.products || []
+
+        function _finish() {
+            OrdersStore.updateOrder(orderId, {
+                products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
+            })
+            SalesStore.recordSale(o.total, o.items)
+            TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
+            _updateOrderInModel(orderId)
+            if (callback) callback({ ok: true, understocked: understocked })
+        }
+
+        var idx = 0
+        function _nextLine() {
+            if (idx >= products.length) { _finish(); return }
+            var pp = products[idx]
+            idx++
+            var qqty = _lineQty(pp)
+            var invP = _resolveInventory(pp)
+
+            function _pushLine(consumption) {
                 var line = {}
                 for (var k in pp) line[k] = pp[k]
                 line.consumption = consumption
                 linesWithConsumption.push(line)
+                _nextLine()
+            }
+
+            if (invP && qqty > 0) {
+                if ((invP.stock || 0) < qqty) understocked = true
+                StockBatchStore.consumeFifo(invP.productId, qqty, function(fifoResult) {
+                    var consumption = fifoResult.consumption
+                    function _afterConsumption() {
+                        // Fire-and-forget by design here (unlike
+                        // _tryCompleteOrder): this function's contract never
+                        // branches on the deduction's outcome —
+                        // `understocked` is already decided above from the
+                        // pre-check, and clamp mode (not reject) means the
+                        // delta is never rejected anyway.
+                        InventoryStore.deductStock(invP.productId, qqty, function(result) {
+                            if (!result || !result.ok)
+                                console.warn("[DataModel] completeImportedOrder: deductStock did not confirm", JSON.stringify(result))
+                        }, true /* clamp, don't reject — "complete + report shortfall" business rule */)
+                        _pushLine(consumption)
+                    }
+                    if (fifoResult.shortfall > 0) {
+                        StockBatchStore.topUpOldest(invP.productId, fifoResult.shortfall, function() {
+                            StockBatchStore.consumeFifo(invP.productId, fifoResult.shortfall, function(retryResult) {
+                                for (var r = 0; r < retryResult.consumption.length; ++r)
+                                    consumption.push(retryResult.consumption[r])
+                                _afterConsumption()
+                            })
+                        })
+                    } else {
+                        _afterConsumption()
+                    }
+                })
+            } else {
+                if (!invP) console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
+                _pushLine([])
             }
         }
-        OrdersStore.updateOrder(orderId, {
-            products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
-        })
-        SalesStore.recordSale(o.total, o.items)
-        TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
-        _updateOrderInModel(orderId)
-        return { ok: true, understocked: understocked }
+        _nextLine()
     }
 
     // Import-facing counterpart to onAdjustOrder's signal handler. The
@@ -655,14 +696,6 @@ Item {
                                           qty, reversed, "reopened", "restock",
                                           qsTr("Order reopened — sale reversed"))
         }
-    }
-
-    // Internal: total qty across an FIFO consumption result.
-    function _sumConsumed(consumption) {
-        var s = 0
-        if (!consumption) return 0
-        for (var i = 0; i < consumption.length; ++i) s += (consumption[i].qtyConsumed || 0)
-        return s
     }
 
     // Reverse/adjust a COMPLETED order's lines. Diffs the edited lines vs the
@@ -942,40 +975,52 @@ Item {
             if (d.addedQty > 0) {
                 var invA = InventoryStore.getById(d.productId)
                 if (invA) {
-                    var cons = StockBatchStore.consumeFifo(d.productId, d.addedQty)
-                    var consumed = _sumConsumed(cons)
-                    if (consumed < d.addedQty) {
-                        StockBatchStore.topUpOldest(d.productId, d.addedQty - consumed)
-                        var retry = StockBatchStore.consumeFifo(d.productId, d.addedQty - consumed)
-                        for (var rr = 0; rr < retry.length; ++rr) cons.push(retry[rr])
-                    }
-                    (function(dCaptured, invACaptured, consCaptured) {
+                    (function(dCaptured, invACaptured) {
                         pending++
-                        InventoryStore.deductStock(dCaptured.productId, dCaptured.addedQty, function(result) {
-                            if (!result || !result.ok) {
-                                deltaFailed = true
-                                deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
-                                    (dCaptured.name + ": " + (result && result.error === "insufficient-quantity"
-                                        ? "stock ran out before this exchange could complete"
-                                        : "could not update stock — try again"))
-                                // consCaptured already ran (consumeFifo/topUpOldest
-                                // above are synchronous, before this callback can
-                                // fire) and its writes already landed — undo them,
-                                // same fix and reasoning as _tryCompleteOrder above
-                                // (review finding C5, 2026-08-06). NOT pushing to
-                                // pendingAdditions already correctly keeps this
-                                // line's sale/refund impact out of _finishAdjustment;
-                                // this closes the matching gap on the batch ledger.
-                                for (var rci = 0; rci < consCaptured.length; ++rci) {
-                                    var rc2 = consCaptured[rci]
-                                    StockBatchStore.restoreFifo(rc2.batchId, dCaptured.productId, rc2.qtyConsumed)
-                                }
-                            } else {
-                                pendingAdditions.push({ d: dCaptured, invA: invACaptured, cons: consCaptured })
+                        StockBatchStore.consumeFifo(dCaptured.productId, dCaptured.addedQty, function(fifoResult) {
+                            var cons = fifoResult.consumption
+
+                            function _afterConsumption() {
+                                InventoryStore.deductStock(dCaptured.productId, dCaptured.addedQty, function(result) {
+                                    if (!result || !result.ok) {
+                                        deltaFailed = true
+                                        deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
+                                            (dCaptured.name + ": " + (result && result.error === "insufficient-quantity"
+                                                ? "stock ran out before this exchange could complete"
+                                                : "could not update stock — try again"))
+                                        // cons already landed on the server (the
+                                        // consumeFifo calls above already resolved,
+                                        // before this callback can fire) — undo it,
+                                        // same fix and reasoning as _tryCompleteOrder
+                                        // above (review finding C5, 2026-08-06). NOT
+                                        // pushing to pendingAdditions already
+                                        // correctly keeps this line's sale/refund
+                                        // impact out of _finishAdjustment; this
+                                        // closes the matching gap on the batch ledger.
+                                        for (var rci = 0; rci < cons.length; ++rci) {
+                                            var rc2 = cons[rci]
+                                            StockBatchStore.restoreFifo(rc2.batchId, dCaptured.productId, rc2.qtyConsumed)
+                                        }
+                                    } else {
+                                        pendingAdditions.push({ d: dCaptured, invA: invACaptured, cons: cons })
+                                    }
+                                    _oneResolved()
+                                }, false /* reject, matching this flow's own pre-check intent */)
                             }
-                            _oneResolved()
-                        }, false /* reject, matching this flow's own pre-check intent */)
-                    })(d, invA, cons)
+
+                            if (fifoResult.shortfall > 0) {
+                                StockBatchStore.topUpOldest(dCaptured.productId, fifoResult.shortfall, function() {
+                                    StockBatchStore.consumeFifo(dCaptured.productId, fifoResult.shortfall, function(retryResult) {
+                                        for (var rr = 0; rr < retryResult.consumption.length; ++rr)
+                                            cons.push(retryResult.consumption[rr])
+                                        _afterConsumption()
+                                    })
+                                })
+                            } else {
+                                _afterConsumption()
+                            }
+                        })
+                    })(d, invA)
                 }
             }
 
@@ -1020,10 +1065,15 @@ Item {
     function _reconcileBatchesForStockEdit(productId, oldStock, fieldsStock) {
         var d = StockReconcile.delta(oldStock, fieldsStock)
         if (d.action === "consume") {
-            // Drain oldest batches; if the ledger had drifted below product.stock
-            // and can't cover the decrease, that's fine — qtyRemaining floors at
-            // 0 and the remaining (already-missing) units simply aren't there.
-            StockBatchStore.consumeFifo(productId, d.qty)
+            // Drain oldest batches. If the ledger had drifted below
+            // product.stock and can't fully cover the decrease, that's
+            // fine — consumeFifo's per-batch floor rejects rather than
+            // partially applies (review round 2 async rewrite), so any
+            // shortfall here just means fewer batches got touched; the
+            // already-missing units simply aren't there to drain. Result
+            // ignored — this is a best-effort ledger reconciliation, not a
+            // decision any caller branches on.
+            StockBatchStore.consumeFifo(productId, d.qty, function() {})
         } else if (d.action === "topup") {
             StockBatchStore.topUpOldest(productId, d.qty)
         }

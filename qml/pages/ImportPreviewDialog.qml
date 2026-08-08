@@ -807,14 +807,28 @@ BottomSheet {
                 var updateOrderFields = counts.updatedOrderFields || []
                 // Map added orders back to their source records to check status.
                 // Newly-added records are those not skipped; match by resulting order.
-                for (var i = 0; i < addedIds.length; ++i) {
-                    var o = OrdersStore.getById(addedIds[i])
-                    if (!o || o.status !== "completed") continue
-                    if (dataModelRef) {
-                        var res = dataModelRef.completeImportedOrder(addedIds[i])
-                        if (res && res.understocked) understocked++
+                //
+                // review round 2: completeImportedOrder is no longer
+                // synchronous (StockBatchStore.consumeFifo's async rewrite
+                // forced it) — sequential, same reasoning as _nextAdjust
+                // just below: these orders can share products.
+                var aiIdx = 0
+                function _nextComplete() {
+                    if (aiIdx >= addedIds.length) {
+                        _afterCompletions()
+                        return
                     }
+                    var addedId = addedIds[aiIdx]
+                    aiIdx++
+                    var o = OrdersStore.getById(addedId)
+                    if (!o || o.status !== "completed" || !dataModelRef) { _nextComplete(); return }
+                    dataModelRef.completeImportedOrder(addedId, function(res) {
+                        if (res && res.understocked) understocked++
+                        _nextComplete()
+                    })
                 }
+
+                function _afterCompletions() {
                 // Envelope fields (contact/date/notes/channel, and products
                 // for a non-completed order) always update, regardless of
                 // status — this is the general field-update path, not the
@@ -855,6 +869,8 @@ BottomSheet {
                     }
                 }
                 _nextAdjust()
+                }
+                _nextComplete()
             })
         }
     }
