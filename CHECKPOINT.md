@@ -1,139 +1,151 @@
-# Session Checkpoint — Implementing async-write-sequencing review fixes
+# Session Checkpoint — End-to-end testing strategy (brainstorm)
 
-**Started:** 2026-08-06 (implementation phase, same day as the review)
-**Branch:** `fix/async-write-sequencing-review-fixes` (off `docs/async-write-sequencing-design` at
-`b51779b` — same fork point as the separate `review/async-write-sequencing-audit` branch, which
-holds the review document itself; the two are siblings, not ancestor/descendant, so this branch
-needed its own copy of the stale-checkpoint archival — done as the first step below).
-**Review doc:** `docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md` (on the
-sibling review branch — not present in this branch's history yet; referenced from memory/the
-conversation, not re-derived).
-**Skills used:** `qt-development-skills:qt-qml`, `ponytail:ponytail`,
-`superpowers:systematic-debugging`, per Taher's explicit instruction for this phase.
-**Status:** 6 of 8 Critical fixes done, verified, and committed locally. Not pushed — no PAT
-provided this phase (the one from the review-push round was explicitly being rotated by Taher).
+**Started:** 2026-08-09
+**Branch:** `docs/e2e-testing-strategy-design` (new, off `main` @ `a749525`)
+**Status:** Brainstorming in progress. No design proposed yet — still gathering context and
+requirements from Taher.
+
+## Goal (as stated by Taher)
+
+Existing test layers (QML `tst_*.qml` via qmltestrunner, Cloud Functions logic tests via
+`node --test`, Firestore rules tests via emulator) run in isolation. Taher wants to know if we
+can run **full scenario end-to-end tests** — real code path (Stores → Gateway → FirebaseService
+→ actual persistence layer), executed against every PR build — that exercise actual
+add/update/delete workflows and validate the resulting state.
 
 ## Step log
 
-1. Archived the stale root `CHECKPOINT.md` (left over from `ci/github-actions-pr-checks`, same
-   file the review branch already archived — this branch just hadn't seen that commit) to
-   `docs/superpowers/specs/2026-07-31-github-actions-pr-checks-CHECKPOINT.md`.
-2. Confirmed `functions/` test baseline for real: `node --test` → 87/87 green, before any changes.
-   (`functions/lib/`'s files have zero external `require`s beyond Node built-ins, so this runs with
-   no `npm install` needed and no Qt dependency — genuine automated verification available here,
-   unlike the QML side.)
-3. **C8 fixed + committed** (`856eab3`): removed debug `console.log`s in `gatewayLogic.js`
-   (`applyMutation`) and `index.js` (`recordMutation` handler) that dumped full before/after
-   document contents on every mutation. Verified: `node --test` still 87/87 after.
-4. **C1 fixed + committed** (`70939af`): `OrdersStore._normalizeOrder` was reading
-   `inv.consumption` (product/inventory record, no such field) instead of `lp.consumption` (the
-   order line itself) — introduced in `b51779b` while consolidating two duplicate
-   `_normalizeOrder` functions. Wiped FIFO lineage on every order, crashed on any line whose
-   product is deleted/missing. Root-caused and fix-verified via a throwaway Node repro (both
-   failure modes reproduced pre-fix, both resolved post-fix). Added 2 new regression tests to
-   `tests/tst_OrdersStore_normalization.qml` (the existing test only caught the crash by accident,
-   via an unseeded `InventoryStore`, not by design — now explicit).
-5. **C2 fixed + committed** (`7d83500`, amended once — see process note below): `firestore.rules`
-   never got the `locks/**` lockdown the design doc's Component 2 requires. Added a new
-   `isServerOnlyCollection` tier distinct from the existing `isLedgerCollection` tier (locks needs
-   BOTH read and write denied, unlike the readable-but-write-locked ledger tier — and the generic
-   fallback's `allow read` line needed its own carve-out since it isn't gated by
-   `isLedgerCollection` at all). Added test coverage to `test/firestore.rules.test.js` — unrunnable
-   in this sandbox (no Firebase emulator network access), same status as the rest of that file.
-   Needs an actual rules deploy to take effect; deliberately not run here.
-6. **C7 fixed + committed** (`cc6152c`): deleted the dead `OrdersStore.approveAllPending()` /
-   `Logic.approveAllPending` signal / `DataModel.onApproveAllPending` handler entirely (confirmed
-   dead via full-repo grep — nothing ever emitted the signal). Ponytail-aligned decision: delete
-   rather than guard, since it had no live caller and the near-identical name to the real
-   `OrdersPage._approveAllPending()` was a standing invitation for a future mis-wire. Also fixed 4
-   now-stale comments elsewhere that cited the deleted function as their example of a
-   `Gateway.recordMutations` batch caller.
-7. **C6 fixed + committed** (`a9ef462`): `LockManager._classifyAcquireResponse` didn't check HTTP
-   status at all — every well-formed `{ok:false}` body was classified `"denied"`, so a
-   400/401/403/500 (auth/request/server problems, none of which mean "someone else holds this
-   lock") showed the user a fabricated "someone else is editing this." Now only `status === 409`
-   is `"denied"`; everything else well-formed-but-not-ok is `"error"`, matching
-   `_classifyDeltaResponse`'s already-fixed reasoning on the delta path. Also added
-   `AuthService.ensureFreshToken()` to `acquire()`, matching every other Gateway call that touches
-   auth-sensitive endpoints. Verified all 8 cases (4 pre-existing + 4 new) via Node repro before
-   editing the QML file; added the 4 new ones as real tests in `tst_LockManager.qml`.
-8. **C5 fixed + committed** (`e2814b5`): `StockBatchStore.consumeFifo`/`topUpOldest` run
-   synchronously and unconditionally before the corresponding `InventoryStore.deductStock` delta
-   resolves, in both `_tryCompleteOrder` and `_tryAdjustOrder`'s added-units path — on rejection,
-   the FIFO batches stayed decremented for units no completed sale/exchange accounts for. Fixed by
-   calling `StockBatchStore.restoreFifo` on every already-touched batch when `deltaFailed`, in both
-   functions (same structural pattern in both, confirmed via the checkpoint's own note that
-   `_tryAdjustOrder` was modeled on `_tryCompleteOrder`). Verified via a Node simulation of a
-   two-line order where one line's `consumeFifo` already ran before the other line's delta gets
-   rejected — confirms full restoration to pre-order batch quantities.
-   **Flagged, not fixed:** an adjacent gap where one line's successful delta stays applied when a
-   sibling line's delta fails (partial-completion inconsistency beyond FIFO) — needs a
-   compensating delta call, bigger than C5's scope. Left for Taher's call, not silently expanded
-   into or ignored.
-9. While investigating C4 (restock → recordDelta), found `InventoryStore.creditStockNoBatch`
-   (used by the returns flow) has the identical bug to `restock` — computes stock locally, sends
-   via plain `recordMutation`. Flagged to Taher as a scope question rather than silently folding it
-   in or ignoring it. **Not yet resolved — waiting on Taher's answer before touching C4.**
+1. Cloned `InventoryManagerUI` fresh from `https://github.com/lkdigitalworks-53/InventoryManagerUI.git`
+   (cloned cleanly over HTTPS, no PAT needed for the clone itself this session).
+2. Archived stale root `CHECKPOINT.md` (workspace-name-edit session, merged to main in
+   `a749525` on 2026-08-04) to
+   `docs/superpowers/specs/2026-08-04-workspace-name-edit-CHECKPOINT.md`.
+3. Created branch `docs/e2e-testing-strategy-design` off `main` (following the existing
+   `docs/<topic>-design` naming convention used for design-only branches, e.g.
+   `docs/async-write-sequencing-design`).
+4. Explored current test/CI architecture — key findings that will shape the design options:
+   - **`.github/workflows/checks.yml`** runs 3 independent jobs per PR: `qml-tests`
+     (qmltestrunner, offscreen), `functions-tests` (`node --test` on `functions/`),
+     `firestore-rules-tests` (**already uses the real Firebase emulator** via
+     `firebase emulators:exec --only firestore`).
+   - **`firebase.json`** only configures the **firestore** emulator (port 8080). No `auth` or
+     `functions` emulator block exists yet.
+   - **`qml/model/FirebaseService.qml`**: `databaseUrl` is hardcoded to
+     `https://firestore.googleapis.com/v1/projects/<id>/databases/<dbId>/documents` — only the
+     *database id* (`(default)`/`test`/`dev1`) is switchable; the **host is always real Google
+     Firestore**, never a local emulator.
+   - **`qml/model/AuthService.qml`**: `authBaseUrl`/`tokenBaseUrl` are hardcoded to real
+     `identitytoolkit.googleapis.com` / `securetoken.googleapis.com` — no auth-emulator support.
+   - **`qml/model/Gateway.qml`**'s `_send`/`_sendBatch` XHR straight to a live Cloud Functions
+     URL; `tests/tst_Gateway.qml`'s own header comment explicitly flags this as a known gap:
+     *"A real mock-HTTP layer to test `_send`/`_sendBatch`'s actual request/response handling
+     would need new test infrastructure this session didn't build."*
+   - **Cloud Functions** (`functions/index.js`) are all `functions.onRequest` (plain HTTP), not
+     `onCall` — reachable by the emulator's normal HTTP endpoint shape, no special SDK needed
+     client-side.
+   - Existing `tests/tst_*.qml` are component/unit-level (pure-logic `.pragma library` helpers,
+     or a single Store/singleton with network calls carefully avoided via guards) — **none
+     currently launch the full app or drive a multi-step business workflow.**
+   - `test/firestore.rules.test.js` carries a note that **this sandbox (Claude's container)
+     has no network egress to Firebase's emulator distribution** — rules tests are written here
+     but verified in CI/on Taher's machine, not in-session. This constrains how much of any new
+     E2E harness we can *actually run* in-session vs. author-and-hand-off.
 
-## Process note — a real mistake, caught and fixed
+## Open questions / not yet decided
 
-Mid-session, a `git commit -m "..."` message containing a backtick-wrapped inline command mention
-(`` `firebase deploy --only firestore:rules` ``) triggered actual bash command substitution — bash
-interprets backticks inside double-quoted strings regardless of markdown intent. Harmless this time
-only because `firebase` isn't installed in this sandbox (got "command not found," empty output
-silently substituted in, corrupting that part of the message). Amended the commit immediately with
-corrected text. **Lesson applied for the rest of this session:** no backticks in `-m "..."` commit
-messages; use single quotes for inline command mentions instead.
+- Whether "E2E" means driving the full UI (qmltestrunner mouse/key events through real screens)
+  vs. driving Store/Gateway methods directly against emulated backends (no UI, but real
+  network round-trip through Gateway → Functions emulator → Firestore emulator).
+- Whether to add emulator-host overrides to `FirebaseService.qml`/`AuthService.qml` (build-time
+  flag vs. env var vs. new `EnvConfig` stage) and the security/footgun implications of that.
+- CI cost/time budget for a 4th job (or extending an existing one) that boots the full emulator
+  suite (firestore + auth + functions) — every PR, per Taher's ask.
+- Scope for a first slice: pick 1 representative scenario (e.g. create order → deduct stock →
+  complete order) vs. broad coverage from day one.
 
-## Open decisions, waiting on Taher (not proceeding further without them)
+## Trade-off investigation (round 1)
 
-1. ~~**C4 scope**~~ — RESOLVED: Taher said fold `creditStockNoBatch` in. Done (`49e498f`).
-2. ~~**C3 scope**~~ — RESOLVED: Taher said all 5 stores. Done (`5230af8`, `6c24418`).
+Taher asked for trade-offs before picking a driving layer. Two more critical findings that
+shape the whole design space:
 
-## C3 and C4 — both done, verified, committed
+- **`qml/Main.qml`** is a Felgo `App { }` root (`import Felgo`, `licenseKey: "..."`,
+  `CMakeLists.txt` does `find_package(Felgo REQUIRED)`). Current CI (`checks.yml`) installs
+  **plain Qt** via `jurplel/install-qt-action` — **no Felgo SDK at all**. So `qmltestrunner`
+  cannot load `Main.qml` in CI today, license question aside.
+- Only 5/95 `.qml` files `import Felgo` directly (`Main.qml`, `Constants.qml`,
+  `CustomeTheme.qml`, `Icon.qml`, `PhotoSourceSheet.qml`) — but business dialogs like
+  `NewOrderDialog.qml` transitively depend on Felgo's global `dp()`/`sp()` functions and the
+  `Constants` singleton **77 times in that one file alone**, via `import "../helper"`. So even
+  component-level instantiation of a single dialog (no `App` root, no license) likely still
+  needs the Felgo plugin registered — **unverified, flagged as a spike item**.
+- Confirmed via `grep -h "^import" tests/*.qml`: **every existing test imports only pure JS
+  helpers or `qml/model`** (plain `QtObject` singletons, Felgo-free). **Zero** existing tests
+  touch `qml/pages` or `qml/components` — the dialog/UI layer has **never** been under
+  automated test, and that's exactly the layer the positional-index bug (memory: `NewOrderDialog`
+  and `OrderDetailDialog`) lived in.
 
-**C4** (`49e498f`): converted `restock()` and `creditStockNoBatch()` (folded in per Taher's
-decision) to `recordDelta`. Local `products[]` now updates only on server confirmation, matching
-`deductStock`'s already-correct pattern. Verified end-to-end against the real, unmodified
-`applyDelta` (pure-addition delta, empty floors/clamps applies correctly, is idempotent, stacks
-correctly with a second genuine addition) plus a full `functions/` suite re-run (87/87).
+**Two independent axes on the table:**
+1. **Driving layer** — service-level (Store/Gateway methods, no UI) vs. component-level UI
+   (instantiate real dialog QML, simulate clicks — Felgo-dependency unverified) vs. full-app UI
+   (Main.qml through Felgo's `App` root — confirmed needs new CI infra, possibly licensing).
+2. **Backend target** — local Firebase Emulator Suite (extend `firebase.json`, matches the
+   precedent already set by `firestore-rules-tests`) vs. the real cloud `test` Firestore
+   database (no new emulator infra, but real latency, shared mutable state across concurrent PR
+   runs, no free reset).
 
-**C3** (`5230af8` + `6c24418`, two commits): the largest remaining piece.
-- Part 1: added `Gateway.mutationConflicted(entity, entityId, current)` signal and a new pure
-  `_parseMutationConflict(status, responseText)` helper. Deliberately narrow, not a full
-  status-classification rewrite like C6's: only the specific `409 + conflict:true` shape gets
-  special handling (drop, don't retry, emit signal) — every other non-2xx keeps using the existing
-  retry path unchanged, since those might genuinely resolve on retry where a real conflict never
-  will. Scope decision made and explained, not silently applied: `_sendBatch` does NOT get the
-  same treatment, since `batchMutationLogic.js` has no CAS check at all (review finding I1) — a
-  conflict check there would be untestable, unreachable code. Verified via Node repro (6 cases)
-  before touching the QML file; added as real tests in `tst_Gateway.qml`. Also fixed an unrelated
-  stale test found as a byproduct (`test_mode_defaults_to_direct` asserted the wrong default).
-- Part 2: wired all 5 stores (`OrdersStore`/`InventoryStore`/`StaffStore`/`SupplierStore`/
-  `StockBatchStore`) to the signal, per Taher's "all five" decision. Each reconciles its local
-  cache using the same normalize function its own sync already uses (or raw splice for
-  `StaffStore`, which has no normalize step, matching its own existing convention). Four show a
-  `Toast`; `StockBatchStore` deliberately doesn't (explained in its own comment — batch writes are
-  an internal side effect of an action the user already got feedback on elsewhere). Verified the
-  shared find/replace/append/remove logic via a 4-case Node simulation. Not added, flagged as a
-  reasonable follow-up: dedicated QML-level tests for these 5 handlers specifically.
+**My leaning (not yet proposed as a decision):** local Emulator Suite as backend (free, fast,
+hermetic, matches existing precedent) + a two-tier driving strategy — broad service-level
+integration coverage as the default, plus a small number of targeted component-level UI tests
+for the specific dialogs where the known bug class lives, contingent on the Felgo-headless spike
+passing. Full `Main.qml`/App-root automation explicitly NOT the default given the confirmed CI
+cost — parked as a possible later phase.
 
-**All 8 Critical findings from the 2026-08-06 review are now fixed.** Pushed to origin as of
-`6c24418`.
+## Correction after deeper read (round 2) — Gateway mode is NOT "direct" today
 
-## Documentation updated (standing rule: update skills/agent/readme after completing work)
+Checked `Gateway.qml` source directly rather than trusting `tests/tst_Gateway.qml`'s comments:
 
-`SKILLS.md` Skill 36, `README.md`'s Concurrency & Conflict Resolution section, and `AGENTS.md`'s
-Compliance & Audit Agent cross-reference all updated to reflect the actual current state — see
-commit `40873ae` for the full rationale. Each doc now explicitly lists what's still genuinely open
-(StockBatchStore's FIFO functions still on `recordMutation`, `recordMutationsBatch` still has no
-CAS, bulk-approve still doesn't lock, `ConfirmReturnSheet`'s lock-span gap, the partial-multi-line
-gap found during C5) so nothing is silently implied as more finished than it is.
+- **`property string mode: "gateway"`** is the actual declared default in `Gateway.qml` — not
+  `"direct"`. The file's own header comment (`"direct" — DEFAULT...`) and
+  `tests/tst_Gateway.qml`'s `test_mode_defaults_to_direct()` assertion are both **stale** —
+  written for an earlier state of the code, before mode was flipped to `"gateway"` in production
+  (matches memory: locking was wired into 3 dialogs, `LockManager` shipped). **This is a real,
+  currently-undetected gap in the existing suite** — worth flagging to Taher separately from
+  this session's scope, since it's exactly the "tests giving false confidence" problem he's
+  worried about, caught by inspection rather than by the tests themselves.
+- Confirmed via `InventoryStore.addProduct()`: the store does an in-memory optimistic update
+  (`products = arr`) then calls `Gateway.recordMutation(...)` — it **never** calls
+  `FirebaseService.put()` itself for the working doc. In `"gateway"` mode, the actual Firestore
+  write happens **inside the `recordMutation` Cloud Function** (POST to a hardcoded
+  `https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation`, Bearer
+  `idToken`).
+- **Revised Phase-1 scope implication:** the Inventory CRUD pilot needs the **Functions
+  emulator**, not just Firestore — `Gateway.functionUrl` is a third hardcoded-to-production URL
+  needing an emulator-host override, alongside `FirebaseService.databaseUrl`.
+- Auth: still likely avoidable as a full running emulator if the Functions emulator's Admin SDK
+  is started with `FIREBASE_AUTH_EMULATOR_HOST` set — Cloud Functions' `verifyIdToken()` accepts
+  unsigned emulator-format tokens in that mode. **Not fully verified** — flagged as a spike item
+  for the Phase 1 plan, not asserted as fact.
 
-## Session status: implementation complete
+## Next step
 
-All 8 Critical fixes (C1–C8) done, verified (real test runs where possible — `functions/`'s 87/87
-suite and the real `applyDelta`/`applyMutation` server-side logic directly; Node-simulated repros
-for every QML-side pure-logic change, since no Qt toolchain exists in this sandbox), committed, and
-pushed. Documentation updated to match. 5 Important findings (I1–I5) from the review remain
-unaddressed — not asked for this round, tracked in the docs above for a future session.
+Ask Taher how he wants the emulator-host override wired (env var at runtime vs. build-time
+CMake/EnvConfig stage vs. qmltestrunner-only), and whether the stale `Gateway.mode` test should
+be fixed now as a quick aside or logged and left for later.
+
+## Aside: fixed the stale Gateway.mode test (Taher: "fix it now, quickly")
+
+- `Gateway.qml`'s header comment and inline property comment both still said `"direct"` was the
+  default/deployed-safe mode. Confirmed via `git log -p` that commit `649046d fix(gateway):
+  change mode from "direct" to "gateway" for compliance with Cloud Function deployment`
+  deliberately flipped it — not accidental drift. Updated both comments to reflect reality.
+- `tests/tst_Gateway.qml`'s `test_mode_defaults_to_direct()` asserted `Gateway.mode === "direct"`
+  and had been passing — but it's structurally incapable of testing what it claims: `init()` runs
+  before every test function and unconditionally sets `Gateway.mode = "direct"`, so the test
+  never observes the singleton's true declared value. It went stale after `649046d` without ever
+  failing. Removed it and left a comment explaining why (and that this is exactly the class of
+  gap the E2E work is meant to close — an integration/E2E check, not a per-case-reset unit test,
+  is the right place to verify a real deployed default).
+- Diff reviewed with Taher and approved. Two commits planned: (1) checkpoint housekeeping,
+  (2) the Gateway.qml/tst_Gateway.qml fix. Push pending — PAT provided in conversation, used
+  directly in the push URL only, not stored in git config.
+>>>>>>> e80eae4 (chore: archive stale checkpoint, start e2e-testing-strategy session)
