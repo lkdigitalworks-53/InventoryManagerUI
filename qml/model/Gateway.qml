@@ -383,16 +383,33 @@ QtObject {
         }))
     }
 
+    // Detects a CAS-conflict response from applyMutationsBatch (review I1,
+    // added this round now that the batch path has a CAS check at all).
+    // Different response shape from _parseMutationConflict above by
+    // necessity — a batch can have MULTIPLE conflicting items in one
+    // response, not just one, so it's `conflicts: [{entityId, current}]`
+    // rather than a single `current`. Pure function, no XHR — unit-
+    // testable, see tst_Gateway.qml.
+    function _parseBatchMutationConflict(status, responseText) {
+        if (status !== 409) return { isConflict: false, conflicts: [] }
+        var body = null
+        try { body = JSON.parse(responseText) } catch (e) { return { isConflict: false, conflicts: [] } }
+        if (!body || !Array.isArray(body.conflicts) || body.conflicts.length === 0)
+            return { isConflict: false, conflicts: [] }
+        return { isConflict: true, conflicts: body.conflicts }
+    }
+
     // Batch counterpart of _send — one outbox item, one HTTP call, whatever
     // its `items` count. Same success/failure/backoff handling as _send.
     //
-    // Deliberately NOT given the same conflict handling as _send above:
-    // functions/lib/batchMutationLogic.js's applyMutationsBatch has no CAS
-    // check at all (confirmed 2026-08-06 review, finding I1) — it can never
-    // actually return a 409 conflict today, so there is nothing for a
-    // conflict check here to catch yet. Adding one now would be untestable,
-    // unreachable code. Revisit once I1 is fixed (CAS extended to the batch
-    // path, or explicitly documented as exempt).
+    // Conflict handling (review I1, filled in this round — see
+    // _parseBatchMutationConflict's comment for the response-shape
+    // difference from _send's). Same reasoning as _send: a genuine
+    // conflict can never resolve on retry, so drop without retrying
+    // (markSent) rather than markFailed. Fires the EXISTING
+    // mutationConflicted signal once per conflicting item — every store is
+    // already wired to it from the single-item C3 fix, so a batch conflict
+    // reconciles through the exact same path with zero new store-side code.
     function _sendBatch(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             OutboxStore.clearInFlight(item)
@@ -407,9 +424,19 @@ QtObject {
             if (ok) {
                 OutboxStore.markSent(item.requestId)
             } else {
-                console.warn("[Gateway] recordMutationsBatch failed", xhr.status,
-                             item.entity, item.items.length, xhr.responseText)
-                OutboxStore.markFailed(item.requestId)
+                var conflict = _parseBatchMutationConflict(xhr.status, xhr.responseText)
+                if (conflict.isConflict) {
+                    console.warn("[Gateway] recordMutationsBatch conflict — dropping stale batch, notifying stores",
+                                 item.entity, conflict.conflicts.length, "of", item.items.length, "item(s) conflicted")
+                    OutboxStore.markSent(item.requestId)
+                    for (var i = 0; i < conflict.conflicts.length; ++i) {
+                        mutationConflicted(item.entity, conflict.conflicts[i].entityId, conflict.conflicts[i].current)
+                    }
+                } else {
+                    console.warn("[Gateway] recordMutationsBatch failed", xhr.status,
+                                 item.entity, item.items.length, xhr.responseText)
+                    OutboxStore.markFailed(item.requestId)
+                }
             }
             OutboxStore.clearInFlight(item)
             _reschedule()

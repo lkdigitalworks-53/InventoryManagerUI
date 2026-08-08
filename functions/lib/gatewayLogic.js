@@ -238,5 +238,6 @@ module.exports = {
     validateMutationRequest,
     validateDeltaRequest,
     applyMutation,
-    applyDelta
+    applyDelta,
+    _deepEqual
 };

@@ -262,4 +262,49 @@ TestCase {
         compare(Gateway._parseMutationConflict(409, "not json{{{").isConflict, false)
         compare(Gateway._parseMutationConflict(404, "").isConflict, false)
     }
+
+    // ── _parseBatchMutationConflict (review finding I1) ──────────────────────
+    // _sendBatch had NO conflict handling at all before this round — deliberately
+    // so, per its own prior comment: applyMutationsBatch had no CAS check yet,
+    // so a 409 conflict was unreachable. Now that it's reachable (I1's Cloud
+    // Function fix), this is the client-side half.
+
+    function test_parseBatchMutationConflict_recognizes_a_genuine_conflict() {
+        var body = JSON.stringify({
+            ok: false, error: "conflict",
+            conflicts: [{ entityId: "order-1", current: { status: "shipped" } }]
+        })
+        var result = Gateway._parseBatchMutationConflict(409, body)
+        compare(result.isConflict, true)
+        compare(result.conflicts.length, 1)
+        compare(result.conflicts[0].entityId, "order-1")
+    }
+
+    function test_parseBatchMutationConflict_reports_every_conflicting_item() {
+        var body = JSON.stringify({
+            ok: false, error: "conflict",
+            conflicts: [
+                { entityId: "order-1", current: { status: "shipped" } },
+                { entityId: "order-2", current: { status: "cancelled" } }
+            ]
+        })
+        var result = Gateway._parseBatchMutationConflict(409, body)
+        compare(result.conflicts.length, 2)
+    }
+
+    function test_parseBatchMutationConflict_ignores_a_409_without_conflicts() {
+        var result = Gateway._parseBatchMutationConflict(409, JSON.stringify({ ok: false, error: "some-other-409-reason" }))
+        compare(result.isConflict, false)
+    }
+
+    function test_parseBatchMutationConflict_ignores_non_409_statuses() {
+        compare(Gateway._parseBatchMutationConflict(400, JSON.stringify({ ok: false, error: "missing-fields" })).isConflict, false)
+        compare(Gateway._parseBatchMutationConflict(500, JSON.stringify({ ok: false, error: "write-failed" })).isConflict, false)
+    }
+
+    function test_parseBatchMutationConflict_handles_a_malformed_or_empty_body_safely() {
+        compare(Gateway._parseBatchMutationConflict(409, "").isConflict, false)
+        compare(Gateway._parseBatchMutationConflict(409, "not json{{{").isConflict, false)
+        compare(Gateway._parseBatchMutationConflict(409, JSON.stringify({ ok: false, conflicts: [] })).isConflict, false)
+    }
 }
