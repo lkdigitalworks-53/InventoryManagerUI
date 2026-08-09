@@ -163,3 +163,47 @@ spec → review → plan → review → implement sequence — writing the spec 
 
 Get Taher's sign-off on the spec doc itself (he approved the design conversationally; the
 written doc should still get an explicit look), then write the implementation plan.
+
+## Implementation plan written
+
+Taher said "go ahead with implementation plan and execution" — proceeded per the
+`superpowers:writing-plans` skill. Deep-dived the actual code (not just the spec's assumptions)
+while drafting, which surfaced real refinements worth tracking:
+
+- **`Gateway.qml` needs zero code changes** — its Cloud Function URLs (`functionUrl` etc.) are
+  already plain mutable `property string`, not computed/readonly like `FirebaseService.databaseUrl`
+  was. A test can set `Gateway.functionUrl` directly. This is a real, evidence-based deviation
+  from the spec's Component 2 (which proposed an `emulatorHost` property on both files) — flagged
+  explicitly, not silently applied.
+- Traced `InventoryStore.addProduct()`'s full call chain: `_resolveSupplierId` (sync if the
+  supplier name is already known — seeded so the pilot stays inventory-only) →
+  `nextProductId`/`FirebaseService.mintCounterValue` (direct Firestore write, bypasses Gateway) →
+  `Gateway.recordMutation` (the actual audited write, via the emulated `recordMutation` Cloud
+  Function).
+- Confirmed `FirebaseService._resolvePath` auto-prefixes non-`tenants/`/`users/` paths with
+  `tenants/{AuthStore.tenantId}/` — so `counters/products` actually lands at
+  `tenants/{tenantId}/counters/products`, which the existing `firestore.rules`' generic
+  `match /{collection}/{docId}` fallback covers. No rules gap.
+- Confirmed `_request()` defaults its Bearer header to `AuthStore.idToken` when no explicit token
+  is passed — one seeded ID token covers both the direct Firestore emulator calls and the
+  Gateway/Functions-emulator call.
+- Designed the auth-token hand-off: `test/e2e/seed.js` (Admin SDK) creates an emulator Auth user,
+  mints a custom token, exchanges it for a real ID token via the Auth emulator's
+  `identitytoolkit`-compatible REST endpoint, and writes it (with `uid`/`tenantId`/supplier ids)
+  to a generated `test/e2e/.fixture.json` that the QML test reads via a synchronous `file://` XHR
+  — the standard QtTest fixture-loading idiom.
+- Verified `firebase-admin@14.2.0` resolves from this sandbox's npm registry access (not
+  previously a root dependency) — will be added for real in Task 3.
+
+Plan saved to `docs/superpowers/plans/2026-08-09-e2e-testing-phase1.md`. Five tasks: (1)
+`firebase.json` emulator blocks, (2) `FirebaseService.emulatorHost`, (3) `test/e2e/seed.js`, (4)
+`tests/e2e/tst_InventoryE2E.qml`, (5) the `e2e-tests` CI job. Everything up through Task 4 is
+static/unverifiable-in-sandbox by construction — this environment cannot reach the Firebase
+emulator distribution — so the plan's real correctness test is Task 5's first CI run.
+
+## Next step
+
+Commit+push the plan doc, then begin executing tasks in order (inline in this session — no
+subagent dispatch tool is available in this chat interface, so `superpowers:executing-plans`
+rather than `superpowers:subagent-driven-development`), one commit per task, confirming the diff
+with Taher before each commit per his standing rule.
