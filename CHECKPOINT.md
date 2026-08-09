@@ -2,8 +2,9 @@
 
 **Started:** 2026-08-09
 **Branch:** `docs/e2e-testing-strategy-design` (new, off `main` @ `a749525`)
-**Status:** Brainstorming in progress. No design proposed yet — still gathering context and
-requirements from Taher.
+**Status:** Phase 1 design approved by Taher; spec written to
+`docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md` and pushed. Awaiting Taher's
+review of the written spec before an implementation plan is written.
 
 ## Goal (as stated by Taher)
 
@@ -126,12 +127,6 @@ Checked `Gateway.qml` source directly rather than trusting `tests/tst_Gateway.qm
   unsigned emulator-format tokens in that mode. **Not fully verified** — flagged as a spike item
   for the Phase 1 plan, not asserted as fact.
 
-## Next step
-
-Ask Taher how he wants the emulator-host override wired (env var at runtime vs. build-time
-CMake/EnvConfig stage vs. qmltestrunner-only), and whether the stale `Gateway.mode` test should
-be fixed now as a quick aside or logged and left for later.
-
 ## Aside: fixed the stale Gateway.mode test (Taher: "fix it now, quickly")
 
 - `Gateway.qml`'s header comment and inline property comment both still said `"direct"` was the
@@ -145,7 +140,26 @@ be fixed now as a quick aside or logged and left for later.
   failing. Removed it and left a comment explaining why (and that this is exactly the class of
   gap the E2E work is meant to close — an integration/E2E check, not a per-case-reset unit test,
   is the right place to verify a real deployed default).
-- Diff reviewed with Taher and approved. Two commits planned: (1) checkpoint housekeeping,
-  (2) the Gateway.qml/tst_Gateway.qml fix. Push pending — PAT provided in conversation, used
-  directly in the push URL only, not stored in git config.
->>>>>>> e80eae4 (chore: archive stale checkpoint, start e2e-testing-strategy session)
+- Diff reviewed with Taher and approved. Committed as two commits: `e80eae4` (checkpoint
+  housekeeping) and `6f00e1f` (the Gateway.qml/tst_Gateway.qml fix). Pushed to
+  `docs/e2e-testing-strategy-design` using a PAT Taher supplied in-conversation, passed directly
+  in the push URL only (never stored in git config / `origin`). Taher will regenerate the PAT
+  after this feature is fully complete, not after each push, by his own choice this session.
+
+## Design approved, spec written
+
+Taher approved the Phase 1 design (emulator infra, `emulatorHost` QML override, Node seed
+script, new `e2e-tests` CI job, Inventory CRUD pilot) as presented, with one on-the-fly
+correction: the emulator-host override is a plain settable QML property, not any of the three
+mechanisms I originally offered as multiple-choice options (runtime env var / new EnvConfig
+build stage / test-only) — simpler and lower-risk than all three, since qmltestrunner doesn't go
+through `main.cpp` and no CMake/Felgo-license surface needs touching.
+
+Spec written to `docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md`. Status: Draft,
+awaiting Taher's review of the doc itself before an implementation plan is written (per the usual
+spec → review → plan → review → implement sequence — writing the spec is not implementation).
+
+## Next step
+
+Get Taher's sign-off on the spec doc itself (he approved the design conversationally; the
+written doc should still get an explicit look), then write the implementation plan.
