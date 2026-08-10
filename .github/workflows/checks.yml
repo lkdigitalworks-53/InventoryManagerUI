@@ -165,6 +165,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_FORCE_STDERR_LOGGING: 1
           QT_LOGGING_TO_CONSOLE: 1
+          QML_XHR_ALLOW_FILE_READ: 1
         run: |
           firebase emulators:exec --only firestore,auth,functions \
             "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml"

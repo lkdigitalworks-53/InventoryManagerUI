@@ -11,11 +11,18 @@ import "../../qml/model"
 // independently via a raw REST GET against the Firestore emulator, not
 // just the client's own optimistic in-memory state.
 //
-// NOT RUN IN THIS SANDBOX — no network egress here to Firebase's emulator
-// distribution. Requires test/e2e/.fixture.json (written by
-// test/e2e/seed.js) and a running emulator suite. Run locally with:
-//   firebase emulators:exec --only firestore,auth,functions \
-//     "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen"
+// QML's XMLHttpRequest does not support synchronous mode (open(..., false))
+// at all -- it throws, which is what the first real CI run of this file hit
+// ("Uncaught exception: Invalid state"). Every request below is
+// asynchronous, with tryVerify()'s event-loop-pumping poll used to wait for
+// completion -- the only pattern Qt's own docs demonstrate for QML XHR.
+// Reading test/e2e/.fixture.json via file:// additionally requires
+// QML_XHR_ALLOW_FILE_READ=1 in the environment (set in the e2e-tests CI job)
+// -- local file reads are disabled by default, separately from the sync/
+// async issue.
+//
+// NOT RUN IN THIS SANDBOX before its first real CI attempt -- no network
+// egress here to Firebase's emulator distribution.
 
 TestCase {
     name: "InventoryE2E"
@@ -27,29 +34,58 @@ TestCase {
     property var fixture: null
 
     function _loadFixture() {
+        var status = -1, text = "", done = false
         var xhr = new XMLHttpRequest()
-        xhr.open("GET", Qt.resolvedUrl("./.fixture.json"), false) // synchronous local read
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                status = xhr.status
+                text = xhr.responseText
+                done = true
+            }
+        }
+        xhr.open("GET", Qt.resolvedUrl("./.fixture.json"), true)
         xhr.send()
-        if (xhr.status !== 200 && xhr.status !== 0) { // status 0 is file:// success on some Qt builds
-            fail("could not read .fixture.json (status " + xhr.status
+        tryVerify(function() { return done }, 5000, "timed out reading .fixture.json")
+        if (status !== 200 && status !== 0) { // status 0 is file:// success on some Qt builds
+            fail("could not read .fixture.json (status " + status
                  + ") — run test/e2e/seed.js against a running emulator first")
         }
-        return JSON.parse(xhr.responseText)
+        return JSON.parse(text)
     }
 
-    // Raw REST read against the emulator, independent of FirebaseService —
-    // asserting via the same client code that wrote the data would only
-    // prove the client's local cache is self-consistent, not that anything
-    // real reached the server.
-    function _getEmulatorDoc(docPath) {
+    // Polls a raw REST GET against the Firestore emulator, independent of
+    // FirebaseService — asserting via the same client code that wrote the
+    // data would only prove the client's local cache is self-consistent,
+    // not that anything real reached the server. Re-fires a fresh async GET
+    // on every tryVerify tick until predicateFn(doc) is true or it times
+    // out; doc is null while missing/not-yet-caught-up.
+    function _pollEmulatorDoc(docPath, predicateFn, timeoutMs, message) {
         var url = emulatorFirestoreHost
             + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + docPath
-        var xhr = new XMLHttpRequest()
-        xhr.open("GET", url, false)
-        xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
-        xhr.send()
-        if (xhr.status !== 200) return null
-        return JSON.parse(xhr.responseText)
+        var latest = null
+        var inFlight = false
+
+        function fire() {
+            if (inFlight) return
+            inFlight = true
+            var xhr = new XMLHttpRequest()
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    latest = (xhr.status === 200) ? JSON.parse(xhr.responseText) : null
+                    inFlight = false
+                }
+            }
+            xhr.open("GET", url, true)
+            xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
+            xhr.send()
+        }
+
+        tryVerify(function() {
+            fire()
+            return predicateFn(latest)
+        }, timeoutMs, message)
+
+        return latest
     }
 
     function init() {
@@ -86,9 +122,8 @@ TestCase {
     function test_addProduct_creates_real_emulator_doc() {
         var id = _createProduct("E2E Widget", "SKU-E2E-1", 10)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
-        var doc = null
-        tryVerify(function() { doc = _getEmulatorDoc(docPath); return doc !== null }, 5000,
-                  "product doc never appeared in the emulator")
+        var doc = _pollEmulatorDoc(docPath, function(d) { return d !== null }, 5000,
+                                    "product doc never appeared in the emulator")
         compare(doc.fields.name.stringValue, "E2E Widget")
         compare(Number(doc.fields.stock.integerValue), 10)
     }
@@ -96,15 +131,13 @@ TestCase {
     function test_updateProduct_persists_to_emulator() {
         var id = _createProduct("E2E Widget Update", "SKU-E2E-2", 5)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
-        tryVerify(function() { return _getEmulatorDoc(docPath) !== null }, 5000,
-                  "product doc never appeared before the update")
+        _pollEmulatorDoc(docPath, function(d) { return d !== null }, 5000,
+                          "product doc never appeared before the update")
 
         InventoryStore.updateProduct(id, { stock: 25 }, "e2e adjustment")
 
-        var doc = null
-        tryVerify(function() {
-            doc = _getEmulatorDoc(docPath)
-            return doc !== null && Number(doc.fields.stock.integerValue) === 25
+        var doc = _pollEmulatorDoc(docPath, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 25
         }, 5000, "updated stock never reached the emulator")
         compare(Number(doc.fields.stock.integerValue), 25)
     }
@@ -112,12 +145,13 @@ TestCase {
     function test_deleteProduct_removes_from_emulator() {
         var id = _createProduct("E2E Widget Delete", "SKU-E2E-3", 3)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
-        tryVerify(function() { return _getEmulatorDoc(docPath) !== null }, 5000,
-                  "product doc never appeared before the delete")
+        _pollEmulatorDoc(docPath, function(d) { return d !== null }, 5000,
+                          "product doc never appeared before the delete")
 
         InventoryStore.deleteProduct(id)
 
-        tryVerify(function() { return _getEmulatorDoc(docPath) === null }, 5000,
-                  "product doc was never removed from the emulator")
+        _pollEmulatorDoc(docPath, function(d) { return d === null }, 5000,
+                          "product doc was never removed from the emulator")
     }
 }
+
