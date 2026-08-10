@@ -207,3 +207,44 @@ Commit+push the plan doc, then begin executing tasks in order (inline in this se
 subagent dispatch tool is available in this chat interface, so `superpowers:executing-plans`
 rather than `superpowers:subagent-driven-development`), one commit per task, confirming the diff
 with Taher before each commit per his standing rule.
+
+## All 5 Phase 1 tasks executed
+
+Taher said "Commit, push and go ahead" / "Continue" through the sequence — executed inline,
+still showing each diff, one commit per task:
+
+1. `3d654ef` — `firebase.json` auth+functions emulator blocks. JSON-validated.
+2. `23f1bd9` — `FirebaseService.emulatorHost` override + `tests/tst_FirebaseService.qml`.
+   Verified `projectId` property name against source before writing the test (it matched the
+   plan's assumption).
+3. `cdc2f72` — `test/e2e/seed.js` + `test/e2e/.gitignore`. `firebase-admin@^14.2.0` installed for
+   real (`npm install`, reachable from this sandbox's registry access) — `npm audit` flags 6
+   moderate transitive vulnerabilities, dev-only dependency, flagged to Taher, not blocking.
+   `node --check` passed.
+4. `b717f75` — `tests/e2e/tst_InventoryE2E.qml`. Before writing, verified every referenced
+   property/method actually exists with the assumed name/signature by grepping source directly
+   rather than trusting the plan's memory of it: `AuthStore.tenantId`, `SupplierStore.suppliers`,
+   `InventoryStore.products`, `SupplierStore.findByName` (confirmed synchronous, in-memory, no
+   network — matches the plan's assumption that pre-seeding it avoids exercising supplier
+   creation), and all three `InventoryStore` CRUD signatures. All matched.
+5. `08184a0` — `e2e-tests` CI job in `checks.yml`. YAML-validated (`pyyaml`), confirmed all four
+   jobs (`qml-tests`, `functions-tests`, `firestore-rules-tests`, `e2e-tests`) present.
+
+All pushed to `docs/e2e-testing-strategy-design`. Branch now has 9 commits total: the two
+checkpoint-housekeeping ones, the stale-Gateway-test fix (`e80eae4`, `6f00e1f`), the spec
+(`9501e28`), the plan (`0797ec6`), and the five implementation tasks above.
+
+**Not yet done, and can't be done from this sandbox:** nothing in Tasks 1–4 has actually run
+against a live emulator — no network egress here to Firebase's emulator distribution. Task 5's
+first real CI run is the actual verification of everything built this session, including the
+spec's flagged spike items (auth-token exchange shape, `FIREBASE_AUTH_EMULATOR_HOST`
+propagation, Admin SDK auto-detection). Expect the first run to surface at least one issue —
+that's the point of running it in CI rather than assuming it works.
+
+## Next step
+
+Taher opens/updates the PR for `docs/e2e-testing-strategy-design` and watches the `E2E Tests`
+check's first real run. Per the spec, it should stay **non-blocking** (not added to required
+status checks) until proven stable across a few runs — that's a branch-protection setting outside
+this repo, Taher's call. Whatever the first run surfaces becomes the next task in this session or
+a follow-up one.
