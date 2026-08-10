@@ -266,5 +266,36 @@ approved before commit.
 
 Taher re-runs the `e2e-tests` CI job with this fix. First run only got far enough to fail inside
 `seed.js` before the module-loading error — everything downstream of that (the actual token
-exchange, the QML test, the Cloud Function round trip) is still unexercised. Expect more issues
+exchange, the QML test, the Cloud Function round trip) is still unexercised.
+
+## First real CI run — failure #2, fixed
+
+`seed.js` got past its previous failure. `tst_InventoryE2E.qml` failed on all three test cases:
+`Uncaught exception: Invalid state`. Root cause, confirmed via web search rather than guessed
+(a wrong second guess would burn a third CI cycle): **QML's `XMLHttpRequest` has no synchronous
+mode at all** — `xhr.open(method, url, false)` throws. Every XHR call in the test file
+(`_loadFixture`, `_getEmulatorDoc`) used the sync flag — a real bug from Task 4, not an emulator
+quirk. Qt's own docs only demonstrate the async `onreadystatechange` pattern.
+
+Rewrote both to be async: `_loadFixture()` now waits via `tryVerify()`'s event-loop-pumping poll;
+`_getEmulatorDoc()` became `_pollEmulatorDoc()`, which re-fires a fresh async GET on every
+`tryVerify` tick (guarded by an in-flight flag) rather than blocking — avoids nesting `tryVerify`
+calls, which would have been architecturally messy.
+
+Also found and fixed proactively, same research pass: local file reads via QML XHR are
+**separately** disabled by default, needing `QML_XHR_ALLOW_FILE_READ=1` — this would have been
+the very next failure (blocking `_loadFixture()`'s `file://` read) even after the sync fix, so
+added it to the `e2e-tests` job's env now rather than waiting for a third failed run to discover
+it.
+
+Committed `73eb632`, pushed. Taher approved before commit, after an explicit caveat that the new
+`_pollEmulatorDoc` retry logic has only had static/structural review — no way to actually run
+`qmltestrunner` in this sandbox.
+
+## Next step
+
+Taher re-runs `e2e-tests` again. Not yet exercised by any real run: the Auth-emulator custom-token
+→ ID-token exchange, whether `FIREBASE_AUTH_EMULATOR_HOST` propagates to `seed.js` as documented,
+and the actual round trip through the emulated `recordMutation` Cloud Function. Any of these could
+still be the next failure. Expect more issues
 to surface once seed.js gets further.
