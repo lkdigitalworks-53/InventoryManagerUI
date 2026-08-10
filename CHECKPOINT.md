@@ -248,3 +248,23 @@ check's first real run. Per the spec, it should stay **non-blocking** (not added
 status checks) until proven stable across a few runs — that's a branch-protection setting outside
 this repo, Taher's call. Whatever the first run surfaces becomes the next task in this session or
 a follow-up one.
+
+## First real CI run — failure #1, fixed
+
+`seed.js` failed immediately: `TypeError: admin.firestore is not a function`. Reproduced the root
+cause in this sandbox without needing the emulator — `require("firebase-admin")`'s top-level
+export in the installed `firebase-admin@14.2.0` only has `initializeApp`/`getApp`/etc.; `.firestore`
+and `.auth` aren't there at all (confirmed via `Object.keys(admin)` locally). v14 dropped the
+namespaced compat API entirely in favor of modular imports
+(`firebase-admin/app`/`firestore`/`auth`) — a real gap in Task 3's original code, not an emulator
+quirk. Rewrote `seed.js` to use `initializeApp`/`getFirestore`/`getAuth` from those subpaths;
+confirmed the call shapes used (`db.doc().set()`, `auth.createCustomToken()`,
+`auth.createUser()`) still exist on the modular clients. Committed `b25b9d6`, pushed. Taher
+approved before commit.
+
+## Next step
+
+Taher re-runs the `e2e-tests` CI job with this fix. First run only got far enough to fail inside
+`seed.js` before the module-loading error — everything downstream of that (the actual token
+exchange, the QML test, the Cloud Function round trip) is still unexercised. Expect more issues
+to surface once seed.js gets further.
