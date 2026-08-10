@@ -11,18 +11,25 @@
 //   firebase emulators:exec --only firestore,auth,functions \
 //     "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen"
 //
-// NOT RUN IN THIS SANDBOX — no network egress here to Firebase's emulator
-// distribution. Written to documented Local Emulator Suite REST/Admin SDK
-// conventions; needs a real emulator pass (CI or Taher's machine) before
-// the e2e-tests job can be trusted. Specifically unverified: whether
-// `firebase emulators:exec` sets FIREBASE_AUTH_EMULATOR_HOST for child
-// processes exactly as documented for this firebase-tools version — if
-// this script exits early with the guard below, that's the first thing to
-// check.
+// NOT RUN IN THIS SANDBOX before its first real CI attempt — no network
+// egress here to Firebase's emulator distribution, so the emulator-facing
+// parts (everything past the two env-var guards below) are still only
+// verified by matching documented Local Emulator Suite conventions, not by
+// executing them. First real CI run (2026-08-10) failed with
+// "admin.firestore is not a function" — firebase-admin@14.x dropped the
+// namespaced compat API (admin.firestore()/admin.auth()) entirely in favor
+// of modular imports; fixed by switching to firebase-admin/app,
+// firebase-admin/firestore, firebase-admin/auth. That fix was reproducible
+// in the sandbox (a pure require()-shape issue, no emulator needed) and is
+// applied below. Still unverified: the Auth-emulator token exchange itself,
+// and whether `firebase emulators:exec` propagates
+// FIREBASE_AUTH_EMULATOR_HOST to this script as documented.
 
 const fs = require("node:fs");
 const path = require("node:path");
-const admin = require("firebase-admin");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
 
 const PROJECT_ID = "inventorymanager-48392"; // MUST match FirebaseService.qml's
                                               // hardcoded projectId — the emulator
@@ -46,7 +53,9 @@ if (!AUTH_EMULATOR_HOST) {
     process.exit(1);
 }
 
-admin.initializeApp({ projectId: PROJECT_ID });
+const app = initializeApp({ projectId: PROJECT_ID });
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 async function mintIdToken(uid) {
     // Admin SDK can only mint a *custom* token. Exchanging it for a real ID
@@ -55,7 +64,7 @@ async function mintIdToken(uid) {
     // emulator's identitytoolkit-compatible REST endpoint — documented
     // Local Emulator Suite behavior; any non-empty string works as the API
     // key, the emulator doesn't check it.
-    const customToken = await admin.auth().createCustomToken(uid);
+    const customToken = await auth.createCustomToken(uid);
     const url = "http://" + AUTH_EMULATOR_HOST
         + "/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=fake-api-key";
     const res = await fetch(url, {
@@ -71,9 +80,7 @@ async function mintIdToken(uid) {
 }
 
 async function main() {
-    const db = admin.firestore();
-
-    await admin.auth().createUser({ uid: TEST_UID, email: "e2e@example.com" })
+    await auth.createUser({ uid: TEST_UID, email: "e2e@example.com" })
         .catch((e) => {
             if (e.code !== "auth/uid-already-exists") throw e;
         });
