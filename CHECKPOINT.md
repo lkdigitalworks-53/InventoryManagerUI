@@ -297,5 +297,41 @@ Committed `73eb632`, pushed. Taher approved before commit, after an explicit cav
 Taher re-runs `e2e-tests` again. Not yet exercised by any real run: the Auth-emulator custom-token
 → ID-token exchange, whether `FIREBASE_AUTH_EMULATOR_HOST` propagates to `seed.js` as documented,
 and the actual round trip through the emulated `recordMutation` Cloud Function. Any of these could
-still be the next failure. Expect more issues
+still be the next failure.
+
+## First real CI run — failure #3, fixed. Real progress this round.
+
+Good news buried in the failure: `seed.js` **fully succeeded** — "seed.js: wrote
+.../test/e2e/.fixture.json" printed, meaning the Auth-emulator custom-token → ID-token exchange,
+`FIREBASE_AUTH_EMULATOR_HOST` propagation, and the Firestore seeding all worked as designed on
+the first real attempt. `qmltestrunner`'s "exited unsuccessfully (code 3)" was just its own exit
+code reflecting 3 failed tests, not a new distinct failure.
+
+The actual bug: all three tests failed with `JSON.parse: Parse error`. Root cause is a genuine
+**planning-stage mistake, not an emulator quirk** — worth being direct about this with Taher
+rather than framing it as another environment surprise. Two similarly-named directories exist:
+`test/e2e/` (Node, `seed.js`, matching the existing `test/firestore.rules.test.js` convention)
+and `tests/e2e/` (QML, `tst_InventoryE2E.qml`, matching `tests/tst_Gateway.qml`). `seed.js` writes
+`.fixture.json` into `test/e2e/`; the QML test's `Qt.resolvedUrl("./.fixture.json")` resolved
+relative to its own location, `tests/e2e/` — a different, empty directory. The plan's "File
+Structure" section listed both paths without ever reconciling the cross-directory reference this
+implied — should have been caught during planning, not discovered via a third CI run.
+
+Fixed by pointing the read at `../../test/e2e/.fixture.json` (verified the resolved path matches
+exactly via a local Python check — no emulator needed for this one). Also hardened the failure
+mode: status codes are documented to be unreliable for `file://` reads (often `0` regardless of
+success or failure), so switched the guard to check for an empty response body instead, with a
+clearer message naming the resolved URL — a future path mistake now fails loudly instead of as an
+opaque `JSON.parse` error.
+
+Committed `0f84424`, pushed. Taher approved before commit.
+
+## Next step
+
+Taher re-runs `e2e-tests` again. With `seed.js` now proven working end to end, this run should
+finally reach the actual point of the whole exercise: `InventoryStore.addProduct/updateProduct/
+deleteProduct` → `Gateway.recordMutation` → the emulated `recordMutation` Cloud Function → the
+emulated Firestore, verified via independent REST reads. If this run fails, it's the first one
+that would indicate a problem with the actual application code path rather than test-harness
+plumbing. Expect more issues
 to surface once seed.js gets further.
