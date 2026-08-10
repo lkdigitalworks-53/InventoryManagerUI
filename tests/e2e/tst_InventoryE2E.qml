@@ -32,6 +32,13 @@ TestCase {
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
 
     property var fixture: null
+    // seed.js (test/e2e/seed.js, singular "test" — matches the existing
+    // Node-test convention alongside test/firestore.rules.test.js) writes
+    // .fixture.json into that directory, not this file's own tests/e2e/
+    // directory. Two similarly-named directories was an avoidable mix-up
+    // from planning; fixed by pointing the read at the right one rather
+    // than moving seed.js's output.
+    readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
     function _loadFixture() {
         var status = -1, text = "", done = false
@@ -43,12 +50,15 @@ TestCase {
                 done = true
             }
         }
-        xhr.open("GET", Qt.resolvedUrl("./.fixture.json"), true)
+        xhr.open("GET", fixtureUrl, true)
         xhr.send()
         tryVerify(function() { return done }, 5000, "timed out reading .fixture.json")
-        if (status !== 200 && status !== 0) { // status 0 is file:// success on some Qt builds
-            fail("could not read .fixture.json (status " + status
-                 + ") — run test/e2e/seed.js against a running emulator first")
+        // status is documented to be unreliable for file:// reads (often 0
+        // regardless of success or failure) — an empty body is the
+        // trustworthy signal that the read actually failed.
+        if (!text || text.length === 0) {
+            fail("could not read .fixture.json from " + fixtureUrl + " (status " + status
+                 + ", empty body) — run test/e2e/seed.js against a running emulator first")
         }
         return JSON.parse(text)
     }
