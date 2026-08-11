@@ -628,8 +628,24 @@ QtObject {
             o.tax = t.tax;
             o.total = t.total;
         }
-        if (!Array.isArray(o.adjustments)) o.adjustments = [];
-        o.adjustments.push(adjustmentRecord);
+        // Reassign, don't mutate in place: `before` is a SHALLOW copy of `o`
+        // (Object.assign a few lines up), so before.adjustments and
+        // o.adjustments start out as the exact same array reference. An
+        // in-place `.push()` here would mutate that shared array, silently
+        // leaking the new adjustment into `before` too — which then fails
+        // the server's CAS check (applyMutation's _deepEqual(current,
+        // before) in functions/lib/gatewayLogic.js) because the claimed
+        // "before" no longer matches what the server actually had before
+        // this write. `.concat()` builds a NEW array for o.adjustments
+        // instead, leaving before.adjustments pointing at the untouched
+        // original — same pattern already used everywhere else in this
+        // codebase (StockBatchStore, OutboxStore, Gateway, NewOrderDialog)
+        // to avoid mutating a value some other reference still holds.
+        // Found via Taher's manual testing 2026-08-10: add order -> complete
+        // -> edit price -> spurious "updated elsewhere" conflict toast.
+        // See docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md.
+        var existingAdjustments = Array.isArray(o.adjustments) ? o.adjustments : [];
+        o.adjustments = existingAdjustments.concat([adjustmentRecord]);
         o.updatedAt = new Date().toISOString();
         _commit(arr, o, "update", before);
     }

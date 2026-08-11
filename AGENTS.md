@@ -402,7 +402,13 @@ itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, 
 closure of the remaining findings at `docs/superpowers/specs/2026-08-08-review-round2-design.md`,
 README's "Concurrency & Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files
 but is a correctness concern, not a compliance one — don't conflate the two when reasoning about
-this directory. Worth knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to
+this directory. Also adjacent, found 2026-08-10 while on-device testing the round-2 branch:
+`OrdersStore.applyAdjustment` built its CAS `before` snapshot via a shallow `Object.assign`, then
+mutated a nested field (`adjustments`) in place — the mutation leaked back into `before`, so the
+server's CAS check rejected a completely ordinary price edit as a false conflict (see SKILLS Skill
+37, `docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md`). A full-codebase
+sweep found this was the only instance of the pattern; fixed narrowly rather than rewritten broadly.
+Worth knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to
 `firestore.rules` (a new `isServerOnlyCollection` tier, distinct from the ledger tier below — locks
 needs read AND write denied, not just write) — if touching `firestore.rules` for compliance work,
 be aware this tier exists and follow the same pattern for any other collection that should never be
@@ -507,10 +513,17 @@ env.
   with `functions/test/{realisedMath,breakdownMath}.test.js` (SKILLS Skill 34). Same literal fixture
   data in both; proves the Node-ported math (`functions/lib/`) agrees with the QML original. If you
   change a scenario in one file of a pair, change it in the other too.
-- 17 suites total (14 pre-existing + 3 new this session). Historical baseline before the 3 new
-  suites: **140 cases pass, 0 fail** — the 3 new suites haven't been run under a real
-  `qmltestrunner` yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; their
-  Node-side twins do pass, 7/7, via `cd functions && npm test`).
+- `tests/tst_OrdersStore_applyAdjustment.qml` (2026-08-10, SKILLS Skill 37) — regression coverage
+  for the `applyAdjustment` before/after snapshot aliasing bug: asserts `before`/`after` end up as
+  independent array references (not the same shared array a `.push()` would leave them as), covers
+  both the first-adjustment and second-adjustment-appended-to-existing-history cases, plus a
+  functional sanity check that local order state still updates correctly.
+- 18 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10). Historical
+  baseline before those 4 new suites: **140 cases pass, 0 fail** — none of the 4 newest suites have
+  been run under a real `qmltestrunner` yet (this repo's Cloud sessions don't have the Windows/Felgo
+  toolchain; the 3 from 2026-08-08 have Node-side twins that do pass, 7/7, via `cd functions && npm
+  test` — `tst_OrdersStore_applyAdjustment.qml` has no Node-side twin, since `applyAdjustment` lives
+  directly in `OrdersStore.qml` and isn't Node-portable the way the pure `functions/lib/` math is).
 - **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file

@@ -449,6 +449,19 @@ branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
 
 See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
 
+**Update 2026-08-10:** found via Taher's own manual testing of the round-2 branch — a real order
+edit (add, complete, adjust price, save) hit a spurious "updated elsewhere" conflict toast with
+nobody else touching the order. `OrdersStore.applyAdjustment` built its CAS `before` snapshot as a
+shallow copy of the order, then mutated a nested field (`adjustments`) in place with `.push()` —
+since a shallow copy shares nested arrays by reference, that mutation leaked into `before` too, so
+the server's `_deepEqual(current, before)` check rejected the write (the whole write, not just the
+adjustment — nothing persisted, including the price change). Fixed by reassigning a new array
+(`.concat()`) instead of mutating the existing one in place, matching the replace-don't-mutate
+convention already used everywhere else in this codebase for this exact reason. A full sweep of
+every `Object.assign` call site in the project (25 total) confirmed this was the only instance of
+the pattern — see SKILLS Skill 37 and `docs/superpowers/specs/
+2026-08-10-before-snapshot-aliasing-CHECKPOINT.md` for the full investigation.
+
 **Update 2026-08-06:** a dedicated code review (`docs/superpowers/specs/
 2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important findings) found every
 mechanism above was individually correct but not fully wired end-to-end — the server-side CAS

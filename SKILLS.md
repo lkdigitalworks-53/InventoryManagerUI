@@ -1281,7 +1281,13 @@ just as one-off fixes:**
    of the live array element (`arr.slice()` + `Object.assign`) — `SupplierStore`, `StockBatchStore`
    — are structurally immune to this specific bug, since there's no separate defaulting step that
    can diverge from creation. When auditing a store for this, check which pattern it uses first;
-   only the reconstructing kind needs the create/clone symmetry check at all.
+   only the reconstructing kind needs the create/clone symmetry check at all. **Caveat added
+   2026-08-10, see Skill 37**: "shallow copy" immunizes against *this* bug (create/clone field-list
+   drift) but is not a general safety property — `Object.assign` only copies top-level fields, so a
+   shallow-copied `before` still shares any nested array/object by reference with `after`, and stays
+   vulnerable to a *different* bug if that nested field is later mutated in place rather than
+   reassigned. `OrdersStore.applyAdjustment` was exactly this: shallow-copy-immune to the bug above,
+   but not to the one Skill 37 covers.
 **2026-08-06: full code review + fix round.** A dedicated review of the whole feature (`docs/
 superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important
 findings) found the design was individually correct in every piece but had never actually been
@@ -1461,3 +1467,75 @@ exists (only `brand1`..`brand5` and semantic aliases like `primaryBlue: brand1`)
 undefined singleton property doesn't fail to compile — it silently binds `undefined`, which is a
 much harder bug to spot than a QML syntax error. `grep -n "property color" qml/helper/Constants.qml`
 before using any `Constants.*` token you haven't seen used elsewhere first.
+
+## Skill 37: Before/after snapshot aliasing — shallow copy vs. in-place mutation
+
+**Files**: `qml/model/OrdersStore.qml` (`applyAdjustment`), `tests/tst_OrdersStore_applyAdjustment.qml`,
+full investigation + fix: `docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md`
+
+Found by Taher's own manual testing (2026-08-10, on `fix/async-write-sequencing-review-fixes`):
+add an order, complete it, open it, adjust the price, save — spurious "This order was updated
+elsewhere — your change didn't save" toast, even though nothing else touched the order. The price
+edit was silently discarded (server rejected the whole write, nothing persisted — see Skill 36 §3
+for what the CAS check does and why a rejection there is all-or-nothing, not just the field that
+triggered it).
+
+**Root cause**: `Object.assign({}, o)` is a SHALLOW copy — it copies top-level properties only.
+Any nested array or object field is copied BY REFERENCE, not by value. `applyAdjustment` took
+`before` this way, then did `o.adjustments.push(adjustmentRecord)` — an IN-PLACE mutation of that
+same shared array. `before.adjustments` and `o.adjustments` were never two arrays; they were one
+array with two names, so the push leaked forward into `before` too. That corrupted `before` is
+exactly what fails `applyMutation`'s `_deepEqual(current, before)` check in
+`functions/lib/gatewayLogic.js` — the server's real prior state didn't have the new adjustment, the
+client's claimed "before" now did, mismatch, reject.
+
+```js
+// BUGGY
+var before = Object.assign({}, o);   // before.adjustments IS o.adjustments (same array)
+o.adjustments.push(adjustmentRecord); // mutates the array both names point to — before is corrupted
+
+// FIXED
+var existingAdjustments = Array.isArray(o.adjustments) ? o.adjustments : [];
+o.adjustments = existingAdjustments.concat([adjustmentRecord]); // NEW array; before's reference untouched
+```
+
+**The fix is `.concat()` over `.push()`, not "stop using shallow copy."** A full-codebase sweep (25
+`Object.assign` call sites across every store, `Gateway`, `OutboxStore`, `AuthService`,
+`NewOrderDialog`) found this was the ONLY instance of the pattern in the project — every other site
+either only reassigns primitive fields after the shallow copy (safe — no shared reference is ever
+mutated), or already builds a brand-new object/array and replaces the array slot rather than
+mutating in place (`StockBatchStore`, `OutboxStore`, `Gateway`, `NewOrderDialog` — this is the
+correct, established convention). Rewriting all of those to a full deep-clone (e.g.
+`JSON.parse(JSON.stringify())`, confirmed safe for this codebase's data shapes — no `Date`/
+Timestamp/function fields ever live in a store's persisted shape, `new Date()` only appears in
+transient calculations) was considered and deliberately rejected: it would have touched 6+ working
+files to guard against a bug that, after the sweep, exists nowhere else, which is exactly the
+"bundled refactoring while fixing a root cause" anti-pattern `superpowers:systematic-debugging`
+warns against.
+
+**The general rule** (this is the actual takeaway, not "avoid `Object.assign`" — it's used safely
+in a dozen other places in this file alone): once you've taken a `before` snapshot — shallow copy
+OR the reconstructing `_normalizeOrder`/`_clone()` kind, doesn't matter which — every subsequent
+change to the live object must be a REASSIGNMENT (`o.field = newValue`, `o.arr = oldArr.concat(x)`,
+`o.arr = oldArr.filter(...)`) never an IN-PLACE MUTATION of a nested field (`.push`, `.splice`,
+`.sort`, `.reverse`, or `obj.nested.prop = x`) — reassignment produces a new reference the old
+snapshot doesn't share; in-place mutation changes the value at an address the snapshot is still
+looking at. `grep -rn "[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\.push(\|...\.splice(" qml/` is
+the fast way to re-check this project-wide — it should keep returning nothing outside intentional,
+reviewed cases.
+
+**A related, currently-dormant fragility, left alone rather than fixed**: `_normalizeOrder`'s
+`adjustments: r.adjustments.slice()` is itself only a shallow ARRAY copy — the individual past
+adjustment record OBJECTS inside are still shared by reference across every snapshot taken from
+that array. Nothing in this codebase currently mutates a past adjustment record after creation (grep
+confirmed), so this isn't live, but it's the same fragility pattern lying dormant one call away. Not
+fixed here — no evidence it's needed, and "fix it in case something mutates it later" is scope creep
+without a concrete bug behind it. Worth checking first if a future change ever needs to edit a past
+adjustment record in place instead of appending a new one.
+
+**Test-tooling note**: `Gateway.recordMutation` in `mode: "gateway"` enqueues into `OutboxStore`
+without touching the network as long as `AuthStore.idToken` stays empty (`_send`'s guard closes
+before any XHR — see Skill 36 / `tests/tst_Gateway.qml`'s header note). That makes the real,
+production `before`/`after` objects directly inspectable via `OutboxStore.items[0].before`/`.after`
+in a test — no mock/fake layer needed to catch this class of bug; asserting on object identity
+(`before.adjustments !== after.adjustments`) is the most direct regression check available.
