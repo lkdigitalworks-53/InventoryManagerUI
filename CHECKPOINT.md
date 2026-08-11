@@ -383,7 +383,7 @@ nonexistent endpoint. Doesn't affect this CI debugging (the emulator loads `func
 from source regardless of real deployment status), but it's a real question worth asking Taher
 directly once this immediate bug is resolved.
 
-## Next step
+## Next step (superseded below — see rebase entry)
 
 Taher re-runs `e2e-tests`. Two possible outcomes: (a) the diagnostic test itself fails with a
 concrete status/response — that's the root cause, fix it properly per the debugging skill's
@@ -391,3 +391,80 @@ Phase 3/4. (b) the diagnostic test passes but the CRUD tests still fail — narr
 specifically to `Gateway`/`OutboxStore`'s dispatch mechanics, a different and more contained
 investigation. Also: ask Taher about the Cloud Functions deployment status. Expect more issues
 to surface once seed.js gets further.
+
+## Rebased onto fix/async-write-sequencing-review-fixes (Taher's request)
+
+Taher clarified functions/rules **were** deployed before this branch started (my earlier
+deployment-status flag was based on stale memory, not current fact) — and separately asked to
+rebase onto `fix/async-write-sequencing-review-fixes` (24 commits, unmerged, review-fix work for
+the earlier async-write-sequencing design: C1–C8 critical findings, all fixed) since it resolves
+real bugs relevant to what this branch was hitting.
+
+**Rebase mechanics:** `git rebase origin/fix/async-write-sequencing-review-fixes`, 18 commits
+replayed. Only 2 real conflicts, both in the first 3 commits (everything after applied clean,
+since later commits only touch files the fix branch never modified):
+- `CHECKPOINT.md` (commit 1): archived the fix branch's own completed-session checkpoint to
+  `docs/superpowers/specs/2026-08-10-async-write-sequencing-review-fixes-CHECKPOINT.md`
+  (preserves their full C1–C8 fix history, process notes, and the I1–I5 open findings they didn't
+  address), restored my session's checkpoint as root. For the remaining CHECKPOINT.md conflicts
+  (nearly every subsequent commit touches it), resolved by consistently taking my own commit's
+  version (`git checkout --theirs` — inverted meaning under rebase: "theirs" = the commit being
+  replayed = mine) rather than re-merging both narratives at every step, since the fix branch's
+  own history is already fully preserved in its own commits underneath and in the archived file.
+- `tests/tst_Gateway.qml` (commit 2): genuine finding, not just a mechanical conflict — both
+  branches independently discovered and "fixed" the same stale `test_mode_defaults_to_direct`
+  test. Checked their actual commit (`4c3157a`) directly: their fix only flipped the asserted
+  string (`"direct"` → `"gateway"`), without addressing that `init()` unconditionally resets
+  `Gateway.mode = "direct"` before every test — so their version would make the test
+  **always fail**, not just stay stale. Kept mine (deletion + explanatory comment), which is the
+  actually-correct resolution.
+
+**Post-rebase test review** (per Taher's explicit ask — not skipped):
+- `InventoryStore.addProduct/updateProduct/deleteProduct` signatures: unchanged. No call-site
+  updates needed.
+- `Gateway.functionUrl`/`Gateway.mode`: still plain overridable properties, same defaults.
+- `firestore.rules`: the fix branch's C2 lockdown is scoped to `locks/**`
+  (`isServerOnlyCollection`) only — `inventory` still falls under the permissive generic
+  fallback, confirmed by reading the current file directly. My test's REST reads (using the
+  seeded member's real token, not an Admin SDK bypass) still work.
+- `InventoryStore.addProduct` doesn't newly depend on `StockBatchStore` — confirmed via grep, no
+  test change needed there despite `StockBatchStore.qml`'s large diff on the fix branch.
+- **Real, substantive finding:** the fix branch adds `Gateway.mutationConflicted(entity,
+  entityId, current)` — a CAS-conflict signal (server-side `_deepEqual(current, before)` check in
+  `applyMutation`, rejecting with `409 + conflict:true`) that plausibly explains part of the
+  original CI failure #4 mystery ("doc never appeared," no visible reason). Checked
+  `_deepEqual(null, null)` directly in `gatewayLogic.js` — returns `true` immediately, so the
+  *create* path's CAS check (which sends `before: null`) shouldn't be the blocker. Can't rule it
+  out for the *update* path (real `before` snapshot, not null) without runtime evidence. Rather
+  than guess further, updated `tst_InventoryE2E.qml` to connect to the signal directly and fail
+  fast with the real conflict data if one fires during any CRUD test, instead of a generic
+  timeout. Required adding an `entityId` parameter to `_pollEmulatorDoc` to scope the check
+  correctly.
+- **Caught and fixed my own mistake mid-edit:** an intermediate `str_replace` accidentally deleted
+  the entire `test_recordMutation_function_accepts_seeded_credentials` diagnostic probe (added
+  last CI round) while removing an earlier, now-dead helper function. Caught via a structural
+  re-check (`grep` for every function name, confirm each appears exactly once) before showing
+  Taher anything — restored it correctly, declared first as before.
+- **Design note recorded, not yet acted on:** `tryVerify`'s `message` argument is evaluated once,
+  before polling starts — it can't reflect something that happens asynchronously *during* the
+  wait. My first attempt at wiring in the conflict diagnostic (an eagerly-evaluated `_diagnose()`
+  helper) was structurally broken because of this — would have always seen `lastConflict = null`.
+  Caught before committing, fixed by moving the check inside the poll predicate itself, which can
+  call `fail()` directly with fresh data.
+
+Committed `f3640a9` (test review changes) on top of the rebased history. Force-pushed
+(`--force-with-lease`, refreshed the remote-tracking ref via `git fetch` first for safety) since
+history was rewritten: `b1fc577...f3640a9 (forced update)`. Taher approved both the rebase result
+and the commit before this push.
+
+## Next step
+
+Taher re-runs `e2e-tests` on this rebased branch. Genuinely new territory now: this run exercises
+the fix branch's CAS conflict handling for the first time in this test's flow, in addition to
+everything from before. Three possible outcomes: (a)
+`test_recordMutation_function_accepts_seeded_credentials` fails with a concrete status/response —
+original root cause, unrelated to the rebase, fix it properly. (b) A CRUD test fails with the new
+`Gateway.mutationConflicted fired for ...` diagnostic message — confirms the CAS hypothesis, gives
+exact data to act on. (c) Everything passes — the review-fix branch's changes (or simply more
+attempts) resolved whatever CI failure #4's root cause was. Any of these is real progress over
+another opaque timeout.
