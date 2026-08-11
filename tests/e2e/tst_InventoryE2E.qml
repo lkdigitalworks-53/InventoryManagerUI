@@ -116,6 +116,44 @@ TestCase {
         AuthStore.tenantId = ""
     }
 
+    // Diagnostic — added after test_addProduct/update/delete all failed
+    // with "doc never appeared" and no visible reason: Gateway._send()
+    // logs the actual HTTP status/response via console.warn on failure but
+    // never surfaces it to the caller (recordMutation is fire-and-forget by
+    // design), so a rejected request looks identical to a slow/successful
+    // one from this test's perspective. This bypasses Gateway/OutboxStore
+    // entirely and POSTs to the same emulated recordMutation function with
+    // the same payload shape _send() uses, so a failure here prints the
+    // real status/response text via compare()'s own output — replacing a
+    // guess with evidence. Runs first (declared first) so it fails fast,
+    // before the slower CRUD tests even attempt anything.
+    function test_recordMutation_function_accepts_seeded_credentials() {
+        var status = -1, text = "", done = false
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                status = xhr.status
+                text = xhr.responseText
+                done = true
+            }
+        }
+        xhr.open("POST", emulatorFunctionsBase + "/recordMutation", true)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
+        xhr.send(JSON.stringify({
+            env: "prd", // matches FirebaseService.environment for a bare qmltestrunner run
+            entity: "inventory",
+            entityId: "diag-" + Date.now(),
+            action: "create",
+            before: null,
+            after: { name: "Diagnostic Widget", sku: "SKU-DIAG-1", price: 1, stock: 1 },
+            requestId: "diag-req-" + Date.now(),
+            clientTimestamp: new Date().toISOString()
+        }))
+        tryVerify(function() { return done }, 5000, "recordMutation call never completed")
+        compare(status, 200, "recordMutation rejected the request — response body: " + text)
+    }
+
     function _createProduct(name, sku, stock) {
         var createdId = ""
         var done = false
