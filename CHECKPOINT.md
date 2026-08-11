@@ -333,5 +333,61 @@ finally reach the actual point of the whole exercise: `InventoryStore.addProduct
 deleteProduct` → `Gateway.recordMutation` → the emulated `recordMutation` Cloud Function → the
 emulated Firestore, verified via independent REST reads. If this run fails, it's the first one
 that would indicate a problem with the actual application code path rather than test-harness
-plumbing. Expect more issues
+plumbing.
+
+## Fourth CI run — real failure, root cause not yet found; added a diagnostic probe instead of guessing again
+
+All three CRUD tests failed: `product doc never appeared in the emulator` (or `before the
+update`/`before the delete`), after the full 5s poll window each (16s total run — confirms real
+async activity happened this time, unlike the earlier 7ms non-runs). `_createProduct`'s own
+assertions (callback fired, non-empty id) all passed — the client believes every create
+succeeded; the doc just never shows up server-side.
+
+Traced code as far as possible without runtime data, per `superpowers:systematic-debugging`
+Phase 1/2, and ruled out several genuine candidates by reading source rather than guessing:
+- Collection path: confirmed via `gatewayLogic.js`'s `tenantRoot` construction that
+  `tenants/{tenantId}/inventory/{id}` (what the test polls) matches exactly what the server
+  writes to.
+- `scopedDb(env)` mapping: client sends `env: "prd"` (bare qmltestrunner has no `APP_STAGE`);
+  server's `DATABASE_ID_FOR_ENV.prd = "(default)"` — matches the client's own `(default)` target.
+  No database-id mismatch.
+- `Gateway.drainNow()`'s `AuthService.ensureFreshToken()` call: guarded by
+  `AuthStore.isAuthenticated`, which the test never sets to `true` — so this no-ops harmlessly
+  rather than attempting a real network call to production Google Auth with our fake
+  refresh token. Not a source of corruption or blocking.
+- `functions/package.json` pins `firebase-admin@^12.6.0` (its own separate dependency tree from
+  root `package.json`, where `seed.js`'s `firebase-admin@14.2.0` lives) — predates the v14
+  namespaced-API removal that broke `seed.js` in failure #1, so
+  `admin.firestore.FieldValue.serverTimestamp()` in `functions/index.js` is fine as written, not
+  a second instance of that bug.
+
+Root cause not found yet: `Gateway._send()` logs the real HTTP status/response via
+`console.warn` on failure but never surfaces it to the caller — `recordMutation` is
+fire-and-forget by design (`OutboxStore.markFailed` + reschedule, no error path back to
+`addProduct`'s callback). A silently-rejected request is indistinguishable from a slow one from
+this test's vantage point, and that console output isn't visible in the CI summary Taher pastes.
+
+Per the debugging skill: this is the 4th consecutive failure in this file, the stated threshold
+to stop attempting blind fixes and gather real evidence instead. Added
+`test_recordMutation_function_accepts_seeded_credentials` — POSTs directly to the emulated
+`recordMutation` function with the same payload shape `_send()` uses, bypassing
+`Gateway`/`OutboxStore` entirely, printing the real status/response body via `compare()` on
+failure. Declared first so it fails fast. Committed `5e6eb1d`, pushed. Explicitly told Taher this
+is not a fix.
+
+**Side finding, flagged to Taher but not yet resolved:** memory notes Cloud Functions were "not
+yet deployed to real Firebase" as of an earlier session. `Gateway.mode` defaults to `"gateway"`
+in the live code (confirmed, commit `649046d`) — if functions still aren't deployed, the real
+production app would currently be failing every inventory/order mutation against a
+nonexistent endpoint. Doesn't affect this CI debugging (the emulator loads `functions/index.js`
+from source regardless of real deployment status), but it's a real question worth asking Taher
+directly once this immediate bug is resolved.
+
+## Next step
+
+Taher re-runs `e2e-tests`. Two possible outcomes: (a) the diagnostic test itself fails with a
+concrete status/response — that's the root cause, fix it properly per the debugging skill's
+Phase 3/4. (b) the diagnostic test passes but the CRUD tests still fail — narrows the bug
+specifically to `Gateway`/`OutboxStore`'s dispatch mechanics, a different and more contained
+investigation. Also: ask Taher about the Cloud Functions deployment status. Expect more issues
 to surface once seed.js gets further.
