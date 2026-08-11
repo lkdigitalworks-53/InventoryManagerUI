@@ -69,7 +69,15 @@ TestCase {
     // not that anything real reached the server. Re-fires a fresh async GET
     // on every tryVerify tick until predicateFn(doc) is true or it times
     // out; doc is null while missing/not-yet-caught-up.
-    function _pollEmulatorDoc(docPath, predicateFn, timeoutMs, message) {
+    //
+    // Also checks lastConflict on every tick and fails immediately with the
+    // real conflict data if one appears for this docPath's entityId, rather
+    // than waiting out the full timeout to report a generic, uninformative
+    // message. (tryVerify's own `message` argument is evaluated once, before
+    // polling starts, so it can't reflect something that happens *during*
+    // the wait — this is why that check has to live inside the predicate,
+    // not be pre-built as a string.)
+    function _pollEmulatorDoc(docPath, entityId, predicateFn, timeoutMs, message) {
         var url = emulatorFirestoreHost
             + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + docPath
         var latest = null
@@ -91,11 +99,32 @@ TestCase {
         }
 
         tryVerify(function() {
+            if (lastConflict && lastConflict.entityId === entityId) {
+                fail(message + " -- Gateway.mutationConflicted fired for "
+                    + lastConflict.entity + "/" + lastConflict.entityId
+                    + ", server has: " + JSON.stringify(lastConflict.current))
+            }
             fire()
             return predicateFn(latest)
         }, timeoutMs, message)
 
         return latest
+    }
+
+    // Discovered while reviewing this file after rebasing onto
+    // fix/async-write-sequencing-review-fixes: that branch added
+    // Gateway.mutationConflicted(entity, entityId, current), fired when the
+    // server's applyMutation() CAS check (_deepEqual(current, before)) fails
+    // -- a 409 that Gateway now recognizes instead of retrying forever, but
+    // that recognition is still silent from a caller's perspective (no error
+    // surfaces to InventoryStore's callback). A genuine conflict shouldn't
+    // happen in this test's single-writer, fresh-id-per-test flow, but if it
+    // does, this turns an opaque "doc never appeared" timeout into an actual
+    // diagnostic instead of another guess.
+    property var lastConflict: null
+
+    function _onMutationConflicted(entity, entityId, current) {
+        lastConflict = { entity: entity, entityId: entityId, current: current }
     }
 
     function init() {
@@ -107,9 +136,12 @@ TestCase {
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
         InventoryStore.products = []
+        lastConflict = null
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
     }
 
     function cleanup() {
+        Gateway.mutationConflicted.disconnect(_onMutationConflicted)
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
         AuthStore.idToken = ""
@@ -170,7 +202,7 @@ TestCase {
     function test_addProduct_creates_real_emulator_doc() {
         var id = _createProduct("E2E Widget", "SKU-E2E-1", 10)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
-        var doc = _pollEmulatorDoc(docPath, function(d) { return d !== null }, 5000,
+        var doc = _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000,
                                     "product doc never appeared in the emulator")
         compare(doc.fields.name.stringValue, "E2E Widget")
         compare(Number(doc.fields.stock.integerValue), 10)
@@ -179,12 +211,13 @@ TestCase {
     function test_updateProduct_persists_to_emulator() {
         var id = _createProduct("E2E Widget Update", "SKU-E2E-2", 5)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
-        _pollEmulatorDoc(docPath, function(d) { return d !== null }, 5000,
+        _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000,
                           "product doc never appeared before the update")
 
+        lastConflict = null // isolate the update's own conflict signal from the create above
         InventoryStore.updateProduct(id, { stock: 25 }, "e2e adjustment")
 
-        var doc = _pollEmulatorDoc(docPath, function(d) {
+        var doc = _pollEmulatorDoc(docPath, id, function(d) {
             return d !== null && Number(d.fields.stock.integerValue) === 25
         }, 5000, "updated stock never reached the emulator")
         compare(Number(doc.fields.stock.integerValue), 25)
@@ -193,12 +226,13 @@ TestCase {
     function test_deleteProduct_removes_from_emulator() {
         var id = _createProduct("E2E Widget Delete", "SKU-E2E-3", 3)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
-        _pollEmulatorDoc(docPath, function(d) { return d !== null }, 5000,
+        _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000,
                           "product doc never appeared before the delete")
 
+        lastConflict = null // isolate the delete's own conflict signal from the create above
         InventoryStore.deleteProduct(id)
 
-        _pollEmulatorDoc(docPath, function(d) { return d === null }, 5000,
+        _pollEmulatorDoc(docPath, id, function(d) { return d === null }, 5000,
                           "product doc was never removed from the emulator")
     }
 }
