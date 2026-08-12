@@ -140,6 +140,7 @@ exports.recordMutation = functions.onRequest(
                 serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
             });
         } catch (e) {
+            console.error("recordMutation write failed", e);
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
@@ -217,6 +218,7 @@ exports.recordDelta = functions.onRequest(
                 serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
             });
         } catch (e) {
+            console.error("recordDelta write failed", e);
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
@@ -417,6 +419,7 @@ exports.recordMutationsBatch = functions.onRequest(
                 serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
             });
         } catch (e) {
+            console.error("recordMutationsBatch write failed", e);
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
