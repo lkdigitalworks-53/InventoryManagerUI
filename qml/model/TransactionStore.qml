@@ -54,6 +54,9 @@ QtObject {
     // onTenantContextReady already re-syncs every store once tenant context
     // resolves — defer to that.
     Component.onCompleted: {
+        console.debug("[TransactionStore.Component.onCompleted]", "TransactionStore.hasMore =",
+                            hasMore, " loadingMore =", loadingMore,
+                            " entries.length =", entries.length )
         if (AuthStore.tenantId.length > 0)
             _resetAndFetch()
     }
@@ -64,6 +67,10 @@ QtObject {
         // call _fetchFromFirebase() against whatever _cursor/entries this
         // NEW reset has since moved on to, potentially re-appending an
         // already-covered page or racing a page this reset is mid-fetching.
+        console.debug("[TransactionStore._resetAndFetch]", "TransactionStore.hasMore =",
+                    hasMore, " loadingMore =", loadingMore,
+                    " entries.length =", entries.length )
+        if (loadingMore) return
         if (_retryTimer) _retryTimer.stop()
         entries = []
         hasMore = true
@@ -87,10 +94,16 @@ QtObject {
     }
 
     function _fetchFromFirebase() {
+        console.debug("[TransactionStore._fetchFromFirebase]", "TransactionStore.hasMore =",
+                            TransactionStore.hasMore, " loadingMore =", TransactionStore.loadingMore,
+                            " entries.length =", TransactionStore.entries.length )
         if (loadingMore) return
         loadingMore = true
         FirebaseService.query("transactions", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
             loadingMore = false
+            console.debug("[TransactionStore.onFetchCompleted] inside callback of firebase function", "TransactionStore.hasMore =",
+                                TransactionStore.hasMore, " loadingMore =", TransactionStore.loadingMore,
+                                " entries.length =", TransactionStore.entries.length, " ok: ", ok )
             if (!ok || !result) {
                 console.warn("[TransactionStore] Firestore sync failed, retrying",
                              "(attempt " + (_retryAttempt + 1) + ")",
@@ -104,6 +117,7 @@ QtObject {
                 return (b.timestamp || "").localeCompare(a.timestamp || "")
             })
             entries = arr
+            console.debug("[TransactionStore.FirebaseService.query] arr length", arr.length, " entries: ", entries.length)
             revision++
             hasMore = result.hasMore
             _cursor = result.nextCursor
@@ -113,12 +127,17 @@ QtObject {
                 // bounded chunks instead of one unbounded request.
                 _fetchFromFirebase()
             } else {
-                console.log("[TransactionStore] Synced", entries.length, "transactions (all pages)")
+                console.info("[TransactionStore] Synced", entries.length, "transactions (all pages)")
             }
         })
     }
 
-    function syncFromFirebase() { _resetAndFetch() }
+    function syncFromFirebase() {
+        console.debug("[TransactionStore.syncFromFirebase]", "TransactionStore.hasMore =",
+                            hasMore, " loadingMore =", loadingMore,
+                            " entries.length =", entries.length )
+        _resetAndFetch()
+    }
 
     // Drop in-memory state. Used on sign-out so the next user never briefly
     // sees the previous account's transactions before the next sync lands.
