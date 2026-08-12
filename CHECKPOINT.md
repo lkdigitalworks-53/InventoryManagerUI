@@ -468,3 +468,40 @@ original root cause, unrelated to the rebase, fix it properly. (b) A CRUD test f
 exact data to act on. (c) Everything passes — the review-fix branch's changes (or simply more
 attempts) resolved whatever CI failure #4's root cause was. Any of these is real progress over
 another opaque timeout.
+
+## Fifth real run — got a concrete server error, ruled out CAS, found and fixed a silent-swallow bug
+
+`test_recordMutation_function_accepts_seeded_credentials` (the diagnostic probe) finally failed
+with real, actionable evidence instead of a timeout:
+`{"ok":false,"error":"write-failed"}` (500). No `Gateway.mutationConflicted fired for ...` message
+appeared in any of the three CRUD failures either — **the CAS-conflict hypothesis from the rebase
+review is ruled out**, useful negative evidence.
+
+Traced `"write-failed"` to a generic `catch (e) { send(res, 500, {...}); }` in `recordMutation`'s
+handler (`functions/index.js`) — and found it **never logs `e` at all**. The exception is silently
+swallowed; even a full CI log dump would have shown nothing.
+
+Before fixing, checked the most likely-looking suspect empirically rather than assuming (again):
+`admin.firestore.FieldValue.serverTimestamp()` sits right inside that `try` block, and this is the
+exact namespaced-API pattern that broke `seed.js` in failure #1. But `functions/` pins
+`firebase-admin@^12.6.0` — a separate dependency tree from root's `14.2.0`. Installed `12.6.0`
+fresh in a scratch dir and checked its exports directly: `admin.firestore.FieldValue.serverTimestamp`
+is a real function. **Not the cause — confirmed, not assumed**, correcting my own earlier
+too-quick dismissal of this exact line (I'd waved it off during the rebase review without actually
+testing it).
+
+Found `recordDelta` and `recordMutationsBatch` have the identical unlogged pattern —
+`provisionMember` already logs (`console.error("provisionMember write failed", e)`), an existing
+established convention the other three were just missing. Applied it to all three. Purely
+additive: `node --test` in `functions/` still 94/94 passing, confirming zero behavior change to
+what any client receives. Safe with respect to production: only takes effect in the `e2e-tests`
+CI job's emulator (loads `functions/` from this branch's source), not real deployed Firebase.
+
+Committed `7119e07`, pushed using a fresh PAT Taher supplied.
+
+## Next step
+
+Taher re-runs `e2e-tests` one more time. This run should finally show the real exception message/
+stack in the Functions emulator's own console output (visible in the "Run E2E tests" step's full
+log, not just the results.xml summary table Taher has been pasting) — ask for that fuller log
+excerpt if the failure repeats, since that's the actual evidence this fix was built to surface.
