@@ -408,6 +408,16 @@ mutated a nested field (`adjustments`) in place — the mutation leaked back int
 server's CAS check rejected a completely ordinary price edit as a false conflict (see SKILLS Skill
 37, `docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md`). A full-codebase
 sweep found this was the only instance of the pattern; fixed narrowly rather than rewritten broadly.
+Found immediately after, testing the same fix (2026-08-11): `OrdersStore.applyAdjustment`'s
+completed-order total also trusts `TransactionStore.totalsForOrder` unconditionally, which is wrong
+if `TransactionStore` hasn't finished its post-cold-start paginated re-sync yet — the newest
+transactions (timestamp-prefixed IDs, ascending `__name__` pagination) load last, so a just-
+completed order's own sale can still be missing when a prompt return tries to net against it.
+`DataModel._tryAdjustOrder` now refuses completed-order adjustments while `TransactionStore.
+hasMore` is true, and `TransactionStore` now retries a failed sync page with backoff instead of
+leaving `hasMore` stuck forever (see SKILLS Skill 38, `docs/superpowers/specs/
+2026-08-11-ledger-sync-race-CHECKPOINT.md`). Scoped to the one caller that actually reads this
+ledger — order completion and everything else here don't depend on it.
 Worth knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to
 `firestore.rules` (a new `isServerOnlyCollection` tier, distinct from the ledger tier below — locks
 needs read AND write denied, not just write) — if touching `firestore.rules` for compliance work,
@@ -518,12 +528,24 @@ env.
   independent array references (not the same shared array a `.push()` would leave them as), covers
   both the first-adjustment and second-adjustment-appended-to-existing-history cases, plus a
   functional sanity check that local order state still updates correctly.
-- 18 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10). Historical
-  baseline before those 4 new suites: **140 cases pass, 0 fail** — none of the 4 newest suites have
-  been run under a real `qmltestrunner` yet (this repo's Cloud sessions don't have the Windows/Felgo
-  toolchain; the 3 from 2026-08-08 have Node-side twins that do pass, 7/7, via `cd functions && npm
-  test` — `tst_OrdersStore_applyAdjustment.qml` has no Node-side twin, since `applyAdjustment` lives
-  directly in `OrdersStore.qml` and isn't Node-portable the way the pure `functions/lib/` math is).
+- `tests/tst_DataModel_adjustOrderSyncGuard.qml`, `tests/tst_TransactionStore_syncRetry.qml`
+  (2026-08-11, SKILLS Skill 38) — regression coverage for the ledger-sync race: the first asserts
+  `DataModel._tryAdjustOrder` refuses a completed-order adjustment while `TransactionStore.hasMore`
+  is true (with no side effects — no ledger entry written, no order mutation enqueued), proceeds
+  normally once synced, and doesn't weaken the pre-existing pending-order-can't-be-adjusted check;
+  the second covers `TransactionStore`'s new retry backoff math in isolation (first-attempt delay,
+  exponential growth, the 30s cap, single-shot timer) — NOT the actual network failure/retry
+  round-trip, which needs on-device verification (kill the network mid-sync, confirm it keeps
+  retrying with growing delays instead of leaving `hasMore` stuck). `DataModel.qml` has no
+  `pragma Singleton` (unlike the stores), so its test instantiates it directly as a child item
+  rather than referencing it by name — first test coverage for this file.
+- 20 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11). Historical baseline before those 6 new suites: **140 cases pass, 0 fail** — none of
+  the 6 newest suites have been run under a real `qmltestrunner` yet (this repo's Cloud sessions
+  don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have Node-side twins that do pass,
+  7/7, via `cd functions && npm test` — the other 3 have no Node-side twin, since the logic under
+  test lives directly in QML singletons/components and isn't Node-portable the way the pure
+  `functions/lib/` math is).
 - **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file

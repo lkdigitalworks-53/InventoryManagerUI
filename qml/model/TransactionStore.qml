@@ -34,6 +34,19 @@ QtObject {
     property bool loadingMore: false
     property var _cursor: null
 
+    // Retry-timer for a failed sync page. Without this, hasMore stays stuck
+    // at true forever after a single transient network failure -- and once
+    // OrdersStore.applyAdjustment/DataModel._tryAdjustOrder start refusing
+    // completed-order returns while hasMore is true (2026-08-11, see
+    // docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md),
+    // that would mean one dropped request permanently blocks every return
+    // until the app restarts. Retrying is what makes "block until synced"
+    // safe to rely on instead of just inconvenient.
+    property int _retryAttempt: 0
+    readonly property int _retryBaseDelayMs: 3000
+    readonly property int _retryMaxDelayMs: 30000
+    property var _retryTimer: null
+
     // Only fetch here if tenant context is ALREADY known (lazy/warm
     // creation). On cold start with a persisted session this singleton could
     // otherwise be created before AuthStore.loadSession() has run, hitting
@@ -49,7 +62,22 @@ QtObject {
         entries = []
         hasMore = true
         _cursor = null
+        _retryAttempt = 0
         _fetchFromFirebase()
+    }
+
+    function _scheduleRetry() {
+        if (!_retryTimer) {
+            _retryTimer = Qt.createQmlObject(
+                'import QtQuick; Timer { repeat: false }', root, "TransactionStoreRetryTimer")
+            _retryTimer.triggered.connect(_fetchFromFirebase)
+        }
+        // Exponential backoff, capped -- a genuinely offline device shouldn't
+        // hammer the network every 3s indefinitely.
+        var delay = Math.min(_retryMaxDelayMs, _retryBaseDelayMs * Math.pow(2, _retryAttempt))
+        _retryAttempt++
+        _retryTimer.interval = delay
+        _retryTimer.restart()
     }
 
     function _fetchFromFirebase() {
@@ -58,10 +86,13 @@ QtObject {
         FirebaseService.query("transactions", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
             loadingMore = false
             if (!ok || !result) {
-                console.warn("[TransactionStore] Firestore sync failed",
+                console.warn("[TransactionStore] Firestore sync failed, retrying",
+                             "(attempt " + (_retryAttempt + 1) + ")",
                              FirebaseService.lastStatusCode, FirebaseService.lastError)
+                _scheduleRetry()
                 return
             }
+            _retryAttempt = 0
             var arr = entries.concat(result.items)
             arr.sort(function(a, b) {
                 return (b.timestamp || "").localeCompare(a.timestamp || "")

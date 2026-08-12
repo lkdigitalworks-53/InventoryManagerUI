@@ -449,6 +449,30 @@ branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
 
 See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
 
+**Update 2026-08-11:** found immediately after the fix directly above, testing the same branch —
+complete an order, verify it in Firestore, close the app, reopen it, and return an item promptly:
+the return "succeeded" locally, but the Orders list total didn't reduce and order-level history
+looked incomplete. Root cause was different from 2026-08-10 despite the similar symptom:
+`OrdersStore.applyAdjustment`'s completed-order total trusts `TransactionStore.totalsForOrder`
+unconditionally, and `TransactionStore` re-fetches its entire transaction history from Firestore on
+every cold start, paginated, ordered ascending by document ID — and because transaction IDs are
+locally generated with an embedded, increasing timestamp, that means the NEWEST transactions
+(including a just-completed order's own sale) load LAST. Acting before that sync finished meant
+computing the ledger total against data that was missing its own base sale event. Verified this
+wasn't an arithmetic bug by Node-porting the actual allocation/ledger-sum logic (both are portable
+`.pragma library` JS) against three scenarios (simple, tax+discount+multi-line, sequential returns)
+— all correct given a complete ledger. Fixed by refusing completed-order adjustments while
+`TransactionStore.hasMore` is true (checked in `DataModel._tryAdjustOrder`, which both the normal
+return flow and the import-adjustment path route through, plus proactively in
+`OrderDetailDialog._save()` so the user finds out before filling out the whole return form) —
+scoped to that one action specifically (`grep -rn "totalsForOrder(" qml/` turns up exactly one
+caller), not a blanket "block the whole app while any store syncs," since order completion and
+everything else here don't read this ledger at all. Also added retry-with-backoff to
+`TransactionStore`'s sync — without it, a single failed page left `hasMore` stuck at `true` forever,
+which would have turned the new guard into a permanent lockout after one dropped request instead of
+a brief, correct wait. See SKILLS Skill 38 and `docs/superpowers/specs/
+2026-08-11-ledger-sync-race-CHECKPOINT.md` for the full investigation.
+
 **Update 2026-08-10:** found via Taher's own manual testing of the round-2 branch — a real order
 edit (add, complete, adjust price, save) hit a spurious "updated elsewhere" conflict toast with
 nobody else touching the order. `OrdersStore.applyAdjustment` built its CAS `before` snapshot as a

@@ -1539,3 +1539,88 @@ before any XHR — see Skill 36 / `tests/tst_Gateway.qml`'s header note). That m
 production `before`/`after` objects directly inspectable via `OutboxStore.items[0].before`/`.after`
 in a test — no mock/fake layer needed to catch this class of bug; asserting on object identity
 (`before.adjustments !== after.adjustments`) is the most direct regression check available.
+
+## Skill 38: Ledger-sync race — acting on a paginated store before it's complete
+
+**Files**: `qml/model/TransactionStore.qml` (`_fetchFromFirebase`, `_scheduleRetry`), `qml/model/
+DataModel.qml` (`_tryAdjustOrder`), `qml/pages/OrderDetailDialog.qml` (`_save`), `tests/
+tst_DataModel_adjustOrderSyncGuard.qml`, `tests/tst_TransactionStore_syncRetry.qml`, full
+investigation: `docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md`
+
+Found by Taher immediately after the Skill 37 fix shipped, testing the very branch that fix
+unblocked: complete an order, verify it in Firestore, close the app, reopen it, and — promptly —
+return an item. The return "succeeded" (product-level history recorded it), but the order's total
+in the Orders list didn't reduce, and order-level history looked incomplete. Confirmed by Taher's
+own follow-up test: same sequence but with the app left running (no restart) — works perfectly.
+Same sequence with a restart, but waiting long enough before returning — also works perfectly. The
+one variable that matters is whether `TransactionStore` has finished its post-restart sync.
+
+**Root cause**: `TransactionStore` re-fetches its entire transaction history from Firestore on
+every cold start, 50 docs at a time, via `FirebaseService.query("transactions", { limit, startAfter
+}, ...)` — no `orderBy` override, so it defaults to ascending `__name__` (document ID). Transaction
+IDs are locally generated as `"tx-" + kind + "-" + Date.now() + "-" + rand` (`_nextId`) — an
+ever-increasing, timestamp-prefixed string. Ascending-by-ID is therefore ascending-by-creation-time:
+the OLDEST transactions load first, page by page, and the NEWEST — including the sale from an order
+you just completed — load LAST. On a dev/test database with a lot of accumulated history (this
+project has plenty, from every review round's testing), that's several sequential round trips, not
+one.
+
+`OrdersStore.applyAdjustment`, for a completed order, trusts `TransactionStore.totalsForOrder(orderId)`
+unconditionally:
+```js
+var led = TransactionStore.totalsForOrder(orderId);
+if (led) { o.tax = led.tax; o.total = led.total; }   // led is ALWAYS an object -- this always wins
+else { o.tax = t.tax; o.total = t.total; }            // dead code, totalsForOrder never returns null
+```
+If the return happens before that last page (containing the order's own sale entry) has synced,
+`totalsForOrder` sums an incomplete ledger — the return entry is there (it's written locally and
+immediately, independent of any fetch), the sale entry isn't, and the resulting total is wrong. I
+verified this isn't an arithmetic bug — I Node-ported the actual `OrderMath.allocate`/
+`TransactionStore.totalsForOrder`/`forOrder` logic (both files are plain, portable JS — no QML/
+singleton deps per their own header comments) and ran it against three realistic scenarios
+(simple, tax+discount+multi-line, sequential double-return) — all computed correctly given a
+complete ledger. The bug is entirely about *what the ledger contains at the moment it's read*, not
+how it's summed.
+
+**The fix has two parts, and both matter — one without the other creates a worse bug:**
+
+1. **Refuse the action, don't silently degrade.** `DataModel._tryAdjustOrder` now refuses to adjust
+   a completed order while `TransactionStore.hasMore` is true, with a clear message telling the
+   user to wait — checked both in `DataModel` (the authoritative gate — `onAdjustOrder` and
+   `adjustOrderForImport` both route through `_tryAdjustOrder`, so one check covers both) and
+   proactively in `OrderDetailDialog._save()` (so the user finds out before filling out
+   ConfirmReturnSheet's reason/condition/note fields, not after). Scoped deliberately narrow: `grep
+   -rn "totalsForOrder(" qml/` turns up exactly one caller (`applyAdjustment`'s completed-order
+   branch) — nothing else in the app reads this ledger, so nothing else needed gating. Order
+   completion itself is unaffected (`recordSaleFromOrder`'s allocation comes from the order's own
+   `products`, never from `TransactionStore.entries`), and blocking the whole app until a
+   potentially-large paginated historical fetch completes — which was the instinctive first ask —
+   would have been a real regression for any business with meaningful order history. "Block the
+   user" only where the actual dependency is.
+
+2. **Fix the failure path the block now depends on.** Before this, a single failed sync page left
+   `TransactionStore.hasMore` stuck at `true` FOREVER — `_fetchFromFirebase`'s failure branch just
+   logged a warning and returned, no retry, nothing else in the file ever flips `hasMore` back down
+   on its own. Once (1) ships, that gap stops being a cosmetic loose end and becomes a real problem:
+   one dropped request during a cold-start sync would permanently block every completed-order return
+   until the app restarts. Added `_scheduleRetry()` — exponential backoff (3s, 6s, 12s, 24s, capped
+   at 30s), single-shot `Timer` created via `Qt.createQmlObject` the same way `Gateway._drainTimer`
+   already does it in this codebase (same `LDR-3` lint finding as that existing, shipped code —
+   not a new anti-pattern, matching established precedent). Point 1 without point 2 trades a subtle
+   wrong-number bug for an occasional hard, unrecoverable lockout — worse, not better.
+
+**The general rule**: a `property bool hasMore` (or equivalent "is this collection fully loaded"
+flag) on a paginated store is not just a loading-spinner concern — anything that trusts that
+store's data to be *complete* (a sum, a lookup-by-key expected to always hit, an aggregate) needs to
+either check that flag or have its own reason to be sure the relevant subset is already loaded.
+`grep -rn "\.hasMore\b" qml/model/` is the fast way to find which stores have this shape at all;
+right now that's `TransactionStore` and `OrdersStore` — worth the same scrutiny if a similar
+"trust an aggregate over the whole collection" pattern shows up reading from `OrdersStore.orders`
+somewhere.
+
+**Left alone, not fixed here**: `OrdersStore.orders` has the identical paginated/`hasMore` shape
+(same grep). Nothing today aggregates *across* orders the way `totalsForOrder` aggregates across
+transactions — `OrdersPage`'s list, counts, and filters all operate per-row on whatever's loaded,
+which degrades gracefully (a syncing order list just looks incomplete, it doesn't compute a wrong
+number) rather than silently wrong. No evidence of a live bug here; flagging so a future aggregate
+built on `OrdersStore.orders` doesn't reintroduce this same class of bug without the same guard.

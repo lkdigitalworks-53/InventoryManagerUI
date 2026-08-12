@@ -735,6 +735,22 @@ Item {
             if (callback) callback(false)
             return
         }
+        // A completed order's tax/total come from TransactionStore.totalsForOrder
+        // (OrdersStore.applyAdjustment) -- summing that ledger while it's still
+        // mid-sync (cold app start, paginating in older transactions) silently
+        // undercounts, since the very entries a return needs to net against
+        // (this order's original sale) may not have loaded yet. Refuse rather
+        // than commit a wrong total. See Skill 38 / SKILLS.md and
+        // docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md for
+        // why this is scoped to completed-order adjustments specifically, not
+        // the whole app -- order completion and every other action here don't
+        // read this ledger at all.
+        if (TransactionStore.hasMore) {
+            dataModel.stockErrorMsg = "Still syncing transaction history from a recent restart — "
+                + "please wait a few seconds and try again."
+            if (callback) callback(false)
+            return
+        }
 
         var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
         for (var pf = 0; pf < deltas.length; ++pf) {

@@ -417,6 +417,14 @@ BottomSheet {
             // routed through the adjust/ledger path (per-line discount event).
             var linesChanged = JSON.stringify(_lineKeys(prods)) !== JSON.stringify(_lineKeys(_originalLines))
             if (linesChanged) {
+                // Same guard as DataModel._tryAdjustOrder, checked here too so the
+                // user finds out BEFORE filling out ConfirmReturnSheet's reason/
+                // condition/note fields, not after (2026-08-11 — see SKILLS Skill 38).
+                if (TransactionStore.hasMore) {
+                    stockErrorLabel.text = qsTr("Still syncing transaction history from a recent restart — "
+                        + "please wait a few seconds and try again.")
+                    return
+                }
                 // Lock-span fix (known gap, review round 2): ConfirmReturnSheet
                 // needs the order locked through its own confirm/cancel, not
                 // just until THIS dialog closes. Hand off ownership instead of
