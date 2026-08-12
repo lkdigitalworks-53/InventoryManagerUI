@@ -634,3 +634,107 @@ push if this session is resumed later).
    check that fails on any `admin.firestore.` (namespaced) usage in `functions/`, forcing the
    modular API everywhere. Not implemented — flagging as a decision for Taher, not assuming it's
    wanted.
+
+## Seventh run — 5/6 passing, FieldValue fix confirmed working; one new, different failure
+
+The FieldValue fix worked exactly as expected: zero `write failed` exceptions anywhere in this
+run's log, across all 13 `recordMutation` invocations. This is a genuinely new failure, not a
+recurrence.
+
+**Result:** `test_addProduct_creates_real_emulator_doc` failed — `'product doc never appeared in
+the emulator' returned FALSE`. `test_updateProduct_persists_to_emulator` and
+`test_deleteProduct_removes_from_emulator` both passed, and both run the *identical* create+poll
+sequence internally (`_createProduct()` then `_pollEmulatorDoc(... d !== null ...)`) before doing
+their own update/delete — so "create doesn't work" is already ruled out; this is specific to
+`test_addProduct`'s own attempt, not the create code path in general.
+
+**Investigation so far (`superpowers:systematic-debugging`, thorough but inconclusive on root
+cause — documenting honestly rather than overclaiming):**
+
+- Read the full client write path for a create: `InventoryStore.addProduct` → `_resolveSupplierId`
+  (synchronous here — the test's `init()` pre-seeds `SupplierStore.suppliers` by name, so no
+  network call) → `nextProductId` → `FirebaseService.mintCounterValue` (2 sequential round trips:
+  GET `counters/products`, then a CAS-guarded `:commit` POST, both direct to the Firestore
+  emulator on 8080, bypassing Gateway entirely — this is how product IDs are minted) → THEN
+  `Gateway.recordMutation("inventory", id, "create", null, doc)` fires (fire-and-forget: enqueues
+  to `OutboxStore` and calls `drainNow()`, which sends immediately and does not block) → the
+  `addProduct` callback fires synchronously right after `mintCounterValue` resolves, **before**
+  the actual `recordMutation` HTTP response has necessarily come back. This is why the test
+  separately polls (`_pollEmulatorDoc`) instead of trusting the callback alone — by design, not a
+  bug.
+- Read `Gateway._send()`, `drainNow()`, `_reschedule()`, and all of `OutboxStore.qml` in full,
+  specifically hunting for a shared-mutable-state race given `addProduct` fires **three**
+  `Gateway.recordMutation` calls back-to-back in one synchronous tick (inventory create, then
+  `TransactionStore.recordCreated`, then `StockBatchStore.addBatch` each fire their own). Found
+  nothing: `_send(item)` closes over its own `item`/`xhr` per call (no shared state to race on),
+  `OutboxStore._isItemBlocked`/`markInFlight`/`clearInFlight` correctly key by `entity/entityId`
+  so the three concurrent sends don't interfere with each other, and `_reschedule()` restarting
+  the shared drain timer multiple times in the same tick is cosmetically redundant but not
+  incorrect.
+- Cross-checked `seed.js`: it seeds `users/`, `tenants/{id}`, `tenants/{id}/members/{uid}`, and
+  `tenants/{id}/suppliers/{id}` — **never** `tenants/{id}/inventory` or `counters/products`. So
+  `test_addProduct`'s create is the first-ever write to both of those collection paths in this
+  emulator instance. Initially treated this as supporting a "first write to a fresh collection is
+  slower" theory.
+- **That theory doesn't survive contact with the actual numbers, and I want to be honest about
+  that rather than quietly dropping it.** Reconstructed the CI log's 13 `recordMutation`
+  begin/finish pairs by matching each `Finished ... in Xms` back to its `Beginning execution`
+  timestamp. The slowest single call took 1088ms; every other call finished within a similar
+  window; all 13 began and ended inside a ~1.75s span. A poll with a fresh 5000ms budget starting
+  around when `_createProduct()` returns should comfortably have caught a write that lands ~1
+  second later — there's roughly a 4x margin, not a photo finish. I don't think "it just barely
+  ran out of time" is well-supported by these numbers, even though it was my first instinct.
+  Flagging this explicitly because guessing past evidence that doesn't fit is exactly the mistake
+  this project has already paid for once (the FieldValue investigation's earlier isolated-check
+  miss).
+- Considered and ruled out (each checked, not assumed): a `FieldValue`-style env/database
+  mismatch between what `Gateway._send()` sends (`env: FirebaseService.environment`) and what
+  `_pollEmulatorDoc` hardcodes (`databases/(default)`) — ruled out because if this were wrong it
+  would break *every* create's poll identically, not just the first, and update/delete's own
+  embedded create-polls (identical code) passed. A stuck `OutboxStore._inFlightKeys` entry —
+  ruled out because it would only affect subsequent client-side sends for that *same* entityId,
+  and every test mints a fresh id, so it can't explain the poll itself failing to observe a doc
+  that the server already wrote.
+- **What I could not rule out, and is the most likely real gap:** `_pollEmulatorDoc`'s `fire()`
+  collapsed *every* non-200 response — a permissions denial, a 500, a malformed-request 400, as
+  well as a genuine "not created yet" 404 — into the identical `latest = null`. The test could not
+  distinguish "the doc isn't there yet" from "the read is failing for some other reason" or from
+  "there's a real problem with what the server actually did with the create." Given the timing
+  data doesn't cleanly support a pure timeout explanation, I don't want to guess further blind —
+  this is the textbook case for adding diagnostic instrumentation and getting one more real data
+  point, per `systematic-debugging`'s evidence-gathering step, rather than picking a fix I can't
+  actually explain.
+
+**Change made — diagnostics only, zero behavior change:** `tests/e2e/tst_InventoryE2E.qml`,
+`_pollEmulatorDoc()`. Now tracks and logs (via `console.warn`, visible in the raw CI log) the
+actual HTTP status and response body on every status change during polling, plus attempt count and
+elapsed time. Also appends `entityId`/`docPath` to `tryVerify`'s static failure message (previously
+a bare "product doc never appeared in the emulator" didn't even say which product/path). Same
+predicate, same timeout, same pass/fail outcome either way — this only makes the next run's log
+tell us what actually happened instead of leaving us to reconstruct it after the fact from
+Cloud-Functions-side logs that don't cover the Firestore-emulator side of the conversation at all.
+
+**Deliberately did NOT also bump the 5000ms timeout.** Given the timing math above doesn't support
+"ran out of time" as the explanation in this run, guessing a bigger number wouldn't be a fix I
+could explain — it might coincidentally make the symptom go away without telling us anything, or
+mask a real bug that would resurface later in a more confusing form. Flagging this as a deliberate
+choice, not an oversight, and open to being told to just bump it anyway if Taher would rather trade
+rigor for a faster resolution — but that should be an explicit call, not something I do silently.
+
+**Not committed or pushed.** Diagnostics-only change, low risk, but still a new commit — same
+standing rule applies.
+
+## Next step
+
+1. Taher reviews the diagnostic diff and the reasoning above (especially the part where the
+   timing evidence undercut my own first theory — flagging that pattern-matching-then-checking-
+   the-math is exactly the discipline this project has needed after the FieldValue miss).
+2. On approval: commit, push, re-run `e2e-tests`.
+3. Expected outcomes: (a) it now passes — in which case the failure was likely transient/flaky,
+   and the enhanced logging plus richer failure message stay in the file as a permanent
+   improvement regardless; or (b) it fails again — in which case the `console.warn` lines in the
+   raw CI log finally tell us the actual status code and response body the poll was seeing, which
+   should turn this from a guessing exercise into a concrete next bug to fix.
+4. Once this is resolved, the diagnostic comment above says to consider stripping the extra
+   logging back out — worth Taher's explicit call at that point (it's genuinely useful permanent
+   diagnostic value vs. noise, a judgment call, not obviously one or the other).

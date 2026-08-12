@@ -77,19 +77,55 @@ TestCase {
     // polling starts, so it can't reflect something that happens *during*
     // the wait — this is why that check has to live inside the predicate,
     // not be pre-built as a string.)
+    // Diagnostic instrumentation (2026-08-12): added after a run where
+    // test_addProduct's poll timed out with the generic "doc never
+    // appeared" message despite every recordMutation call in that run's
+    // Functions-emulator log finishing in <1.1s with no error logged —
+    // math that doesn't support a plain "ran out of time" explanation.
+    // The real gap is that fire() below collapsed EVERY non-200 response
+    // (403, 500, a genuine 404-still-waiting, a malformed request, ...)
+    // into the same `latest = null`, so a permissions problem and "not
+    // created yet" were indistinguishable from this test's own point of
+    // view. This does not change pass/fail behavior — same predicate, same
+    // timeout — it only makes the CI log show what the poll actually
+    // observed (status + body) instead of forcing a guess. Intended to be
+    // temporary: strip it back out once the addProduct-specific failure is
+    // understood and this file has been stable for a while.
     function _pollEmulatorDoc(docPath, entityId, predicateFn, timeoutMs, message) {
         var url = emulatorFirestoreHost
             + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + docPath
         var latest = null
         var inFlight = false
+        var startedAt = Date.now()
+        var attemptCount = 0
+        var lastStatus = -1
+        var lastLoggedStatus = -2
+        var lastLoggedAt = 0
 
         function fire() {
             if (inFlight) return
             inFlight = true
+            attemptCount++
             var xhr = new XMLHttpRequest()
             xhr.onreadystatechange = function() {
                 if (xhr.readyState === XMLHttpRequest.DONE) {
+                    lastStatus = xhr.status
                     latest = (xhr.status === 200) ? JSON.parse(xhr.responseText) : null
+                    // Log on every status change, and at most once a second
+                    // otherwise -- a run that just keeps 404ing still shows
+                    // elapsed-time progression instead of one line total.
+                    var nowMs = Date.now()
+                    if (lastStatus !== lastLoggedStatus || (nowMs - lastLoggedAt) >= 1000) {
+                        console.warn("[_pollEmulatorDoc]", entityId,
+                                     "attempt", attemptCount,
+                                     "elapsedMs", (nowMs - startedAt),
+                                     "status", lastStatus,
+                                     "body", (lastStatus !== 200)
+                                         ? String(xhr.responseText).slice(0, 300)
+                                         : "(200 OK)")
+                        lastLoggedStatus = lastStatus
+                        lastLoggedAt = nowMs
+                    }
                     inFlight = false
                 }
             }
@@ -106,7 +142,7 @@ TestCase {
             }
             fire()
             return predicateFn(latest)
-        }, timeoutMs, message)
+        }, timeoutMs, message + " (entityId=" + entityId + ", docPath=" + docPath + ")")
 
         return latest
     }
