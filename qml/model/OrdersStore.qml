@@ -80,6 +80,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         orders = [];
         hasMore = true;
         _cursor = null;

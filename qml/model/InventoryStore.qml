@@ -67,6 +67,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         products = [];
         hasMore = true;
         _cursor = null;

@@ -94,6 +94,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         batches = []
         hasMore = true
         _cursor = null

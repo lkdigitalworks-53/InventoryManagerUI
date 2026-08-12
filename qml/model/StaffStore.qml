@@ -287,6 +287,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         staff = []
         activities = []
         hasMore = true

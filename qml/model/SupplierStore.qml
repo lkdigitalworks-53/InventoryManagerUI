@@ -75,6 +75,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         suppliers = []
         hasMore = true
         _cursor = null
