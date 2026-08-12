@@ -127,7 +127,48 @@ in `OrdersStore.applyAdjustment` — correct call.
       convention), explicitly noting the root cause was different from 2026-08-10 despite the
       similar surface symptom.
 
-## What's NOT done / needs Taher
+## Follow-up (2026-08-11, same day) — Taher's on-device retest found it wasn't fully fixed
+
+Taher rebuilt and retested against `7bb1db4` (confirmed, not a stale-build issue). Result: no
+"still syncing" message appeared when returning an item promptly after a restart, and order/
+inventory screens showed inconsistent/partial data, self-resolving after enough time passed —
+meaning the underlying sync race is still happening, but the new guard isn't reliably catching it.
+
+Investigated two hypotheses:
+- **Overlapping `_resetAndFetch()` calls** (the same category of race `OrdersStore` already has a
+  documented comment about) — checked whether `Component.onCompleted` and `onTenantContextReady`
+  could both fire `_resetAndFetch()` on a plain cold start. Evidence says no: `Component.onCompleted`'s
+  guard (`AuthStore.tenantId.length > 0`) is normally false at creation time on a fresh launch, so
+  `onTenantContextReady` should be the sole trigger. Not ruled out with certainty, but no positive
+  evidence either.
+- **`FirebaseService.query`'s pagination/`hasMore` logic** — re-read in full; it over-fetches by one
+  specifically to detect `hasMore` exactly at the page boundary (`PagingHelper.mergePage`), shared
+  by every paginated store in the app, not something touched by the 2026-08-11 fix. No evidence of
+  a bug here either, though not exhaustively verified.
+
+**Concrete bug found and fixed**: `_resetAndFetch()` never cancelled a pending retry timer. If an
+earlier fetch attempt failed and scheduled a retry, then something reset the sync again before that
+retry fired, the stale retry would still go off later against a `_cursor`/`entries` state it no
+longer matches. Fixed — `_resetAndFetch()` now calls `_retryTimer.stop()` first.
+
+**Could not identify a second concrete bug from static reading alone.** Rather than guess further
+(risk of a larger, speculative rewrite — e.g. a generation-counter guard against overlapping syncs —
+built on an unconfirmed theory), added targeted diagnostic logging instead:
+- `DataModel._tryAdjustOrder` now logs `TransactionStore.hasMore`, `.loadingMore`, and
+  `.entries.length` at the exact moment the guard checks them.
+- The existing `[TransactionStore] Firestore sync failed, retrying...` / `Synced N transactions`
+  logs from the original fix remain in place.
+
+Asked Taher to retest with logcat/console visible and share the output — this turns the next round
+into an actual trace instead of more speculation. Also asked for clarification on what "transactions
+not getting updated" on the Orders/Inventory pages specifically refers to.
+
+**Files touched this round**: `qml/model/TransactionStore.qml` (`_resetAndFetch` timer-stop fix),
+`qml/model/DataModel.qml` (diagnostic log line only — no behavior change). No new tests this round
+(no new testable behavior — the timer-stop fix is covered in spirit by the existing
+`tst_TransactionStore_syncRetry.qml` backoff tests, and the log line has nothing to assert on).
+
+
 
 - **On-device, the original repro**: complete an order, verify in Firestore, restart the app, and
   attempt a return immediately — confirm the new message appears ("Still syncing transaction

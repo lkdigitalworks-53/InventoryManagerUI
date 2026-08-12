@@ -59,6 +59,12 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        // A retry scheduled by an earlier, now-superseded fetch attempt must
+        // not survive a fresh reset -- left running, it would fire later and
+        // call _fetchFromFirebase() against whatever _cursor/entries this
+        // NEW reset has since moved on to, potentially re-appending an
+        // already-covered page or racing a page this reset is mid-fetching.
+        if (_retryTimer) _retryTimer.stop()
         entries = []
         hasMore = true
         _cursor = null

@@ -745,6 +745,9 @@ Item {
         // why this is scoped to completed-order adjustments specifically, not
         // the whole app -- order completion and every other action here don't
         // read this ledger at all.
+        console.log("[DataModel._tryAdjustOrder]", orderId, "TransactionStore.hasMore =",
+                    TransactionStore.hasMore, " loadingMore =", TransactionStore.loadingMore,
+                    " entries.length =", TransactionStore.entries.length)
         if (TransactionStore.hasMore) {
             dataModel.stockErrorMsg = "Still syncing transaction history from a recent restart — "
                 + "please wait a few seconds and try again."
