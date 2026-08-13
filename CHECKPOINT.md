@@ -738,3 +738,108 @@ standing rule applies.
 4. Once this is resolved, the diagnostic comment above says to consider stripping the extra
    logging back out — worth Taher's explicit call at that point (it's genuinely useful permanent
    diagnostic value vs. noise, a judgment call, not obviously one or the other).
+
+## New session (2026-08-13) — fresh clone, checked out this branch per Taher's instruction
+
+Per standing session rules: cloned `InventoryManagerUI` fresh into the sandbox
+(`/home/claude/work/InventoryManagerUI`), fetched and checked out the existing
+`docs/e2e-testing-strategy-design` branch (Taher named it explicitly this session — did not
+create a new branch on top of it, since the ask was to debug and fix on this branch, matching
+every prior round's pattern of committing directly here). Loaded `superpowers:systematic-debugging`
+per Taher's explicit invocation before doing anything else.
+
+## Eighth run (the diagnostic commit's first real test) — the diagnostics never reached the CI log; found out why, and it's not the addProduct bug
+
+Taher supplied the raw CI log for the diagnostic commit's (`6053419`) first real run (job "E2E
+Tests (Inventory CRUD)", run `31584114852`, PR #43). Read it in full per Phase 1.
+
+**Confirmed, good news first:** the `FieldValue` fix from the Sixth run is still solid — zero
+`write failed` exceptions anywhere in this run, across all 13 `recordMutation` invocations. The
+Seventh run's pattern also repeats a third time: `test_addProduct_creates_real_emulator_doc` is
+the only failure (`'product doc never appeared in the emulator (entityId=PRD-001,
+docPath=tenants/e2e-tenant/inventory/PRD-001)' returned FALSE`);
+`test_updateProduct_persists_to_emulator`, `test_deleteProduct_removes_from_emulator`, and the
+`test_recordMutation_function_accepts_seeded_credentials` diagnostic probe all passed.
+
+**The actual finding this round, and it's not what the diagnostic commit was built to surface:**
+the `console.warn("[_pollEmulatorDoc]", ...)` lines added last round — the whole point of that
+commit — **do not appear anywhere in this log.** Neither does any other qmltestrunner console
+output: no `********* Start testing of InventoryE2E *********` banner, no per-test `PASS`/`FAIL`
+lines, nothing between `seed.js: wrote .../.fixture.json` and `Script exited unsuccessfully (code
+1)` except the Functions emulator's own `Beginning execution`/`Finished` lines. Verified this
+isn't a copy/paste artifact — grepped the raw file directly (`grep -a`, byte-for-byte, no ANSI
+codes or hidden text swallowing it) and it's genuinely absent, not just filtered out by my search
+terms.
+
+Checked why, rather than assuming a fluke, since this is exactly the pattern the debugging skill
+warns about ("no root cause" is usually incomplete investigation): confirmed via Qt's own
+documentation (`doc.qt.io/qt-6/qtest-overview.html`) that <cite index="1-1">the `-o filename,format` option writes output to the specified file, and if that first version of `-o` is used, no other output goes to standard output — the special filename `-` has to be used to explicitly also log to stdout, and the option can be repeated once to get both a file and stdout at the same time</cite>. The
+`e2e-tests` job's `Run E2E tests` step invokes qmltestrunner with exactly one `-o
+results.xml,junitxml` and nothing else. Per that documented behavior, **every bit of test
+output — the standard PASS/FAIL banner AND any `console.warn`/`console.log` calls the test itself
+makes — goes only into `results.xml`, never to stdout.** That's the whole gap: the diagnostic
+commit worked exactly as designed, the data just landed somewhere this session's raw-log-reading
+workflow can't see.
+
+**This is a real, verifiable, low-risk gap — but it's not the root cause of the CRUD failure
+itself, and I want to be direct about that distinction rather than letting a fix here read as
+"found and fixed the bug."** It's the root cause of *why the last three CI rounds of `console.warn`
+instrumentation have all felt like shouting into a void* — a separate, real problem, worth fixing
+regardless of what the underlying addProduct issue turns out to be.
+
+**Fix applied** (`.github/workflows/checks.yml`, `e2e-tests` job, one line):
+```diff
+-  "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml"
++  "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml -o -,txt"
+```
+Second `-o -,txt` target streams plain-text output (banner + PASS/FAIL + every `console.warn`) to
+stdout *in addition to* the existing `results.xml`/junitxml (still consumed unchanged by
+`dorny/test-reporter` and the `upload-artifact` step) — the documented "repeat `-o` once, second
+one targets `-` for stdout" pattern, not a guess. YAML-validated (`pyyaml`).
+
+**Deliberately NOT touched:** the `qml-tests` job (`checks.yml` line 29,
+`qmltestrunner -input tests -platform offscreen -o results.xml,junitxml`) has the exact same
+single-`-o` gap. Left alone — that job runs the *entire* `tests/` directory (far more test files
+than `tests/e2e/`), so mirroring this fix there would meaningfully bloat that job's log on every
+PR, and it isn't blocking anything today (no one's added `console.warn` diagnostics there). Flagging
+it as a real, related, and easy-to-fix gap if Taher wants it, not silently expanding scope into a
+job this branch didn't create and doesn't need for its own purpose.
+
+**Faster alternative worth Taher knowing about, not just the next-CI-run path:** `results.xml` for
+*this exact run* was already uploaded — `actions/upload-artifact` succeeded before the job failed
+(`if: always()`), artifact ID `9136403898`, download URL was in the log:
+`https://github.com/lkdigitalworks-53/InventoryManagerUI/actions/runs/31584114852/artifacts/9136403898`.
+Junitxml output includes each test's captured console messages as part of its own result data — so
+that artifact almost certainly already contains the exact `[_pollEmulatorDoc]` status/body lines
+this whole diagnostic round was built to produce, with zero need to wait for another CI run. Told
+Taher this is the faster path if he wants the actual answer sooner; the `-o -,txt` fix guarantees
+future runs show it directly in the log regardless.
+
+**Own hypothesis, held loosely and explicitly labeled as unconfirmed:** re-read
+`FirebaseService.mintCounterValue` and `Gateway.qml`'s drain/send path while doing this pass.
+`test_addProduct` is the *first-ever* call to `InventoryStore.addProduct` in the whole suite
+(`test_recordMutation_function_accepts_seeded_credentials`'s diagnostic call bypasses minting
+entirely — hardcoded `entityId: "diag-" + Date.now()`), making it the first-ever mint of
+`counters/products` and — per this run's own timing — the recordMutation calls clustered right
+after it show ~950–1070ms durations for the first 3 vs. ~65–110ms for the rest, a clear first-call
+cold-start signature (consistent with Node/V8 JIT warm-up or Firestore-client connection setup on
+a function's first real invocation, not something `node --test`'s fakes ever exercise). This is a
+plausible contributor, not a proven one — I have not traced it to a concrete number that exceeds
+`_pollEmulatorDoc`'s 5000ms budget, and the Seventh run's own timing math (also inconclusive) is a
+reminder not to trust a plausible story without the actual numbers. The `results.xml` artifact
+(or a future run with `-o -,txt`) is what actually settles this, not more source-reading.
+
+**Not yet committed or pushed — see next message to Taher for the go-ahead.**
+
+## Next step
+
+1. Taher reviews this diff and the reasoning above — especially that this fix restores
+   *visibility*, it does not touch the actual CRUD-test logic and is not expected to make
+   `test_addProduct` pass on its own.
+2. Two independent paths forward, not mutually exclusive: (a) Taher pulls `results.xml` from the
+   already-completed run's artifact (link above) and pastes/attaches its contents — likely the
+   fastest way to an actual answer; (b) on approval, commit + push this CI fix and re-run
+   `e2e-tests` — the *next* failure (if any) will show real diagnostic data directly in the log,
+   no artifact download needed from then on.
+3. Whichever path surfaces the actual status/body data, that's the real Phase-3 hypothesis test
+   this bug has been waiting on since the Seventh run — not another blind fix.

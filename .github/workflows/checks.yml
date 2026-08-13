@@ -168,7 +168,7 @@ jobs:
           QML_XHR_ALLOW_FILE_READ: 1
         run: |
           firebase emulators:exec --only firestore,auth,functions \
-            "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml"
+            "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml -o -,txt"
 
       - name: Upload E2E test results
         if: always()
