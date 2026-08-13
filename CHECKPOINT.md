@@ -829,17 +829,144 @@ plausible contributor, not a proven one — I have not traced it to a concrete n
 reminder not to trust a plausible story without the actual numbers. The `results.xml` artifact
 (or a future run with `-o -,txt`) is what actually settles this, not more source-reading.
 
-**Not yet committed or pushed — see next message to Taher for the go-ahead.**
+**Committed and pushed** (`be61228`) — see the log excerpt below; this restored visibility, as
+predicted, without touching the CRUD test failure itself.
+
+## Ninth run — the `-o -,txt` fix worked; real diagnostic data changed the diagnosis entirely
+
+Taher supplied both the raw CI log **and** `results.xml` for the very next `e2e-tests` run
+(2026-08-13, run started 02:08:59). Confirmed the previous fix worked exactly as intended: the raw
+log now shows the full `********* Start testing of qmltestrunner *********` banner, every
+`PASS`/`FAIL!` line, and every `console.warn`/`QWARN` line, in real time with millisecond
+timestamps — no artifact download needed. `results.xml` independently confirms the same content
+via each testcase's `<system-err>`. Cross-checked the two against each other; they agree.
+
+**First correction to something I got wrong last round:** I'd assumed
+`test_recordMutation_function_accepts_seeded_credentials` runs first, since it's declared first in
+the file and its own comment says so ("declared first so it fails fast"). The raw log's own
+per-line test-context annotations prove that's false — **actual execution order this run was
+`test_addProduct` → `test_deleteProduct` → `test_recordMutation_function_accepts_seeded_credentials`
+→ `test_updateProduct`** — alphabetical, not declaration order. QtQuickTest does not preserve
+source order for QML-defined test functions the way classic moc'd C++ QTestLib does. This is a
+real, previously-unexamined assumption behind a chunk of the earlier investigation (including my
+own read of the Eighth run) — the "fail-fast probe" never actually ran fail-fast, in any of the
+prior CI rounds either, since nothing changed this run's ordering behavior. Worth remembering
+going forward: don't infer QML TestCase execution order from source position.
+
+**The actual root cause, now backed by hard numbers, not a hypothesis:**
+```
+02:09:01.611  qmltestrunner starts
+02:09:02.143  test_addProduct's poll for PRD-001 starts (attempt 1, 404 — expected, still early)
+02:09:07.195  test_addProduct FAILS — 5000ms poll budget exhausted, PRD-001 still 404
+02:09:08.820  Functions emulator logs its FIRST "Beginning execution of recordMutation" — ever,
+              this whole run — 6.68s after the poll started, 1.62s AFTER the test had already failed
+```
+Zero `recordMutation` invocations appear in the Functions emulator log anywhere before 08.820.
+`OutboxStore.enqueue()`/`Gateway.drainNow()` run synchronously and client-side (confirmed by
+re-reading `Gateway.qml`) — the client dispatches its POST within ~500ms of the test starting
+(matches the `ActivityLog`/`Firestore` QWARN lines clustered around 02:09:02.08–02.14). So the
+request left the client almost immediately; **the Cloud Functions Emulator itself didn't even log
+receiving it for 6.68 seconds.** That gap is on the server side, not the client.
+
+This matches `firebase-tools`' well-documented Functions Emulator behavior: function *definitions*
+are statically registered at emulator boot ("Loaded functions definitions from source", visible
+much earlier in the log), but each function's actual Node worker process is spun up lazily, on
+its first real invocation — a genuine cold start (new child process, module resolution,
+`firebase-admin` init) that can run several seconds, paid exactly once per function per emulator
+session. Every `recordMutation` call after that first one in this run completed in well under 1s
+(confirmed via the Functions log's own `Finished ... in Nms` lines) — consistent with a warm
+worker handling everything from the second call onward. This is *not* Firestore-doc-read latency,
+*not* a `mintCounterValue`/counter cold-start issue (that hypothesis from the Eighth run doesn't
+survive this data — the delay is entirely server-side, before the write is even attempted), and
+*not* the `QSettings` warnings (see gaps below — those don't throw, request dispatch happened on
+schedule regardless of them).
+
+Whichever CRUD test happens to run first (by this alphabetical ordering, always
+`test_addProduct`) is the one that pays this cold-start cost inside its own 5000ms poll budget —
+and loses. Every other test runs after the worker's already warm, which is exactly why
+`test_updateProduct`/`test_deleteProduct` have passed identically across every single prior CI
+round: not because create genuinely works and addProduct is special, but because they're
+structurally guaranteed to run *after* whichever test the alphabet puts first.
+
+**Fix applied** (`tests/e2e/tst_InventoryE2E.qml`):
+- Added `initTestCase()` — runs exactly once, unconditionally, before any `test_` function
+  (unlike declared order, this ordering guarantee is real and documented Qt Test behavior). Fires
+  one throwaway `recordMutation` POST (bypassing Gateway/OutboxStore, identical shape to the
+  existing diagnostic probe) with a 15000ms timeout — generous on purpose, since it represents a
+  one-time emulator warm-up cost, not per-call latency the real tests should ever need to budget
+  for.
+- Extracted the raw-POST logic (`XMLHttpRequest` + headers + payload + `tryVerify`) that
+  `test_recordMutation_function_accepts_seeded_credentials` already had into a shared
+  `_postRecordMutationDirect(entityId, timeoutMs, timeoutMessage)` helper, used by both
+  `initTestCase()` and the now-slimmed-down diagnostic test — avoided duplicating the XHR
+  boilerplate a second time.
+- Corrected `test_recordMutation_function_accepts_seeded_credentials`'s comment (it no longer
+  claims to run first/fail-fast — it doesn't, and per the ordering finding above, never did).
+  Kept the test itself: still a fast, useful credentials/payload-shape regression check, now
+  reliably fast since `initTestCase()` warms the worker before it runs.
+- Left every CRUD test's own `_pollEmulatorDoc`/`tryVerify` timeout at 5000ms, unchanged.
+  Considered and rejected bumping them as a "belt and suspenders" safety margin: that would mask
+  a real regression behind a longer wait rather than fix anything, and 5000ms is a fine budget for
+  *warm* recordMutation + Firestore round trips (confirmed by this exact run: PRD-002/PRD-003 both
+  completed in well under that once warm). If `initTestCase()`'s warm-up itself starts flaking or
+  needs more margin, that's the number to revisit, not the individual tests.
+- Did not clean up the throwaway `warmup-*` inventory doc `initTestCase()` creates. Harmless to
+  all 4 CRUD tests (none assert on collection counts or iterate all inventory docs) — a
+  deliberate, disclosed minimal-diff choice, not an oversight.
+
+**Not yet committed — reviewing with Taher first, given this is a real behavior change (moves
+where a cost is paid, not just a logging flag) rather than the low-risk CI-only edit from the
+Eighth run.**
+
+## Gaps found this round — documented per Taher's instruction, deliberately NOT fixed now
+
+Taher's explicit call: fix the actual CRUD bug now, document everything else, address separately
+later. Four items, none touched:
+
+1. **`QSettings` never initializes under `qmltestrunner`** — `AuthStore.qml:62` and
+   `OutboxStore.qml:54` both warn on every run: `Failed to initialize QSettings instance. Status
+   code is: 1` / `The following application identifiers have not been set: QList("organizationName",
+   "organizationDomain")`. Root cause (read, not just guessed): `QCoreApplication::setOrganizationName`
+   /`setOrganizationDomain` are normally set in the real app's `main.cpp`, which `qmltestrunner` —
+   a generic Qt-provided binary — never runs, so `Settings { category: ... }` has nowhere to
+   resolve a storage path under it. Confirmed this is **not** the E2E bug's cause: the warning is
+   logged and execution continues immediately in the same run (recordMutation dispatch happened on
+   its normal client-side schedule regardless), so property writes to a mis-initialized `Settings`
+   object appear to no-op rather than throw. Real gap though — `OutboxStore`'s durability-across-relaunch
+   guarantee (the entire reason it persists to `Settings` at all) is silently untested by this
+   whole E2E suite, every single run. Worth a real fix (e.g. set org identifiers in a
+   `qmltestrunner`-only init path, or accept this is permanently untestable under qmltestrunner and
+   document that limitation explicitly) — not attempted here.
+2. **`ActivityLog` writes are rejected by Firestore rules in this test's context** — every run,
+   confirmed via both logs: a `runQuery` POST and a `PATCH`/`PUT` to `activity_log/{id}` both come
+   back `403 PERMISSION_DENIED, "No matching allow statements"`. `ActivityLog` writes directly to
+   Firestore client-side (bypassing `Gateway`/Cloud Functions entirely, unlike every other store) —
+   the E2E fixture's seeded credentials evidently don't satisfy whatever `firestore.rules` requires
+   for that collection. Two live questions worth Taher's own read on `firestore.rules`, not mine to
+   guess: (a) is this rules-vs-fixture mismatch specific to the E2E fixture, or would a real
+   Owner/Admin/Manager/Staff account hit the identical 403 in production? (b) if it's fixture-only,
+   what's actually missing from `seed.js`'s fixture generation? Not investigated further — flagged,
+   not fixed, and I don't have enough evidence yet to guess which.
+3. **`qml-tests` job has the identical single-`-o` gap** (`checks.yml` line 29) — flagged in the
+   Eighth run's entry above, still open. Same fix (`-o -,txt`) would apply; deliberately not
+   mirrored there without Taher's go-ahead, given it's a much larger test surface (`tests/` vs.
+   `tests/e2e/`) and would meaningfully bloat that job's log on every PR.
+4. **QtQuickTest doesn't preserve declared test-function order** — not a bug exactly, but a real
+   gap in this file's own design assumptions (see the Ninth-run findings above): the
+   `test_recordMutation_function_accepts_seeded_credentials` comment relied on declaration order
+   for "fail fast" behavior that never actually held. Fixed the misleading comment as part of this
+   round's edit; did not investigate whether QtQuickTest offers any actual ordering control
+   (`-functions` flag, naming convention, etc.) if guaranteed ordering is ever wanted for a future
+   test file — noting it here as a "how QtQuickTest actually behaves" fact worth remembering
+   project-wide, not just patching locally.
 
 ## Next step
 
-1. Taher reviews this diff and the reasoning above — especially that this fix restores
-   *visibility*, it does not touch the actual CRUD-test logic and is not expected to make
-   `test_addProduct` pass on its own.
-2. Two independent paths forward, not mutually exclusive: (a) Taher pulls `results.xml` from the
-   already-completed run's artifact (link above) and pastes/attaches its contents — likely the
-   fastest way to an actual answer; (b) on approval, commit + push this CI fix and re-run
-   `e2e-tests` — the *next* failure (if any) will show real diagnostic data directly in the log,
-   no artifact download needed from then on.
-3. Whichever path surfaces the actual status/body data, that's the real Phase-3 hypothesis test
-   this bug has been waiting on since the Seventh run — not another blind fix.
+1. Taher reviews the `tst_InventoryE2E.qml` diff and the root-cause reasoning above.
+2. On approval: commit + push, then a real CI run is the actual verification (this sandbox can't
+   build/run the app or the emulator stack, so this fix is evidence-driven but **not yet
+   confirmed** against a live run — say so plainly, don't claim it's fixed until a green
+   `e2e-tests` run shows it).
+3. If it's still flaky after this, the 15000ms warm-up timeout is the next thing to question — not
+   the individual tests' 5000ms budgets.
+4. Gap list above is Taher's to schedule, not blocking this branch's merge on its own terms.

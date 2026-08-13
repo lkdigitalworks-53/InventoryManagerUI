@@ -163,6 +163,79 @@ TestCase {
         lastConflict = { entity: entity, entityId: entityId, current: current }
     }
 
+    // Shared by the initTestCase() warm-up and the diagnostic probe below —
+    // both need the identical raw POST (bypassing Gateway/OutboxStore
+    // entirely) with only the entityId/timeout differing. Returns
+    // {status, text} instead of asserting itself so each caller can apply
+    // its own timeout/message.
+    function _postRecordMutationDirect(entityId, timeoutMs, timeoutMessage) {
+        var status = -1, text = "", done = false
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                status = xhr.status
+                text = xhr.responseText
+                done = true
+            }
+        }
+        xhr.open("POST", emulatorFunctionsBase + "/recordMutation", true)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
+        xhr.send(JSON.stringify({
+            env: "prd", // matches FirebaseService.environment for a bare qmltestrunner run
+            entity: "inventory",
+            entityId: entityId,
+            action: "create",
+            before: null,
+            after: { name: "Diagnostic Widget", sku: "SKU-DIAG-1", price: 1, stock: 1 },
+            requestId: "diag-req-" + Date.now(),
+            clientTimestamp: new Date().toISOString()
+        }))
+        tryVerify(function() { return done }, timeoutMs, timeoutMessage)
+        return { status: status, text: text }
+    }
+
+    // Runs exactly once, before ANY test_ function — unlike this file's own
+    // declaration order, which QtQuickTest does NOT preserve. Confirmed
+    // empirically from the run that surfaced this (2026-08-13, via the
+    // -o -,txt CI fix + results.xml): actual execution order was
+    // test_addProduct, test_deleteProduct, test_recordMutation, then
+    // test_updateProduct — alphabetical, not declared order.
+    // test_recordMutation_function_accepts_seeded_credentials's own old
+    // comment claimed "declared first so it fails fast" — that was never
+    // true, and is very likely why this bug survived four CI rounds: the
+    // probe meant to catch a cold Functions emulator never actually ran
+    // before the CRUD tests it was supposed to protect.
+    //
+    // Root cause of the actual bug (found from that same run's raw log):
+    // the Cloud Functions Emulator lazily spins up a fresh Node worker on
+    // the FIRST real invocation of a given function — "Loaded functions
+    // definitions from source" at emulator boot is static registration
+    // only, not a warm runtime. In the run that caught this, the client
+    // dispatched its POST within ~0.5s of the test starting, but the
+    // emulator's own log didn't show "Beginning execution" until 6.68s
+    // later — 1.6s AFTER test_addProduct had already given up and failed
+    // on its 5000ms poll. Every call after that first one landed in well
+    // under 1s. That's the exact "first one hangs, the rest are fine"
+    // pattern this bug has shown across every prior run, regardless of
+    // which literal test happened to create the first product.
+    //
+    // Fix: pay that cold-start cost here, once, with a timeout sized for
+    // "one-time emulator warm-up" rather than per-call latency — keeps the
+    // real tests' 5000ms budgets meaningful instead of just inflating them
+    // and hoping. Does not poll/clean up the resulting doc afterward (a
+    // stray "warmup-*" inventory doc is harmless to the 4 CRUD tests below,
+    // none of which assert on collection counts) — a deliberate, minimal
+    // trade-off, not an oversight.
+    function initTestCase() {
+        fixture = _loadFixture()
+        var result = _postRecordMutationDirect(
+            "warmup-" + Date.now(), 15000,
+            "Cloud Functions emulator never responded to the warm-up call")
+        compare(result.status, 200,
+                "warm-up recordMutation call was rejected — response body: " + result.text)
+    }
+
     function init() {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
@@ -193,33 +266,15 @@ TestCase {
     // entirely and POSTs to the same emulated recordMutation function with
     // the same payload shape _send() uses, so a failure here prints the
     // real status/response text via compare()'s own output — replacing a
-    // guess with evidence. Runs first (declared first) so it fails fast,
-    // before the slower CRUD tests even attempt anything.
+    // guess with evidence. No longer relied on to run first (see
+    // initTestCase() above for why that assumption was wrong) — kept as a
+    // fast regression check that credentials/payload shape are still
+    // accepted, now reliably fast since initTestCase() already warmed the
+    // emulator up by the time this runs.
     function test_recordMutation_function_accepts_seeded_credentials() {
-        var status = -1, text = "", done = false
-        var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                status = xhr.status
-                text = xhr.responseText
-                done = true
-            }
-        }
-        xhr.open("POST", emulatorFunctionsBase + "/recordMutation", true)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
-        xhr.send(JSON.stringify({
-            env: "prd", // matches FirebaseService.environment for a bare qmltestrunner run
-            entity: "inventory",
-            entityId: "diag-" + Date.now(),
-            action: "create",
-            before: null,
-            after: { name: "Diagnostic Widget", sku: "SKU-DIAG-1", price: 1, stock: 1 },
-            requestId: "diag-req-" + Date.now(),
-            clientTimestamp: new Date().toISOString()
-        }))
-        tryVerify(function() { return done }, 5000, "recordMutation call never completed")
-        compare(status, 200, "recordMutation rejected the request — response body: " + text)
+        var result = _postRecordMutationDirect(
+            "diag-" + Date.now(), 5000, "recordMutation call never completed")
+        compare(result.status, 200, "recordMutation rejected the request — response body: " + result.text)
     }
 
     function _createProduct(name, sku, stock) {
