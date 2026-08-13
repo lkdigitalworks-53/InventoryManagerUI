@@ -960,13 +960,101 @@ later. Four items, none touched:
    test file — noting it here as a "how QtQuickTest actually behaves" fact worth remembering
    project-wide, not just patching locally.
 
+## Next step (superseded — see Tenth run below)
+
+**Committed and pushed** (`e511cd7`). Verification came back via the next CI run — see below.
+
+## Tenth run — the initTestCase() warm-up was tested and disproven; found a real, unlogged candidate instead of guessing again
+
+Taher supplied the raw log and `results.xml` for the very next run after `e511cd7` (2026-08-13,
+run started 11:07:29). Same failure, same message, same entityId (`PRD-001`) — but this time with
+`initTestCase()` in the picture, and its own timing is the whole story:
+
+```
+InventoryE2E::initTestCase          PASS   time=1.215s  (includes the warm-up's own 349ms round trip)
+InventoryE2E::test_addProduct_...   FAIL!  time=5.636s  — same "doc never appeared" message
+```
+
+**The warm-up worked exactly as designed and still didn't help.** Its own `recordMutation` call
+completed in 349ms (`Beginning execution` → `Finished` in the Functions log) — the emulator is
+provably warm by the time `test_addProduct` starts. And it still failed, identically. That's a
+clean disproof of the Ninth run's hypothesis, not an ambiguous result — worth stating plainly
+rather than quietly moving past it: **the Functions-Emulator-cold-start theory was wrong.** Not
+"insufficient margin" — wrong. Recording that so it doesn't get re-tried later under a different
+name.
+
+Re-measured the actual gap with the emulator now confirmed warm:
+```
+poll for PRD-001 starts:                     11:07:31.529
+test_addProduct FAILs (5000ms budget spent):  11:07:36.573
+first NEW "Beginning execution" (PRD-001's own create), 56ms AFTER the test had already failed:
+                                               11:07:36.629
+```
+Same ~5.1s gap as the Eighth/Ninth runs, structurally identical to before, just with the cold-start
+explanation now closed off. Ruled out three more things by re-reading code rather than guessing,
+each cheap enough to check before reaching for instrumentation again:
+- **Not `Gateway.mode`** — `property string mode: "gateway"` is the literal default, not bound to
+  anything that could be false at this point; `init()` also sets it explicitly every time.
+- **Not a global JS/engine stall** — `_pollEmulatorDoc`'s own poll timer keeps firing every ~50ms
+  throughout the whole 5s gap (visible in the attempt-count progression), so the event loop is
+  demonstrably alive and processing timers the entire time. Whatever's blocked is scoped to this
+  one call, not the engine.
+- **Not slow singleton construction** — traced the full synchronous call chain from
+  `InventoryStore.addProduct()` (`Gateway.recordMutation()` on line 423, then
+  `TransactionStore.recordCreated()`, `StockBatchStore.addBatch()`, then the test's own `callback(true, id)`
+  that flips `_createProduct()`'s `done` flag) — all of it, including everything AFTER the
+  `Gateway.recordMutation()` call, provably completes within ~30ms (the poll's attempt 1 fires at
+  32ms elapsed). If `OutboxStore`'s first-ever singleton construction (triggered by this exact
+  call, `Settings` init failure and all) took anywhere near 5s, that chain couldn't have finished
+  in 30ms. It's fast, whatever else it's doing.
+
+**Found one real, specific, currently-unlogged candidate instead of a fourth guess.**
+`Gateway._send()` (`Gateway.qml`, right above the `xhr.send()` call) has this guard:
+```js
+if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
+    OutboxStore.clearInFlight(item)
+    return
+}
+```
+If `AuthStore.idToken` is empty at the exact moment this runs, `_send()` returns **without
+sending, without logging anything, and without calling `_reschedule()`** — the item stays queued
+and unblocked, but nothing schedules a retry. It would only go out whenever some UNRELATED later
+`drainNow()` call (triggered by a different `recordMutation()` elsewhere) happens to drain it. That
+is *exactly* the shape of what's been observed twice now: the client-side chain looks prompt, and
+the item eventually appears bundled in with the very next test's own create. This is a real
+candidate with a mechanism that fits the evidence, not a vibe — but I don't have a way to confirm
+`AuthStore.idToken`'s actual value at that instant without either running the app (not available
+in this sandbox) or logging it, and I'm not shipping a third unverified fix after the second one
+just failed. Chose to log instead.
+
+**Change made — diagnostic only, explicitly no behavior change:** added one `console.warn` at the
+top of `Gateway._send()` (`qml/model/Gateway.qml`) logging `entity`, `entityId`,
+`AuthStore.idToken`'s length, and `Date.now()` — on every single call, both branches. If the next
+run shows `idTokenLength 0` on `_send`'s first-ever call, this guard is confirmed as the cause and
+the actual fix (make `_send()` call `_reschedule()` before it returns early, so a token that
+arrives later actually gets retried instead of waiting on an unrelated trigger — needs its own
+proper look, not decided yet) becomes a targeted, evidence-backed change instead of a guess. If
+`idTokenLength` is already correct at that point, this is ruled out too, and the next candidate is
+network-transport-layer queueing (Qt's connection-pool/concurrency limits under the burst of
+near-simultaneous XHR calls `addProduct()` fires — polling GETs, `ActivityLog`'s three failed
+calls, and three `recordMutation` POSTs, all within milliseconds of each other) — flagged as the
+next thing to instrument if this doesn't pan out, not investigated further this round.
+
+Left `initTestCase()`'s warm-up in place — it's not wrong, it's just not sufficient on its own. It
+still guards a real, separately-measured risk (the emulator's cold-start latency is real, just not
+what's causing THIS failure), and removing it would lose that coverage for no reason.
+
+**Not yet committed — this is a diagnostic-only change (matches the Eighth-run pattern that
+worked), reviewing with Taher before pushing, same as always.**
+
 ## Next step
 
-1. Taher reviews the `tst_InventoryE2E.qml` diff and the root-cause reasoning above.
-2. On approval: commit + push, then a real CI run is the actual verification (this sandbox can't
-   build/run the app or the emulator stack, so this fix is evidence-driven but **not yet
-   confirmed** against a live run — say so plainly, don't claim it's fixed until a green
-   `e2e-tests` run shows it).
-3. If it's still flaky after this, the 15000ms warm-up timeout is the next thing to question — not
-   the individual tests' 5000ms budgets.
-4. Gap list above is Taher's to schedule, not blocking this branch's merge on its own terms.
+1. Taher reviews the one-line diagnostic diff in `Gateway._send()`.
+2. On approval: commit + push, trigger `e2e-tests` again, and read the next log the same way —
+   this time looking specifically at `idTokenLength` on `_send`'s very first call.
+3. Two outcomes, both actionable: `idTokenLength 0` → confirmed, implement the real fix (retry
+   scheduling on the early-return path). `idTokenLength` already correct → this theory's closed
+   too, and the next step is instrumenting the network-transport-layer queueing candidate above,
+   not another guess.
+4. Gap list from the Ninth run (QSettings, ActivityLog 403s, `qml-tests` job's `-o` gap, QtQuickTest
+   ordering) is still open, still Taher's to schedule, unaffected by any of this.

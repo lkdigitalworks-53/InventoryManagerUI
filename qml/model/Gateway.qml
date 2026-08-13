@@ -333,6 +333,31 @@ QtObject {
     }
 
     function _send(item) {
+        // Diagnostic (2026-08-13, after the initTestCase() warm-up fix
+        // proved insufficient — see CHECKPOINT.md "Tenth run"). The warm-up
+        // confirmed the Functions Emulator itself responds in ~350ms once
+        // hit directly, ruling out cold-start as the cause — yet
+        // test_addProduct still failed identically, with the Functions
+        // emulator log showing ZERO invocations for ~5s after this
+        // function must have been called (addProduct's own synchronous
+        // chain, including everything AFTER this call, completes in
+        // ~30ms). That means EITHER this function isn't reached promptly
+        // (ruled out — nothing upstream blocks that long) OR xhr.send()
+        // below doesn't fire promptly despite being reached. The one
+        // branch in this function with zero visibility either way is the
+        // idToken guard immediately below: if AuthStore.idToken is empty
+        // at this exact moment, this function returns WITHOUT sending —
+        // silently, no console.warn, no _reschedule() call — leaving the
+        // item queued but un-retried until some UNRELATED later
+        // drainNow() call happens to pick it up. That's the one code path
+        // that would produce exactly what's been observed twice now:
+        // client-side dispatch looking prompt while the server sees
+        // nothing until the next test's own recordMutation call. Not
+        // claiming this IS the cause — logging to find out, rather than
+        // shipping a third unverified fix. Remove once resolved.
+        console.warn("[Gateway._send]", item.entity, item.entityId,
+                     "idTokenLength", (AuthStore.idToken || "").length,
+                     "atMs", Date.now())
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
             OutboxStore.clearInFlight(item)
