@@ -229,6 +229,46 @@ TestCase {
     // trade-off, not an oversight.
     function initTestCase() {
         fixture = _loadFixture()
+
+        // Forces AuthService's singleton construction now, before any
+        // test's init() sets AuthStore.idToken for real. Confirmed root
+        // cause of the addProduct failure (2026-08-14, via the Gateway._send
+        // diagnostic): AuthService is a pragma-Singleton QML type never
+        // referenced anywhere in this file or in init() -- its actual FIRST
+        // reference in the whole run is inside Gateway.drainNow():
+        // "if (typeof AuthService !== 'undefined' && AuthService)
+        // AuthService.ensureFreshToken()". Referencing a QML singleton for
+        // the first time triggers its Component.onCompleted, which for
+        // AuthService calls AuthStore.loadSession() -> clear() UNCONDITIONALLY
+        // before checking whether there's a persisted session to restore --
+        // wiping idToken/tenantId/everything back to "" regardless.
+        // test_addProduct is the first test to actually call
+        // Gateway.recordMutation() (the diagnostic probe and the warm-up
+        // below both bypass Gateway/OutboxStore entirely, using a raw
+        // XMLHttpRequest instead) -- so it's also the first thing that ever
+        // references AuthService, and it does so from inside drainNow(),
+        // AFTER its own init() already set AuthStore.idToken = fixture.idToken.
+        // The construction-time wipe lands in between, clearing idToken
+        // right before _send()'s own guard checks it. Confirmed directly,
+        // not inferred: the now-removed Gateway._send() diagnostic logged
+        // idTokenLength as 0 on every call across a ~5.1s span, then 469 (a
+        // real token) the instant the next test's init() re-set it --
+        // _send()'s guard was silently no-op-ing the whole time, and the
+        // item sat queued until an unrelated later drainNow() call (the
+        // next test's own create) happened to pick it up. That's the exact
+        // failure this file has been chasing since the Seventh run.
+        //
+        // The real app almost certainly never hits this in practice --
+        // something in its normal UI/bootstrap flow references AuthService
+        // (to check login state) long before any real login sets
+        // AuthStore.idToken, so the construction-time wipe lands on
+        // already-empty state there. This test pokes AuthStore directly,
+        // skipping that natural bootstrap order, so it has to force the
+        // same ordering explicitly. That inference isn't traced end to end
+        // against main.qml's actual bootstrap sequence -- flagged as worth
+        // Taher's own quick confirmation, not re-verified here.
+        AuthService.ensureFreshToken() // no-op (not authenticated yet); forces construction only
+
         var result = _postRecordMutationDirect(
             "warmup-" + Date.now(), 15000,
             "Cloud Functions emulator never responded to the warm-up call")

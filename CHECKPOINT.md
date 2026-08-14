@@ -1044,17 +1044,109 @@ Left `initTestCase()`'s warm-up in place — it's not wrong, it's just not suffi
 still guards a real, separately-measured risk (the emulator's cold-start latency is real, just not
 what's causing THIS failure), and removing it would lose that coverage for no reason.
 
-**Not yet committed — this is a diagnostic-only change (matches the Eighth-run pattern that
-worked), reviewing with Taher before pushing, same as always.**
+**Committed and pushed** (`24e708a`). Verification came back the next run — see below.
+
+## Eleventh run — confirmed root cause, real fix implemented, diagnostic removed
+
+Taher supplied the log + `results.xml` for the run right after `24e708a` (2026-08-14, run started
+01:47:49). The `idTokenLength` diagnostic answered the question directly:
+
+```
+idTokenLength 0    atMs 1786672069019   (first _send() call, entity=inventory)
+idTokenLength 0    atMs 1786672069278   (retry, 259ms later)
+idTokenLength 0    atMs 1786672069531   (retry, 253ms later)
+... repeats every ~250-255ms ...
+idTokenLength 0    atMs 1786672074095   (last 0 — still failing after ~5.08s)
+idTokenLength 469  atMs 1786672074148   (53ms later — a real token, finally)
+```
+**Confirmed: `AuthStore.idToken` was empty on every single `_send()` call for ~5.1 seconds, then
+became valid (469 chars, a real JWT-length token) the instant the next test's `init()` re-ran.**
+Not partial evidence this time — direct measurement of the exact variable the guard checks.
+
+**Also worth correcting from the Tenth-run writeup:** I'd written that `_send()`'s early return
+happens "without calling `_reschedule()`" — true of `_send()` in isolation, but `drainNow()` (which
+calls `_send()`) calls `_reschedule()` unconditionally right after its loop, regardless of what any
+individual `_send()` call did. The 250ms-interval retries visible above are that mechanism working
+exactly as designed — the item wasn't stuck with zero retries, it was retried roughly 20 times over
+5.1 seconds, and every single retry failed for the same reason. Worth being precise about: the
+retry *scheduling* was never the problem.
+
+**Root cause, fully traced through the code, not just observed:**
+1. `AuthService` (`qml/model/AuthService.qml`, `pragma Singleton`) is never referenced anywhere in
+   `tst_InventoryE2E.qml` or in its own `init()`. Its actual first reference in the whole run is
+   inside `Gateway.drainNow()`: `if (typeof AuthService !== "undefined" && AuthService)
+   AuthService.ensureFreshToken()`.
+2. Referencing a QML singleton for the first time triggers its `Component.onCompleted`. For
+   `AuthService` that's `{ init() }`, which calls `AuthStore.loadSession()`.
+3. `AuthStore.loadSession()` (`qml/model/AuthStore.qml:86`) calls `clear()` **unconditionally, first**
+   — wiping `idToken`, `tenantId`, and everything else back to `""` — *before* checking whether
+   `_settings.sessionJson` has anything to restore. On a fresh emulator run there's nothing to
+   restore, so `clear()` is the only thing that happens.
+4. Sequence for `test_addProduct` specifically: its own `init()` runs first and sets
+   `AuthStore.idToken = fixture.idToken` — correctly, at that moment. Then the test body runs,
+   reaches `Gateway.recordMutation()` for the first time ever, which calls `drainNow()`, which
+   references `AuthService` for the first time ever, which fires the construction-time `clear()` —
+   **wiping the idToken `init()` had just set, moments before `_send()`'s own guard checks it.**
+   Every test after this one is unaffected: `AuthService` is already constructed by then, so
+   referencing it is a normal no-op, and each test's own `init()` sets `idToken` *after* that
+   one-time construction has already happened and already cleared whatever was there before.
+
+This is why `test_addProduct` — specifically whichever test the alphabet happens to run first — has
+failed identically across every CI round since the Seventh run, while every other CRUD test has
+passed: not cold emulator, not slow singleton construction, not a network-layer delay. A one-time,
+order-dependent side effect of lazily constructing `AuthService`, landing exactly once, exactly
+between one test's `init()` setting real values and that same test's first `Gateway.recordMutation()`
+call reading them back.
+
+**Fix implemented** (`tests/e2e/tst_InventoryE2E.qml`, `initTestCase()`): added
+`AuthService.ensureFreshToken()` as the first line — a real, existing, already-safe method
+(no-ops when `AuthStore.isAuthenticated` is false, which it is at that point) — called purely to
+force `AuthService`'s one-time construction-and-wipe to happen *before* any test's `init()` sets
+real values, not after. Once `AuthService` exists, referencing it again from `drainNow()` is an
+ordinary no-op, so every subsequent test (and this test's own real `init()` call, moments later)
+is unaffected.
+
+**Diagnostic removed** (`qml/model/Gateway.qml`): the `console.warn` added to `_send()` last round
+did its job — it's gone now. Worth flagging explicitly why removal (not "leave it, it's harmless")
+was the right call this time, unlike `_pollEmulatorDoc`'s diagnostic which stayed: `Gateway._send()`
+is production code that runs on *every* real mutation the actual app ever makes, not just this test
+file. Leaving a `console.warn` there would mean every real user action logs to console in production
+— a real regression, not harmless leftover instrumentation.
+
+**Why this is very likely test-only, not a latent production bug** (inference, not fully traced):
+the real app's normal UI/bootstrap flow almost certainly references `AuthService` very early — some
+screen has to check login state on launch — long before any real login sets `AuthStore.idToken`. So
+in production, `AuthService`'s construction-time `clear()` lands on already-empty state, same as it
+now does here. This test is the exception because it pokes `AuthStore` directly, skipping the app's
+normal bootstrap sequence entirely, so it's the one place that needed to force the ordering
+explicitly. **Have not traced this end-to-end against `main.qml`'s actual bootstrap sequence to
+confirm** — stating the inference plainly rather than dressing it up as verified. Worth Taher's own
+five-minute check of `main.qml`/whatever screen first touches auth state, at his convenience — not
+blocking this fix, since the fix is correct regardless of whether production is also exposed.
+
+**Related design gap, worth a note, not a rewrite:** `Gateway.drainNow()`'s pattern of referencing
+a heavier singleton with real side effects (`AuthService`) lazily, "just in time," inside a hot path
+is inherently a little fragile — this exact class of bug (a singleton's first-reference side effect
+racing against code that assumes state already set) could in principle recur anywhere else that
+touches `AuthService` for the first time at an inconvenient moment. Not fixing the underlying
+pattern now — no evidence it's actually biting production, and forcing construction order in one
+test file is a minimal, targeted, low-risk fix for the actual failure. Flagging the pattern itself
+as worth remembering, same spirit as the QtQuickTest-ordering gap from the Ninth run.
+
+**Verification status, stated plainly:** this fix is evidence-driven and traced end-to-end through
+the actual code, with direct measurement (`idTokenLength`) confirming the mechanism — the strongest
+basis of any fix this branch has shipped so far. It is still not build/run-verified in this sandbox.
+A green `e2e-tests` run is what actually confirms it.
+
+Per Taher's standing instruction this round: **committed and pushed without waiting for review.**
 
 ## Next step
 
-1. Taher reviews the one-line diagnostic diff in `Gateway._send()`.
-2. On approval: commit + push, trigger `e2e-tests` again, and read the next log the same way —
-   this time looking specifically at `idTokenLength` on `_send`'s very first call.
-3. Two outcomes, both actionable: `idTokenLength 0` → confirmed, implement the real fix (retry
-   scheduling on the early-return path). `idTokenLength` already correct → this theory's closed
-   too, and the next step is instrumenting the network-transport-layer queueing candidate above,
-   not another guess.
-4. Gap list from the Ninth run (QSettings, ActivityLog 403s, `qml-tests` job's `-o` gap, QtQuickTest
-   ordering) is still open, still Taher's to schedule, unaffected by any of this.
+1. Trigger `e2e-tests` (or wait for the next scheduled run) and send the log/`results.xml` pair the
+   same way.
+2. If `test_addProduct` passes: this bug is closed. Move to the Ninth-run gap list (QSettings,
+   ActivityLog 403s, `qml-tests` job's `-o` gap, QtQuickTest ordering) plus this round's new one
+   (the `AuthService`-lazy-construction pattern) on whatever schedule Taher wants.
+3. If it still fails: don't assume this fix was wrong without new evidence first — check whether
+   the failure message/entityId changed at all, since that would indicate a *different* problem now
+   exposed, not a disproof of this one.
