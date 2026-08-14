@@ -9,7 +9,7 @@
 // invocation that starts firestore+auth+functions — see
 // .github/workflows/checks.yml's e2e-tests job, or run locally with:
 //   firebase emulators:exec --only firestore,auth,functions \
-//     "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen"
+//     "node test/e2e/seed.js && qmltestrunner -input test/e2e -platform offscreen"
 //
 // NOT RUN IN THIS SANDBOX before its first real CI attempt — no network
 // egress here to Firebase's emulator distribution, so the emulator-facing

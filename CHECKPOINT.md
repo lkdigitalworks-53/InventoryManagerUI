@@ -1138,15 +1138,103 @@ the actual code, with direct measurement (`idTokenLength`) confirming the mechan
 basis of any fix this branch has shipped so far. It is still not build/run-verified in this sandbox.
 A green `e2e-tests` run is what actually confirms it.
 
-Per Taher's standing instruction this round: **committed and pushed without waiting for review.**
+**Confirmed by Taher: `e2e-tests` passed.** `test_addProduct_creates_real_emulator_doc` — and by
+extension the `AuthService`-construction-ordering fix from the Eleventh run — is closed. This
+branch's original E2E goal (Phase 1 pilot: real CRUD against the real Local Emulator Suite,
+service-level, no UI) is now actually green, eleven rounds after the first real CI attempt.
+
+## Twelfth run — `qml-tests` and `firestore-rules-tests` both failing, two unrelated root causes, both confirmed via documented tool behavior rather than guessed
+
+Taher supplied `0_Firestore_Rules_Tests.txt` and `2_QML_Tests.txt` (2026-08-14). Two different
+jobs, two different failures, no relation to each other or to the E2E bug just closed.
+
+### `firestore-rules-tests`: exit code 1, "No tests found," zero console output
+
+The job's own command: `firebase emulators:exec --only firestore "node --test
+--test-reporter=junit --test-reporter-destination=results.xml test/"`. Confirmed against Node's
+own documentation (`nodejs.org/docs/latest-v24.x/api/test.html`) rather than assumed: <cite>"If a
+directory named test is encountered, the test runner will search it recursively for all .js, .cjs,
+and .mjs files. All of these files are treated as test files, and do not need to match the
+specific naming convention."</cite> `test/` (the literal directory name) contains both
+`test/firestore.rules.test.js` (the intended target) and `test/e2e/seed.js` — and per that
+documented rule, **both get swept in and executed as test files**, regardless of `seed.js` never
+being written as one.
+
+`seed.js`'s own header comment confirms it needs Firestore *and* Auth *and* Functions emulators
+(`getAuth()` calls to mint a real emulator-signed ID token) — this job starts `--only firestore`
+alone. Run this way, `seed.js` fails immediately trying to reach an Auth emulator that was never
+started, and since Node executes matching files as regular scripts, a crashing "test file" takes
+the whole `node --test` invocation down with it — consistent with every observed symptom: exit
+code 1, an empty/near-empty (993 byte) `results.xml`, and no console output in the raw log (same
+`--test-reporter-destination` redirect-away-from-stdout behavior already seen twice with
+qmltestrunner's `-o`, now confirmed as a pattern in this repo's Node test setup too).
+
+**Fix:** changed the job to target `test/firestore.rules.test.js` explicitly instead of the whole
+`test/` directory (`.github/workflows/checks.yml`). Also updated `firestore.rules.test.js`'s own
+header comment, which had documented the old (buggy) `"node --test test/"` invocation as the
+correct way to run it locally — left uncorrected, that comment would have silently reintroduced
+this exact bug the next time someone copied it back into the workflow.
+
+### `qml-tests`: `InventoryE2E::initTestCase` — `'timed out reading .fixture.json' returned FALSE`
+
+The `qml-tests` job runs `qmltestrunner -input tests -platform offscreen -o results.xml,junitxml`
+— recursively scanning the entire `tests/` directory. `tst_InventoryE2E.qml` lived at
+`tests/e2e/tst_InventoryE2E.qml` — physically *inside* that tree, even though the original design
+spec (`docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md` §7) explicitly called it
+out as "a new, **separate** directory from `tests/`." That separation was never actually enforced
+at the filesystem level, just intended — `qml-tests` doesn't start any Firebase emulator or run
+`seed.js`, so `test/e2e/.fixture.json` never exists when it runs `InventoryE2E`'s `initTestCase()`,
+which calls `_loadFixture()`, which times out reading a file that was never created. This is the
+inverse problem of the Firestore-rules one above: there, a script that shouldn't be a test got
+swept in; here, a test that shouldn't run in this job got swept in — same underlying cause
+(a too-broad directory scan with no exclude mechanism), different direction.
+
+Checked for a `qmltestrunner` flag to exclude a subdirectory from `-input` before reaching for a
+structural fix — none documented (`doc.qt.io/qt-6/qtest-overview.html`, various Qt Forum threads);
+"Takes a filename or directory of files to run," no exclude option. Considered generating an
+explicit file list via shell globbing instead of a directory path, but couldn't confirm
+`qmltestrunner` accepts multiple positional/`-input` file arguments reliably from documentation
+alone, and this sandbox can't run qmltestrunner to test the syntax directly — guessing at
+unverified CLI syntax for a script Taher can't easily catch a mistake in before it ships felt like
+the wrong trade-off versus a structural change I could verify completely with tools already
+available (`git mv`, path arithmetic).
+
+**Fix:** moved `tst_InventoryE2E.qml` from `tests/e2e/` to `test/e2e/` — physically alongside
+`seed.js`, and genuinely outside the `tests/` tree the `qml-tests` job scans, not just
+conceptually separate. Verified safe before moving, not assumed: both `Qt.resolvedUrl("../../qml/model")`-style
+relative references in the file resolve identically from the new location, since `tests/e2e/` and
+`test/e2e/` are the same depth (2 segments) from the repo root — `fixtureUrl`'s
+`../../test/e2e/.fixture.json` and the `import "../../qml/model"` line needed no changes at all.
+Updated the `e2e-tests` job's `-input tests/e2e` → `-input test/e2e` to match, plus the two stale
+in-file comments (in `seed.js` and the test file itself) that documented the old path — left
+uncorrected, either one could have misled a future change back into the same layout.
+
+**Not touched, flagged only:** `functions-tests` (`working-directory: functions`, bare `node --test`
+with no explicit path) has the same directory-name-triggers-recursive-sweep mechanism available to
+it — `functions/test/fixtures/*.js` sit inside a directory named `test` too. Didn't investigate or
+change this: Taher hasn't reported that job failing, and those fixture files are plain data
+exports with no side effects (unlike `seed.js`), so a swept-in "test file" that does nothing and
+exits 0 is registered as trivially passing, not a crash. Worth knowing the mechanism could bite
+here too if a future fixture file ever gains a side effect on load — not changing anything
+speculatively.
+
+**Verification status:** both fixes are grounded in documented tool behavior (Node's own docs,
+directly quoted; `qmltestrunner`'s documented lack of an exclude flag) and verified-safe path
+arithmetic, not guesses. Neither is build/run-verified in this sandbox — same standing limitation
+as every fix this session. Next CI run of both jobs is what actually confirms them.
+
+Per Taher's standing instruction: **committed and pushed without waiting for review.**
 
 ## Next step
 
-1. Trigger `e2e-tests` (or wait for the next scheduled run) and send the log/`results.xml` pair the
-   same way.
-2. If `test_addProduct` passes: this bug is closed. Move to the Ninth-run gap list (QSettings,
-   ActivityLog 403s, `qml-tests` job's `-o` gap, QtQuickTest ordering) plus this round's new one
-   (the `AuthService`-lazy-construction pattern) on whatever schedule Taher wants.
-3. If it still fails: don't assume this fix was wrong without new evidence first — check whether
-   the failure message/entityId changed at all, since that would indicate a *different* problem now
-   exposed, not a disproof of this one.
+1. Trigger `qml-tests` and `firestore-rules-tests` (or wait for the next scheduled run) and send
+   the logs the same way.
+2. If both pass: every CI job on this branch is green for the first time. Worth Taher's own check
+   of whether `docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md` should get a short
+   addendum noting the actual final file location, since the spec's own stated intent (§7,
+   "separate directory from tests/") is what this fix actually delivered on — not required, but
+   the spec is now slightly stale relative to what shipped.
+3. Gap list carried forward, unaffected by any of this: QSettings org-identifier warnings under
+   qmltestrunner, `ActivityLog`'s client-side 403s, the `AuthService`-lazy-construction pattern as
+   a design note, and now the `functions-tests` job's same-shape (currently benign) exposure to the
+   directory-sweep mechanism above.

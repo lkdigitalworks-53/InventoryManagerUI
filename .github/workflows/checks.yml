@@ -108,7 +108,7 @@ jobs:
         run: npm install -g firebase-tools
 
       - name: Run Firestore rules tests
-        run: firebase emulators:exec --only firestore "node --test --test-reporter=junit --test-reporter-destination=results.xml test/"
+        run: firebase emulators:exec --only firestore "node --test --test-reporter=junit --test-reporter-destination=results.xml test/firestore.rules.test.js"
 
       - name: Upload rules test results
         if: always()
@@ -168,7 +168,7 @@ jobs:
           QML_XHR_ALLOW_FILE_READ: 1
         run: |
           firebase emulators:exec --only firestore,auth,functions \
-            "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml -o -,txt"
+            "node test/e2e/seed.js && qmltestrunner -input test/e2e -platform offscreen -o results.xml,junitxml -o -,txt"
 
       - name: Upload E2E test results
         if: always()

@@ -22,7 +22,18 @@ const { doc, getDoc, setDoc, deleteDoc } = require("firebase/firestore");
 // distribution (only npm/GitHub/PyPI/crates domains are allowlisted).
 // Written to the standard @firebase/rules-unit-testing convention. Run
 // locally or in CI with:
-//   firebase emulators:exec --only firestore "node --test test/"
+//   firebase emulators:exec --only firestore "node --test test/firestore.rules.test.js"
+//
+// Must target this file explicitly, not the bare "test/" directory: Node's
+// test runner treats every .js/.cjs/.mjs file under any directory literally
+// named "test" as a test file, recursively, regardless of naming — which
+// sweeps in test/e2e/seed.js too. seed.js is a fixture-seeding script, not
+// a test, and requires the Auth emulator (getAuth() calls) that this job
+// deliberately doesn't start (--only firestore) — running it here crashes
+// immediately and takes the whole `node --test` invocation down with it
+// before any real result gets recorded (found via CI, 2026-08-14: exit
+// code 1, zero tests in the junit output, no console output at all since
+// --test-reporter-destination redirects everything away from stdout).
 
 const TENANT = "tenant-1";
 const MEMBER_UID = "member-uid";

@@ -32,12 +32,16 @@ TestCase {
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
 
     property var fixture: null
-    // seed.js (test/e2e/seed.js, singular "test" — matches the existing
-    // Node-test convention alongside test/firestore.rules.test.js) writes
-    // .fixture.json into that directory, not this file's own tests/e2e/
-    // directory. Two similarly-named directories was an avoidable mix-up
-    // from planning; fixed by pointing the read at the right one rather
-    // than moving seed.js's output.
+    // seed.js and this file both live in test/e2e/ (moved here 2026-08-14 —
+    // originally this file sat under tests/e2e/, a second, similarly-named
+    // directory that the qml-tests CI job's blanket "-input tests" scan
+    // recursively swept in, even though it needs the Firebase Emulator
+    // Suite + seeded fixture that only the dedicated e2e-tests job sets up.
+    // Moving the file out of the tests/ tree entirely — rather than trying
+    // to exclude a subdirectory from qmltestrunner's scan, which has no
+    // documented flag for that — was the reliable fix). The "../../" below
+    // still resolves to the repo root either way, since both locations are
+    // the same depth from it.
     readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
     function _loadFixture() {
