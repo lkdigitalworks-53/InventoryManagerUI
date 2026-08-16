@@ -1225,16 +1225,72 @@ as every fix this session. Next CI run of both jobs is what actually confirms th
 
 Per Taher's standing instruction: **committed and pushed without waiting for review.**
 
+## Rebase onto `main` (2026-08-14/16)
+
+Taher confirmed `qml-tests` and `firestore-rules-tests` both passed after the Twelfth run's fixes,
+then asked to rebase this branch onto `main` (PR #41, the async-write-sequencing/ledger-sync-race
+work, had merged). Checked for file-level overlap between the two histories *before* touching
+anything: `git diff --name-only` from the merge-base on each side, `comm -12` on the sorted lists —
+zero overlapping file paths, including `CHECKPOINT.md` itself (`main` never touched it since the
+merge-base). Tagged the pre-rebase tip locally as a safety net, ran `git rebase origin/main` — zero
+conflicts, exactly as the pre-check predicted. Verified the new branch tip's merge-base with `main`
+was `main`'s own tip (confirming a true rebase, not a no-op), spot-checked that the moved E2E file
+and both CI path fixes survived the replay intact, then force-pushed with `--force-with-lease`
+pinned to the exact prior remote SHA (per standing force-push discipline), and deleted the local
+safety tag once the push was confirmed. `docs/e2e-testing-strategy-design` is now based directly on
+`main`'s tip.
+
+## Thirteenth run — one test failure surfaced by the rebase, traced to a genuine miscount in a test `main` never ran locally
+
+Taher found `DataModel_adjustOrderSyncGuard::test_proceeds_normally_once_transaction_history_is_synced`
+failing post-rebase: `'the order mutation should be enqueued once allowed to proceed' returned FALSE`.
+
+**Ruled out our own responsibility first, with evidence, before touching anything:** confirmed via
+`git diff` that our branch never modified `DataModel.qml`, `OrdersStore.qml`, `TransactionStore.qml`,
+`StockBatchStore.qml`, `InventoryStore.qml`, or `OutboxStore.qml` — all untouched, straight from
+`main`. Also checked `Gateway.qml` specifically, since our branch did touch it: the diff between
+`main` and our branch is comment-only (a stale header comment predating this whole session's work,
+unrelated) — the `mode: "gateway"` value itself, and every function body, are byte-identical to
+`main`. This bug's mechanism lives entirely in code this branch never wrote.
+
+Traced `DataModel._tryAdjustOrder`'s "returned units" branch (`qml/model/DataModel.qml:957-991`)
+for this test's exact scenario (a single-batch return, 1 of 2 units, one supplier) before touching
+the test. Requested the fuller `results.xml` from Taher first rather than guess — it showed
+`Actual (): 4` / `Expected (): 1`, which didn't match my first pass through the code (I'd only
+traced 2 calls: `TransactionStore.recordReturn` and `OrdersStore.applyAdjustment`). Went back and
+traced the *complete* branch, including the stock/batch restoration I'd skipped past the first
+time, and found two more: `StockBatchStore.restoreFifo` and `InventoryStore.creditStockNoBatch`.
+Both call `Gateway.recordDelta(...)`, not `recordMutation(...)` — a different Gateway method I
+hadn't checked. Confirmed `OutboxStore.pendingCount = items.length` counts both: `recordDelta`'s
+`enqueueDelta()` and `recordMutation`'s `enqueue()` push into the *same* underlying array, just
+shaped differently (matches `Gateway.drainNow()`'s own `due[i].deltas` / `due[i].items` / plain-item
+branching). Four distinct entity+entityId pairs (`stock_batch`/B1, `inventory`/SKU-1,
+`transaction`/the return's tx id, `order`/ORD-SYNC-1) — none coalesce, so `pendingCount` should
+genuinely be 4. Matches the actual value exactly, not approximately.
+
+**This is correct, intentional application behavior, not a bug** — consistent with the P0
+compliance-gateway design this whole branch's earlier work depended on (one audited mutation per
+entity write, not one per business operation). The test file's own header literally says "NOT RUN
+IN THIS SANDBOX" — `main`'s author couldn't execute `qmltestrunner` locally either (same constraint
+this whole session has worked under), and wrote `pendingCount === 1` as an incidental sanity check
+without tracing the full four-entity fan-out a return actually produces. An understandable miscount
+given the constraint, not a sign of a deeper problem.
+
+**Fix:** changed the assertion from `1` to `4` in `tests/tst_DataModel_adjustOrderSyncGuard.qml`,
+with a comment enumerating all four call sites and citing the confirmed `results.xml` evidence, so
+a future reader doesn't have to re-trace this. Left the sibling `test_refusal_has_no_side_effects`
+(`pendingCount === 0`) untouched — correct as-is, since a refused adjustment never reaches any of
+the four mutation call sites.
+
+Per Taher's standing instruction: **committed and pushed without waiting for review.**
+
 ## Next step
 
-1. Trigger `qml-tests` and `firestore-rules-tests` (or wait for the next scheduled run) and send
-   the logs the same way.
-2. If both pass: every CI job on this branch is green for the first time. Worth Taher's own check
-   of whether `docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md` should get a short
-   addendum noting the actual final file location, since the spec's own stated intent (§7,
-   "separate directory from tests/") is what this fix actually delivered on — not required, but
-   the spec is now slightly stale relative to what shipped.
+1. Trigger `qml-tests` and send the log the same way — this closes out the only known failure on
+   this branch post-rebase.
+2. If it passes: every CI job on this branch has now been green at least once. Worth a full clean
+   run of all four jobs together to confirm nothing regressed from the rebase itself.
 3. Gap list carried forward, unaffected by any of this: QSettings org-identifier warnings under
-   qmltestrunner, `ActivityLog`'s client-side 403s, the `AuthService`-lazy-construction pattern as
-   a design note, and now the `functions-tests` job's same-shape (currently benign) exposure to the
-   directory-sweep mechanism above.
+   qmltestrunner, `ActivityLog`'s client-side 403s, the `AuthService`-lazy-construction pattern,
+   `functions-tests`' benign exposure to the directory-sweep mechanism, and whether the
+   e2e-testing-phase1 design spec is worth a short addendum for its final file location.

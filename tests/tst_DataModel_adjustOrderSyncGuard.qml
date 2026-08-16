@@ -103,7 +103,26 @@ TestCase {
         compare(result, true, "must proceed exactly as it did before this fix once the ledger is complete")
         compare(dm.stockErrorMsg, "")
         verify(TransactionStore.entries.length > 0, "the return should be recorded once allowed to proceed")
-        compare(OutboxStore.pendingCount, 1, "the order mutation should be enqueued once allowed to proceed")
+        // A single-batch return of 1 unit legitimately produces FOUR separate
+        // OutboxStore items, not one -- confirmed via CI (results.xml showed
+        // Actual: 4 for this exact assertion, 2026-08-16) and traced through
+        // DataModel._tryAdjustOrder's "returned units" branch:
+        //   1. StockBatchStore.restoreFifo -> Gateway.recordDelta("stock_batch", B1, ...)
+        //   2. InventoryStore.creditStockNoBatch -> Gateway.recordDelta("inventory", SKU-1, ...)
+        //   3. TransactionStore.recordReturn -> Gateway.recordMutation("transaction", ...)
+        //   4. OrdersStore.applyAdjustment -> Gateway.recordMutation("order", ...)
+        // OutboxStore.pendingCount is items.length, which recordDelta's
+        // enqueueDelta() shares with recordMutation's enqueue() -- both push
+        // into the same underlying queue, just shaped differently (see
+        // Gateway.drainNow()'s due[i].deltas / due[i].items / plain-item
+        // branching). Each is a distinct entity+entityId, so none coalesce.
+        // This matches the P0 compliance-gateway design (one audited write
+        // per entity, not one per business operation) -- 4 is correct, not
+        // a bug. Original assertion (1) was written without having run this
+        // file (see the header comment above: "NOT RUN IN THIS SANDBOX"),
+        // undercounting the real fan-out of a single return.
+        compare(OutboxStore.pendingCount, 4, "four separate entity mutations (stock_batch delta, "
+                + "inventory delta, transaction, order) should be enqueued once allowed to proceed")
     }
 
     // ── the guard must not weaken the pre-existing status check ────────────
