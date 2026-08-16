@@ -39,7 +39,16 @@ QtObject {
     // log was in-memory only: clear() on sign-out wiped it and nothing re-synced,
     // so every non-order activity (product/staff edits) vanished on re-login
     // while orders survived only because they re-derive from OrdersStore.
-    Component.onCompleted: _fetchFromFirebase()
+    // Was unconditional -- fired on every creation regardless of whether
+    // AuthStore.tenantId was known yet, hitting Firestore with an unscoped
+    // path on a cold start (a guaranteed-failing request, recovered only by
+    // onTenantContextReady's explicit re-sync moments later). Every other
+    // Firestore-backed store in this app guards this the same way -- see
+    // SKILLS Skill 39.
+    Component.onCompleted: {
+        if (AuthStore.tenantId.length > 0)
+            _fetchFromFirebase()
+    }
 
     function _fetchFromFirebase() {
         // Was FirebaseService.get("activity_log", ...) — fetched the ENTIRE

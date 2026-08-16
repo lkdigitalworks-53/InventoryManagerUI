@@ -397,9 +397,44 @@ QtObject {
 **Purpose**: Owns the India compliance roadmap (P0–P7) — the immutable ledger tier, the Cloud
 Functions gateway, tax-identity fields, DPDP privacy, and retention. **Adjacent, not part of P0
 itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, atomic deltas —
-`docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, README's "Concurrency &
-Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files but is a correctness
-concern, not a compliance one — don't conflate the two when reasoning about this directory.
+`docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, its 2026-08-06 review at
+`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, its 2026-08-08 round-2
+closure of the remaining findings at `docs/superpowers/specs/2026-08-08-review-round2-design.md`,
+README's "Concurrency & Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files
+but is a correctness concern, not a compliance one — don't conflate the two when reasoning about
+this directory. Also adjacent, found 2026-08-10 while on-device testing the round-2 branch:
+`OrdersStore.applyAdjustment` built its CAS `before` snapshot via a shallow `Object.assign`, then
+mutated a nested field (`adjustments`) in place — the mutation leaked back into `before`, so the
+server's CAS check rejected a completely ordinary price edit as a false conflict (see SKILLS Skill
+37, `docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md`). A full-codebase
+sweep found this was the only instance of the pattern; fixed narrowly rather than rewritten broadly.
+Found immediately after, testing the same fix (2026-08-11): `OrdersStore.applyAdjustment`'s
+completed-order total also trusts `TransactionStore.totalsForOrder` unconditionally, which is wrong
+if `TransactionStore` hasn't finished its post-cold-start paginated re-sync yet — the newest
+transactions (timestamp-prefixed IDs, ascending `__name__` pagination) load last, so a just-
+completed order's own sale can still be missing when a prompt return tries to net against it.
+`DataModel._tryAdjustOrder` now refuses completed-order adjustments while `TransactionStore.
+hasMore` is true, and `TransactionStore` now retries a failed sync page with backoff instead of
+leaving `hasMore` stuck forever (see SKILLS Skill 38, `docs/superpowers/specs/
+2026-08-11-ledger-sync-race-CHECKPOINT.md`). Scoped to the one caller that actually reads this
+ledger — order completion and everything else here don't depend on it.
+Found by Taher himself immediately after, still testing the same guard (2026-08-12): the guard
+above didn't reliably fire because `TransactionStore.hasMore` could read `false` while `entries` was
+genuinely still incomplete — `Component.onCompleted` and `onTenantContextReady` both call
+`_resetAndFetch()` on a cold start, and since both are async, the second call could wipe `entries`/
+`_cursor` out from under the first, still-in-flight fetch. Fixed with `if (loadingMore) return` at
+the top of `_resetAndFetch()`, applied to every paginated store (not just `TransactionStore`) — see
+SKILLS Skill 39 for the full sweep of all 21 `qml/model/*.qml` singletons, including which ones
+don't need this guard and why, and a documented (not yet implemented) residual edge case around
+account-switch timing.
+Worth knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to
+`firestore.rules` (a new `isServerOnlyCollection` tier, distinct from the ledger tier below — locks
+needs read AND write denied, not just write) — if touching `firestore.rules` for compliance work,
+be aware this tier exists and follow the same pattern for any other collection that should never be
+client-reachable. Also worth knowing: `functions/lib/batchMutationLogic.js`'s `applyMutationsBatch`
+(the live path for every bulk import) now has a CAS check as of 2026-08-08 — if adding a new bulk
+write path anywhere, check whether it should route through this rather than a bespoke batch write
+that would reintroduce the same gap.
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
 `StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
@@ -497,10 +532,36 @@ env.
   with `functions/test/{realisedMath,breakdownMath}.test.js` (SKILLS Skill 34). Same literal fixture
   data in both; proves the Node-ported math (`functions/lib/`) agrees with the QML original. If you
   change a scenario in one file of a pair, change it in the other too.
-- 17 suites total (14 pre-existing + 3 new this session). Historical baseline before the 3 new
-  suites: **140 cases pass, 0 fail** — the 3 new suites haven't been run under a real
-  `qmltestrunner` yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; their
-  Node-side twins do pass, 7/7, via `cd functions && npm test`).
+- `tests/tst_OrdersStore_applyAdjustment.qml` (2026-08-10, SKILLS Skill 37) — regression coverage
+  for the `applyAdjustment` before/after snapshot aliasing bug: asserts `before`/`after` end up as
+  independent array references (not the same shared array a `.push()` would leave them as), covers
+  both the first-adjustment and second-adjustment-appended-to-existing-history cases, plus a
+  functional sanity check that local order state still updates correctly.
+- `tests/tst_DataModel_adjustOrderSyncGuard.qml`, `tests/tst_TransactionStore_syncRetry.qml`
+  (2026-08-11, SKILLS Skill 38) — regression coverage for the ledger-sync race: the first asserts
+  `DataModel._tryAdjustOrder` refuses a completed-order adjustment while `TransactionStore.hasMore`
+  is true (with no side effects — no ledger entry written, no order mutation enqueued), proceeds
+  normally once synced, and doesn't weaken the pre-existing pending-order-can't-be-adjusted check;
+  the second covers `TransactionStore`'s new retry backoff math in isolation (first-attempt delay,
+  exponential growth, the 30s cap, single-shot timer) — NOT the actual network failure/retry
+  round-trip, which needs on-device verification (kill the network mid-sync, confirm it keeps
+  retrying with growing delays instead of leaving `hasMore` stuck). `DataModel.qml` has no
+  `pragma Singleton` (unlike the stores), so its test instantiates it directly as a child item
+  rather than referencing it by name — first test coverage for this file.
+- `tests/tst_TransactionStore_resetGuard.qml` (2026-08-12, SKILLS Skill 39) — regression coverage
+  for the concurrent-reset race Taher found and fixed on-device: asserts `_resetAndFetch()` is a
+  no-op (doesn't wipe `entries`/`_cursor`) while `loadingMore` is already true, and still resets
+  normally when nothing is in flight. The "nothing in flight" case deliberately lets a real
+  `_fetchFromFirebase()` call run (same no-real-network safety pattern as `tst_Gateway.qml` — empty
+  `AuthStore.idToken`), so it also stops any retry timer that call schedules in `cleanup()` to avoid
+  bleeding into other test files.
+- 21 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11 + 1 from 2026-08-12). Historical baseline before those 7 new suites: **140 cases pass,
+  0 fail** — none of the 7 newest suites have been run under a real `qmltestrunner` yet (this repo's
+  Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have Node-side twins
+  that do pass, 7/7, via `cd functions && npm test` — the other 4 have no Node-side twin, since the
+  logic under test lives directly in QML singletons/components and isn't Node-portable the way the
+  pure `functions/lib/` math is).
 - **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file

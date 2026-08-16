@@ -9,6 +9,8 @@
 // job: acquireLock grants over an expired lock exactly like it would over a
 // missing one.
 
+const { ENTITY_COLLECTIONS } = require("./gatewayLogic");
+
 function _ref(db, params) {
     return db.doc("tenants/" + params.tenantId + "/locks/" + params.entity + "_" + params.entityId);
 }
@@ -77,6 +79,9 @@ function validateAcquireRequest(body) {
     if (!entity || !entityId || !requestId) {
         return { ok: false, status: 400, error: "missing-fields" };
     }
+    if (!ENTITY_COLLECTIONS[entity]) {
+        return { ok: false, status: 400, error: "unsupported-entity" };
+    }
     if (!isFinite(ttlMs) || ttlMs <= 0) {
         return { ok: false, status: 400, error: "invalid-ttl" };
     }
@@ -91,6 +96,9 @@ function validateReleaseRequest(body) {
 
     if (!entity || !entityId) {
         return { ok: false, status: 400, error: "missing-fields" };
+    }
+    if (!ENTITY_COLLECTIONS[entity]) {
+        return { ok: false, status: 400, error: "unsupported-entity" };
     }
 
     return { ok: true, entity: entity, entityId: entityId };

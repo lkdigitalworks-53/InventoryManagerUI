@@ -45,6 +45,11 @@ BottomSheet {
     // lone tester "someone else is editing this" when nobody else was.
     property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
     property var _lockHolder: null
+    // Set right before dlg.close() when handing the lock off to
+    // ConfirmReturnSheet (see the linesChanged branch in _save() below) so
+    // onClosed skips its normal release — ConfirmReturnSheet now owns it and
+    // releases when IT closes. Reset immediately after being read.
+    property bool _lockHandoffPending: false
 
     property var catalog: []
     property var catalogNames: []
@@ -310,13 +315,34 @@ BottomSheet {
     // notably the available-stock count, which derives from products +
     // _originalLines + _orderStatus.
     onClosed: {
-        LockManager.release("order", orderId)
+        if (_lockHandoffPending) {
+            _lockHandoffPending = false // ConfirmReturnSheet now owns this lock
+        } else {
+            LockManager.release("order", orderId)
+        }
         _lockState = "pending"
         _lockHolder = null
         products.clear()
         _originalLines = []
         _orderStatus = ""
         stockErrorLabel.text = ""
+    }
+
+    // review I4: fires from _save() when the user taps Save while not
+    // granted. Doesn't auto-continue the save on success — deliberately
+    // requires a second tap, so a slow/late acquire response can never save
+    // on the user's behalf without them re-confirming. Same
+    // openedOrderId guard as the initial acquire in onOpened, for the same
+    // reason: the dialog may have moved on to a different order by the time
+    // this resolves.
+    function _retryLockAcquire() {
+        if (_lockState === "granted") return
+        var openedOrderId = orderId
+        LockManager.acquire("order", orderId, function(result) {
+            if (dlg.orderId !== openedOrderId) return
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+        })
     }
 
     onPrimaryClicked: _save()
@@ -332,6 +358,10 @@ BottomSheet {
             } else {
                 stockErrorLabel.text = qsTr("Still confirming this order is free to edit — try again in a moment")
             }
+            // review I4: "try again" used to mean nothing — tapping Save again
+            // just re-showed the same stale message forever. Actually retry the
+            // acquisition in the background so the NEXT tap has a fresh answer.
+            _retryLockAcquire()
             return
         }
         var itemCount = 0
@@ -387,6 +417,22 @@ BottomSheet {
             // routed through the adjust/ledger path (per-line discount event).
             var linesChanged = JSON.stringify(_lineKeys(prods)) !== JSON.stringify(_lineKeys(_originalLines))
             if (linesChanged) {
+                // Same guard as DataModel._tryAdjustOrder, checked here too so the
+                // user finds out BEFORE filling out ConfirmReturnSheet's reason/
+                // condition/note fields, not after (2026-08-11 — see SKILLS Skill 38).
+                if (TransactionStore.hasMore) {
+                    stockErrorLabel.text = qsTr("Still syncing transaction history from a recent restart — "
+                        + "please wait a few seconds and try again.")
+                    return
+                }
+                // Lock-span fix (known gap, review round 2): ConfirmReturnSheet
+                // needs the order locked through its own confirm/cancel, not
+                // just until THIS dialog closes. Hand off ownership instead of
+                // releasing here — _lockHandoffPending tells onClosed below to
+                // skip its release, and ConfirmReturnSheet.onClosed releases
+                // once the handoff sheet itself closes (confirm, cancel, or
+                // tap-outside-dismiss, alike).
+                _lockHandoffPending = true
                 dlg.adjustRequested(dlg.orderId, prods, dlg._originalLines)
                 dlg.close()
                 return

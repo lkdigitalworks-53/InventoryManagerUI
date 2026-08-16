@@ -87,7 +87,17 @@ QtObject {
         var isRealResponse = body !== null && typeof body === "object" && typeof body.ok === "boolean"
         if (!isRealResponse) return { granted: false, holder: null, reason: "error" }
         if (body.ok === true) return { granted: true, holder: null, reason: null }
-        return { granted: false, holder: body.holder || null, reason: "denied" }
+        // A real ok:false response. acquireLock's handler only ever uses
+        // 409 for an actual denial (someone else holds it, with `holder`
+        // populated) — 400 (missing-fields), 401 (invalid-token), 403
+        // (no-tenant-context), and 500 (lock-failed, the transaction's own
+        // catch) are all well-formed ok:false bodies too, but none of them
+        // mean "someone else is editing this". Treating every non-ok
+        // response as "denied" was exactly the bug _classifyDeltaResponse
+        // was already fixed for on the delta path (2026-07-29) — this is
+        // the same fix, applied here (2026-08-06 review, finding C6).
+        if (status === 409) return { granted: false, holder: body.holder || null, reason: "denied" }
+        return { granted: false, holder: null, reason: "error" }
     }
 
     // Acquire a lock before opening an edit action (never before a plain
@@ -103,6 +113,14 @@ QtObject {
             if (callback) callback({ granted: false, holder: null, reason: "error" })
             return
         }
+        // A dialog can be opened long after sign-in, well past the token's
+        // freshness window — without this, a stale token produces a 401
+        // that (pre-fix, see _classifyAcquireResponse above) used to show
+        // as "someone else is editing this" instead of what it actually
+        // was. Matches Gateway.qml's drainNow()/_send()/_sendDelta() etc.,
+        // which all do this before their own auth-sensitive requests.
+        if (typeof AuthService !== "undefined" && AuthService)
+            AuthService.ensureFreshToken()
         var requestId = _nextRequestId()
         _post(acquireLockUrl, {
             entity: entity,

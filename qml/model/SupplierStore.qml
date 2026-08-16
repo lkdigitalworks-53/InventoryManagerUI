@@ -41,6 +41,31 @@ QtObject {
     Component.onCompleted: {
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06) — see
+    // OrdersStore._onMutationConflicted for the full explanation. Reuses
+    // _normalizeSuppliers (same function _load() already runs fetched data
+    // through) so the patched record stays consistent with the array's
+    // shape. Assigning `suppliers` below auto-bumps `revision` via
+    // onSuppliersChanged — no manual bump needed here, unlike OrdersStore.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "supplier") return
+        var arr = suppliers.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].supplierId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeSuppliers([current])[0]
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized)
+        } else if (idx >= 0) {
+            arr.splice(idx, 1)
+        }
+        suppliers = arr
+        Toast.show(qsTr("This supplier was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -50,12 +75,20 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         suppliers = []
         hasMore = true
         _cursor = null
         _fetchFromFirebase()
     }
 
+    // Legacy-data defaults for docs predating these fields — NOT a create-
+    // vs-clone reshaping risk the way OrdersStore's old _clone() was (see
+    // that file's 2026-07-30 note): updateSupplier/addSupplier both build
+    // before/after from a plain `suppliers.slice()` + `Object.assign`, no
+    // explicit field whitelist that could drift from what creation sends.
+    // Keep it that way — don't introduce a reconstructing clone() here
+    // without re-reading that note first.
     function _normalizeSuppliers(arr) {
         for (var i = 0; i < arr.length; ++i) {
             var s = arr[i]

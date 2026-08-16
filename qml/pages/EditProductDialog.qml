@@ -67,6 +67,21 @@ BottomSheet {
         _lockState = "pending"
         _lockHolder = null
     }
+
+    // review I4: same guard shape as _enterEditMode's own acquire — the
+    // dialog may have moved on to a different product by the time this
+    // resolves. Doesn't auto-continue the submit on success; the user taps
+    // Save again once the state's fresh.
+    function _retryLockAcquire() {
+        if (_lockState === "granted") return
+        var lockedProductId = productId
+        LockManager.acquire("inventory", productId, function(result) {
+            if (root.productId !== lockedProductId) return
+            _lockState = result.granted ? "granted" : result.reason
+            _lockHolder = result.holder
+        })
+    }
+
     property bool photoBusy: false
 
     // Supplier banner state — `_currentSupplierId` resolves to the most
@@ -1051,6 +1066,9 @@ BottomSheet {
             } else {
                 errorLabel.text = qsTr("Still confirming this product is free to edit — try again in a moment")
             }
+            // review I4: actually retry the acquisition so the next tap has a
+            // fresh answer, instead of "try again" meaning nothing.
+            _retryLockAcquire()
             return
         }
         var errs = []

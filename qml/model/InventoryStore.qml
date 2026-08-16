@@ -36,6 +36,30 @@ QtObject {
     Component.onCompleted: {
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06) — see
+    // OrdersStore._onMutationConflicted for the full explanation. Only
+    // applies to plain recordMutation edits (name/price/category/etc via
+    // updateProduct); deductStock/restock/creditStockNoBatch already go
+    // through recordDelta, which doesn't use CAS and can't conflict this way.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "inventory") return
+        var arr = products.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].productId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeProducts([current])[0]
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized)
+        } else if (idx >= 0) {
+            arr.splice(idx, 1)
+        }
+        products = arr
+        Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     function _load() {
@@ -43,6 +67,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         products = [];
         hasMore = true;
         _cursor = null;
@@ -102,6 +127,17 @@ QtObject {
         products = []
     }
 
+    // INVARIANT (added 2026-07-30, after a real bug found in OrdersStore's
+    // equivalent function): this field list must exactly match every field
+    // addProduct's `doc` sends at creation — no more, no less. If they ever
+    // drift (a field this whitelist defaults that creation doesn't send, or
+    // vice versa), the very next clone silently reshapes the local cache
+    // away from what's actually in Firestore, and the CAS backstop in
+    // applyMutation (Component 3, async-write-sequencing design) will
+    // reject a completely ordinary single-user edit as a false conflict —
+    // not a rare race, a near-certainty on the second touch of any record.
+    // Verified consistent as of this date; re-check both functions together
+    // whenever either one changes.
     function _clone() {
         var a = [];
         for (var i = 0; i < products.length; ++i) {
@@ -500,7 +536,7 @@ QtObject {
     // the original loop synchronously again against those pre-reserved
     // pools. All new/renamed rows are collected into a single
     // Gateway.recordMutations() call at the end instead of one
-    // recordMutation() per row, matching approveAllPending's pattern.
+    // recordMutation() per row, matching SupplierStore.upsertMany's pattern.
     function upsertMany(records, callback) {
         var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] };
         if (!records || records.length === 0) { if (callback) callback(counts); return; }
@@ -796,45 +832,63 @@ QtObject {
     // caller didn't capture it (e.g. legacy restock paths).
     function restock(productId, amount, party, unitCost, reason, callback) {
         var arr = _clone();
-        var changed = null;
-        var before = null;
+        var current = null;
         var addedQty = amount || 10;
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].productId === productId) {
-                before = Object.assign({}, arr[i]);
-                arr[i].stock += addedQty;
-                changed = arr[i];
-                break;
-            }
+            if (arr[i].productId === productId) { current = arr[i]; break; }
         }
-        products = arr;
-        if (!changed) { if (callback) callback(false); return }
+        if (!current) { if (callback) callback(false); return }
 
         _resolveSupplierId(party, function(supplierId, supplierFailed) {
             var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
-            var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (changed.price || 0);
+            var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (current.price || 0);
             var reasonText = (reason || "").trim();
 
-            ActivityLog.record("product_restocked",
-                               "Restocked: " + changed.name,
-                               "+" + addedQty + " · now " + changed.stock + " in stock"
-                                   + (supplierName ? " · from " + supplierName : "")
-                                   + (reasonText ? " · " + reasonText : ""),
-                               productId);
-            TransactionStore.recordPurchase(productId, addedQty, batchCost, changed.name, supplierId, reasonText);
-            // The receipt also lands as a FIFO batch — this is what every
-            // subsequent sale will draw from in date order. The reason rides
-            // along in the batch's existing (currently unrendered) note field.
-            StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
-            Gateway.recordMutation("inventory", productId, "update", before, changed);
-            // Unlike addProduct, the stock change above is already committed
-            // (both locally at the top of this function and to Firestore on
-            // the line above) by the time supplier resolution's outcome is
-            // known — aborting here would leave local state ahead of what's
-            // persisted. So restock still succeeds even if supplier creation
-            // failed; supplierFailed just lets the caller surface a
-            // non-blocking notice that attribution specifically didn't stick.
-            if (callback) callback(true, supplierFailed)
+            // Atomic server-side delta (Component 4) instead of the old
+            // optimistic-local-then-whole-record-CAS-mutation pattern —
+            // same fix and reasoning as deductStock above. review finding
+            // C4 (2026-08-06): restock() was the one Component-4 caller
+            // the design doc called for that was never actually converted
+            // — two staff restocking the same product close together used
+            // to compute the new stock value from a stale local snapshot,
+            // which (combined with the now-fixed C3/C1 gaps) could get
+            // silently stuck retrying forever on the resulting conflict.
+            // Local products[] is now updated only once the server confirms
+            // (result.after.stock), not optimistically — so the ActivityLog/
+            // TransactionStore/StockBatchStore side effects below also wait
+            // for that confirmation, rather than firing for a write that
+            // might not have actually landed.
+            Gateway.recordDelta("inventory", productId, { stock: addedQty }, {}, {}, function(result) {
+                if (!result || !result.ok || !result.after || result.after.stock === undefined) {
+                    console.warn("[InventoryStore] restock: recordDelta failed for", productId, result && result.error)
+                    if (callback) callback(false, supplierFailed)
+                    return
+                }
+                var arr2 = _clone();
+                for (var j = 0; j < arr2.length; ++j) {
+                    if (arr2[j].productId === productId) { arr2[j].stock = result.after.stock; break }
+                }
+                products = arr2;
+
+                ActivityLog.record("product_restocked",
+                                   "Restocked: " + current.name,
+                                   "+" + addedQty + " · now " + result.after.stock + " in stock"
+                                       + (supplierName ? " · from " + supplierName : "")
+                                       + (reasonText ? " · " + reasonText : ""),
+                                   productId);
+                TransactionStore.recordPurchase(productId, addedQty, batchCost, current.name, supplierId, reasonText);
+                // The receipt also lands as a FIFO batch — this is what every
+                // subsequent sale will draw from in date order. The reason
+                // rides along in the batch's existing (currently unrendered)
+                // note field. addBatch creates a brand-new document (no
+                // shared mutable value to race on), so it's out of C4's
+                // scope — only consumeFifo/topUpOldest/restoreFifo (which
+                // mutate an EXISTING batch's qtyRemaining) are the still-open
+                // part of that gap, tracked separately.
+                StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
+
+                if (callback) callback(true, supplierFailed)
+            })
         })
     }
 
@@ -897,16 +951,34 @@ QtObject {
     function creditStockNoBatch(productId, qty) {
         if (!qty || qty <= 0) return
         var arr = _clone()
+        var exists = false
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].productId === productId) {
-                var before = Object.assign({}, arr[i])
-                arr[i].stock = (arr[i].stock || 0) + qty
-                products = arr
-                Gateway.recordMutation("inventory", productId, "update", before, arr[i])
+            if (arr[i].productId === productId) { exists = true; break }
+        }
+        if (!exists) {
+            console.warn("[InventoryStore] creditStockNoBatch: no product with id", productId)
+            return
+        }
+        // Atomic server-side delta (Component 4) instead of a whole-record
+        // CAS mutation computed from a possibly-stale local snapshot — same
+        // fix and reasoning as restock() above (review finding C4,
+        // 2026-08-06, folded in alongside restock's fix since it's the
+        // identical bug). Stays fire-and-forget from the caller's
+        // perspective (no callback param, matching restoreFifo/consumeFifo's
+        // existing convention in the returns flow this feeds) — local
+        // products[] is just patched from result.after.stock once the
+        // server confirms, instead of being mutated optimistically.
+        Gateway.recordDelta("inventory", productId, { stock: qty }, {}, {}, function(result) {
+            if (!result || !result.ok || !result.after || result.after.stock === undefined) {
+                console.warn("[InventoryStore] creditStockNoBatch: recordDelta failed for", productId, result && result.error)
                 return
             }
-        }
-        console.warn("[InventoryStore] creditStockNoBatch: no product with id", productId)
+            var arr2 = _clone()
+            for (var j = 0; j < arr2.length; ++j) {
+                if (arr2[j].productId === productId) { arr2[j].stock = result.after.stock; break }
+            }
+            products = arr2
+        })
     }
 
     function findIndexById(productId) {

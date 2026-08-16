@@ -169,11 +169,6 @@ Item {
             })
         }
 
-        function onApproveAllPending() {
-            OrdersStore.approveAllPending()
-            _syncOrdersModel()
-        }
-
         function onDeleteOrder(orderId) {
             if (!_hasAnyRole(["owner", "admin", "manager"])) {
                 logic.errorOccurred("auth", "You do not have permission to delete orders")
@@ -200,13 +195,14 @@ Item {
                 logic.errorOccurred("auth", "You do not have permission to adjust orders")
                 return
             }
-            var ok = _tryAdjustOrder(orderId, newLines, reason, condition, note)
-            if (ok) {
-                _updateOrderInModel(orderId)
-                logic.orderUpdated(orderId)
-            } else {
-                logic.errorOccurred("order", dataModel.stockErrorMsg || "Could not adjust order")
-            }
+            _tryAdjustOrder(orderId, newLines, reason, condition, note, function(ok) {
+                if (ok) {
+                    _updateOrderInModel(orderId)
+                    logic.orderUpdated(orderId)
+                } else {
+                    logic.errorOccurred("order", dataModel.stockErrorMsg || "Could not adjust order")
+                }
+            })
         }
 
         // ── Inventory ─────────────────────────────────────────────────────────
@@ -434,9 +430,41 @@ Item {
         var linesWithConsumption = new Array(lines.length)
         var deltaFailed = false
         var deltaFailMsg = ""
+        // New (review round 2, partial-multi-line-completion gap): tracks
+        // which lines' deductStock actually succeeded, so a sibling line's
+        // failure can credit them back — see _afterAllDeltas below.
+        var succeededLines = []
 
         function _afterAllDeltas() {
             if (deltaFailed) {
+                // FIFO consumption for every line already ran (synchronously,
+                // up front, before any deductStock callback could resolve —
+                // see the loop below) regardless of whether THIS order ends
+                // up completing. Undo it here so a rejected order doesn't
+                // leave stock_batches permanently decremented for units no
+                // sale actually accounts for (review finding C5, 2026-08-06).
+                // Uses the same restoreFifo the returns flow already relies
+                // on for exactly this purpose (see _tryAdjustOrder's return
+                // path above).
+                for (var li = 0; li < linesWithConsumption.length; ++li) {
+                    var restoreLine = linesWithConsumption[li]
+                    if (!restoreLine || !Array.isArray(restoreLine.consumption)) continue
+                    for (var ri = 0; ri < restoreLine.consumption.length; ++ri) {
+                        var rc = restoreLine.consumption[ri]
+                        StockBatchStore.restoreFifo(rc.batchId, restoreLine.productId, rc.qtyConsumed)
+                    }
+                }
+                // C5 above only restores the batch ledger. It doesn't touch
+                // product.stock itself for lines whose deductStock already
+                // succeeded before a SIBLING line's deductStock failed — that
+                // stock stays decremented for an order that never completed.
+                // Credit it back with the same primitive the returns flow
+                // already uses for exactly this "credit stock, batches already
+                // handled separately" shape (creditStockNoBatch, recordDelta-
+                // based since C4).
+                for (var si = 0; si < succeededLines.length; ++si) {
+                    InventoryStore.creditStockNoBatch(succeededLines[si].productId, succeededLines[si].qty)
+                }
                 OrdersStore.updateOrder(orderId, { status: "out of stock" })
                 dataModel.stockErrorMsg = deltaFailMsg
                 _updateOrderInModel(orderId)
@@ -473,40 +501,54 @@ Item {
                 var pp = lines[j]
                 var qqty = _lineQty(pp)
                 var invP = _resolveInventory(pp)
-                var consumption = []
                 var line = {}
                 for (var k in pp) line[k] = pp[k]
 
                 if (invP && qqty > 0) {
-                    consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
-                    var consumed = _sumConsumed(consumption)
-                    // Drift guard: if batches couldn't satisfy the qty even
-                    // though product.stock said they should, top up the oldest
-                    // batch by the deficit and try again. Logged inside the
-                    // store; we only retry once because topUp guarantees enough.
-                    if (consumed < qqty) {
-                        StockBatchStore.topUpOldest(invP.productId, qqty - consumed)
-                        var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
-                        for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
-                    }
                     pending++
-                    InventoryStore.deductStock(invP.productId, qqty, function(result) {
-                        if (!result || !result.ok) {
-                            deltaFailed = true
-                            deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
-                                (invP.name + ": " + (result && result.error === "insufficient-quantity"
-                                    ? "stock ran out before this order could complete"
-                                    : "could not update stock — try again"))
+                    StockBatchStore.consumeFifo(invP.productId, qqty, function(fifoResult) {
+                        var consumption = fifoResult.consumption
+                        var shortfall = fifoResult.shortfall
+
+                        function _afterConsumption() {
+                            InventoryStore.deductStock(invP.productId, qqty, function(result) {
+                                if (!result || !result.ok) {
+                                    deltaFailed = true
+                                    deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
+                                        (invP.name + ": " + (result && result.error === "insufficient-quantity"
+                                            ? "stock ran out before this order could complete"
+                                            : "could not update stock — try again"))
+                                } else {
+                                    succeededLines.push({ productId: invP.productId, qty: qqty })
+                                }
+                                line.consumption = consumption
+                                linesWithConsumption[j] = line
+                                _oneResolved()
+                            }, false /* reject, don't clamp — round-4 decision for order completion */)
+                            console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
+                                        "across", consumption.length, "batch(es)")
                         }
-                        line.consumption = consumption
-                        linesWithConsumption[j] = line
-                        _oneResolved()
-                    }, false /* reject, don't clamp — round-4 decision for order completion */)
-                    console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
-                                "across", consumption.length, "batch(es)")
+
+                        if (shortfall > 0) {
+                            // Drift guard: batches couldn't satisfy the qty
+                            // even though product.stock said they should.
+                            // Top up the oldest batch by the deficit and try
+                            // once more — topUp guarantees enough, so a
+                            // single retry suffices.
+                            StockBatchStore.topUpOldest(invP.productId, shortfall, function() {
+                                StockBatchStore.consumeFifo(invP.productId, shortfall, function(retryResult) {
+                                    for (var r = 0; r < retryResult.consumption.length; ++r)
+                                        consumption.push(retryResult.consumption[r])
+                                    _afterConsumption()
+                                })
+                            })
+                        } else {
+                            _afterConsumption()
+                        }
+                    })
                 } else {
                     if (!invP) console.warn("[DataModel] Could not resolve line item to inventory:", JSON.stringify(pp))
-                    line.consumption = consumption
+                    line.consumption = []
                     linesWithConsumption[j] = line
                 }
             })(j)
@@ -523,52 +565,81 @@ Item {
     // the caller. The import flow (ImportPreviewDialog) calls this for each
     // freshly-added order whose status is "completed".
     //   returns { ok: bool, understocked: bool }
-    function completeImportedOrder(orderId) {
+    // review round 2: was synchronous (`return {ok, understocked}`) — its
+    // ImportPreviewDialog caller looped over every newly-completed imported
+    // order and used the return value immediately. consumeFifo's async
+    // rewrite forced this to become callback-based too. Mirrors
+    // adjustOrderForImport's existing precedent just below (already made
+    // async in round 4 of the original async-write-sequencing project) —
+    // same shape, not a new pattern for this file.
+    function completeImportedOrder(orderId, callback) {
         var o = OrdersStore.getById(orderId)
-        if (!o) return { ok: false, understocked: false }
+        if (!o) { if (callback) callback({ ok: false, understocked: false }); return }
         var understocked = false
         var linesWithConsumption = []
-        if (o.products && o.products.length > 0) {
-            for (var j = 0; j < o.products.length; ++j) {
-                var pp = o.products[j]
-                var qqty = _lineQty(pp)
-                var invP = _resolveInventory(pp)
-                var consumption = []
-                if (invP && qqty > 0) {
-                    if ((invP.stock || 0) < qqty) understocked = true
-                    consumption = StockBatchStore.consumeFifo(invP.productId, qqty)
-                    var consumed = _sumConsumed(consumption)
-                    if (consumed < qqty) {
-                        StockBatchStore.topUpOldest(invP.productId, qqty - consumed)
-                        var retry = StockBatchStore.consumeFifo(invP.productId, qqty - consumed)
-                        for (var r = 0; r < retry.length; ++r) consumption.push(retry[r])
-                    }
-                    // Fire-and-forget by design here (unlike _tryCompleteOrder):
-                    // this function's contract never branches on the deduction's
-                    // outcome — `understocked` is already decided above from the
-                    // pre-check, and clamp mode (not reject) means the delta is
-                    // never rejected anyway. Local products[] still gets the
-                    // authoritative post-deduction value once the callback runs.
-                    InventoryStore.deductStock(invP.productId, qqty, function(result) {
-                        if (!result || !result.ok)
-                            console.warn("[DataModel] completeImportedOrder: deductStock did not confirm", JSON.stringify(result))
-                    }, true /* clamp, don't reject — "complete + report shortfall" business rule */)
-                } else if (!invP) {
-                    console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
-                }
+        var products = o.products || []
+
+        function _finish() {
+            OrdersStore.updateOrder(orderId, {
+                products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
+            })
+            SalesStore.recordSale(o.total, o.items)
+            TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
+            _updateOrderInModel(orderId)
+            if (callback) callback({ ok: true, understocked: understocked })
+        }
+
+        var idx = 0
+        function _nextLine() {
+            if (idx >= products.length) { _finish(); return }
+            var pp = products[idx]
+            idx++
+            var qqty = _lineQty(pp)
+            var invP = _resolveInventory(pp)
+
+            function _pushLine(consumption) {
                 var line = {}
                 for (var k in pp) line[k] = pp[k]
                 line.consumption = consumption
                 linesWithConsumption.push(line)
+                _nextLine()
+            }
+
+            if (invP && qqty > 0) {
+                if ((invP.stock || 0) < qqty) understocked = true
+                StockBatchStore.consumeFifo(invP.productId, qqty, function(fifoResult) {
+                    var consumption = fifoResult.consumption
+                    function _afterConsumption() {
+                        // Fire-and-forget by design here (unlike
+                        // _tryCompleteOrder): this function's contract never
+                        // branches on the deduction's outcome —
+                        // `understocked` is already decided above from the
+                        // pre-check, and clamp mode (not reject) means the
+                        // delta is never rejected anyway.
+                        InventoryStore.deductStock(invP.productId, qqty, function(result) {
+                            if (!result || !result.ok)
+                                console.warn("[DataModel] completeImportedOrder: deductStock did not confirm", JSON.stringify(result))
+                        }, true /* clamp, don't reject — "complete + report shortfall" business rule */)
+                        _pushLine(consumption)
+                    }
+                    if (fifoResult.shortfall > 0) {
+                        StockBatchStore.topUpOldest(invP.productId, fifoResult.shortfall, function() {
+                            StockBatchStore.consumeFifo(invP.productId, fifoResult.shortfall, function(retryResult) {
+                                for (var r = 0; r < retryResult.consumption.length; ++r)
+                                    consumption.push(retryResult.consumption[r])
+                                _afterConsumption()
+                            })
+                        })
+                    } else {
+                        _afterConsumption()
+                    }
+                })
+            } else {
+                if (!invP) console.warn("[DataModel] completeImportedOrder: line not resolved to inventory:", JSON.stringify(pp))
+                _pushLine([])
             }
         }
-        OrdersStore.updateOrder(orderId, {
-            products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
-        })
-        SalesStore.recordSale(o.total, o.items)
-        TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
-        _updateOrderInModel(orderId)
-        return { ok: true, understocked: understocked }
+        _nextLine()
     }
 
     // Import-facing counterpart to onAdjustOrder's signal handler. The
@@ -582,10 +653,11 @@ Item {
     // this reason -- no RBAC check here either, matching that precedent,
     // since import-level access is gated at the import entry point, not
     // per adjustment operation.
-    function adjustOrderForImport(orderId, newLines, reason, condition, note) {
+    function adjustOrderForImport(orderId, newLines, reason, condition, note, callback) {
         dataModel.stockErrorMsg = ""
-        var ok = _tryAdjustOrder(orderId, newLines, reason, condition, note)
-        return { ok: ok, message: ok ? "" : dataModel.stockErrorMsg }
+        _tryAdjustOrder(orderId, newLines, reason, condition, note, function(ok) {
+            if (callback) callback({ ok: ok, message: ok ? "" : dataModel.stockErrorMsg })
+        })
     }
 
     // Reverse a COMPLETED order back to an un-booked state. Mirrors a full
@@ -626,30 +698,61 @@ Item {
         }
     }
 
-    // Internal: total qty across an FIFO consumption result.
-    function _sumConsumed(consumption) {
-        var s = 0
-        if (!consumption) return 0
-        for (var i = 0; i < consumption.length; ++i) s += (consumption[i].qtyConsumed || 0)
-        return s
-    }
-
     // Reverse/adjust a COMPLETED order's lines. Diffs the edited lines vs the
     // order's current lines and, per changed line: restores returned units to
     // their original batches (Restock) or writes them off (Damaged), deducts any
     // added units via fresh FIFO, writes a negative return ledger event, and
     // reconciles any price change on surviving units. Then updates the order +
     // appends an adjustments[] entry. Mirrors _tryCompleteOrder in reverse.
-    function _tryAdjustOrder(orderId, newLines, reason, condition, note) {
+    // Cross-store orchestration for a completed order's return/exchange/price
+    // adjustment. See _tryCompleteOrder for the general shape this follows.
+    //
+    // ASYNC as of 2026-07-29 (the follow-up flagged when _tryCompleteOrder
+    // got the round-4 treatment but this didn't, due to this function's
+    // size/complexity — now done). Only the ADDED-units branch (exchange
+    // replacement / qty-up) touches the network via deductStock; returns and
+    // price/discount changes are pure local-state + ledger writes and stay
+    // synchronous exactly as before. callback(ok) fires once every added-
+    // unit deduction has actually resolved.
+    //
+    // Known, deliberately unfixed limitation: if an added-unit deduction is
+    // rejected, the RETURN and PRICE-ADJUST side effects that already ran
+    // earlier in this same call are NOT rolled back — this function reports
+    // the real outcome instead of always claiming success, but doesn't
+    // attempt compensating writes for what already landed. Full
+    // transactional rollback across a multi-step flow like this was
+    // explicitly scoped out of the whole async-write-sequencing design (see
+    // design doc §2) as a separate, larger initiative.
+    function _tryAdjustOrder(orderId, newLines, reason, condition, note, callback) {
         var o = OrdersStore.getById(orderId)
-        if (!o) return false
+        if (!o) { if (callback) callback(false); return }
         // Only completed orders carry booked stock + sale events to reverse.
         // A pending/processing order never deducted stock, so reversing would
         // corrupt both ledgers. Guard defensively (the UI only routes completed
         // orders here, but RBAC gates WHO, not the order STATE).
         if (o.status !== "completed") {
             dataModel.stockErrorMsg = "Only completed orders can be adjusted"
-            return false
+            if (callback) callback(false)
+            return
+        }
+        // A completed order's tax/total come from TransactionStore.totalsForOrder
+        // (OrdersStore.applyAdjustment) -- summing that ledger while it's still
+        // mid-sync (cold app start, paginating in older transactions) silently
+        // undercounts, since the very entries a return needs to net against
+        // (this order's original sale) may not have loaded yet. Refuse rather
+        // than commit a wrong total. See Skill 38 / SKILLS.md and
+        // docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md for
+        // why this is scoped to completed-order adjustments specifically, not
+        // the whole app -- order completion and every other action here don't
+        // read this ledger at all.
+        console.log("[DataModel._tryAdjustOrder]", orderId, "TransactionStore.hasMore =",
+                    TransactionStore.hasMore, " loadingMore =", TransactionStore.loadingMore,
+                    " entries.length =", TransactionStore.entries.length)
+        if (TransactionStore.hasMore) {
+            dataModel.stockErrorMsg = "Still syncing transaction history from a recent restart — "
+                + "please wait a few seconds and try again."
+            if (callback) callback(false)
+            return
         }
 
         var deltas = OrderAdjust.diffLines(o.products || [], newLines || [])
@@ -661,7 +764,8 @@ Item {
                 if (pfStock < pfd.addedQty) {
                     dataModel.stockErrorMsg = (pfd.name || pfd.productId) + ": not enough stock to add "
                         + pfd.addedQty + " more (only " + Math.max(0, pfStock) + " available)"
-                    return false
+                    if (callback) callback(false)
+                    return
                 }
             }
         }
@@ -682,6 +786,169 @@ Item {
         // Revenue-by-supplier) miss its COGS and supplier — overstating profit
         // and undercounting the supplier axis on every exchange (bug 14).
         var addedConsByPid = {}
+
+        // Added-unit confirmations are deferred until after the main loop —
+        // recordSaleFromOrder/addedConsByPid/refundAmount for THESE units only
+        // happen once we know the deduction actually landed, not optimistically
+        // during the loop. Each entry: { d, invA, cons, ok }.
+        var pendingAdditions = []
+        var deltaFailed = false
+        var deltaFailMsg = ""
+
+        function _finishAdjustment() {
+            if (deltaFailed) {
+                // Same gap as _tryCompleteOrder's partial-multi-line-completion
+                // fix above, second site: pendingAdditions holds every ADDED-
+                // units line whose deductStock already succeeded before a
+                // SIBLING addition failed. Their FIFO consumption and
+                // product.stock deduction already landed and were never
+                // reversed — undo both here, same primitives as the single-
+                // line failure path just above (restoreFifo + creditStockNoBatch).
+                for (var pf2 = 0; pf2 < pendingAdditions.length; ++pf2) {
+                    var failedEntry = pendingAdditions[pf2]
+                    for (var fci = 0; fci < failedEntry.cons.length; ++fci) {
+                        var fc = failedEntry.cons[fci]
+                        StockBatchStore.restoreFifo(fc.batchId, failedEntry.d.productId, fc.qtyConsumed)
+                    }
+                    InventoryStore.creditStockNoBatch(failedEntry.d.productId, failedEntry.d.addedQty)
+                }
+                dataModel.stockErrorMsg = deltaFailMsg
+                if (callback) callback(false)
+                return
+            }
+            // Now that every added-unit deduction is confirmed, record their
+            // sale events and fold their lineage/refund impact in.
+            for (var pa = 0; pa < pendingAdditions.length; ++pa) {
+                var entry = pendingAdditions[pa]
+                var d = entry.d, invA = entry.invA, cons = entry.cons
+                // Tax the ADDED units at the product's CURRENT setting (bug 3).
+                // The original units' sale event is immutable and keeps the
+                // tax booked at completion, so "originals unchanged, added
+                // units current tax" holds in the authoritative event ledger
+                // even when the product's tax changed after completion.
+                TransactionStore.recordSaleFromOrder({
+                    orderId: o.orderId, date: o.date, orderChannel: o.orderChannel,
+                    staffId: o.staffId,
+                    products: [{ productId: d.productId, name: d.name, price: d.newPrice,
+                                 quantity: d.addedQty, consumption: cons,
+                                 taxable: !!invA.taxable,
+                                 taxPercent: invA.taxable ? (invA.taxPercent || 0) : 0 }]
+                })
+                if (d.productId) addedConsByPid[d.productId] = cons
+                refundAmount -= d.addedQty * d.newPrice
+            }
+            _finishAdjustmentSync()
+        }
+
+        // Everything from here to applyAdjustment() is unchanged from before
+        // this conversion — pure local computation + ledger writes, no
+        // network dependency, so it stays synchronous once _finishAdjustment
+        // has folded in the (now-confirmed) added-units impact above.
+        function _finishAdjustmentSync() {
+            // Re-stamp surviving consumption[] onto the adjusted lines so the
+            // order-sourced Revenue-by-supplier breakdown keeps its FIFO lineage
+            // (returns reduce a line's consumption; additions don't carry lineage
+            // here, which is acceptable — added units' lineage lives in their sale
+            // event). Without this, an adjusted line loses consumption and the
+            // Revenue supplier axis drops the whole order.
+            var enrichedLines = (newLines || []).map(function(nl) {
+                var orig = _findLine(o.products, nl.productId)
+                var origCons = orig && Array.isArray(orig.consumption) ? orig.consumption : []
+                var oldQ = orig ? (orig.quantity || 0) : 0
+                var newQ = nl.quantity || 0
+                var returnedQ = Math.max(0, oldQ - newQ)
+                var survCons = OrderAdjust.survivingConsumption(origCons, returnedQ)
+                // Append the FIFO lineage for any ADDED units on this line so the
+                // adjusted order carries full consumption (original surviving + new).
+                // Fixes exchange/qty-up COGS + supplier attribution in order-sourced
+                // reports (bug 14).
+                var added = addedConsByPid[nl.productId]
+                if (Array.isArray(added) && added.length > 0)
+                    survCons = survCons.concat(added)
+                var copy = {}
+                for (var k in nl) copy[k] = nl[k]
+                copy.consumption = survCons
+                return copy
+            })
+
+            // ── Per-line discount change (revenue adjustment) ─────────────────
+            // Discount is per-line now. A discount-only edit doesn't change unit
+            // price, so diffLines won't surface it — scan matched lines directly.
+            // Isolate the discount-RATE change from any qty change by valuing the
+            // discount delta on the SURVIVING units only (returned/added units are
+            // already revenue-handled by the blocks above). Emits one price_adjust
+            // per changed line (reason "discount") so it nets into ledger Profit
+            // and shows in BOTH the order's and the product's history (bug 17).
+            function _lineDiscAmt(ln) {
+                var gross = (ln.quantity || 0) * (ln.price || 0)
+                if (ln.discountType === "percent") {
+                    var p = parseFloat(ln.discountValue) || 0
+                    if (p < 0) p = 0; if (p > 100) p = 100
+                    return gross * (p / 100)
+                }
+                var d = parseFloat(ln.discountValue) || 0
+                if (d < 0) d = 0; if (d > gross) d = gross
+                return d
+            }
+            var newByPid = {}
+            for (var nbi = 0; nbi < (newLines || []).length; ++nbi) {
+                var nlx = newLines[nbi]
+                newByPid[nlx.productId || nlx.name] = nlx
+            }
+            for (var oli = 0; oli < (o.products || []).length; ++oli) {
+                var ol2 = o.products[oli]
+                var key3 = ol2.productId || ol2.name
+                var nl2 = newByPid[key3]
+                if (!nl2) continue   // fully removed lines: revenue handled by return block
+                var oldQ2 = ol2.quantity || 0
+                var newQ2 = nl2.quantity || 0
+                if (oldQ2 <= 0 || newQ2 <= 0) continue
+                // Per-unit discount under each setting.
+                var oldPerUnitDisc = _lineDiscAmt(ol2) / oldQ2
+                var newPerUnitDisc = _lineDiscAmt(nl2) / newQ2
+                var survQ = Math.min(oldQ2, newQ2)
+                var addedQ2 = Math.max(0, newQ2 - oldQ2)
+                // Discount delta has TWO parts:
+                //  • surviving units: their per-unit discount changes old→new.
+                //  • added units: booked by the added-units sale event at full price
+                //    with NO discount, so the scanner must book their new per-unit
+                //    discount here too (else addedQ/newQ of the line discount is
+                //    silently lost → event-ledger net overshoots vs the live order).
+                // Returned units' old discount is already unwound by the return block.
+                var discDelta = survQ * (newPerUnitDisc - oldPerUnitDisc)
+                              + addedQ2 * newPerUnitDisc
+                if (Math.abs(discDelta) < 0.005) continue
+                // revenue down when discount up: recordPriceAdjust(qty, perUnitDelta)
+                // yields revenueDelta = -(qty*perUnitDelta). Factor as (1, discDelta)
+                // so revenueDelta = -discDelta exactly, independent of survQ.
+                TransactionStore.recordPriceAdjust(
+                    o, { productId: ol2.productId || "", name: ol2.name },
+                    1, discDelta, "discount",
+                    (note ? note + " · " : "") + "discount "
+                        + (Math.round(_lineDiscAmt(ol2) * 100) / 100) + "->"
+                        + (Math.round(_lineDiscAmt(nl2) * 100) / 100) + " on " + ol2.name)
+                refundAmount += discDelta   // discount up → refund owed to customer
+            }
+
+            OrdersStore.applyAdjustment(orderId, enrichedLines, {
+                date: new Date().toISOString(),
+                reason: reason || "", condition: condition || "",
+                lineDeltas: deltas, refundAmount: refundAmount,
+                note: note || "", actorUid: AuthStore.uid || ""
+            })
+            if (callback) callback(true)
+        }
+
+        // Extra "loop not finished yet" token — same reason as
+        // _tryCompleteOrder: a deductStock callback firing SYNCHRONOUSLY for
+        // an early delta (e.g. a not-found guard) must not trigger
+        // _finishAdjustment() before later deltas in the same loop have even
+        // been dispatched.
+        var pending = 1
+        function _oneResolved() {
+            pending--
+            if (pending === 0) _finishAdjustment()
+        }
 
         for (var i = 0; i < deltas.length; ++i) {
             var d = deltas[i]
@@ -727,50 +994,52 @@ Item {
             if (d.addedQty > 0) {
                 var invA = InventoryStore.getById(d.productId)
                 if (invA) {
-                    var cons = StockBatchStore.consumeFifo(d.productId, d.addedQty)
-                    var consumed = _sumConsumed(cons)
-                    if (consumed < d.addedQty) {
-                        StockBatchStore.topUpOldest(d.productId, d.addedQty - consumed)
-                        var retry = StockBatchStore.consumeFifo(d.productId, d.addedQty - consumed)
-                        for (var rr = 0; rr < retry.length; ++rr) cons.push(retry[rr])
-                    }
-                    // NOT awaited, unlike _tryCompleteOrder — _tryAdjustOrder's
-                    // control flow is not (yet) restructured for async stock
-                    // confirmation the way order completion was for round 4.
-                    // Its synchronous pre-check above (pfStock < pfd.addedQty)
-                    // catches the common case, but the SAME race this whole
-                    // design exists to close is still possible here: stock
-                    // could run out between that check and this delta actually
-                    // landing. Reject mode (not clamp) at least matches this
-                    // flow's existing intent (don't silently under-fulfill an
-                    // exchange) and the failure gets logged, not silently
-                    // swallowed — but nothing here rolls the adjustment back if
-                    // it happens. Flagged in the checkpoint as follow-up work
-                    // deserving the same treatment as order completion got,
-                    // not solved in this pass.
-                    InventoryStore.deductStock(d.productId, d.addedQty, function(result) {
-                        if (!result || !result.ok)
-                            console.warn("[DataModel] _tryAdjustOrder: deductStock rejected for", d.productId,
-                                         JSON.stringify(result))
-                    }, false /* reject, matching this flow's own pre-check intent */)
-                    // Tax the ADDED units at the product's CURRENT setting (bug 3).
-                    // The original units' sale event is immutable and keeps the
-                    // tax booked at completion, so "originals unchanged, added
-                    // units current tax" holds in the authoritative event ledger
-                    // even when the product's tax changed after completion.
-                    TransactionStore.recordSaleFromOrder({
-                        orderId: o.orderId, date: o.date, orderChannel: o.orderChannel,
-                        staffId: o.staffId,
-                        products: [{ productId: d.productId, name: d.name, price: d.newPrice,
-                                     quantity: d.addedQty, consumption: cons,
-                                     taxable: !!invA.taxable,
-                                     taxPercent: invA.taxable ? (invA.taxPercent || 0) : 0 }]
-                    })
-                    // Remember the added units' lineage so it's stamped onto the
-                    // order line too (bug 14) — keeps order-sourced COGS/supplier
-                    // reports correct for exchanges.
-                    if (d.productId) addedConsByPid[d.productId] = cons
-                    refundAmount -= d.addedQty * d.newPrice
+                    (function(dCaptured, invACaptured) {
+                        pending++
+                        StockBatchStore.consumeFifo(dCaptured.productId, dCaptured.addedQty, function(fifoResult) {
+                            var cons = fifoResult.consumption
+
+                            function _afterConsumption() {
+                                InventoryStore.deductStock(dCaptured.productId, dCaptured.addedQty, function(result) {
+                                    if (!result || !result.ok) {
+                                        deltaFailed = true
+                                        deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
+                                            (dCaptured.name + ": " + (result && result.error === "insufficient-quantity"
+                                                ? "stock ran out before this exchange could complete"
+                                                : "could not update stock — try again"))
+                                        // cons already landed on the server (the
+                                        // consumeFifo calls above already resolved,
+                                        // before this callback can fire) — undo it,
+                                        // same fix and reasoning as _tryCompleteOrder
+                                        // above (review finding C5, 2026-08-06). NOT
+                                        // pushing to pendingAdditions already
+                                        // correctly keeps this line's sale/refund
+                                        // impact out of _finishAdjustment; this
+                                        // closes the matching gap on the batch ledger.
+                                        for (var rci = 0; rci < cons.length; ++rci) {
+                                            var rc2 = cons[rci]
+                                            StockBatchStore.restoreFifo(rc2.batchId, dCaptured.productId, rc2.qtyConsumed)
+                                        }
+                                    } else {
+                                        pendingAdditions.push({ d: dCaptured, invA: invACaptured, cons: cons })
+                                    }
+                                    _oneResolved()
+                                }, false /* reject, matching this flow's own pre-check intent */)
+                            }
+
+                            if (fifoResult.shortfall > 0) {
+                                StockBatchStore.topUpOldest(dCaptured.productId, fifoResult.shortfall, function() {
+                                    StockBatchStore.consumeFifo(dCaptured.productId, fifoResult.shortfall, function(retryResult) {
+                                        for (var rr = 0; rr < retryResult.consumption.length; ++rr)
+                                            cons.push(retryResult.consumption[rr])
+                                        _afterConsumption()
+                                    })
+                                })
+                            } else {
+                                _afterConsumption()
+                            }
+                        })
+                    })(d, invA)
                 }
             }
 
@@ -792,98 +1061,7 @@ Item {
             }
         }
 
-        // Re-stamp surviving consumption[] onto the adjusted lines so the
-        // order-sourced Revenue-by-supplier breakdown keeps its FIFO lineage
-        // (returns reduce a line's consumption; additions don't carry lineage
-        // here, which is acceptable — added units' lineage lives in their sale
-        // event). Without this, an adjusted line loses consumption and the
-        // Revenue supplier axis drops the whole order.
-        var enrichedLines = (newLines || []).map(function(nl) {
-            var orig = _findLine(o.products, nl.productId)
-            var origCons = orig && Array.isArray(orig.consumption) ? orig.consumption : []
-            var oldQ = orig ? (orig.quantity || 0) : 0
-            var newQ = nl.quantity || 0
-            var returnedQ = Math.max(0, oldQ - newQ)
-            var survCons = OrderAdjust.survivingConsumption(origCons, returnedQ)
-            // Append the FIFO lineage for any ADDED units on this line so the
-            // adjusted order carries full consumption (original surviving + new).
-            // Fixes exchange/qty-up COGS + supplier attribution in order-sourced
-            // reports (bug 14).
-            var added = addedConsByPid[nl.productId]
-            if (Array.isArray(added) && added.length > 0)
-                survCons = survCons.concat(added)
-            var copy = {}
-            for (var k in nl) copy[k] = nl[k]
-            copy.consumption = survCons
-            return copy
-        })
-
-        // ── Per-line discount change (revenue adjustment) ─────────────────
-        // Discount is per-line now. A discount-only edit doesn't change unit
-        // price, so diffLines won't surface it — scan matched lines directly.
-        // Isolate the discount-RATE change from any qty change by valuing the
-        // discount delta on the SURVIVING units only (returned/added units are
-        // already revenue-handled by the blocks above). Emits one price_adjust
-        // per changed line (reason "discount") so it nets into ledger Profit
-        // and shows in BOTH the order's and the product's history (bug 17).
-        function _lineDiscAmt(ln) {
-            var gross = (ln.quantity || 0) * (ln.price || 0)
-            if (ln.discountType === "percent") {
-                var p = parseFloat(ln.discountValue) || 0
-                if (p < 0) p = 0; if (p > 100) p = 100
-                return gross * (p / 100)
-            }
-            var d = parseFloat(ln.discountValue) || 0
-            if (d < 0) d = 0; if (d > gross) d = gross
-            return d
-        }
-        var newByPid = {}
-        for (var nbi = 0; nbi < (newLines || []).length; ++nbi) {
-            var nlx = newLines[nbi]
-            newByPid[nlx.productId || nlx.name] = nlx
-        }
-        for (var oli = 0; oli < (o.products || []).length; ++oli) {
-            var ol2 = o.products[oli]
-            var key3 = ol2.productId || ol2.name
-            var nl2 = newByPid[key3]
-            if (!nl2) continue   // fully removed lines: revenue handled by return block
-            var oldQ2 = ol2.quantity || 0
-            var newQ2 = nl2.quantity || 0
-            if (oldQ2 <= 0 || newQ2 <= 0) continue
-            // Per-unit discount under each setting.
-            var oldPerUnitDisc = _lineDiscAmt(ol2) / oldQ2
-            var newPerUnitDisc = _lineDiscAmt(nl2) / newQ2
-            var survQ = Math.min(oldQ2, newQ2)
-            var addedQ2 = Math.max(0, newQ2 - oldQ2)
-            // Discount delta has TWO parts:
-            //  • surviving units: their per-unit discount changes old→new.
-            //  • added units: booked by the added-units sale event at full price
-            //    with NO discount, so the scanner must book their new per-unit
-            //    discount here too (else addedQ/newQ of the line discount is
-            //    silently lost → event-ledger net overshoots vs the live order).
-            // Returned units' old discount is already unwound by the return block.
-            var discDelta = survQ * (newPerUnitDisc - oldPerUnitDisc)
-                          + addedQ2 * newPerUnitDisc
-            if (Math.abs(discDelta) < 0.005) continue
-            // revenue down when discount up: recordPriceAdjust(qty, perUnitDelta)
-            // yields revenueDelta = -(qty*perUnitDelta). Factor as (1, discDelta)
-            // so revenueDelta = -discDelta exactly, independent of survQ.
-            TransactionStore.recordPriceAdjust(
-                o, { productId: ol2.productId || "", name: ol2.name },
-                1, discDelta, "discount",
-                (note ? note + " · " : "") + "discount "
-                    + (Math.round(_lineDiscAmt(ol2) * 100) / 100) + "->"
-                    + (Math.round(_lineDiscAmt(nl2) * 100) / 100) + " on " + ol2.name)
-            refundAmount += discDelta   // discount up → refund owed to customer
-        }
-
-        OrdersStore.applyAdjustment(orderId, enrichedLines, {
-            date: new Date().toISOString(),
-            reason: reason || "", condition: condition || "",
-            lineDeltas: deltas, refundAmount: refundAmount,
-            note: note || "", actorUid: AuthStore.uid || ""
-        })
-        return true
+        _oneResolved() // release the loop-not-finished token
     }
 
     // Find an order line by productId. No name fallback — see _resolveInventory
@@ -906,10 +1084,15 @@ Item {
     function _reconcileBatchesForStockEdit(productId, oldStock, fieldsStock) {
         var d = StockReconcile.delta(oldStock, fieldsStock)
         if (d.action === "consume") {
-            // Drain oldest batches; if the ledger had drifted below product.stock
-            // and can't cover the decrease, that's fine — qtyRemaining floors at
-            // 0 and the remaining (already-missing) units simply aren't there.
-            StockBatchStore.consumeFifo(productId, d.qty)
+            // Drain oldest batches. If the ledger had drifted below
+            // product.stock and can't fully cover the decrease, that's
+            // fine — consumeFifo's per-batch floor rejects rather than
+            // partially applies (review round 2 async rewrite), so any
+            // shortfall here just means fewer batches got touched; the
+            // already-missing units simply aren't there to drain. Result
+            // ignored — this is a best-effort ledger reconciliation, not a
+            // decision any caller branches on.
+            StockBatchStore.consumeFifo(productId, d.qty, function() {})
         } else if (d.action === "topup") {
             StockBatchStore.topUpOldest(productId, d.qty)
         }

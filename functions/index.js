@@ -404,8 +404,9 @@ exports.recordMutationsBatch = functions.onRequest(
             return;
         }
 
+        let result;
         try {
-            await BatchMutationLogic.applyMutationsBatch(db, {
+            result = await BatchMutationLogic.applyMutationsBatch(db, {
                 tenantId: ctx.tenantId,
                 actorUid: actorUid,
                 actorRole: ctx.role,
@@ -417,6 +418,15 @@ exports.recordMutationsBatch = functions.onRequest(
             });
         } catch (e) {
             send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        // review I1: applyMutationsBatch's return value used to be ignored
+        // entirely here — a CAS conflict (nothing written, transaction
+        // correctly refused) would still get reported to the client as
+        // `200 {ok:true}`. Actually check it now.
+        if (result && result.ok === false) {
+            send(res, result.status || 409, { ok: false, error: "conflict", conflicts: result.conflicts });
             return;
         }
 

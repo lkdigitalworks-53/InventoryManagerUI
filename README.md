@@ -420,9 +420,158 @@ reverting from "completed" to "pending"):
   concurrent stock movements on the same product both apply correctly instead of one clobbering
   the other. Supports either rejecting (`floors`) or clamping (`clamps`) at a boundary, per caller.
 
-**Known, deliberately unfinished piece:** `DataModel._tryAdjustOrder` (order returns/exchanges)
-was NOT given the same async-await treatment `_tryCompleteOrder` got, and `OrderDetailDialog`'s
-order-level lock doesn't span into the subsequent `ConfirmReturnSheet` confirmation step — both
-flagged as real follow-up work in the design doc, not solved in this pass.
+**Update 2026-08-08:** the 5 Important findings from the 2026-08-06 review (I1-I5) plus 2 known
+gaps and 1 newly-discovered gap are now all closed too (`fix/async-write-sequencing-review-fixes`
+branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
+- `functions/lib/batchMutationLogic.js`'s `applyMutationsBatch` now has a CAS check, matching
+  `applyMutation`'s — this is the live path for every bulk import (Supplier/Order/StockBatch/
+  Inventory/Transaction), not dead code as it first appeared. Whole batch rejects on any item
+  conflicting, matching the module's own all-or-nothing design. The client (`Gateway._sendBatch`)
+  now handles the resulting 409 the same way `_send` already handles a single-item conflict, reusing
+  the same `mutationConflicted` signal every store already listens to.
+- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` are now `recordDelta`-based (full async
+  rewrite, not the smaller mechanical-swap alternative — chosen to close the per-batch attribution
+  race under concurrency, not just the CAS-clobber risk). Rippled into `DataModel.qml`'s three
+  retry-loop call sites and forced `completeImportedOrder` off its prior synchronous
+  `return {ok, understocked}` contract.
+- Bulk order approval (`OrdersPage._approveAllPending`) now acquires the per-order lock before
+  completing each order, same as `OrderDetailDialog`.
+- `acquireLock`/`releaseLock` now validate `entity` against the known allowlist (previously any
+  string was accepted).
+- All 3 dialogs' (`OrderDetailDialog`, `EditProductDialog`, `StaffDetailDialog`) "try again"
+  lock-denial message now actually retries the lock acquisition, instead of re-showing the same
+  stale message forever.
+- `ConfirmReturnSheet` now holds the order lock through the user's actual confirm/cancel decision,
+  not just until `OrderDetailDialog` closes.
+- The partial-multi-line-completion gap (one line's successful stock deduction staying applied when
+  a sibling line's fails) is fixed at both sites it occurs: `_tryCompleteOrder` and
+  `_tryAdjustOrder`'s exchange path.
+
+See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
+
+**Update 2026-08-12:** Taher found this himself, on-device, immediately after the 2026-08-11 guard
+shipped and still didn't reliably catch the sync-incomplete window — no "still syncing" message on
+a prompt post-restart return, and Orders/Inventory screens showing inconsistent data that
+self-resolved given enough time. Root cause: `TransactionStore.Component.onCompleted` and `Main.
+qml`'s `onTenantContextReady` both call `_resetAndFetch()` on a cold start — both async, and since
+nothing gated a second call while the first was still mid-fetch, whichever landed second wiped
+`entries`/`_cursor` out from under the first, corrupting the rest of that pagination chain and
+leaving `hasMore` able to read `false` while `entries` was genuinely still incomplete — which is
+exactly why the 2026-08-11 guard (which only checks `hasMore`) didn't catch it. Fixed with
+`if (loadingMore) return` at the top of `_resetAndFetch()`, applied to every paginated store, not
+just `TransactionStore` (`InventoryStore`, `OrdersStore`, `StaffStore`, `StockBatchStore`,
+`SupplierStore`). A follow-up full sweep of all 21 `qml/model/*.qml` singletons found three more
+stores sharing the same dual-trigger exposure (`ActivityLog`, `CategoryStore`, `OrderChannelStore`)
+— structurally immune to the corruption itself (single bounded fetches, not multi-page pagination),
+but missing the same `AuthStore.tenantId.length > 0` guard on `Component.onCompleted` that every
+other store already had, fixed for consistency. See SKILLS Skill 39 for the full sweep table and a
+documented, not-yet-implemented residual edge case around account-switch timing.
+
+**Update 2026-08-11:** found immediately after the fix directly above, testing the same branch —
+complete an order, verify it in Firestore, close the app, reopen it, and return an item promptly:
+the return "succeeded" locally, but the Orders list total didn't reduce and order-level history
+looked incomplete. Root cause was different from 2026-08-10 despite the similar symptom:
+`OrdersStore.applyAdjustment`'s completed-order total trusts `TransactionStore.totalsForOrder`
+unconditionally, and `TransactionStore` re-fetches its entire transaction history from Firestore on
+every cold start, paginated, ordered ascending by document ID — and because transaction IDs are
+locally generated with an embedded, increasing timestamp, that means the NEWEST transactions
+(including a just-completed order's own sale) load LAST. Acting before that sync finished meant
+computing the ledger total against data that was missing its own base sale event. Verified this
+wasn't an arithmetic bug by Node-porting the actual allocation/ledger-sum logic (both are portable
+`.pragma library` JS) against three scenarios (simple, tax+discount+multi-line, sequential returns)
+— all correct given a complete ledger. Fixed by refusing completed-order adjustments while
+`TransactionStore.hasMore` is true (checked in `DataModel._tryAdjustOrder`, which both the normal
+return flow and the import-adjustment path route through, plus proactively in
+`OrderDetailDialog._save()` so the user finds out before filling out the whole return form) —
+scoped to that one action specifically (`grep -rn "totalsForOrder(" qml/` turns up exactly one
+caller), not a blanket "block the whole app while any store syncs," since order completion and
+everything else here don't read this ledger at all. Also added retry-with-backoff to
+`TransactionStore`'s sync — without it, a single failed page left `hasMore` stuck at `true` forever,
+which would have turned the new guard into a permanent lockout after one dropped request instead of
+a brief, correct wait. See SKILLS Skill 38 and `docs/superpowers/specs/
+2026-08-11-ledger-sync-race-CHECKPOINT.md` for the full investigation.
+
+**Update 2026-08-10:** found via Taher's own manual testing of the round-2 branch — a real order
+edit (add, complete, adjust price, save) hit a spurious "updated elsewhere" conflict toast with
+nobody else touching the order. `OrdersStore.applyAdjustment` built its CAS `before` snapshot as a
+shallow copy of the order, then mutated a nested field (`adjustments`) in place with `.push()` —
+since a shallow copy shares nested arrays by reference, that mutation leaked into `before` too, so
+the server's `_deepEqual(current, before)` check rejected the write (the whole write, not just the
+adjustment — nothing persisted, including the price change). Fixed by reassigning a new array
+(`.concat()`) instead of mutating the existing one in place, matching the replace-don't-mutate
+convention already used everywhere else in this codebase for this exact reason. A full sweep of
+every `Object.assign` call site in the project (25 total) confirmed this was the only instance of
+the pattern — see SKILLS Skill 37 and `docs/superpowers/specs/
+2026-08-10-before-snapshot-aliasing-CHECKPOINT.md` for the full investigation.
+
+**Update 2026-08-06:** a dedicated code review (`docs/superpowers/specs/
+2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important findings) found every
+mechanism above was individually correct but not fully wired end-to-end — the server-side CAS
+backstop, for instance, was fully implemented and tested, but the client never actually handled its
+409 conflict response, so a real conflict retried forever instead of resolving. All 8 Critical
+findings are now fixed:
+- The client now handles a CAS conflict properly: `Gateway.mutationConflicted(entity, entityId,
+  current)` fires when a write is dropped (not retried) due to a conflict, and all five stores that
+  call `recordMutation` (`OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`,
+  `StockBatchStore`) reconcile their local cache from `current` and notify the user.
+- `InventoryStore.restock`/`creditStockNoBatch` are now genuinely converted to `recordDelta` (a
+  prior checkpoint had asserted `restock` was already converted — it wasn't).
+- `firestore.rules` now denies client read/write on the `locks/**` collection — previously
+  unenforced, despite the design calling for it; any client could read/write lock documents
+  directly, bypassing `acquireLock`/`releaseLock` entirely.
+- `StockBatchStore.consumeFifo`/`topUpOldest` now roll back via `restoreFifo` when the
+  corresponding stock delta is rejected, in both `_tryCompleteOrder` and `_tryAdjustOrder` — FIFO
+  batches no longer stay decremented for units no completed sale/exchange accounts for.
+- `LockManager._classifyAcquireResponse` is now status-aware (only a real 409 means "someone else
+  holds this lock" — a 400/401/403/500 no longer shows a fabricated version of that message).
+- A regression introduced the same day it landed: `OrdersStore._normalizeOrder` was reading FIFO
+  consumption lineage off the wrong object, silently discarding it on every order and crashing on
+  any line whose product had been deleted — found and fixed same-session.
+- Removed a dead, dangerous duplicate order-approval code path that bypassed every mechanism above.
+
+See SKILLS Skill 36 for the full mechanism-by-mechanism detail and the reusable lessons from this
+round.
+
+**Update 2026-07-30:** `DataModel._tryAdjustOrder` (order returns/exchanges) now gets the same
+async-await treatment `_tryCompleteOrder` got — added-unit stock deductions are confirmed before
+the adjustment is finalized, reported honestly via callback instead of always claiming success.
+Returns and price/discount changes stay synchronous (no network dependency). Known limitation kept
+from the original scoping, **narrowed as of 2026-08-06**: the FIFO batch consumption itself now
+rolls back correctly on a rejected delta (see above) — what's still explicitly out of scope is the
+broader order-level side effects (refund amounts, price-adjustment ledger entries) not rolling
+back; full compensating-write rollback across the whole multi-step flow remains a separate
+initiative (§2 of the design doc), not something either fix round attempts.
+
+**Still open** (Important-severity, tracked in the 2026-08-06 review, not silently dropped):
+- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` still route through the old whole-record
+  `recordMutation`, not `recordDelta` — still exposed to the original concurrent-clobber bug for
+  the batch ledger specifically (unlike `InventoryStore`, which is now fully converted).
+- `recordMutationsBatch` (`functions/lib/batchMutationLogic.js`) has no CAS check at all — the CAS
+  guarantee isn't uniform across every write path in the app.
+- Bulk order approval never acquires a per-order lock.
+- `OrderDetailDialog`'s lock releases the instant the dialog closes, which is before
+  `ConfirmReturnSheet`'s confirmation step actually runs the adjustment — the lock doesn't span
+  that window. Flagged in the design doc, still not solved.
+- When one order line's stock delta succeeds and a sibling line's is rejected, the successful
+  line's delta stays applied even though the whole order reports failure — a partial-completion
+  gap found while fixing the FIFO rollback above, needing a compensating delta call, deliberately
+  left out of that fix's scope.
+
+**Also found and fixed 2026-07-30 (Taher's own testing, then confirmed via
+`/superpowers:systematic-debugging`):** two real bugs, more serious than either sounds in
+isolation —
+1. `LockManager`/`Gateway._sendDelta` treated ANY failed request (including an undeployed Cloud
+   Function's 404) as if the server had made a real decision, showing a lone tester a false
+   "someone else is editing this" message and silently stranding orders at "pending" forever.
+   Fixed by extracting pure `_classify*Response()` functions that only treat a response as
+   decisive when it's actually valid JSON matching this app's own envelope shape.
+2. `OrdersStore._clone()`'s field-reconstruction whitelist didn't match `addOrder`'s create
+   payload — `adjustments` got silently added, `updatedAt` got silently dropped, on the very next
+   clone after any order was created. This meant Component 3's CAS check would reject a
+   completely ordinary single-user edit as a false conflict on the second touch of nearly every
+   order, once live — not a rare race, closer to a certainty. Fixed with a single
+   `_normalizeOrder()` used by both functions; audited all 4 other stores for the same pattern
+   (only Orders had it — see SKILLS Skill 36 for the full mechanism and why the other stores were
+   already safe).
 
 ---

@@ -49,7 +49,7 @@ QtObject {
     property string functionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     // Batch counterpart of recordMutation (new this session) — one atomic
     // transaction for up to MAX_BATCH_SIZE items of the same entity, e.g.
-    // OrdersStore.approveAllPending. See functions/lib/batchMutationLogic.js.
+    // InventoryStore.upsertMany. See functions/lib/batchMutationLogic.js.
     property string batchFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutationsBatch"
     // Atomic-delta endpoint (Component 4, async-write-sequencing design) —
     // NOT YET DEPLOYED, this URL is aspirational until index.js wires up
@@ -67,6 +67,17 @@ QtObject {
     property string provisionMemberUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/provisionMember"
 
     signal cutoverFinished(bool ok, string error)
+
+    // Component 3's client-side half (review finding C3, 2026-08-06): fired
+    // when applyMutation's CAS check rejects a recordMutation because
+    // someone else's write already landed for that record (`before` was
+    // stale). `current` is the server's actual current document (null only
+    // if the malformed/legacy edge case in _parseMutationConflict below
+    // ever fires, which it shouldn't for a real conflict response). Each
+    // store that calls recordMutation should connect to this and patch its
+    // own local array for `entityId` from `current` — the queued write is
+    // already dropped (not retried) by the time this fires, see _send.
+    signal mutationConflicted(string entity, string entityId, var current)
 
     property int inFlight: 0
 
@@ -202,7 +213,7 @@ QtObject {
     }
 
     // Batch counterpart of recordMutation — one call for many items of the
-    // SAME entity, e.g. OrdersStore.approveAllPending. `items` is
+    // SAME entity, e.g. InventoryStore.upsertMany. `items` is
     // [{entityId, action, before, after}, ...]. Returns the batch requestId.
     function recordMutations(entity, items) {
         var collection = _collectionFor(entity)
@@ -299,6 +310,28 @@ QtObject {
     // Retry-timer tick — re-drains due outbox items and reschedules.
     function _onDrainTick() { drainNow() }
 
+    // Detects a CAS-conflict response from applyMutation (Component 3),
+    // pure function, no XHR — unit-testable, see tst_Gateway.qml. Review
+    // finding C3 (2026-08-06): this case wasn't handled at all before —
+    // _send treated a 409 conflict exactly like a timeout or a 5xx,
+    // retrying forever via markFailed with the SAME stale `before`, which
+    // the server would keep rejecting by construction. Deliberately
+    // narrow, unlike _classifyDeltaResponse: only the specific
+    // conflict:true 409 shape gets special handling here. Every OTHER
+    // non-2xx (400/401/403/5xx/network error) keeps going through the
+    // existing markFailed()+backoff+retry path completely unchanged —
+    // those genuinely might resolve on retry (token refresh, transient
+    // infra blip), so it would be WRONG to also stop retrying on them.
+    // A conflict never resolves on retry: `before` is permanently stale
+    // by construction, so this is the one case retrying can't fix.
+    function _parseMutationConflict(status, responseText) {
+        if (status !== 409) return { isConflict: false, current: null }
+        var body = null
+        try { body = JSON.parse(responseText) } catch (e) { return { isConflict: false, current: null } }
+        if (!body || body.conflict !== true) return { isConflict: false, current: null }
+        return { isConflict: true, current: body.current !== undefined ? body.current : null }
+    }
+
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
@@ -314,9 +347,20 @@ QtObject {
             if (ok) {
                 OutboxStore.markSent(item.requestId)
             } else {
-                console.warn("[Gateway] recordMutation failed", xhr.status,
-                             item.entity, item.entityId, xhr.responseText)
-                OutboxStore.markFailed(item.requestId)
+                var conflict = _parseMutationConflict(xhr.status, xhr.responseText)
+                if (conflict.isConflict) {
+                    console.warn("[Gateway] recordMutation conflict — dropping stale write, notifying store",
+                                 item.entity, item.entityId)
+                    // Remove without retrying — see _parseMutationConflict's
+                    // comment for why retry can never succeed here. The
+                    // owning store reconciles its cache via the signal below.
+                    OutboxStore.markSent(item.requestId)
+                    mutationConflicted(item.entity, item.entityId, conflict.current)
+                } else {
+                    console.warn("[Gateway] recordMutation failed", xhr.status,
+                                 item.entity, item.entityId, xhr.responseText)
+                    OutboxStore.markFailed(item.requestId)
+                }
             }
             OutboxStore.clearInFlight(item)
             _reschedule()
@@ -339,8 +383,33 @@ QtObject {
         }))
     }
 
+    // Detects a CAS-conflict response from applyMutationsBatch (review I1,
+    // added this round now that the batch path has a CAS check at all).
+    // Different response shape from _parseMutationConflict above by
+    // necessity — a batch can have MULTIPLE conflicting items in one
+    // response, not just one, so it's `conflicts: [{entityId, current}]`
+    // rather than a single `current`. Pure function, no XHR — unit-
+    // testable, see tst_Gateway.qml.
+    function _parseBatchMutationConflict(status, responseText) {
+        if (status !== 409) return { isConflict: false, conflicts: [] }
+        var body = null
+        try { body = JSON.parse(responseText) } catch (e) { return { isConflict: false, conflicts: [] } }
+        if (!body || !Array.isArray(body.conflicts) || body.conflicts.length === 0)
+            return { isConflict: false, conflicts: [] }
+        return { isConflict: true, conflicts: body.conflicts }
+    }
+
     // Batch counterpart of _send — one outbox item, one HTTP call, whatever
     // its `items` count. Same success/failure/backoff handling as _send.
+    //
+    // Conflict handling (review I1, filled in this round — see
+    // _parseBatchMutationConflict's comment for the response-shape
+    // difference from _send's). Same reasoning as _send: a genuine
+    // conflict can never resolve on retry, so drop without retrying
+    // (markSent) rather than markFailed. Fires the EXISTING
+    // mutationConflicted signal once per conflicting item — every store is
+    // already wired to it from the single-item C3 fix, so a batch conflict
+    // reconciles through the exact same path with zero new store-side code.
     function _sendBatch(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             OutboxStore.clearInFlight(item)
@@ -355,9 +424,19 @@ QtObject {
             if (ok) {
                 OutboxStore.markSent(item.requestId)
             } else {
-                console.warn("[Gateway] recordMutationsBatch failed", xhr.status,
-                             item.entity, item.items.length, xhr.responseText)
-                OutboxStore.markFailed(item.requestId)
+                var conflict = _parseBatchMutationConflict(xhr.status, xhr.responseText)
+                if (conflict.isConflict) {
+                    console.warn("[Gateway] recordMutationsBatch conflict — dropping stale batch, notifying stores",
+                                 item.entity, conflict.conflicts.length, "of", item.items.length, "item(s) conflicted")
+                    OutboxStore.markSent(item.requestId)
+                    for (var i = 0; i < conflict.conflicts.length; ++i) {
+                        mutationConflicted(item.entity, conflict.conflicts[i].entityId, conflict.conflicts[i].current)
+                    }
+                } else {
+                    console.warn("[Gateway] recordMutationsBatch failed", xhr.status,
+                                 item.entity, item.items.length, xhr.responseText)
+                    OutboxStore.markFailed(item.requestId)
+                }
             }
             OutboxStore.clearInFlight(item)
             _reschedule()

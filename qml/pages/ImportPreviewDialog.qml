@@ -807,14 +807,28 @@ BottomSheet {
                 var updateOrderFields = counts.updatedOrderFields || []
                 // Map added orders back to their source records to check status.
                 // Newly-added records are those not skipped; match by resulting order.
-                for (var i = 0; i < addedIds.length; ++i) {
-                    var o = OrdersStore.getById(addedIds[i])
-                    if (!o || o.status !== "completed") continue
-                    if (dataModelRef) {
-                        var res = dataModelRef.completeImportedOrder(addedIds[i])
-                        if (res && res.understocked) understocked++
+                //
+                // review round 2: completeImportedOrder is no longer
+                // synchronous (StockBatchStore.consumeFifo's async rewrite
+                // forced it) — sequential, same reasoning as _nextAdjust
+                // just below: these orders can share products.
+                var aiIdx = 0
+                function _nextComplete() {
+                    if (aiIdx >= addedIds.length) {
+                        _afterCompletions()
+                        return
                     }
+                    var addedId = addedIds[aiIdx]
+                    aiIdx++
+                    var o = OrdersStore.getById(addedId)
+                    if (!o || o.status !== "completed" || !dataModelRef) { _nextComplete(); return }
+                    dataModelRef.completeImportedOrder(addedId, function(res) {
+                        if (res && res.understocked) understocked++
+                        _nextComplete()
+                    })
                 }
+
+                function _afterCompletions() {
                 // Envelope fields (contact/date/notes/channel, and products
                 // for a non-completed order) always update, regardless of
                 // status — this is the general field-update path, not the
@@ -823,20 +837,40 @@ BottomSheet {
                     logic.updateOrder(updateOrderFields[f].orderId, updateOrderFields[f].fields)
                 }
                 var failedAdjustments = 0
-                for (var j = 0; j < updateOrders.length; ++j) {
+                // Sequential, not parallel — same reasoning as OrdersPage's
+                // _approveAllPending: these orders can share products, and
+                // adjustOrderForImport is no longer synchronous (round 4 of
+                // the async-write-sequencing design carried through to
+                // _tryAdjustOrder on 2026-07-30). Only the dataModelRef-
+                // available branch actually needs awaiting — the signal
+                // fallback (logic.adjustOrder) was already fire-and-forget
+                // from this loop's own perspective before this change, and
+                // stays that way; it just has no per-row failure visibility,
+                // same as before.
+                var uoIdx = 0
+                function _nextAdjust() {
+                    if (uoIdx >= updateOrders.length) {
+                        _finishApply(counts, understocked, failedAdjustments)
+                        return
+                    }
+                    var row = updateOrders[uoIdx]
+                    uoIdx++
                     if (dataModelRef) {
-                        var adjRes = dataModelRef.adjustOrderForImport(
-                            updateOrders[j].orderId, updateOrders[j].products,
-                            "import orders", "", "Import: overwrite")
-                        if (!adjRes || !adjRes.ok) failedAdjustments++
+                        dataModelRef.adjustOrderForImport(
+                            row.orderId, row.products,
+                            "import orders", "", "Import: overwrite",
+                            function(adjRes) {
+                                if (!adjRes || !adjRes.ok) failedAdjustments++
+                                _nextAdjust()
+                            })
                     } else {
-                        // No direct DataModel reference available — fall back
-                        // to the signal path (no per-row failure visibility,
-                        // same as before this fix).
-                        logic.adjustOrder(updateOrders[j].orderId, updateOrders[j].products, "import orders", "", "Import: overwrite")
+                        logic.adjustOrder(row.orderId, row.products, "import orders", "", "Import: overwrite")
+                        _nextAdjust()
                     }
                 }
-                _finishApply(counts, understocked, failedAdjustments)
+                _nextAdjust()
+                }
+                _nextComplete()
             })
         }
     }

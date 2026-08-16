@@ -133,12 +133,22 @@ Extends `functions/test/gatewayLogic.test.js`.
   `before`/`after` — first (by transaction commit order, not necessarily send order) succeeds,
   second is rejected and its response's `current` matches exactly what the first one wrote.
 
-**Negative / critical edge case to verify against real schemas at implementation time**
-- **Server-side auto-stamped fields** (if any working-tier doc gets a field set outside the
-  client's `before`/`after` — e.g. a server timestamp added by some other path) would make whole-
-  record CAS spuriously fail on *every* write touching that doc. Needs an explicit audit of the 5
-  working-tier collections' actual field sets before this ships — flagging now so it isn't
-  discovered mid-implementation.
+**Negative / critical edge case — resolved 2026-07-30, but not the way originally framed**
+- **Server-side auto-stamped fields**: checked early (round 2 of the design conversation) —
+  `applyMutation` writes exactly what the client sends in `after`, nothing added server-side. This
+  part was clean, as suspected.
+- **The actual bug was client-side, and worse than what this entry anticipated.** Taher found it
+  through his own testing: `OrdersStore._clone()`'s field-reconstruction whitelist didn't exactly
+  match `addOrder`'s create payload (`adjustments` defaulted by `_clone()` but never sent at
+  creation; `updatedAt` sent at creation but not included in `_clone()`'s whitelist at all). Every
+  clone after creation silently reshaped the local cache away from the real Firestore document —
+  meaning this wasn't a rare edge case needing verification, it was close to guaranteed to fire on
+  the second touch of any order once the CAS check went live. Fixed via a single
+  `_normalizeOrder()` used by both functions; audited the other 4 stores for the same pattern (see
+  the design doc's own note and the session checkpoint for the full audit). Recorded here as a
+  lesson: the right question wasn't "does the server add fields we don't know about" but "do our
+  OWN create and read/reconstruct paths agree with each other" — the second one is the one that
+  actually broke.
 
 ---
 

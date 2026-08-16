@@ -41,6 +41,34 @@ QtObject {
         // instead of racing it.
         if (AuthStore.tenantId.length > 0)
             _load()
+        Gateway.mutationConflicted.connect(_onMutationConflicted)
+    }
+
+    // Component 3's client-side half (review finding C3, 2026-08-06): a
+    // recordMutation for an order was rejected because someone else's write
+    // landed first (before was stale). Gateway has already dropped the
+    // queued write without retrying — this reconciles the local cache with
+    // the server's actual current document, same shape as a real sync
+    // (_normalizeOrder), and tells the user so they don't keep looking at a
+    // version that silently never saved.
+    function _onMutationConflicted(entity, entityId, current) {
+        if (entity !== "order") return
+        var arr = orders.slice()
+        var idx = -1
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].orderId === entityId) { idx = i; break }
+        }
+        if (current) {
+            var normalized = _normalizeOrder(current)
+            if (idx >= 0) arr[idx] = normalized
+            else arr.push(normalized) // rare: conflict on what we thought was a create
+        } else if (idx >= 0) {
+            arr.splice(idx, 1) // deleted elsewhere
+        }
+        orders = arr
+        revision++
+        _refreshCounts()
+        Toast.show(qsTr("This order was updated elsewhere — your change didn't save. Refreshed to the latest version."))
     }
 
     onAutoApproveEnabledChanged: {
@@ -52,6 +80,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        if (loadingMore) return
         orders = [];
         hasMore = true;
         _cursor = null;
@@ -132,7 +161,7 @@ QtObject {
     // loop can't await a network call mid-iteration, and one round-trip per
     // row would be slow for a large import). New/renamed rows are collected
     // into a single Gateway.recordMutations() batch call at the end instead
-    // of one recordMutation() per row, matching approveAllPending's pattern.
+    // of one recordMutation() per row, matching InventoryStore.upsertMany's pattern.
     function upsertMany(records, callback) {
         var counts = { added: 0, updated: 0, skipped: 0 };
         var addedIds = [];
@@ -262,6 +291,46 @@ QtObject {
         });
     }
 
+    // `changedOrder`, when provided, is the single order doc this mutation
+    // actually touched — persisted through the gateway with one
+    // recordMutation call instead of rebuilding the entire collection into
+    // one bulk :commit (which hard-fails past Firestore's 500-write-per-
+    // commit cap). A caller that legitimately touches several docs at once
+    // would omit changedOrder here and persist via Gateway.recordMutations()
+    // itself after calling this — no current caller in this file needs
+    // that (the one that did, approveAllPending, was deleted 2026-08-06;
+    // see the note further down), but the parameter stays optional for
+    // whichever future bulk-write caller needs it.
+    // `action`/`before` are the P0 gateway's audit-trail fields — "update"
+    // and null before are safe defaults for existing callers that don't
+    // (yet) pass them explicitly.
+    // Canonical order shape — the ONE place every field an order document
+    // can carry gets listed, with its default. Used both when rebuilding
+    // the local cache (_clone, per order) and when constructing the
+    // payload for a brand-new order (addOrder) — using two different field
+    // lists for "the same object" is exactly what caused the bug this
+    // fixes (see the 2026-07-30 note below), so there must only ever be
+    // one.
+    //
+    // BUG THIS FIXES (found by Taher, 2026-07-30): addOrder's create
+    // payload didn't include `adjustments`, while _clone()'s reconstruction
+    // always defaulted it to `[]` — so the moment ANY subsequent operation
+    // called _clone() (which every update does, to build `before`), the
+    // local cache silently gained a phantom `adjustments: []` that the
+    // actual Firestore document never had. Symmetrically, addOrder DID
+    // send `updatedAt`, but _clone()'s reconstruction never included that
+    // field at all — so it got silently DROPPED from the local cache on
+    // the very next clone. Either direction produces the same failure: the
+    // CAS check's whole-record compare sees a `before` with a different
+    // key count than the server's actual `current` doc, and rejects a
+    // completely ordinary, single-user, no-race edit as a conflict. Once
+    // Component 3's CAS check is actually live (post-deployment), this
+    // would have fired on nearly every order touched more than once — not
+    // a rare race, a near-certainty. The fix isn't a smarter compare, it's
+    // making sure `before` can never disagree with reality in the first
+    // place: one normalization function, used at creation AND at every
+    // later read, so the shape sent to Firestore on day one is identical
+    // to what the client will ever reconstruct locally afterward.
     function _normalizeOrder(r) {
         var prods = [];
         var rawProducts = r.products || [];
@@ -275,6 +344,22 @@ QtObject {
                 : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
             var lnType = lp.discountType === "percent" ? "percent" : "flat";
             var lnVal = parseCurrency(lp.discountValue);
+            // Keep productId on every line item — _tryCompleteOrder
+            // uses it to deduct stock against the right inventory row.
+            // Deep-copy consumption[] so consumers can mutate their
+            // own clones without bleeding into the live store array.
+            var consClone = [];
+            if (Array.isArray(lp.consumption)) {
+                for (var ci = 0; ci < lp.consumption.length; ++ci) {
+                    var c = lp.consumption[ci];
+                    consClone.push({
+                        batchId: c.batchId || "",
+                        supplierId: c.supplierId || "",
+                        qtyConsumed: c.qtyConsumed || 0,
+                        unitCost: c.unitCost || 0
+                    });
+                }
+            }
             prods.push({
                 productId: lp.productId || "",
                 name: lp.name || "",
@@ -285,7 +370,7 @@ QtObject {
                 discountType: lnType,
                 discountValue: lnVal,
                 // FIFO batch lineage stamped by DataModel on order completion
-                consumption: Array.isArray(lp.consumption) ? lp.consumption.slice() : []
+                consumption: consClone
             });
         }
 
@@ -308,6 +393,7 @@ QtObject {
             notes: r.notes || "",
             orderChannel: r.orderChannel || "",
             staffId: r.staffId || "",
+            adjustments: Array.isArray(r.adjustments) ? r.adjustments.slice() : [],
             products: prods
         };
     }
@@ -401,16 +487,6 @@ QtObject {
         outOfStockCount = oos;
     }
 
-    // `changedOrder`, when provided, is the single order doc this mutation
-    // actually touched — persisted through the gateway with one
-    // recordMutation call instead of rebuilding the entire collection into
-    // one bulk :commit (which hard-fails past Firestore's 500-write-per-
-    // commit cap). Callers that legitimately touch several docs at once
-    // (approveAllPending) omit changedOrder here and persist via
-    // Gateway.recordMutations() themselves after calling this.
-    // `action`/`before` are the P0 gateway's audit-trail fields — "update"
-    // and null before are safe defaults for existing callers that don't
-    // (yet) pass them explicitly.
     function _commit(arr, changedOrder, action, before) {
         orders = arr;
         revision++;
@@ -421,53 +497,7 @@ QtObject {
 
     function _clone() {
         var a = [];
-        for (var i = 0; i < orders.length; ++i) {
-            var o = orders[i];
-            var prods = [];
-            if (o.products) {
-                for (var j = 0; j < o.products.length; ++j) {
-                    var p = o.products[j];
-                    // Keep productId on every line item — _tryCompleteOrder
-                    // uses it to deduct stock against the right inventory row.
-                    // Deep-copy consumption[] so consumers can mutate their
-                    // own clones without bleeding into the live store array.
-                    var consClone = [];
-                    if (Array.isArray(p.consumption)) {
-                        for (var ci = 0; ci < p.consumption.length; ++ci) {
-                            var c = p.consumption[ci];
-                            consClone.push({
-                                batchId: c.batchId || "",
-                                supplierId: c.supplierId || "",
-                                qtyConsumed: c.qtyConsumed || 0,
-                                unitCost: c.unitCost || 0
-                            });
-                        }
-                    }
-                    prods.push({ productId: p.productId || "", name: p.name, price: p.price, quantity: p.quantity,
-                                 taxable: !!p.taxable,
-                                 taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
-                                 discountType: p.discountType === "percent" ? "percent" : "flat",
-                                 discountValue: typeof p.discountValue === "number" ? p.discountValue : parseCurrency(p.discountValue),
-                                 consumption: consClone });
-                }
-            }
-            var bd = [];
-            if (o.taxBreakdown) {
-                for (var k = 0; k < o.taxBreakdown.length; ++k)
-                    bd.push({ rate: o.taxBreakdown[k].rate, amount: o.taxBreakdown[k].amount });
-            }
-            a.push({ orderId: o.orderId, customer: o.customer, items: o.items,
-                      subtotal: o.subtotal || 0,
-                      discount: o.discount || 0,
-                      tax: o.tax || 0,
-                      taxBreakdown: bd,
-                      total: o.total, status: o.status, date: o.date,
-                      notes: o.notes, email: o.email, phone: o.phone,
-                      orderChannel: o.orderChannel || "",
-                      staffId: o.staffId || "",
-                      adjustments: Array.isArray(o.adjustments) ? o.adjustments.slice() : [],
-                      products: prods });
-        }
+        for (var i = 0; i < orders.length; ++i) a.push(_normalizeOrder(orders[i]));
         return a;
     }
 
@@ -559,7 +589,7 @@ QtObject {
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         o.updatedAt = new Date().toISOString();
-        _commit(arr, o, "update", before);
+        _commit(arr, _normalizeOrder(o), "update", before);
     }
 
     // Apply a return/exchange/modify adjustment: set the order's lines to the
@@ -599,26 +629,42 @@ QtObject {
             o.tax = t.tax;
             o.total = t.total;
         }
-        if (!Array.isArray(o.adjustments)) o.adjustments = [];
-        o.adjustments.push(adjustmentRecord);
+        // Reassign, don't mutate in place: `before` is a SHALLOW copy of `o`
+        // (Object.assign a few lines up), so before.adjustments and
+        // o.adjustments start out as the exact same array reference. An
+        // in-place `.push()` here would mutate that shared array, silently
+        // leaking the new adjustment into `before` too — which then fails
+        // the server's CAS check (applyMutation's _deepEqual(current,
+        // before) in functions/lib/gatewayLogic.js) because the claimed
+        // "before" no longer matches what the server actually had before
+        // this write. `.concat()` builds a NEW array for o.adjustments
+        // instead, leaving before.adjustments pointing at the untouched
+        // original — same pattern already used everywhere else in this
+        // codebase (StockBatchStore, OutboxStore, Gateway, NewOrderDialog)
+        // to avoid mutating a value some other reference still holds.
+        // Found via Taher's manual testing 2026-08-10: add order -> complete
+        // -> edit price -> spurious "updated elsewhere" conflict toast.
+        // See docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md.
+        var existingAdjustments = Array.isArray(o.adjustments) ? o.adjustments : [];
+        o.adjustments = existingAdjustments.concat([adjustmentRecord]);
         o.updatedAt = new Date().toISOString();
         _commit(arr, o, "update", before);
     }
 
-    function approveAllPending() {
-        var arr = _clone();
-        var items = [];
-        for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].status === "pending") {
-                var before = Object.assign({}, arr[i]);
-                arr[i].status = "completed";
-                items.push({ entityId: arr[i].orderId, action: "update", before: before, after: arr[i] });
-            }
-        }
-        _commit(arr);
-        if (items.length === 0) return;
-        Gateway.recordMutations("order", items);
-    }
+    // NOTE: there used to be an approveAllPending() here, wired to
+    // Logic.approveAllPending (a signal nothing ever emitted — confirmed
+    // dead via a full-repo grep, 2026-08-06 review). It flipped order
+    // status straight to "completed" via one batch mutation, bypassing
+    // stock deduction, FIFO consumption, sale/transaction recording,
+    // locking, and CAS entirely. The real "Approve all" button
+    // (OrdersPage._approveAllPending) always called
+    // dataModel.tryCompleteOrder() per order directly, never this. Deleted
+    // rather than fixed or guarded: it duplicated a name close enough to
+    // the real path (approveAllPending vs. _approveAllPending) to be a
+    // standing invitation for a future refactor to wire the button to the
+    // wrong one. If a genuine "bulk approve without the full completion
+    // pipeline" need shows up later, it should be designed on purpose, not
+    // resurrected from here.
 
     // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
     // (the salesperson) are optional — empty strings are persisted when the
@@ -656,7 +702,7 @@ QtObject {
                 }
             }
             var totals = computeOrderTotals(prods);
-            var newOrder = { orderId: id, customer: customer,
+            var newOrder = _normalizeOrder({ orderId: id, customer: customer,
                        items: prods.length > 0 ? totals.itemCount : items,
                        subtotal: totals.subtotal,
                        discount: totals.discount,
@@ -668,7 +714,7 @@ QtObject {
                        orderChannel: orderChannel || "",
                        staffId: staffId || "",
                        updatedAt: new Date().toISOString(),
-                       products: prods };
+                       products: prods });
             arr.push(newOrder);
             _commit(arr, newOrder, "create", null);
             if (callback) callback(true, id)

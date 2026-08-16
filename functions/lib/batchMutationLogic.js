@@ -1,12 +1,12 @@
 "use strict";
 
 // New in this session — NOT part of the original P0 spec, which only defines
-// a single-item recordMutation contract. Needed because approveAllPending
-// (OrdersStore.qml) previously did one Firestore putMany for potentially
-// many orders; routing that through N individual recordMutation calls would
-// trade that away for N round trips. This gives one atomic batch write
-// instead — every item lands or none do — which is a stronger compliance
-// property than N independent writes, at the cost of a batch-size cap.
+// a single-item recordMutation contract. Needed for bulk operations (import,
+// primarily) that would otherwise trade atomicity away for N round trips
+// through N individual recordMutation calls. This gives one atomic batch
+// write instead — every item lands or none do — which is a stronger
+// compliance property than N independent writes, at the cost of a
+// batch-size cap.
 //
 // MAX_BATCH_SIZE=200 keeps the transaction's write count (2 per item: one
 // working-doc write + one audit_log entry) at 400, safely under Firestore's
@@ -18,7 +18,7 @@
 // Zero Firebase SDK dependency of its own — same dependency-injection
 // pattern as gatewayLogic.js / cutoverLogic.js.
 
-const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS } = require("./gatewayLogic");
+const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual } = require("./gatewayLogic");
 
 const MAX_BATCH_SIZE = 200;
 
@@ -66,15 +66,31 @@ function validateBatchMutationRequest(body) {
     return { ok: true, entity: entity, collection: collection, requestId: requestId, items: normalized };
 }
 
-// Applies every item in the batch atomically, in a single transaction.
+// Applies every item in the batch atomically, in a single transaction. Backstop
+// CAS check (review finding I1, added this round): mirrors applyMutation's
+// single-item check exactly, extended per-item — a stale/racing batch write
+// silently clobbering data was the whole point of this finding, since this is
+// the LIVE path for every bulk import (Supplier/Order/StockBatch/Inventory/
+// Transaction all route recordMutations through here), directly touching the
+// "imports must never silently overwrite data" invariant.
+//
+// On any single item's before mismatching the record's current server state,
+// the WHOLE batch is rejected — nothing written, matching this module's own
+// stated all-or-nothing design (see the top-of-file comment) rather than
+// silently applying a partial batch. Returns EVERY conflicting item's
+// current value (not just the first) so the caller isn't left guessing which
+// of potentially many rows actually conflicted.
+//
 // Per-item idempotency: the audit_log doc id for item N is
 // `<batchRequestId>:<entityId>` — a retried batch (or a batch that partly
 // overlaps a previous one) skips whatever was already applied and only
-// writes what's new.
+// writes what's new. An idempotent-replay item is exempt from the CAS check
+// (same reasoning as applyMutation's own idempotent-replay short-circuit) —
+// it's not a competing write, it's this same request landing twice.
 async function applyMutationsBatch(db, params) {
     const tenantRoot = "tenants/" + params.tenantId;
 
-    await db.runTransaction(async (txn) => {
+    return db.runTransaction(async (txn) => {
         const refs = params.items.map((item) => ({
             item: item,
             auditRef: db.doc(tenantRoot + "/audit_log/" + params.requestId + ":" + item.entityId),
@@ -83,6 +99,20 @@ async function applyMutationsBatch(db, params) {
 
         // Firestore transactions require all reads before any writes.
         const existingFlags = await Promise.all(refs.map((r) => txn.get(r.auditRef)));
+        const workingSnaps = await Promise.all(refs.map((r) => txn.get(r.workingRef)));
+
+        const conflicts = [];
+        refs.forEach((r, i) => {
+            if (existingFlags[i].exists) return; // idempotent retry — not a competing write
+            const current = workingSnaps[i].exists ? workingSnaps[i].data() : null;
+            if (!_deepEqual(current, r.item.before)) {
+                conflicts.push({ entityId: r.item.entityId, current: current });
+            }
+        });
+
+        if (conflicts.length > 0) {
+            return { ok: false, status: 409, conflicts: conflicts };
+        }
 
         refs.forEach((r, i) => {
             if (existingFlags[i].exists) return; // idempotent retry — already applied
@@ -109,6 +139,8 @@ async function applyMutationsBatch(db, params) {
                 batchEntityId: r.item.entityId
             });
         });
+
+        return { ok: true };
     });
 }
 

@@ -1179,8 +1179,10 @@ the arithmetic against Firestore's actual limit.
 
 ## Skill 36: Async write sequencing — single-flight, locking, CAS, and atomic deltas
 
-**Files**: `qml/model/{OutboxStore,Gateway,LockManager}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`,
-full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`
+**Files**: `qml/model/{OutboxStore,Gateway,LockManager,OrdersStore,InventoryStore,StaffStore,
+SupplierStore,StockBatchStore}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`, `firestore.rules`,
+full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, review:
+`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`
 
 Four related but distinct correctness mechanisms, easy to conflate — know which one actually
 fixes which bug before reaching for any of them:
@@ -1203,7 +1205,12 @@ directly into it) — never a plain view, reads are always unrestricted.
 backstop for whole-record writes, independent of whether locking "worked": rejects if the record's
 current server state doesn't match the mutation's claimed `before`. With locking in place this
 should fire rarely — if it fires often, that's a signal locking isn't actually being acquired
-somewhere it should be, not a reason to remove the check.
+somewhere it should be, not a reason to remove the check. **The client half matters just as much as
+the server half** (see the 2026-08-06 section below): a server that correctly rejects a stale write
+is only a real backstop if the client actually stops retrying it and reconciles — `Gateway.
+mutationConflicted(entity, entityId, current)` is that other half, and every store that calls
+`recordMutation` needs to be connected to it, not just the one or two that happen to get exercised
+in testing.
 
 **4. Atomic server-side deltas (`applyDelta`, `Gateway.recordDelta`)** — a DIFFERENT mutation kind
 for quantity fields, not a CAS variant. Reads the current value INSIDE the transaction and computes
@@ -1246,7 +1253,188 @@ before writing, but silently breaks anything that does (caught this converting 2
 `applyMutation` tests when adding the CAS check — they used `makeFakeDb` with a non-null `before`,
 which read as a false conflict once the function started actually checking current state).
 
-## Skill 37: Coordinated multi-document saves — `ProfileSettingsMath.js` + a real `patch()`
+**Two real bugs found post-implementation (2026-07-30), both worth internalizing as patterns, not
+just as one-off fixes:**
+
+1. **Never let "the request failed" and "the server decided no" share a code path.** The original
+   `LockManager.acquire`/`Gateway._sendDelta` treated any non-2xx HTTP response as a genuine server
+   decision. An undeployed Cloud Function's 404 has no real body — but the code couldn't tell that
+   apart from a real `409 someone-else-has-this`, so a lone tester saw "someone else is editing
+   this" with nobody else on the system. The fix pattern: a real decision from YOUR OWN code is
+   only ever valid JSON matching YOUR OWN response envelope (here, a boolean `ok` field) — anything
+   else, regardless of HTTP status number, is infrastructure noise and must never be presented to a
+   user as a business outcome. Extract this as a pure `_classify*Response(status, body)` function
+   so it's unit-testable without a mock HTTP layer (see `_classifyDeltaResponse`/
+   `_classifyAcquireResponse`).
+
+2. **Whole-record CAS is only as safe as your create-vs-reconstruct symmetry.** `OrdersStore`'s
+   `_clone()` (used to build `before` for every update) had a field whitelist that DIDN'T match
+   `addOrder`'s create payload — `adjustments` got silently added by `_clone()`'s defaulting,
+   `updatedAt` got silently dropped since `_clone()`'s whitelist never listed it. Every clone after
+   creation reshaped the local cache away from the real Firestore document, so `applyMutation`'s
+   CAS check would reject a completely ordinary single-user edit as a false conflict — not a rare
+   race, close to guaranteed on the second touch of any record. **The lesson generalizes past
+   orders**: any store with a reconstructing `_clone()`-style function (explicit field list with
+   defaults) needs that list to be IDENTICAL to what its create function sends — extract one
+   `_normalizeX(raw)` function and use it in both places, don't maintain two field lists that have
+   to be kept in sync by hand. Stores that instead build `before`/`after` via a plain shallow copy
+   of the live array element (`arr.slice()` + `Object.assign`) — `SupplierStore`, `StockBatchStore`
+   — are structurally immune to this specific bug, since there's no separate defaulting step that
+   can diverge from creation. When auditing a store for this, check which pattern it uses first;
+   only the reconstructing kind needs the create/clone symmetry check at all. **Caveat added
+   2026-08-10, see Skill 37**: "shallow copy" immunizes against *this* bug (create/clone field-list
+   drift) but is not a general safety property — `Object.assign` only copies top-level fields, so a
+   shallow-copied `before` still shares any nested array/object by reference with `after`, and stays
+   vulnerable to a *different* bug if that nested field is later mutated in place rather than
+   reassigned. `OrdersStore.applyAdjustment` was exactly this: shallow-copy-immune to the bug above,
+   but not to the one Skill 37 covers.
+**2026-08-06: full code review + fix round.** A dedicated review of the whole feature (`docs/
+superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important
+findings) found the design was individually correct in every piece but had never actually been
+wired end-to-end — several mechanisms above were server-tested but client-inert, or converted for
+one caller and silently not another. All 8 Critical findings are now fixed (`fix/
+async-write-sequencing-review-fixes` branch). Patterns worth internalizing, not just the specific
+bugs:
+
+1. **A mechanism "existing" server-side and being "wired up" client-side are two different claims
+   — verify both separately.** Component 3's CAS check (#3 above) was fully implemented and
+   unit-tested in `gatewayLogic.js`, but `Gateway._send`/`_sendBatch` never actually handled a 409
+   conflict response — it fell into the exact same retry-forever bucket as a plain network
+   timeout, defeating the entire point of the backstop. Fixed with a narrow, deliberately-scoped
+   `_parseMutationConflict(status, responseText)` (pure, unit-tested) that only special-cases the
+   specific `409 + conflict:true` shape — every OTHER failure (400/401/403/5xx/network error) keeps
+   going through the existing retry path unchanged, since those might genuinely resolve on retry
+   (token refresh, transient infra) where a real conflict never will. Then wired
+   `Gateway.mutationConflicted(entity, entityId, current)` into **every** store that calls
+   `recordMutation` (`OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`,
+   `StockBatchStore`) — each patches its local array for that `entityId` from `current` (removing
+   it if `current` is null — deleted elsewhere) and shows a `Toast`, except `StockBatchStore`,
+   which patches silently since batch writes are an internal accounting side effect of an action
+   the user already got feedback on elsewhere.
+
+2. **"Converted caller X and Y" in a checkpoint is a claim to re-verify, not a fact to inherit.**
+   The prior checkpoint asserted `InventoryStore.deductStock`/`restock` were both converted to
+   `recordDelta` (#4 above) — only `deductStock` actually was; `restock` (and, found during this
+   fix, `creditStockNoBatch`, same bug) were still computing the new stock value from a local
+   snapshot and sending it via the old whole-record CAS path. `grep -rn "recordDelta(" qml/` is the
+   fast way to independently confirm a delta-conversion claim rather than trusting prose about it.
+
+3. **A "reject on rejection" delta path needs the SAME care about what already ran before it as a
+   "reject on rejection" mutation path does.** `StockBatchStore.consumeFifo`/`topUpOldest` run
+   synchronously and unconditionally, before the corresponding `deductStock` delta call resolves,
+   in both `_tryCompleteOrder` and `_tryAdjustOrder`. On a genuine rejection (the exact scenario
+   `floors` exists to produce), the FIFO batches had already been decremented with no rollback.
+   Fixed by calling the already-existing `StockBatchStore.restoreFifo` on every already-touched
+   batch when the delta fails — no new primitive needed, the returns flow already had one for
+   exactly this purpose. **Left open, flagged rather than silently expanded into**: when one line
+   item's delta succeeds and a sibling's fails, the successful line's `product.stock` delta stays
+   applied even though the whole order reports failure — a partial-completion gap beyond FIFO,
+   needing a compensating delta call, out of scope for the FIFO-specific fix.
+
+4. **A sibling function needs the SAME fix as its twin, not just a similar one.** The 2026-07-30
+   `_classify*Response` fix (lesson 1 above) was applied to `_classifyDeltaResponse` but
+   `LockManager._classifyAcquireResponse` never got the equivalent status-range check — it treated
+   every well-formed `{ok:false}` body as `"denied"` regardless of status, so a 400/401/403/500
+   (none of which mean "someone else holds this lock") produced a fabricated "someone else is
+   editing this" message. When a bug's fix pattern applies to more than one function, grep for
+   every function that shares the pattern, not just the one that was reported.
+
+5. **`firestore.rules` needing a lockdown and `firestore.rules` HAVING a lockdown are two different
+   git commits — check the actual diff, not just the design doc's intent.** The design doc called
+   for `locks/**` to be denied to clients the same way `audit_log`/`transactions`/etc. are — this
+   was never actually done; `git log` confirmed the rules file was untouched across the entire
+   13-commit branch. Fixed with a new `isServerOnlyCollection` tier, distinct from the existing
+   `isLedgerCollection` tier: the ledger tier is readable-but-write-locked (clients display that
+   data), `locks` needs BOTH denied since no client ever has a legitimate reason to touch it.
+   **Subtlety worth remembering**: Firestore grants access if ANY matching rule allows it — the
+   generic wildcard fallback's `allow read` line isn't gated by `isLedgerCollection` at all, so
+   adding a name to that list alone would NOT have blocked reads. The fallback's read rule needed
+   its own explicit carve-out.
+
+6. **A "fix by consolidating two duplicate functions into one" commit needs the same scrutiny as
+   any other fix.** `OrdersStore._normalizeOrder` existed as two drifted-apart copies (the root
+   cause of lesson 2's bug above); consolidating them into one was the right instinct, but the
+   merge read `inv.consumption` (the just-looked-up inventory/product record, which never has a
+   `consumption` field) instead of `lp.consumption` (the order line itself) — silently wiping FIFO
+   lineage on every order, and crashing with a TypeError whenever a line's product was deleted from
+   inventory (`InventoryStore.getById` returns `null`; `null.consumption` throws). The existing
+   `tests/tst_OrdersStore_normalization.qml` (added specifically for the OTHER bug this same commit
+   fixed) caught this by accident, via an unseeded `InventoryStore` in its test fixture — not by
+   design. Two explicit regression tests were added for both failure modes so it's no longer an
+   accident that this is covered.
+
+**Still genuinely open after the 2026-08-06 round** (Important-severity findings, not Critical —
+tracked, not silently dropped): none — see 2026-08-08 below. All five were closed, plus the two
+new/known gaps also tracked here (StockBatchStore recordDelta conversion, ConfirmReturnSheet
+lock-span) and one more discovered mid-round (partial-multi-line-completion, lesson 3 above).
+
+**2026-08-08: round 2 — I1–I4 + 3 known/new gaps, all closed** (`fix/
+async-write-sequencing-review-fixes` branch, design doc: `docs/superpowers/specs/
+2026-08-08-review-round2-design.md`). Scoped via `/superpowers:brainstorming` — Taher was shown the
+real blast radius of the StockBatchStore option (5 call sites, 3 with retry-loop coupling) before
+choosing the full rewrite over the smaller mechanical-swap alternative. New patterns worth
+internalizing, distinct from the 2026-08-06 lessons above (see there first — several round-2 bugs
+are second instances of those same lesson categories, cross-referenced rather than re-derived):
+
+1. **`floors` and `clamps` are not interchangeable "don't go negative" options — they have opposite
+   failure semantics, and picking wrong quietly reintroduces the attribution gap you're trying to
+   close.** `floors` on `applyDelta` REJECTS the whole delta if it would cross the floor (ok:false,
+   zero applied) — the delta either fully lands or doesn't happen at all, no partial state.
+   `clamps` caps the result at the boundary and still succeeds — a partial amount can silently
+   apply. `StockBatchStore.consumeFifo`'s async rewrite deliberately uses `floors`, not `clamps`,
+   specifically because exact-or-nothing per batch is what makes the returned `consumption[]`
+   trustworthy — with `clamps`, a successful response could still mean "less than planned was
+   actually taken," reintroducing ambiguity about which batch really contributed what.
+
+2. **(Second instance of the 2026-08-06 lesson 2 pattern — "verify caller-conversion claims,
+   don't inherit them.")** The round-2 design doc scoped `completeImportedOrder`'s `consumeFifo`
+   conversion as "simpler — no failure path." That was true for the failure-handling logic, but
+   missed that the function had a synchronous `return {ok, understocked}` contract its
+   `ImportPreviewDialog` caller depended on in a tight loop — converting the function to async
+   forced restructuring that loop too. **A function's own body being simple doesn't mean its
+   conversion is small — check what its RETURN VALUE'S caller does with it before scoping.**
+
+3. **A "hand off ownership" fix needs the actual event ordering traced, not assumed.** First
+   instinct for the `ConfirmReturnSheet` lock-span gap was having the sheet re-acquire its own
+   lock in `openFor()` — simpler, self-contained. Wrong: `openFor()` runs SYNCHRONOUSLY, inside the
+   same call stack as `OrderDetailDialog._save()`'s `adjustRequested` handler, which fires BEFORE
+   `dlg.close()` on the next line. A re-acquire there would resolve, then `OrderDetailDialog`'s own
+   release (fired moments later by `close()`) would delete the SAME lock document the re-acquire
+   just claimed — the two are both async network calls racing on one doc, and there's no ordering
+   guarantee release loses. Fixed with an explicit handoff flag instead (`_lockHandoffPending`) so
+   the original owner's `onClosed` skips its release rather than relying on a second acquire
+   winning a race it might not win. **When two components both touch the same server-side
+   resource across an async boundary, trace the actual call-stack ordering before assuming a
+   "simpler" independent-acquire design is safe.**
+
+4. **(Second instance of 2026-08-06 lesson 1 — "existing" and "wired up" are different claims.)**
+   The Cloud Function endpoint (`functions/index.js`'s `recordMutationsBatch`) was calling
+   `applyMutationsBatch` and discarding its return value entirely, always sending `200 {ok:true}`
+   regardless of what the transaction did. Adding the CAS check itself (I1) would have been
+   silently inert without also fixing this — the transaction would correctly refuse to write, but
+   the client would be told it succeeded, which is WORSE than doing nothing (a caller that thinks
+   an import landed when it didn't is a worse bug than the original no-CAS-check gap). Grep for
+   every place a function's result is called and check whether the CALLER actually branches on it,
+   not just whether the function itself returns something meaningful.
+
+5. **A fake DB double built for one query shape breaks silently once the code starts reading a
+   DIFFERENT ref.** `batchMutationLogic.test.js`'s `makeFakeDb` only ever modeled `auditRef`
+   existence (all `applyMutationsBatch` needed to check before I1). Adding the CAS check meant
+   reading `workingRef`s too — the existing 5 tests would have started reporting false conflicts
+   (fake working docs "don't exist" by default, but `validItem()`'s fixture `before` claims
+   `{status:"pending"}`) had the fake not been extended to model working-doc state and the existing
+   tests updated to pass matching state. Same root pattern as the 2026-07-30 `makeFakeDbWithData`
+   note above — a fake that's "good enough" for what the code currently reads needs re-auditing
+   every time the code starts reading something new, not assumed to still be sufficient.
+
+All 7 remaining findings from the 2026-08-06 review are closed as of this round: I1 (batch CAS,
+plus the endpoint wiring gap it surfaced), I2 (bulk-approve locking), I3 (lock entity allowlist),
+I4 (dialogs' dead "try again" retry, all 3), StockBatchStore's full async rewrite, the
+`ConfirmReturnSheet` lock-span handoff, and the partial-multi-line-completion gap (found mid-round
+during the 2026-08-06 fix, fixed at two sites: `_tryCompleteOrder` and `_tryAdjustOrder`'s exchange
+path — the second site wasn't in any prior finding list, found while implementing the first).
+
+
 
 **Files**: `qml/helper/ProfileSettingsMath.js`, `tests/tst_ProfileSettingsMath.qml`,
 `qml/model/AuthService.qml` (`saveProfileSettings`), `qml/model/FirebaseService.qml` (`patch`)
@@ -1279,3 +1467,247 @@ exists (only `brand1`..`brand5` and semantic aliases like `primaryBlue: brand1`)
 undefined singleton property doesn't fail to compile — it silently binds `undefined`, which is a
 much harder bug to spot than a QML syntax error. `grep -n "property color" qml/helper/Constants.qml`
 before using any `Constants.*` token you haven't seen used elsewhere first.
+
+## Skill 37: Before/after snapshot aliasing — shallow copy vs. in-place mutation
+
+**Files**: `qml/model/OrdersStore.qml` (`applyAdjustment`), `tests/tst_OrdersStore_applyAdjustment.qml`,
+full investigation + fix: `docs/superpowers/specs/2026-08-10-before-snapshot-aliasing-CHECKPOINT.md`
+
+Found by Taher's own manual testing (2026-08-10, on `fix/async-write-sequencing-review-fixes`):
+add an order, complete it, open it, adjust the price, save — spurious "This order was updated
+elsewhere — your change didn't save" toast, even though nothing else touched the order. The price
+edit was silently discarded (server rejected the whole write, nothing persisted — see Skill 36 §3
+for what the CAS check does and why a rejection there is all-or-nothing, not just the field that
+triggered it).
+
+**Root cause**: `Object.assign({}, o)` is a SHALLOW copy — it copies top-level properties only.
+Any nested array or object field is copied BY REFERENCE, not by value. `applyAdjustment` took
+`before` this way, then did `o.adjustments.push(adjustmentRecord)` — an IN-PLACE mutation of that
+same shared array. `before.adjustments` and `o.adjustments` were never two arrays; they were one
+array with two names, so the push leaked forward into `before` too. That corrupted `before` is
+exactly what fails `applyMutation`'s `_deepEqual(current, before)` check in
+`functions/lib/gatewayLogic.js` — the server's real prior state didn't have the new adjustment, the
+client's claimed "before" now did, mismatch, reject.
+
+```js
+// BUGGY
+var before = Object.assign({}, o);   // before.adjustments IS o.adjustments (same array)
+o.adjustments.push(adjustmentRecord); // mutates the array both names point to — before is corrupted
+
+// FIXED
+var existingAdjustments = Array.isArray(o.adjustments) ? o.adjustments : [];
+o.adjustments = existingAdjustments.concat([adjustmentRecord]); // NEW array; before's reference untouched
+```
+
+**The fix is `.concat()` over `.push()`, not "stop using shallow copy."** A full-codebase sweep (25
+`Object.assign` call sites across every store, `Gateway`, `OutboxStore`, `AuthService`,
+`NewOrderDialog`) found this was the ONLY instance of the pattern in the project — every other site
+either only reassigns primitive fields after the shallow copy (safe — no shared reference is ever
+mutated), or already builds a brand-new object/array and replaces the array slot rather than
+mutating in place (`StockBatchStore`, `OutboxStore`, `Gateway`, `NewOrderDialog` — this is the
+correct, established convention). Rewriting all of those to a full deep-clone (e.g.
+`JSON.parse(JSON.stringify())`, confirmed safe for this codebase's data shapes — no `Date`/
+Timestamp/function fields ever live in a store's persisted shape, `new Date()` only appears in
+transient calculations) was considered and deliberately rejected: it would have touched 6+ working
+files to guard against a bug that, after the sweep, exists nowhere else, which is exactly the
+"bundled refactoring while fixing a root cause" anti-pattern `superpowers:systematic-debugging`
+warns against.
+
+**The general rule** (this is the actual takeaway, not "avoid `Object.assign`" — it's used safely
+in a dozen other places in this file alone): once you've taken a `before` snapshot — shallow copy
+OR the reconstructing `_normalizeOrder`/`_clone()` kind, doesn't matter which — every subsequent
+change to the live object must be a REASSIGNMENT (`o.field = newValue`, `o.arr = oldArr.concat(x)`,
+`o.arr = oldArr.filter(...)`) never an IN-PLACE MUTATION of a nested field (`.push`, `.splice`,
+`.sort`, `.reverse`, or `obj.nested.prop = x`) — reassignment produces a new reference the old
+snapshot doesn't share; in-place mutation changes the value at an address the snapshot is still
+looking at. `grep -rn "[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\.push(\|...\.splice(" qml/` is
+the fast way to re-check this project-wide — it should keep returning nothing outside intentional,
+reviewed cases.
+
+**A related, currently-dormant fragility, left alone rather than fixed**: `_normalizeOrder`'s
+`adjustments: r.adjustments.slice()` is itself only a shallow ARRAY copy — the individual past
+adjustment record OBJECTS inside are still shared by reference across every snapshot taken from
+that array. Nothing in this codebase currently mutates a past adjustment record after creation (grep
+confirmed), so this isn't live, but it's the same fragility pattern lying dormant one call away. Not
+fixed here — no evidence it's needed, and "fix it in case something mutates it later" is scope creep
+without a concrete bug behind it. Worth checking first if a future change ever needs to edit a past
+adjustment record in place instead of appending a new one.
+
+**Test-tooling note**: `Gateway.recordMutation` in `mode: "gateway"` enqueues into `OutboxStore`
+without touching the network as long as `AuthStore.idToken` stays empty (`_send`'s guard closes
+before any XHR — see Skill 36 / `tests/tst_Gateway.qml`'s header note). That makes the real,
+production `before`/`after` objects directly inspectable via `OutboxStore.items[0].before`/`.after`
+in a test — no mock/fake layer needed to catch this class of bug; asserting on object identity
+(`before.adjustments !== after.adjustments`) is the most direct regression check available.
+
+## Skill 38: Ledger-sync race — acting on a paginated store before it's complete
+
+**Files**: `qml/model/TransactionStore.qml` (`_fetchFromFirebase`, `_scheduleRetry`), `qml/model/
+DataModel.qml` (`_tryAdjustOrder`), `qml/pages/OrderDetailDialog.qml` (`_save`), `tests/
+tst_DataModel_adjustOrderSyncGuard.qml`, `tests/tst_TransactionStore_syncRetry.qml`, full
+investigation: `docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md`
+
+Found by Taher immediately after the Skill 37 fix shipped, testing the very branch that fix
+unblocked: complete an order, verify it in Firestore, close the app, reopen it, and — promptly —
+return an item. The return "succeeded" (product-level history recorded it), but the order's total
+in the Orders list didn't reduce, and order-level history looked incomplete. Confirmed by Taher's
+own follow-up test: same sequence but with the app left running (no restart) — works perfectly.
+Same sequence with a restart, but waiting long enough before returning — also works perfectly. The
+one variable that matters is whether `TransactionStore` has finished its post-restart sync.
+
+**Root cause**: `TransactionStore` re-fetches its entire transaction history from Firestore on
+every cold start, 50 docs at a time, via `FirebaseService.query("transactions", { limit, startAfter
+}, ...)` — no `orderBy` override, so it defaults to ascending `__name__` (document ID). Transaction
+IDs are locally generated as `"tx-" + kind + "-" + Date.now() + "-" + rand` (`_nextId`) — an
+ever-increasing, timestamp-prefixed string. Ascending-by-ID is therefore ascending-by-creation-time:
+the OLDEST transactions load first, page by page, and the NEWEST — including the sale from an order
+you just completed — load LAST. On a dev/test database with a lot of accumulated history (this
+project has plenty, from every review round's testing), that's several sequential round trips, not
+one.
+
+`OrdersStore.applyAdjustment`, for a completed order, trusts `TransactionStore.totalsForOrder(orderId)`
+unconditionally:
+```js
+var led = TransactionStore.totalsForOrder(orderId);
+if (led) { o.tax = led.tax; o.total = led.total; }   // led is ALWAYS an object -- this always wins
+else { o.tax = t.tax; o.total = t.total; }            // dead code, totalsForOrder never returns null
+```
+If the return happens before that last page (containing the order's own sale entry) has synced,
+`totalsForOrder` sums an incomplete ledger — the return entry is there (it's written locally and
+immediately, independent of any fetch), the sale entry isn't, and the resulting total is wrong. I
+verified this isn't an arithmetic bug — I Node-ported the actual `OrderMath.allocate`/
+`TransactionStore.totalsForOrder`/`forOrder` logic (both files are plain, portable JS — no QML/
+singleton deps per their own header comments) and ran it against three realistic scenarios
+(simple, tax+discount+multi-line, sequential double-return) — all computed correctly given a
+complete ledger. The bug is entirely about *what the ledger contains at the moment it's read*, not
+how it's summed.
+
+**The fix has two parts, and both matter — one without the other creates a worse bug:**
+
+1. **Refuse the action, don't silently degrade.** `DataModel._tryAdjustOrder` now refuses to adjust
+   a completed order while `TransactionStore.hasMore` is true, with a clear message telling the
+   user to wait — checked both in `DataModel` (the authoritative gate — `onAdjustOrder` and
+   `adjustOrderForImport` both route through `_tryAdjustOrder`, so one check covers both) and
+   proactively in `OrderDetailDialog._save()` (so the user finds out before filling out
+   ConfirmReturnSheet's reason/condition/note fields, not after). Scoped deliberately narrow: `grep
+   -rn "totalsForOrder(" qml/` turns up exactly one caller (`applyAdjustment`'s completed-order
+   branch) — nothing else in the app reads this ledger, so nothing else needed gating. Order
+   completion itself is unaffected (`recordSaleFromOrder`'s allocation comes from the order's own
+   `products`, never from `TransactionStore.entries`), and blocking the whole app until a
+   potentially-large paginated historical fetch completes — which was the instinctive first ask —
+   would have been a real regression for any business with meaningful order history. "Block the
+   user" only where the actual dependency is.
+
+2. **Fix the failure path the block now depends on.** Before this, a single failed sync page left
+   `TransactionStore.hasMore` stuck at `true` FOREVER — `_fetchFromFirebase`'s failure branch just
+   logged a warning and returned, no retry, nothing else in the file ever flips `hasMore` back down
+   on its own. Once (1) ships, that gap stops being a cosmetic loose end and becomes a real problem:
+   one dropped request during a cold-start sync would permanently block every completed-order return
+   until the app restarts. Added `_scheduleRetry()` — exponential backoff (3s, 6s, 12s, 24s, capped
+   at 30s), single-shot `Timer` created via `Qt.createQmlObject` the same way `Gateway._drainTimer`
+   already does it in this codebase (same `LDR-3` lint finding as that existing, shipped code —
+   not a new anti-pattern, matching established precedent). Point 1 without point 2 trades a subtle
+   wrong-number bug for an occasional hard, unrecoverable lockout — worse, not better.
+
+**The general rule**: a `property bool hasMore` (or equivalent "is this collection fully loaded"
+flag) on a paginated store is not just a loading-spinner concern — anything that trusts that
+store's data to be *complete* (a sum, a lookup-by-key expected to always hit, an aggregate) needs to
+either check that flag or have its own reason to be sure the relevant subset is already loaded.
+`grep -rn "\.hasMore\b" qml/model/` is the fast way to find which stores have this shape at all;
+right now that's `TransactionStore` and `OrdersStore` — worth the same scrutiny if a similar
+"trust an aggregate over the whole collection" pattern shows up reading from `OrdersStore.orders`
+somewhere.
+
+**Left alone, not fixed here**: `OrdersStore.orders` has the identical paginated/`hasMore` shape
+(same grep). Nothing today aggregates *across* orders the way `totalsForOrder` aggregates across
+transactions — `OrdersPage`'s list, counts, and filters all operate per-row on whatever's loaded,
+which degrades gracefully (a syncing order list just looks incomplete, it doesn't compute a wrong
+number) rather than silently wrong. No evidence of a live bug here; flagging so a future aggregate
+built on `OrdersStore.orders` doesn't reintroduce this same class of bug without the same guard.
+
+## Skill 39: Concurrent-reset race — two async resyncs, one paginated store
+
+**Files**: `qml/model/TransactionStore.qml`, `qml/model/InventoryStore.qml`, `qml/model/
+OrdersStore.qml`, `qml/model/StaffStore.qml`, `qml/model/StockBatchStore.qml`, `qml/model/
+SupplierStore.qml` (all `_resetAndFetch`, Taher's fix, 2026-08-12), `qml/model/ActivityLog.qml`,
+`qml/model/CategoryStore.qml`, `qml/model/OrderChannelStore.qml` (`Component.onCompleted`, this
+session's follow-up fix), `tests/tst_TransactionStore_resetGuard.qml`. Full narrative:
+`docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md`.
+
+Taher found this himself, on-device, immediately after the Skill 38 guard shipped and still didn't
+reliably catch the sync-incomplete window: no "still syncing" message on a prompt post-restart
+return, and Orders/Inventory screens showing inconsistent data that self-resolved given enough time.
+His diagnosis, in his own words: `TransactionStore.Component.onCompleted` calls `_resetAndFetch()`,
+and separately `Main.qml`'s `onTenantContextReady` handler ALSO calls it (via `syncFromFirebase()`)
+— both async, both real, on the same cold start. Whichever's page-1 request lands first sets
+`loadingMore = true` and starts accumulating pages; the second call still ran to completion anyway
+(nothing was gating it), wiping `entries` back to `[]` and resetting `_cursor` out from under the
+FIRST, still-in-flight fetch. That first fetch's eventual page-1 response then concatenated onto the
+just-wiped array and its `_cursor` got clobbered, corrupting the rest of that pagination chain —
+`hasMore` could end up `false` with `entries` still genuinely incomplete, which is exactly why
+Skill 38's guard (which only checks `hasMore`) didn't catch it: `hasMore` was lying.
+
+This is a materially different bug from Skill 38, even though the visible symptom (return doesn't
+fully take effect after a restart) looked similar. Skill 38 was about *what* the ledger sum trusted;
+this is about *whether the sync that populates the ledger can even complete correctly* when two
+triggers fire close together. Worth internalizing as two separate lessons because a fix for one
+doesn't imply the other is covered — Skill 38's guard, by itself, was necessary but not sufficient.
+
+**Why `Component.onCompleted`'s existing `AuthStore.tenantId.length > 0` check didn't prevent
+this**: that guard was written (see `OrdersStore`'s own comment on the same pattern) assuming
+`tenantId` is normally still empty at singleton-creation time on a cold start, deferring the actual
+first fetch to `onTenantContextReady`. On-device, that assumption didn't hold reliably — `tenantId`
+CAN already be populated by the time these singletons are created (session restore timing varies),
+so BOTH triggers fire. Static reading of the "normal" case predicted this couldn't happen; the
+actual device proved otherwise. Lesson: a guard justified by "this shouldn't normally be true yet"
+is a hope, not a guarantee — the two-async-callers problem needs its own guard regardless of how
+unlikely the overlap seems from reading the trigger order in isolation.
+
+**The fix**: `_resetAndFetch()` now starts with `if (loadingMore) return` — a second reset call
+arriving while a fetch is already in flight is a no-op instead of wiping state out from under it.
+Applied to `_resetAndFetch()` itself (not each caller), so it protects against ANY current or future
+caller pairing, not just the two known ones — confirmed by finding a third, currently-dead trigger
+(`Logic.syncAllStores` / `DataModel.onSyncAllStores`, declared and handled but never actually
+emitted anywhere in the app today) that would hit the exact same race the moment something wires it
+up to a UI action (e.g. a future pull-to-refresh) — already covered, no separate fix needed if/when
+that happens.
+
+**Residual trade-off, not fixed, worth a decision before it's needed**: `if (loadingMore) return`
+also silently drops a *legitimate* reset that happens to arrive mid-fetch — e.g. a user switching
+accounts while the previous account's very own initial sync is still in flight. The in-flight fetch
+would complete with the OLD account's data, and the new account's reset request — the one case
+`onTenantContextReady`'s own comment says it exists FOR ("a re-login after switching accounts") —
+would just be discarded, leaving the store showing the wrong account's data until some other trigger
+resyncs it. Lower probability than the cold-start double-fire (needs a deliberate fast account
+switch, not just normal app launch timing) and not something Taher's on-device testing has hit, but
+it's a real gap in the current fix, not a hypothetical. A more complete fix is a "pending reset"
+flag: if `_resetAndFetch()` is called while `loadingMore` is true, set `_resetPending = true` instead
+of silently returning; when the in-flight fetch's callback completes, check the flag and immediately
+re-run `_resetAndFetch()` (which will now proceed, since `loadingMore` is false) rather than
+continuing that now-stale fetch chain. Not implemented — flagging for a decision on whether the
+probability of hitting this in practice justifies the added complexity, rather than deciding
+unilaterally either way.
+
+**Full sweep of every `qml/model/*.qml` singleton** (Taher's fix covered six stores; this session
+checked the other fifteen for the same shape — a reset-like function clearing accumulator state and
+kicking off an async fetch, reachable from more than one trigger):
+
+| Store | Verdict | Why |
+|---|---|---|
+| `TransactionStore`, `InventoryStore`, `OrdersStore`, `StaffStore`, `StockBatchStore`, `SupplierStore` | **Fixed** (Taher, 2026-08-12) | Multi-page pagination (`entries`/`hasMore`/`_cursor`), dual-triggered (`Component.onCompleted` + `onTenantContextReady`) — exactly the vulnerable shape. |
+| `ActivityLog`, `CategoryStore`, `OrderChannelStore` | **Structurally immune to the corruption; fixed a smaller, separate issue** (this session) | Dual-triggered same as above, but each does a single bounded fetch (`ActivityLog`: top-50 query, no cursor; `CategoryStore`/`OrderChannelStore`: single-document `get()`) — no multi-page accumulation to corrupt. A duplicate concurrent call just re-fetches the same correct data; whichever response lands last harmlessly overwrites with an equally-correct result. They DID have a different, minor issue: unlike every dual-triggered store above, none guarded `Component.onCompleted` with the `AuthStore.tenantId.length > 0` check — meaning they fired an unscoped, guaranteed-to-fail Firestore request on every cold start before `onTenantContextReady`'s real sync. Fixed for consistency (same one-line guard the six already had) — not the same bug, but the same missing defense, found while checking the same trigger pair. |
+| `SalesStore` | **N/A** | No Firestore fetch at all — `syncFromFirebase()`/`_load()` both just call `_rebuildDerivedData()`, a synchronous, idempotent recompute over `OrdersStore.orders` already in memory. `Component.onCompleted` happens to call `_load()` then `_rebuildDerivedData()` redundantly (harmless double-recompute at startup, not worth touching). |
+| `AuthStore` | **N/A** | `loadSession()` is a synchronous local `QSettings` read, no network I/O at all, called from exactly one place (`AuthService.Component.onCompleted`). No async, no second trigger, no race possible. |
+| `OutboxStore`, `PartyStore` | **N/A** | Each has exactly one call site for its load function (its own `Component.onCompleted`) — grepped the whole `qml/` tree to confirm neither is in `onTenantContextReady`'s resync list or called from anywhere else. Safe by construction: a race needs two callers, and these only have one. `PartyStore` is additionally device-local (`QSettings`, not Firestore-tenant-scoped) per its own `onSignedOut` handling. |
+| `AnalysisService`, `GoogleAuthService`, `LockManager`, `MigrationService`, `StorageService` | **N/A** | No `Component.onCompleted`, no `FirebaseService.query`/`.get()` call anywhere in any of these five files — they don't do startup fetching at all (pure computation, auth-flow helpers, in-memory coordination, or invoked on demand). Nothing for this bug class to attach to. |
+
+**The general rule**: any store with a "reset and (re)fetch from scratch" function reachable from
+more than one trigger point needs that function itself to refuse re-entry while a fetch it already
+started is still in flight — guard the shared function, not each caller, since callers get added
+over time and each one re-deriving "is this safe" independently is how this kind of gap survives a
+review. The `if (loadingMore) return` guard is `_resetAndFetch()`-specific (a resettable, multi-page
+pagination cycle); a store instead using `FirebaseService.query`/`.get()` for a bounded, single-call,
+directly-overwritten fetch (see the `ActivityLog`/`CategoryStore`/`OrderChannelStore` row above)
+doesn't need it — a second concurrent call there just re-fetches the same correct answer. Before
+adding a NEW dual-triggered store, check which of these two shapes it is before assuming it needs
+the guard.
