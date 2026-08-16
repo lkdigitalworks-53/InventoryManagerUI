@@ -18,7 +18,7 @@
 
 const functions = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
@@ -137,9 +137,10 @@ exports.recordMutation = functions.onRequest(
                 after: validated.after,
                 clientTimestamp: validated.clientTimestamp,
                 collection: validated.collection,
-                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+                serverTimestamp: FieldValue.serverTimestamp()
             });
         } catch (e) {
+            console.error("recordMutation write failed", e);
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
@@ -214,9 +215,10 @@ exports.recordDelta = functions.onRequest(
                 clamps: validated.clamps,
                 clientTimestamp: validated.clientTimestamp,
                 collection: validated.collection,
-                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+                serverTimestamp: FieldValue.serverTimestamp()
             });
         } catch (e) {
+            console.error("recordDelta write failed", e);
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
@@ -414,9 +416,10 @@ exports.recordMutationsBatch = functions.onRequest(
                 collection: validated.collection,
                 requestId: validated.requestId,
                 items: validated.items,
-                serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+                serverTimestamp: FieldValue.serverTimestamp()
             });
         } catch (e) {
+            console.error("recordMutationsBatch write failed", e);
             send(res, 500, { ok: false, error: "write-failed" });
             return;
         }
@@ -660,7 +663,7 @@ exports.runCutover = functions.onRequest(
                 tenantId: ctx.tenantId,
                 actorUid: decoded.uid,
                 actorRole: ctx.role,
-                serverTimestamp: admin.firestore.FieldValue.serverTimestamp(),
+                serverTimestamp: FieldValue.serverTimestamp(),
                 clientTimestamp: body.clientTimestamp || null
             });
             await db.doc(root + "/audit_log/" + markerId).set(marker);

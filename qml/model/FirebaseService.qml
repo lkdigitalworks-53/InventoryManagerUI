@@ -16,8 +16,18 @@ QtObject {
     readonly property string environment: EnvConfig.envForStage(
         (typeof APP_STAGE !== "undefined" && APP_STAGE) ? APP_STAGE : "")
     readonly property string databaseId: EnvConfig.databaseIdForEnv(environment)
-    readonly property string databaseUrl: "https://firestore.googleapis.com/v1/projects/"
-                                          + projectId + "/databases/" + databaseId + "/documents"
+
+    // Test/dev-only override. Empty (every real build, always) means every
+    // existing behavior is unchanged — real Google Firestore, exactly as
+    // before. Set directly by qmltestrunner tests (tests/e2e/) to redirect
+    // at a local Firebase emulator instead. Never touched by production
+    // code; no build-time or CMake involvement.
+    property string emulatorHost: ""
+
+    readonly property string databaseUrl: (emulatorHost.length > 0
+            ? (emulatorHost + "/v1/projects/" + projectId + "/databases/" + databaseId + "/documents")
+            : ("https://firestore.googleapis.com/v1/projects/"
+               + projectId + "/databases/" + databaseId + "/documents"))
 
     property bool syncing: false
     property int pendingRequests: 0
