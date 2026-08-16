@@ -62,13 +62,24 @@ per-push permission this session (commits still shown for review first, per stan
 - Whether the Phase 1 design spec is worth a short addendum noting the final `test/e2e/` (not
   `tests/e2e/`) file location.
 
-## Open decision — asked Taher directly, not assumed
+## Decision locked (2026-08-16)
 
 Presented four candidate directions with trade-offs (doc-gap fix, gap-list triage, extend E2E
-coverage to a second scenario, start the Phase 2 UI-test spike) and asked which to pursue. See
-chat for the trade-off writeup. **Not yet answered as of this checkpoint.**
+coverage to a second scenario, start the Phase 2 UI-test spike). Taher's call — **sequence, not
+a single pick**:
+
+1. **E2E second scenario** (Orders) — do this first.
+2. **Gap-list triage** (the 5 items above, esp. the `AuthService` lazy-construction pattern).
+3. **Phase 2 spike** (Felgo headless dialog feasibility) — last.
+
+Docs update (`AGENTS.md`/`SKILLS.md`/`README.md`) folded in as a wrap-up after step 1 lands,
+covering Phase 1 + the new scenario in one pass rather than writing it twice — flagged to Taher
+as a deviation from my original "docs first" suggestion, not decided silently.
 
 ## Next step
 
-Waiting on Taher's direction. Nothing has been implemented yet this session beyond the
-checkpoint archive/rename — no product code touched.
+Starting on item 1: the Orders E2E scenario. Scoping this properly first — exploring
+`OrdersStore`/`DataModel`'s order-completion path surfaced that it's meaningfully more complex
+than Phase 1's single-store Inventory CRUD (crosses `Gateway.recordDelta`, a Cloud Function URL
+the harness has never pointed at the emulator, and is orchestrated from `DataModel.qml`, not a
+single Store). Presenting this to Taher before writing any code — see chat.
