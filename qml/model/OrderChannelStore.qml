@@ -32,9 +32,15 @@ QtObject {
         property string lastUsed: ""
     }
 
+    // _loadLocal() is device-local (QSettings), no tenant dependency, always
+    // safe. _fetchFromFirebase() was unconditional -- fired on every creation
+    // regardless of whether AuthStore.tenantId was known yet, hitting
+    // Firestore with an unscoped path on a cold start. Every other Firestore-
+    // backed store in this app guards this the same way -- see SKILLS Skill 39.
     Component.onCompleted: {
         _loadLocal()
-        _fetchFromFirebase()
+        if (AuthStore.tenantId.length > 0)
+            _fetchFromFirebase()
     }
 
     function _loadLocal() {

@@ -168,6 +168,90 @@ not getting updated" on the Orders/Inventory pages specifically refers to.
 (no new testable behavior — the timer-stop fix is covered in spirit by the existing
 `tst_TransactionStore_syncRetry.qml` backoff tests, and the log line has nothing to assert on).
 
+## Follow-up 2 (2026-08-12) — Taher found and fixed the actual root cause himself
+
+Taher retested with the diagnostic logging in place and diagnosed it correctly, in his own words:
+`TransactionStore.Component.onCompleted` calls `_resetAndFetch()`, and separately `Main.qml`'s
+`onTenantContextReady` handler also calls it. Both are async. Whichever's page-1 request lands first
+sets `loadingMore = true` and starts accumulating pages; the second call ran anyway (nothing gated
+it), wiping `entries` back to `[]` and resetting `_cursor` out from under the first, still-in-flight
+fetch — corrupting the rest of that pagination chain. This is exactly why the 2026-08-11 guard
+(`DataModel._tryAdjustOrder` checking `TransactionStore.hasMore`) didn't reliably fire: `hasMore`
+itself could read `false` while `entries` was genuinely still incomplete, because the corruption
+happened at the pagination-state level the guard never inspected.
+
+Taher's fix, committed directly (`e512c3f`, `2c23e16`): `_resetAndFetch()` now starts with
+`if (loadingMore) return`, applied to `TransactionStore` first, then extended to every other
+paginated store with the same shape (`InventoryStore`, `OrdersStore`, `StaffStore`,
+`StockBatchStore`, `SupplierStore`). Also added a detailed test plan doc (`b9c86fc`,
+`docs/superpowers/specs/2026-08-08-async-write-sequencing-test-plan-in-detail.md`).
+
+Asked me (this session) to: review the fix, document it properly for future improvements, and check
+the two stores Taher's pass didn't touch (`SalesStore`, `AuthStore`) plus anywhere else this bug
+might exist — fix if found, document if not.
+
+### This session's review
+
+1. **Verified Taher's fix is correct** for the exact race described — traced through
+   `_resetAndFetch()`'s new guard line by line against the failure sequence.
+
+2. **Full sweep of all 21 `qml/model/*.qml` singletons** (not just the two named), checking each for
+   the vulnerable shape (reset-like function, accumulator state, async fetch, more than one trigger):
+   - Confirmed `SalesStore` and `AuthStore` are both structurally immune — `SalesStore` has no
+     Firestore fetch at all (`_rebuildDerivedData()` is a synchronous recompute over `OrdersStore.
+     orders` already in memory); `AuthStore.loadSession()` is a synchronous local `QSettings` read
+     with exactly one caller, no async, no second trigger possible.
+   - Found **three more stores with the same dual-trigger exposure** Taher's pass didn't cover:
+     `ActivityLog`, `CategoryStore`, `OrderChannelStore` — all in `Main.qml`'s `onTenantContextReady`
+     resync list alongside the six already-fixed stores. Traced each in full: all three are
+     structurally immune to the *corruption* itself (each does a single bounded fetch — a top-50
+     query or a single-document `get()` — not multi-page pagination with a shared mutable cursor, so
+     a duplicate concurrent call just re-fetches the same correct data harmlessly). But none of the
+     three guarded `Component.onCompleted` with the `AuthStore.tenantId.length > 0` check every
+     other dual-triggered store already had — meaning each fires a guaranteed-to-fail, unscoped
+     Firestore request on every cold start before `onTenantContextReady`'s real sync runs. Different,
+     smaller issue than the main bug, found while checking the same trigger pair; fixed for
+     consistency with a one-line guard matching the established pattern (`qml/model/ActivityLog.qml`,
+     `qml/model/CategoryStore.qml`, `qml/model/OrderChannelStore.qml`).
+   - Confirmed `OutboxStore` and `PartyStore` have exactly one call site for their load functions
+     (grepped the whole `qml/` tree) — safe by construction, no second trigger exists to race against.
+   - Confirmed `AnalysisService`, `GoogleAuthService`, `LockManager`, `MigrationService`,
+     `StorageService` have no `Component.onCompleted` or Firestore fetch at all — not applicable.
+   - Found a third, currently-**dead** trigger while tracing `Main.qml`'s `onTenantContextReady`:
+     `Logic.syncAllStores` / `DataModel.onSyncAllStores` calls `syncFromFirebase()` on seven stores,
+     but nothing in the app actually emits `logic.syncAllStores()` anywhere today — declared and
+     handled, never wired to a UI action. Already covered by Taher's fix regardless (the guard is on
+     `_resetAndFetch()` itself, not per-caller), so no separate action needed — worth knowing if a
+     future pull-to-refresh feature wires this signal up.
+
+3. **Identified a residual trade-off in the fix as shipped**, not fixed, documented for a future
+   decision: `if (loadingMore) return` also silently drops a *legitimate* reset arriving mid-fetch —
+   e.g. switching accounts while the previous account's own initial sync is still in flight. Lower
+   probability than the cold-start double-fire (needs a deliberate fast account switch), and not
+   something Taher's testing has hit, but real. A "pending reset" flag (set a flag instead of no-op,
+   re-run the reset once the in-flight fetch's callback completes) would close this without
+   reintroducing the corruption risk — not implemented, since it's not a live bug and adds real
+   complexity; flagged so it's a deliberate choice next time rather than a rediscovery.
+
+4. **Wrote `tests/tst_TransactionStore_resetGuard.qml`** — two cases: `_resetAndFetch()` is a no-op
+   (doesn't touch `entries`/`_cursor`) while `loadingMore` is true, and still resets normally when
+   nothing is in flight. The second case deliberately lets a real `_fetchFromFirebase()` call run
+   (same no-real-network safety pattern as `tst_Gateway.qml` — empty `AuthStore.idToken`), with a
+   `cleanup()` that stops any retry timer it schedules so it can't bleed into other test files.
+
+5. **Docs**: appended **Skill 39** to `SKILLS.md` (the full mechanism, why the `Component.
+   onCompleted` guard's "shouldn't normally be true yet" assumption didn't hold on-device, the fix,
+   the residual account-switch trade-off, and the full 21-store sweep table). Cross-referenced in
+   `AGENTS.md` (Compliance & Audit Agent, Testing & QA suite count 20 → 21) and `README.md`
+   (Concurrency & Conflict Resolution changelog, chronologically above the 2026-08-11 entry).
+
+**Files touched this round**: `qml/model/TransactionStore.qml` (comments only — Taher's fix was
+already in place, this session added no code change here), `qml/model/ActivityLog.qml`, `qml/model/
+CategoryStore.qml`, `qml/model/OrderChannelStore.qml` (`Component.onCompleted` tenantId guard),
+`tests/tst_TransactionStore_resetGuard.qml` (new).
+
+## What's NOT done / needs Taher
+
 
 
 - **On-device, the original repro**: complete an order, verify in Firestore, restart the app, and
@@ -178,8 +262,13 @@ not getting updated" on the Orders/Inventory pages specifically refers to.
   Kill the network mid-sync (e.g., airplane mode right after opening the app) and confirm the
   console log shows retries with growing delays (`[TransactionStore] Firestore sync failed,
   retrying (attempt N)...`) rather than `hasMore` getting stuck.
-- **`qmltestrunner`**: run the two new suites plus the existing baseline.
+- **`qmltestrunner`**: run all three new suites (`tst_DataModel_adjustOrderSyncGuard.qml`,
+  `tst_TransactionStore_syncRetry.qml`, `tst_TransactionStore_resetGuard.qml`) plus the existing
+  baseline.
 - **Not addressed, flagged only**: `OrdersStore.orders` has the same paginated/`hasMore` shape as
   `TransactionStore` (Skill 38, "left alone" paragraph) — no live bug found, but worth checking
   again if a future feature starts aggregating across the full orders list the way `totalsForOrder`
   aggregates across transactions.
+- **A decision needed, not an on-device check**: whether the account-switch-mid-sync trade-off
+  (Skill 39, "residual trade-off" paragraph) is worth the added complexity of a "pending reset" flag,
+  or acceptable as-is given how narrow the window is.

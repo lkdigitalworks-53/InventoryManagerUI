@@ -449,6 +449,24 @@ branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
 
 See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
 
+**Update 2026-08-12:** Taher found this himself, on-device, immediately after the 2026-08-11 guard
+shipped and still didn't reliably catch the sync-incomplete window — no "still syncing" message on
+a prompt post-restart return, and Orders/Inventory screens showing inconsistent data that
+self-resolved given enough time. Root cause: `TransactionStore.Component.onCompleted` and `Main.
+qml`'s `onTenantContextReady` both call `_resetAndFetch()` on a cold start — both async, and since
+nothing gated a second call while the first was still mid-fetch, whichever landed second wiped
+`entries`/`_cursor` out from under the first, corrupting the rest of that pagination chain and
+leaving `hasMore` able to read `false` while `entries` was genuinely still incomplete — which is
+exactly why the 2026-08-11 guard (which only checks `hasMore`) didn't catch it. Fixed with
+`if (loadingMore) return` at the top of `_resetAndFetch()`, applied to every paginated store, not
+just `TransactionStore` (`InventoryStore`, `OrdersStore`, `StaffStore`, `StockBatchStore`,
+`SupplierStore`). A follow-up full sweep of all 21 `qml/model/*.qml` singletons found three more
+stores sharing the same dual-trigger exposure (`ActivityLog`, `CategoryStore`, `OrderChannelStore`)
+— structurally immune to the corruption itself (single bounded fetches, not multi-page pagination),
+but missing the same `AuthStore.tenantId.length > 0` guard on `Component.onCompleted` that every
+other store already had, fixed for consistency. See SKILLS Skill 39 for the full sweep table and a
+documented, not-yet-implemented residual edge case around account-switch timing.
+
 **Update 2026-08-11:** found immediately after the fix directly above, testing the same branch —
 complete an order, verify it in Firestore, close the app, reopen it, and return an item promptly:
 the return "succeeded" locally, but the Orders list total didn't reduce and order-level history

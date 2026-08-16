@@ -418,6 +418,15 @@ hasMore` is true, and `TransactionStore` now retries a failed sync page with bac
 leaving `hasMore` stuck forever (see SKILLS Skill 38, `docs/superpowers/specs/
 2026-08-11-ledger-sync-race-CHECKPOINT.md`). Scoped to the one caller that actually reads this
 ledger — order completion and everything else here don't depend on it.
+Found by Taher himself immediately after, still testing the same guard (2026-08-12): the guard
+above didn't reliably fire because `TransactionStore.hasMore` could read `false` while `entries` was
+genuinely still incomplete — `Component.onCompleted` and `onTenantContextReady` both call
+`_resetAndFetch()` on a cold start, and since both are async, the second call could wipe `entries`/
+`_cursor` out from under the first, still-in-flight fetch. Fixed with `if (loadingMore) return` at
+the top of `_resetAndFetch()`, applied to every paginated store (not just `TransactionStore`) — see
+SKILLS Skill 39 for the full sweep of all 21 `qml/model/*.qml` singletons, including which ones
+don't need this guard and why, and a documented (not yet implemented) residual edge case around
+account-switch timing.
 Worth knowing regardless: the 2026-08-06 review added a `locks/**` lockdown to
 `firestore.rules` (a new `isServerOnlyCollection` tier, distinct from the ledger tier below — locks
 needs read AND write denied, not just write) — if touching `firestore.rules` for compliance work,
@@ -539,13 +548,20 @@ env.
   retrying with growing delays instead of leaving `hasMore` stuck). `DataModel.qml` has no
   `pragma Singleton` (unlike the stores), so its test instantiates it directly as a child item
   rather than referencing it by name — first test coverage for this file.
-- 20 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
-  2026-08-11). Historical baseline before those 6 new suites: **140 cases pass, 0 fail** — none of
-  the 6 newest suites have been run under a real `qmltestrunner` yet (this repo's Cloud sessions
-  don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have Node-side twins that do pass,
-  7/7, via `cd functions && npm test` — the other 3 have no Node-side twin, since the logic under
-  test lives directly in QML singletons/components and isn't Node-portable the way the pure
-  `functions/lib/` math is).
+- `tests/tst_TransactionStore_resetGuard.qml` (2026-08-12, SKILLS Skill 39) — regression coverage
+  for the concurrent-reset race Taher found and fixed on-device: asserts `_resetAndFetch()` is a
+  no-op (doesn't wipe `entries`/`_cursor`) while `loadingMore` is already true, and still resets
+  normally when nothing is in flight. The "nothing in flight" case deliberately lets a real
+  `_fetchFromFirebase()` call run (same no-real-network safety pattern as `tst_Gateway.qml` — empty
+  `AuthStore.idToken`), so it also stops any retry timer that call schedules in `cleanup()` to avoid
+  bleeding into other test files.
+- 21 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11 + 1 from 2026-08-12). Historical baseline before those 7 new suites: **140 cases pass,
+  0 fail** — none of the 7 newest suites have been run under a real `qmltestrunner` yet (this repo's
+  Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have Node-side twins
+  that do pass, 7/7, via `cd functions && npm test` — the other 4 have no Node-side twin, since the
+  logic under test lives directly in QML singletons/components and isn't Node-portable the way the
+  pure `functions/lib/` math is).
 - **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file

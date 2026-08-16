@@ -1624,3 +1624,90 @@ transactions — `OrdersPage`'s list, counts, and filters all operate per-row on
 which degrades gracefully (a syncing order list just looks incomplete, it doesn't compute a wrong
 number) rather than silently wrong. No evidence of a live bug here; flagging so a future aggregate
 built on `OrdersStore.orders` doesn't reintroduce this same class of bug without the same guard.
+
+## Skill 39: Concurrent-reset race — two async resyncs, one paginated store
+
+**Files**: `qml/model/TransactionStore.qml`, `qml/model/InventoryStore.qml`, `qml/model/
+OrdersStore.qml`, `qml/model/StaffStore.qml`, `qml/model/StockBatchStore.qml`, `qml/model/
+SupplierStore.qml` (all `_resetAndFetch`, Taher's fix, 2026-08-12), `qml/model/ActivityLog.qml`,
+`qml/model/CategoryStore.qml`, `qml/model/OrderChannelStore.qml` (`Component.onCompleted`, this
+session's follow-up fix), `tests/tst_TransactionStore_resetGuard.qml`. Full narrative:
+`docs/superpowers/specs/2026-08-11-ledger-sync-race-CHECKPOINT.md`.
+
+Taher found this himself, on-device, immediately after the Skill 38 guard shipped and still didn't
+reliably catch the sync-incomplete window: no "still syncing" message on a prompt post-restart
+return, and Orders/Inventory screens showing inconsistent data that self-resolved given enough time.
+His diagnosis, in his own words: `TransactionStore.Component.onCompleted` calls `_resetAndFetch()`,
+and separately `Main.qml`'s `onTenantContextReady` handler ALSO calls it (via `syncFromFirebase()`)
+— both async, both real, on the same cold start. Whichever's page-1 request lands first sets
+`loadingMore = true` and starts accumulating pages; the second call still ran to completion anyway
+(nothing was gating it), wiping `entries` back to `[]` and resetting `_cursor` out from under the
+FIRST, still-in-flight fetch. That first fetch's eventual page-1 response then concatenated onto the
+just-wiped array and its `_cursor` got clobbered, corrupting the rest of that pagination chain —
+`hasMore` could end up `false` with `entries` still genuinely incomplete, which is exactly why
+Skill 38's guard (which only checks `hasMore`) didn't catch it: `hasMore` was lying.
+
+This is a materially different bug from Skill 38, even though the visible symptom (return doesn't
+fully take effect after a restart) looked similar. Skill 38 was about *what* the ledger sum trusted;
+this is about *whether the sync that populates the ledger can even complete correctly* when two
+triggers fire close together. Worth internalizing as two separate lessons because a fix for one
+doesn't imply the other is covered — Skill 38's guard, by itself, was necessary but not sufficient.
+
+**Why `Component.onCompleted`'s existing `AuthStore.tenantId.length > 0` check didn't prevent
+this**: that guard was written (see `OrdersStore`'s own comment on the same pattern) assuming
+`tenantId` is normally still empty at singleton-creation time on a cold start, deferring the actual
+first fetch to `onTenantContextReady`. On-device, that assumption didn't hold reliably — `tenantId`
+CAN already be populated by the time these singletons are created (session restore timing varies),
+so BOTH triggers fire. Static reading of the "normal" case predicted this couldn't happen; the
+actual device proved otherwise. Lesson: a guard justified by "this shouldn't normally be true yet"
+is a hope, not a guarantee — the two-async-callers problem needs its own guard regardless of how
+unlikely the overlap seems from reading the trigger order in isolation.
+
+**The fix**: `_resetAndFetch()` now starts with `if (loadingMore) return` — a second reset call
+arriving while a fetch is already in flight is a no-op instead of wiping state out from under it.
+Applied to `_resetAndFetch()` itself (not each caller), so it protects against ANY current or future
+caller pairing, not just the two known ones — confirmed by finding a third, currently-dead trigger
+(`Logic.syncAllStores` / `DataModel.onSyncAllStores`, declared and handled but never actually
+emitted anywhere in the app today) that would hit the exact same race the moment something wires it
+up to a UI action (e.g. a future pull-to-refresh) — already covered, no separate fix needed if/when
+that happens.
+
+**Residual trade-off, not fixed, worth a decision before it's needed**: `if (loadingMore) return`
+also silently drops a *legitimate* reset that happens to arrive mid-fetch — e.g. a user switching
+accounts while the previous account's very own initial sync is still in flight. The in-flight fetch
+would complete with the OLD account's data, and the new account's reset request — the one case
+`onTenantContextReady`'s own comment says it exists FOR ("a re-login after switching accounts") —
+would just be discarded, leaving the store showing the wrong account's data until some other trigger
+resyncs it. Lower probability than the cold-start double-fire (needs a deliberate fast account
+switch, not just normal app launch timing) and not something Taher's on-device testing has hit, but
+it's a real gap in the current fix, not a hypothetical. A more complete fix is a "pending reset"
+flag: if `_resetAndFetch()` is called while `loadingMore` is true, set `_resetPending = true` instead
+of silently returning; when the in-flight fetch's callback completes, check the flag and immediately
+re-run `_resetAndFetch()` (which will now proceed, since `loadingMore` is false) rather than
+continuing that now-stale fetch chain. Not implemented — flagging for a decision on whether the
+probability of hitting this in practice justifies the added complexity, rather than deciding
+unilaterally either way.
+
+**Full sweep of every `qml/model/*.qml` singleton** (Taher's fix covered six stores; this session
+checked the other fifteen for the same shape — a reset-like function clearing accumulator state and
+kicking off an async fetch, reachable from more than one trigger):
+
+| Store | Verdict | Why |
+|---|---|---|
+| `TransactionStore`, `InventoryStore`, `OrdersStore`, `StaffStore`, `StockBatchStore`, `SupplierStore` | **Fixed** (Taher, 2026-08-12) | Multi-page pagination (`entries`/`hasMore`/`_cursor`), dual-triggered (`Component.onCompleted` + `onTenantContextReady`) — exactly the vulnerable shape. |
+| `ActivityLog`, `CategoryStore`, `OrderChannelStore` | **Structurally immune to the corruption; fixed a smaller, separate issue** (this session) | Dual-triggered same as above, but each does a single bounded fetch (`ActivityLog`: top-50 query, no cursor; `CategoryStore`/`OrderChannelStore`: single-document `get()`) — no multi-page accumulation to corrupt. A duplicate concurrent call just re-fetches the same correct data; whichever response lands last harmlessly overwrites with an equally-correct result. They DID have a different, minor issue: unlike every dual-triggered store above, none guarded `Component.onCompleted` with the `AuthStore.tenantId.length > 0` check — meaning they fired an unscoped, guaranteed-to-fail Firestore request on every cold start before `onTenantContextReady`'s real sync. Fixed for consistency (same one-line guard the six already had) — not the same bug, but the same missing defense, found while checking the same trigger pair. |
+| `SalesStore` | **N/A** | No Firestore fetch at all — `syncFromFirebase()`/`_load()` both just call `_rebuildDerivedData()`, a synchronous, idempotent recompute over `OrdersStore.orders` already in memory. `Component.onCompleted` happens to call `_load()` then `_rebuildDerivedData()` redundantly (harmless double-recompute at startup, not worth touching). |
+| `AuthStore` | **N/A** | `loadSession()` is a synchronous local `QSettings` read, no network I/O at all, called from exactly one place (`AuthService.Component.onCompleted`). No async, no second trigger, no race possible. |
+| `OutboxStore`, `PartyStore` | **N/A** | Each has exactly one call site for its load function (its own `Component.onCompleted`) — grepped the whole `qml/` tree to confirm neither is in `onTenantContextReady`'s resync list or called from anywhere else. Safe by construction: a race needs two callers, and these only have one. `PartyStore` is additionally device-local (`QSettings`, not Firestore-tenant-scoped) per its own `onSignedOut` handling. |
+| `AnalysisService`, `GoogleAuthService`, `LockManager`, `MigrationService`, `StorageService` | **N/A** | No `Component.onCompleted`, no `FirebaseService.query`/`.get()` call anywhere in any of these five files — they don't do startup fetching at all (pure computation, auth-flow helpers, in-memory coordination, or invoked on demand). Nothing for this bug class to attach to. |
+
+**The general rule**: any store with a "reset and (re)fetch from scratch" function reachable from
+more than one trigger point needs that function itself to refuse re-entry while a fetch it already
+started is still in flight — guard the shared function, not each caller, since callers get added
+over time and each one re-deriving "is this safe" independently is how this kind of gap survives a
+review. The `if (loadingMore) return` guard is `_resetAndFetch()`-specific (a resettable, multi-page
+pagination cycle); a store instead using `FirebaseService.query`/`.get()` for a bounded, single-call,
+directly-overwritten fetch (see the `ActivityLog`/`CategoryStore`/`OrderChannelStore` row above)
+doesn't need it — a second concurrent call there just re-fetches the same correct answer. Before
+adding a NEW dual-triggered store, check which of these two shapes it is before assuming it needs
+the guard.
