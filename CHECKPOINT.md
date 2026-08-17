@@ -112,8 +112,37 @@ confirmed evidence; per-test granularity inside that job is not something I veri
   layers) — one table row per layer, pointing to `AGENTS.md`/`SKILLS.md` for depth rather than
   duplicating it.
 
-## Next step
+## Item 2 (gap-list triage) — in progress
 
-Docs committed and pushed next, then moving to item 2 of the locked sequence: gap-list triage,
-starting with the `AuthService` lazy-construction pattern (the one item in that list that already
-caused a real bug, not just a cosmetic warning).
+**`AuthService` lazy-construction pattern — CLOSED, not just worked around.** Grepped every
+`.qml` file under `qml/` for direct writes to `AuthStore.idToken` outside `AuthStore.qml`/
+`AuthService.qml` themselves: zero matches. `AuthService` is the ONLY writer anywhere in the app.
+Since its own `Component.onCompleted` always runs before any of its own login/refresh functions
+could set a *new* token, the construction-order wipe can only race against an external direct
+write — and no such write exists in production code. The race is structurally test-harness-only
+(the E2E tests deliberately poke `AuthStore` directly to inject a fixture token, bypassing
+`AuthService` entirely, an ordering that never occurs in the real app). No production fix needed;
+already covered by both test files' `initTestCase()` workaround and SKILLS.md Skill 40's
+documentation of why.
+
+**`ActivityLog`'s client-side 403s — narrowed with real evidence, not fully resolved.** Read
+`firestore.rules` end to end: `activity_log` isn't in `isLedgerCollection` or
+`isServerOnlyCollection`, so it falls into the generic wildcard (`allow create/update/delete: if
+isMember(tenantId)`), and `FirebaseService._resolvePath` tenant-prefixes it exactly like every
+other collection — ruled out wrong-collection-name and wrong-path-prefix as causes. Checked
+`test/e2e/seed.js`: it DOES create `tenants/{TENANT_ID}/members/{TEST_UID}` (line 98) — ruled out
+"fixture has no member doc" too. `ActivityLog` is the only Store in the entire app that writes
+client-side directly to Firestore (every other Store goes through `Gateway` → Cloud Functions →
+Admin SDK, which bypasses `firestore.rules` entirely) — meaning it's the ONLY place `isMember()`'s
+member-doc dependency is exercised by a real client-authenticated request anywhere in this test
+suite, and nothing else has ever proven that path works under emulation. Most likely remaining
+suspect: `seed.js`'s custom-token → ID-token exchange not propagating `request.auth.uid` into the
+Firestore emulator's rules evaluation the way a real production login would — a known category of
+Firebase Local Emulator Suite limitation, not confirmed here. Static reading can't settle this
+further; needs either Taher's own quick check (does a real logged-in account's activity log write
+succeed in production/on-device?) or a live instrumented run against the emulator. **Production
+risk is genuinely open, not ruled out** — unlike the AuthService item, don't treat this as closed.
+
+Remaining, not yet triaged this round: QSettings org-identifier warnings under `qmltestrunner`,
+`functions-tests`' exposure to the directory-sweep mechanism, and the Phase 1 spec addendum note.
+Paused here — this checkpoint update and the two findings above go to Taher before continuing.
