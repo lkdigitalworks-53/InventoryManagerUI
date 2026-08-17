@@ -502,7 +502,7 @@ env.
 ### 9. Testing & QA Agent
 
 **Purpose**: Owns the QML test harness and unit coverage for pure logic.
-**Scope**: `tests/`
+**Scope**: `tests/`, `functions/test/`, `test/e2e/`
 
 **Responsibilities**:
 - Write Qt Quick Test (`TestCase`) suites for **pure, headless-testable logic** — primarily the
@@ -566,12 +566,55 @@ env.
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file
   (QML has no established pattern here for reading an external JSON file synchronously in a test).
+- **New, separate test surface: `test/e2e/`** (`qmltestrunner -input test/e2e`, run in CI's
+  `e2e-tests` job against the real Firebase Local Emulator Suite — Firestore + Auth + Functions,
+  started via `firebase emulators:start`, seeded via `node test/e2e/seed.js`) — real code path
+  (Store/DataModel → `Gateway` → the *emulated* Cloud Functions → the *emulated* Firestore), not
+  a mock. Verifies via a raw REST GET against the Firestore emulator, independent of the client's
+  own optimistic local state. Distinct from `tests/` in three ways worth knowing before adding a
+  third scenario here:
+  - **Every Cloud Function URL Gateway calls has to be pointed at the emulator explicitly** —
+    `Gateway.functionUrl` (`recordMutation`), `Gateway.deltaFunctionUrl` (`recordDelta`, added
+    2026-08-16 for the Orders scenario — `StockBatchStore.consumeFifo`/`InventoryStore.deductStock`
+    go through this, not `recordMutation`), restored in `cleanup()`. `Gateway.batchFunctionUrl`
+    isn't wired yet — nothing in `test/e2e/` exercises a deferred-write batch path so far.
+  - **The Cloud Functions Emulator cold-starts each function on its own first real invocation** —
+    `initTestCase()` in each file pays that cost with a dedicated warm-up POST (bypassing
+    Gateway/OutboxStore) before any real test runs, sized for a one-time cold start rather than
+    inflating every test's own timeout. `tst_OrdersE2E.qml`'s `recordDelta` warm-up deliberately
+    expects HTTP 404 (a delta against a nonexistent entityId — confirmed against
+    `functions/lib/gatewayLogic.js`'s `applyDelta()`), not 200 — a real function needs a real doc
+    to move.
+  - **Referencing `AuthService` for the first time triggers its `Component.onCompleted`, which
+    unconditionally wipes `AuthStore`** — every file's `initTestCase()` forces that construction
+    (`AuthService.ensureFreshToken()`, a harmless no-op call) before its own `init()` sets
+    `AuthStore.idToken` for real, or the wipe silently lands after and every write goes out with
+    an empty token. Root-caused 2026-08-14 after it cost several rounds of "doc never appeared,
+    no visible reason" — see `docs/superpowers/specs/2026-08-16-e2e-testing-phase1-CHECKPOINT.md`
+    for the full trace if it resurfaces somewhere this note doesn't cover.
+  - Shared plumbing (`loadFixture`/`pollEmulatorDoc`/`postDirect`) lives in
+    `test/e2e/E2EHelpers.js` (`.pragma library`, extracted 2026-08-16 when a second scenario
+    needed it) — every function takes the calling `TestCase` instance explicitly and calls
+    `tc.tryVerify`/`tc.fail`/`tc.compare` through it, since pragma-library scripts don't share the
+    QML component scope a bare `tryVerify(...)` resolves against inside a `TestCase` file itself.
+  - `DataModel.qml` orchestration (as opposed to a single Store) is reached the same way
+    `tests/tst_DataModel_adjustOrderSyncGuard.qml` already established — instantiated directly as
+    a child item, since it has no `pragma Singleton`.
+  - Two scenarios so far: `tst_InventoryE2E.qml` (Phase 1 — CRUD, one Store) and
+    `tst_OrdersE2E.qml` (create → complete → FIFO stock deduction, crosses `OrdersStore` →
+    `DataModel` → `StockBatchStore`/`InventoryStore` → `TransactionStore`). Not yet covered here:
+    the `stock_batch.qtyRemaining` doc directly, the generated transaction doc, and anything
+    UI/dialog-level — that last one is Phase 2, gated on an unresolved Felgo headless-rendering
+    question (do `dp()`/`sp()`/`Constants` resolve outside an `App{}` root), tracked separately
+    from this test surface.
 
 **Example Prompts**:
 - "Add tests for the new breakdown metric"
 - "Write a TestCase covering the week/month period windows"
 - "Add a parity fixture pair for a new RealisedMath scenario, in both functions/test/fixtures/ and
   the matching tst_RealisedMathParityFixtures.qml"
+- "Add an E2E scenario for [workflow] against the Firebase emulator, following the pattern in
+  test/e2e/tst_OrdersE2E.qml"
 
 ---
 

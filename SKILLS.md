@@ -1711,3 +1711,78 @@ directly-overwritten fetch (see the `ActivityLog`/`CategoryStore`/`OrderChannelS
 doesn't need it — a second concurrent call there just re-fetches the same correct answer. Before
 adding a NEW dual-triggered store, check which of these two shapes it is before assuming it needs
 the guard.
+
+---
+
+## Skill 40: Real-emulator E2E testing — cold starts, singleton construction order, and per-function URLs
+
+**Files**: `test/e2e/tst_InventoryE2E.qml`, `test/e2e/tst_OrdersE2E.qml`, `test/e2e/E2EHelpers.js`,
+`test/e2e/seed.js`, `qml/model/Gateway.qml`, `.github/workflows/checks.yml` (`e2e-tests` job). Full
+narrative of Phase 1's 13 CI-debugging rounds: the archived
+`docs/superpowers/specs/2026-08-16-e2e-testing-phase1-CHECKPOINT.md`. Design boundary (what's in
+scope vs. deferred to Phase 2): `docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md`.
+
+This suite drives real Store/`DataModel` code against the real Firebase Local Emulator Suite —
+Firestore + Auth + Functions — and verifies via a raw REST GET against the Firestore emulator,
+independent of the client's own optimistic in-memory state. That's the whole point of it (a mock
+would only prove the client agrees with itself), but it means every gap between "looks right
+locally" and "the server actually agrees" is a real bug this suite can catch that `tests/`
+structurally cannot. Four gaps specifically cost real CI rounds; worth internalizing before adding
+a third scenario here rather than rediscovering each one:
+
+**1. The Cloud Functions Emulator lazily cold-starts each function on its own first real
+invocation.** Not per test run, per *function* — warming up `recordMutation` does nothing for
+`recordDelta`'s first call. `initTestCase()` in each file pays this cost once, deliberately, with a
+dedicated raw POST warm-up sized for a one-time cold start (15000ms), before any real test's
+5000ms-budget poll can eat it. `tst_OrdersE2E.qml`'s `recordDelta` warm-up targets a nonexistent
+`entityId` and asserts HTTP 404, not 200 — confirmed against `functions/lib/gatewayLogic.js`'s
+`applyDelta()`, which returns `{ok:false, status:404}` for a missing document. A real function
+still needs a real doc to move; 404 there proves the worker responded, which is all a warm-up
+needs.
+
+**2. Referencing a QML singleton for the first time triggers its `Component.onCompleted`** — for
+`AuthService` specifically, that unconditionally wipes `AuthStore` before checking whether there's
+a session to restore. `AuthService` is never referenced directly anywhere in either test file; its
+actual first reference in a real run is buried inside `Gateway.drainNow()`
+(`if (typeof AuthService !== 'undefined' && AuthService) AuthService.ensureFreshToken()`) — meaning
+the FIRST test to call any `Gateway.recordMutation`/`recordDelta` path is also the first thing to
+construct `AuthService`, and it does so from *inside* that call, after its own `init()` already set
+`AuthStore.idToken` for real. The wipe lands in between, silently no-op-ing every request until an
+unrelated later call happens to re-set the token. Both files' `initTestCase()` forces the
+construction explicitly (`AuthService.ensureFreshToken()`, a harmless no-op while unauthenticated)
+before `init()` ever runs — cheap insurance against a bug that took four CI rounds to root-cause
+the first time, and applies to ANY new E2E file that touches `Gateway`, not just these two.
+
+**3. Each Cloud Function `Gateway` calls has its own URL property, and wiring one doesn't wire the
+others.** `functionUrl` (`recordMutation`), `deltaFunctionUrl` (`recordDelta`), `batchFunctionUrl`
+(`recordMutationsBatch`) are three independent properties. Phase 1 only needed the first. The
+Orders scenario needed the second (`StockBatchStore.consumeFifo`/`InventoryStore.deductStock` go
+through `recordDelta`, not `recordMutation`) — a scenario exercising a deferred-write batch path
+would need the third. Before writing a new scenario, trace which Store methods it actually calls
+and check each one's `Gateway.*` call against this list rather than assuming the existing
+`functionUrl` override covers it.
+
+**4. QtQuickTest does not preserve a file's declared function order.** `tst_InventoryE2E.qml`'s own
+`test_recordMutation_function_accepts_seeded_credentials` was originally written assuming it'd run
+first (as a fast-fail credentials probe) — it didn't; actual order was alphabetical. Don't design a
+test around "this one runs before the others" without `initTestCase()`/explicit sequencing; use
+`initTestCase()` for anything that must happen exactly once before every test, not test declaration
+order.
+
+**Sharing code across test files, given #1–#4 mean every new scenario needs the same
+fixture-loading/polling/warm-up machinery**: `test/e2e/E2EHelpers.js` (`.pragma library`) holds
+`loadFixture`/`pollEmulatorDoc`/`postDirect`, extracted from `tst_InventoryE2E.qml` when
+`tst_OrdersE2E.qml` needed the same logic verbatim. Every function takes the calling `TestCase`
+instance explicitly (`tc`) and calls `tc.tryVerify`/`tc.fail`/reads `tc.fixture`/`tc.lastConflict`
+through it — a `.pragma library` script doesn't share the QML component scope a bare
+`tryVerify(...)` call resolves against inside a `TestCase` file itself, so every QtTest primitive
+has to arrive as an explicit call on the passed-in object instead of an unqualified reference. New
+pattern for this codebase (`BreakdownMath.js`/`OrderMath.js`/`ImportMath.js` are pure math, no
+`TestCase` involved) — passed first CI attempt, but flagging the pattern itself as worth watching
+if a future E2E file's helpers start failing in a way that looks like a scoping issue.
+
+**Reaching `DataModel` orchestration** (as opposed to a single Store's own method): `DataModel.qml`
+has no `pragma Singleton`, so it's instantiated directly as a child item inside the `TestCase`
+(`DataModel { id: dm }`) and its functions called directly (`dm._tryCompleteOrder(...)`) — same
+pattern `tests/tst_DataModel_adjustOrderSyncGuard.qml` already established, bypassing the
+Logic/dispatcher signal bus entirely rather than trying to drive it through `Logic.qml`'s signals.

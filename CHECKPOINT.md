@@ -76,10 +76,44 @@ Docs update (`AGENTS.md`/`SKILLS.md`/`README.md`) folded in as a wrap-up after s
 covering Phase 1 + the new scenario in one pass rather than writing it twice — flagged to Taher
 as a deviation from my original "docs first" suggestion, not decided silently.
 
+## Step 1 result: Orders E2E scenario — CI verified, first attempt
+
+Wrote `test/e2e/tst_OrdersE2E.qml` (create → complete → FIFO stock deduction, two tests: happy
+path and over-stock rejection) plus `test/e2e/E2EHelpers.js` (shared fixture/polling/warm-up
+logic, extracted from `tst_InventoryE2E.qml`, which shrank 375 → 265 lines with no behavior
+change). New `Gateway.deltaFunctionUrl` emulator wiring — Phase 1 only wired `functionUrl`.
+Presented the full diff to Taher, flagged the two genuinely novel/unverified pieces (calling
+`tc.tryVerify`/`tc.fail` through a passed TestCase reference from inside a `.pragma library` file;
+the `recordDelta` warm-up expecting HTTP 404, not 200) before committing.
+
+Taher: "don't wait for my permission to commit and push" going forward — updated memory edit #2
+to reflect this (still show full diffs; no longer gate commit/push on a separate confirmation
+each time). Committed (`44009e0`), pushed, opened PR #44 (a bare branch push doesn't trigger
+`checks.yml` — it only fires on `push: branches: [main]` and `pull_request` events).
+
+**CI result** (PR #44, run `32005489283`, checked via the Actions API — not assumed): **all four
+jobs passed on the first attempt**, including `E2E Tests` (1m47s, covering both
+`tst_InventoryE2E.qml` and the new `tst_OrdersE2E.qml`). Contrary to my own stated expectation
+("I'd genuinely bet on at least one CI round here too") — worth noting plainly rather than quietly
+revising the earlier claim away. Could not fetch the job's raw per-test log for a line-by-line
+count (GitHub's log endpoint redirects to `productionresultssa2.blob.core.windows.net`, outside
+this sandbox's allowed egress domains) — job-level pass/fail via the Actions API is real,
+confirmed evidence; per-test granularity inside that job is not something I verified directly.
+
+## Docs wrap-up (done, per the locked plan — write once, covering Phase 1 + Orders together)
+
+- `AGENTS.md`: extended the Testing & QA Agent section with a `test/e2e/` bullet block — the four
+  gotchas above, `E2EHelpers.js`, the `DataModel`-instantiation pattern, current scenario coverage
+  and what's explicitly not covered yet.
+- `SKILLS.md`: new Skill 40, matching the established format — cold starts, singleton
+  construction order, per-function URLs, declared-order-isn't-real-order, the pragma-library/
+  TestCase-boundary pattern.
+- `README.md`: new short **Testing** section (previously zero mentions of any of the four test
+  layers) — one table row per layer, pointing to `AGENTS.md`/`SKILLS.md` for depth rather than
+  duplicating it.
+
 ## Next step
 
-Starting on item 1: the Orders E2E scenario. Scoping this properly first — exploring
-`OrdersStore`/`DataModel`'s order-completion path surfaced that it's meaningfully more complex
-than Phase 1's single-store Inventory CRUD (crosses `Gateway.recordDelta`, a Cloud Function URL
-the harness has never pointed at the emulator, and is orchestrated from `DataModel.qml`, not a
-single Store). Presenting this to Taher before writing any code — see chat.
+Docs committed and pushed next, then moving to item 2 of the locked sequence: gap-list triage,
+starting with the `AuthService` lazy-construction pattern (the one item in that list that already
+caused a real bug, not just a cosmetic warning).
