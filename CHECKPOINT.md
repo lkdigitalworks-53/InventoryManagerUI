@@ -187,11 +187,54 @@ log-noise item — flagging the concrete fix (a conditional `fileName` distingui
 | `ActivityLog` client-side 403s | **Closed** — Taher confirmed production unaffected; E2E-suite-only limitation, documented |
 | Spec addendum (file location) | **Done** — 4 stale paths fixed, addendum note added |
 | `functions-tests` sweep exposure | **No action** — dormant, benign, re-flagged not re-decided |
-| QSettings org-identifier warnings | **Open, real fix identified, needs Taher's call** — touches production persistence code |
+| QSettings org-identifier warnings | **Fixed for `AuthStore`/`OutboxStore`; extending to remaining 4 stores approved 2026-08-17, in progress** |
+
+## Item 2 continued: QSettings fix implementation (2026-08-17)
+
+Taher's decision: **fix it**, not just document it. Implemented:
+
+- `qml/helper/SettingsPath.js` (new) — pure helper, `settingsFileNameOverride(orgName, tempDir)`.
+  Returns `""` (≡ unset) when `orgName` is non-empty; an explicit
+  `StandardPaths.writableLocation(StandardPaths.TempLocation)`-rooted shared file path when empty.
+  Logic-checked with `node` directly (stripped `.pragma library`, `eval`'d, asserted all four
+  input cases) — the one piece of this I could actually execute in this sandbox.
+- `qml/model/AuthStore.qml`, `qml/model/OutboxStore.qml` — wired `fileName:
+  SettingsPath.settingsFileNameOverride(Application.organization,
+  StandardPaths.writableLocation(StandardPaths.TempLocation))` into each `Settings` block.
+  `Application` is the QtQuick singleton (not the older `Qt.application` global-object property) —
+  verified against current Qt 6.9/6.11 docs since there's no toolchain here to confirm empirically.
+  Both files already had `import QtQuick`/`import QtCore`; no new imports needed beyond the helper.
+- `tests/tst_SettingsPath.qml` (new) — unit coverage for the helper itself.
+- `tests/tst_AuthStore.qml` (new) — first-ever coverage for `AuthStore`, deliberately scoped to
+  session persistence (`applyAuth`/`loadSession`/the `signOut` clear()+saveSession() sequence),
+  not the role/permission surface — flagged as a separate, unscoped gap, not silently done.
+- `tests/tst_OutboxStore.qml` — two new cases: a durability-across-simulated-relaunch test (the
+  one that actually *proves* the fix — fails with `pendingCount: 0` without it, since the write
+  never reached a real file) and a `clear()`-wipes-the-persisted-file case.
+- `SKILLS.md` Skill 41, `AGENTS.md` (Store & Firebase Agent, Compliance & Audit Agent, Testing &
+  QA Agent sections) updated to match.
+
+**Verification status, stated plainly**: nothing above has run under a real `qmltestrunner`. The
+JS logic itself was verified via `node`; the QML wiring (imports resolving, `Application.organization`
+actually being empty under `qmltestrunner`, `fileName: ""` actually being equivalent to unset) is
+unverified in this sandbox and needs a real pass before merge — same status as every other test
+file in this branch's history.
+
+**Scope found broader than the original gap-list item**: grepping `qml/model/*.qml` for the same
+`Settings {}` pattern found four more stores with the identical bug — `OrdersStore`
+(`autoApprove`), `PartyStore`, `CategoryStore`, `OrderChannelStore`. Flagged to Taher rather than
+silently expanding or silently leaving them inconsistent.
+
+**Taher's decision (2026-08-17): extend the fix to all six stores.** Not yet done as of this
+checkpoint entry — next step.
 
 ## Next step
 
-Gap-list triage (item 2 of the locked sequence) complete pending Taher's QSettings decision.
-Committing/pushing this round's work, then item 3: Phase 2 spike (Felgo headless dialog
-feasibility) — the one item in the whole locked sequence I can't fully close out myself, since
-this sandbox has no Qt/Felgo toolchain to test against.
+1. Push this round's work (helper + `AuthStore`/`OutboxStore` fix + 3 test files + docs) — in
+   progress, blocked on a fresh PAT (the one posted in-conversation earlier was flagged as exposed
+   and deliberately not used; Taher asked to rotate it, no replacement provided yet).
+2. Extend the `SettingsPath` fix to `OrdersStore`, `PartyStore`, `CategoryStore`,
+   `OrderChannelStore` — approved 2026-08-17, same pattern, not yet started.
+3. Phase 2 spike — Taher approved the probe-file path (write a standalone `.qml` probe testing
+   whether `dp()`/`sp()`/`Constants` resolve outside a Felgo `App{}` root, for Taher to run on his
+   own machine and report back) over holding it. Not yet started.

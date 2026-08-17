@@ -1786,3 +1786,63 @@ has no `pragma Singleton`, so it's instantiated directly as a child item inside 
 (`DataModel { id: dm }`) and its functions called directly (`dm._tryCompleteOrder(...)`) — same
 pattern `tests/tst_DataModel_adjustOrderSyncGuard.qml` already established, bypassing the
 Logic/dispatcher signal bus entirely rather than trying to drive it through `Logic.qml`'s signals.
+
+---
+
+## Skill 41: QSettings org-identifier fix — making a Settings-backed store's persistence actually testable under qmltestrunner
+
+**Files**: `qml/helper/SettingsPath.js` (new), `qml/model/AuthStore.qml`, `qml/model/OutboxStore.qml`,
+`tests/tst_SettingsPath.qml` (new), `tests/tst_AuthStore.qml` (new, first coverage for this store),
+`tests/tst_OutboxStore.qml` (two new cases). Carried forward from the archived
+`2026-08-16-e2e-testing-phase1-CHECKPOINT.md`'s gap list as "QSettings org-identifier warnings under
+`qmltestrunner`".
+
+**The bug, precisely**: `Qt.labs.Settings`/QtCore's `Settings { category: "..." }` resolves its
+underlying storage file from `QCoreApplication`'s organization identifier when no explicit
+`fileName` is set. `qmltestrunner` is a generic Qt-provided binary — it never runs this app's own
+`main.cpp`, so `FelgoApplication::initialize()` (which sets `Application.organization` for a real
+launch) never runs either. The identifier stays empty, `Settings` logs a warning, and — this is the
+part that actually matters, not just noise — every property write against it no-ops instead of
+persisting. For `OutboxStore`, whose entire reason to exist is durability across a relaunch, this
+meant that guarantee was silently untested by every `qmltestrunner` run there has ever been.
+
+**The fix**: a pure helper, `SettingsPath.settingsFileNameOverride(orgName, tempDir)` — returns `""`
+(identical to leaving `fileName` unset) when `orgName` is non-empty, an explicit
+`StandardPaths.writableLocation(StandardPaths.TempLocation)`-rooted path when it's empty. Wired into
+each store's `Settings` block as `fileName: SettingsPath.settingsFileNameOverride(Application.organization, StandardPaths.writableLocation(StandardPaths.TempLocation))`.
+`Application` (the QtQuick singleton, not the older `Qt.application` global-object property) and
+`StandardPaths` (QtCore) are both already in scope via each store's existing `import QtQuick`/
+`import QtCore` — no new imports needed beyond the helper itself. Verified against Qt 6.9/6.11 docs
+(`Application` QML type) since this sandbox has no toolchain to confirm empirically — **the one
+assumption this needs checked on a real build**: that `fileName: ""` is genuinely equivalent to
+leaving the property unset, not a distinct (and different) explicit value.
+
+**Why untouched for real users, not just "probably fine"**: the override only fires when
+`orgName` is falsy. In a real app build, Felgo sets it before `Main.qml` even loads — so
+`settingsFileNameOverride` returns `""` on every real invocation, unconditionally. There's no
+runtime flag or stage check gating this; it's structurally impossible for a real launch to take the
+temp-file branch. This is a real behavioral change to production persistence code (the file this
+function lives in is loaded by the real app too — it's not a test-only shim in a test-only
+location), but the branch that changes anything only executes where `Application.organization` is
+empty, which never happens outside `qmltestrunner` or a similarly-init-skipping harness.
+
+**One file, not one per store**: the override path is the same literal filename regardless of which
+store calls it — mirrors production, where every `Settings` block using this pattern already shares
+ONE default-resolved QSettings file, differentiated only by each block's own `category`. Splitting
+it per-store under test would test a file layout that doesn't match production.
+
+**The regression test that actually proves the fix, not just documents it**:
+`tst_OutboxStore.qml`'s `test_persists_and_reloads_via_settings_across_a_simulated_relaunch` —
+can't literally destroy/reconstruct a `pragma Singleton` within one `qmltestrunner` process, so
+"relaunch" is simulated by wiping only the in-memory `items` (`OutboxStore.items = []`) while
+leaving the persisted `_settings.itemsJson` untouched, then calling `OutboxStore._load()` directly —
+the same function `Component.onCompleted` calls on a real launch. Without the fix, this test would
+fail (`pendingCount` comes back `0`, not `1`) because the write never reached a real file in the
+first place — this is the concrete, executable difference between "fixed" and "still broken", not
+just a warning going away.
+
+**Scope note, not silently narrowed**: grepping `qml/model/*.qml` for the same `Settings {` pattern
+found four more stores with the identical bug — `OrdersStore` (`autoApprove`), `PartyStore`,
+`CategoryStore`, `OrderChannelStore` — not fixed here. The original gap-list item only named
+`AuthStore`/`OutboxStore`; flagged to Taher rather than either silently expanding to all six or
+silently leaving the other four inconsistent with no mention.

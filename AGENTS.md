@@ -273,6 +273,14 @@ App (Main.qml)
   `StaffStore.addStaff`, and `ActivityLog` — fixed; see SKILLS Skill 12's `putMany()`). Single-doc
   `put()` per changed record; `putMany()` only for a genuinely multi-doc action (e.g.
   `approveAllPending`).
+- Any new `Settings { category: "..." }` block (device-local `QSettings` persistence — `AuthStore`,
+  `OutboxStore`, and four others as of 2026-08-17) needs an explicit `fileName:
+  SettingsPath.settingsFileNameOverride(Application.organization,
+  StandardPaths.writableLocation(StandardPaths.TempLocation))` — without it, `qmltestrunner` never
+  satisfies the org-identifier `Settings` needs to resolve a real file, and every property write
+  against it silently no-ops under test (see SKILLS Skill 41). `AuthStore`/`OutboxStore` fixed
+  2026-08-17; `OrdersStore`, `PartyStore`, `CategoryStore`, `OrderChannelStore` still have the same
+  gap, not yet fixed.
 
 **Store Pattern** (see SKILLS Skill 11 for the full paginated version):
 ```qml
@@ -435,6 +443,12 @@ client-reachable. Also worth knowing: `functions/lib/batchMutationLogic.js`'s `a
 (the live path for every bulk import) now has a CAS check as of 2026-08-08 — if adding a new bulk
 write path anywhere, check whether it should route through this rather than a bespoke batch write
 that would reintroduce the same gap.
+Found 2026-08-17, closing out the gap-list's QSettings item: `OutboxStore`'s `Settings` block never
+actually persisted to a real file under `qmltestrunner` (org-identifier resolution failure — see
+SKILLS Skill 41) — meaning this store's entire reason to exist, durability across a relaunch, was
+silently untested by every run there has ever been. Fixed with an explicit `fileName` override that
+only activates when the org identifier is unset (never true for a real launch); `tst_OutboxStore.qml`
+gained the actual regression test that proves it (fails without the fix, not just documents intent).
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
 `StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
@@ -555,13 +569,19 @@ env.
   `_fetchFromFirebase()` call run (same no-real-network safety pattern as `tst_Gateway.qml` — empty
   `AuthStore.idToken`), so it also stops any retry timer that call schedules in `cleanup()` to avoid
   bleeding into other test files.
-- 21 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
-  2026-08-11 + 1 from 2026-08-12). Historical baseline before those 7 new suites: **140 cases pass,
-  0 fail** — none of the 7 newest suites have been run under a real `qmltestrunner` yet (this repo's
-  Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have Node-side twins
-  that do pass, 7/7, via `cd functions && npm test` — the other 4 have no Node-side twin, since the
-  logic under test lives directly in QML singletons/components and isn't Node-portable the way the
-  pure `functions/lib/` math is).
+- `tests/tst_SettingsPath.qml` (new file), `tests/tst_AuthStore.qml` (new file — first-ever
+  coverage for `AuthStore`, deliberately scoped to session persistence only, not the role/permission
+  surface), and two new cases in `tests/tst_OutboxStore.qml` (2026-08-17, SKILLS Skill 41) — the
+  QSettings org-identifier fix and its regression coverage. The `tst_OutboxStore.qml` durability case
+  is the one that actually *proves* the fix rather than documenting intent: it fails
+  (`pendingCount` comes back `0`) without the fix, because the write never reached a real file.
+- 23 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17). Historical baseline before those 9 new suites:
+  **140 cases pass, 0 fail** — none of the 9 newest suites have been run under a real `qmltestrunner`
+  yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have
+  Node-side twins that do pass, 7/7, via `cd functions && npm test` — the other 6 have no Node-side
+  twin, since the logic under test lives directly in QML singletons/components and isn't
+  Node-portable the way the pure `functions/lib/` math is).
 - **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file
