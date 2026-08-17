@@ -2,6 +2,8 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+import "../helper/SettingsPath.js" as SettingsPath
+
 // Configurable list of order channels (Online / In-store / Direct …).
 // Persisted to Firestore (tenant-scoped) AND cached device-locally via
 // QSettings. Used by NewOrderDialog / OrderDetailDialog as a picker model and
@@ -28,6 +30,10 @@ QtObject {
 
     property Settings _settings: Settings {
         category: "OrderChannelStore"
+        // See qml/helper/SettingsPath.js (SKILLS Skill 41).
+        fileName: SettingsPath.settingsFileNameOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string channelsJson: ""
         property string lastUsed: ""
     }

@@ -2,6 +2,8 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+import "../helper/SettingsPath.js" as SettingsPath
+
 // Product categories. Persisted to Firestore (tenant-scoped) AND cached
 // device-locally via QSettings. Exposes a single default category that
 // pre-selects in the AddProductDialog picker. Edited via ManageCategoriesDialog.
@@ -20,6 +22,10 @@ QtObject {
 
     property Settings _settings: Settings {
         category: "CategoryStore"
+        // See qml/helper/SettingsPath.js (SKILLS Skill 41).
+        fileName: SettingsPath.settingsFileNameOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string categoriesJson: ""
         property string lastUsed: ""
     }

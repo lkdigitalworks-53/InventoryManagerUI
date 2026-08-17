@@ -3,6 +3,8 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+import "../helper/SettingsPath.js" as SettingsPath
+
 QtObject {
     id: root
 
@@ -24,6 +26,13 @@ QtObject {
 
     property Settings _settings: Settings {
         category: "OrdersStore"
+        // See qml/helper/SettingsPath.js (SKILLS Skill 41) -- untouched
+        // ("" ≡ unset) for a real app build; explicit temp-file path only
+        // under qmltestrunner, so autoApprove persistence is actually
+        // exercised by the test suite instead of silently no-op-ing.
+        fileName: SettingsPath.settingsFileNameOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
         property bool autoApprove: false
     }
 
