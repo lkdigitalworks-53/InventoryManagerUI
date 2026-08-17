@@ -342,4 +342,42 @@ TestCase {
         compare(OutboxStore.items[0].deltas.qtyRemaining, -3, "in-flight delta payload must be untouched")
         compare(OutboxStore.items[1].deltas.qtyRemaining, -2, "held as a separate item, not merged in")
     }
+
+    // ── Persistence across a simulated relaunch (SKILLS Skill 41) ───────────
+    // The actual regression test for the QSettings org-identifier fix: without
+    // it, _settings.itemsJson silently no-ops under qmltestrunner (Settings
+    // never resolves a real file, so this test would fail -- pendingCount
+    // would come back 0, not 1 -- proving the durability contract was never
+    // exercised before now). Simulates "relaunch" by wiping only the
+    // in-memory `items`, leaving the persisted `_settings.itemsJson`
+    // untouched, then re-running the same `_load()` path Component.onCompleted
+    // calls on construction -- can't literally destroy/reconstruct the
+    // singleton within one qmltestrunner process, so this is the equivalent
+    // real exercise of "does data survive independent of in-memory state".
+
+    function test_persists_and_reloads_via_settings_across_a_simulated_relaunch() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "sku-1", action: "update",
+                               before: { qty: 1 }, after: { qty: 2 } })
+        compare(OutboxStore.pendingCount, 1)
+
+        OutboxStore.items = [] // simulate pre-_load() in-memory state after a relaunch
+        OutboxStore._load()    // simulate Component.onCompleted on the next launch
+
+        compare(OutboxStore.pendingCount, 1,
+                "must reload the persisted item after a simulated relaunch -- if this is 0, " +
+                "Settings never actually wrote to a real file")
+        compare(OutboxStore.items[0].requestId, "r1")
+        compare(OutboxStore.items[0].after.qty, 2)
+    }
+
+    function test_clear_removes_the_persisted_file_contents_too_not_just_memory() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "sku-1", action: "update" })
+        OutboxStore.clear()
+
+        OutboxStore.items = []
+        OutboxStore._load()
+
+        compare(OutboxStore.pendingCount, 0,
+                "clear() must wipe the persisted file too, or a cleared queue would come back after relaunch")
+    }
 }
