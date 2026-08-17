@@ -143,6 +143,55 @@ further; needs either Taher's own quick check (does a real logged-in account's a
 succeed in production/on-device?) or a live instrumented run against the emulator. **Production
 risk is genuinely open, not ruled out** — unlike the AuthService item, don't treat this as closed.
 
-Remaining, not yet triaged this round: QSettings org-identifier warnings under `qmltestrunner`,
-`functions-tests`' exposure to the directory-sweep mechanism, and the Phase 1 spec addendum note.
-Paused here — this checkpoint update and the two findings above go to Taher before continuing.
+**Spec addendum for the file-location rename — DONE.** Fixed 4 stale `tests/e2e/` references in
+`2026-08-09-e2e-testing-phase1-design.md` to the actual final `test/e2e/`, and added a short
+addendum note at the point the design doc first names the directory, explaining the later rename
+and why (the `qml-tests` sweep bug). Trivial, unambiguous — no design decision involved, just the
+doc catching up to reality.
+
+**`functions-tests`' directory-sweep exposure — no action, staying documented-only.** Node's
+`node --test` (no path arg, cwd `functions/`) recursively sweeps any `.js`/`.cjs`/`.mjs` file
+under a directory literally named `test` — `functions/test/fixtures/*.js` qualifies, same
+mechanism that broke `firestore-rules-tests`/`qml-tests` (commit `3a83444`). Currently harmless:
+those fixture files are plain data exports with no side effects on load, so a swept-in file
+registers as trivially passing, not a crash. Already flagged, not fixed, in that same commit's own
+message — re-confirmed the reasoning still holds (nothing about those fixture files has changed)
+rather than re-deciding blind. Real trade-off if this ever gets touched: scoping `node --test`
+explicitly to real test files would need every fixture import path in `functions/test/*.test.js`
+checked for breakage, for a mechanism that hasn't caused a single actual failure. Leaving it named
+and dormant, same call as before — flagging again here rather than fixing speculatively.
+
+**QSettings org-identifier warnings under `qmltestrunner` — real fix exists, holding for Taher's
+call before touching it.** `AuthStore.qml`/`OutboxStore.qml`'s `Qt.labs.Settings` declarations
+(`Settings { category: "..." }`) resolve their storage path from `QCoreApplication`'s
+organizationName/organizationDomain, which `qmltestrunner` — a generic Qt-provided binary, not
+this app's own `main.cpp` — never sets. `Qt.labs.Settings` has a `fileName` property that bypasses
+that requirement entirely when set explicitly. Not implementing this now: `fileName` would need to
+differ between the real app (where org/app identifiers ARE already set correctly in `main.cpp`,
+and changing this could relocate where real user sessions/outbox data persist on-device) and
+`qmltestrunner` runs (where it's needed) — a real behavioral change to production persistence
+code, not a test-only tweak, for a warning that's already confirmed cosmetic (logs and continues;
+property writes to the mis-initialized `Settings` object no-op rather than throw, so no test in
+either suite is actually broken by it). The genuine cost is narrower than "warnings are noisy": it
+means `OutboxStore`'s entire reason to exist — durability across relaunch — is silently untested
+by `qmltestrunner`, every run, and always has been. Worth fixing, but touching how production
+session/outbox persistence resolves its storage path isn't a call to make unilaterally for a CI
+log-noise item — flagging the concrete fix (a conditional `fileName` distinguishing real runs from
+`qmltestrunner`) for Taher's decision, not doing it silently.
+
+## Gap list: final status
+
+| Item | Verdict |
+|---|---|
+| `AuthService` lazy-construction | **Closed** — test-harness-only, confirmed via grep |
+| `ActivityLog` client-side 403s | **Closed** — Taher confirmed production unaffected; E2E-suite-only limitation, documented |
+| Spec addendum (file location) | **Done** — 4 stale paths fixed, addendum note added |
+| `functions-tests` sweep exposure | **No action** — dormant, benign, re-flagged not re-decided |
+| QSettings org-identifier warnings | **Open, real fix identified, needs Taher's call** — touches production persistence code |
+
+## Next step
+
+Gap-list triage (item 2 of the locked sequence) complete pending Taher's QSettings decision.
+Committing/pushing this round's work, then item 3: Phase 2 spike (Felgo headless dialog
+feasibility) — the one item in the whole locked sequence I can't fully close out myself, since
+this sandbox has no Qt/Felgo toolchain to test against.

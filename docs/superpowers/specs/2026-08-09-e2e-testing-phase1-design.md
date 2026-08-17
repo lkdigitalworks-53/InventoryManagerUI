@@ -112,18 +112,26 @@ Steps (union of what the existing jobs already do separately):
 1. Checkout, install Qt (as `qml-tests` does today).
 2. Install Node, `firebase-tools`, Java (as `firestore-rules-tests` does today).
 3. `functions: npm ci` (as `functions-tests` does today).
-4. `firebase emulators:exec --only firestore,auth,functions "node test/e2e/seed.js && qmltestrunner -input tests/e2e -platform offscreen -o results.xml,junitxml"`.
+4. `firebase emulators:exec --only firestore,auth,functions "node test/e2e/seed.js && qmltestrunner -input test/e2e -platform offscreen -o results.xml,junitxml"`.
 5. Upload/report results, same pattern as the existing jobs.
 
-`tests/e2e/` is a **new, separate directory** from `tests/` — the existing unit-test file set and
+`test/e2e/` is a **new, separate directory** from `tests/` — the existing unit-test file set and
 `qml-tests` job composition don't change at all.
+
+> **Addendum (2026-08-14):** this spec originally called the directory `tests/e2e/` throughout —
+> a subdirectory of `tests/`. It shipped that way, then had to move to the current top-level
+> `test/e2e/` (singular, sibling of `tests/`, not nested inside it) after `qml-tests`' own
+> `qmltestrunner -input tests` swept `tests/e2e/tst_InventoryE2E.qml` into a job with no Firebase
+> emulator running, timing out on a fixture file that was never created. The separation this spec
+> called for was correct; it just wasn't enforced at the filesystem level until the CI failure
+> forced it. Every path in this document below is corrected to the actual final location.
 
 **Recommendation (Taher's call, not mine to make unilaterally):** mark `e2e-tests` non-blocking
 for the first several PRs it runs on, promote to a required check once proven stable. New,
 first-of-its-kind CI infra that's a hard merge-blocker from day one tends to get bypassed under
 deadline pressure rather than fixed, which defeats the point.
 
-## 7. Component 5 — pilot test (`tests/e2e/tst_InventoryE2E.qml`)
+## 7. Component 5 — pilot test (`test/e2e/tst_InventoryE2E.qml`)
 
 Three cases, service-level (no UI):
 1. **Create** — call `InventoryStore.addProduct(...)`, then independently verify via a raw REST
@@ -159,7 +167,7 @@ discovering it mid-implementation:
 2. `emulatorHost` properties on `FirebaseService.qml`/`Gateway.qml` (§4) — additive, default
    no-op, safe alongside existing behavior.
 3. `test/e2e/seed.js` (§5), spiking unknowns #1–#3 (§8) as part of getting it working.
-4. `tests/e2e/tst_InventoryE2E.qml` (§7), once seeding is proven.
+4. `test/e2e/tst_InventoryE2E.qml` (§7), once seeding is proven.
 5. `e2e-tests` CI job (§6), last — wire it up once the local (or CI-run-once) path is proven, not
    before.
 
