@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../qml/model"
+import "E2EHelpers.js" as E2EHelpers
 
 // Phase 1 E2E pilot — Inventory CRUD driven service-level (no UI) against
 // the real Firebase Local Emulator Suite (Firestore + Auth + Functions).
@@ -20,6 +21,11 @@ import "../../qml/model"
 // QML_XHR_ALLOW_FILE_READ=1 in the environment (set in the e2e-tests CI job)
 // -- local file reads are disabled by default, separately from the sync/
 // async issue.
+//
+// Fixture loading, emulator-doc polling, and the raw-POST warm-up primitive
+// now live in E2EHelpers.js (factored out 2026-08-16 when tst_OrdersE2E.qml
+// needed the same logic) — see that file for the mechanics and the pragma-
+// library/TestCase boundary this crosses.
 //
 // NOT RUN IN THIS SANDBOX before its first real CI attempt -- no network
 // egress here to Firebase's emulator distribution.
@@ -45,110 +51,7 @@ TestCase {
     readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
     function _loadFixture() {
-        var status = -1, text = "", done = false
-        var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                status = xhr.status
-                text = xhr.responseText
-                done = true
-            }
-        }
-        xhr.open("GET", fixtureUrl, true)
-        xhr.send()
-        tryVerify(function() { return done }, 5000, "timed out reading .fixture.json")
-        // status is documented to be unreliable for file:// reads (often 0
-        // regardless of success or failure) — an empty body is the
-        // trustworthy signal that the read actually failed.
-        if (!text || text.length === 0) {
-            fail("could not read .fixture.json from " + fixtureUrl + " (status " + status
-                 + ", empty body) — run test/e2e/seed.js against a running emulator first")
-        }
-        return JSON.parse(text)
-    }
-
-    // Polls a raw REST GET against the Firestore emulator, independent of
-    // FirebaseService — asserting via the same client code that wrote the
-    // data would only prove the client's local cache is self-consistent,
-    // not that anything real reached the server. Re-fires a fresh async GET
-    // on every tryVerify tick until predicateFn(doc) is true or it times
-    // out; doc is null while missing/not-yet-caught-up.
-    //
-    // Also checks lastConflict on every tick and fails immediately with the
-    // real conflict data if one appears for this docPath's entityId, rather
-    // than waiting out the full timeout to report a generic, uninformative
-    // message. (tryVerify's own `message` argument is evaluated once, before
-    // polling starts, so it can't reflect something that happens *during*
-    // the wait — this is why that check has to live inside the predicate,
-    // not be pre-built as a string.)
-    // Diagnostic instrumentation (2026-08-12): added after a run where
-    // test_addProduct's poll timed out with the generic "doc never
-    // appeared" message despite every recordMutation call in that run's
-    // Functions-emulator log finishing in <1.1s with no error logged —
-    // math that doesn't support a plain "ran out of time" explanation.
-    // The real gap is that fire() below collapsed EVERY non-200 response
-    // (403, 500, a genuine 404-still-waiting, a malformed request, ...)
-    // into the same `latest = null`, so a permissions problem and "not
-    // created yet" were indistinguishable from this test's own point of
-    // view. This does not change pass/fail behavior — same predicate, same
-    // timeout — it only makes the CI log show what the poll actually
-    // observed (status + body) instead of forcing a guess. Intended to be
-    // temporary: strip it back out once the addProduct-specific failure is
-    // understood and this file has been stable for a while.
-    function _pollEmulatorDoc(docPath, entityId, predicateFn, timeoutMs, message) {
-        var url = emulatorFirestoreHost
-            + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + docPath
-        var latest = null
-        var inFlight = false
-        var startedAt = Date.now()
-        var attemptCount = 0
-        var lastStatus = -1
-        var lastLoggedStatus = -2
-        var lastLoggedAt = 0
-
-        function fire() {
-            if (inFlight) return
-            inFlight = true
-            attemptCount++
-            var xhr = new XMLHttpRequest()
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === XMLHttpRequest.DONE) {
-                    lastStatus = xhr.status
-                    latest = (xhr.status === 200) ? JSON.parse(xhr.responseText) : null
-                    // Log on every status change, and at most once a second
-                    // otherwise -- a run that just keeps 404ing still shows
-                    // elapsed-time progression instead of one line total.
-                    var nowMs = Date.now()
-                    if (lastStatus !== lastLoggedStatus || (nowMs - lastLoggedAt) >= 1000) {
-                        console.warn("[_pollEmulatorDoc]", entityId,
-                                     "attempt", attemptCount,
-                                     "elapsedMs", (nowMs - startedAt),
-                                     "status", lastStatus,
-                                     "body", (lastStatus !== 200)
-                                         ? String(xhr.responseText).slice(0, 300)
-                                         : "(200 OK)")
-                        lastLoggedStatus = lastStatus
-                        lastLoggedAt = nowMs
-                    }
-                    inFlight = false
-                }
-            }
-            xhr.open("GET", url, true)
-            xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
-            xhr.send()
-        }
-
-        tryVerify(function() {
-            if (lastConflict && lastConflict.entityId === entityId) {
-                fail(message + " -- Gateway.mutationConflicted fired for "
-                    + lastConflict.entity + "/" + lastConflict.entityId
-                    + ", server has: " + JSON.stringify(lastConflict.current))
-            }
-            fire()
-            return predicateFn(latest)
-        }, timeoutMs, message + " (entityId=" + entityId + ", docPath=" + docPath + ")")
-
-        return latest
+        return E2EHelpers.loadFixture(this, fixtureUrl)
     }
 
     // Discovered while reviewing this file after rebasing onto
@@ -159,33 +62,24 @@ TestCase {
     // that recognition is still silent from a caller's perspective (no error
     // surfaces to InventoryStore's callback). A genuine conflict shouldn't
     // happen in this test's single-writer, fresh-id-per-test flow, but if it
-    // does, this turns an opaque "doc never appeared" timeout into an actual
-    // diagnostic instead of another guess.
+    // does, E2EHelpers.pollEmulatorDoc turns an opaque "doc never appeared"
+    // timeout into an actual diagnostic instead of another guess.
     property var lastConflict: null
 
     function _onMutationConflicted(entity, entityId, current) {
         lastConflict = { entity: entity, entityId: entityId, current: current }
     }
 
+    function _pollEmulatorDoc(docPath, entityId, predicateFn, timeoutMs, message) {
+        return E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, docPath, entityId,
+                                           predicateFn, timeoutMs, message)
+    }
+
     // Shared by the initTestCase() warm-up and the diagnostic probe below —
     // both need the identical raw POST (bypassing Gateway/OutboxStore
-    // entirely) with only the entityId/timeout differing. Returns
-    // {status, text} instead of asserting itself so each caller can apply
-    // its own timeout/message.
+    // entirely) with only the entityId/timeout differing.
     function _postRecordMutationDirect(entityId, timeoutMs, timeoutMessage) {
-        var status = -1, text = "", done = false
-        var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                status = xhr.status
-                text = xhr.responseText
-                done = true
-            }
-        }
-        xhr.open("POST", emulatorFunctionsBase + "/recordMutation", true)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.setRequestHeader("Authorization", "Bearer " + fixture.idToken)
-        xhr.send(JSON.stringify({
+        return E2EHelpers.postDirect(this, emulatorFunctionsBase + "/recordMutation", {
             env: "prd", // matches FirebaseService.environment for a bare qmltestrunner run
             entity: "inventory",
             entityId: entityId,
@@ -194,9 +88,7 @@ TestCase {
             after: { name: "Diagnostic Widget", sku: "SKU-DIAG-1", price: 1, stock: 1 },
             requestId: "diag-req-" + Date.now(),
             clientTimestamp: new Date().toISOString()
-        }))
-        tryVerify(function() { return done }, timeoutMs, timeoutMessage)
-        return { status: status, text: text }
+        }, timeoutMs, timeoutMessage)
     }
 
     // Runs exactly once, before ANY test_ function — unlike this file's own
@@ -371,4 +263,3 @@ TestCase {
                           "product doc was never removed from the emulator")
     }
 }
-
