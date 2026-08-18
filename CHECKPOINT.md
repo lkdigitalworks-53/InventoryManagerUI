@@ -481,3 +481,44 @@ this file. The Gateway fix specifically rests on an assumption about Qt's file-e
    the `tst_AuthStore.qml` root fix alone is preferred.
 4. `E2E Tests` on this branch still not looked at this session — separate from all of the above.
 5. Still open, unrelated: `OrdersStore` full-coverage test work, Phase 2 probe results from Taher.
+
+## Taher confirmed all tests pass (2026-08-18, continued) — independently re-verified, PR/branch landscape reviewed
+
+Didn't just take "all tests passed" at face value — pulled the real GitHub Checks API for this
+branch's HEAD (`0d4c033`) rather than relying on Taher's report alone: `QML Tests`, `Functions
+Tests`, `Firestore Rules Tests`, `E2E Tests` all `completed` / `success`. Confirms this round's three
+fixes (SettingsPath: no-op confirmed stale; CategoryStore/OrderChannelStore: constant fix; Gateway:
+the disk-contamination fix) all hold under a real toolchain, not just the static trace.
+
+Also pulled the full open-PR list (`api.github.com`, not assumed from memory) to answer Taher's
+"where do things stand" question honestly rather than from a compressed summary:
+
+- **PR #44** (`docs/e2e-testing-phase1-followup` → `main`) — this branch. Open, all four checks
+  green as of `0d4c033`. Ready for Taher's review/merge call.
+- **PR #39** (`feature/desktop-ux-design` → `main`) — open, separate parked thread (Plan 1 verified
+  and done; Plan 2 tasks 1–2 done, 3–5 not started). Untouched this session.
+- **PR #29** (`docs/offline-handling-design-update` → `main`) — open, last updated **2026-07-11**
+  (over five weeks before today), empty PR body. No context on this in memory or anywhere in this
+  file's history. Surfacing as a genuine open question, not silently ignoring it: worth confirming
+  with Taher whether it's still live work or should be closed.
+
+## Next step (current, priority order)
+
+1. **PR #44 merge decision** — all CI green, independently confirmed. Taher's call on whether to
+   merge now (small, coherent, reduces rebase risk as `main` moves) or hold to bundle in
+   `OrdersStore` coverage / the Phase 2 probe result first.
+2. **Two small open decisions from this round**, non-blocking but unresolved: repo-visibility
+   discrepancy (informational, needs Taher to check on GitHub's side); Gateway `init()`
+   defense-in-depth layer — keep both layers or drop to the `tst_AuthStore.qml` root fix alone.
+3. **`OrdersStore` full-coverage tests** — the one store from the 4-store QSettings extension
+   (2026-08-17) that never got matching persistence-regression coverage. Independent of the probe;
+   can proceed without waiting on Taher.
+4. **Phase 2 probe** — drafted since 2026-08-17, never run. The one item in the whole locked
+   sequence that fundamentally can't be closed from this sandbox; needs Taher to run it locally and
+   report the `=== PROBE OUTPUT ===` content. Can run in parallel with item 3, no ordering dependency.
+5. **Optional, raised but not yet decided**: sweep the rest of `tests/*.qml` for other files that
+   lazily reference `AuthService`/`Gateway.drainNow()` and could hit the same class of shared-disk
+   contamination found this session — not yet done, not yet requested by Taher.
+6. **PR #29** — needs a keep-or-close decision from Taher; not investigated further this session.
+7. Unrelated, separate thread: `feature/desktop-ux-design` Plan 2 Tasks 3–5 (OrdersDetailPane,
+   OrdersMasterDetail composition, `Main.qml` wiring) still pending whenever that thread resumes.
