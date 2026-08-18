@@ -1870,3 +1870,18 @@ first (Taher's original decision), then `OrdersStore`, `PartyStore`, `CategorySt
 excluding the actual `FirebaseService` network callbacks, which have no mock layer available to QML
 singletons anywhere in this codebase). `OrdersStore`'s own broader test-coverage gap (764 lines, 27
 functions, 4 already covered elsewhere) is separate, larger, unscoped work — not yet started.
+
+**Correction, 2026-08-18 (second) — the `location` rename (commit `4d8c5aa`) missed one caller.**
+That commit renamed `SettingsPath.js`'s exported function and updated all six stores' `Settings`
+blocks plus this doc, but not `tests/tst_SettingsPath.qml` — the one file that unit-tests the helper
+function directly rather than through a store. All four of its test functions still called
+`SettingsPath.settingsFileNameOverride(...)`, which no longer exists post-rename. Found by grepping
+the whole tree for the old name (not from a CI log — GitHub's raw job logs and artifact downloads
+both redirect to `*.blob.core.windows.net`, outside this sandbox's egress allowlist, so the actual
+CI failure text for this run was never directly readable) and confirmed deterministically via the
+same `node`-vm harness this skill has used throughout: calling the old name against the renamed
+module throws `TypeError: ... is not a function`. Fixed by updating the six call sites in
+`tests/tst_SettingsPath.qml` to `settingsLocationOverride`, no other change. Lesson, stated plainly:
+a rename's completeness has to be checked with a repo-wide grep for the old name, every time — "I
+updated the callers I remembered" is not the same claim as "I updated every caller," and the second
+one is the only one that's actually true after a rename.

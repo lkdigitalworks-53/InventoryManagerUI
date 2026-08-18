@@ -325,3 +325,79 @@ better-grounded fix this time.
 3. E2E test failures (`test/e2e/`) mentioned alongside the QML failures — not yet looked at, no
    log supplied for those yet.
 4. Still open: `OrdersStore` full-coverage test work, Phase 2 probe results from Taher.
+
+## New session (2026-08-18, later) — resumed on this branch, second QML Tests failure found and fixed
+
+**Setup**: cloned fresh (per standing workflow), token stripped from `origin` immediately after
+clone. Taher asked to check out this branch and fix a QML test failure from "attached logs" — no
+file was actually attached to that message; proceeded by pulling live status from the GitHub API
+instead of asking first, since it was directly checkable.
+
+**Two things flagged to Taher up front, not silently worked around:**
+- He described this as "the public repo." It isn't anymore — the clone required the PAT
+  (memory already had this: made private mid-2026). Not a problem, just noting the mismatch
+  between what was said and what's actually configured.
+- The PAT was pasted directly into the chat message this time, not just supplied for in-URL use.
+  That's a step beyond the established discipline (token used only in the push URL, stripped
+  immediately after) — the token is now sitting in this conversation's history regardless of how
+  carefully it's handled from here. Taher already said he'll rotate it after merge; flagging this
+  now rather than after the fact.
+
+**Status found on arrival**: commit `4d8c5aa` (the `location`-not-`fileName` fix, previous entry
+above) was already committed and pushed, PR #44 open. Checked the real CI result via the Actions
+API rather than assuming the fix had landed clean: **QML Tests still failing** on `4d8c5aa` itself
+(`Functions Tests` / `Firestore Rules Tests` green, `E2E Tests` cancelled — see below). Tried to
+pull the actual failure text two ways — the job's raw log endpoint and the `qml-test-results`
+artifact — both redirect to `productionresultssa*.blob.core.windows.net`, outside this sandbox's
+egress allowlist (same wall hit and documented earlier in this file, for the PR #44 E2E job). The
+Checks API's own annotations for this run were generic (`"Failed test were found..."`, `"Process
+completed with exit code 7"`) — no per-test detail. So: no log to read, same as last time; had to
+find the failure by direct investigation instead of by asking for a log this session doesn't have
+either.
+
+**Root cause, found by comparison against `4d8c5aa`'s own diff, not by guessing**: that commit's
+message says it changed "all six store call sites" and it did — but it didn't touch
+`tests/tst_SettingsPath.qml`, the one file that unit-tests `SettingsPath.js`'s exported function
+directly. A repo-wide grep for the pre-rename name confirmed it: all four of that file's test
+functions still called `SettingsPath.settingsFileNameOverride(...)`, which stopped existing the
+moment the function was renamed to `settingsLocationOverride`. Confirmed deterministically with the
+same `node`-vm harness used throughout this branch: calling the old name against the current module
+throws `TypeError: ... is not a function` — not a hypothesis, a reproduced fact, independent of
+whatever else might also be in that CI log.
+
+**Fixed**: renamed the six call sites in `tests/tst_SettingsPath.qml` to `settingsLocationOverride`,
+no other change to that file. Re-verified all four of its assertions against the real
+`settingsLocationOverride` logic in `node` — all pass. Repo-wide grep confirms zero remaining
+references to the old name anywhere in `.qml`/`.js`/`.md` except `CHECKPOINT.md`'s own dated
+history entries above, left untouched on purpose (this file doesn't rewrite what was believed at
+the time). Added a correction addendum to `SKILLS.md` Skill 41 (same "don't silently edit the
+mistake away" convention the rest of this file already follows).
+
+**Diligence beyond the one confirmed bug**: cross-checked every store-member reference in the three
+newest test files (`tst_PartyStore.qml`, `tst_CategoryStore.qml`, `tst_OrderChannelStore.qml`)
+against each store's actual exposed functions/properties — all match. No further mechanical
+mismatches found by this method. **Stated plainly**: this doesn't prove QML Tests will go fully
+green on the next run. It proves one guaranteed, reproduced break is now fixed, and that a
+reasonable static sweep didn't turn up a second one. Without the actual log or a real
+`qmltestrunner` pass, "still not run against a real toolchain" stays true here too — same open
+status as everything else in this file.
+
+**Noticed mid-session, not caused by anything done here**: while investigating, the Actions API
+started reporting `4d8c5aa`'s workflow run as `run_attempt: 2`, `status: in_progress` — someone
+(presumably Taher, working in parallel) re-ran the failed jobs. That re-run is against the
+*original* `4d8c5aa` tree (before this session's fix), so it's expected to hit the exact same
+`tst_SettingsPath.qml` break again. Not waited on before pushing this fix, since the next real
+signal comes from CI running *this* commit, not from watching a re-run of the old one.
+
+## Next step
+
+1. Push this fix now (per standing "don't wait for permission to push" instruction).
+2. Watch CI on the resulting commit via the Actions API for `QML Tests` specifically — report
+   pass/fail plainly, without assuming green means "fully resolved" beyond what was actually checked.
+3. If `QML Tests` still fails after this: this session cannot get further without the actual log or
+   artifact content (egress-blocked both ways) — will need Taher to paste the failure text or the
+   `results.xml` directly, same as he did for the first `fileName` bug.
+4. `E2E Tests` on this branch has not been looked at yet this session (was `cancelled` on the
+   attempt-1 run due to the external re-run, not evaluated) — separate from the QML Tests fix above.
+5. Still open, unrelated to this fix: `OrdersStore` full-coverage test work, Phase 2 probe results
+   from Taher.
