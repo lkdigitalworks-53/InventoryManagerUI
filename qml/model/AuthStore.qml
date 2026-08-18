@@ -2,6 +2,8 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+import "../helper/SettingsPath.js" as SettingsPath
+
 QtObject {
     id: root
 
@@ -61,6 +63,14 @@ QtObject {
 
     property Settings _settings: Settings {
         category: "AuthStore"
+        // See qml/helper/SettingsPath.js -- "" under a real app build
+        // (Application.organization is set, defers to normal QSettings
+        // resolution, untouched); an explicit temp-file path only when it
+        // isn't (qmltestrunner), so session persistence is actually
+        // exercised by the test suite instead of silently no-op-ing.
+        location: SettingsPath.settingsLocationOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string sessionJson: ""
     }
 

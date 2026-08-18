@@ -126,7 +126,7 @@ jobs:
           reporter: java-junit
 
   e2e-tests:
-    name: E2E Tests (Inventory CRUD)
+    name: E2E Tests
     runs-on: ubuntu-latest
     permissions:
       checks: write

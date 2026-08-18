@@ -273,6 +273,16 @@ App (Main.qml)
   `StaffStore.addStaff`, and `ActivityLog` — fixed; see SKILLS Skill 12's `putMany()`). Single-doc
   `put()` per changed record; `putMany()` only for a genuinely multi-doc action (e.g.
   `approveAllPending`).
+- Any new `Settings { category: "..." }` block (device-local `QSettings` persistence — all six
+  stores: `AuthStore`, `OutboxStore`, `OrdersStore`, `PartyStore`, `CategoryStore`,
+  `OrderChannelStore`, all fixed as of 2026-08-18) needs an explicit `location:
+  SettingsPath.settingsLocationOverride(Application.organization,
+  StandardPaths.writableLocation(StandardPaths.TempLocation))` — note `location` (a `url`), not
+  `fileName` (a `string`, which belongs to the older deprecated `Qt.labs.settings` Settings type,
+  not this app's `QtCore` one — the first version of this fix used the wrong name and broke 14 test
+  files at compile time; see SKILLS Skill 41). Without it, `qmltestrunner` never satisfies the
+  org-identifier `Settings` needs to resolve a real file, and every property write against it
+  silently no-ops under test.
 
 **Store Pattern** (see SKILLS Skill 11 for the full paginated version):
 ```qml
@@ -435,6 +445,13 @@ client-reachable. Also worth knowing: `functions/lib/batchMutationLogic.js`'s `a
 (the live path for every bulk import) now has a CAS check as of 2026-08-08 — if adding a new bulk
 write path anywhere, check whether it should route through this rather than a bespoke batch write
 that would reintroduce the same gap.
+Found 2026-08-17, closing out the gap-list's QSettings item: `OutboxStore`'s `Settings` block never
+actually persisted to a real file under `qmltestrunner` (org-identifier resolution failure — see
+SKILLS Skill 41) — meaning this store's entire reason to exist, durability across a relaunch, was
+silently untested by every run there has ever been. Fixed with an explicit `location` override
+(not `fileName` — see SKILLS Skill 41 for that correction) that only activates when the org
+identifier is unset (never true for a real launch); `tst_OutboxStore.qml`
+gained the actual regression test that proves it (fails without the fix, not just documents intent).
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
 `StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
@@ -502,7 +519,7 @@ env.
 ### 9. Testing & QA Agent
 
 **Purpose**: Owns the QML test harness and unit coverage for pure logic.
-**Scope**: `tests/`
+**Scope**: `tests/`, `functions/test/`, `test/e2e/`
 
 **Responsibilities**:
 - Write Qt Quick Test (`TestCase`) suites for **pure, headless-testable logic** — primarily the
@@ -555,23 +572,72 @@ env.
   `_fetchFromFirebase()` call run (same no-real-network safety pattern as `tst_Gateway.qml` — empty
   `AuthStore.idToken`), so it also stops any retry timer that call schedules in `cleanup()` to avoid
   bleeding into other test files.
-- 21 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
-  2026-08-11 + 1 from 2026-08-12). Historical baseline before those 7 new suites: **140 cases pass,
-  0 fail** — none of the 7 newest suites have been run under a real `qmltestrunner` yet (this repo's
-  Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have Node-side twins
-  that do pass, 7/7, via `cd functions && npm test` — the other 4 have no Node-side twin, since the
-  logic under test lives directly in QML singletons/components and isn't Node-portable the way the
-  pure `functions/lib/` math is).
+- `tests/tst_SettingsPath.qml` (new file), `tests/tst_AuthStore.qml` (new file — first-ever
+  coverage for `AuthStore`, deliberately scoped to session persistence only, not the role/permission
+  surface), and two new cases in `tests/tst_OutboxStore.qml` (2026-08-17, SKILLS Skill 41) — the
+  QSettings org-identifier fix and its regression coverage. The `tst_OutboxStore.qml` durability case
+  is the one that actually *proves* the fix rather than documenting intent: it fails
+  (`pendingCount` comes back `0`) without the fix, because the write never reached a real file.
+- 23 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17). Historical baseline before those 9 new suites:
+  **140 cases pass, 0 fail** — none of the 9 newest suites have been run under a real `qmltestrunner`
+  yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have
+  Node-side twins that do pass, 7/7, via `cd functions && npm test` — the other 6 have no Node-side
+  twin, since the logic under test lives directly in QML singletons/components and isn't
+  Node-portable the way the pure `functions/lib/` math is).
 - **New, separate test surface: `functions/test/`** (`node:test`, run via `cd functions && npm
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file
   (QML has no established pattern here for reading an external JSON file synchronously in a test).
+- **New, separate test surface: `test/e2e/`** (`qmltestrunner -input test/e2e`, run in CI's
+  `e2e-tests` job against the real Firebase Local Emulator Suite — Firestore + Auth + Functions,
+  started via `firebase emulators:start`, seeded via `node test/e2e/seed.js`) — real code path
+  (Store/DataModel → `Gateway` → the *emulated* Cloud Functions → the *emulated* Firestore), not
+  a mock. Verifies via a raw REST GET against the Firestore emulator, independent of the client's
+  own optimistic local state. Distinct from `tests/` in three ways worth knowing before adding a
+  third scenario here:
+  - **Every Cloud Function URL Gateway calls has to be pointed at the emulator explicitly** —
+    `Gateway.functionUrl` (`recordMutation`), `Gateway.deltaFunctionUrl` (`recordDelta`, added
+    2026-08-16 for the Orders scenario — `StockBatchStore.consumeFifo`/`InventoryStore.deductStock`
+    go through this, not `recordMutation`), restored in `cleanup()`. `Gateway.batchFunctionUrl`
+    isn't wired yet — nothing in `test/e2e/` exercises a deferred-write batch path so far.
+  - **The Cloud Functions Emulator cold-starts each function on its own first real invocation** —
+    `initTestCase()` in each file pays that cost with a dedicated warm-up POST (bypassing
+    Gateway/OutboxStore) before any real test runs, sized for a one-time cold start rather than
+    inflating every test's own timeout. `tst_OrdersE2E.qml`'s `recordDelta` warm-up deliberately
+    expects HTTP 404 (a delta against a nonexistent entityId — confirmed against
+    `functions/lib/gatewayLogic.js`'s `applyDelta()`), not 200 — a real function needs a real doc
+    to move.
+  - **Referencing `AuthService` for the first time triggers its `Component.onCompleted`, which
+    unconditionally wipes `AuthStore`** — every file's `initTestCase()` forces that construction
+    (`AuthService.ensureFreshToken()`, a harmless no-op call) before its own `init()` sets
+    `AuthStore.idToken` for real, or the wipe silently lands after and every write goes out with
+    an empty token. Root-caused 2026-08-14 after it cost several rounds of "doc never appeared,
+    no visible reason" — see `docs/superpowers/specs/2026-08-16-e2e-testing-phase1-CHECKPOINT.md`
+    for the full trace if it resurfaces somewhere this note doesn't cover.
+  - Shared plumbing (`loadFixture`/`pollEmulatorDoc`/`postDirect`) lives in
+    `test/e2e/E2EHelpers.js` (`.pragma library`, extracted 2026-08-16 when a second scenario
+    needed it) — every function takes the calling `TestCase` instance explicitly and calls
+    `tc.tryVerify`/`tc.fail`/`tc.compare` through it, since pragma-library scripts don't share the
+    QML component scope a bare `tryVerify(...)` resolves against inside a `TestCase` file itself.
+  - `DataModel.qml` orchestration (as opposed to a single Store) is reached the same way
+    `tests/tst_DataModel_adjustOrderSyncGuard.qml` already established — instantiated directly as
+    a child item, since it has no `pragma Singleton`.
+  - Two scenarios so far: `tst_InventoryE2E.qml` (Phase 1 — CRUD, one Store) and
+    `tst_OrdersE2E.qml` (create → complete → FIFO stock deduction, crosses `OrdersStore` →
+    `DataModel` → `StockBatchStore`/`InventoryStore` → `TransactionStore`). Not yet covered here:
+    the `stock_batch.qtyRemaining` doc directly, the generated transaction doc, and anything
+    UI/dialog-level — that last one is Phase 2, gated on an unresolved Felgo headless-rendering
+    question (do `dp()`/`sp()`/`Constants` resolve outside an `App{}` root), tracked separately
+    from this test surface.
 
 **Example Prompts**:
 - "Add tests for the new breakdown metric"
 - "Write a TestCase covering the week/month period windows"
 - "Add a parity fixture pair for a new RealisedMath scenario, in both functions/test/fixtures/ and
   the matching tst_RealisedMathParityFixtures.qml"
+- "Add an E2E scenario for [workflow] against the Firebase emulator, following the pattern in
+  test/e2e/tst_OrdersE2E.qml"
 
 ---
 

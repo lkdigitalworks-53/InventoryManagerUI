@@ -2,6 +2,8 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+import "../helper/SettingsPath.js" as SettingsPath
+
 // Durable outbox for compliance-gateway calls (P0). Every mutation routed
 // through Gateway is enqueued here FIRST (persisted to QSettings), then sent.
 // On success the item is dequeued; on failure it stays and is retried with
@@ -53,6 +55,15 @@ QtObject {
 
     property Settings _settings: Settings {
         category: "OutboxStore"
+        // See qml/helper/SettingsPath.js -- "" under a real app build
+        // (Application.organization is set, defers to normal QSettings
+        // resolution, untouched); an explicit temp-file path only when it
+        // isn't (qmltestrunner), so the whole reason this store exists --
+        // durability across a relaunch -- is actually exercised by the test
+        // suite instead of silently no-op-ing.
+        location: SettingsPath.settingsLocationOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string itemsJson: ""
     }
 

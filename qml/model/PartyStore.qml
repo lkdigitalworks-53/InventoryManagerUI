@@ -2,6 +2,8 @@ pragma Singleton
 import QtQuick
 import QtCore
 
+import "../helper/SettingsPath.js" as SettingsPath
+
 // Device-local list of parties (dealers / wholesalers / suppliers) that the
 // user buys stock from. Persisted via QSettings — the same shape as
 // CategoryStore — so it survives relaunches without needing a Firestore
@@ -16,6 +18,10 @@ QtObject {
 
     property Settings _settings: Settings {
         category: "PartyStore"
+        // See qml/helper/SettingsPath.js (SKILLS Skill 41).
+        location: SettingsPath.settingsLocationOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string partiesJson: ""
         property string lastUsed: ""
     }

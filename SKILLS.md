@@ -1711,3 +1711,177 @@ directly-overwritten fetch (see the `ActivityLog`/`CategoryStore`/`OrderChannelS
 doesn't need it — a second concurrent call there just re-fetches the same correct answer. Before
 adding a NEW dual-triggered store, check which of these two shapes it is before assuming it needs
 the guard.
+
+---
+
+## Skill 40: Real-emulator E2E testing — cold starts, singleton construction order, and per-function URLs
+
+**Files**: `test/e2e/tst_InventoryE2E.qml`, `test/e2e/tst_OrdersE2E.qml`, `test/e2e/E2EHelpers.js`,
+`test/e2e/seed.js`, `qml/model/Gateway.qml`, `.github/workflows/checks.yml` (`e2e-tests` job). Full
+narrative of Phase 1's 13 CI-debugging rounds: the archived
+`docs/superpowers/specs/2026-08-16-e2e-testing-phase1-CHECKPOINT.md`. Design boundary (what's in
+scope vs. deferred to Phase 2): `docs/superpowers/specs/2026-08-09-e2e-testing-phase1-design.md`.
+
+This suite drives real Store/`DataModel` code against the real Firebase Local Emulator Suite —
+Firestore + Auth + Functions — and verifies via a raw REST GET against the Firestore emulator,
+independent of the client's own optimistic in-memory state. That's the whole point of it (a mock
+would only prove the client agrees with itself), but it means every gap between "looks right
+locally" and "the server actually agrees" is a real bug this suite can catch that `tests/`
+structurally cannot. Four gaps specifically cost real CI rounds; worth internalizing before adding
+a third scenario here rather than rediscovering each one:
+
+**1. The Cloud Functions Emulator lazily cold-starts each function on its own first real
+invocation.** Not per test run, per *function* — warming up `recordMutation` does nothing for
+`recordDelta`'s first call. `initTestCase()` in each file pays this cost once, deliberately, with a
+dedicated raw POST warm-up sized for a one-time cold start (15000ms), before any real test's
+5000ms-budget poll can eat it. `tst_OrdersE2E.qml`'s `recordDelta` warm-up targets a nonexistent
+`entityId` and asserts HTTP 404, not 200 — confirmed against `functions/lib/gatewayLogic.js`'s
+`applyDelta()`, which returns `{ok:false, status:404}` for a missing document. A real function
+still needs a real doc to move; 404 there proves the worker responded, which is all a warm-up
+needs.
+
+**2. Referencing a QML singleton for the first time triggers its `Component.onCompleted`** — for
+`AuthService` specifically, that unconditionally wipes `AuthStore` before checking whether there's
+a session to restore. `AuthService` is never referenced directly anywhere in either test file; its
+actual first reference in a real run is buried inside `Gateway.drainNow()`
+(`if (typeof AuthService !== 'undefined' && AuthService) AuthService.ensureFreshToken()`) — meaning
+the FIRST test to call any `Gateway.recordMutation`/`recordDelta` path is also the first thing to
+construct `AuthService`, and it does so from *inside* that call, after its own `init()` already set
+`AuthStore.idToken` for real. The wipe lands in between, silently no-op-ing every request until an
+unrelated later call happens to re-set the token. Both files' `initTestCase()` forces the
+construction explicitly (`AuthService.ensureFreshToken()`, a harmless no-op while unauthenticated)
+before `init()` ever runs — cheap insurance against a bug that took four CI rounds to root-cause
+the first time, and applies to ANY new E2E file that touches `Gateway`, not just these two.
+
+**3. Each Cloud Function `Gateway` calls has its own URL property, and wiring one doesn't wire the
+others.** `functionUrl` (`recordMutation`), `deltaFunctionUrl` (`recordDelta`), `batchFunctionUrl`
+(`recordMutationsBatch`) are three independent properties. Phase 1 only needed the first. The
+Orders scenario needed the second (`StockBatchStore.consumeFifo`/`InventoryStore.deductStock` go
+through `recordDelta`, not `recordMutation`) — a scenario exercising a deferred-write batch path
+would need the third. Before writing a new scenario, trace which Store methods it actually calls
+and check each one's `Gateway.*` call against this list rather than assuming the existing
+`functionUrl` override covers it.
+
+**4. QtQuickTest does not preserve a file's declared function order.** `tst_InventoryE2E.qml`'s own
+`test_recordMutation_function_accepts_seeded_credentials` was originally written assuming it'd run
+first (as a fast-fail credentials probe) — it didn't; actual order was alphabetical. Don't design a
+test around "this one runs before the others" without `initTestCase()`/explicit sequencing; use
+`initTestCase()` for anything that must happen exactly once before every test, not test declaration
+order.
+
+**Sharing code across test files, given #1–#4 mean every new scenario needs the same
+fixture-loading/polling/warm-up machinery**: `test/e2e/E2EHelpers.js` (`.pragma library`) holds
+`loadFixture`/`pollEmulatorDoc`/`postDirect`, extracted from `tst_InventoryE2E.qml` when
+`tst_OrdersE2E.qml` needed the same logic verbatim. Every function takes the calling `TestCase`
+instance explicitly (`tc`) and calls `tc.tryVerify`/`tc.fail`/reads `tc.fixture`/`tc.lastConflict`
+through it — a `.pragma library` script doesn't share the QML component scope a bare
+`tryVerify(...)` call resolves against inside a `TestCase` file itself, so every QtTest primitive
+has to arrive as an explicit call on the passed-in object instead of an unqualified reference. New
+pattern for this codebase (`BreakdownMath.js`/`OrderMath.js`/`ImportMath.js` are pure math, no
+`TestCase` involved) — passed first CI attempt, but flagging the pattern itself as worth watching
+if a future E2E file's helpers start failing in a way that looks like a scoping issue.
+
+**Reaching `DataModel` orchestration** (as opposed to a single Store's own method): `DataModel.qml`
+has no `pragma Singleton`, so it's instantiated directly as a child item inside the `TestCase`
+(`DataModel { id: dm }`) and its functions called directly (`dm._tryCompleteOrder(...)`) — same
+pattern `tests/tst_DataModel_adjustOrderSyncGuard.qml` already established, bypassing the
+Logic/dispatcher signal bus entirely rather than trying to drive it through `Logic.qml`'s signals.
+
+---
+
+## Skill 41: QSettings org-identifier fix — making a Settings-backed store's persistence actually testable under qmltestrunner
+
+**Files**: `qml/helper/SettingsPath.js` (new), all six `Settings`-backed stores (`AuthStore`,
+`OutboxStore`, `OrdersStore`, `PartyStore`, `CategoryStore`, `OrderChannelStore`),
+`tests/tst_SettingsPath.qml`, `tests/tst_AuthStore.qml`, `tests/tst_PartyStore.qml`,
+`tests/tst_CategoryStore.qml`, `tests/tst_OrderChannelStore.qml` (all new), plus new cases in
+`tests/tst_OutboxStore.qml`. Carried forward from the archived
+`2026-08-16-e2e-testing-phase1-CHECKPOINT.md`'s gap list as "QSettings org-identifier warnings under
+`qmltestrunner`".
+
+**The bug, precisely**: `Settings { category: "..." }` resolves its underlying storage file from
+`QCoreApplication`'s organization identifier when no explicit override is set. `qmltestrunner` is a
+generic Qt-provided binary — it never runs this app's own `main.cpp`, so
+`FelgoApplication::initialize()` (which sets `Application.organization` for a real launch) never
+runs either. The identifier stays empty, `Settings` logs a warning, and — this is the part that
+actually matters, not just noise — every property write against it no-ops instead of persisting.
+For `OutboxStore`, whose entire reason to exist is durability across a relaunch, this meant that
+guarantee was silently untested by every `qmltestrunner` run there has ever been.
+
+**Correction, 2026-08-18 — the first version of this fix was itself wrong.** It targeted a property
+called `fileName` (string) — that's the OLD, deprecated `Qt.labs.settings` Settings type's property
+name. This app imports `QtCore`'s Settings (Qt 6.5+, `import QtCore`), whose equivalent property is
+called **`location`** and is typed **`url`**, not `string`. Confirmed by an actual `qmltestrunner`
+run on Qt 6.8.3 (results.xml Taher supplied): `qml/model/PartyStore.qml:22,9: Cannot assign to
+non-existent property "fileName"` — and because one QML singleton failing to compile breaks the
+whole `qml/model` qmldir module for every file that transitively imports any of it, this cascaded
+into **14 failing test files** (`tst_ActivityLog`, `tst_Gateway`, `tst_LockManager`, and others that
+never touch `PartyStore` directly), not just the six actually-changed store files. This was the
+exact assumption flagged in the first version of this entry as "needs checked on a real build,
+unverified in this sandbox" — it was wrong, and this sandbox genuinely could not have caught it
+(no Qt toolchain here to compile against). Lesson: a plausible, doc-shaped assumption about a QML
+type's API surface is still a guess until something actually compiles it — the honest flag doesn't
+substitute for the check, it just means the check has to happen on a real build, which it now has.
+
+**The fix, corrected**: a pure helper, `SettingsPath.settingsLocationOverride(orgName, tempDir)` —
+returns `""` (identical to leaving `location` unset — per QtCore's own docs: *"If this property is
+empty (the default), then QSettings::defaultFormat() will be used"*) when `orgName` is non-empty, an
+explicit `StandardPaths.writableLocation(StandardPaths.TempLocation)`-rooted path when it's empty.
+Wired into each store's `Settings` block as `location:
+SettingsPath.settingsLocationOverride(Application.organization,
+StandardPaths.writableLocation(StandardPaths.TempLocation))`. `StandardPaths.writableLocation()`
+already returns a `url`; the helper's string concatenation coerces it via `toString()`, producing
+another valid URL string, which QML accepts for a `url`-typed property the same way it accepts a
+plain string for one. `Application` (the QtQuick singleton, not the older `Qt.application`
+global-object property) and `StandardPaths` (QtCore) are both already in scope via each store's
+existing `import QtQuick`/`import QtCore` — no new imports needed beyond the helper itself.
+
+**Why untouched for real users, not just "probably fine"**: the override only fires when
+`orgName` is falsy. In a real app build, Felgo sets it before `Main.qml` even loads — so
+`settingsLocationOverride` returns `""` on every real invocation, unconditionally. There's no
+runtime flag or stage check gating this; it's structurally impossible for a real launch to take the
+temp-file branch. This is a real behavioral change to production persistence code (the file this
+function lives in is loaded by the real app too — it's not a test-only shim in a test-only
+location), but the branch that changes anything only executes where `Application.organization` is
+empty, which never happens outside `qmltestrunner` or a similarly-init-skipping harness.
+
+**One file, not one per store**: the override path is the same literal filename regardless of which
+store calls it — mirrors production, where every `Settings` block using this pattern already shares
+ONE default-resolved QSettings file, differentiated only by each block's own `category`. Splitting
+it per-store under test would test a file layout that doesn't match production.
+
+**The regression test that actually proves the fix, not just documents it**:
+`tst_OutboxStore.qml`'s `test_persists_and_reloads_via_settings_across_a_simulated_relaunch` —
+can't literally destroy/reconstruct a `pragma Singleton` within one `qmltestrunner` process, so
+"relaunch" is simulated by wiping only the in-memory `items` (`OutboxStore.items = []`) while
+leaving the persisted `_settings.itemsJson` untouched, then calling `OutboxStore._load()` directly —
+the same function `Component.onCompleted` calls on a real launch. Without the fix, this test would
+fail (`pendingCount` comes back `0`, not `1`) because the write never reached a real file in the
+first place — this is the concrete, executable difference between "fixed" and "still broken", not
+just a warning going away.
+
+**Scope, final state**: all six stores using this pattern are fixed — `AuthStore`, `OutboxStore`
+first (Taher's original decision), then `OrdersStore`, `PartyStore`, `CategoryStore`,
+`OrderChannelStore` (Taher: "cover all", 2026-08-17) after grepping `qml/model/*.qml` for the same
+`Settings {` pattern turned up four more instances the original gap-list item didn't name.
+`PartyStore`/`CategoryStore`/`OrderChannelStore` also got comprehensive new test coverage
+(`tst_PartyStore.qml` fully complete — no Firestore calls in that store at all;
+`tst_CategoryStore.qml`/`tst_OrderChannelStore.qml` complete for every local/synchronous path,
+excluding the actual `FirebaseService` network callbacks, which have no mock layer available to QML
+singletons anywhere in this codebase). `OrdersStore`'s own broader test-coverage gap (764 lines, 27
+functions, 4 already covered elsewhere) is separate, larger, unscoped work — not yet started.
+
+**Correction, 2026-08-18 (second) — the `location` rename (commit `4d8c5aa`) missed one caller.**
+That commit renamed `SettingsPath.js`'s exported function and updated all six stores' `Settings`
+blocks plus this doc, but not `tests/tst_SettingsPath.qml` — the one file that unit-tests the helper
+function directly rather than through a store. All four of its test functions still called
+`SettingsPath.settingsFileNameOverride(...)`, which no longer exists post-rename. Found by grepping
+the whole tree for the old name (not from a CI log — GitHub's raw job logs and artifact downloads
+both redirect to `*.blob.core.windows.net`, outside this sandbox's egress allowlist, so the actual
+CI failure text for this run was never directly readable) and confirmed deterministically via the
+same `node`-vm harness this skill has used throughout: calling the old name against the renamed
+module throws `TypeError: ... is not a function`. Fixed by updating the six call sites in
+`tests/tst_SettingsPath.qml` to `settingsLocationOverride`, no other change. Lesson, stated plainly:
+a rename's completeness has to be checked with a repo-wide grep for the old name, every time — "I
+updated the callers I remembered" is not the same claim as "I updated every caller," and the second
+one is the only one that's actually true after a rename.

@@ -206,6 +206,23 @@ All six growing collections (`orders`/`inventory`/`staff`/`suppliers`/`transacti
 
 ---
 
+## Testing
+
+Four independent layers, each with its own CI job in `.github/workflows/checks.yml`:
+
+| Layer | Location | Runner |
+|---|---|---|
+| QML unit tests (pure logic) | `tests/` | `qmltestrunner -input tests -platform offscreen` |
+| Cloud Functions logic | `functions/test/` | `cd functions && npm test` (`node:test`) |
+| Firestore security rules | `test/firestore.rules.test.js` (see `FIRESTORE_RULES.md`) | `firebase emulators:exec` |
+| End-to-end (real Store/DataModel code against the real Firebase Local Emulator Suite) | `test/e2e/` | `qmltestrunner -input test/e2e`, seeded via `node test/e2e/seed.js` |
+
+See `AGENTS.md`'s **Testing & QA Agent** section for what each layer actually covers, and
+`SKILLS.md` Skill 40 for the E2E layer's specific gotchas (Cloud Functions cold starts, singleton
+construction order, per-function emulator URLs) before adding a new scenario there.
+
+---
+
 ## Qt Skills Cheat Sheet
 
 This repository now includes local Copilot agents mapped from the Qt skills repo:
