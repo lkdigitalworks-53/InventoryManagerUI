@@ -225,16 +225,42 @@ file in this branch's history.
 (`autoApprove`), `PartyStore`, `CategoryStore`, `OrderChannelStore`. Flagged to Taher rather than
 silently expanding or silently leaving them inconsistent.
 
-**Taher's decision (2026-08-17): extend the fix to all six stores.** Not yet done as of this
-checkpoint entry — next step.
+**Taher's decision (2026-08-17): extend the fix to all six stores.** Done — `OrdersStore`,
+`PartyStore`, `CategoryStore`, `OrderChannelStore` all fixed with the identical
+`SettingsPath.settingsFileNameOverride()` wiring. Committed (`f5d57ab`) and pushed separately from
+the first two stores (`30f8ba3`/`b2d3f1b`), so the original approved scope and the extension are
+distinguishable in history.
+
+**Open, not yet resolved: regression test coverage for these 4.** Unlike `AuthStore`/`OutboxStore`,
+none of these four got a matching persistence-across-simulated-relaunch test. `OrdersStore` has
+existing test files (`tst_OrdersStore_applyAdjustment.qml`, `tst_OrdersStore_normalization.qml`) to
+extend; `PartyStore`/`CategoryStore`/`OrderChannelStore` have zero existing coverage, meaning 3 new
+test files. Taher approved "cover all" for the production fix specifically — flagging this as a
+separate, larger scope question rather than silently building 3 more test files or silently leaving
+these four less-verified than the first two.
+
+## Phase 2 spike: probe drafted, not yet run
+
+Taher approved the probe-file path over holding. Wrote `scripts/probes/probe_dp_sp_outside_app_root.qml`
+(+ `probe_declarative_helper.qml`, a companion file for the `Qt.createComponent` check) — deliberately
+placed outside `tests/`/`test/e2e/` (verified against `.github/workflows/checks.yml`'s exact
+`-input tests` / `-input test/e2e` invocations, and against `CMakeLists.txt`'s `GLOB_RECURSE`, which
+is scoped to `qml/*.qml` only) so it can't be swept into CI or the app bundle.
+
+Four checks in one file: (1) bare `typeof dp`/`typeof sp`/`typeof Constants` existence check, (2)
+imperative try/catch calls, (3) declarative-binding usage via `Qt.createQmlObject` (matching how the
+real dialogs actually call `dp()`/`sp()`), (4) the same via `Qt.createComponent`+`createObject` as a
+second QML API path, in case the two report a scope-resolution failure differently. Deliberately not
+a pass/fail test — the correct outcome isn't known yet, so it only logs and always reports "passed";
+the value is entirely in the console output between its `=== PROBE OUTPUT ===` markers.
+
+**Not run in this sandbox** (no Qt/Felgo toolchain) — needs Taher to run it locally and report back
+the logged output. This is the one item in the whole locked sequence that fundamentally can't be
+closed out from here.
 
 ## Next step
 
-1. Push this round's work (helper + `AuthStore`/`OutboxStore` fix + 3 test files + docs) — in
-   progress, blocked on a fresh PAT (the one posted in-conversation earlier was flagged as exposed
-   and deliberately not used; Taher asked to rotate it, no replacement provided yet).
-2. Extend the `SettingsPath` fix to `OrdersStore`, `PartyStore`, `CategoryStore`,
-   `OrderChannelStore` — approved 2026-08-17, same pattern, not yet started.
-3. Phase 2 spike — Taher approved the probe-file path (write a standalone `.qml` probe testing
-   whether `dp()`/`sp()`/`Constants` resolve outside a Felgo `App{}` root, for Taher to run on his
-   own machine and report back) over holding it. Not yet started.
+1. Push this round (4-store extension + probe files) — pending.
+2. Taher: run `scripts/probes/probe_dp_sp_outside_app_root.qml` locally, report back the output.
+3. Open decision: add matching persistence regression tests for the 4 newly-fixed stores, or leave
+   as production-fix-only for now — not yet decided.
