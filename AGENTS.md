@@ -273,14 +273,16 @@ App (Main.qml)
   `StaffStore.addStaff`, and `ActivityLog` — fixed; see SKILLS Skill 12's `putMany()`). Single-doc
   `put()` per changed record; `putMany()` only for a genuinely multi-doc action (e.g.
   `approveAllPending`).
-- Any new `Settings { category: "..." }` block (device-local `QSettings` persistence — `AuthStore`,
-  `OutboxStore`, and four others as of 2026-08-17) needs an explicit `fileName:
-  SettingsPath.settingsFileNameOverride(Application.organization,
-  StandardPaths.writableLocation(StandardPaths.TempLocation))` — without it, `qmltestrunner` never
-  satisfies the org-identifier `Settings` needs to resolve a real file, and every property write
-  against it silently no-ops under test (see SKILLS Skill 41). `AuthStore`/`OutboxStore` fixed
-  2026-08-17; `OrdersStore`, `PartyStore`, `CategoryStore`, `OrderChannelStore` still have the same
-  gap, not yet fixed.
+- Any new `Settings { category: "..." }` block (device-local `QSettings` persistence — all six
+  stores: `AuthStore`, `OutboxStore`, `OrdersStore`, `PartyStore`, `CategoryStore`,
+  `OrderChannelStore`, all fixed as of 2026-08-18) needs an explicit `location:
+  SettingsPath.settingsLocationOverride(Application.organization,
+  StandardPaths.writableLocation(StandardPaths.TempLocation))` — note `location` (a `url`), not
+  `fileName` (a `string`, which belongs to the older deprecated `Qt.labs.settings` Settings type,
+  not this app's `QtCore` one — the first version of this fix used the wrong name and broke 14 test
+  files at compile time; see SKILLS Skill 41). Without it, `qmltestrunner` never satisfies the
+  org-identifier `Settings` needs to resolve a real file, and every property write against it
+  silently no-ops under test.
 
 **Store Pattern** (see SKILLS Skill 11 for the full paginated version):
 ```qml
@@ -446,8 +448,9 @@ that would reintroduce the same gap.
 Found 2026-08-17, closing out the gap-list's QSettings item: `OutboxStore`'s `Settings` block never
 actually persisted to a real file under `qmltestrunner` (org-identifier resolution failure — see
 SKILLS Skill 41) — meaning this store's entire reason to exist, durability across a relaunch, was
-silently untested by every run there has ever been. Fixed with an explicit `fileName` override that
-only activates when the org identifier is unset (never true for a real launch); `tst_OutboxStore.qml`
+silently untested by every run there has ever been. Fixed with an explicit `location` override
+(not `fileName` — see SKILLS Skill 41 for that correction) that only activates when the org
+identifier is unset (never true for a real launch); `tst_OutboxStore.qml`
 gained the actual regression test that proves it (fails without the fix, not just documents intent).
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /

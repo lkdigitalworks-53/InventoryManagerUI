@@ -68,7 +68,7 @@ QtObject {
         // resolution, untouched); an explicit temp-file path only when it
         // isn't (qmltestrunner), so session persistence is actually
         // exercised by the test suite instead of silently no-op-ing.
-        fileName: SettingsPath.settingsFileNameOverride(
+        location: SettingsPath.settingsLocationOverride(
                       Application.organization,
                       StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string sessionJson: ""

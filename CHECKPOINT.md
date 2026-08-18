@@ -264,3 +264,64 @@ closed out from here.
 2. Taher: run `scripts/probes/probe_dp_sp_outside_app_root.qml` locally, report back the output.
 3. Open decision: add matching persistence regression tests for the 4 newly-fixed stores, or leave
    as production-fix-only for now — not yet decided.
+
+## Comprehensive test coverage for PartyStore/CategoryStore/OrderChannelStore (2026-08-18)
+
+Taher's decision on the open item above: add tests, aim for 100% coverage. Delivered:
+
+- `tests/tst_PartyStore.qml` — genuinely complete, every function/branch. PartyStore has no
+  Firestore calls at all, so this is achievable in full.
+- `tests/tst_CategoryStore.qml`, `tests/tst_OrderChannelStore.qml` — complete for every local/
+  synchronous path (`_loadLocal`'s four branches including corrupted-JSON recovery and the
+  empty-array guard, add/remove/setDefault's full branch set, `indexOfDefault`). NOT covered: the
+  inside of `_fetchFromFirebase()`'s `FirebaseService.get` callback and `_pushToFirebase()`'s
+  `FirebaseService.put` callback — no mock layer for `FirebaseService` exists for QML singletons
+  anywhere in this codebase (the one precedent, `tst_TenantContextRaceGuard.qml`, works around it
+  with a hand-rolled stand-in object rather than the real singleton — not replicated here since it
+  risked testing a fake that diverges from the real store). Flagged in both files' headers: these
+  tests fire a real, async, fire-and-forget `FirebaseService.put()` as a side effect.
+- `OrdersStore` (764 lines, 27 functions, 4 already covered elsewhere) explicitly not started —
+  flagged to Taher as its own, larger, separately-scoped piece of work rather than rushed here.
+
+## CI failure found and fixed: `fileName` was the wrong property name (2026-08-18)
+
+Taher supplied `results.xml` from an actual GitHub Actions `qmltestrunner` run (Qt 6.8.3) — **14 of
+293 tests failing**, all compile-time (`Type X unavailable`), all cascading from one root error:
+
+```
+qml/model/PartyStore.qml:22,9: Cannot assign to non-existent property "fileName"
+```
+
+**Root cause**: the QSettings fix (this checkpoint, 2026-08-17 entries above) used a property called
+`fileName` on the `Settings` type. That property belongs to the OLD, deprecated `Qt.labs.settings`
+Settings type. This app imports `QtCore`'s Settings (Qt 6.5+) — its equivalent property is called
+`location` and is typed `url`, not `string`. This was flagged explicitly at the time as "the one
+assumption this needs checked on a real build" (see SKILLS Skill 41, prior wording) — it was wrong,
+and this sandbox genuinely had no way to catch it without a Qt toolchain to compile against. Because
+one QML singleton failing to compile breaks the whole `qml/model` qmldir module for every file that
+transitively imports any part of it, the blast radius was much wider than the six files actually
+touched — `tst_ActivityLog`, `tst_Gateway`, `tst_LockManager`, `tst_DataModel_adjustOrderSyncGuard`,
+and others that never reference `PartyStore` directly all failed too.
+
+**Fixed**: `qml/helper/SettingsPath.js`'s function renamed `settingsFileNameOverride` →
+`settingsLocationOverride`, same logic (verified again via `node`), all six store call sites changed
+from `fileName: SettingsPath.settingsFileNameOverride(...)` to `location:
+SettingsPath.settingsLocationOverride(...)`. `SKILLS.md` Skill 41 rewritten with an explicit
+correction section (not silently edited as if the mistake never happened); `AGENTS.md`'s two
+references corrected. Full details: SKILLS Skill 41.
+
+**Verification status, stated plainly**: still not run against a real `qmltestrunner` from this
+sandbox (no toolchain here either) — the property-name fix is checked against Qt's own current
+documentation (`qml-qtcore-settings.html`, confirmed `location: url` is the only location-control
+property Qt Qml Core's Settings exposes) rather than against a compile. This needs a real
+`qmltestrunner` pass to confirm before treating it as closed — same open item as before, just a
+better-grounded fix this time.
+
+## Next step
+
+1. Push this fix immediately — CI is currently broken on this branch.
+2. Taher: re-run `qmltestrunner -input tests` (or CI) to confirm the 14 failures are actually
+   resolved, not just plausible-looking.
+3. E2E test failures (`test/e2e/`) mentioned alongside the QML failures — not yet looked at, no
+   log supplied for those yet.
+4. Still open: `OrdersStore` full-coverage test work, Phase 2 probe results from Taher.

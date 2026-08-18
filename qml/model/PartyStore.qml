@@ -19,7 +19,7 @@ QtObject {
     property Settings _settings: Settings {
         category: "PartyStore"
         // See qml/helper/SettingsPath.js (SKILLS Skill 41).
-        fileName: SettingsPath.settingsFileNameOverride(
+        location: SettingsPath.settingsLocationOverride(
                       Application.organization,
                       StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string partiesJson: ""

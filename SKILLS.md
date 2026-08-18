@@ -1791,35 +1791,54 @@ Logic/dispatcher signal bus entirely rather than trying to drive it through `Log
 
 ## Skill 41: QSettings org-identifier fix — making a Settings-backed store's persistence actually testable under qmltestrunner
 
-**Files**: `qml/helper/SettingsPath.js` (new), `qml/model/AuthStore.qml`, `qml/model/OutboxStore.qml`,
-`tests/tst_SettingsPath.qml` (new), `tests/tst_AuthStore.qml` (new, first coverage for this store),
-`tests/tst_OutboxStore.qml` (two new cases). Carried forward from the archived
+**Files**: `qml/helper/SettingsPath.js` (new), all six `Settings`-backed stores (`AuthStore`,
+`OutboxStore`, `OrdersStore`, `PartyStore`, `CategoryStore`, `OrderChannelStore`),
+`tests/tst_SettingsPath.qml`, `tests/tst_AuthStore.qml`, `tests/tst_PartyStore.qml`,
+`tests/tst_CategoryStore.qml`, `tests/tst_OrderChannelStore.qml` (all new), plus new cases in
+`tests/tst_OutboxStore.qml`. Carried forward from the archived
 `2026-08-16-e2e-testing-phase1-CHECKPOINT.md`'s gap list as "QSettings org-identifier warnings under
 `qmltestrunner`".
 
-**The bug, precisely**: `Qt.labs.Settings`/QtCore's `Settings { category: "..." }` resolves its
-underlying storage file from `QCoreApplication`'s organization identifier when no explicit
-`fileName` is set. `qmltestrunner` is a generic Qt-provided binary — it never runs this app's own
-`main.cpp`, so `FelgoApplication::initialize()` (which sets `Application.organization` for a real
-launch) never runs either. The identifier stays empty, `Settings` logs a warning, and — this is the
-part that actually matters, not just noise — every property write against it no-ops instead of
-persisting. For `OutboxStore`, whose entire reason to exist is durability across a relaunch, this
-meant that guarantee was silently untested by every `qmltestrunner` run there has ever been.
+**The bug, precisely**: `Settings { category: "..." }` resolves its underlying storage file from
+`QCoreApplication`'s organization identifier when no explicit override is set. `qmltestrunner` is a
+generic Qt-provided binary — it never runs this app's own `main.cpp`, so
+`FelgoApplication::initialize()` (which sets `Application.organization` for a real launch) never
+runs either. The identifier stays empty, `Settings` logs a warning, and — this is the part that
+actually matters, not just noise — every property write against it no-ops instead of persisting.
+For `OutboxStore`, whose entire reason to exist is durability across a relaunch, this meant that
+guarantee was silently untested by every `qmltestrunner` run there has ever been.
 
-**The fix**: a pure helper, `SettingsPath.settingsFileNameOverride(orgName, tempDir)` — returns `""`
-(identical to leaving `fileName` unset) when `orgName` is non-empty, an explicit
-`StandardPaths.writableLocation(StandardPaths.TempLocation)`-rooted path when it's empty. Wired into
-each store's `Settings` block as `fileName: SettingsPath.settingsFileNameOverride(Application.organization, StandardPaths.writableLocation(StandardPaths.TempLocation))`.
-`Application` (the QtQuick singleton, not the older `Qt.application` global-object property) and
-`StandardPaths` (QtCore) are both already in scope via each store's existing `import QtQuick`/
-`import QtCore` — no new imports needed beyond the helper itself. Verified against Qt 6.9/6.11 docs
-(`Application` QML type) since this sandbox has no toolchain to confirm empirically — **the one
-assumption this needs checked on a real build**: that `fileName: ""` is genuinely equivalent to
-leaving the property unset, not a distinct (and different) explicit value.
+**Correction, 2026-08-18 — the first version of this fix was itself wrong.** It targeted a property
+called `fileName` (string) — that's the OLD, deprecated `Qt.labs.settings` Settings type's property
+name. This app imports `QtCore`'s Settings (Qt 6.5+, `import QtCore`), whose equivalent property is
+called **`location`** and is typed **`url`**, not `string`. Confirmed by an actual `qmltestrunner`
+run on Qt 6.8.3 (results.xml Taher supplied): `qml/model/PartyStore.qml:22,9: Cannot assign to
+non-existent property "fileName"` — and because one QML singleton failing to compile breaks the
+whole `qml/model` qmldir module for every file that transitively imports any of it, this cascaded
+into **14 failing test files** (`tst_ActivityLog`, `tst_Gateway`, `tst_LockManager`, and others that
+never touch `PartyStore` directly), not just the six actually-changed store files. This was the
+exact assumption flagged in the first version of this entry as "needs checked on a real build,
+unverified in this sandbox" — it was wrong, and this sandbox genuinely could not have caught it
+(no Qt toolchain here to compile against). Lesson: a plausible, doc-shaped assumption about a QML
+type's API surface is still a guess until something actually compiles it — the honest flag doesn't
+substitute for the check, it just means the check has to happen on a real build, which it now has.
+
+**The fix, corrected**: a pure helper, `SettingsPath.settingsLocationOverride(orgName, tempDir)` —
+returns `""` (identical to leaving `location` unset — per QtCore's own docs: *"If this property is
+empty (the default), then QSettings::defaultFormat() will be used"*) when `orgName` is non-empty, an
+explicit `StandardPaths.writableLocation(StandardPaths.TempLocation)`-rooted path when it's empty.
+Wired into each store's `Settings` block as `location:
+SettingsPath.settingsLocationOverride(Application.organization,
+StandardPaths.writableLocation(StandardPaths.TempLocation))`. `StandardPaths.writableLocation()`
+already returns a `url`; the helper's string concatenation coerces it via `toString()`, producing
+another valid URL string, which QML accepts for a `url`-typed property the same way it accepts a
+plain string for one. `Application` (the QtQuick singleton, not the older `Qt.application`
+global-object property) and `StandardPaths` (QtCore) are both already in scope via each store's
+existing `import QtQuick`/`import QtCore` — no new imports needed beyond the helper itself.
 
 **Why untouched for real users, not just "probably fine"**: the override only fires when
 `orgName` is falsy. In a real app build, Felgo sets it before `Main.qml` even loads — so
-`settingsFileNameOverride` returns `""` on every real invocation, unconditionally. There's no
+`settingsLocationOverride` returns `""` on every real invocation, unconditionally. There's no
 runtime flag or stage check gating this; it's structurally impossible for a real launch to take the
 temp-file branch. This is a real behavioral change to production persistence code (the file this
 function lives in is loaded by the real app too — it's not a test-only shim in a test-only
@@ -1841,8 +1860,13 @@ fail (`pendingCount` comes back `0`, not `1`) because the write never reached a 
 first place — this is the concrete, executable difference between "fixed" and "still broken", not
 just a warning going away.
 
-**Scope note, not silently narrowed**: grepping `qml/model/*.qml` for the same `Settings {` pattern
-found four more stores with the identical bug — `OrdersStore` (`autoApprove`), `PartyStore`,
-`CategoryStore`, `OrderChannelStore` — not fixed here. The original gap-list item only named
-`AuthStore`/`OutboxStore`; flagged to Taher rather than either silently expanding to all six or
-silently leaving the other four inconsistent with no mention.
+**Scope, final state**: all six stores using this pattern are fixed — `AuthStore`, `OutboxStore`
+first (Taher's original decision), then `OrdersStore`, `PartyStore`, `CategoryStore`,
+`OrderChannelStore` (Taher: "cover all", 2026-08-17) after grepping `qml/model/*.qml` for the same
+`Settings {` pattern turned up four more instances the original gap-list item didn't name.
+`PartyStore`/`CategoryStore`/`OrderChannelStore` also got comprehensive new test coverage
+(`tst_PartyStore.qml` fully complete — no Firestore calls in that store at all;
+`tst_CategoryStore.qml`/`tst_OrderChannelStore.qml` complete for every local/synchronous path,
+excluding the actual `FirebaseService` network callbacks, which have no mock layer available to QML
+singletons anywhere in this codebase). `OrdersStore`'s own broader test-coverage gap (764 lines, 27
+functions, 4 already covered elsewhere) is separate, larger, unscoped work — not yet started.

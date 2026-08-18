@@ -61,7 +61,7 @@ QtObject {
         // isn't (qmltestrunner), so the whole reason this store exists --
         // durability across a relaunch -- is actually exercised by the test
         // suite instead of silently no-op-ing.
-        fileName: SettingsPath.settingsFileNameOverride(
+        location: SettingsPath.settingsLocationOverride(
                       Application.organization,
                       StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string itemsJson: ""
