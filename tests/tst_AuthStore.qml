@@ -26,6 +26,28 @@ TestCase {
         AuthStore.saveSession()
     }
 
+    function cleanupTestCase() {
+        // init() only guarantees a clean slate BEFORE each test in THIS
+        // file. Nothing guaranteed a clean slate after the LAST one --
+        // and test_applyAuth_persists_session_and_loadSession_restores_it
+        // deliberately leaves a real idToken ("tok-1") persisted to prove
+        // persistence works. SettingsPath.js intentionally routes every
+        // store to the SAME on-disk file under qmltestrunner (mirrors
+        // production, where they all resolve to one default QSettings
+        // file). Since QtQuickTest doesn't guarantee declared function
+        // order (documented gap, 2026-08 checkpoint) OR declared FILE
+        // order across a directory run, if this file's last-executed test
+        // happens to be the persistence one, it leaves "tok-1" on disk for
+        // whichever file next triggers AuthService's lazy construction
+        // (AuthService.init() calls AuthStore.loadSession(), which reads
+        // straight from that shared file) -- silently flipping that file's
+        // AuthStore.idToken from empty to "tok-1" out from under it. This
+        // is exactly what broke tst_Gateway.qml's no-auth-guard test.
+        // Leave this file clean regardless of internal run order.
+        AuthStore.clear()
+        AuthStore.saveSession()
+    }
+
     function test_applyAuth_persists_session_and_loadSession_restores_it_after_a_simulated_relaunch() {
         AuthStore.applyAuth({
             uid: "u1", email: "a@example.com", displayName: "Ann",

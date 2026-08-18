@@ -52,6 +52,15 @@ TestCase {
         Gateway.mode = "direct"
         OutboxStore.clear()
         AuthStore.idToken = "" // keep the _send/_sendBatch guard closed (see header)
+        // In-memory reset alone isn't enough: Gateway.drainNow() itself
+        // triggers AuthService's first-ever lazy construction (only real
+        // reference to it in this file), whose init() calls
+        // AuthStore.loadSession() -- reading from the SAME on-disk file
+        // every store shares under qmltestrunner (see SettingsPath.js).
+        // If tst_AuthStore.qml's persistence test left a real idToken
+        // there, loadSession() silently overwrites the line above with
+        // it, right before _send checks it. Clear the disk copy too.
+        AuthStore._settings.sessionJson = ""
     }
 
     // ── mode + collection mapping ────────────────────────────────────────────

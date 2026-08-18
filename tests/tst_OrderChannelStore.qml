@@ -134,7 +134,12 @@ TestCase {
 
         OrderChannelStore.removeChannel("WhatsApp")
 
-        compare(OrderChannelStore.defaultChannel, "Instagram")
+        // removeChannel()'s own comment states the intent directly:
+        // "Removing the default reassigns it to the first remaining
+        // channel." That's defaults[0] ("Online"), not the most-recently-
+        // added channel. Pre-existing behavior (unchanged since cad0362),
+        // not something this branch touched.
+        compare(OrderChannelStore.defaultChannel, OrderChannelStore.defaults[0])
     }
 
     function test_removeChannel_leaves_default_unchanged_for_a_different_channel() {

@@ -149,7 +149,13 @@ TestCase {
 
         CategoryStore.removeCategory("Books")
 
-        compare(CategoryStore.defaultCategory, "Toys")
+        // removeCategory() reassigns to arr[0] -- the first remaining
+        // category overall, not the most-recently-added one. That's
+        // original, pre-existing behavior (unchanged since 3d22b87), not
+        // something this branch touched. "Books" was appended after the
+        // six defaults, so removing it leaves defaults[0] ("Electronics")
+        // first, not "Toys".
+        compare(CategoryStore.defaultCategory, CategoryStore.defaults[0])
     }
 
     function test_removeCategory_leaves_default_unchanged_for_a_different_category() {

@@ -389,15 +389,95 @@ started reporting `4d8c5aa`'s workflow run as `run_attempt: 2`, `status: in_prog
 `tst_SettingsPath.qml` break again. Not waited on before pushing this fix, since the next real
 signal comes from CI running *this* commit, not from watching a re-run of the old one.
 
+## New session (2026-08-18, continued) — three more QML Tests failures, one newly discovered test-isolation bug
+
+Resumed on `docs/e2e-testing-phase1-followup` per Taher's instruction. Cloned fresh into a new
+sandbox; the clone succeeded over plain `https://github.com/...` with **no PAT needed**. Flagging
+this because the entry above states this repo is private and required a PAT — that's now
+inconsistent with what actually happened this session. Not resolving which is currently true;
+noting the discrepancy rather than silently picking one (raised with Taher directly, not buried
+here).
+
+Taher supplied `results.xml` — a real `qmltestrunner` JUnit report, 470 tests, 7 failures — instead
+of the Actions API this sandbox still can't reach either way. All four findings below come from
+direct inspection of that log plus the actual source/test files at this branch's HEAD, not from
+assumption. No Qt toolchain in this sandbox (standing note, unchanged) — nothing here was run
+against a real `qmltestrunner`.
+
+**Failures 1–4 — `SettingsPath` (`settingsFileNameOverride` is not a function`)**: STALE, not a
+current bug. `grep -rn "settingsFileNameOverride"` across the whole repo at HEAD (`a2f60a4`)
+returns zero hits — only `settingsLocationOverride` exists anywhere, consistently across source and
+tests. `a2f60a4`, this branch's own last commit before this session started, is exactly the commit
+that renamed the four call sites away from the old name. The uploaded log must be from a run against
+an earlier commit (most likely `4d8c5aa`, immediately prior) — matching the exact scenario the
+entry above already predicted ("someone re-ran the failed jobs... against the *original* tree").
+**No code change made.** Recommend: re-run CI on current HEAD before treating this as open.
+
+**Failure 5 — `CategoryStore::test_removeCategory_reassigns_default_when_removing_the_default`** and
+**Failure 6 — `OrderChannelStore::test_removeChannel_reassigns_default_when_removing_the_default`**:
+test-authoring bugs, not source bugs. Traced both by hand against the actual `removeCategory` /
+`removeChannel` implementations — unchanged since `3d22b87` / `cad0362` respectively, both predating
+this branch entirely. Both reassign the default to `arr[0]`, the first remaining item overall;
+`OrderChannelStore`'s version even carries an explicit comment stating this is intentional ("first
+remaining channel"). The tests (written last session in the comprehensive-coverage commit `38be363`,
+never run against real Qt) assumed a different, "adjacency-preserving" fallback and asserted the
+wrong constant. **Fixed**: both now compare against `.defaults[0]`, matching this file's own
+existing convention elsewhere. Mechanical constant correction, not a behavior change.
+
+**Failure 7 — `Gateway::test_drainNow_does_not_leave_an_item_stuck_in_flight_when_unauthenticated`**:
+real bug, and the interesting one — a second-order consequence of the QSettings shared-file fix
+from earlier this branch (`30f8ba3`/`f5d57ab`). Traced end to end:
+
+1. `SettingsPath.js` intentionally routes *every* store's `Settings` block to the same on-disk file
+   under `qmltestrunner` (mirrors production, where they already share one file, differentiated only
+   by `category`). Correct and deliberate — it's what makes persistence testable at all.
+2. `tst_AuthStore.qml`'s persistence test deliberately writes a real `idToken: "tok-1"` to that
+   shared file, to prove persistence round-trips. It's the only test in the suite that legitimately
+   does this.
+3. That file's `init()` resets state before each of its OWN tests, but nothing reset state after the
+   LAST one. Combined with the already-documented "QtQuickTest doesn't preserve declared function
+   order" gap, whichever test happens to run last in that file isn't guaranteed to be a clean one.
+4. `AuthService` is referenced by real code in exactly three files; the only one of those three that
+   sorts alphabetically before `tst_Gateway.qml` is `tst_AuthStore.qml` itself — and its own
+   references there are comments, not code. That makes `tst_Gateway.qml`'s own `Gateway.drainNow()`
+   call the first real construction point for `AuthService` in the whole suite, assuming alphabetical
+   file processing (Qt's typical default for `-input <dir>`, not independently verified here).
+5. `AuthService.Component.onCompleted → init() → AuthStore.loadSession()` fires exactly once, at
+   that construction point, and reads straight from the shared file. If `tst_AuthStore.qml` left
+   `"tok-1"` there, `loadSession()` silently overwrites `tst_Gateway.qml`'s own
+   `AuthStore.idToken = ""` (set moments earlier by that test's own `init()`).
+6. That flips `_send()`'s no-auth guard open. `_send` proceeds down the real-XHR path, marks the
+   item in-flight, and — synchronous test body — nothing clears it before the test's own second
+   `drainNow()` call checks `dueItems()`. Result: `dueItems().length === 0`, not `1`. Matches the
+   log exactly.
+
+`tst_Gateway.qml`'s own header comment already states the assumption that broke ("don't set
+`AuthStore.idToken` in these tests, or that safety property no longer holds") — written before the
+QSettings fix made disk-backed contamination possible, so it correctly guarded the in-memory path
+and had no way to anticipate the disk path.
+
+**Fixed, two layers**:
+- **Root fix**: added `cleanupTestCase()` to `tst_AuthStore.qml`, clearing and re-saving a blank
+  session after that file's tests finish, regardless of which one runs last. New pattern in this
+  suite — no prior `cleanupTestCase()` exists anywhere else. Principle: the test that writes shared
+  state cleans up after itself.
+- **Defense in depth**: `tst_Gateway.qml`'s `init()` now also clears `AuthStore._settings.sessionJson`
+  directly, not just the in-memory `idToken`. Belt-and-suspenders on top of the root fix, not a
+  substitute for it. This was my call, not Taher's — cheap and consistent with this file's already-
+  defensive posture, but it's a second thing to maintain going forward, and he may reasonably prefer
+  just the one root fix. Flagged to him directly, not decided silently.
+
+**Not independently verified against a real toolchain** — same standing caveat as every entry in
+this file. The Gateway fix specifically rests on an assumption about Qt's file-enumeration order for
+`-input <dir>` that this sandbox cannot check.
+
 ## Next step
 
-1. Push this fix now (per standing "don't wait for permission to push" instruction).
-2. Watch CI on the resulting commit via the Actions API for `QML Tests` specifically — report
-   pass/fail plainly, without assuming green means "fully resolved" beyond what was actually checked.
-3. If `QML Tests` still fails after this: this session cannot get further without the actual log or
-   artifact content (egress-blocked both ways) — will need Taher to paste the failure text or the
-   `results.xml` directly, same as he did for the first `fileName` bug.
-4. `E2E Tests` on this branch has not been looked at yet this session (was `cancelled` on the
-   attempt-1 run due to the external re-run, not evaluated) — separate from the QML Tests fix above.
-5. Still open, unrelated to this fix: `OrdersStore` full-coverage test work, Phase 2 probe results
-   from Taher.
+1. Get a real `qmltestrunner` pass from Taher's machine — this round's fixes, especially the Gateway
+   one, need that confirmation more than prior rounds did.
+2. Resolve the repo-visibility discrepancy (public today vs. "private, needs PAT" per the entry
+   above) — ask Taher directly rather than assume either is stale.
+3. Get Taher's call on whether the Gateway `init()` defense-in-depth layer should stay, or whether
+   the `tst_AuthStore.qml` root fix alone is preferred.
+4. `E2E Tests` on this branch still not looked at this session — separate from all of the above.
+5. Still open, unrelated: `OrdersStore` full-coverage test work, Phase 2 probe results from Taher.
