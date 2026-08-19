@@ -471,54 +471,45 @@ and had no way to anticipate the disk path.
 this file. The Gateway fix specifically rests on an assumption about Qt's file-enumeration order for
 `-input <dir>` that this sandbox cannot check.
 
+## Second CI run: 293->470 tests, 7 real failures fixed (2026-08-19)
+
+The `location` fix worked -- compile cascade gone, 470 tests now actually run (up from 293). 7
+real failures remained, all fixed:
+
+- **tst_SettingsPath.qml** (4 failures) -- missed updating this file's own calls when the helper
+  function was renamed `settingsFileNameOverride` -> `settingsLocationOverride` in the previous
+  round. A plain oversight, not a design issue. Fixed.
+- **tst_CategoryStore.qml / tst_OrderChannelStore.qml** (1 each) -- my own test bug, not a
+  production issue. Read `CategoryStore.qml`'s actual `removeCategory()` source directly rather
+  than guess: the default-reassignment fallback picks `arr[0]` of the *whole* remaining list, and
+  these files' shared `init()` seeds `categories`/`channels` with the real defaults array (6/3
+  items) before every test, so "first remaining item" landed on a pre-existing default, not on
+  what the test itself added. Two sibling tests in the same files already worked around this by
+  locally resetting to an empty list before running -- applied the identical pattern to the two
+  broken ones rather than changing the shared `init()` (which would have broken the
+  `_loadLocal`-falls-back-to-defaults test that specifically depends on that seeding).
+- **tst_Gateway.qml** (`test_drainNow_does_not_leave_an_item_stuck_in_flight_when_unauthenticated`)
+  -- traced the full production chain (`recordMutation` -> `OutboxStore.enqueue`/`dueItems`/
+  `markInFlight` -> `Gateway._send`'s no-auth guard -> `OutboxStore.clearInFlight`); all correct as
+  written. Found a real robustness gap instead: this file's `init()` reset `AuthStore.idToken`
+  directly but not `AuthStore.isAuthenticated`, which is an independently-stored property (not a
+  binding derived from `idToken` -- see `AuthStore.qml`). `AuthStore` is one singleton shared
+  across every test file in a single `qmltestrunner` run; `tst_AuthStore.qml` (new this session) is
+  the only other file that sets real authenticated session state on it. Switched to
+  `AuthStore.clear()` (the store's own complete reset) instead of a partial one-field reset.
+  **Stated plainly**: could not 100% conclusively reproduce/confirm this was the exact cause via
+  static reading alone -- no toolchain here to run the suite and watch it fail/pass directly. The
+  fix is correct and strictly more robust regardless of whether it's the complete explanation.
+
+Also: a self-inflicted commit-message corruption caught before push -- backticks in a
+double-quoted shell `-m` string got interpreted as command substitution, silently dropping the
+quoted terms. Caught by checking `git log` output before pushing, fixed via `commit --amend -F`
+with the message in a file instead. Worth remembering for any future commit message with
+backtick-quoted code terms in this shell environment.
+
 ## Next step
 
-1. Get a real `qmltestrunner` pass from Taher's machine — this round's fixes, especially the Gateway
-   one, need that confirmation more than prior rounds did.
-2. Resolve the repo-visibility discrepancy (public today vs. "private, needs PAT" per the entry
-   above) — ask Taher directly rather than assume either is stale.
-3. Get Taher's call on whether the Gateway `init()` defense-in-depth layer should stay, or whether
-   the `tst_AuthStore.qml` root fix alone is preferred.
-4. `E2E Tests` on this branch still not looked at this session — separate from all of the above.
-5. Still open, unrelated: `OrdersStore` full-coverage test work, Phase 2 probe results from Taher.
-
-## Taher confirmed all tests pass (2026-08-18, continued) — independently re-verified, PR/branch landscape reviewed
-
-Didn't just take "all tests passed" at face value — pulled the real GitHub Checks API for this
-branch's HEAD (`0d4c033`) rather than relying on Taher's report alone: `QML Tests`, `Functions
-Tests`, `Firestore Rules Tests`, `E2E Tests` all `completed` / `success`. Confirms this round's three
-fixes (SettingsPath: no-op confirmed stale; CategoryStore/OrderChannelStore: constant fix; Gateway:
-the disk-contamination fix) all hold under a real toolchain, not just the static trace.
-
-Also pulled the full open-PR list (`api.github.com`, not assumed from memory) to answer Taher's
-"where do things stand" question honestly rather than from a compressed summary:
-
-- **PR #44** (`docs/e2e-testing-phase1-followup` → `main`) — this branch. Open, all four checks
-  green as of `0d4c033`. Ready for Taher's review/merge call.
-- **PR #39** (`feature/desktop-ux-design` → `main`) — open, separate parked thread (Plan 1 verified
-  and done; Plan 2 tasks 1–2 done, 3–5 not started). Untouched this session.
-- **PR #29** (`docs/offline-handling-design-update` → `main`) — open, last updated **2026-07-11**
-  (over five weeks before today), empty PR body. No context on this in memory or anywhere in this
-  file's history. Surfacing as a genuine open question, not silently ignoring it: worth confirming
-  with Taher whether it's still live work or should be closed.
-
-## Next step (current, priority order)
-
-1. **PR #44 merge decision** — all CI green, independently confirmed. Taher's call on whether to
-   merge now (small, coherent, reduces rebase risk as `main` moves) or hold to bundle in
-   `OrdersStore` coverage / the Phase 2 probe result first.
-2. **Two small open decisions from this round**, non-blocking but unresolved: repo-visibility
-   discrepancy (informational, needs Taher to check on GitHub's side); Gateway `init()`
-   defense-in-depth layer — keep both layers or drop to the `tst_AuthStore.qml` root fix alone.
-3. **`OrdersStore` full-coverage tests** — the one store from the 4-store QSettings extension
-   (2026-08-17) that never got matching persistence-regression coverage. Independent of the probe;
-   can proceed without waiting on Taher.
-4. **Phase 2 probe** — drafted since 2026-08-17, never run. The one item in the whole locked
-   sequence that fundamentally can't be closed from this sandbox; needs Taher to run it locally and
-   report the `=== PROBE OUTPUT ===` content. Can run in parallel with item 3, no ordering dependency.
-5. **Optional, raised but not yet decided**: sweep the rest of `tests/*.qml` for other files that
-   lazily reference `AuthService`/`Gateway.drainNow()` and could hit the same class of shared-disk
-   contamination found this session — not yet done, not yet requested by Taher.
-6. **PR #29** — needs a keep-or-close decision from Taher; not investigated further this session.
-7. Unrelated, separate thread: `feature/desktop-ux-design` Plan 2 Tasks 3–5 (OrdersDetailPane,
-   OrdersMasterDetail composition, `Main.qml` wiring) still pending whenever that thread resumes.
+1. Taher: re-run `qmltestrunner -input tests` (or CI) to confirm all failures are now actually
+   resolved.
+2. E2E test failures (`test/e2e/`) still not looked at -- no log supplied for those yet.
+3. Still open: `OrdersStore` full-coverage test work, Phase 2 probe results from Taher.
