@@ -380,9 +380,9 @@ QtObject {
         for (var i = 0; i < Math.min(words.length, 2); ++i)
             prefix += words[i].charAt(0).toUpperCase();
         var year = new Date().getFullYear();
-        var num = numOfProducts > 0 ? numOfProducts : products.length + 1;
+        var num = numOfProducts !== undefined && numOfProducts > 0 ? numOfProducts : products.length + 1;
         var numStr = String(num).padStart(3, '0');
-        return prefix + "-" + year + "-" + num;
+        return prefix + "-" + year + "-" + numStr;
     }
 
     // The `party` legacy argument is now treated as a SUPPLIER ID for new
