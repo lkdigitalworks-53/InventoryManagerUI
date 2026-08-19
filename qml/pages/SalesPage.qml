@@ -1484,9 +1484,9 @@ Item {
             // bottom so the user can sanity-check the chart.
             var showSup = root.canViewSuppliers
             var snapHeaders = showSup
-                    ? [qsTr("Name"), qsTr("SKU"), qsTr("Category"), qsTr("Supplier"),
-                       qsTr("Stock"), qsTr("Min stock"), qsTr("Status")]
-                    : [qsTr("Name"), qsTr("SKU"), qsTr("Category"),
+                    ? [qsTr("Product ID"), qsTr("Name"), qsTr("SKU"), qsTr("Category"), qsTr("Supplier"),
+                       qsTr("Stock"), qsTr("Min stock"), qsTr("Cost Price"), qsTr("Selling Price"), qsTr("Status"), qsTr("Tax%")]
+                    : [qsTr("Product ID"), qsTr("Name"), qsTr("SKU"), qsTr("Category"),
                        qsTr("Stock"), qsTr("Min stock"), qsTr("Status")]
             var snapRows = []
             var inv = (InventoryStore.products || []).slice()
@@ -1516,14 +1516,14 @@ Item {
                             : s <= (p.minStock || 0) ? qsTr("Low")
                             : qsTr("In stock")
                 if (showSup)
-                    snapRows.push([p.name || "", p.sku || "", p.category || "",
-                                   sup, s, p.minStock || 0, status])
+                    snapRows.push([p.productId, p.name || "", p.sku || "", p.category || "",
+                                   sup, s, p.minStock || 0, p.price || 0, p.sellingPrice || p.price, status, p.taxPercent || 0])
                 else
                     snapRows.push([p.name || "", p.sku || "", p.category || "",
                                    s, p.minStock || 0, status])
             }
             if (showSup)
-                snapRows.push(["", "", "", qsTr("Total"), grandTotal, "", ""])
+                snapRows.push(["", "", "","" , qsTr("Total"), grandTotal, "", ""])
             else
                 snapRows.push(["", "", qsTr("Total"), grandTotal, "", ""])
             return {
