@@ -143,6 +143,9 @@ TestCase {
     }
 
     function test_removeCategory_reassigns_default_when_removing_the_default() {
+        CategoryStore.categories = [] // isolate from the 6-item `defaults` seed -- see the
+                                       // removeCategory fallback (arr[0] of the WHOLE remaining
+                                       // list, not just what this test added) that caught this
         CategoryStore.addCategory("Books")
         CategoryStore.addCategory("Toys")
         CategoryStore.setDefault("Books")

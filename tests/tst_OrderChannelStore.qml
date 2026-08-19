@@ -128,6 +128,9 @@ TestCase {
     }
 
     function test_removeChannel_reassigns_default_when_removing_the_default() {
+        OrderChannelStore.channels = [] // isolate from the 3-item `defaults` seed -- same
+                                         // fallback-picks-arr[0]-of-the-whole-list issue as
+                                         // CategoryStore's equivalent test
         OrderChannelStore.addChannel("WhatsApp")
         OrderChannelStore.addChannel("Instagram")
         OrderChannelStore.setDefault("WhatsApp")

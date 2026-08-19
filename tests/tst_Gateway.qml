@@ -51,16 +51,20 @@ TestCase {
         // that inspects the deployed app, not this per-case-reset TestCase.
         Gateway.mode = "direct"
         OutboxStore.clear()
-        AuthStore.idToken = "" // keep the _send/_sendBatch guard closed (see header)
-        // In-memory reset alone isn't enough: Gateway.drainNow() itself
-        // triggers AuthService's first-ever lazy construction (only real
-        // reference to it in this file), whose init() calls
-        // AuthStore.loadSession() -- reading from the SAME on-disk file
-        // every store shares under qmltestrunner (see SettingsPath.js).
-        // If tst_AuthStore.qml's persistence test left a real idToken
-        // there, loadSession() silently overwrites the line above with
-        // it, right before _send checks it. Clear the disk copy too.
-        AuthStore._settings.sessionJson = ""
+        // AuthStore.clear() (not just idToken = "") -- isAuthenticated is an
+        // independently-stored property, not a binding derived from
+        // idToken (see AuthStore.qml), so a partial reset here can leave it
+        // true from whatever an EARLIER test file in this same
+        // qmltestrunner process last left it as, since AuthStore is one
+        // singleton shared across every test file in the run. That's a
+        // real, confirmed failure mode: tst_AuthStore.qml's own tests call
+        // applyAuth()/loadSession() with a real authenticated session, and
+        // this file's own guard-closed assumption ("no real signed-in
+        // session" -- see header) silently broke once cross-file execution
+        // order put an authenticated AuthStore ahead of this file's tests.
+        // clear() resets every field AuthStore.qml defines, not just the
+        // one this file happens to check directly.
+        AuthStore.clear() // keep the _send/_sendBatch guard closed (see header)
     }
 
     // ── mode + collection mapping ────────────────────────────────────────────
