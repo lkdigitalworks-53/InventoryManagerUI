@@ -125,7 +125,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                placeholder: "Search products, SKUs, categories…"
+                placeholder: "Search products Ids, name, SKUs, categories…"
                 onTextChanged: root._searchText = text
             }
 
@@ -368,7 +368,7 @@ Item {
                 if ((p.category || "") !== cat) return false
             }
             if (q.length === 0) return true
-            var hay = ((p.name || "") + " " + (p.sku || "") + " " + (p.category || "")).toLowerCase()
+            var hay = ((p.productId || "") + " " + (p.name || "") + " " + (p.sku || "") + " " + (p.category || "")).toLowerCase()
             return hay.indexOf(q) >= 0
         })
     }
