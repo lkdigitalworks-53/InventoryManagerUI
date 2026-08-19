@@ -94,6 +94,7 @@ QtObject {
             if (!p.size) p.size = "";
             if (!p.photoUrl) p.photoUrl = "";
             if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
+            if (!p.supplierId) p.supplierId = "";
         }
         return arr;
     }
@@ -151,7 +152,8 @@ QtObject {
                       size: p.size || "",
                       unit: p.unit, description: p.description,
                       photoUrl: p.photoUrl || "",
-                      photoUpdatedAt: p.photoUpdatedAt || "" });
+                      photoUpdatedAt: p.photoUpdatedAt || "",
+                      supplierId: p.supplierId || ""});
         }
         return a;
     }
@@ -378,9 +380,9 @@ QtObject {
         for (var i = 0; i < Math.min(words.length, 2); ++i)
             prefix += words[i].charAt(0).toUpperCase();
         var year = new Date().getFullYear();
-        var num = numOfProducts > 0 ? numOfProducts : products.length + 1;
+        var num = numOfProducts !== undefined && numOfProducts > 0 ? numOfProducts : products.length + 1;
         var numStr = String(num).padStart(3, '0');
-        return prefix + "-" + year + "-" + num;
+        return prefix + "-" + year + "-" + numStr;
     }
 
     // The `party` legacy argument is now treated as a SUPPLIER ID for new
@@ -688,6 +690,11 @@ QtObject {
                 }
 
                 // overwrite
+                if (!r.sku || r.sku.length === 0) {
+                    // Generate SKU if empty, for an existing row
+                    var num = parseInt(String(r.productId).split('-')[1]);
+                    r.sku = generateSku(r.name, num);
+                }
                 // For overwrite operation we have to send it through logic and data model layer to update details.
                 updatedProducts.push({productId: r.productId, fields: {
                                   name: r.name,
@@ -703,7 +710,8 @@ QtObject {
                                       : 0,
                                   size: r.size || "",
                                   stock: r.stock,
-                                  minStock: r.minStock
+                                  minStock: r.minStock,
+                                  supplierId: r.supplierId
                               }})
                 counts.updated++;
             } else {
@@ -713,8 +721,8 @@ QtObject {
                 r.productId = pullProductId();
                 if (!r.sku || r.sku.length === 0) {
                     // Generate SKU if empty, for a new row
-                    var num = parseInt(String(r.productId).split('-')[1]);
-                    r.sku = generateSku(r.name, num);
+                    var sku_num = parseInt(String(r.productId).split('-')[1]);
+                    r.sku = generateSku(r.name, sku_num);
                 }
 
                 var doc = _normalizeRecord(r);
