@@ -371,14 +371,15 @@ QtObject {
         })
     }
 
-    function generateSku(name) {
+    function generateSku(name, numOfProducts = 0) {
         if (!name || name.length < 2) return "";
         var words = name.trim().split(/\s+/);
         var prefix = "";
         for (var i = 0; i < Math.min(words.length, 2); ++i)
             prefix += words[i].charAt(0).toUpperCase();
         var year = new Date().getFullYear();
-        var num = String(products.length + 1).padStart(3, '0');
+        var num = numOfProducts > 0 ? numOfProducts : products.length + 1;
+        var numStr = String(num).padStart(3, '0');
         return prefix + "-" + year + "-" + num;
     }
 
@@ -712,7 +713,8 @@ QtObject {
                 r.productId = pullProductId();
                 if (!r.sku || r.sku.length === 0) {
                     // Generate SKU if empty, for a new row
-                    r.sku = generateSku(r.name);
+                    var num = parseInt(String(r.productId).split('-')[1]);
+                    r.sku = generateSku(r.name, num);
                 }
 
                 var doc = _normalizeRecord(r);
