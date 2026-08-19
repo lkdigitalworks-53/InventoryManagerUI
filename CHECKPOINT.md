@@ -522,3 +522,41 @@ Also pulled the full open-PR list (`api.github.com`, not assumed from memory) to
 6. **PR #29** — needs a keep-or-close decision from Taher; not investigated further this session.
 7. Unrelated, separate thread: `feature/desktop-ux-design` Plan 2 Tasks 3–5 (OrdersDetailPane,
    OrdersMasterDetail composition, `Main.qml` wiring) still pending whenever that thread resumes.
+
+## PR #44 merged; decisions resolved (2026-08-18, continued)
+
+Verified via API, not just Taher's word: PR #44 merged into `main` at `bc0a8fb` on 2026-08-18. Pulled
+`main`, opened a fresh branch (`docs/e2e-testing-phase2-followup`) for this round, per the standing
+"never commit directly to main" rule — applies even to a docs-only checkpoint update.
+
+Taher's decisions on the open items from last round:
+
+- **Repo visibility**: confirmed public, no PAT needed. Resolves the discrepancy flagged earlier.
+  Old "private, needs PAT" entry above is left as-is (this file doesn't rewrite what was believed at
+  the time) — this note is the correction.
+- **Gateway `init()` defense-in-depth layer**: keep it. Taher's standing instruction: always take the
+  correct/robust fix over a shortcut, project-wide, not case-by-case. Applied here — both layers
+  stay (root fix in `tst_AuthStore.qml` + defensive reset in `tst_Gateway.qml`). No code change
+  needed, this was already shipped in `0d4c033`; just documenting the resolved call.
+- **`OrdersStore` full coverage**: confirmed go — and generalized. Taher's standing instruction now:
+  aim for 100% relevant test coverage on anything Claude writes or touches, not just the specific
+  gap being closed. Recorded as a durable principle (memory), not just a one-off for this store.
+- **PR #29 / `feature/desktop-ux-design`**: Taher does not want Claude proactively checking or
+  managing other branches/PRs — his call to make, only on request. Recorded as a durable preference
+  (memory). Not investigated further.
+- **AuthService-contamination sweep**: not yet decided — Taher asked for a clearer re-explanation of
+  the underlying problem before deciding. Given in chat this round, not yet re-recorded here pending
+  his actual decision.
+- **Local test command**: Taher asked for a copy-pasteable command to run the QML test suite
+  locally. Pulled the exact CI invocation from `checks.yml`'s `qml-tests` job (`qmltestrunner -input
+  tests -platform offscreen -o results.xml,junitxml`) rather than reconstruct from memory, and added
+  `-o -,txt` for local human-readable stdout — CI's `qml-tests` job is still missing that flag
+  (confirmed still true, listed in the original deferred-gap list), `e2e-tests` job already has it.
+  Given verbatim in chat.
+
+## Next step
+
+1. Awaiting Taher's decision on the AuthService-sweep question (re-explained this round).
+2. Once decided (or independently, no dependency): start `OrdersStore` coverage work toward the
+   100% standard, on this branch.
+3. Nothing else currently blocked — PR #44's items are all closed out.
