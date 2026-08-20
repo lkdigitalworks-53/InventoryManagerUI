@@ -37,19 +37,101 @@ just agree and implement the first plausible fix.
    keep-or-close) is **not** part of this session's task — left untouched for Taher/a future
    session, not silently absorbed into this one.
 5. Created new branch `fix/return-analysis-revenue-not-updated` off `main`.
-6. **Next:** Phase 1 root-cause investigation — trace the data flow for a return from
-   `OrdersStore`/`Gateway` through to whatever computes Sales Analysis revenue/profit
-   (memory points at `RealisedMath` as "single source of truth for revenue/profit" and flags
-   a known landmine in `_breakdownByDimension()`'s ternary — worth checking but not assuming
-   that's this bug without evidence).
+6. **Correction, caught by Taher:** commit `c48f304` (step 5's setup) was made locally but I
+   did not push it — an actual process miss, not a deliberate withhold. Pushed
+   `fix/return-analysis-revenue-not-updated` right after Taher flagged it, using the PAT
+   directly in the push URL only (never written to `.git/config` — confirmed via
+   `git remote -v` post-push). Independently verified the branch exists via
+   `GET /repos/.../branches/fix/return-analysis-revenue-not-updated` (didn't just trust the
+   `git push` success line). **Lesson: push immediately after every commit this session,
+   don't batch it for "later."**
+7. Taher confirmed the repro has no special setup (default tax/discount, single line,
+   qty 1) and that BOTH Revenue and Profit tabs are wrong (not just one) — same in the
+   exported sheet.
+8. Phase 1 root-cause investigation — exhaustive trace, see below. **No root cause found
+   yet.** This is an honest dead-end-so-far, not a fix.
 
-## Root cause (pending — not yet investigated)
+## Investigation trace (Phase 1 — root cause NOT yet found)
 
-## Fix (pending — not yet decided; will show trade-offs before implementing)
+Traced the full pipeline for a single-item order, complete, full return via the "−" stepper
+down to 0 (which removes the row — confirmed, doesn't leave `quantity:0`):
 
-## Verification status (pending)
+- `ConfirmReturnSheet.qml` → `Main.qml:728 logic.adjustOrder(oid, newLines, reason, condition,
+  note)` → `Logic.qml` signal → `DataModel.onAdjustOrder` (RBAC-gated) → `_tryAdjustOrder`
+  (DataModel.qml:726) — **the only return code path in the app**; grepped for a second
+  "returned"-status route, none exists.
+- `_tryAdjustOrder` reads `o = OrdersStore.getById(orderId)` once at the top (pre-adjustment
+  snapshot), computes `deltas = OrderAdjust.diffLines(o.products, newLines)`. For a fully-
+  removed single line, `diffLines` still yields `returnedQty = oldQty` (verified: a line
+  absent from `newLines` is treated as `quantity:0`, same as a line present with `quantity:0`).
+- For that delta: `line = _findLine(o.products, d.productId)` (exact productId match, no
+  bug), `consumption = line.consumption`, `plan = OrderAdjust.restorePlan(consumption,
+  returnedQty)` — traced this function fully; for a qty-1 single-batch consumption it
+  correctly reverses the full unit. `reversed[]` gets negative `qtyConsumed`.
+- `TransactionStore.recordReturn(o, ..., reversed, ...)` — re-fetches
+  `OrdersStore.getById(order.orderId)` (same pre-adjustment state, since
+  `OrdersStore.applyAdjustment` hasn't run yet — that's later, in `_finishAdjustmentSync`),
+  runs `OrderMath.allocate()` on it, matches the line, computes `rNet/rTax/rDisc` as the
+  negative of the full line's net/tax/discount. Doc gets `kind:"return"` (exact string,
+  no typo), `net/tax/discountShare` set correctly, `consumption: reversed`. `_push(doc)`
+  updates `TransactionStore.entries` **synchronously** (local unshift, `revision++`) —
+  confirmed the Gateway persist call happens *after* the local array update, so this isn't
+  a "waiting on network" gap either.
+- `RealisedMath.byDimension()`/`totals()` — read in full. Correctly includes `kind:"return"`
+  rows, correctly handles the negative `qtyConsumed` sign convention (frac resolves to the
+  same sign, net contribution comes out negative as expected). `totals()` is literally
+  `Σ byDimension("category")` — read to confirm, not just trusting the comment.
+- `InventoryStore.realisedTotals/realisedProfitByDimension/realisedBucketWalk` — thin
+  passthroughs, read `TransactionStore.entries` fresh on every call. No caching, no stale
+  copy.
+- **Built and ran a Node.js harness** (`scratch/harness.js`, not committed — scratch only)
+  that loads the actual `OrderMath.js`/`OrderAdjust.js`/`RealisedMath.js` (`.pragma`/`.import`
+  lines stripped only, nothing else touched) into `vm` contexts and replays this exact
+  repro — sale doc + return doc, fed into `RealisedMath.totals()`. **Result: revenue and
+  profit both correctly net to 0.** The pure math, given well-formed inputs matching what
+  the orchestration code should produce, is not the bug.
+- Considered and ruled out a UI-reactivity/stale-binding theory (`_txWatcher` not read by
+  the hero computation) — ruled out **because the exported sheet is also wrong**, and export
+  recomputes `_exportTotalsBlock()` fresh on click with no dependency on any binding/watcher.
+  If it were a reactivity bug, export would show the correct number even if the on-screen
+  hero didn't. It doesn't, so the underlying computed *value* must be wrong, not just a
+  stale render.
+- Considered and ruled out "a background Firestore resync wipes the locally-pushed return
+  doc out of `entries`" — ruled out because `TransactionStore.bucketsFor` (backs the
+  Sold/Purchased tabs, which Taher confirms DO update correctly) reads the exact same
+  `entries` array fresh each call. If `entries` were losing the return doc, Sold/Purchased
+  would be wrong too.
+- Considered and ruled out a date/period-window scope exclusion — `_dateFilter` defaults to
+  `"all"` (`_dateWindow()` returns `null`), and export uses `periodScoped:false`, so by
+  default neither the on-screen hero's week-intersected window nor the export's window
+  should be excluding same-day events. Not impossible at a week boundary, but doesn't fit
+  "reliably reproduces every time."
 
-## Open questions for Taher
+**Where this leaves things:** the one structural fact that's still consistent with the
+evidence is that `RealisedMath.byDimension`/`totals` are the only computation in the whole
+pipeline that depend on `consumption[]` being correctly populated on the return event —
+`bucketsFor` (Sold/Purchased, confirmed working) doesn't care about `consumption` at all,
+just `quantity`. Every place I can *read* that builds/reverses `consumption` looks correct
+on paper. I can't tell from static reading alone whether the REAL `consumption` array on
+Taher's actual return event is what the code says it should be. Further progress needs live
+data, not more code reading.
 
-(none yet — will add here rather than interrupting mid-investigation unless something blocks
-progress entirely)
+## Root cause: NOT YET FOUND — need live evidence, not more static tracing
+
+## Fix: not decided — no fix without root cause (Iron Law)
+
+## Verification status: pure-math layer verified via Node harness (scratch, uncommitted).
+Orchestration layer (DataModel/TransactionStore/OrdersStore) verified by reading only —
+not yet verified against real data.
+
+## Open question for Taher — blocking
+
+Need ONE of:
+1. The actual Firestore `transactions` collection doc for the return event on this test
+   order (Firebase console, or `firebase firestore:get`/similar) — specifically its
+   `kind`, `net`, `tax`, `consumption` fields.
+2. OR: permission to add a temporary `console.log(JSON.stringify(doc))` right before
+   `_push(doc)` in `TransactionStore.recordReturn` (and one in `InventoryStore.realisedTotals`
+   dumping `entries.length` and the last 2 entries) for a debug build Taher runs once and
+   pastes back the logcat output. This needs Taher to build/run — I'm not doing that myself
+   unprompted per the standing instruction.
