@@ -679,7 +679,13 @@ QtObject {
                 if (policy === "rename") {
                     // Treat as new: assign fresh id (pre-reserved) and unique SKU
                     r.productId = pullProductId();
-                    if (r.sku) r.sku = ImportMath.renameSku(r.sku, counts.added);
+
+                    if (r.sku) { r.sku = ImportMath.renameSku(r.sku, counts.added); }
+                    else {
+                        var sku_num = parseInt(String(r.productId).split('-')[1]);
+                        r.sku = generateSku(r.name, sku_num);
+                    }
+
                     var renamedDoc = _normalizeRecord(r);
                     arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
