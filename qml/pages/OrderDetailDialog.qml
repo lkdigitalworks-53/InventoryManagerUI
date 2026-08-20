@@ -1026,7 +1026,7 @@ BottomSheet {
                             }
                         }
                         Text {
-                            visible: ohRow._sku.length > 0
+                            visible: modelData.productId && modelData.productId.length > 0
                             text: qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
                             color: Constants.textSecondary
                             font.pixelSize: sp(Constants.fsCaption)
