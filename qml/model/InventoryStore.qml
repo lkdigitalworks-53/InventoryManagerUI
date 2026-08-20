@@ -285,7 +285,15 @@ QtObject {
                 return (typeof OrdersStore !== "undefined" && oid) ? OrdersStore.getById(oid) : null
             }
         }
-        return RealisedMath.totals(entries, opts || null, lookups)
+        // TEMP DEBUG (returns/analysis-revenue bug) — remove before merge.
+        var _dbgReturns = entries.filter(function(e) { return e.kind === "return" })
+        console.log("[TEMPDBG] realisedTotals: entries.length=" + entries.length
+            + " returnEntries=" + JSON.stringify(_dbgReturns)
+            + " opts=" + JSON.stringify(opts || null))
+        var result = RealisedMath.totals(entries, opts || null, lookups)
+        // TEMP DEBUG (returns/analysis-revenue bug) — remove before merge.
+        console.log("[TEMPDBG] realisedTotals: result=" + JSON.stringify(result))
+        return result
     }
 
     // Period-bucketed realised event walk for the on-screen chart / export

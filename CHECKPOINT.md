@@ -124,14 +124,39 @@ data, not more code reading.
 Orchestration layer (DataModel/TransactionStore/OrdersStore) verified by reading only —
 not yet verified against real data.
 
-## Open question for Taher — blocking
+## Open question for Taher — blocking (in progress)
 
-Need ONE of:
-1. The actual Firestore `transactions` collection doc for the return event on this test
-   order (Firebase console, or `firebase firestore:get`/similar) — specifically its
-   `kind`, `net`, `tax`, `consumption` fields.
-2. OR: permission to add a temporary `console.log(JSON.stringify(doc))` right before
-   `_push(doc)` in `TransactionStore.recordReturn` (and one in `InventoryStore.realisedTotals`
-   dumping `entries.length` and the last 2 entries) for a debug build Taher runs once and
-   pastes back the logcat output. This needs Taher to build/run — I'm not doing that myself
-   unprompted per the standing instruction.
+Taher chose option 2: temporary debug logging, his own build/run, he pastes back the logcat.
+
+Added 4 `console.log("[TEMPDBG] ...")` lines, all tagged and marked "remove before merge":
+1. `DataModel._tryAdjustOrder`, return branch — logs `line.consumption` as read from the
+   order (the INPUT to `restorePlan`) and the `restorePlan` OUTPUT. Narrows down whether an
+   empty/malformed consumption originates upstream (order persistence) or downstream.
+2. `TransactionStore.recordReturn` — logs the fully-constructed return doc right before
+   `_push(doc)`. Shows exactly what enters `TransactionStore.entries`.
+3. `InventoryStore.realisedTotals` — logs `entries.length`, every `kind:"return"` row
+   found in `entries` at call time, and the final computed result. Shows exactly what
+   `RealisedMath.totals` receives and returns.
+
+Repro to run: add order (1 line, default tax/discount) → complete → return the item via the
+"−" stepper to 0 → open Sales Analysis (Revenue or Profit tab) once (this calls
+`realisedTotals`, firing log #3). Grep logcat for `TEMPDBG`.
+
+**What each outcome would tell us:**
+- Log #1's `line.consumption` is `[]` or `null` → bug is upstream, in order completion/
+  persistence not actually attaching consumption (contradicts my read of
+  `_tryCompleteOrder`, but read ≠ reality — would need a second debug pass there).
+- Log #1's `line.consumption` is populated but `restorePlan` output is `[]` → bug is in
+  `OrderAdjust.restorePlan` itself, or in how the input is being read that a read-through
+  of the source didn't reveal (types, structural mismatch).
+- Log #2's doc looks well-formed (`kind:"return"`, `net`/`tax` non-zero-negative,
+  `consumption` non-empty) but log #3 shows it MISSING from `entries` or with `kind`/`net`
+  altered → bug is between `_push` and the read in `realisedTotals` (something mutates or
+  filters `entries` between write and read that I haven't found).
+- Log #3 shows the return row present and correct in `entries` but `result.net`/
+  `result.profit` still wrong → bug is inside `RealisedMath.totals`/`byDimension` itself,
+  contradicting the Node harness — would mean the harness doesn't faithfully match
+  production (worth re-checking scope/opts differences).
+
+Pushed as commit (see below) directly to `fix/return-analysis-revenue-not-updated`. Will be
+reverted/removed as part of the eventual fix commit once root cause is confirmed.

@@ -496,6 +496,8 @@ QtObject {
             condition: condition || "",
             note: note || ""
         }
+        // TEMP DEBUG (returns/analysis-revenue bug) — remove before merge.
+        console.log("[TEMPDBG] recordReturn doc=" + JSON.stringify(doc))
         _push(doc)
     }
 

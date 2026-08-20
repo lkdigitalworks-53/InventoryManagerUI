@@ -957,7 +957,13 @@ Item {
             if (d.returnedQty > 0) {
                 var line = _findLine(o.products, d.productId)
                 var consumption = line && Array.isArray(line.consumption) ? line.consumption : []
+                // TEMP DEBUG (returns/analysis-revenue bug) — remove before merge.
+                console.log("[TEMPDBG] _tryAdjustOrder return: productId=" + d.productId
+                    + " returnedQty=" + d.returnedQty
+                    + " line.consumption=" + JSON.stringify(line ? line.consumption : null))
                 var plan = OrderAdjust.restorePlan(consumption, d.returnedQty)
+                // TEMP DEBUG (returns/analysis-revenue bug) — remove before merge.
+                console.log("[TEMPDBG] _tryAdjustOrder return: restorePlan=" + JSON.stringify(plan))
                 var reversed = []
                 for (var p = 0; p < plan.length; ++p)
                     reversed.push({ batchId: plan[p].batchId, supplierId: plan[p].supplierId,
