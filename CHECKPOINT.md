@@ -116,13 +116,77 @@ on paper. I can't tell from static reading alone whether the REAL `consumption` 
 Taher's actual return event is what the code says it should be. Further progress needs live
 data, not more code reading.
 
-## Root cause: NOT YET FOUND — need live evidence, not more static tracing
+## Root cause: FOUND, confirmed by device logs (`TEMPDBGLogs.txt`, Taher's device)
 
-## Fix: not decided — no fix without root cause (Iron Law)
+`OrderDetailDialog._save()` rebuilds a line array (`prods`) from the dialog's editable
+`products` ListModel — that ListModel never carries `consumption[]` (FIFO batch lineage
+stamped at completion) because it isn't a user-editable field. For a COMPLETED order where
+lines are UNCHANGED (`linesChanged === false` — pure metadata edit: customer/email/phone/
+status/channel/staff), `_save()` falls through to `logic.updateOrder(orderId, {..., products:
+prods, ...})`. `OrdersStore.updateOrder` does a full, unconditional `o.products =
+fields.products` replace (confirmed: line 586 of `OrdersStore.qml`, no merge). So editing a
+completed order's customer name silently wipes `consumption[]` off every line.
 
-## Verification status: pure-math layer verified via Node harness (scratch, uncommitted).
-Orchestration layer (DataModel/TransactionStore/OrdersStore) verified by reading only —
-not yet verified against real data.
+Later, returning that line: `_tryAdjustOrder` reads `line.consumption` — now `[]` —
+`OrderAdjust.restorePlan([], returnedQty)` correctly returns `[]` for empty input, so the
+return event's own `consumption` ends up `[]` too. `RealisedMath.byDimension`/`totals` need
+a non-empty `consumption[]` to attribute a row's revenue/profit; with `[]` the return
+contributes nothing. `TransactionStore.bucketsFor` (Sold/Purchased) doesn't touch
+`consumption` at all — just nets `quantity` — so those stayed correct. Same underlying
+`entries` array feeds the export path too, so it inherited the same bug.
+
+Log evidence (line 152 of the device log): for `ORD-002` (customer name edited post-
+completion, per Taher's repro) — `line.consumption=[]` right at the return site, confirming
+the field was already gone before the return even started. `ORD-004`/`ORD-005` (price edit,
+discount add) went through the ADJUST path instead (`_lineKeys` flags a quantity/price/
+discount change as `linesChanged`), which derives consumption independently inside
+`_tryAdjustOrder` — never touches `OrderDetailDialog`'s rebuilt array — which is exactly why
+those edits didn't corrupt anything and "all calculations were correctly aligned" right up
+until the return.
+
+## Fix: implemented, TDD'd, pushed
+
+Added `OrderAdjust.reconcileConsumptionOnSave(newLines, originalLines)` to
+`qml/helper/OrderAdjust.js` (pure, `.pragma library`, matches `diffLines`/`restorePlan`'s
+existing style) — merges each surviving line's original `consumption[]` back in by
+productId match; a genuinely new/unmatched line gets `consumption: []`. TDD'd via the
+Node harness: RED (function didn't exist, confirmed threw) → GREEN (7 edge cases: surviving
+line, unmatched new line, original with no consumption field, multiple lines matched
+independently, other fields (price/discount) pass through untouched, null-safety). Ported
+the same 6 cases into `tests/tst_OrderAdjust.qml` as permanent qmltestrunner tests — **not
+run in this sandbox** (no Qt toolchain), needs a real qmltestrunner pass, same status as
+every other QML-level test written this session.
+
+Wired into `OrderDetailDialog._save()`: **only** the plain-`updateOrder` branch's
+`products:` field now goes through `OrderAdjust.reconcileConsumptionOnSave(prods,
+_originalLines)` — deliberately did NOT touch the `prods` sent to `adjustRequested` (the
+line-changed/adjust path), since `_tryAdjustOrder`/`_finishAdjustmentSync` already derive
+consumption correctly on their own for that path; touching it there would've been
+unnecessary blast radius for a bug that only exists in the metadata-only-edit branch.
+
+Removed all 4 `TEMPDBG` console.log lines (DataModel.qml x2, TransactionStore.qml x1,
+InventoryStore.qml x2) — root cause confirmed, no longer needed.
+
+## Verification status
+- Pure-function fix (`reconcileConsumptionOnSave`): verified GREEN via Node harness
+  (`scratch/test_reconcile_full.js`, not committed — scratch only), 9/9 assertions pass.
+- Permanent QML test (`tst_OrderAdjust.qml` additions): written, NOT run — needs Taher's
+  local `qmltestrunner` or CI.
+- End-to-end (does the actual bug repro now show the return in Revenue/Profit): NOT
+  verified on-device — needs Taher to rebuild and re-run the exact repro from
+  `TEMPDBGLogs.txt` (or any completed-order → metadata-edit → return sequence).
+
+## Not done / explicitly out of scope this pass
+- Did not audit `adjustOrderForImport` (`DataModel.qml:656`, the import-correction twin of
+  `_tryAdjustOrder`) for a similar pattern — different function, different caller, out of
+  scope for Taher's reported repro. Worth a look in a follow-up if imports ever hit the
+  same symptom.
+- Did not add a test at the `OrderDetailDialog` Dialog-instantiation level (calling the
+  real `_save()` through a real component instance) — no existing precedent for
+  instantiating this Dialog in a test, and Taher's own roadmap already has a deferred
+  "Felgo headless dialog feasibility" spike for exactly this question. Wrote the
+  regression test at the `OrderAdjust.js` pure-function boundary instead, which is fully
+  Node-verifiable by me and covers the actual defect.
 
 ## Open question for Taher — blocking (in progress)
 

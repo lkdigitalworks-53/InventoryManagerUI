@@ -138,4 +138,71 @@ TestCase {
         compare(d[0].taxable, true)
         compare(d[0].taxPercent, 10)
     }
+
+    // ── reconcileConsumptionOnSave — returns/analysis-revenue bug ──────────
+    // OrderDetailDialog._save() rebuilds a line array from editable UI state
+    // that has no consumption field at all (not user-editable), then sends
+    // it straight to OrdersStore.updateOrder(...) for ANY save on a
+    // completed order — including metadata-only edits (customer/status/
+    // channel) that never touch quantities. That silently wiped consumption[]
+    // off every line. A later return then read an empty consumption[], so
+    // RealisedMath.byDimension/totals (which need it to attribute revenue/
+    // profit) counted the return as zero — while every other analysis view
+    // (bucketsFor, which only sums quantity) stayed correct. Reproduced via
+    // on-device TEMPDBG logging 2026-08-20 (order edited post-completion,
+    // then returned — consumption confirmed empty at the return site).
+    function test_reconcile_surviving_line_keeps_original_consumption() {
+        var newLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1 }]
+        var origLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1,
+                            consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] }]
+        var out = OA.reconcileConsumptionOnSave(newLines, origLines)
+        compare(out.length, 1)
+        compare(out[0].consumption.length, 1)
+        compare(out[0].consumption[0].batchId, "B1")
+        compare(out[0].consumption[0].qtyConsumed, 1)
+    }
+    function test_reconcile_unmatched_new_line_gets_empty_consumption() {
+        var newLines = [{ productId: "P2", name: "New Product", price: 50, quantity: 1 }]
+        var origLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1,
+                            consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] }]
+        var out = OA.reconcileConsumptionOnSave(newLines, origLines)
+        compare(out[0].consumption.length, 0)
+    }
+    function test_reconcile_original_line_with_no_consumption_field_is_safe() {
+        // A pending order's lines never had FIFO consumption stamped yet.
+        var newLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1 }]
+        var origLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1 }]
+        var out = OA.reconcileConsumptionOnSave(newLines, origLines)
+        compare(out[0].consumption.length, 0)
+    }
+    function test_reconcile_multiple_lines_match_independently() {
+        var newLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1 },
+                         { productId: "P2", name: "Gadget", price: 50, quantity: 2 }]
+        var origLines = [
+            { productId: "P1", name: "Widget", price: 100, quantity: 1,
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { productId: "P2", name: "Gadget", price: 50, quantity: 2,
+              consumption: [{ batchId: "B2", supplierId: "S2", qtyConsumed: 2, unitCost: 20 }] }
+        ]
+        var out = OA.reconcileConsumptionOnSave(newLines, origLines)
+        compare(out[0].consumption[0].batchId, "B1")
+        compare(out[1].consumption[0].batchId, "B2")
+    }
+    function test_reconcile_preserves_edited_price_and_discount_not_original() {
+        // The fix must only touch consumption — an actual price/discount
+        // edit on this line still routes through _tryAdjustOrder, never this
+        // path, but the function itself must not clobber whatever the
+        // caller passed for other fields.
+        var newLines = [{ productId: "P1", name: "Widget", price: 90, quantity: 1,
+                           discountType: "flat", discountValue: 5 }]
+        var origLines = [{ productId: "P1", name: "Widget", price: 100, quantity: 1,
+                            consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] }]
+        var out = OA.reconcileConsumptionOnSave(newLines, origLines)
+        compare(out[0].price, 90)
+        compare(out[0].discountValue, 5)
+    }
+    function test_reconcile_null_safe() {
+        compare(OA.reconcileConsumptionOnSave(null, null).length, 0)
+        compare(OA.reconcileConsumptionOnSave([{ productId: "P1", quantity: 1 }], null)[0].consumption.length, 0)
+    }
 }
