@@ -554,9 +554,61 @@ Taher's decisions on the open items from last round:
   (confirmed still true, listed in the original deferred-gap list), `e2e-tests` job already has it.
   Given verbatim in chat.
 
+## AuthService sweep folded into OrdersStore work; CI flag shipped; spec written and decided; Slice 1 plan written (2026-08-20)
+
+Taher's answers this round, in order:
+
+- **CI flag**: `qml-tests` job in `checks.yml` now has `-o -,txt` too, matching `e2e-tests`.
+  Verified via `e2e-tests`' own check-run history that the flag pattern runs clean before applying
+  it here (not assumed safe). Confirmed working: Taher's own CI logs from this run
+  (`1_QML_Tests.txt`) show per-test `PASS` lines, 470/470, matching `results.xml`.
+- **AuthService sweep** (folded into this pass, not a separate effort, per Taher): swept every file
+  that actually calls `Gateway.drainNow`/`recordMutation` (the real trigger points) —
+  `tst_DataModel_adjustOrderSyncGuard.qml`, `tst_Gateway.qml` (already fixed), `tst_OrdersStore_applyAdjustment.qml`,
+  `tst_OutboxStore.qml`. The last one confirmed safe **by verifying no actual call exists**, not by
+  trusting its header comment. The other two had the same incomplete in-memory-only defense the
+  original `tst_Gateway.qml` had — extended both with the disk-level reset.
+- **Full audit of `OrdersStore.qml`** (764 lines, 29 functions, re-read in full — not from memory):
+  25 of 29 functions had zero direct coverage. Classified every one into "pure/local ->
+  `qmltestrunner`" (22) or "Firebase-touching -> smoke-test at qml layer, real coverage at
+  E2E/emulator layer" (7) — Taher's explicit instruction was not to skip the Firebase-touching
+  ones, just route them correctly.
+- **Spec written**: `docs/superpowers/specs/2026-08-20-ordersstore-full-coverage-design.md`.
+  Surfaced three adjacent findings so nothing gets duplicated: `orderMath.js`/`OrderMath.js` is a
+  *distinct* module from `computeOrderTotals` (parity-related, not the same code — **deferred,
+  tracked here as pending, not dropped**, per Taher's explicit "document it as pending"
+  instruction); tenant isolation for `orders` already covered generically via
+  `firestore.rules.test.js`'s `WORKING_COLLECTIONS` loop; "own orders" RBAC filtering lives in
+  `StaffScope`, already tested separately.
+- **Taher's decisions on the spec's 3 open questions**: (1) `orderMath.js` parity — deferred,
+  documented as pending, not folded into this pass. (2) E2E tests — **separate new file**
+  (`test/e2e/tst_OrdersStoreE2E.qml`, not an extension of the existing `tst_OrdersE2E.qml` — this
+  overrides my own proposed default in the spec). (3) No exceptions on coverage — every Group A
+  function gets tests, including the two trivial one-line getters.
+- **Plan-writing scope decision**: the `writing-plans` skill's own guidance ("if the spec covers
+  multiple independent subsystems... break into separate plans, one per subsystem") plus that same
+  skill's "no placeholders, complete code every step" requirement made one mega-plan covering all
+  5 files impractical and against house guidance. Splitting into 5 separate plan docs, one per
+  file from the spec's §6 layout, written and reviewed incrementally rather than all at once.
+- **Slice 1 plan written and verified**: `docs/superpowers/plans/2026-08-20-ordersstore-totals-coverage.md`
+  — `tst_OrdersStore_totals.qml` (`computeOrderTotals`, `parseCurrency`, `formatCurrency`), 26 test
+  functions across 3 tasks/commits. Every expected value in that plan was verified by porting the
+  actual functions to Node.js and executing them (`node --version` confirmed available in this
+  sandbox), not hand-calculated — including a genuine, proven rounding-order divergence case
+  (step-wise gives `9.99`; a naive single-final-round would give `10.00`) rather than an assumed
+  one that turned out not to actually diverge on the first attempt (first constructed case didn't
+  diverge; caught by verifying, not by assuming the math was right).
+
 ## Next step
 
-1. Awaiting Taher's decision on the AuthService-sweep question (re-explained this round).
-2. Once decided (or independently, no dependency): start `OrdersStore` coverage work toward the
-   100% standard, on this branch.
-3. Nothing else currently blocked — PR #44's items are all closed out.
+1. Write Slices 2–5 (`tst_OrdersStore_queries.qml`, `_mutations.qml`, `_sync.qml`, and the new
+   `test/e2e/tst_OrdersStoreE2E.qml`) as separate plan docs, same verified-not-hand-calculated
+   standard as Slice 1.
+2. Once plans are reviewed: implement, starting with Slice 1 (Group A files first, per the spec's
+   §8 rollout order — no emulator dependency, fastest feedback, and settles
+   `computeOrderTotals`'s exact behavior before the E2E slice writes assertions that depend on it).
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity — tracked here as deferred/pending, not
+   forgotten. No action until Taher decides to pick it up.
+4. Phase 2 probe (`scripts/probes/probe_dp_sp_outside_app_root.qml`) — still needs Taher to run it
+   locally and report the `=== PROBE OUTPUT ===` content. Independent of everything above, can
+   happen in parallel any time.

@@ -162,6 +162,19 @@ file). Open to splitting into a separate file if Taher prefers — noted as an o
    `pendingCount`/`completedThisMonth`)? Default in this spec is still "test it" per the 100%
    instruction, but flagging in case that's more than intended for trivial wrappers.
 
+### Decisions (Taher, 2026-08-20)
+
+1. **Defer, but document it as pending** — not silently dropped. The parity relationship between
+   `OrdersStore.computeOrderTotals` and `qml/helper/OrderMath.js`'s `allocate()` is recorded here
+   and in `CHECKPOINT.md` as a tracked, deferred item — not part of this pass's scope.
+2. **Separate file** — new E2E file scoped to `OrdersStore`'s own async surface, not an extension
+   of `test/e2e/tst_OrdersE2E.qml`. Proposed name: `test/e2e/tst_OrdersStoreE2E.qml` (matches the
+   `tests/tst_OrdersStore_*.qml` naming convention already used for the qml-layer files in this
+   pass). Overrides this doc's §6 default proposal; §6 is left as-is below since it records what
+   was proposed, this note records what was decided.
+3. **No exceptions** — every Group A function gets tests, including the trivial getters. 100%
+   coverage means 100%, not "100% of what seems worth it."
+
 ## 8. Rollout order (proposed, pending Taher's review of this spec)
 
 1. This spec, reviewed and adjusted per Taher's answers to §7.
