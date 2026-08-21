@@ -298,4 +298,31 @@ TestCase {
         verify(reconciled.customer !== "Conflict Test Customer" || reconciled.notes !== "Owner's conflicting edit",
                "local order still reflects the owner's rejected edit instead of the server's actual current version")
     }
+
+    function test_syncFromFirebase_assembles_the_full_set_across_multiple_pages() {
+        // _pageSize is 50 -- seed 55 so a real multi-page fetch is
+        // required, not just exercised in a way a single page could
+        // satisfy by coincidence.
+        var seedCount = 55
+        var lastId = ""
+        for (var i = 0; i < seedCount; ++i) {
+            lastId = _addOrder("Pagination Customer " + i, 1, 10)
+        }
+        var lastDocPath = "tenants/" + fixture.tenantId + "/orders/" + lastId
+        _pollEmulatorDoc(lastDocPath, lastId, function(d) { return d !== null }, 10000,
+                          "last seeded order never appeared before starting the sync")
+
+        OrdersStore.orders = [] // local cache reset -- syncFromFirebase must repopulate it from the server, not from what's already here
+        OrdersStore.hasMore = true
+        OrdersStore.syncFromFirebase()
+
+        tryVerify(function() {
+            return !OrdersStore.loadingMore && OrdersStore.orders.length >= seedCount
+        }, 20000, "syncFromFirebase never assembled the full seeded set across pages "
+                  + "(stuck at " + OrdersStore.orders.length + " of " + seedCount + ")")
+
+        compare(OrdersStore.hasMore, false)
+        verify(OrdersStore.getById(lastId) !== null,
+               "the last-seeded order specifically must be present -- proves the LAST page landed, not just enough total count by coincidence")
+    }
 }
