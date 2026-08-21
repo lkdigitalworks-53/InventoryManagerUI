@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import "../../qml/model"
 import "../../qml/helper/OrderAdjust.js" as OrderAdjust
+import "../../qml/helper/RealisedMath.js" as RealisedMath
 import "E2EHelpers.js" as E2EHelpers
 
 // Returns/analysis-revenue E2E — third E2E scenario (2026-08-20), extending
@@ -168,6 +169,23 @@ TestCase {
         return createdId
     }
 
+    // The emulator is shared across every E2E test FILE in one CI run — no
+    // reset between files, so by the time this file runs, TransactionStore
+    // syncs back transactions other files already wrote (confirmed by the
+    // actual CI failure: an unscoped realisedTotals(null) returned 400, not
+    // 100, on a brand-new order — the other 300 was leftover from earlier
+    // E2E files' own fixtures in the same emulator instance). Scope every
+    // assertion in this file to THIS test's own orderId, not a global sum.
+    // RealisedMath has no scope.orderId (checked _passesScope directly —
+    // it only supports window/channel/staffId/category), so filter entries
+    // by hand before handing them to RealisedMath.totals.
+    function _entriesForOrder(orderId) {
+        var out = []
+        for (var i = 0; i < TransactionStore.entries.length; ++i)
+            if (TransactionStore.entries[i].orderId === orderId) out.push(TransactionStore.entries[i])
+        return out
+    }
+
     function test_metadata_edit_then_return_nets_revenue_and_profit_to_zero() {
         var productId = _createProduct("E2E Return Widget", "SKU-E2E-RM-1", 10)
         var productDocPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
@@ -190,8 +208,9 @@ TestCase {
             return d !== null && d.fields.status.stringValue === "completed"
         }, 5000, "order status never reached 'completed' in the emulator")
 
-        var revenueAfterSale = InventoryStore.realisedTotals(null)
-        compare(revenueAfterSale.net, 100, "sanity check: revenue must be 100 right after completion")
+        var revenueAfterSale = RealisedMath.totals(_entriesForOrder(orderId), null, {})
+        compare(revenueAfterSale.net, 100,
+                "sanity check: THIS order's own revenue must be 100 right after completion")
 
         // ── 2. metadata-only edit (customer name), through the FIXED path ──
         var originalLines = OrdersStore.getById(orderId).products
@@ -234,21 +253,19 @@ TestCase {
         }, 5000, "order total never reached 0 in the emulator after the full return")
 
         // ── 4. THE regression check ─────────────────────────────────────
-        var totals = InventoryStore.realisedTotals(null)
+        var totals = RealisedMath.totals(_entriesForOrder(orderId), null, {})
         compare(totals.net, 0, "Revenue must net to 0 after a full return following a metadata " +
                 "edit — this is the exact bug Taher reported: it silently stayed at 100")
         compare(totals.profit, 0, "Profit must net to 0 after the same sequence")
 
-        // Sold/Purchased (bucketsFor) never had this bug — confirm they
-        // still net correctly too, so a future change can't reintroduce an
-        // asymmetric regression between the two calculation paths without
-        // this file catching it. bucketsFor returns an array of
-        // {label, value} bins (confirmed by reading TransactionStore.
-        // bucketsForFiltered directly, not assumed) — sum every bin's
-        // .value, not the bin objects themselves.
-        var soldBuckets = TransactionStore.bucketsFor("sale", 0)
+        // Sold/Purchased (bucketsFor) never had this bug — confirm it still
+        // nets correctly too, scoped to THIS order via bucketsForFiltered's
+        // predicate (plain bucketsFor has no scoping — same shared-emulator
+        // pollution risk the unscoped realisedTotals call above had).
+        var soldBuckets = TransactionStore.bucketsForFiltered("sale", 0,
+            function(e) { return e.orderId === orderId })
         var totalSold = 0
         for (var b = 0; b < soldBuckets.length; ++b) totalSold += (soldBuckets[b].value || 0)
-        compare(totalSold, 0, "net Sold quantity must also be 0 after a full return")
+        compare(totalSold, 0, "net Sold quantity for THIS order must also be 0 after a full return")
     }
 }

@@ -195,13 +195,31 @@ TestCase {
         })
 
         var updated = OrdersStore.getById("ORD-META-1")
-        compare(updated.products[0].consumption.length, 0,
-                "documents the original bug: without reconcileConsumptionOnSave, " +
-                "OrdersStore.updateOrder's full products replace silently drops consumption " +
-                "(OrdersStore._normalizeOrder coerces a missing consumption[] to an empty array, " +
-                "never undefined — confirmed by reading _normalizeOrder directly, not assumed) — " +
-                "this is EXPECTED/current behavior of the raw store call, which is exactly why " +
-                "the fix has to live at the CALLER (OrderDetailDialog._save()), not here")
+        // First version of this test asserted .length === 0 here, reasoning
+        // that OrdersStore._normalizeOrder coerces a missing consumption[]
+        // to an empty array. That's true of _normalizeOrder in isolation,
+        // but wrong about what actually ends up in LOCAL state: re-reading
+        // OrdersStore._commit(arr, changedOrder, ...) shows it does
+        // `orders = arr` — the raw cloned array, with arr[idx] = o mutated
+        // directly — and only passes the SEPARATE _normalizeOrder(o) result
+        // to Gateway.recordMutation for the outbound write. So local state
+        // and the outbound Firestore payload can genuinely diverge: the
+        // local order can carry `consumption: undefined` on a line while
+        // Firestore gets `consumption: []`. Confirmed by an actual CI run
+        // (qmltestrunner), not by re-reading the source a second time —
+        // this file's own first CI attempt caught the wrong assumption.
+        verify(updated.products[0].consumption === undefined,
+               "documents the original bug precisely: without reconcileConsumptionOnSave, " +
+               "the LOCAL order (read straight back via OrdersStore.getById) carries " +
+               "consumption: undefined, not []) — OrdersStore._commit stores the raw cloned " +
+               "object locally and only normalizes the copy it sends to Gateway. Downstream " +
+               "readers (_tryAdjustOrder's `Array.isArray(line.consumption) ? ... : []` guard) " +
+               "already tolerate undefined defensively, which is why this local-vs-remote " +
+               "divergence never surfaced as a crash — only as the silent revenue/profit bug " +
+               "this whole fix addresses. Still: the fix belongs at the CALLER " +
+               "(OrderDetailDialog._save()), not here — OrdersStore.updateOrder's contract is " +
+               "a full replace by design, and patching it to merge would be a bigger, riskier " +
+               "change than reconciling at the one caller that needs it.")
     }
 
     // ── edge case: multi-line order, only one line survives the edit ───

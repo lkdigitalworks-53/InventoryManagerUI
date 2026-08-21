@@ -1958,3 +1958,20 @@ itself is the risk, not the specific field.
 outside Taher's reported repro. Worth the same grep if an import-correction path ever shows the same
 symptom.
 
+**Addendum, first real CI run (2026-08-21):** the initial version of
+`tests/tst_OrderMetadataEditPreservesConsumption.qml`'s negative/characterization test assumed
+`OrdersStore._normalizeOrder`'s consumption-coercion (`Array.isArray(p.consumption) ? p.consumption :
+[]`) applies to whatever ends up in LOCAL state after `updateOrder`. It doesn't:
+`OrdersStore._commit(arr, changedOrder, ...)` does `orders = arr` - the raw cloned array, mutated
+directly (`arr[idx] = o`) - and only passes the SEPARATE `_normalizeOrder(o)` result to
+`Gateway.recordMutation` for the outbound Firestore write. So local state and the outbound payload
+can genuinely diverge: skip `reconcileConsumptionOnSave` and the LOCAL order carries
+`consumption: undefined` on a line, while Firestore would get `consumption: []`. This never surfaced
+as a crash because every downstream reader (`_tryAdjustOrder`'s
+`Array.isArray(line.consumption) ? line.consumption : []` guard) already tolerates `undefined`
+defensively - which is itself worth remembering: reading `_normalizeOrder`'s behavior tells you what
+gets WRITTEN to Firestore, not what's readable from `OrdersStore.getById()` a moment later. The real
+qmltestrunner CI run caught this wrong assumption on the first attempt (499/500 passed, the one
+failure was this test, not the fix) - a genuine case of "written to convention, not run in this
+sandbox" catching a real gap once it actually ran.
+
