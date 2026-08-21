@@ -168,4 +168,71 @@ TestCase {
         _pollEmulatorDoc(secondDocPath, secondId, function(d) { return d !== null }, 5000,
                           "second concurrent order never appeared in the emulator")
     }
+
+    function test_upsertMany_skip_and_rename_policies_against_real_state() {
+        // Seed one existing order the batch will collide with.
+        var existingId = _addOrder("Existing Customer", 1, 20)
+        var existingDocPath = "tenants/" + fixture.tenantId + "/orders/" + existingId
+        _pollEmulatorDoc(existingDocPath, existingId, function(d) { return d !== null }, 5000,
+                          "seeded existing order never appeared before the import")
+
+        var received = null
+        var done = false
+        OrdersStore.upsertMany([
+            { orderId: existingId, customer: "Should Be Skipped", products: [], _conflictPolicy: "skip" },
+            { orderId: existingId, customer: "Should Be Renamed", products: [], _conflictPolicy: "rename" },
+            { orderId: "", customer: "Brand New Row", products: [], _conflictPolicy: "skip" } // no orderId -> always new, per source comment
+        ], function(counts) { received = counts; done = true })
+
+        tryVerify(function() { return done }, 10000, "upsertMany callback never fired")
+        compare(received.skipped, 1)
+        compare(received.added, 2) // the rename + the brand-new row
+        compare(received.addedIds.length, 2)
+
+        // The skip must not have touched the existing order's customer.
+        var stillExisting = _pollEmulatorDoc(existingDocPath, existingId, function(d) {
+            return d !== null && d.fields.customer.stringValue === "Existing Customer"
+        }, 5000, "skipped row's target order was modified — skip policy did not hold")
+        compare(stillExisting.fields.customer.stringValue, "Existing Customer")
+
+        // The renamed row must have landed under a NEW id, not overwritten
+        // the existing one, and be findable in the emulator under that id.
+        var renamedId = received.addedIds.filter(function(id) { return id !== existingId })[0]
+        verify(renamedId !== undefined, "no distinct renamed id found in addedIds")
+        var renamedDocPath = "tenants/" + fixture.tenantId + "/orders/" + renamedId
+        var renamedDoc = _pollEmulatorDoc(renamedDocPath, renamedId, function(d) {
+            return d !== null && d.fields.customer.stringValue === "Should Be Renamed"
+        }, 5000, "renamed order never appeared under its new id")
+        compare(renamedDoc.fields.customer.stringValue, "Should Be Renamed")
+    }
+
+    function test_upsertMany_overwrite_policy_updates_envelope_fields_in_place() {
+        var existingId = _addOrder("Original Name", 1, 20)
+        var existingDocPath = "tenants/" + fixture.tenantId + "/orders/" + existingId
+        _pollEmulatorDoc(existingDocPath, existingId, function(d) { return d !== null }, 5000,
+                          "seeded existing order never appeared before the import")
+
+        var received = null
+        var done = false
+        OrdersStore.upsertMany([
+            { orderId: existingId, customer: "Overwritten Name", email: "new@x.com",
+              phone: "", date: "", notes: "", orderChannel: "", products: [],
+              _conflictPolicy: "overwrite" }
+        ], function(counts) { received = counts; done = true })
+
+        tryVerify(function() { return done }, 10000, "upsertMany callback never fired")
+        compare(received.updated, 1)
+        compare(received.updatedOrderFields.length, 1)
+        compare(received.updatedOrderFields[0].orderId, existingId)
+
+        // Overwrite goes through updateOrder separately -- upsertMany
+        // itself only reports the intent via updatedOrderFields; this
+        // order's status is still "pending" (not "completed"), so it's a
+        // non-ledger-aware envelope-field update, applied directly.
+        OrdersStore.updateOrder(existingId, received.updatedOrderFields[0].fields)
+        var updated = _pollEmulatorDoc(existingDocPath, existingId, function(d) {
+            return d !== null && d.fields.customer.stringValue === "Overwritten Name"
+        }, 5000, "order was never actually overwritten in the emulator")
+        compare(updated.fields.customer.stringValue, "Overwritten Name")
+    }
 }
