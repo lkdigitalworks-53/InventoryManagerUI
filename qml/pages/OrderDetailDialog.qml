@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../helper/OrderMath.js" as OrderMath
+import "../helper/OrderAdjust.js" as OrderAdjust
 import "../model"
 
 // Order detail / edit — bottom sheet. Live product table with qty editing,
@@ -453,7 +454,17 @@ BottomSheet {
                               phone: phoneField.text,
                               status: statuses[Math.max(0, statusCombo.currentIndex)] || "pending",
                               items: itemCount,
-                              products: prods,
+                              // Bug fix 2026-08-20: a plain save (this branch only runs
+                              // when lines are UNCHANGED — see the linesChanged guard
+                              // above) must not touch consumption[], the FIFO batch
+                              // lineage stamped at completion. `prods` never carries it
+                              // (not a user-editable field), so sending it straight to
+                              // OrdersStore.updateOrder's full products replace was
+                              // silently wiping it on every save — including this one,
+                              // triggered by nothing more than a customer-name edit.
+                              // See OrderAdjust.reconcileConsumptionOnSave and
+                              // tests/tst_OrderAdjust.qml for the full writeup.
+                              products: OrderAdjust.reconcileConsumptionOnSave(prods, _originalLines),
                               orderChannel: channel,
                               staffId: staffId
                           })

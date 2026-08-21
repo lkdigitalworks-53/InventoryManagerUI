@@ -47,3 +47,9 @@ explicitly logged here rather than re-sourcing Revenue from the ledger). Revisit
 to a ledger-sourced read (natural fit with the P0 immutable-ledger roadmap), at which point all three
 surfaces would net in the same period.
 
+**Related, 2026-08-20:** a second, different site of the same consumption-loss bug class was found
+and fixed — `OrderDetailDialog._save()`'s plain metadata-edit path (customer/email/phone/status/
+channel/staff, no line changes) was silently dropping `consumption[]` on every save to a completed
+order, independent of the adjustment path referenced above. See SKILLS.md Skill 42 for the full
+writeup.
+

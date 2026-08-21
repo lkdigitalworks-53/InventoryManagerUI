@@ -110,3 +110,39 @@ function survivingConsumption(consumption, returnedQty) {
     }
     return kept
 }
+
+// Rebuild a line array for OrdersStore.updateOrder(..., {products: ...}) so
+// each surviving line keeps its ORIGINAL consumption[] (the FIFO batch
+// lineage stamped at completion). Callers that rebuild lines from editable
+// UI state (OrderDetailDialog._save()) never carry consumption in that
+// state at all — it isn't a user-editable field — so any array they build
+// and persist unconditionally would silently strip it off every line, even
+// for a metadata-only edit (customer/status/channel) that never touched
+// quantities. RealisedMath.byDimension/totals need a non-empty consumption[]
+// on a later return event to attribute its revenue/profit; bucketsFor
+// (Sold/Purchased) doesn't, since it only sums quantity — which is exactly
+// why losing this field here made Revenue/Profit silently stop reflecting
+// returns on any order touched again after completion, while every other
+// analysis view stayed correct.
+// Matches lines by productId (same invariant as diffLines). A line with no
+// match in originalLines (a genuinely new line) gets consumption: [].
+function reconcileConsumptionOnSave(newLines, originalLines) {
+    newLines = newLines || []
+    originalLines = originalLines || []
+    var byIdOrig = {}
+    for (var i = 0; i < originalLines.length; ++i) {
+        var o = originalLines[i]
+        byIdOrig[o.productId || o.name] = o
+    }
+    var out = []
+    for (var j = 0; j < newLines.length; ++j) {
+        var n = newLines[j]
+        var key = n.productId || n.name
+        var orig = byIdOrig[key]
+        var merged = {}
+        for (var k in n) merged[k] = n[k]
+        merged.consumption = (orig && Array.isArray(orig.consumption)) ? orig.consumption.slice() : []
+        out.push(merged)
+    }
+    return out
+}
