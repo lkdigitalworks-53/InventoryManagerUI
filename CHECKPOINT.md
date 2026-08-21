@@ -661,3 +661,38 @@ Taher's review before any of the actual test code gets written to the real files
 4. Phase 2 probe (`scripts/probes/probe_dp_sp_outside_app_root.qml`) — still needs Taher to run it
    locally and report the `=== PROBE OUTPUT ===` content. Independent of everything above, can
    happen in parallel any time.
+
+## All 5 slices implemented (2026-08-20, continued)
+
+Taher said to proceed straight to implementation rather than pausing for a separate plan-review
+round. Implemented all 5 slices exactly as planned, one commit per task, same order as each plan
+document:
+
+- Slice 1 (`tests/tst_OrdersStore_totals.qml`) — 3 commits, 26 tests.
+- Slice 2 (`tests/tst_OrdersStore_queries.qml`) — 3 commits, 26 tests.
+- Slice 3 (`tests/tst_OrdersStore_mutations.qml`) — 5 commits (Task 5 and its addendum combined
+  into one commit rather than kept as two, the only deviation from a plan's exact commit-count —
+  noted here since precision matters, even for something this small), 35 tests.
+- Slice 4 (`tests/tst_OrdersStore_sync.qml`) — 2 commits, 12 tests.
+- Slice 5 (`test/e2e/seed.js` extension + new `test/e2e/tst_OrdersStoreE2E.qml`) — 6 commits, 6
+  test functions covering `addOrder`, concurrent `addOrder`, `upsertMany`'s three conflict
+  policies, the multi-user conflict, and pagination.
+
+**122 test cases total, all written and pushed to `docs/e2e-testing-phase2-followup`. None run
+against a real Qt toolchain or Firebase emulator** — every new file says so in its own header, same
+standing limitation as everything else in this project. This is the single biggest thing this
+branch needs before it can be considered done: a real `qmltestrunner` pass for the four `tests/*.qml`
+files, and a real `e2e-tests` CI run (or local `firebase emulators:exec`) for `tst_OrdersStoreE2E.qml`
+and the `seed.js` change.
+
+## Next step
+
+1. **Get a real test run.** Local: `qmltestrunner -input tests -platform offscreen -o -,txt` for
+   Slices 1–4. CI or local `firebase emulators:exec` for Slice 5 — this is the first real run for
+   `tst_OrdersStoreE2E.qml` and the `seed.js` second-identity extension both.
+2. Slice 5's multi-user conflict test (`test_two_users_editing_the_same_order_produces_a_real_conflict`)
+   is the specific one flagged as least certain across the whole series — if anything in this batch
+   fails, check that one first, and specifically check `staffWinResult.status` if it does.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged from before.
+4. Phase 2 probe — still needs Taher to run it locally, unchanged from before, independent of
+   everything else.
