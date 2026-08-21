@@ -123,4 +123,49 @@ TestCase {
         // gross 200, no discount/tax -- same verified case as Slice 1/3.
         compare(Number(orderDoc.fields.total.doubleValue || orderDoc.fields.total.integerValue), 200)
     }
+
+    function test_concurrent_addOrder_calls_do_not_collide_on_id() {
+        var products = [{
+            productId: "", name: "Concurrent Widget", price: 50, quantity: 1,
+            taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0
+        }]
+        var totals = OrdersStore.computeOrderTotals(products)
+
+        var firstDone = false, firstId = ""
+        var secondDone = false, secondId = ""
+
+        // Fired back-to-back, deliberately not awaited between calls --
+        // both nextOrderId->mintCounterValue requests are in flight at the
+        // same time. A naive max(existing)+1 approach would be prone to
+        // exactly this race; mintCounterValue's whole reason for existing
+        // is to not be.
+        OrdersStore.addOrder(
+            "Concurrent Customer A", totals.itemCount, totals.total, "pending", new Date(),
+            "", "", products, "e2e", "",
+            function(ok, id) { firstDone = true; firstId = ok ? id : "" }
+        )
+        OrdersStore.addOrder(
+            "Concurrent Customer B", totals.itemCount, totals.total, "pending", new Date(),
+            "", "", products, "e2e", "",
+            function(ok, id) { secondDone = true; secondId = ok ? id : "" }
+        )
+
+        tryVerify(function() { return firstDone && secondDone }, 10000,
+                   "one or both concurrent addOrder callbacks never fired")
+        verify(firstId.length > 0, "first concurrent addOrder did not return an orderId")
+        verify(secondId.length > 0, "second concurrent addOrder did not return an orderId")
+        verify(firstId !== secondId,
+               "concurrent addOrder calls minted the SAME orderId (" + firstId
+               + ") -- mintCounterValue's collision-avoidance failed under real concurrency")
+
+        // Both orders must actually exist in the emulator under their
+        // distinct ids, not just have returned distinct-looking strings
+        // locally.
+        var firstDocPath = "tenants/" + fixture.tenantId + "/orders/" + firstId
+        _pollEmulatorDoc(firstDocPath, firstId, function(d) { return d !== null }, 5000,
+                          "first concurrent order never appeared in the emulator")
+        var secondDocPath = "tenants/" + fixture.tenantId + "/orders/" + secondId
+        _pollEmulatorDoc(secondDocPath, secondId, function(d) { return d !== null }, 5000,
+                          "second concurrent order never appeared in the emulator")
+    }
 }
