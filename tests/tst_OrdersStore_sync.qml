@@ -67,4 +67,56 @@ TestCase {
         compare(OrdersStore.revision, before + 1)
         compare(OrdersStore.completedOrderCount, 1)
     }
+
+    function test_resetAndFetch_is_a_no_op_while_a_fetch_is_already_in_flight() {
+        // Same pattern this codebase already established for TransactionStore
+        // (TransactionStore_resetGuard::test_resetAndFetch_is_a_no_op_while_a_fetch_is_already_in_flight).
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        OrdersStore.loadingMore = true
+        OrdersStore._resetAndFetch()
+        // Guard returns before the orders=[]/hasMore=true/_cursor=null reset:
+        compare(OrdersStore.orders.length, 1)
+    }
+
+    function test_resetAndFetch_resets_local_state_and_begins_a_fetch_when_not_already_in_flight() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        OrdersStore.hasMore = false
+        OrdersStore.loadingMore = false
+        OrdersStore._resetAndFetch()
+        // Synchronously observable before any network response arrives:
+        // orders/hasMore reset, then _fetchFromFirebase's own entry sets
+        // loadingMore = true.
+        compare(OrdersStore.orders.length, 0)
+        compare(OrdersStore.hasMore, true)
+        compare(OrdersStore.loadingMore, true)
+    }
+
+    function test_load_delegates_to_resetAndFetch() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        OrdersStore.loadingMore = false
+        OrdersStore._load()
+        compare(OrdersStore.orders.length, 0) // same observable effect as _resetAndFetch directly
+    }
+
+    function test_fetchFromFirebase_is_a_no_op_while_already_in_flight() {
+        // _fetchFromFirebase has its OWN independent loadingMore guard --
+        // a separate line from _resetAndFetch's -- tested separately
+        // since it's separate code, even though both check the same flag.
+        OrdersStore.hasMore = false
+        OrdersStore.loadingMore = true
+        OrdersStore._fetchFromFirebase()
+        compare(OrdersStore.hasMore, false) // guard returns before hasMore/_cursor could change
+    }
+
+    function test_fetchFromFirebase_dispatches_without_throwing_when_not_already_in_flight() {
+        OrdersStore.loadingMore = false
+        OrdersStore._fetchFromFirebase()
+        verify(true)
+        compare(OrdersStore.loadingMore, true) // its own entry sets this synchronously, before any network response
+    }
+
+    function test_syncFromFirebase_dispatches_without_throwing() {
+        OrdersStore.syncFromFirebase()
+        verify(true)
+    }
 }
