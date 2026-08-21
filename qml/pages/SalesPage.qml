@@ -512,7 +512,7 @@ Item {
                     Text {
                         visible: root._viewMode === root._MODE_REVENUE
                                  && (root._periodTax > 0 || root._periodDiscount > 0)
-                        text: qsTr("incl. %1 tax · %2 discount")
+                        text: qsTr("excl. %1 tax · incl. %2 discount")
                               .arg(SalesStore.formatCurrency(root._periodTax))
                               .arg(SalesStore.formatCurrency(root._periodDiscount))
                         color: Qt.rgba(1,1,1,0.92)
