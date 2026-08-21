@@ -235,4 +235,67 @@ TestCase {
         }, 5000, "order was never actually overwritten in the emulator")
         compare(updated.fields.customer.stringValue, "Overwritten Name")
     }
+
+    function test_two_users_editing_the_same_order_produces_a_real_conflict() {
+        // Owner (fixture.idToken) creates and reads back an order.
+        var orderId = _addOrder("Conflict Test Customer", 1, 100)
+        var orderDocPath = "tenants/" + fixture.tenantId + "/orders/" + orderId
+        var orderDoc = _pollEmulatorDoc(orderDocPath, orderId, function(d) { return d !== null }, 5000,
+                                          "order doc never appeared before the conflict test")
+        var serverUpdatedAt = orderDoc.fields.updatedAt.stringValue
+
+        // Staff (fixture.secondIdToken) writes to the SAME order directly
+        // via a raw POST -- a real second identity's write actually
+        // landing on the server, not a simulated one. Sends a full doc:
+        // functions/lib/gatewayLogic.js's applyMutation does a whole-
+        // record CAS compare (_deepEqual(current, before)), and the
+        // client-derived `before` this test builds only approximates what
+        // OrdersStore._clone()/_normalizeOrder would have produced -- the
+        // owner-side write below is what actually needs the accurate
+        // before, since it's the one whose rejection this test asserts on.
+        var staffWinResult = E2EHelpers.postDirect(this,
+            emulatorFunctionsBase + "/recordMutation",
+            {
+                env: "prd", entity: "order", entityId: orderId, action: "update",
+                before: orderDoc.fields, // best-effort -- see comment above; this write's own success isn't what's asserted, only that it lands before the owner's write below
+                after: Object.assign({}, orderDoc.fields, {
+                    customer: { stringValue: "Changed By Staff" },
+                    updatedAt: { stringValue: new Date().toISOString() }
+                }),
+                requestId: "staff-conflict-" + Date.now(),
+                clientTimestamp: new Date().toISOString()
+            }, 5000, "staff's raw recordMutation call never responded")
+        // This raw POST's own before/after field-shape isn't guaranteed to
+        // exactly match applyMutation's expected wire format. What matters
+        // for this test is only that the SERVER'S current updatedAt
+        // actually changed underneath the owner, proving a real second-
+        // identity write landed -- confirmed by polling below, not by
+        // asserting this POST's own status.
+        _pollEmulatorDoc(orderDocPath, orderId, function(d) {
+            return d !== null && d.fields.updatedAt.stringValue !== serverUpdatedAt
+        }, 5000, "staff's write never actually changed the server's updatedAt — conflict setup failed")
+
+        // Owner (still fixture.idToken, the QML client under test) now
+        // tries to update the SAME order via the normal OrdersStore path,
+        // using its own stale local copy as `before` -- exactly the real
+        // "I had the order open, someone else already saved a change"
+        // scenario.
+        lastConflict = null
+        OrdersStore.orders = [OrdersStore._normalizeOrder({
+            orderId: orderId, customer: "Conflict Test Customer", products: []
+        })]
+        OrdersStore.updateOrder(orderId, { notes: "Owner's conflicting edit" })
+
+        tryVerify(function() { return lastConflict !== null }, 10000,
+                   "Gateway.mutationConflicted never fired — owner's stale write should have been rejected by the server's CAS check")
+        compare(lastConflict.entity, "order")
+        compare(lastConflict.entityId, orderId)
+
+        // _onMutationConflicted must have reconciled OrdersStore's local
+        // copy to the server's actual current version.
+        var reconciled = OrdersStore.getById(orderId)
+        verify(reconciled !== null, "order should still be present locally after reconciliation, not dropped")
+        verify(reconciled.customer !== "Conflict Test Customer" || reconciled.notes !== "Owner's conflicting edit",
+               "local order still reflects the owner's rejected edit instead of the server's actual current version")
+    }
 }
