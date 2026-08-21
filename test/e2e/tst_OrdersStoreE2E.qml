@@ -239,6 +239,61 @@ TestCase {
         compare(updated.fields.customer.stringValue, "Overwritten Name")
     }
 
+    // postDirect (E2EHelpers.js) hardcodes tc.fixture.idToken -- no way to
+    // send as a different identity. Local variant, same shape, explicit
+    // token parameter. Needed for the multi-user conflict test below: the
+    // whole point is a genuinely different identity's write landing on the
+    // server, not the owner writing to itself twice.
+    function _postDirectAs(idToken, url, payload, timeoutMs, timeoutMessage) {
+        var status = -1, text = "", done = false
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                status = xhr.status
+                text = xhr.responseText
+                done = true
+            }
+        }
+        xhr.open("POST", url, true)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + idToken)
+        xhr.send(JSON.stringify(payload))
+        tryVerify(function() { return done }, timeoutMs, timeoutMessage)
+        return { status: status, text: text }
+    }
+
+    // functions/lib/gatewayLogic.js's applyMutation does
+    // _deepEqual(current, params.before) where `current` comes from the
+    // Admin SDK (plain JS values: {customer: "x", total: 100}) -- but
+    // Firestore's REST API (what pollEmulatorDoc reads, via
+    // emulatorFirestoreHost) returns typed-value-wrapped fields
+    // ({customer: {stringValue: "x"}, total: {doubleValue: 100}}). Those
+    // two shapes can never deep-equal each other. Converts REST-shaped
+    // `fields` into the plain values applyMutation's CAS check actually
+    // compares against. Handles the value types OrdersStore documents
+    // actually use; not a general-purpose Firestore value parser.
+    function _firestoreFieldsToPlain(fields) {
+        function convertValue(v) {
+            if (v.stringValue !== undefined) return v.stringValue
+            if (v.integerValue !== undefined) return Number(v.integerValue)
+            if (v.doubleValue !== undefined) return v.doubleValue
+            if (v.booleanValue !== undefined) return v.booleanValue
+            if (v.nullValue !== undefined) return null
+            if (v.timestampValue !== undefined) return v.timestampValue
+            if (v.arrayValue !== undefined) {
+                var arr = (v.arrayValue.values || [])
+                var out = []
+                for (var i = 0; i < arr.length; ++i) out.push(convertValue(arr[i]))
+                return out
+            }
+            if (v.mapValue !== undefined) return _firestoreFieldsToPlain(v.mapValue.fields || {})
+            return null
+        }
+        var plain = {}
+        for (var key in fields) plain[key] = convertValue(fields[key])
+        return plain
+    }
+
     function test_two_users_editing_the_same_order_produces_a_real_conflict() {
         // Owner (fixture.idToken) creates and reads back an order.
         var orderId = _addOrder("Conflict Test Customer", 1, 100)
@@ -249,31 +304,39 @@ TestCase {
 
         // Staff (fixture.secondIdToken) writes to the SAME order directly
         // via a raw POST -- a real second identity's write actually
-        // landing on the server, not a simulated one. Sends a full doc:
-        // functions/lib/gatewayLogic.js's applyMutation does a whole-
-        // record CAS compare (_deepEqual(current, before)), and the
-        // client-derived `before` this test builds only approximates what
-        // OrdersStore._clone()/_normalizeOrder would have produced -- the
-        // owner-side write below is what actually needs the accurate
-        // before, since it's the one whose rejection this test asserts on.
-        var staffWinResult = E2EHelpers.postDirect(this,
+        // landing on the server, not a simulated one.
+        //
+        // Two things that were wrong here before being fixed (see
+        // CHECKPOINT.md, 2026-08-21 debugging entry, for the full trace):
+        // 1. Must use fixture.secondIdToken, not the owner's -- this test
+        //    is meaningless as a MULTI-user conflict otherwise.
+        // 2. applyMutation's CAS check (functions/lib/gatewayLogic.js)
+        //    compares against `current`, read server-side via the Admin
+        //    SDK as plain JS values -- but orderDoc.fields is Firestore's
+        //    REST typed-value wire format ({customer: {stringValue: "x"}}).
+        //    Sending REST-shaped fields as `before` could never deep-equal
+        //    plain Admin SDK values. _firestoreFieldsToPlain converts.
+        var plainOrder = _firestoreFieldsToPlain(orderDoc.fields)
+        var staffAfter = Object.assign({}, plainOrder, {
+            customer: "Changed By Staff",
+            updatedAt: new Date().toISOString()
+        })
+        var staffWinResult = _postDirectAs(fixture.secondIdToken,
             emulatorFunctionsBase + "/recordMutation",
             {
                 env: "prd", entity: "order", entityId: orderId, action: "update",
-                before: orderDoc.fields, // best-effort -- see comment above; this write's own success isn't what's asserted, only that it lands before the owner's write below
-                after: Object.assign({}, orderDoc.fields, {
-                    customer: { stringValue: "Changed By Staff" },
-                    updatedAt: { stringValue: new Date().toISOString() }
-                }),
+                before: plainOrder,
+                after: staffAfter,
                 requestId: "staff-conflict-" + Date.now(),
                 clientTimestamp: new Date().toISOString()
             }, 5000, "staff's raw recordMutation call never responded")
-        // This raw POST's own before/after field-shape isn't guaranteed to
-        // exactly match applyMutation's expected wire format. What matters
-        // for this test is only that the SERVER'S current updatedAt
-        // actually changed underneath the owner, proving a real second-
-        // identity write landed -- confirmed by polling below, not by
-        // asserting this POST's own status.
+        compare(staffWinResult.status, 200,
+                "staff's recordMutation call was rejected — response body: " + staffWinResult.text)
+        // What matters for this test is only that the SERVER'S current
+        // updatedAt actually changed underneath the owner, proving a real
+        // second-identity write landed -- confirmed by polling below, not by
+        // asserting this POST's own status, since a rejected-but-uncaught
+        // write would otherwise fail silently right up until this point.
         _pollEmulatorDoc(orderDocPath, orderId, function(d) {
             return d !== null && d.fields.updatedAt.stringValue !== serverUpdatedAt
         }, 5000, "staff's write never actually changed the server's updatedAt — conflict setup failed")
