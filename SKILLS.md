@@ -1885,3 +1885,76 @@ module throws `TypeError: ... is not a function`. Fixed by updating the six call
 a rename's completeness has to be checked with a repo-wide grep for the old name, every time — "I
 updated the callers I remembered" is not the same claim as "I updated every caller," and the second
 one is the only one that's actually true after a rename.
+
+## Skill 42: Returns/analysis-revenue bug — a rebuild of `order.products` silently dropped `consumption[]` on ANY save, not just edits
+
+**Files**: `qml/pages/OrderDetailDialog.qml` (`_save`), `qml/helper/OrderAdjust.js`
+(`reconcileConsumptionOnSave`), `qml/model/OrdersStore.qml` (`updateOrder`, `_normalizeOrder`),
+`qml/helper/RealisedMath.js` (`byDimension`, `totals`), `tests/tst_ReconcileConsumptionOnSave.qml`,
+`tests/tst_OrderMetadataEditPreservesConsumption.qml`, `test/e2e/tst_ReturnAfterMetadataEditE2E.qml`
+
+Found by Taher 2026-08-19: complete an order with one item, return the item — Order and Inventory
+pages show the return correctly, every Sales Analysis tab updates correctly *except* Revenue and
+Profit, which stay exactly where they were before the return. Same stale numbers in the exported
+XLSX. Static tracing of the entire return pipeline (`ConfirmReturnSheet` -> `_tryAdjustOrder` ->
+`TransactionStore.recordReturn` -> `RealisedMath.byDimension`/`totals` -> the `InventoryStore`
+wrappers both the hero display and export call) read correct on paper, and a Node.js `vm` harness
+replaying the exact repro through the actual math files netted revenue and profit to 0 as expected
+- the pure math wasn't the bug. Root cause only surfaced from Taher's device logs (temporary
+`console.log` instrumentation, one build/run cycle): for the specific order that failed, its line's
+`consumption` array - the FIFO batch lineage stamped at completion - was already `[]` *before* the
+return even started.
+
+**Root cause**: `OrderDetailDialog._save()` rebuilds a `prods` array from the dialog's editable
+`products` ListModel - a ListModel that never carries `consumption` at all, because it isn't a
+user-editable field (nothing in the UI shows or edits FIFO batch lineage). For a **completed** order
+whose lines are unchanged (`linesChanged === false` - the branch that runs for ANY metadata-only
+edit: customer name, email, phone, status, channel, staff - nothing that touches quantity/price/
+discount), `_save()` falls straight through to `logic.updateOrder(orderId, {..., products: prods,
+...})`. `OrdersStore.updateOrder` does a full, unconditional `o.products = fields.products` - no
+merge, no per-field patch - so any save from this dialog on a completed order silently wiped
+`consumption` off every line, even a save triggered by nothing more than fixing a typo in the
+customer's name.
+
+The reason this stayed invisible until an actual return: `RealisedMath.byDimension`/`totals` need a
+non-empty `consumption[]` to attribute a sale or return event's revenue/profit to any dimension -
+the per-row split is driven by `qtyConsumed` fractions of the stamped line total. With
+`consumption: []`, the row loop never runs and the event contributes **nothing**, silently, no error.
+`TransactionStore.bucketsFor` (backs Sold/Purchased) doesn't touch `consumption` at all - it just
+nets `quantity` - which is exactly why those tabs, and the Order/Inventory pages (neither of which
+reads `consumption` for their own status display), stayed correct while only Revenue/Profit went
+wrong. The bug was dormant on the *original sale* too (completion always writes `consumption`
+correctly - this class of bug only fires on a LATER save) - it only became visible on a return,
+because a return is the only thing that reads `consumption` back out of the order to reverse it.
+
+**Same bug class, different site than the existing "preserve consumption[] on adjusted lines" fix**
+(referenced in `docs/superpowers/KNOWN-ISSUES.md`'s cross-period-netting entry) - that one covers the
+`_tryAdjustOrder`/quantity-and-price adjustment path, which derives `consumption` correctly on its
+own and was never at risk here. This is the OTHER save path in the same dialog: the plain-metadata-
+edit branch, which has no adjustment math at all and simply forwards whatever `prods` it built.
+
+**The fix**: `OrderAdjust.reconcileConsumptionOnSave(newLines, originalLines)` - a small, pure,
+`.pragma library` function (matches `diffLines`/`restorePlan`'s existing shape in the same file) that
+merges each surviving line's *original* `consumption[]` back in by `productId` (falling back to
+`name`, same invariant `diffLines` already uses) before the array is sent to `updateOrder`. Wired
+into `OrderDetailDialog._save()` **only** on the plain-`updateOrder` branch - deliberately left the
+`adjustRequested`/adjust-path branch untouched, since `_tryAdjustOrder` already derives consumption
+correctly there and touching it would have been unnecessary blast radius for a bug that only exists
+in the metadata-only-edit branch.
+
+**The general rule**: any place that rebuilds an `order.products`-shaped array from UI/editable state
+and then does a *full replace* write (as opposed to a per-field patch) has to explicitly carry
+forward every field the UI state doesn't represent - `consumption` here, matching the exact same
+class of bug as `InventoryStore._clone()`'s field whitelist (Key structural discoveries, top of this
+doc). `grep -rn "products:\s" qml/model/DataModel.qml` is the fast way to audit every call site that
+sends a `products` field through `updateOrder`; each one needs to either derive `consumption` itself
+(`_tryCompleteOrder`, `_tryAdjustOrder` - do) or explicitly preserve it from the original
+(`OrderDetailDialog._save()` - now does, via this fix). A field that isn't shown or edited in a form
+is the easiest one to forget when that form's save path does a full-object rebuild - the rebuild
+itself is the risk, not the specific field.
+
+**Left alone, not audited here**: `DataModel.adjustOrderForImport` (the import-correction twin of
+`_tryAdjustOrder`) wasn't checked for the same pattern - different function, different caller,
+outside Taher's reported repro. Worth the same grep if an import-correction path ever shows the same
+symptom.
+
