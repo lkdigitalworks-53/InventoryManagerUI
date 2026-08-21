@@ -20,6 +20,7 @@ TestCase {
     readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    readonly property string realBatchFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutationsBatch"
     readonly property string realDeltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
     readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
@@ -69,6 +70,7 @@ TestCase {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        Gateway.batchFunctionUrl = emulatorFunctionsBase + "/recordMutationsBatch"
         Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
         Gateway.mode = "gateway"
         AuthStore.idToken = fixture.idToken
@@ -84,6 +86,7 @@ TestCase {
         Gateway.mutationConflicted.disconnect(_onMutationConflicted)
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
+        Gateway.batchFunctionUrl = realBatchFunctionUrl
         Gateway.deltaFunctionUrl = realDeltaFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
