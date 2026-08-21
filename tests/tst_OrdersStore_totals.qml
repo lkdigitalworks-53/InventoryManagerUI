@@ -182,4 +182,40 @@ TestCase {
         // the second one -- "1.2.3" becomes 1.2, not NaN and not 123.
         compare(OrdersStore.parseCurrency("1.2.3"), 1.2)
     }
+
+    function test_formatCurrency_fractional_value_shows_exactly_one_decimal() {
+        var formatted = OrdersStore.formatCurrency(10.5)
+        verify(formatted.indexOf("10.5") !== -1,
+               "expected '10.5' in formatted output, got: " + formatted)
+    }
+
+    function test_formatCurrency_integer_value_shows_no_trailing_decimal() {
+        var formatted = OrdersStore.formatCurrency(15)
+        verify(formatted.indexOf("15.0") === -1,
+               "integer input must not show a trailing '.0', got: " + formatted)
+        verify(formatted.indexOf("15") !== -1,
+               "expected '15' in formatted output, got: " + formatted)
+    }
+
+    function test_formatCurrency_zero() {
+        var formatted = OrdersStore.formatCurrency(0)
+        verify(formatted.indexOf("0") !== -1, "expected '0' in formatted output, got: " + formatted)
+    }
+
+    function test_formatCurrency_rounds_to_one_decimal() {
+        // parseCurrency(1234.56) = 1234.56; formatCurrency must round to
+        // 1 decimal, i.e. show "1,234.6", not "1,234.56" or "1,234.5".
+        var formatted = OrdersStore.formatCurrency(1234.56)
+        verify(formatted.indexOf("1,234.6") !== -1,
+               "expected '1,234.6' (rounded to 1 decimal) in formatted output, got: " + formatted)
+    }
+
+    function test_formatCurrency_delegates_to_parseCurrency_for_string_input() {
+        // formatCurrency(str) calls parseCurrency(str) first -- confirms
+        // the two functions are actually wired together, not just
+        // independently correct in isolation.
+        var formatted = OrdersStore.formatCurrency("\u20B91,234.50")
+        verify(formatted.indexOf("1,234.5") !== -1,
+               "expected the pre-parsed numeric value reflected in the output, got: " + formatted)
+    }
 }
