@@ -167,4 +167,83 @@ TestCase {
         )
         verify(true)
     }
+
+    function test_updateOrder_updates_the_specified_fields() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "Old Name", email: "old@x.com", phone: "111",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 0, discount: 0, tax: 0,
+            taxBreakdown: [], total: 0, items: 0, adjustments: []
+        }]
+        OrdersStore.updateOrder("ORD-001", { status: "completed", notes: "Handled" })
+        var updated = OrdersStore.getById("ORD-001")
+        compare(updated.status, "completed")
+        compare(updated.notes, "Handled")
+    }
+
+    function test_updateOrder_leaves_unspecified_fields_unchanged() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "Keep This Name", email: "keep@x.com", phone: "111",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 0, discount: 0, tax: 0,
+            taxBreakdown: [], total: 0, items: 0, adjustments: []
+        }]
+        OrdersStore.updateOrder("ORD-001", { status: "completed" }) // customer/email not mentioned
+        var updated = OrdersStore.getById("ORD-001")
+        compare(updated.customer, "Keep This Name")
+        compare(updated.email, "keep@x.com")
+    }
+
+    function test_updateOrder_recomputes_totals_when_products_change() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "X", email: "", phone: "",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 0, discount: 0, tax: 0,
+            taxBreakdown: [], total: 0, items: 0, adjustments: []
+        }]
+        // Reuses the verified computeOrderTotals case from Slice 1:
+        // gross 200, no discount/tax -> subtotal=total=200, itemCount=2.
+        OrdersStore.updateOrder("ORD-001", {
+            products: [{ productId: "", name: "Widget", price: 100, quantity: 2,
+                         taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }]
+        })
+        var updated = OrdersStore.getById("ORD-001")
+        compare(updated.subtotal, 200)
+        compare(updated.total, 200)
+        compare(updated.items, 2)
+    }
+
+    function test_updateOrder_uses_fields_total_directly_when_products_not_given() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "X", email: "", phone: "",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 50, discount: 0, tax: 0,
+            taxBreakdown: [], total: 50, items: 1, adjustments: []
+        }]
+        OrdersStore.updateOrder("ORD-001", { total: "\u20B975.00" }) // string, goes through parseCurrency
+        var updated = OrdersStore.getById("ORD-001")
+        compare(updated.total, 75)
+        compare(updated.subtotal, 50) // untouched -- only products-driven updates recompute subtotal
+    }
+
+    function test_updateOrder_is_a_no_op_for_an_unknown_orderId() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        var before = OrdersStore.revision
+        OrdersStore.updateOrder("ORD-999", { status: "completed" })
+        compare(OrdersStore.revision, before) // findIndexById returns -1, function returns before _commit
+        compare(OrdersStore.orders.length, 1)
+        compare(OrdersStore.orders[0].status, "pending")
+    }
+
+    function test_updateOrder_records_a_mutation() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "X", email: "", phone: "",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 0, discount: 0, tax: 0,
+            taxBreakdown: [], total: 0, items: 0, adjustments: []
+        }]
+        var before = OutboxStore.dueItems().length
+        OrdersStore.updateOrder("ORD-001", { status: "completed" })
+        compare(OutboxStore.dueItems().length, before + 1)
+    }
 }
