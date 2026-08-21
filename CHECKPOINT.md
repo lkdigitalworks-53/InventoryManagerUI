@@ -599,14 +599,63 @@ Taher's answers this round, in order:
   one that turned out not to actually diverge on the first attempt (first constructed case didn't
   diverge; caught by verifying, not by assuming the math was right).
 
+## Slices 2–5 written, all five OrdersStore coverage plans complete (2026-08-20, continued)
+
+All four remaining plans written in one pass, same standard as Slice 1 (verified where verification
+was possible, gaps found via self-review fixed inline rather than left silent):
+
+- **Slice 2** (`docs/superpowers/plans/2026-08-20-ordersstore-queries-coverage.md`) —
+  `tst_OrdersStore_queries.qml`: `get`/`getById`/`findIndexById`/`openOrdersForProduct`/
+  `pendingCount`/`completedThisMonth`/`totalRevenue`/`processingCount`. 26 tests, 3 tasks. No
+  floating-point involved, so verified by direct source trace rather than Node — said so explicitly
+  rather than implying the same machine-verified confidence as Slice 1.
+- **Slice 3** (`docs/superpowers/plans/2026-08-20-ordersstore-mutations-coverage.md`) —
+  `tst_OrdersStore_mutations.qml`: the largest slice. `clear`/`_refreshCounts`/`_commit`/
+  `_mergeOrder`/`nextOrderId`(smoke)/`upsertMany`(its empty-input path turned out to be fully
+  synchronous — real coverage, not just smoke)/`updateOrder`/`deleteOrder`/`_normalizeOrder`/
+  `_normalizeOrders`. 35 tests, 5 tasks + 1 addendum. Traced two genuinely non-obvious real
+  behaviors while writing this one: `updateOrder`'s local state is normalized once via `_clone()`
+  before field mutations, not re-normalized by the second `_normalizeOrder(o)` call `_commit`
+  builds for the Gateway payload; `deleteOrder` bumps `revision` unconditionally even on a no-op
+  delete for an unknown orderId, only the actual `Gateway.recordMutation` call is guarded. Both
+  tested as real, traced behavior rather than assumed or routed around. Self-review caught a real
+  gap — `addOrder`'s own smoke test was in the spec's file layout but no task had actually added it
+  — fixed via an addendum task in the same document rather than silently left out.
+- **Slice 4** (`docs/superpowers/plans/2026-08-20-ordersstore-sync-coverage.md`) —
+  `tst_OrdersStore_sync.qml`: `_onMutationConflicted` (full coverage, including the same
+  unconditional-revision-bump pattern found in Slice 3, this time for the conflict-with-nothing-
+  locally-known edge case) plus `_load`/`_resetAndFetch`/`_fetchFromFirebase`/`syncFromFirebase` —
+  upgraded from pure smoke tests to real re-entrancy-guard coverage (both `_resetAndFetch` and
+  `_fetchFromFirebase` have their own independent `loadingMore` guards, tested separately since
+  they're separate lines even though they check the same flag), matching the
+  `TransactionStore_resetGuard` precedent already established elsewhere in this suite. 12 tests, 2
+  tasks.
+- **Slice 5** (`docs/superpowers/plans/2026-08-20-ordersstore-e2e-coverage.md`) — new file,
+  `test/e2e/tst_OrdersStoreE2E.qml`, per Taher's decision to keep it separate from the existing
+  `tst_OrdersE2E.qml`. Real emulator coverage for `addOrder`, concurrent `addOrder` (no id
+  collision — the actual reason `mintCounterValue` exists, first test anywhere in this codebase
+  that exercises real request concurrency rather than trusting the source comment's stated intent),
+  `upsertMany`'s three conflict policies, `syncFromFirebase` pagination (55 seeded orders, past
+  `_pageSize`'s 50), and — the standout scenario — a genuine multi-user conflict using two real
+  identities. That last one required extending `test/e2e/seed.js` with a second seeded user
+  (`e2e-staff`) and a second minted token (`fixture.secondIdToken`) — additive only, existing E2E
+  files unaffected, but flagged as touching shared infrastructure, not just adding a new file. 6
+  tasks (including one self-review-caught addendum for pagination, same pattern as Slice 3).
+  Explicitly flagged as this whole plan series' least certain test: the raw-POST-from-a-second-
+  identity mechanic for forcing a real CAS conflict couldn't be executed to confirm in this
+  sandbox, said so directly in that task rather than presented with false confidence.
+
+**Total across all 5 slices: 122 new test cases, 5 new/modified files (4 new `tests/*.qml`, 1 new
+`test/e2e/*.qml`, plus the `seed.js` extension), none implemented yet — plans only, awaiting
+Taher's review before any of the actual test code gets written to the real files and committed.**
+
 ## Next step
 
-1. Write Slices 2–5 (`tst_OrdersStore_queries.qml`, `_mutations.qml`, `_sync.qml`, and the new
-   `test/e2e/tst_OrdersStoreE2E.qml`) as separate plan docs, same verified-not-hand-calculated
-   standard as Slice 1.
-2. Once plans are reviewed: implement, starting with Slice 1 (Group A files first, per the spec's
-   §8 rollout order — no emulator dependency, fastest feedback, and settles
-   `computeOrderTotals`'s exact behavior before the E2E slice writes assertions that depend on it).
+1. Taher reviews the 5 plans (or picks a subset to start with) — nothing implemented from them yet,
+   per the standing spec→plan→approval→code process.
+2. Once approved: implement in the spec's §8 rollout order — Slices 1→2→3→4 (Group A, no emulator
+   dependency, fastest feedback) before Slice 5 (E2E, and specifically needs `computeOrderTotals`'s
+   exact behavior settled first since several E2E assertions reuse those verified values).
 3. `orderMath.js`/`qml/helper/OrderMath.js` parity — tracked here as deferred/pending, not
    forgotten. No action until Taher decides to pick it up.
 4. Phase 2 probe (`scripts/probes/probe_dp_sp_outside_app_root.qml`) — still needs Taher to run it

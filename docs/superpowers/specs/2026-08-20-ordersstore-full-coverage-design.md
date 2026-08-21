@@ -131,7 +131,11 @@ which is a bare `verify(true)` after the call), fully verified at the E2E/emulat
   `processingCount`
 - `tests/tst_OrdersStore_mutations.qml` — `addOrder` (smoke-test half), `updateOrder`, `deleteOrder`,
   `clear`, `upsertMany` (smoke-test half), `_mergeOrder`, `_commit`, `_refreshCounts`, `nextOrderId`
-  (smoke-test)
+  (smoke-test), `_normalizeOrder`, `_normalizeOrders` (**added after Slice 1 was written and
+  pushed** — these two were listed in §3's Group A table but never assigned a file here, a genuine
+  gap caught during Slice 2 prep, not caught before Slice 1 shipped. Documenting the correction
+  rather than silently fixing it. They belong here, not in `_totals.qml`, because `_mergeOrder` and
+  `upsertMany` — already in this file — are their actual callers.)
 - `tests/tst_OrdersStore_sync.qml` — `_onMutationConflicted` (full coverage), `_load` /
   `_resetAndFetch` (re-entrancy guard, real coverage) / `_fetchFromFirebase` / `syncFromFirebase`
   (smoke-test only)
