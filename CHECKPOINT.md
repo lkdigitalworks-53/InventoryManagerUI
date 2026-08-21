@@ -678,12 +678,17 @@ document:
   test functions covering `addOrder`, concurrent `addOrder`, `upsertMany`'s three conflict
   policies, the multi-user conflict, and pagination.
 
-**122 test cases total, all written and pushed to `docs/e2e-testing-phase2-followup`. None run
-against a real Qt toolchain or Firebase emulator** — every new file says so in its own header, same
-standing limitation as everything else in this project. This is the single biggest thing this
-branch needs before it can be considered done: a real `qmltestrunner` pass for the four `tests/*.qml`
-files, and a real `e2e-tests` CI run (or local `firebase emulators:exec`) for `tst_OrdersStoreE2E.qml`
-and the `seed.js` change.
+**122 test cases total, all written and pushed to `docs/e2e-testing-phase2-followup`.** Correction
+made after implementing (this estimate was written before the code existed): actual grep count
+across the 5 files is **106** (26+26+36+12+6), not 122 — the plan docs' own per-task test counts
+undercounted Slice 3's `_mergeOrder`/`nextOrderId`/`upsertMany` task by one (said 7, actually 8).
+Verified by `grep -c "function test_"` against the real files rather than trusting the planning
+estimate, same discipline as everything else in this project. **None run against a real Qt
+toolchain or Firebase emulator** — every new file says so in its own header, same standing
+limitation as everything else in this project. This is the single biggest thing this branch needs
+before it can be considered done: a real `qmltestrunner` pass for the four `tests/*.qml` files, and
+a real `e2e-tests` CI run (or local `firebase emulators:exec`) for `tst_OrdersStoreE2E.qml` and the
+`seed.js` change.
 
 ## Next step
 
