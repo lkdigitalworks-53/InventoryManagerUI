@@ -76,4 +76,76 @@ TestCase {
         ]
         compare(OrdersStore.findIndexById("ORD-001"), 0)
     }
+
+    function test_openOrdersForProduct_includes_pending_orders_referencing_the_product() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "pending", products: [{ productId: "P1" }] }
+        ]
+        compare(OrdersStore.openOrdersForProduct("P1"), ["ORD-001"])
+    }
+
+    function test_openOrdersForProduct_includes_processing_and_out_of_stock_orders_too() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "processing", products: [{ productId: "P1" }] },
+            { orderId: "ORD-002", status: "out of stock", products: [{ productId: "P1" }] }
+        ]
+        var refs = OrdersStore.openOrdersForProduct("P1")
+        compare(refs.length, 2)
+        verify(refs.indexOf("ORD-001") !== -1)
+        verify(refs.indexOf("ORD-002") !== -1)
+    }
+
+    function test_openOrdersForProduct_excludes_completed_orders() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "completed", products: [{ productId: "P1" }] }
+        ]
+        compare(OrdersStore.openOrdersForProduct("P1"), [])
+    }
+
+    function test_openOrdersForProduct_excludes_orders_that_dont_reference_the_product() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "pending", products: [{ productId: "P2" }] }
+        ]
+        compare(OrdersStore.openOrdersForProduct("P1"), [])
+    }
+
+    function test_openOrdersForProduct_returns_empty_array_when_no_orders_exist() {
+        compare(OrdersStore.openOrdersForProduct("P1"), [])
+    }
+
+    function test_openOrdersForProduct_returns_each_matching_orderId_once_even_with_multiple_matching_lines() {
+        // Same product referenced twice in one order's line items -- the
+        // source `break`s after the first match per order, so the orderId
+        // must appear exactly once in the result, not twice.
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "pending",
+              products: [{ productId: "P1" }, { productId: "P1" }] }
+        ]
+        compare(OrdersStore.openOrdersForProduct("P1"), ["ORD-001"])
+    }
+
+    function test_pendingCount_returns_the_pendingOrderCount_property() {
+        OrdersStore.pendingOrderCount = 7
+        compare(OrdersStore.pendingCount(), 7)
+    }
+
+    function test_pendingCount_zero() {
+        OrdersStore.pendingOrderCount = 0
+        compare(OrdersStore.pendingCount(), 0)
+    }
+
+    function test_completedThisMonth_returns_the_completedOrderCount_property() {
+        // Despite the name, this does NOT filter by month -- it's a
+        // direct passthrough of completedOrderCount (see
+        // qml/model/OrdersStore.qml:514). Documenting actual behavior,
+        // not the behavior the name implies. The property's own
+        // computation (_refreshCounts) is covered in Slice 3.
+        OrdersStore.completedOrderCount = 3
+        compare(OrdersStore.completedThisMonth(), 3)
+    }
+
+    function test_completedThisMonth_zero() {
+        OrdersStore.completedOrderCount = 0
+        compare(OrdersStore.completedThisMonth(), 0)
+    }
 }
