@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../qml/model"
+import "../qml/components"
 
 // NOT RUN IN THIS SANDBOX — no Qt/qmltestrunner toolchain available.
 // Expected values checked by direct trace against
