@@ -281,4 +281,100 @@ TestCase {
         OrdersStore.deleteOrder("ORD-999")
         compare(OutboxStore.dueItems().length, before) // the one guard that DOES check `found`
     }
+
+    function test_normalizeOrder_fills_in_missing_optional_fields_with_defaults() {
+        var result = OrdersStore._normalizeOrder({ orderId: "ORD-001" })
+        compare(result.customer, "")
+        compare(result.email, "")
+        compare(result.phone, "")
+        compare(result.notes, "")
+        compare(result.orderChannel, "")
+        compare(result.staffId, "")
+        compare(result.status, "pending")
+        compare(result.adjustments.length, 0)
+        compare(result.products.length, 0)
+    }
+
+    function test_normalizeOrder_computes_items_and_totals_from_products_when_present() {
+        var result = OrdersStore._normalizeOrder({
+            orderId: "ORD-001",
+            products: [{ productId: "", name: "Widget", price: 100, quantity: 2,
+                         taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }]
+        })
+        // Same verified case as Slice 1: gross 200, no discount/tax.
+        compare(result.subtotal, 200)
+        compare(result.total, 200)
+        compare(result.items, 2)
+    }
+
+    function test_normalizeOrder_falls_back_to_r_items_and_r_total_when_no_products() {
+        var result = OrdersStore._normalizeOrder({ orderId: "ORD-001", items: 5, total: "\u20B9250.00" })
+        compare(result.items, 5)
+        compare(result.total, 250) // parseCurrency("₹250.00")
+    }
+
+    function test_normalizeOrder_resolves_tax_from_inventory_when_line_does_not_specify_it() {
+        InventoryStore.products = [
+            { id: "P1", name: "Taxed Widget", taxable: true, taxPercent: 18 }
+        ]
+        var result = OrdersStore._normalizeOrder({
+            orderId: "ORD-001",
+            products: [{ productId: "P1", name: "Taxed Widget", price: 100, quantity: 1 }] // no taxable/taxPercent on the line itself
+        })
+        compare(result.products[0].taxable, true)
+        compare(result.products[0].taxPercent, 18)
+    }
+
+    function test_normalizeOrder_line_level_taxable_and_taxPercent_override_inventory() {
+        InventoryStore.products = [
+            { id: "P1", name: "Taxed Widget", taxable: true, taxPercent: 18 }
+        ]
+        var result = OrdersStore._normalizeOrder({
+            orderId: "ORD-001",
+            products: [{ productId: "P1", name: "Taxed Widget", price: 100, quantity: 1,
+                         taxable: false, taxPercent: 0 }] // line explicitly overrides
+        })
+        compare(result.products[0].taxable, false)
+        compare(result.products[0].taxPercent, 0)
+    }
+
+    function test_normalizeOrder_deep_copies_consumption_so_mutating_the_result_does_not_affect_the_source() {
+        var sourceConsumption = [{ batchId: "B1", supplierId: "S1", qtyConsumed: 5, unitCost: 10 }]
+        var result = OrdersStore._normalizeOrder({
+            orderId: "ORD-001",
+            products: [{ productId: "P1", name: "Widget", price: 10, quantity: 1, consumption: sourceConsumption }]
+        })
+        result.products[0].consumption[0].qtyConsumed = 999
+        compare(sourceConsumption[0].qtyConsumed, 5) // source untouched -- proves it's a real copy, not a shared reference
+    }
+
+    function test_normalizeOrder_adjustments_defaults_to_empty_array_when_missing_or_not_an_array() {
+        var result1 = OrdersStore._normalizeOrder({ orderId: "ORD-001" }) // adjustments omitted
+        compare(result1.adjustments.length, 0)
+        var result2 = OrdersStore._normalizeOrder({ orderId: "ORD-001", adjustments: "not an array" })
+        compare(result2.adjustments.length, 0)
+    }
+
+    function test_normalizeOrders_normalizes_every_order_in_the_array() {
+        var arr = [
+            { order_id: "ORD-001" }, // backend field name, no local orderId yet
+            { orderId: "ORD-002", customer: "Already Has Customer" }
+        ]
+        var result = OrdersStore._normalizeOrders(arr)
+        compare(result.length, 2)
+        compare(result[0].orderId, "ORD-001") // order_id -> orderId
+        compare(result[0].customer, "") // defaulted
+        compare(result[1].customer, "Already Has Customer") // left alone
+    }
+
+    function test_addOrder_dispatches_without_throwing() {
+        // addOrder is fully async (nextOrderId -> FirebaseService.mintCounterValue
+        // is its first step) -- real outcome needs the emulator (E2E slice),
+        // this only confirms the synchronous portion before that call doesn't throw.
+        OrdersStore.addOrder(
+            "New Customer", 0, 0, "pending", new Date(), "", "", [], "", "",
+            function(ok, id) {}
+        )
+        verify(true)
+    }
 }
