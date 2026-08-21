@@ -148,4 +148,40 @@ TestCase {
         OrdersStore.completedOrderCount = 0
         compare(OrdersStore.completedThisMonth(), 0)
     }
+
+    function test_totalRevenue_sums_total_of_completed_orders_only() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "completed", total: 500 },
+            { orderId: "ORD-002", status: "pending", total: 300 },
+            { orderId: "ORD-003", status: "completed", total: 250 }
+        ]
+        compare(OrdersStore.totalRevenue(), 750)
+    }
+
+    function test_totalRevenue_returns_zero_when_none_are_completed() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending", total: 500 }]
+        compare(OrdersStore.totalRevenue(), 0)
+    }
+
+    function test_totalRevenue_returns_zero_when_orders_is_empty() {
+        compare(OrdersStore.totalRevenue(), 0)
+    }
+
+    function test_processingCount_counts_processing_status_orders() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "processing" },
+            { orderId: "ORD-002", status: "pending" },
+            { orderId: "ORD-003", status: "processing" }
+        ]
+        compare(OrdersStore.processingCount(), 2)
+    }
+
+    function test_processingCount_returns_zero_when_none_are_processing() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "completed" }]
+        compare(OrdersStore.processingCount(), 0)
+    }
+
+    function test_processingCount_returns_zero_when_orders_is_empty() {
+        compare(OrdersStore.processingCount(), 0)
+    }
 }
