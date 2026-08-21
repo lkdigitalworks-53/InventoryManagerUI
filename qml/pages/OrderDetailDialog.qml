@@ -399,7 +399,7 @@ BottomSheet {
                 needFromStock = Math.max(0, p.quantity - origQty)
             }
             if (inv && needFromStock > inv.stock)
-                stockErrors.push(p.name + ": only " + inv.stock + " in stock, need " + needFromStock + " more")
+                stockErrors.push(p.name + ": only " + inv.stock + " in stock, need " + (needFromStock - inv.stock) + " more")
         }
         if (stockErrors.length > 0) {
             stockErrorLabel.text = stockErrors.join("\n")
@@ -441,6 +441,12 @@ BottomSheet {
         }
 
         var statuses = ["pending","processing","completed"]
+
+        if (products.count === 0 && _orderStatus !== "completed" &&
+                statuses[Math.max(0, statusCombo.currentIndex)] === "completed") {
+            stockErrorLabel.text = qsTr("Atleast add one item in the order to complete.")
+            return
+        }
         var chIdx = channelCombo.currentIndex
         var channel = (chIdx >= 0 && chIdx < OrderChannelStore.channels.length)
                 ? OrderChannelStore.channels[chIdx]
