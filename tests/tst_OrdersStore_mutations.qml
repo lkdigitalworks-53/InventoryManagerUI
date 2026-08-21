@@ -214,9 +214,21 @@ TestCase {
     }
 
     function test_updateOrder_uses_fields_total_directly_when_products_not_given() {
+        // subtotal/discount/tax are ALWAYS recomputed from `products` by
+        // _normalizeOrder inside _clone() -- unconditionally, on every
+        // updateOrder call, regardless of what `fields` contains (see
+        // qml/model/OrdersStore.qml:394, no prods.length>0 fallback there,
+        // unlike items/total which do have one at :393,:398). An empty
+        // products array with a hand-set subtotal would get overwritten to
+        // 0 the moment _clone() runs, before fields.total is ever applied
+        // -- seeding a REAL product line that computes to subtotal=50 is
+        // what actually makes "subtotal stays 50, only total is overridden"
+        // a meaningful, correct assertion.
         OrdersStore.orders = [{
             orderId: "ORD-001", customer: "X", email: "", phone: "",
-            status: "pending", date: "2026-01-01", notes: "", products: [],
+            status: "pending", date: "2026-01-01", notes: "",
+            products: [{ productId: "", name: "Widget", price: 50, quantity: 1,
+                         taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0 }],
             orderChannel: "", staffId: "", subtotal: 50, discount: 0, tax: 0,
             taxBreakdown: [], total: 50, items: 1, adjustments: []
         }]
@@ -315,7 +327,7 @@ TestCase {
 
     function test_normalizeOrder_resolves_tax_from_inventory_when_line_does_not_specify_it() {
         InventoryStore.products = [
-            { id: "P1", name: "Taxed Widget", taxable: true, taxPercent: 18 }
+            { productId: "P1", name: "Taxed Widget", taxable: true, taxPercent: 18 }
         ]
         var result = OrdersStore._normalizeOrder({
             orderId: "ORD-001",
@@ -327,7 +339,7 @@ TestCase {
 
     function test_normalizeOrder_line_level_taxable_and_taxPercent_override_inventory() {
         InventoryStore.products = [
-            { id: "P1", name: "Taxed Widget", taxable: true, taxPercent: 18 }
+            { productId: "P1", name: "Taxed Widget", taxable: true, taxPercent: 18 }
         ]
         var result = OrdersStore._normalizeOrder({
             orderId: "ORD-001",
