@@ -100,4 +100,71 @@ TestCase {
         OrdersStore._commit([{ orderId: "ORD-001", status: "pending" }], null, "update", null)
         compare(OutboxStore.dueItems().length, before)
     }
+
+    function test_mergeOrder_incoming_values_override_existing() {
+        var existing = { orderId: "ORD-001", customer: "Old Name", status: "pending", products: [] }
+        var incoming = { orderId: "ORD-001", customer: "New Name", status: "completed", products: [] }
+        var merged = OrdersStore._mergeOrder(existing, incoming)
+        compare(merged.customer, "New Name")
+        compare(merged.status, "completed")
+    }
+
+    function test_mergeOrder_falls_back_to_existing_when_incoming_field_is_undefined() {
+        var existing = { orderId: "ORD-001", customer: "Existing Name", status: "pending", products: [] }
+        var incoming = { orderId: "ORD-001", status: "completed", products: [] } // customer omitted
+        var merged = OrdersStore._mergeOrder(existing, incoming)
+        compare(merged.customer, "Existing Name")
+    }
+
+    function test_mergeOrder_falls_back_to_existing_when_incoming_field_is_empty_string() {
+        var existing = { orderId: "ORD-001", customer: "Existing Name", status: "pending", products: [] }
+        var incoming = { orderId: "ORD-001", customer: "", status: "completed", products: [] }
+        var merged = OrdersStore._mergeOrder(existing, incoming)
+        compare(merged.customer, "Existing Name")
+    }
+
+    function test_mergeOrder_falls_back_to_existing_when_incoming_array_field_is_empty() {
+        var existingProducts = [{ productId: "P1", name: "Widget", quantity: 1, price: 10 }]
+        var existing = { orderId: "ORD-001", customer: "X", status: "pending", products: existingProducts }
+        var incoming = { orderId: "ORD-001", customer: "X", status: "pending", products: [] }
+        var merged = OrdersStore._mergeOrder(existing, incoming)
+        compare(merged.products.length, 1)
+        compare(merged.products[0].productId, "P1")
+    }
+
+    function test_nextOrderId_dispatches_without_throwing() {
+        OrdersStore.nextOrderId(function(id) {})
+        verify(true)
+    }
+
+    function test_upsertMany_empty_records_array_returns_zeroed_counts_synchronously() {
+        var received = null
+        OrdersStore.upsertMany([], function(counts) { received = counts })
+        // No FirebaseService call happens on this path (:179-185) -- the
+        // callback fires synchronously, so `received` is already set here,
+        // not just eventually.
+        verify(received !== null, "callback must fire synchronously for an empty records array")
+        compare(received.added, 0)
+        compare(received.updated, 0)
+        compare(received.skipped, 0)
+        compare(received.addedIds.length, 0)
+    }
+
+    function test_upsertMany_null_records_returns_zeroed_counts_synchronously() {
+        var received = null
+        OrdersStore.upsertMany(null, function(counts) { received = counts })
+        verify(received !== null, "callback must fire synchronously for null records")
+        compare(received.added, 0)
+    }
+
+    function test_upsertMany_with_records_dispatches_without_throwing() {
+        // Non-empty input reaches FirebaseService.mintCounterBatch -- real
+        // outcome needs the emulator (E2E slice), this only confirms the
+        // synchronous portion before that call doesn't throw.
+        OrdersStore.upsertMany(
+            [{ orderId: "", customer: "New Customer", products: [], _conflictPolicy: "skip" }],
+            function(counts) {}
+        )
+        verify(true)
+    }
 }
