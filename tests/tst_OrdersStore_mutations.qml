@@ -246,4 +246,39 @@ TestCase {
         OrdersStore.updateOrder("ORD-001", { status: "completed" })
         compare(OutboxStore.dueItems().length, before + 1)
     }
+
+    function test_deleteOrder_removes_the_matching_order() {
+        OrdersStore.orders = [
+            { orderId: "ORD-001", status: "pending" },
+            { orderId: "ORD-002", status: "pending" }
+        ]
+        OrdersStore.deleteOrder("ORD-001")
+        compare(OrdersStore.orders.length, 1)
+        compare(OrdersStore.orders[0].orderId, "ORD-002")
+    }
+
+    function test_deleteOrder_records_a_mutation() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        var before = OutboxStore.dueItems().length
+        OrdersStore.deleteOrder("ORD-001")
+        compare(OutboxStore.dueItems().length, before + 1)
+    }
+
+    function test_deleteOrder_is_a_no_op_for_an_unknown_orderId_but_still_increments_revision() {
+        // Real, traced behavior: orders/revision/_refreshCounts run
+        // unconditionally, BEFORE the found-check. Documenting what the
+        // code actually does, not routing around it.
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        var beforeRevision = OrdersStore.revision
+        OrdersStore.deleteOrder("ORD-999")
+        compare(OrdersStore.orders.length, 1) // nothing actually removed
+        compare(OrdersStore.revision, beforeRevision + 1) // but revision still bumped
+    }
+
+    function test_deleteOrder_does_not_record_a_mutation_for_an_unknown_orderId() {
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        var before = OutboxStore.dueItems().length
+        OrdersStore.deleteOrder("ORD-999")
+        compare(OutboxStore.dueItems().length, before) // the one guard that DOES check `found`
+    }
 }
