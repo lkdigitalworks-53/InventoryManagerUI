@@ -147,4 +147,39 @@ TestCase {
         ])
         compare(result.itemCount, 7) // 5 + 2, not 2 (the line count)
     }
+
+    function test_parseCurrency_passes_a_number_through_unchanged() {
+        compare(OrdersStore.parseCurrency(42.5), 42.5)
+        compare(OrdersStore.parseCurrency(0), 0)
+    }
+
+    function test_parseCurrency_empty_string_returns_zero() {
+        compare(OrdersStore.parseCurrency(""), 0)
+    }
+
+    function test_parseCurrency_null_returns_zero() {
+        compare(OrdersStore.parseCurrency(null), 0)
+    }
+
+    function test_parseCurrency_undefined_returns_zero() {
+        compare(OrdersStore.parseCurrency(undefined), 0)
+    }
+
+    function test_parseCurrency_strips_currency_symbol_and_commas() {
+        compare(OrdersStore.parseCurrency("\u20B91,234.50"), 1234.5) // \u20B9 is the Rupee sign
+    }
+
+    function test_parseCurrency_non_numeric_string_returns_zero() {
+        compare(OrdersStore.parseCurrency("abc"), 0)
+    }
+
+    function test_parseCurrency_surrounding_whitespace_is_tolerated() {
+        compare(OrdersStore.parseCurrency("  99.99 "), 99.99)
+    }
+
+    function test_parseCurrency_multiple_decimal_points_parses_up_to_the_second_one() {
+        // The strip regex keeps every '.', but parseFloat itself stops at
+        // the second one -- "1.2.3" becomes 1.2, not NaN and not 123.
+        compare(OrdersStore.parseCurrency("1.2.3"), 1.2)
+    }
 }
