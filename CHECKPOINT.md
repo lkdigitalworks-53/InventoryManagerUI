@@ -779,3 +779,41 @@ not guessed, but Taher needs to re-run before this is confirmed closed.
 2. If anything still fails: paste the log back, same as this round — don't re-guess blind.
 3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Second run: down to 5 QML + 1 E2E, both root-caused differently than first guessed (2026-08-22)
+
+**QML — last round's Toast fix was wrong, still 5 failing, same error.** Corrected mental model: a
+QML file resolves unqualified type references (`Toast.show(...)` inside `OrdersStore.qml`) based
+on *that file's own* imports, not the caller's. My test file importing `qml/components` did nothing
+for `OrdersStore.qml` itself. Production works via `qt_add_qml_module` bundling `qml/model` +
+`qml/components` into one cohesive module (sibling types visible without explicit imports) — a
+build-system behavior bare `qmltestrunner -input tests` doesn't replicate. Real fix: explicit
+`import "../components"` added to all four `qml/model/*.qml` files that call `Toast.show()`
+(`InventoryStore`, `OrdersStore`, `StaffStore`, `SupplierStore` — checked all four for consistency,
+not just the one under test). Safe, additive, zero behavior change in the compiled app. Removed the
+ineffective test-file import so it doesn't mislead later.
+
+**E2E — down to 1 failure, root-caused as likely OutboxStore cross-test contamination.** The
+conflict test's `Gateway.mutationConflicted` never fired; the QWARN right before it was a
+transport-level failure (status 0), not a real HTTP rejection — which only happens if the owner's
+update never reached the server at all. Traced: `tst_OrdersStoreE2E.qml` never called
+`OutboxStore.clear()` anywhere, the one gap in the whole suite. `OutboxStore` is shared across the
+entire `test/e2e` process; `stock_batch BAT-2026-001` (also seen as noise during unrelated tests in
+this file) traces to `tst_OrdersE2E.qml::test_completeOrder_rejects_when_stock_insufficient`'s own
+deliberate negative-path failure, left queued and retried by every subsequent `recordMutation` call
+system-wide. Confirmed the other two E2E files don't need the same fix (they bypass Gateway/
+OutboxStore via raw POSTs for everything except `completeOrder`, which is the actual origin, not a
+second gap). Fixed by adding `OutboxStore.clear()` to this file's `init()`.
+
+**Honest caveat, stated directly rather than overclaimed**: the OutboxStore fix is real, confirmed,
+and well-evidenced, but a transport-level status-0 failure can also stem from genuine transient
+emulator load under CI, independent of this contention. Can't rule that out from static analysis
+alone.
+
+## Next step
+
+1. Re-run again. If the E2E conflict test still fails with the same status-0 pattern after this
+   fix, that would point toward genuine emulator flakiness rather than the contention theory —
+   worth knowing either way.
+2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
