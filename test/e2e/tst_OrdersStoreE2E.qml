@@ -360,7 +360,21 @@ TestCase {
         })]
         OrdersStore.updateOrder(orderId, { notes: "Owner's conflicting edit" })
 
-        tryVerify(function() { return lastConflict !== null }, 10000,
+        // 10s was too tight against OutboxStore's real backoff schedule
+        // (qml/model/OutboxStore.qml:54, _backoffMs: [2000, 8000, 30000, ...]).
+        // Confirmed by two real runs: both showed the owner's first send
+        // attempt fail at the transport level (status 0, not a real HTTP
+        // response -- transient emulator contention, most likely from the
+        // concurrent-addOrder test's own counter-mint retry storm landing
+        // moments earlier), then a second attempt ~2s later (matches
+        // backoffMs[0] exactly) also failing. A third attempt needs
+        // 2000+8000=10000ms from the first failure, right at the OLD
+        // timeout's edge -- a coin-flip, not a real margin. 45s gives real
+        // room past a 4th attempt (10s+30s=40s) for Gateway's own retry
+        // mechanism to actually do its job, rather than the test racing
+        // against it. This is the system's designed resilience working as
+        // intended, not something to route around.
+        tryVerify(function() { return lastConflict !== null }, 45000,
                    "Gateway.mutationConflicted never fired — owner's stale write should have been rejected by the server's CAS check")
         compare(lastConflict.entity, "order")
         compare(lastConflict.entityId, orderId)
