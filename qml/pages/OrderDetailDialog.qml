@@ -1033,7 +1033,13 @@ BottomSheet {
                         }
                         Text {
                             visible: modelData.productId && modelData.productId.length > 0
-                            text: qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
+                            // Gating visibility on productId (rather than SKU, as
+                            // before this fix) means this row can now render for a
+                            // product that legitimately has no SKU — don't leave a
+                            // dangling "SKU: " label with nothing after it in that case.
+                            text: ohRow._sku.length > 0
+                                    ? qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
+                                    : qsTr("%1 | ₹%2").arg(modelData.productId).arg(modelData.unitPrice)
                             color: Constants.textSecondary
                             font.pixelSize: sp(Constants.fsCaption)
                         }
