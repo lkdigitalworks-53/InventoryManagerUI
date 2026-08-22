@@ -8,6 +8,7 @@ import "../model"
 import "../helper/BreakdownMath.js" as BreakdownMath
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/RealisedMath.js" as RealisedMath
+import "../helper/StockSnapshotMath.js" as StockSnapshotMath
 
 // Modern sales report — segmented period pill, gradient hero card with area
 // chart, weekly bar breakdown, top items list. All numbers from SalesStore.
@@ -1515,17 +1516,9 @@ Item {
                 var status = s <= 0 ? qsTr("Out of stock")
                             : s <= (p.minStock || 0) ? qsTr("Low")
                             : qsTr("In stock")
-                if (showSup)
-                    snapRows.push([p.productId, p.name || "", p.sku || "", p.category || "",
-                                   sup, s, p.minStock || 0, p.price || 0, p.sellingPrice || p.price, status, p.taxPercent || 0])
-                else
-                    snapRows.push([p.name || "", p.sku || "", p.category || "",
-                                   s, p.minStock || 0, status])
+                snapRows.push(StockSnapshotMath.buildRow(p, showSup, sup, status))
             }
-            if (showSup)
-                snapRows.push(["", "", "","" , qsTr("Total"), grandTotal, "", ""])
-            else
-                snapRows.push(["", "", qsTr("Total"), grandTotal, "", ""])
+            snapRows.push(StockSnapshotMath.buildTotalRow(showSup, qsTr("Total"), grandTotal))
             return {
                 title: qsTr("Current stock snapshot") + partyTag,
                 suggestedName: "current_stock_" + stamp + ".xlsx",
