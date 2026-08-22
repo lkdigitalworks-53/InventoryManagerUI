@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "../components"
 
 // First-class supplier records, persisted to Firestore at
 // `tenants/{tenantId}/suppliers/{supplierId}`. Replaces the old PartyStore

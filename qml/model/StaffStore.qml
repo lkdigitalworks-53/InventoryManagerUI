@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "../components"
 import "../helper/StaffScope.js" as StaffScope
 
 QtObject {

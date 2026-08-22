@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "../components"
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/RealisedMath.js" as RealisedMath
 import "../helper/ImportMath.js" as ImportMath

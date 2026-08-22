@@ -2,6 +2,7 @@
 pragma Singleton
 import QtQuick
 import QtCore
+import "../components"
 
 import "../helper/SettingsPath.js" as SettingsPath
 
