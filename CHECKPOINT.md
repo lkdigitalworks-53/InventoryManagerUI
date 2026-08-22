@@ -701,3 +701,81 @@ a real `e2e-tests` CI run (or local `firebase emulators:exec`) for `tst_OrdersSt
 3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged from before.
 4. Phase 2 probe — still needs Taher to run it locally, unchanged from before, independent of
    everything else.
+
+## First real run: 9 QML + 2 E2E failures, all root-caused and fixed (2026-08-21)
+
+Taher ran the implementation for real and reported back genuine failures — the first actual
+`qmltestrunner`/`e2e-tests` execution any of Slices 1–5's code has ever had. Root-caused every one
+before touching anything (read error messages precisely, read the actual current source, didn't
+guess), per `systematic-debugging`. Summary:
+
+**QML (9 failures, all fixed):**
+
+1. **5× `Toast is not defined`, all `OrdersStore_sync::test_onMutationConflicted_*`.** Root cause:
+   `_onMutationConflicted` calls `Toast.show(...)` unqualified — normal for `qml/model/*.qml` code,
+   works in the real app because `Main.qml` does `import "components"`. `Toast` is a
+   `qmldir`-registered singleton in `qml/components/`, a *separate* module from `qml/model` (which
+   is all `tst_OrdersStore_sync.qml` imported). First test in this whole suite to ever exercise a
+   code path that calls `Toast.show()` — nothing before this hit the gap. Fix: added
+   `import "../qml/components"`, matching `Main.qml`'s own precedent exactly. Confirmed
+   `Toast.qml` itself is a 4-line inert `QtObject` (just emits a signal, no host dependency), so the
+   import alone is sufficient.
+2. **2× `Compared values are not the same`, both genuine test-authoring bugs:**
+   - `test_normalizeOrder_resolves_tax_from_inventory...`: fixture used `InventoryStore.products`
+     field `id`, but `InventoryStore.getById()` matches on `productId`
+     (`qml/model/InventoryStore.qml:1051`). Fixed both occurrences of the wrong field name in this
+     file (one failed, one coincidentally passed anyway since it overrides tax on the line itself
+     regardless — fixed for correctness, not just to stop a visible failure).
+   - `test_updateOrder_uses_fields_total_directly...`: seeded an empty `products: []` array with a
+     hand-set `subtotal: 50`. Real behavior: `_clone()` unconditionally recomputes
+     `subtotal`/`discount`/`tax` from `products` via `_normalizeOrder` on *every* `updateOrder`
+     call — no fallback-to-existing branch for `subtotal` the way there is for `items`/`total`
+     (`qml/model/OrdersStore.qml:394` vs `:393,:398`). An empty-products seed gets its subtotal
+     zeroed by the clone before `fields.total` is ever applied. Fixed by seeding a real product line
+     that computes to `subtotal: 50`, making the original intent ("subtotal stays put, only total is
+     overridden") actually true.
+3. **2× `formatCurrency` — confirmed, not just theorized.** This environment's QJSEngine throws on
+   `Intl.NumberFormat`; the manual fallback fires (`'INR ' + rounded`, no comma grouping). Exactly
+   the open question flagged as unverified when this test was first written. Fixed both to check
+   digit content only. The other three `formatCurrency` tests already didn't assume comma grouping,
+   which is why they passed.
+
+**E2E (2 failures, both fixed):**
+
+4. **`test_upsertMany_skip_and_rename_policies_against_real_state`** — `"recordMutationsBatch
+   failed 401 ... invalid-token"`. Root cause: `Gateway.batchFunctionUrl` defaults to the *real*
+   production Cloud Function URL (`qml/model/Gateway.qml:53`) — `init()`/`cleanup()` redirected
+   `functionUrl` and `deltaFunctionUrl` to the emulator but missed `batchFunctionUrl` entirely.
+   `upsertMany`'s real-records path was hitting prod, which correctly rejected the fake
+   emulator-signed token. Fixed by adding the same redirect pattern for the third URL.
+   `test_upsertMany_overwrite_policy_...` had the identical latent bug but happened to pass — its
+   assertion depends on a separate `updateOrder` call using the already-correct `functionUrl`, not
+   on `upsertMany`'s own network write.
+5. **`test_two_users_editing_the_same_order_produces_a_real_conflict`** — the one flagged from the
+   start as least certain. Two real, distinct bugs, both found by reading the actual code rather
+   than re-guessing:
+   - `E2EHelpers.postDirect` hardcodes `tc.fixture.idToken` — no parameter for a different token at
+     all. The "staff write" was silently using the owner's own identity the whole time.
+   - More fundamental: `functions/lib/gatewayLogic.js`'s `applyMutation` does
+     `_deepEqual(current, params.before)`, where `current` is Admin-SDK-read plain JS values
+     (`{customer: "x"}`) — but this test built `before`/`after` from `orderDoc.fields`, Firestore's
+     REST typed-value wire format (`{customer: {stringValue: "x"}}`). Those shapes can never
+     deep-equal; the CAS check would reject the write regardless of identity.
+   Fixed with two new local helpers in the test file: `_postDirectAs(idToken, ...)` (explicit-token
+   variant, kept local rather than modifying the shared `E2EHelpers.js`, same convention as
+   `_addOrder`) and `_firestoreFieldsToPlain(fields)` (a converter scoped to the value types
+   OrdersStore documents actually use, not a general-purpose Firestore parser). Also added a
+   `compare()` on the staff write's status that wasn't there before, so a rejected write fails
+   loudly where it happens instead of as a confusing timeout several lines later.
+
+**Not re-verified against a live run** — same standing sandbox limitation as every fix in this
+project. All of the above is root-caused from the actual failure logs and actual current source,
+not guessed, but Taher needs to re-run before this is confirmed closed.
+
+## Next step
+
+1. Re-run both `qmltestrunner` (Slices 1–4) and `e2e-tests`/local emulator (Slice 5) — first real
+   confirmation these fixes hold.
+2. If anything still fails: paste the log back, same as this round — don't re-guess blind.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
