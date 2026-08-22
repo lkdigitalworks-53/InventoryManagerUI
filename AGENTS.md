@@ -584,8 +584,18 @@ env.
   QSettings org-identifier fix and its regression coverage. The `tst_OutboxStore.qml` durability case
   is the one that actually *proves* the fix rather than documenting intent: it fails
   (`pendingCount` comes back `0`) without the fix, because the write never reached a real file.
-- 23 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
-  2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17). Historical baseline before those 9 new suites:
+- `tests/tst_InventoryStore_cloneSymmetry.qml`, `tests/tst_InventoryStore_upsertMany.qml`,
+  `tests/tst_StockSnapshotMath.qml` (2026-08-22, SKILLS Skill 46, review of `pr_taher_bug_fixes`) —
+  first-ever direct unit coverage for `InventoryStore`'s create/clone symmetry and bulk-import SKU
+  handling (previously zero tests touched `_upsertManySync`/`generateSku`/`addProduct`'s payload at
+  all), plus new coverage for `SalesPage.qml`'s stock-snapshot export via a newly-extracted pure
+  helper, `qml/helper/StockSnapshotMath.js` (same pattern as `ImportMath.js`/`OrderMath.js`). Verified
+  clean (498 passed, 0 failed) in a throwaway scratch copy with a Qt-6.4.2 compat shim — see Skill 46
+  for why this Cloud sandbox's real `qmltestrunner` run always shows 14 unrelated pre-existing
+  compile failures (`Settings is not a type` under Qt 6.4.2 vs CI's 6.8) that aren't a real signal.
+- 26 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17 + 3 from 2026-08-22). Historical baseline before
+  those 9 new suites (pre-2026-08-22 count; the 3 newest aren't included in this older tally):
   **140 cases pass, 0 fail** — none of the 9 newest suites have been run under a real `qmltestrunner`
   yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have
   Node-side twins that do pass, 7/7, via `cd functions && npm test` — the other 6 have no Node-side

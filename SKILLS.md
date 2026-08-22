@@ -2148,3 +2148,92 @@ propagate that middleware's own completion path to a resolved promise. Since OPT
 unmodified `cors` package behavior, not this codebase's own logic, it wasn't worth fighting that
 mock/middleware interaction for — dropped, with a comment explaining why, rather than either silently
 omitted or endlessly debugged.
+
+## Skill 47: Reviewing `pr_taher_bug_fixes` — a `_clone()`/create-payload drift, a SKU-clobber, and an export column shift
+
+**Files**: `qml/model/InventoryStore.qml` (`_newProductDoc()` new, `_idSuffixNumber()` new,
+`generateSku()`, `_upsertManySync()`), `qml/helper/StockSnapshotMath.js` (new),
+`qml/pages/SalesPage.qml`, `qml/pages/OrderDetailDialog.qml`,
+`tests/tst_InventoryStore_cloneSymmetry.qml` (new), `tests/tst_InventoryStore_upsertMany.qml`
+(new), `tests/tst_StockSnapshotMath.qml` (new).
+
+**Context**: Taher had already pushed 8 commits to `pr_taher_bug_fixes` (branched off `main` @
+`bc0a8fb`) fixing real bugs in bulk-import SKU generation, the inventory search field, an order-
+history display, and an analysis export. The PR's CI showed QML/Functions/Firestore-Rules Tests
+green but **E2E Tests failing**; none of the eight commits added a single test. This session's job
+was to find why E2E failed and cover the untested surface — not to re-litigate the eight fixes
+themselves, most of which were correct.
+
+**Bug 1 (the actual CI failure) — `_clone()`/create-payload drift, same failure class as Skill 20-
+ish's OrdersStore incident** (see `tests/tst_OrdersStore_normalization.qml`'s own header comment for
+that precedent). One of the eight commits added `supplierId` to `InventoryStore._clone()`'s field
+whitelist — correctly, it's needed so the bulk-import/overwrite path can carry it — but never added
+it to `addProduct()`'s create payload. `functions/lib/gatewayLogic.js`'s CAS check (`_deepEqual`)
+bails out on `aKeys.length !== bKeys.length` before comparing a single value, so: create a product
+via `addProduct()` (doc has no `supplierId` key) → any later edit reads it back through `_clone()`
+first (`updateProduct`/`deleteProduct` both start with `var arr = _clone()`) → that clone now carries
+`supplierId: ""`, a key the real Firestore doc doesn't have → key-count mismatch → false 409
+conflict. `test/e2e/tst_InventoryE2E.qml`'s `test_updateProduct_persists_to_emulator` and
+`test_deleteProduct_removes_from_emulator` both create-then-touch-again, which is exactly this.
+Confirmed against the actual GitHub Checks API (`gh`/`curl` weren't available; used
+`api.github.com/repos/.../commits/{sha}/check-runs` directly with a session PAT) rather than
+guessed — QML/Functions/Firestore-Rules all green, only E2E red, matching this theory exactly (a
+CAS/emulator-only failure mode, invisible to the offline QML unit suite).
+
+**Fix**: extracted `addProduct`'s doc-building into `_newProductDoc()` — a pure function (no async
+args; `id`/`supplierId` are already-resolved values by the time `addProduct` calls it) — and added
+`supplierId` there. Deliberately **not** the full `_normalizeOrder`-style unification OrdersStore
+uses (one canonical shape function called by every path, including bulk-import) — `_normalizeRecord`
+(bulk-import's own doc-builder) still independently duplicates this shape and has to be checked by
+hand against `_newProductDoc`/`_clone()` if any of the three changes. Flagged to Taher as a
+trade-off (smaller/faster fix now vs. the structurally-safer unification as a follow-up), not
+decided unilaterally. `tests/tst_InventoryStore_cloneSymmetry.qml` locks the fields-match invariant
+down directly (`Object.keys(_newProductDoc(...))` vs `Object.keys(_clone()[0])`) instead of by
+inspection, mirroring `tst_OrdersStore_normalization.qml`'s approach for the same bug class.
+
+**Bug 2 — SKU clobber on overwrite**: `_upsertManySync`'s "overwrite" branch (existing product,
+matched by `productId`) generated a brand-new SKU whenever the imported row's `sku` column was
+blank — but a blank `sku` on an *overwrite* row just means the CSV round-trip didn't carry that
+column, not that the product's real SKU should be replaced; `updateProduct`'s merge only skips
+`undefined` fields, so the synthetic SKU silently overwrote the real one every time. New-row/rename
+are correct to generate fresh (nothing to preserve there). Fixed to prefer
+`arr[existingIdx].sku`, only falling back to `generateSku()` if the stored product itself also has
+none (legacy-data edge case). `tests/tst_InventoryStore_upsertMany.qml` covers this plus the
+original generate-unique-SKU-per-batch fix directly (calling `_upsertManySync`/`generateSku` with
+stub `pullProductId`/`resolveSupplierForRecord` functions — both already plain synchronous
+functions by design, so no Gateway/network mocking needed for the overwrite-only scenarios).
+
+**Bug 3 — `SalesPage.qml`'s stock-snapshot export column shift**: one of the eight commits added a
+leading "Product ID" column plus three trailing ones (Cost Price/Selling Price/Tax%) to
+`snapHeaders` without updating every `snapRows.push(...)` to match — the non-supplier-view data row
+kept its old field count against the new header, shifting every value one column left (Name lands
+under "Product ID", ..., Status ends up blank), and both views' Total rows were short several
+trailing columns. `src/XlsxService.cpp`'s `renderAnalysisSections()` loops
+`col < headers.size() && col < line.size()`, so this never crashes or fails anything — it just
+silently writes a wrong spreadsheet. Nothing caught it because nothing tested it: `SalesPage.qml` is
+a UI page, not unit-tested under this project's existing convention (`tests/` only covers
+`.pragma library` helpers — see the Testing & QA Agent section of `AGENTS.md`). Fix: extracted the
+row/column shaping (not the `qsTr()` headers, not the `TransactionStore`/`SupplierStore` lookups —
+just the pure array-building) into `qml/helper/StockSnapshotMath.js`, following the exact
+`ImportMath.js`/`OrderMath.js` pattern this codebase already uses for testable pure logic, rather
+than either leaving it untestable in-page or over-extracting the whole export function (which would
+have dragged in translation-context and singleton-mocking complexity for no real benefit — the bug
+was purely in the array shaping, not the lookups). `tests/tst_StockSnapshotMath.qml` asserts
+row/header column-count parity for both `showSup` branches plus the total row, and specifically
+locks down "the non-supplier row leads with `productId`" as its own case.
+
+**Sandbox environment note, worth knowing before trusting a "tests pass" claim from a Cloud
+session on this repo**: this Cloud sandbox's `apt`-installable Qt is **6.4.2**; CI runs **6.8**.
+Concretely, `Settings` moved from `Qt.labs.settings` to `QtCore` partway through Qt 6's life —
+`import QtCore; Settings { ... }` (what every store in this app actually uses) fails to compile
+under 6.4.2 with `Settings is not a type`, and since one failed-to-compile singleton breaks the
+whole `qml/model` qmldir for every file that transitively imports it, this shows up as **14 files
+failing at `compile()`** with zero relation to whatever the actual diff touches (confirmed
+identical on `main` — not something this PR or this session caused). A real `qmltestrunner -input
+tests` run in this sandbox will always show that exact 14-file signature as a floor; anything
+beyond those 14 is a real signal. To verify new/changed test files anyway without waiting for CI,
+this session did the verification in a **throwaway scratch copy only** (`Qt.labs.settings` compat
+shim swapped in, `location:` properties stripped — neither change touched the real working tree),
+confirmed **498 passed, 0 failed** across the whole suite there, then discarded the scratch copy.
+Don't "fix" the real `AuthStore.qml`/etc. for this — they're already correct for Qt 6.8; the gap is
+this sandbox's Qt version, not the code.
