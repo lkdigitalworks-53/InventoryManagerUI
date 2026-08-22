@@ -158,6 +158,30 @@ QtObject {
         return a;
     }
 
+    // The other half of the _clone() invariant above: the exact shape
+    // addProduct() sends on create. Pulled out to a standalone pure
+    // function (no async args — id/supplierId are already-resolved values
+    // by the time addProduct calls this) so tst_InventoryStore_cloneSymmetry.qml
+    // can assert the two field lists match without needing the emulator
+    // that addProduct's own async id/supplier minting requires end to end.
+    // This is a narrower fix than OrdersStore's _normalizeOrder (which also
+    // folds in the update/bulk-import paths) — see review notes on
+    // pr_taher_bug_fixes for the trade-off; _normalizeRecord (bulk import)
+    // still builds its own doc shape independently and must be checked by
+    // hand against this one and _clone() if either changes.
+    function _newProductDoc(id, name, sku, category, stock, minStock,
+                             price, sellingPrice, taxable, taxPercent,
+                             size, unit, description, supplierId) {
+        return { productId: id, name: name, sku: sku, category: category,
+                 stock: stock, minStock: minStock,
+                 price: price, sellingPrice: sellingPrice,
+                 taxable: taxable, taxPercent: taxPercent,
+                 size: size,
+                 unit: unit, description: description || "",
+                 photoUrl: "", photoUpdatedAt: "",
+                 supplierId: supplierId };
+    }
+
     function totalProducts() { return products.length; }
 
     function lowStockCount() {
@@ -380,9 +404,24 @@ QtObject {
         for (var i = 0; i < Math.min(words.length, 2); ++i)
             prefix += words[i].charAt(0).toUpperCase();
         var year = new Date().getFullYear();
-        var num = numOfProducts !== undefined && numOfProducts > 0 ? numOfProducts : products.length + 1;
+        // numOfProducts always has a value (default param above), so the
+        // only thing that decides the fallback is whether it's > 0.
+        var num = numOfProducts > 0 ? numOfProducts : products.length + 1;
         var numStr = String(num).padStart(3, '0');
         return prefix + "-" + year + "-" + numStr;
+    }
+
+    // Shared by every _upsertManySync branch that needs a per-row-unique
+    // SKU suffix during bulk import: the numeric tail of a "PRD-###"
+    // productId. Using each row's own (already-unique) productId instead
+    // of `products.length` is what fixes the original bug this branch was
+    // built for — `products.length` is read from the *outer* `products`
+    // property, which stays frozen at its pre-import value for the whole
+    // loop (it's only reassigned once, after the loop, via `products =
+    // arr`), so every row lacking a SKU in a batch used to collide on the
+    // exact same generated suffix.
+    function _idSuffixNumber(productId) {
+        return parseInt(String(productId).split('-')[1]);
     }
 
     // The `party` legacy argument is now treated as a SUPPLIER ID for new
@@ -414,13 +453,8 @@ QtObject {
                 var tx = !!taxable;
                 var tp = (typeof taxPercent === "number" && !isNaN(taxPercent)) ? taxPercent : 0;
                 var sz = size || "";
-                var doc = { productId: id, name: name, sku: sku, category: category,
-                           stock: stock, minStock: minStock,
-                           price: price, sellingPrice: sp,
-                           taxable: tx, taxPercent: tp,
-                           size: sz,
-                           unit: unit, description: description || "",
-                           photoUrl: "", photoUpdatedAt: "" };
+                var doc = _newProductDoc(id, name, sku, category, stock, minStock,
+                                         price, sp, tx, tp, sz, unit, description, supplierId);
                 arr.push(doc);
                 // Optimistic local update; persist this one product via the gateway
                 // (a per-doc create, not the legacy bulk PUT of the whole collection).
@@ -682,8 +716,7 @@ QtObject {
 
                     if (r.sku) { r.sku = ImportMath.renameSku(r.sku, counts.added); }
                     else {
-                        var sku_num = parseInt(String(r.productId).split('-')[1]);
-                        r.sku = generateSku(r.name, sku_num);
+                        r.sku = generateSku(r.name, _idSuffixNumber(r.productId));
                     }
 
                     var renamedDoc = _normalizeRecord(r);
@@ -695,11 +728,20 @@ QtObject {
                     continue;
                 }
 
-                // overwrite
+                // overwrite — this is an EXISTING product (matched by
+                // productId), not a new one. A blank sku on the incoming
+                // row almost always just means "the CSV export/edit round
+                // trip didn't carry the sku column" — it does not mean the
+                // product itself has no SKU. Falling straight to
+                // generateSku() here (as new-row/rename correctly do,
+                // since those really are new products with nothing to
+                // preserve) would silently replace the product's real,
+                // already-correct SKU with a synthetic one on every bulk
+                // edit that happens to omit that column. Preserve the
+                // existing value first; only synthesize one if the stored
+                // product itself somehow also has none (legacy data).
                 if (!r.sku || r.sku.length === 0) {
-                    // Generate SKU if empty, for an existing row
-                    var num = parseInt(String(r.productId).split('-')[1]);
-                    r.sku = generateSku(r.name, num);
+                    r.sku = arr[existingIdx].sku || generateSku(r.name, _idSuffixNumber(r.productId));
                 }
                 // For overwrite operation we have to send it through logic and data model layer to update details.
                 updatedProducts.push({productId: r.productId, fields: {
@@ -727,8 +769,7 @@ QtObject {
                 r.productId = pullProductId();
                 if (!r.sku || r.sku.length === 0) {
                     // Generate SKU if empty, for a new row
-                    var sku_num = parseInt(String(r.productId).split('-')[1]);
-                    r.sku = generateSku(r.name, sku_num);
+                    r.sku = generateSku(r.name, _idSuffixNumber(r.productId));
                 }
 
                 var doc = _normalizeRecord(r);
