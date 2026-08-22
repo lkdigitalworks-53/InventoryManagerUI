@@ -817,3 +817,31 @@ alone.
    worth knowing either way.
 2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Third run: QML fully green, E2E down to the same one test — real root cause found (2026-08-22)
+
+QML: 100% pass, confirmed — the Toast fix (import in the 4 source files, not the test file) holds.
+
+E2E: same single failure, same "order ORD-061 recordMutation failed 0" pattern as last round —
+meaning the OutboxStore.clear() fix, while a real and worthwhile hygiene fix, wasn't the actual
+cause of *this* symptom. Went back to the source instead of re-guessing: read
+`qml/model/OutboxStore.qml`'s actual `_backoffMs` array — `[2000, 8000, 30000, 120000, 600000]`.
+The ~2.15s gap between this run's two logged failures matches `backoffMs[0]` (2000ms) exactly, not
+a coincidence — confirms the retry mechanism is working correctly, the test's 10s `tryVerify` window
+just didn't give it enough time (a 3rd attempt needs 2000+8000=10000ms from the first failure,
+landing right at the old timeout's edge). Verified `Gateway.drainNow()` self-schedules via its own
+`_drainTimer`/`_onDrainTick` — a real, self-perpetuating retry loop, nothing external needs to
+trigger it. Fixed by increasing the timeout to 45s, real margin past a 4th attempt.
+
+The first-attempt transport failure itself is most likely genuine emulator contention from the
+concurrent-addOrder test's own counter-mint retry storm (visible in this same log as a 400
+FAILED_PRECONDITION version-mismatch on that test, landing moments before) — not something to
+eliminate, since tolerating real transient infrastructure behavior via the system's own designed
+retry mechanism is the correct fix, not routing around it.
+
+## Next step
+
+1. Re-run once more. If this still fails, the 45s timeout theory would be wrong and this needs a
+   different explanation — say so plainly rather than guess a fourth time.
+2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
