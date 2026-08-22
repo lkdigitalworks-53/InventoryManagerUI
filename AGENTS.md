@@ -525,9 +525,15 @@ env.
 ### 9. Testing & QA Agent
 
 **Purpose**: Owns the QML test harness and unit coverage for pure logic.
-**Scope**: `tests/`, `functions/test/`, `test/e2e/`
+**Scope**: `tests/`, `functions/test/`, `test/e2e/`, `docs/superpowers/test-plans/`
 
 **Responsibilities**:
+- Write every new test plan (automated coverage map, or an on-device manual checklist) into
+  `docs/superpowers/test-plans/` directly — not `specs/` or `plans/` — and add it to that folder's
+  `README.md` index (consolidated there 2026-08-22, see SKILLS Skill 47). Follow the existing
+  naming convention (`YYYY-MM-DD-<branch-or-feature>-test-plan.md`, or `YYYY-MM-DD-on-device-
+  test-plan-<feature>.md` for manual-only) and note in the index whether it supersedes or chains
+  with an existing plan for the same feature area.
 - Write Qt Quick Test (`TestCase`) suites for **pure, headless-testable logic** — primarily the
   `.pragma library` JS helpers (e.g. `qml/helper/BreakdownMath.js`). Page-level QML that needs the
   full Felgo `App` context (`dp()`/`sp()`/`Theme`/`GlassHeader`) cannot load under the runner — keep

@@ -4,8 +4,8 @@
 **Branch:** `pr_taher_bug_fixes` (existing, already has an open PR; NOT a new branch — Taher's
 request named this branch, not "create a new branch," which is otherwise this session's standing
 instruction)
-**Status:** All fixes + new tests written. Verified clean in a throwaway scratch copy (see below).
-Not yet committed/pushed to the real working tree as of this checkpoint.
+**Status:** Bug-fix portion committed and pushed (see step 14 for the push, steps 15+ for the
+follow-on test-plan/consolidation work in the same session).
 
 ## Phase 2 probe: answered, closing it out (not "still pending")
 
@@ -47,7 +47,7 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
    `tests/tst_OrdersStore_normalization.qml`'s own header comment for that precedent). Confirmed
    `test/e2e/tst_InventoryE2E.qml`'s `test_updateProduct_persists_to_emulator` and
    `test_deleteProduct_removes_from_emulator` both create-then-touch-again, exactly the shape that
-   trips this. Full detail in `SKILLS.md` Skill 42.
+   trips this. Full detail in `SKILLS.md` Skill 46.
 7. Found two more real bugs by hand-reviewing the diff (qt-qml-review/ponytail-review lenses,
    done manually — `qmllint` in this sandbox lacks QtQuick.Controls/Layouts so its SalesPage.qml
    output is 100% unrelated environment noise, not used for anything beyond confirming no parse
@@ -56,7 +56,7 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
      new SKU instead of preserving the product's real existing one.
    - Export column misalignment (`SalesPage.qml`'s stock-snapshot export) — header grew by 4
      columns, row/total arrays didn't fully keep up. Silent, no crash, wrong spreadsheet.
-   Both detailed in `SKILLS.md` Skill 42.
+   Both detailed in `SKILLS.md` Skill 46.
 8. Fixed all three bugs. Extracted `InventoryStore._newProductDoc()` (pure, mirrors the
    `_clone()` invariant), `InventoryStore._idSuffixNumber()` (dedupes a 3x-repeated
    parseInt/split), and `qml/helper/StockSnapshotMath.js` (new — same pattern as
@@ -77,9 +77,42 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
     "E2E testing Phase 1 follow-up") to
     `docs/superpowers/specs/2026-08-16-e2e-testing-phase1-followup-CHECKPOINT.md`, matching this
     project's established archive-before-replacing convention.
-12. Added `SKILLS.md` Skill 42 (full bug/fix narrative) and an `AGENTS.md` Testing & QA Agent
+12. Added `SKILLS.md` Skill 46 (full bug/fix narrative) and an `AGENTS.md` Testing & QA Agent
     entry for the three new test files.
-13. This checkpoint.
+13. This checkpoint (original version).
+14. Committed (4 commits, split by concern: the two InventoryStore bugs together since they're
+    the same file's diff, the SalesPage export bug + its helper, the OrderDetailDialog cosmetic
+    fix, then docs) and pushed to `origin/pr_taher_bug_fixes` with the session PAT embedded only
+    in the one-off push command (confirmed after: `.git/config`'s stored `origin` URL has no
+    token in it). CI hadn't reported back on the new push as of a ~30s-later check.
+15. **New task, same session**: Taher asked for a test plan covering this branch's changes, plus
+    consolidating every scattered "test plan" document in the repo into one folder. First,
+    `git fetch` + `git status` revealed local was stale — origin had moved 10 commits ahead via
+    `aba371b`, "Merge branch 'main' into pr_taher_bug_fixes", bringing in an entirely unrelated,
+    already-on-`main` feature (`fix/return-analysis-revenue-not-updated`, merged via PR #47).
+    Fast-forwarded, confirmed the one file-overlap (`OrderDetailDialog.qml`) merged cleanly (my
+    fix and theirs touch different regions), re-ran the full suite in a scratch copy to confirm no
+    regression from the merge: 528 passed, 0 failed.
+16. Grepped the repo for "test plan" (case-insensitive): found 9 standalone test-plan files
+    spread across `docs/superpowers/` root and `docs/superpowers/specs/`, plus 2 design docs in
+    `docs/superpowers/plans/` with an inline test-plan *section* (left alone — not the same
+    artifact as a standalone plan). Created `docs/superpowers/test-plans/`, `git mv`'d all 9 in,
+    grepped the whole repo for references to each old path, updated all 9 hits, then re-grepped to
+    confirm zero remained.
+17. While writing the new plan's coverage table, found `_upsertManySync`'s `rename`/`skip`
+    conflict-policy branches had no direct test at all — `rename` is exactly what `fb180d8` (one
+    of Skill 46's three bugs) touches. Added 3 new cases to `tests/tst_InventoryStore_upsertMany.qml`
+    rather than just noting the gap. An `str_replace` edit dropped the file's closing `TestCase {}`
+    brace; the scratch-copy verification run caught it as a compile error before anything was
+    claimed done — fixed (one line), re-verified: 11/11 in that file, 531/531 for the full suite.
+18. Wrote `docs/superpowers/test-plans/2026-08-22-pr_taher_bug_fixes-test-plan.md` (this branch's
+    plan — 3-tier structure: genuinely-run automated coverage, what real CI/emulator will confirm
+    that this sandbox can't, and a static-trace-only gap list with a short on-device checklist) and
+    `docs/superpowers/test-plans/README.md` (the combined index for all 10 files now in the
+    folder, newest-first, with the two multi-part chains called out explicitly).
+19. Added `SKILLS.md` Skill 47 (this consolidation + the coverage-gap catch) and pointed
+    `AGENTS.md`'s Testing & QA Agent scope at the new folder.
+20. This checkpoint update. Next: commit + push steps 15-19's work.
 
 ## Deliberately NOT done (flagged to Taher as a trade-off, not decided unilaterally)
 
@@ -92,7 +125,7 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
 - **qmllint with the full Controls/Layouts stack** wasn't installed (would need a much bigger
   apt footprint for uncertain payoff, given the actual verification signal already came from the
   real test suite). The qmllint output that WAS captured for `SalesPage.qml` is pure environment
-  noise (missing Controls/Layouts modules) — didn't chase further; noted in Skill 42.
+  noise (missing Controls/Layouts modules) — didn't chase further; noted in Skill 46.
 
 ## Next steps
 

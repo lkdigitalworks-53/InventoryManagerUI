@@ -176,7 +176,7 @@ Not touched (confirmed out of scope, see Decisions): `InventoryStore._mergeRecor
 No headless QML test coverage planned for the XlsxService/import-preview changes — consistent
 with the prior import/export workstream, since page-level QML and QXlsx file I/O can't run under
 `qmltestrunner`. A manual on-device test plan will be written alongside this spec (matching the
-existing `docs/superpowers/2026-06-19-on-device-test-plan-revenue-reconciliation.md` /
+existing `docs/superpowers/test-plans/2026-06-19-on-device-test-plan-revenue-reconciliation.md` /
 `2026-06-21-custome-device-test-plan.md` pattern), covering:
 
 - Add a product with Taxable on + a Tax %, and with a Size value → verify both save and reload

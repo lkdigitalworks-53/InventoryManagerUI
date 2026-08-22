@@ -2237,3 +2237,63 @@ shim swapped in, `location:` properties stripped — neither change touched the 
 confirmed **498 passed, 0 failed** across the whole suite there, then discarded the scratch copy.
 Don't "fix" the real `AuthStore.qml`/etc. for this — they're already correct for Qt 6.8; the gap is
 this sandbox's Qt version, not the code.
+
+## Skill 47: Consolidating scattered test plans into `docs/superpowers/test-plans/`, and the `pr_taher_bug_fixes` test plan
+
+**Files**: `docs/superpowers/test-plans/` (new folder, 9 files moved into it via `git mv` + 1 new
+one), `docs/superpowers/test-plans/README.md` (new — the combined index), plus every file that
+referenced a moved path by name (`docs/superpowers/plans/2026-07-10-product-tax-export-size-
+field.md`, `.../2026-07-11-product-adjustment-reason.md`, and four files under `specs/` —
+`2026-08-11-ledger-sync-race-CHECKPOINT.md`, `2026-07-10-product-tax-export-size-field-
+CHECKPOINT.md`, `2026-07-10-product-tax-export-size-field-design.md`,
+`2026-08-08-review-round2-design.md`, `2026-07-29-async-write-sequencing-design.md`). Also 2 new
+test cases in `tests/tst_InventoryStore_upsertMany.qml` (found missing while writing the test
+plan below — see the last paragraph).
+
+**The mess, found by grep**: before this session, "test plan" documents existed in three
+different places — `docs/superpowers/` root (3 on-device manual checklists), `docs/superpowers/
+specs/` (6 automated-coverage plans, interleaved with unrelated design docs and session
+checkpoints), and 2 more `docs/superpowers/plans/` design docs that have a test-plan *section*
+inline rather than being standalone plans (those two were left where they are — a design doc
+with an embedded test-plan section isn't the same artifact as a standalone plan file, and moving
+it would separate the plan from the design decisions it's testing). Nothing indicated which of
+the 9 standalone files was current for a given feature versus superseded by a later one for the
+same feature — e.g. `2026-07-14-test-plan.md` says outright, in its own addendum, "don't treat
+this document as complete on its own anymore," but you'd only find that by opening it.
+
+**The fix**: one new folder, `docs/superpowers/test-plans/`, holding all 9 standalone plans
+(moved with `git mv`, preserving blame/history) plus a `README.md` that indexes every one of them
+newest-first with its branch/feature, a one-line description of what kind of coverage it actually
+represents (automated-and-run / automated-but-unverified-in-that-session / on-device-only), and an
+explicit "chains" section calling out the two multi-part sequences (`2026-07-14` →
+`2026-07-17-part2` for order-import-stock; `2026-07-29` → `2026-08-08-in-detail` →
+`2026-08-08-review-round2` for async-write-sequencing) so a reader doesn't stop at the first file
+in a chain and miss that it's out of date. Every file elsewhere in the repo that referenced one of
+the 9 by its old path was grepped for and updated — checked afterward with the same grep pattern
+returning zero hits, not just assumed clean after one pass.
+
+**The new `pr_taher_bug_fixes` test plan** (`2026-08-22-pr_taher_bug_fixes-test-plan.md`, the first
+plan seeded directly into the new folder) follows the same three-tier structure
+`2026-08-08-review-round2-test-plan.md` established: what's genuinely been run (31 new cases, via
+the Skill 42 scratch-copy workaround — 531/531 passing), what a real Qt 6.8 + Firebase emulator CI
+run will confirm that this sandbox structurally cannot (the actual E2E tests that failed pre-fix),
+and what has zero automated coverage with a static trace instead (`InventoryPage.qml`'s two UI-page
+changes, `OrderDetailDialog.qml`'s dialog text, and `XlsxService.cpp`'s order-channel column — this
+last one re-checked specifically for the same "inserted column, index shift not fully propagated"
+bug class as Bug 3, and found to have been done correctly and completely, unlike the SalesPage bug).
+
+**Writing this plan surfaced a real, cheap-to-close gap in the prior session's own tests**: the
+`rename` and `skip` branches of `_upsertManySync`'s conflict-policy dispatch had no direct test at
+all, even though `rename` is exactly what `fb180d8` (one of the three bugs Skill 42 fixed) touches.
+Closed immediately rather than just noted — `tests/tst_InventoryStore_upsertMany.qml` gained
+`test_rename_policy_with_blank_sku_generates_a_fresh_unique_sku`,
+`test_rename_policy_with_provided_sku_gets_a_renamed_suffix_not_a_fresh_one` (asserts the rename
+path calls `ImportMath.renameSku`, not `generateSku`, for a row that already has a sku — a
+distinction the code gets right but nothing previously pinned down), and
+`test_skip_policy_leaves_the_existing_product_untouched`. Caught a real mistake writing the second
+of these: an `str_replace` edit dropped the `TestCase {}` block's own closing brace, and the
+scratch-copy run (which this session runs before ever claiming "done," not after) caught it
+immediately as a compile error rather than a silent no-op test file — the fix was one line, but the
+catch is the point: static review of a diff doesn't substitute for actually running it, even for a
+change that "obviously" just adds test functions.
+
