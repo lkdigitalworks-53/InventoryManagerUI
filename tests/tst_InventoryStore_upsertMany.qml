@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../qml/model"
+import "../qml/helper/ImportMath.js" as ImportMath
 
 // Coverage for pr_taher_bug_fixes's changes to InventoryStore's bulk-import
 // SKU handling (generateSku() and _upsertManySync()) — previously zero
@@ -146,5 +147,83 @@ TestCase {
         verify(InventoryStore.products[0].sku !== InventoryStore.products[1].sku,
                "two same-named products created in the same import batch must not collide on SKU: " +
                InventoryStore.products[0].sku + " vs " + InventoryStore.products[1].sku)
+    }
+
+    // --- _upsertManySync(): the two remaining conflict-policy branches ---
+    // (found missing while writing this file's test plan -- rename/skip
+    // weren't covered even though "rename" is exactly what fb180d8 touched)
+
+    function test_rename_policy_with_blank_sku_generates_a_fresh_unique_sku() {
+        InventoryStore.products = [{
+            productId: "PRD-060", name: "Existing", sku: "AB-2026-060",
+            category: "General", stock: 5, minStock: 1, price: 100,
+            sellingPrice: 120, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "SUP-001"
+        }]
+
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        var records = [{
+            productId: "PRD-060", _conflictPolicy: "rename",
+            name: "Imported Duplicate", sku: "", category: "General",
+            stock: 3, minStock: 1, price: 90, sellingPrice: 110,
+            taxable: false, taxPercent: 0, size: "", supplierId: ""
+        }]
+
+        InventoryStore._upsertManySync(records, _stubPullProductId("PRD-061"), _stubResolveSupplier(), counts)
+
+        compare(counts.added, 1, "rename treats the row as a brand-new product, not an update")
+        compare(InventoryStore.products.length, 2, "the original product must be untouched, not replaced")
+        compare(InventoryStore.products[0].sku, "AB-2026-060", "the original product's SKU must survive a rename import")
+        verify(InventoryStore.products[1].sku.length > 0, "the renamed row needs a real generated SKU")
+        verify(InventoryStore.products[1].sku !== InventoryStore.products[0].sku)
+    }
+
+    function test_rename_policy_with_provided_sku_gets_a_renamed_suffix_not_a_fresh_one() {
+        InventoryStore.products = [{
+            productId: "PRD-062", name: "Existing", sku: "AB-2026-062",
+            category: "General", stock: 5, minStock: 1, price: 100,
+            sellingPrice: 120, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "SUP-001"
+        }]
+
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        var records = [{
+            productId: "PRD-062", _conflictPolicy: "rename",
+            name: "Imported Duplicate", sku: "AB-2026-062", category: "General",
+            stock: 3, minStock: 1, price: 90, sellingPrice: 110,
+            taxable: false, taxPercent: 0, size: "", supplierId: ""
+        }]
+
+        InventoryStore._upsertManySync(records, _stubPullProductId("PRD-063"), _stubResolveSupplier(), counts)
+
+        // ImportMath.renameSku, not generateSku, must handle a row that
+        // already has a sku -- generateSku is only for the blank-sku case.
+        compare(InventoryStore.products[1].sku, ImportMath.renameSku("AB-2026-062", 0))
+    }
+
+    function test_skip_policy_leaves_the_existing_product_untouched() {
+        InventoryStore.products = [{
+            productId: "PRD-070", name: "Existing", sku: "AB-2026-070",
+            category: "General", stock: 5, minStock: 1, price: 100,
+            sellingPrice: 120, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "SUP-001"
+        }]
+
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        var records = [{
+            productId: "PRD-070", _conflictPolicy: "skip",
+            name: "Should Not Apply", sku: "SHOULD-NOT-APPLY", category: "General",
+            stock: 999, minStock: 1, price: 1, sellingPrice: 1,
+            taxable: false, taxPercent: 0, size: "", supplierId: ""
+        }]
+
+        InventoryStore._upsertManySync(records, _stubPullProductId("PRD-999"), _stubResolveSupplier(), counts)
+
+        compare(counts.skipped, 1)
+        compare(counts.added, 0)
+        compare(counts.updatedProducts.length, 0)
+        compare(InventoryStore.products.length, 1, "skip must not add a second product")
+        compare(InventoryStore.products[0].name, "Existing", "skip must leave the existing product's fields untouched")
+        compare(InventoryStore.products[0].sku, "AB-2026-070")
     }
 }
