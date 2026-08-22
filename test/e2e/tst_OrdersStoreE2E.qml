@@ -78,6 +78,14 @@ TestCase {
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
         InventoryStore.products = []
         OrdersStore.orders = []
+        OutboxStore.clear() // this file was the one gap in the suite that never reset this -- a
+                             // failed/queued mutation from an earlier test (or an earlier E2E FILE
+                             // in the same qmltestrunner process -- OutboxStore is a shared
+                             // singleton) could otherwise get retried mid-test via Gateway.drainNow(),
+                             // which every recordMutation call triggers internally, adding real
+                             // network contention at exactly the moments this file's own timing-
+                             // sensitive tests (concurrent addOrder, the conflict test) most need
+                             // a clean, uncontended run
         lastConflict = null
         Gateway.mutationConflicted.connect(_onMutationConflicted)
     }
