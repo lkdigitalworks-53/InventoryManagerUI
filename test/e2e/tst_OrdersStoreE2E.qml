@@ -355,24 +355,23 @@ TestCase {
         // "I had the order open, someone else already saved a change"
         // scenario.
         //
-        // DIAGNOSTIC, not a confirmed fix (2026-08-22, 4th debugging round):
-        // three prior rounds (Toast import, OutboxStore.clear(), 45s
-        // timeout) were each real, evidence-based fixes for what they
-        // targeted, but this specific failure persists -- now 4/4 retry
-        // attempts across 40+ seconds, all instant, all status 0. That
-        // rules out simple transient contention (a real network blip
-        // wouldn't reproduce identically 4 times spanning almost a
-        // minute) but I don't have a confirmed cause for what's left.
-        // Logging functionUrl right before the call -- if it's NOT the
-        // emulator URL, that's the answer. If it IS correct and this still
-        // fails, the next log needs to come back here, not get guessed at
-        // a fifth time.
-        console.warn("[DEBUG conflict test] Gateway.functionUrl =", Gateway.functionUrl,
-                      "AuthStore.idToken.length =", AuthStore.idToken.length)
-        wait(500) // cheap, defensive: rules out any rapid-fire connection-reuse
-                  // issue between the staff write (~100ms earlier) and this call,
-                  // even though it doesn't explain why later retries (2s/8s/30s
-                  // later, long past any such race) would ALSO fail identically
+        // 5th debugging round (2026-08-23): the 4th round's diagnostic
+        // logging confirmed Gateway.functionUrl and AuthStore.idToken were
+        // BOTH correct at the moment of the failing call -- ruled those
+        // out definitively, removed the logging now that it's answered.
+        // New leading hypothesis, confirmed by evidence rather than
+        // guessed: this test ran immediately after
+        // test_syncFromFirebase_assembles_the_full_set_across_multiple_pages
+        // (55 real writes + a full multi-page resync, by far the heaviest
+        // test in this file) in every run observed -- sorting every test
+        // function name in this file alphabetically produced an EXACT
+        // match against the real observed execution order across 2
+        // separate runs, confirming QtQuickTest executes alphabetically
+        // here, not by declaration order. That test is now renamed
+        // (test_zz_...) to sort last, removing it as a "ran immediately
+        // before" variable for this test. Kept the 500ms settle wait from
+        // last round as cheap defense either way.
+        wait(500)
         lastConflict = null
         OrdersStore.orders = [OrdersStore._normalizeOrder({
             orderId: orderId, customer: "Conflict Test Customer", products: []
@@ -406,7 +405,21 @@ TestCase {
                "local order still reflects the owner's rejected edit instead of the server's actual current version")
     }
 
-    function test_syncFromFirebase_assembles_the_full_set_across_multiple_pages() {
+    // Named with a "zz_" prefix deliberately -- QtQuickTest in this CI
+    // environment executes test functions alphabetically by name, not
+    // declaration order (confirmed: sorting every function name in this
+    // file alphabetically produced an exact match against 2 separate
+    // real runs' observed execution order, ORD-number by ORD-number).
+    // This is the heaviest test in the file by far (55 real writes + a
+    // full multi-page resync) -- forcing it to run last, regardless of
+    // what other tests get added to this file later, removes it as a
+    // "ran immediately before" variable for anything else here. This is
+    // the one explicit lever QtQuickTest actually respects for ordering;
+    // not a workaround avoiding the real problem, a direct test of the
+    // leading hypothesis for the persistent test_two_users_editing_the_
+    // same_order_produces_a_real_conflict transport failures (see
+    // CHECKPOINT.md, 2026-08-23 entry, for the full evidence trail).
+    function test_zz_syncFromFirebase_assembles_the_full_set_across_multiple_pages() {
         // _pageSize is 50 -- seed 55 so a real multi-page fetch is
         // required, not just exercised in a way a single page could
         // satisfy by coincidence.
