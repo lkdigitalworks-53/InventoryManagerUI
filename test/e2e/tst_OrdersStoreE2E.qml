@@ -354,6 +354,25 @@ TestCase {
         // using its own stale local copy as `before` -- exactly the real
         // "I had the order open, someone else already saved a change"
         // scenario.
+        //
+        // DIAGNOSTIC, not a confirmed fix (2026-08-22, 4th debugging round):
+        // three prior rounds (Toast import, OutboxStore.clear(), 45s
+        // timeout) were each real, evidence-based fixes for what they
+        // targeted, but this specific failure persists -- now 4/4 retry
+        // attempts across 40+ seconds, all instant, all status 0. That
+        // rules out simple transient contention (a real network blip
+        // wouldn't reproduce identically 4 times spanning almost a
+        // minute) but I don't have a confirmed cause for what's left.
+        // Logging functionUrl right before the call -- if it's NOT the
+        // emulator URL, that's the answer. If it IS correct and this still
+        // fails, the next log needs to come back here, not get guessed at
+        // a fifth time.
+        console.warn("[DEBUG conflict test] Gateway.functionUrl =", Gateway.functionUrl,
+                      "AuthStore.idToken.length =", AuthStore.idToken.length)
+        wait(500) // cheap, defensive: rules out any rapid-fire connection-reuse
+                  // issue between the staff write (~100ms earlier) and this call,
+                  // even though it doesn't explain why later retries (2s/8s/30s
+                  // later, long past any such race) would ALSO fail identically
         lastConflict = null
         OrdersStore.orders = [OrdersStore._normalizeOrder({
             orderId: orderId, customer: "Conflict Test Customer", products: []
