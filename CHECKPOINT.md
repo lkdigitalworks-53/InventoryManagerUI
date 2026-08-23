@@ -845,3 +845,35 @@ retry mechanism is the correct fix, not routing around it.
    different explanation — say so plainly rather than guess a fourth time.
 2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Fourth run: same failure, new data, no confirmed root cause this time (2026-08-22)
+
+Precise timing now visible from a fuller log read: create→poll→staff-write→poll-confirm→owner-
+update-attempt all completes in ~230ms, and 4/4 retries (2.1s/8.05s/30.04s gaps, confirming the
+backoff-schedule fix from last round is correct) fail instantly with status 0, empty responseText.
+
+Ruled out this round: (1) simple transient contention — 4 identical failures across 40+ seconds
+of calendar time isn't consistent with random network blips; (2) a masked server-side crash —
+read `functions/index.js`'s actual `recordMutation` handler in full for the first time (had only
+checked `gatewayLogic.js`'s pure logic before); it's properly try/catch-guarded around both auth
+verification and `applyMutation`, would cleanly return 500 on a real exception, not fail the
+connection; (3) `deriveContext` (the one unguarded call) as a differentiator — same actor/tenant's
+earlier `addOrder` create call succeeds fine in the same test run, so context derivation clearly
+works for this identity.
+
+**No confirmed root cause this round** — said so directly rather than presenting a guess as a fix.
+Added diagnostic logging (`Gateway.functionUrl` value right before the failing call) and a
+defensive 500ms settle delay (cheap, doesn't fully explain the later retries but rules out any
+rapid-fire connection-reuse concern for the first attempt). Next log should either show a wrong
+`functionUrl` (a real answer) or confirm it's correct (meaning the remaining mystery is somewhere
+this diagnostic can't reach, and needs a different approach — server-side function logs, most
+likely, which aren't visible from the qmltestrunner-side log alone).
+
+## Next step
+
+1. Re-run. Check the new `[DEBUG conflict test] Gateway.functionUrl = ...` line specifically.
+2. If `functionUrl` is correct and this still fails: the next real lead is probably Cloud Functions
+   emulator server-side logs (not visible in `2_E2E_Tests.txt`), if Taher can capture those from a
+   local `firebase emulators:exec` run.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
