@@ -877,3 +877,38 @@ likely, which aren't visible from the qmltestrunner-side log alone).
    local `firebase emulators:exec` run.
 3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Fifth run: diagnostic answered, real ordering discovery made (2026-08-23)
+
+Diagnostic from last round paid off: `Gateway.functionUrl` = the correct emulator URL,
+`AuthStore.idToken.length` = 469 (real token). Both confirmed correct at the exact failing moment —
+rules out "wrong URL" and "empty/corrupted token" definitively. Removed the logging.
+
+New finding, evidence-based: sorted every test function name in `tst_OrdersStoreE2E.qml`
+alphabetically and compared against the real observed execution order across two separate runs
+(matched by ORD-number sequence) — **exact match**. QtQuickTest executes this file's tests
+alphabetically by name, not declaration order — a more precise characterization of the
+already-documented "doesn't preserve declared order" gap (not random, alphabetical).
+
+`test_syncFromFirebase_assembles_the_full_set_across_multiple_pages` (55 real writes + full
+multi-page resync, by far the heaviest test here) alphabetically sorted to run immediately before
+`test_two_users_editing_the_same_order_produces_a_real_conflict` in every run seen. Renamed with a
+`zz_` prefix to force it last — removes it as a "ran immediately before" variable, for this test and
+any future one added to the file. This is a direct, evidence-based test of the leading remaining
+hypothesis (emulator/connection state still settling from a heavy prior burst), not a naming hack —
+alphabetical ordering is the one lever QtQuickTest actually respects here.
+
+Still genuinely can't confirm the underlying transport-level mechanism without Cloud Functions
+emulator server-side logs, which aren't visible from the qmltestrunner-side log this sandbox
+receives. Said so directly, not overclaiming.
+
+## Next step
+
+1. Re-run. This is the most direct test yet of the "heavy-test-adjacency" theory — either it clears
+   up (strong confirmation) or it doesn't (rules that out too, narrowing further).
+2. If it still fails: the remaining honest options are (a) get real Cloud Functions emulator
+   server-side logs from a local `firebase emulators:exec` run, since the client-side log alone has
+   been exhausted as a diagnostic source, or (b) treat this as a known-flaky test to revisit later
+   rather than keep guessing blind.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
