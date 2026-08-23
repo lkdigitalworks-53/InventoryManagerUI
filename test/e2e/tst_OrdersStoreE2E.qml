@@ -247,29 +247,6 @@ TestCase {
         compare(updated.fields.customer.stringValue, "Overwritten Name")
     }
 
-    // postDirect (E2EHelpers.js) hardcodes tc.fixture.idToken -- no way to
-    // send as a different identity. Local variant, same shape, explicit
-    // token parameter. Needed for the multi-user conflict test below: the
-    // whole point is a genuinely different identity's write landing on the
-    // server, not the owner writing to itself twice.
-    function _postDirectAs(idToken, url, payload, timeoutMs, timeoutMessage) {
-        var status = -1, text = "", done = false
-        var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                status = xhr.status
-                text = xhr.responseText
-                done = true
-            }
-        }
-        xhr.open("POST", url, true)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.setRequestHeader("Authorization", "Bearer " + idToken)
-        xhr.send(JSON.stringify(payload))
-        tryVerify(function() { return done }, timeoutMs, timeoutMessage)
-        return { status: status, text: text }
-    }
-
     // functions/lib/gatewayLogic.js's applyMutation does
     // _deepEqual(current, params.before) where `current` comes from the
     // Admin SDK (plain JS values: {customer: "x", total: 100}) -- but
@@ -310,44 +287,46 @@ TestCase {
                                           "order doc never appeared before the conflict test")
         var serverUpdatedAt = orderDoc.fields.updatedAt.stringValue
 
-        // Staff (fixture.secondIdToken) writes to the SAME order directly
-        // via a raw POST -- a real second identity's write actually
-        // landing on the server, not a simulated one.
+        // Staff (fixture.secondIdToken) writes to the SAME order -- a real
+        // second identity's write actually landing on the server, not a
+        // simulated one.
         //
-        // Two things that were wrong here before being fixed (see
-        // CHECKPOINT.md, 2026-08-21 debugging entry, for the full trace):
-        // 1. Must use fixture.secondIdToken, not the owner's -- this test
-        //    is meaningless as a MULTI-user conflict otherwise.
-        // 2. applyMutation's CAS check (functions/lib/gatewayLogic.js)
-        //    compares against `current`, read server-side via the Admin
-        //    SDK as plain JS values -- but orderDoc.fields is Firestore's
-        //    REST typed-value wire format ({customer: {stringValue: "x"}}).
-        //    Sending REST-shaped fields as `before` could never deep-equal
-        //    plain Admin SDK values. _firestoreFieldsToPlain converts.
+        // 6th debugging round (2026-08-23): rerouted through
+        // Gateway.recordMutation (temporarily swapping AuthStore.idToken)
+        // instead of a raw REST POST, which is what every prior round used.
+        // Six things were checked and ruled out as the cause of the owner's
+        // persistent transport failure before this change (full trace,
+        // CHECKPOINT.md 2026-08-23): wrong URL, wrong/empty token,
+        // Gateway.recordMutation's parameter order vs _commit's call site,
+        // heavy-test adjacency (reordering had zero effect), a throw in
+        // date handling (_normalizeOrder's date field has a safe ||
+        // fallback, not .toISOString() on a possibly-invalid Date), and
+        // FirebaseService.environment differing between calls (it's a
+        // readonly build-time constant, identical for every call). This
+        // is a genuinely new, untested angle: the staff write was the one
+        // request in this whole test that DIDN'T go through the same
+        // Gateway._send code path as everything else -- testing whether a
+        // raw POST leaves the emulator's transaction machinery in a state
+        // the owner's subsequent db.runTransaction()-based update chokes
+        // on. Also just more realistic: a real second user's app would use
+        // the same Gateway path too, not a hand-built REST call.
         var plainOrder = _firestoreFieldsToPlain(orderDoc.fields)
         var staffAfter = Object.assign({}, plainOrder, {
             customer: "Changed By Staff",
             updatedAt: new Date().toISOString()
         })
-        var staffWinResult = _postDirectAs(fixture.secondIdToken,
-            emulatorFunctionsBase + "/recordMutation",
-            {
-                env: "prd", entity: "order", entityId: orderId, action: "update",
-                before: plainOrder,
-                after: staffAfter,
-                requestId: "staff-conflict-" + Date.now(),
-                clientTimestamp: new Date().toISOString()
-            }, 5000, "staff's raw recordMutation call never responded")
-        compare(staffWinResult.status, 200,
-                "staff's recordMutation call was rejected — response body: " + staffWinResult.text)
+        var savedOwnerToken = AuthStore.idToken
+        AuthStore.idToken = fixture.secondIdToken
+        Gateway.recordMutation("order", orderId, "update", plainOrder, staffAfter)
         // What matters for this test is only that the SERVER'S current
         // updatedAt actually changed underneath the owner, proving a real
-        // second-identity write landed -- confirmed by polling below, not by
-        // asserting this POST's own status, since a rejected-but-uncaught
-        // write would otherwise fail silently right up until this point.
+        // second-identity write landed -- confirmed by polling, same as
+        // every prior round (Gateway.recordMutation is fire-and-forget,
+        // no completion callback to await directly).
         _pollEmulatorDoc(orderDocPath, orderId, function(d) {
             return d !== null && d.fields.updatedAt.stringValue !== serverUpdatedAt
         }, 5000, "staff's write never actually changed the server's updatedAt — conflict setup failed")
+        AuthStore.idToken = savedOwnerToken
 
         // Owner (still fixture.idToken, the QML client under test) now
         // tries to update the SAME order via the normal OrdersStore path,
