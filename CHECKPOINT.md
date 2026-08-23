@@ -912,3 +912,34 @@ receives. Said so directly, not overclaiming.
    rather than keep guessing blind.
 3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Sixth run: alphabetical-ordering fix cleanly falsified, new angle tried (2026-08-23)
+
+Reordering had ZERO effect — identical failure, identical 4-attempt backoff pattern, just on
+`ORD-006` instead of `ORD-061` (the heavy pagination test now genuinely runs last, confirmed by log
+position, but the conflict test still fails exactly the same way). That's clean falsification, not
+inconclusive — recorded honestly rather than left ambiguous.
+
+Traced two more concrete candidates and ruled both out: `_commit`'s call to `Gateway.recordMutation`
+matches that function's real parameter order exactly (`entity, entityId, action, before, after`, no
+mismatch); `FirebaseService.environment` (used in every `_send` payload's `env` field) is a
+`readonly` build-time constant — provably identical for the successful create call and the failing
+update call, can't be the differentiator.
+
+New angle: noticed the staff write was the *one* request in the whole test that didn't go through
+`Gateway._send` like everything else — it used a raw REST POST (`_postDirectAs`, from round 5's
+predecessor investigation). Rerouted it through `Gateway.recordMutation` itself (temporarily
+swapping `AuthStore.idToken`), testing whether the raw POST was leaving the emulator's transaction
+machinery in a state the owner's subsequent `db.runTransaction()`-based update chokes on. Also
+just more realistic regardless of outcome. Removed the now-unused `_postDirectAs` helper.
+
+Six hypotheses now ruled out with concrete evidence across 6 rounds. Still can't confirm the exact
+mechanism without Cloud Functions emulator server-side logs, which this sandbox has no access to.
+
+## Next step
+
+1. Re-run. If this still fails identically, the raw-POST theory is falsified too, and the honest
+   next step is genuinely getting server-side emulator logs from Taher's machine — the qmltestrunner
+   client-side log has been thoroughly mined at this point.
+2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
