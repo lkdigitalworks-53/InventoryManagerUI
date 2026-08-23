@@ -42,7 +42,8 @@ rather than repeated per row:
 **This is the strongest claim in this doc: these 31 new cases (plus the pre-existing 500) were
 actually executed, not asserted.** Re-run it yourself: see `AGENTS.md`'s Testing & QA Agent
 section for the exact command, and `SKILLS.md` Skill 46 for the scratch-copy workaround if your
-sandbox has the same Qt-version gap.
+sandbox has the same Qt-version gap. **Update, same day:** real CI now confirms this independently
+too — see §2.
 
 ## 2. What CI will verify that this sandbox cannot — real Qt 6.8 + real Firebase emulator
 
@@ -53,8 +54,13 @@ guessed — see Skill 46). Section 1's `tst_InventoryStore_cloneSymmetry.qml` te
 invariant these two rely on, but against a **fabricated local product**, not a real Firestore
 document and not the real `functions/lib/gatewayLogic.js` CAS check running server-side. The E2E
 run against the real emulator (which this sandbox cannot start — no Firebase emulator, and Qt 6.4.2
-here vs CI's 6.8) is the actual end-to-end confirmation. **Check this once CI runs on the latest
-push** — that's the one claim in this whole plan that genuinely can't be settled from this sandbox.
+here vs CI's 6.8) is the actual end-to-end confirmation.
+
+**Confirmed 2026-08-22, same day, via the GitHub Checks API against commit `5f64f57`:** all four
+checks green — QML Tests, Functions Tests, Firestore Rules Tests, **and E2E Tests**. Before this
+session's fixes, E2E was the one red check (see Skill 46); everything else was already green. This
+is the one claim in this whole plan that this sandbox structurally couldn't settle on its own, and
+it's now settled by the actual CI run, not by inference from the local scratch-copy workaround.
 
 ## 3. What has NO automated coverage — static trace only, no test file exists
 

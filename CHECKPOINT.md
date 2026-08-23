@@ -4,8 +4,9 @@
 **Branch:** `pr_taher_bug_fixes` (existing, already has an open PR; NOT a new branch — Taher's
 request named this branch, not "create a new branch," which is otherwise this session's standing
 instruction)
-**Status:** Bug-fix portion committed and pushed (see step 14 for the push, steps 15+ for the
-follow-on test-plan/consolidation work in the same session).
+**Status:** Done. All 4 CI checks green on `5f64f57` (QML/Functions/Firestore-Rules/**E2E** —
+confirmed via GitHub Checks API), including the E2E job that was red before this session. PR
+ready for Taher's review.
 
 ## Phase 2 probe: answered, closing it out (not "still pending")
 
@@ -112,7 +113,12 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
     folder, newest-first, with the two multi-part chains called out explicitly).
 19. Added `SKILLS.md` Skill 47 (this consolidation + the coverage-gap catch) and pointed
     `AGENTS.md`'s Testing & QA Agent scope at the new folder.
-20. This checkpoint update. Next: commit + push steps 15-19's work.
+20. This checkpoint update.
+21. Pushed steps 15-19's work (`ad9f040`, `5f64f57`). Fetched again: no further drift.
+22. Checked the real GitHub Checks API against `5f64f57` — **all 4 checks green**: QML Tests,
+    Functions Tests, Firestore Rules Tests, and (the one that mattered) **E2E Tests**. Updated the
+    test plan's §2 and this checkpoint with the confirmed result rather than leaving it as "check
+    this once CI runs" — it's now actually been checked. Session complete; PR ready for Taher.
 
 ## Deliberately NOT done (flagged to Taher as a trade-off, not decided unilaterally)
 
