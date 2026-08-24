@@ -943,3 +943,40 @@ mechanism without Cloud Functions emulator server-side logs, which this sandbox 
    client-side log has been thoroughly mined at this point.
 2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Seventh run: major new evidence from server-side logs, diagnostic upgraded (2026-08-23)
+
+This log included the actual Cloud Functions emulator console output for the first time (`Beginning
+execution` / `Finished ...ms`), not just the client-side view every prior round was limited to —
+genuinely new visibility.
+
+**Definitive new finding:** every client-side `recordMutation failed 0` had a matching server-side
+`Finished ... in ~24-29ms` immediately before it — completely normal timing, matching every
+successful call elsewhere in the log. The request reaches the server and the server completes its
+logical work every time. This rules out "never reached the server," "server crashed," and "server
+hung" — three real remaining possibilities, gone. The mystery narrows to: why does a
+normally-completing response never reach the client.
+
+Checked `functions/index.js`'s exact response-sending code and the 409-conflict branch specifically
+— `current` (the field a conflict response uniquely carries) comes from a fresh Admin SDK read,
+built entirely from plain JS values written via the same Gateway path everything else uses. No
+obvious serialization risk found by inspection.
+
+**Structural fix, not just another guess:** `tryVerify()` fails hard and stops the test immediately,
+meaning every prior round's diagnostics could only run *before* the failure point, never after.
+Replaced it with a manual poll loop, so a real diagnostic runs regardless of outcome: on timeout, the
+test now re-fetches the order document directly and reports whether the owner's edit actually landed
+server-side. Either answer narrows things concretely — landed = pure response-transmission issue,
+CAS unexpectedly passed; didn't land = CAS is correctly rejecting every time, narrows the mystery
+specifically to the 409-conflict response path rather than recordMutation responses in general.
+
+Still no confirmed fix. Said so directly — this round's honest contribution is ruling out three more
+possibilities with hard evidence and building the diagnostic that should answer the remaining
+question on the next run.
+
+## Next step
+
+1. Re-run. Read the new `fail()` message closely if it fails again — it directly states which of the
+   two remaining explanations the evidence points to.
+2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
