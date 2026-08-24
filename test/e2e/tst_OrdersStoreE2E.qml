@@ -357,22 +357,59 @@ TestCase {
         })]
         OrdersStore.updateOrder(orderId, { notes: "Owner's conflicting edit" })
 
-        // 10s was too tight against OutboxStore's real backoff schedule
-        // (qml/model/OutboxStore.qml:54, _backoffMs: [2000, 8000, 30000, ...]).
-        // Confirmed by two real runs: both showed the owner's first send
-        // attempt fail at the transport level (status 0, not a real HTTP
-        // response -- transient emulator contention, most likely from the
-        // concurrent-addOrder test's own counter-mint retry storm landing
-        // moments earlier), then a second attempt ~2s later (matches
-        // backoffMs[0] exactly) also failing. A third attempt needs
-        // 2000+8000=10000ms from the first failure, right at the OLD
-        // timeout's edge -- a coin-flip, not a real margin. 45s gives real
-        // room past a 4th attempt (10s+30s=40s) for Gateway's own retry
-        // mechanism to actually do its job, rather than the test racing
-        // against it. This is the system's designed resilience working as
-        // intended, not something to route around.
-        tryVerify(function() { return lastConflict !== null }, 45000,
-                   "Gateway.mutationConflicted never fired — owner's stale write should have been rejected by the server's CAS check")
+        // 7th debugging round (2026-08-23): this log included the actual
+        // Cloud Functions emulator server-side console output for the
+        // first time (Beginning execution / Finished ...ms), not just the
+        // qmltestrunner client-side view every prior round was limited to.
+        // That's genuinely new information: every single "recordMutation
+        // failed 0" on the client had a matching "Finished ... in ~24-29ms"
+        // immediately before it server-side -- completely normal timing,
+        // matching every successful call elsewhere in the log. The request
+        // DOES reach the server and the server DOES complete its logical
+        // work every time -- this rules out "never reached the server",
+        // "server crashed", and "server hung" definitively. The mystery is
+        // now narrowly: why does a normally-completing response never
+        // reach the client.
+        //
+        // tryVerify() fails hard and stops the test immediately on
+        // timeout, which meant every prior round's diagnostics could only
+        // run BEFORE the failure point, never after -- switched to a
+        // manual poll loop here so a diagnostic can run regardless of
+        // outcome. Directly checks the actual server document state: if
+        // the owner's edit landed despite the client seeing "failed 0",
+        // that proves the mutation applied server-side and this is purely
+        // a response-transmission issue, not a CAS-logic issue -- the
+        // single most useful fact the next log could reveal.
+        var elapsed = 0
+        var pollInterval = 250
+        while (lastConflict === null && elapsed < 45000) {
+            wait(pollInterval)
+            elapsed += pollInterval
+        }
+        if (lastConflict === null) {
+            var finalDoc = _pollEmulatorDoc(orderDocPath, orderId, function(d) { return d !== null },
+                                              5000, "order doc vanished entirely -- unexpected")
+            var appliedServerSide = finalDoc.fields.notes !== undefined
+                                     && finalDoc.fields.notes.stringValue === "Owner's conflicting edit"
+            fail("Gateway.mutationConflicted never fired after 45s. Diagnostic: the order's actual "
+                 + "server-side notes field is "
+                 + (appliedServerSide
+                    ? "'Owner's conflicting edit' -- the mutation DID apply server-side despite the "
+                      + "client seeing 'failed 0' every attempt. This is a response-transmission issue, "
+                      + "not a CAS-logic issue: the CAS check must have passed (before matched current), "
+                      + "meaning this test's own assumption that the owner's stale copy would mismatch "
+                      + "the server's current state was wrong, or the response for a real 200 success is "
+                      + "somehow not reaching the client."
+                    : "'" + (finalDoc.fields.notes ? finalDoc.fields.notes.stringValue : "<missing>")
+                      + "' -- NOT the owner's edit. The mutation did NOT apply server-side. Combined with "
+                      + "the server-side 'Finished' log entries appearing for every attempt, this means "
+                      + "the CAS check is correctly rejecting every time (a real conflict IS being "
+                      + "detected, as intended) but the 409 response specifically is what's failing to "
+                      + "reach the client -- narrows this to something about the CONFLICT response path "
+                      + "specifically (e.g. the `current` field it uniquely carries), not recordMutation "
+                      + "responses in general."))
+            return
+        }
         compare(lastConflict.entity, "order")
         compare(lastConflict.entityId, orderId)
 
