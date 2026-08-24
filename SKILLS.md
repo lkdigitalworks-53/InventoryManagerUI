@@ -1975,3 +1975,63 @@ qmltestrunner CI run caught this wrong assumption on the first attempt (499/500 
 failure was this test, not the fix) - a genuine case of "written to convention, not run in this
 sandbox" catching a real gap once it actually ran.
 
+## Skill 43: Dropped-field response contract — a client parser and a server response builder that never got diffed against each other
+
+**Symptom**: `test/e2e/tst_OrdersStoreE2E.qml`'s
+`test_two_users_editing_the_same_order_produces_a_real_conflict` failed identically across 8
+debugging rounds (full trail: `CHECKPOINT.md`, "E2E testing phase 2 followup") -
+`Gateway.mutationConflicted` never fired, `tryVerify`/its later manual-poll replacement always timed
+out. Eight rounds ruled out wrong URL, empty/wrong token, parameter-order mismatch, heavy-test
+adjacency, date-handling, env/database routing, raw-POST-vs-Gateway-path, request-never-reaching-
+the-server, server crash, server hang, and the CAS logic itself - all with real evidence, all correct
+eliminations. None of them found the actual bug.
+
+**Root cause**: `functions/lib/gatewayLogic.js`'s `applyMutation` computes a CAS conflict correctly -
+`{ ok: false, status: 409, conflict: true, current }` - well covered by
+`functions/test/gatewayLogic.test.js`. But `functions/index.js:155` (the actual HTTP handler that
+turns that result into a response body) forwarded `current` and reconstructed everything else by
+hand, dropping `result.conflict` and substituting an unrelated `error: "conflict"` string. The 409
+arrived at the client, parsed as valid JSON, and `Gateway.qml`'s `_parseMutationConflict` - which
+checks specifically for `body.conflict !== true` - still returned `isConflict: false` every time,
+because the one field it depends on was never actually on the wire. The mutation fell into the
+generic retry/backoff path with a permanently-stale `before`, rejected identically forever - which
+is exactly the "identical failure every round" symptom that made this look like a transport/timing
+problem rather than a data-shape one.
+
+**Why 8 rounds missed it, and why the unit tests didn't catch it either**: `_parseMutationConflict`
+had unit coverage (`tests/tst_Gateway.qml`) - but the test's fixture was `{ ok: false, status: 409,
+conflict: true, current }`, which is `gatewayLogic.js`'s *internal result object* shape, not the
+actual serialized HTTP body `functions/index.js` sends. The two shapes are close enough to look
+interchangeable at a glance and different enough that one has the field the parser needs and the
+other doesn't. The batch-mutation path (`_parseBatchMutationConflict` / `applyMutationsBatch`'s 409
+body) uses a different, internally-consistent shape that happens to line up correctly, which is part
+of why grepping either single-mutation file in isolation looked fine - the break only shows up by
+holding the client parser and the server response builder side by side, line by line, which none of
+the 8 rounds (reasoning about transport/timing/environment) nor the original test-authoring session
+(reasoning about `gatewayLogic.js`'s return value, not the HTTP layer's re-serialization of it) did.
+
+**Fixed**: `functions/index.js:155` now forwards `conflict: result.conflict === true` alongside the
+existing `error`/`current` fields - additive, no removal, doesn't touch the batch path. Chose
+`result.conflict === true` over a hardcoded `true` so this stays correct if `applyMutation` ever
+grows a second, non-conflict `ok:false` branch (currently it has exactly one). Fixed the QML unit
+test's fixture to match the real wire shape, and added a regression test pinned to the literal
+pre-fix body, documenting the actual failure mode rather than an idealized one.
+
+**Real production impact, not just a test artifact**: `mutationConflicted` is connected by five
+production stores - `OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`,
+`StockBatchStore` - each with its own correctly-written reconciliation handler. Every one of those
+handlers has been unreachable in practice since this shipped: a real user hitting a genuine CAS
+conflict on any of those five entities would have had their conflicting write silently retried
+forever against a permanently-stale snapshot, with no reconciliation and no user-visible signal,
+rather than hitting the Component 3 backstop that was specifically built to catch this. Not
+confirmed to have caused a real support ticket, but the code path existed with zero live coverage
+until this fix.
+
+**General principle**: when a value crosses a serialization boundary (an internal result object -> a
+hand-built HTTP response body -> a client-side parser reading specific field names), a passing unit
+test on either side of that boundary proves nothing about the boundary itself unless one side's
+fixture is actually derived from - or diffed against - the other side's real output. Two files that
+each look internally consistent can still disagree with each other. When a bug reproduces
+identically across many attempts with a fully-parseable, correctly-arriving response, treat "the two
+ends might be using different field names for the same concept" as a first-class hypothesis, not a
+last resort after transport/timing theories are exhausted.

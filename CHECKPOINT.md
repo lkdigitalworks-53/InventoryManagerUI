@@ -1021,3 +1021,102 @@ still not mechanistically confirmed, but now the only thing left standing.
    there too -- which would settle the "real risk vs. test artifact" question directly.
 3. `orderMath.js`/`qml/helper/OrderMath.js` parity -- still deferred/pending, unchanged.
 4. Phase 2 probe -- still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Ninth round: root cause found -- NOT a delivery/transport issue, a response-shape contract mismatch (2026-08-24)
+
+**Setup**: fresh clone, checked out this branch (already existed on `origin`, not created new).
+Read this entire file end to end before touching anything, per standing workflow, rather than
+trusting the eighth round's own summary of itself. Then went one level past what round 8 checked:
+round 8 confirmed the 409 response is *computed* correctly and *sent*; it never diffed the exact
+JSON field names the client actually parses against the exact JSON field names the server actually
+sends. That diff is where this was hiding.
+
+**Root cause, three files, read directly, not inferred:**
+- `functions/lib/gatewayLogic.js`'s `applyMutation` (CAS check) returns
+  `{ ok: false, status: 409, conflict: true, current: current }` on a stale write -- correct, and
+  round 8 already confirmed this logic fires correctly every time.
+- `functions/index.js:155` (the `recordMutation` HTTP handler, authored 2026-08-02) builds the
+  actual response body from that result as `{ ok: false, error: "conflict", current: result.current }`
+  -- it forwards `current` but **drops `result.conflict` entirely**, substituting an `error: "conflict"`
+  string field the client never looks at.
+- `qml/model/Gateway.qml:331`'s `_parseMutationConflict` (authored 2026-08-07, five days later, by
+  Taher) checks `body.conflict !== true` -- the exact boolean field the handler above never sends.
+
+Net effect: the response **does** arrive (status 409, valid JSON, matches everything round 7/8 already
+proved about server completion and CAS correctness) but `_parseMutationConflict` returns
+`isConflict: false` every time, because the one field it checks for was never on the wire. `_send`
+then falls into its generic-failure branch (`OutboxStore.markFailed`, retry-with-backoff) instead of
+firing `mutationConflicted` -- using the same permanently-stale `before`, so every retry is rejected
+the same way, forever. This is an exact match for every symptom logged across rounds 1-8: identical
+4-attempt backoff pattern, server always completing normally, the owner's edit never landing, and
+`test_two_users_editing_the_same_order_produces_a_real_conflict`'s `fail("Gateway.mutationConflicted
+never fired after 45s...")` in `test/e2e/tst_OrdersStoreE2E.qml`.
+
+**Why 8 rounds missed it**: the batch-mutation path (`_parseBatchMutationConflict` /
+`applyMutationsBatch`'s 409 body, `functions/index.js:432`) uses a *different*, internally-consistent
+shape (`conflicts: [...]`) that the client correctly checks for -- so grepping either file for "does
+conflict handling exist" turns up code that looks right in isolation. The break is only visible by
+holding the single-mutation client parser and the single-mutation server response next to each other,
+which no round did; all eight were reasoning about transport/timing/environment, not about the two
+authors (a Claude session on 8/02, Taher himself on 8/07) never having cross-checked the wire contract.
+
+**Confirmed via `tests/tst_OrdersStore_sync.qml`'s existing `_onMutationConflicted` coverage**: that
+test fires `Gateway.mutationConflicted` directly and asserts the store's handler -- it exercises
+`OrdersStore`'s reaction to the signal, not `_parseMutationConflict`'s wire-parsing, so it could not
+have caught this; the gap is specifically in the untested seam between the two files.
+
+## Tenth round: fix implemented, tests added, docs written (2026-08-24)
+
+Taher: proceed without per-push confirmation this session; do the fix properly rather than the
+minimal one-liner -- review affected code, check regression risk, check design, cover it with tests.
+
+**Scoped the affected surface before touching anything**: grepped every consumer of the 409 body
+shape (`functions/index.js` lines 155/432 are the only two producers; `tests/tst_Gateway.qml` the
+only consumer besides the real client) and every connector of `Gateway.mutationConflicted`
+(`OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`, `StockBatchStore` -- all five,
+confirmed each has its own correctly-written, currently-unreachable handler). Checked
+`functions/lib/gatewayLogic.js`'s `applyMutation` end to end: exactly one `ok:false` branch, always
+sets `conflict: true` -- so forwarding `result.conflict === true` is safe and won't misfire on some
+other failure mode, now or if one gets added later. Checked `functions/test/` for any existing test
+asserting the old (buggy) response shape that this fix would break: none exist -- `functions/index.js`
+has zero direct handler-level test coverage today, only `lib/*Logic.js` unit tests.
+
+**Fixed**: `functions/index.js:155` now sends `conflict: result.conflict === true` alongside the
+existing `error`/`current` fields -- additive, batch path (line 432) untouched. Verified the exact
+before/after body shapes against a re-implementation of `_parseMutationConflict`'s logic in `node`
+(can't run `qmltestrunner` in this sandbox): pre-fix body -> `isConflict: false` (reproduces the bug
+exactly), post-fix body -> `isConflict: true, current.stock: 5` (fix confirmed).
+
+**Tests**: fixed `tests/tst_Gateway.qml`'s `test_parseMutationConflict_recognizes_a_genuine_conflict`
+-- its fixture was `gatewayLogic.js`'s internal result-object shape, not the real HTTP body, which is
+exactly the gap that let this ship past a "passing" test suite. Added
+`test_parseMutationConflict_would_have_caught_the_dropped_conflict_field_bug`, pinned to the literal
+pre-fix response body, so a future regression on this exact field gets caught by this test instead of
+another multi-round E2E investigation. Did not add a `functions/index.js` handler-level test (no
+req/res-mocking harness exists yet for that file at all) -- flagged as a real, separate gap below, not
+silently skipped.
+
+**Docs**: `SKILLS.md` Skill 43 -- full writeup of the root cause, why 8 rounds and the existing unit
+test both missed it, and the general lesson (a value crossing object -> HTTP body -> parser needs a
+fixture derived from the real far side, not a hand-copied guess).
+
+**Not run against a real `qmltestrunner` or Cloud Functions emulator** -- same standing limitation as
+everything else in this file; verified by direct code reading, a `node` re-implementation of the
+parser logic, and `node --check`'s syntax pass on `functions/index.js`, not by executing the actual
+test suite.
+
+## Next step
+
+1. Taher: run `qmltestrunner` (or CI) to confirm `tst_Gateway.qml` passes for real, and specifically
+   re-run `test/e2e/tst_OrdersStoreE2E.qml`'s conflict test -- this is the one that should now go from
+   a 45s timeout to actually passing.
+2. Real gap, not fixed here: `functions/index.js` has no handler-level test coverage at all (only the
+   `lib/*Logic.js` layer does). This exact bug lived in the untested seam between them. Worth a
+   follow-up session scoping what a req/res-mocking harness for `functions/index.js` would take --
+   not attempted in this round, which was scoped to the one confirmed bug.
+3. Given all five stores' `mutationConflicted` handlers have been silently unreachable in production
+   until this fix, worth deciding whether any of them warrant a dedicated conflict-scenario test of
+   their own (today only `OrdersStore`'s is covered, via the E2E test that found this bug) -- not
+   decided here, flagging rather than picking for Taher.
+4. `orderMath.js`/`qml/helper/OrderMath.js` parity -- still deferred/pending, unchanged.
+5. Phase 2 probe -- still needs Taher to run it locally, unchanged, independent of everything else.

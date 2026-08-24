@@ -148,11 +148,27 @@ exports.recordMutation = functions.onRequest(
         // Component 3 (async-write-sequencing design): applyMutation now
         // returns a result instead of always succeeding — a CAS conflict
         // must actually reach the client as a 409, or the whole backstop
-        // is silently inert (this was the exact gap this session found and
-        // is now closing). `current` rides along so the client can
-        // reconcile that one record without a second round trip.
+        // is silently inert. That comment was already here, but the fix it
+        // describes was itself incomplete: this handler forwarded `current`
+        // but silently dropped `result.conflict` -- the exact boolean field
+        // Gateway.qml's _parseMutationConflict (qml/model/Gateway.qml) checks
+        // for (`body.conflict !== true`). applyMutation's only ok:false
+        // branch always sets conflict:true (see functions/lib/gatewayLogic.js),
+        // so this was a pure serialization drop, not a logic gap -- the 409
+        // arrived, parsed as valid JSON, and was still silently misread as a
+        // generic failure, sent through the normal retry/backoff path with a
+        // permanently-stale `before`, forever. Confirmed via
+        // docs/superpowers/specs (E2E testing phase 2 followup, ninth round)
+        // this was neutering mutationConflicted's reconciliation path for
+        // every store that connects to it (Orders/Inventory/Staff/Supplier/
+        // StockBatch), not just the one test that happened to exercise it.
+        // `result.conflict === true` (not a bare `result.conflict` truthy
+        // check, and not a hardcoded `true`) so this stays correct if
+        // applyMutation ever grows a second, non-conflict ok:false branch.
         if (result && result.ok === false) {
-            send(res, result.status || 409, { ok: false, error: "conflict", current: result.current });
+            send(res, result.status || 409, {
+                ok: false, error: "conflict", conflict: result.conflict === true, current: result.current
+            });
             return;
         }
 
