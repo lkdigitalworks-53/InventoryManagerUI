@@ -980,3 +980,44 @@ question on the next run.
    two remaining explanations the evidence points to.
 2. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
 3. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+
+## Eighth run: definitive diagnostic result -- CAS rejection works, 409 delivery is the isolated problem (2026-08-24)
+
+The manual-poll diagnostic from round 7 paid off with a clean answer: order's server-side `notes`
+field came back `''`, not the owner's edit. **The mutation did NOT apply.** Combined with round 7's
+finding (server completes execution normally every time, ~24-29ms) this is now definitive: the CAS
+check correctly rejects the stale write on every single attempt — the conflict-detection logic works
+exactly as designed. The isolated, remaining problem is specifically that the 409 response
+communicating that rejection never reaches the client.
+
+**Checked whether this could be a real production risk, not just a test/emulator quirk**:
+`mutationConflicted` (`qml/model/Gateway.qml:358`) is real production code, gated entirely on
+successfully parsing a 409 response inside `_send`'s response handler — not a test-only path. If
+this same delivery gap exists in production (not confirmed, but not ruled out either), a real user's
+conflicting edit would silently fail to reconcile with no signal and no recovery path. This is a
+genuine open question with real correctness stakes, not something to route around unilaterally.
+
+**Not implementing a workaround this round.** Flagging this as a decision point for Taher rather
+than weakening the test's pass condition (e.g., accepting "document state proves rejection" as a
+substitute for "the signal fired and reconciliation happened") without his input — that tradeoff has
+real product-quality implications and matches his standing instruction to be consulted on judgment
+calls, not just implementation bugs.
+
+**8 rounds, ruled out with hard evidence**: wrong URL, wrong/empty token, parameter-order mismatch,
+heavy-test adjacency, date-handling exception, env/database-routing difference, raw-POST-vs-Gateway-
+path difference, request-never-reaching-server, server crash, server hang, and (this round) any
+issue with the CAS logic itself. What remains: something about 409-response delivery specifically,
+still not mechanistically confirmed, but now the only thing left standing.
+
+## Next step -- awaiting Taher's decision, not further unilateral debugging
+
+1. Is this an emulator/CI-environment-specific limitation (safe to work around in the test, e.g. by
+   also accepting the direct document-state check as a valid pass condition) or a real production
+   risk (needs an actual fix, likely somewhere in Gateway.qml's response handling or investigating
+   whether this reproduces against real Firebase, not just the emulator)?
+2. If Taher wants to keep digging: the remaining productive angle is probably capturing the RAW HTTP
+   response bytes for a 409 specifically (this sandbox and the qmltestrunner log can't see that), or
+   testing the SAME conflict scenario against real (non-emulator) Firebase to see if it reproduces
+   there too -- which would settle the "real risk vs. test artifact" question directly.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity -- still deferred/pending, unchanged.
+4. Phase 2 probe -- still needs Taher to run it locally, unchanged, independent of everything else.
