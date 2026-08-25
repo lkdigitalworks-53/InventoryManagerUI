@@ -1193,14 +1193,66 @@ just confirming status is 0. Added it, along with `xhr.getAllResponseHeaders()` 
 `tryVerify` → poll-loop replacement: build the diagnostic that answers the question on the next real
 run, rather than guess a fix without evidence a second/third time.
 
+## Thirteenth round: root cause found — QTBUG-49896, a real Qt engine bug (2026-08-25)
+
+Taher supplied a fresh CI run testing `38ceab5` (confirmed via checkout log). Same failure, but this
+time the new `statusText`/headers diagnostic actually paid off — the raw log shows headers were
+partially captured before truncation: `x-powered-by: Express?` — the first header Express writes, cut
+off immediately after. That's real evidence a response DID start arriving, contradicting a pure
+"nothing ever reaches the client" theory, and re-opened the question properly instead of accepting
+"transport failure, cause unknown" as a final answer.
+
+**Two things established with hard evidence before searching further:**
+1. Every single `[Gateway] recordMutation failed]` line across every CI run so far shows status `0`
+   — no exception anywhere in this whole test suite of a non-2xx response ever being received with
+   its real status code. Not narrow to the conflict test or to `order` — also hits an unrelated
+   `stock_batch` mutation elsewhere in the same suite.
+2. `test_completeOrder_rejects_when_stock_insufficient` (which passes) never actually exercises
+   `recordDelta`'s error path at all — its rejection is a pure client-side pre-check
+   (`DataModel._tryCompleteOrder`'s step 1), confirmed by reading the code, not assumed from the
+   test passing.
+
+**Searched for a known Qt/Firebase-emulator issue matching this exact signature** (status is real at
+first, dies specifically on non-2xx, connection appears to start then cut off) and found it:
+**QTBUG-49896** — *"XmlHttpRequest status is 'lost' (becomes 0) in readyState 3->4 transition for PUT
+requests yielding response with custom HTTP status."* Unresolved, no fix version, affects 5.5.1+.
+The original reporter's own repro used a **409** response and saw `status: 409` correctly at
+readyState 2 and 3, then `status: 0` at readyState 4 (DONE) — the exact status code and the exact
+transition this codebase's conflict path hits. This is a genuine, longstanding QML engine bug, not
+anything in this codebase's server or client logic. It also explains the partial `x-powered-by:
+Express?` header capture: headers legitimately started arriving before the engine's internal state
+got corrupted at the 3->4 transition.
+
+**Fixed with a workaround, not a server change** (matches the evidence — both repros last round
+proved the server sends a clean response): added `_captureBeforeStatusIsLost(xhr, snapshot)` to
+`qml/model/Gateway.qml`, which snapshots `status`/`responseText`/headers the moment they're non-zero
+at `HEADERS_RECEIVED`/`LOADING`, before the DONE-state bug can lose them. Every one of Gateway.qml's
+five XHR call sites (`_send`, `_sendBatch`, `_sendDelta`, `runCutover`, `provisionMember`) had the
+identical vulnerable pattern — all five converted to use an `effStatus`/`effResponseText` fallback,
+not just the one the failing test exercises. Every failure log now prints **both** the raw
+(possibly-lost) status and the effective (recovered) one side by side, so the next real run either
+confirms this (effective status shows 409, matching the bug's own signature) or refutes it (still 0)
+— not asserted as fixed without that confirmation.
+
+**Tests**: `tests/tst_Gateway.qml` — 5 new tests for `_captureBeforeStatusIsLost` (captures at
+HEADERS_RECEIVED, keeps latest through LOADING, ignores a genuine zero mid-flight rather than
+clobbering a good snapshot, does nothing at OPENED/DONE) and one end-to-end test reproducing
+QTBUG-49896's own observed sequence through to `_parseMutationConflict`. Actually executed (not just
+`node --check`'d) against an extracted copy of the real logic — all 5 pass. Real `qmltestrunner` still
+not available in this sandbox; that's the standing limitation, unchanged.
+
+**Honest caveat**: this is the strongest evidence this investigation has had in 13 rounds (a named,
+documented bug matching the exact status code and exact transition), but it's still a workaround for
+a bug this sandbox cannot reproduce directly, applied without a real Qt runtime to confirm against.
+Next CI log's raw-status/effective-status pair is what actually settles it.
+
 ## Next step
 
-1. Re-run. This is the single most informative log this bug has ever had a chance to produce — read
-   `statusText`/the headers dump specifically, whatever the outcome.
-2. If `statusText` reveals a real Qt-side network error description, that finally gives something
-   concrete to fix, rather than infer.
-3. If it's still empty/unhelpful even with this: that itself is evidence (points more strongly at
-   Firebase CLI's own proxy layer, which genuinely needs Taher's local machine to investigate further
-   — this sandbox has exhausted what it can test).
-4. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
-5. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+1. Re-run. Read the `raw-status:`/`effective-status:` pair in the next failure log (if any) first,
+   before anything else — that's the direct confirm/refute signal.
+2. If effective-status recovers 409 correctly: the conflict test should finally pass. If it's still 0
+   even with the snapshot: this specific manifestation isn't QTBUG-49896 after all (or is a related-
+   but-distinct variant), and that's still useful — it would mean status is being lost even earlier
+   than HEADERS_RECEIVED, which is a different, narrower question than the last 12 rounds explored.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.

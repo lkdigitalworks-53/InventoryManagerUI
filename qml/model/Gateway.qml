@@ -332,6 +332,45 @@ QtObject {
         return { isConflict: true, current: body.current !== undefined ? body.current : null }
     }
 
+    // ── QTBUG-49896 workaround (12th round, 2026-08-25) ──────────────────────
+    // QML's XMLHttpRequest implementation can lose (reset to 0) xhr.status —
+    // and, in this codebase's observed manifestation, responseText and
+    // getAllResponseHeaders() along with it — during the readyState 3->4
+    // (LOADING -> DONE) transition, for certain {method, response status}
+    // combinations. Confirmed via bugreports.qt.io/browse/QTBUG-49896:
+    // "XmlHttpRequest status is 'lost' (becomes 0) in readyState 3->4
+    // transition for PUT requests yielding response with custom HTTP
+    // status" — unresolved, no fix version, and the original report
+    // reproduced with a 409, the exact status this codebase's conflict path
+    // uses. status is reported correctly at readyState 2/3 and only lost by
+    // DONE — this is not a server bug: see CHECKPOINT.md's twelfth round for
+    // two real repros (plain Express, and the actual firebase-functions v2 +
+    // functions-framework wrapper) that both send this exact response
+    // cleanly, ruling the server side out with evidence.
+    //
+    // Workaround: snapshot status/responseText/headers the moment they're
+    // non-zero (readyState HEADERS_RECEIVED or LOADING), and every call site
+    // falls back to that snapshot if xhr.status reads 0 at DONE. Deliberately
+    // keeps the RAW xhr.status alongside the effective one in every failure
+    // log — this hasn't been run against a real emulator from this sandbox,
+    // so the next real CI run is what actually confirms or refutes this,
+    // not another guess declared as fixed.
+    //
+    // Known limitation: for a response large enough to arrive across
+    // multiple LOADING events, the snapshot taken at HEADERS_RECEIVED/
+    // LOADING might not have the full body yet. Not a concern for this
+    // codebase's responses (single small JSON documents), but worth knowing
+    // if this pattern gets reused somewhere with larger payloads.
+    function _captureBeforeStatusIsLost(xhr, snapshot) {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {
+            if (xhr.status !== 0) {
+                snapshot.status = xhr.status
+                snapshot.responseText = xhr.responseText
+                try { snapshot.headers = xhr.getAllResponseHeaders() } catch (e) { /* keep previous value */ }
+            }
+        }
+    }
+
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
@@ -340,14 +379,18 @@ QtObject {
         }
         inFlight++
         var xhr = new XMLHttpRequest()
+        var _snap = { status: 0, responseText: "", headers: "" }
         xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             inFlight--
-            var ok = xhr.status >= 200 && xhr.status < 300
+            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
+            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
+            var ok = effStatus >= 200 && effStatus < 300
             if (ok) {
                 OutboxStore.markSent(item.requestId)
             } else {
-                var conflict = _parseMutationConflict(xhr.status, xhr.responseText)
+                var conflict = _parseMutationConflict(effStatus, effResponseText)
                 if (conflict.isConflict) {
                     console.warn("[Gateway] recordMutation conflict — dropping stale write, notifying store",
                                  item.entity, item.entityId)
@@ -364,20 +407,15 @@ QtObject {
                     // both send this exact response shape/headers cleanly.
                     // That rules out the response construction and the
                     // framework layer with actual evidence, not just
-                    // inspection -- see CHECKPOINT.md. What's never been
-                    // logged, across 11 rounds, is xhr.statusText -- the one
-                    // field Qt's XHR implementation would use to describe
-                    // *why* a request failed at the network level (refused /
-                    // reset / timed out / etc.), which is exactly the
-                    // missing piece now that status===0 + a clean server-side
-                    // completion is confirmed. Logging it (and any response
-                    // headers, defensively -- likely empty on a true
-                    // transport failure, but free to check) rather than
-                    // guessing a fix a third time.
-                    var headersSeen = ""
-                    try { headersSeen = xhr.getAllResponseHeaders() } catch (e) { headersSeen = "<getAllResponseHeaders threw: " + e + ">" }
-                    console.warn("[Gateway] recordMutation failed", xhr.status, "statusText:", xhr.statusText,
-                                 item.entity, item.entityId, xhr.responseText, "headers:", headersSeen)
+                    // inspection -- see CHECKPOINT.md. 12th round: found
+                    // QTBUG-49896 and applied the workaround above via
+                    // _captureBeforeStatusIsLost -- raw-status/effective-
+                    // status logged side by side below so the next real run
+                    // confirms or refutes this rather than trusting it blind.
+                    var headersSeen = (xhr.status !== 0) ? "" : _snap.headers
+                    if (xhr.status !== 0) { try { headersSeen = xhr.getAllResponseHeaders() } catch (e) { headersSeen = "<getAllResponseHeaders threw: " + e + ">" } }
+                    console.warn("[Gateway] recordMutation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
+                                 "statusText:", xhr.statusText, item.entity, item.entityId, effResponseText, "headers:", headersSeen)
                     OutboxStore.markFailed(item.requestId)
                 }
             }
@@ -436,14 +474,18 @@ QtObject {
         }
         inFlight++
         var xhr = new XMLHttpRequest()
+        var _snap = { status: 0, responseText: "", headers: "" }
         xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             inFlight--
-            var ok = xhr.status >= 200 && xhr.status < 300
+            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
+            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
+            var ok = effStatus >= 200 && effStatus < 300
             if (ok) {
                 OutboxStore.markSent(item.requestId)
             } else {
-                var conflict = _parseBatchMutationConflict(xhr.status, xhr.responseText)
+                var conflict = _parseBatchMutationConflict(effStatus, effResponseText)
                 if (conflict.isConflict) {
                     console.warn("[Gateway] recordMutationsBatch conflict — dropping stale batch, notifying stores",
                                  item.entity, conflict.conflicts.length, "of", item.items.length, "item(s) conflicted")
@@ -452,8 +494,8 @@ QtObject {
                         mutationConflicted(item.entity, conflict.conflicts[i].entityId, conflict.conflicts[i].current)
                     }
                 } else {
-                    console.warn("[Gateway] recordMutationsBatch failed", xhr.status,
-                                 item.entity, item.items.length, xhr.responseText)
+                    console.warn("[Gateway] recordMutationsBatch failed", "raw-status:", xhr.status, "effective-status:", effStatus,
+                                 item.entity, item.items.length, effResponseText)
                     OutboxStore.markFailed(item.requestId)
                 }
             }
@@ -519,18 +561,22 @@ QtObject {
         }
         inFlight++
         var xhr = new XMLHttpRequest()
+        var _snap = { status: 0, responseText: "", headers: "" }
         xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             inFlight--
+            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
+            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
             var body = null
-            try { body = JSON.parse(xhr.responseText) } catch (e) { body = null }
-            var classified = _classifyDeltaResponse(xhr.status, body)
+            try { body = JSON.parse(effResponseText) } catch (e) { body = null }
+            var classified = _classifyDeltaResponse(effStatus, body)
 
             if (classified.terminal) {
                 OutboxStore.markSent(item.requestId)
             } else {
-                console.warn("[Gateway] recordDelta failed", xhr.status,
-                             item.entity, item.entityId, xhr.responseText)
+                console.warn("[Gateway] recordDelta failed", "raw-status:", xhr.status, "effective-status:", effStatus,
+                             item.entity, item.entityId, effResponseText)
                 OutboxStore.markFailed(item.requestId)
             }
             OutboxStore.clearInFlight(item)
@@ -577,14 +623,18 @@ QtObject {
             AuthService.ensureFreshToken()
 
         var xhr = new XMLHttpRequest()
+        var _snap = { status: 0, responseText: "", headers: "" }
         xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
-            var ok = xhr.status >= 200 && xhr.status < 300
+            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
+            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
+            var ok = effStatus >= 200 && effStatus < 300
             if (ok) {
                 cutoverFinished(true, "")
             } else {
-                console.warn("[Gateway] cutover failed", xhr.status, xhr.responseText)
-                cutoverFinished(false, "HTTP " + xhr.status)
+                console.warn("[Gateway] cutover failed", "raw-status:", xhr.status, "effective-status:", effStatus, effResponseText)
+                cutoverFinished(false, "HTTP " + effStatus)
             }
         }
         xhr.open("POST", cutoverUrl)
@@ -620,13 +670,17 @@ QtObject {
             AuthService.ensureFreshToken()
 
         var xhr = new XMLHttpRequest()
+        var _snap = { status: 0, responseText: "", headers: "" }
         xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
-            var ok = xhr.status >= 200 && xhr.status < 300
+            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
+            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
+            var ok = effStatus >= 200 && effStatus < 300
             var data = null
-            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            try { data = JSON.parse(effResponseText) } catch (e) { data = null }
             if (!ok)
-                console.warn("[Gateway] provisionMember failed", xhr.status, xhr.responseText)
+                console.warn("[Gateway] provisionMember failed", "raw-status:", xhr.status, "effective-status:", effStatus, effResponseText)
             if (callback) callback(ok, data)
         }
         xhr.open("POST", provisionMemberUrl)

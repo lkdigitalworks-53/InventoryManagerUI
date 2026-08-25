@@ -2067,3 +2067,43 @@ same failure class the whole `test/e2e` debugging trail already teaches (Skills 
 different angle: prose summaries compress away the detail that falsifies a plausible-looking theory,
 and the fix is always to go back to the primary evidence, not the summary of it -- including your
 own summary, written two paragraphs ago in the same document.
+
+## Skill 45: QTBUG-49896 — QML's XMLHttpRequest can lose `status` (reset to 0) at the readyState 3->4 transition
+
+**What happened**: `test_two_users_editing_the_same_order_produces_a_real_conflict` failed
+identically across 13 rounds. Rounds 1-11 exhausted server-side theories (transport, timing, dropped
+response fields, serialization) with real evidence, including two working repros (Skill 43/44's
+writeup) that proved the server sends a completely clean 409. Round 12 added `xhr.statusText` and
+header logging — still no answer on its own, but it captured something new: a partial header
+(`x-powered-by: Express?`, cut off immediately after) that proved a response really had started
+arriving, rather than nothing at all. That reopened the question productively instead of settling for
+"transport failure, cause unknown."
+
+**Root cause**: [QTBUG-49896](https://bugreports.qt.io/browse/QTBUG-49896) — QML's
+`XMLHttpRequest` implementation can lose `xhr.status` (reset to `0`) during the readyState 3->4
+(LOADING -> DONE) transition, for certain {HTTP method, response status} combinations. Unresolved,
+no fix version. The original reporter's own minimal repro used a **409** response and observed
+`status: 409` correctly at readyState 2 and 3, `status: 0` at readyState 4 — the exact status code
+and exact transition this codebase's CAS-conflict path hits. A real, longstanding Qt engine bug, not
+anything in this codebase.
+
+**How it was found**: a targeted web search once the evidence was specific enough to search for —
+"the client receives real response headers but ends up with status 0 specifically for a 409" is a
+search-able signature; "recordMutation intermittently fails" is not. The lesson isn't "search
+earlier" in general (most of rounds 1-11's server-side elimination was necessary and correctly done
+via code reading and real repros, not guessable via search) — it's that once evidence narrows to
+something with a *specific, unusual shape* (an exact status code, an exact protocol-level symptom),
+that shape is often exactly what an external tool's bug tracker would also describe, and is worth
+searching verbatim rather than continuing to reason from this codebase's logs alone.
+
+**Fixed**: not a server change (the server was already proven clean) — a client-side workaround.
+`_captureBeforeStatusIsLost(xhr, snapshot)` in `qml/model/Gateway.qml` snapshots status/responseText/
+headers at HEADERS_RECEIVED/LOADING, before DONE's potential loss, and every one of the file's five
+XHR call sites falls back to that snapshot via an `effStatus`/`effResponseText` pair. All five call
+sites had the identical vulnerable pattern — this bug isn't specific to conflict responses or to
+`recordMutation`; it can hit any non-2xx response from any of them.
+
+**Discipline point**: every failure log now prints the raw (possibly-lost) status *and* the effective
+(recovered) one side by side, specifically so the next real run can confirm or refute this rather than
+taking it on faith. Thirteen rounds in, a plausible-sounding root cause with strong circumstantial
+support (Skill 44's own lesson) still isn't the same as a confirmed one until a real run says so.
