@@ -1155,16 +1155,52 @@ previously-uncaught, potentially connection-corrupting failure into a logged 500
 explicitly a safety net and diagnostic improvement, NOT a claimed fix for the status-0 bug -- said
 directly rather than dressed up as more than it is.
 
+## Twelfth round: two real repros, both clean — server-side is now exonerated with evidence, not inspection (2026-08-24/25)
+
+Taher supplied another fresh CI run (PR #45 again, `HEAD is now at b34037e Merge 1b27aa2...` —
+confirmed this tested the eleventh round's fixes). Same failure, identical message. Two real,
+concrete results from this round, not more log reading:
+
+**The `OutboxStore.clear()` fix is confirmed working.** The `stock_batch BAT-2026-001` noise that
+used to bleed into `ReturnAfterMetadataEditE2E::test_metadata_edit_then_return_nets_revenue_and_profit_to_zero`'s
+log is gone in this run. Real, verified fix, holding.
+
+**The `send()` hardening never fired** — no `"send() failed to serialize"` anywhere in the raw log.
+Genuinely useful negative evidence: rules out a JSON-serialization crash as the cause, not just
+"unlikely by inspection."
+
+**Went further than reading this round: built two actual repros**, since this sandbox can build and
+run real HTTP servers even without live Firebase network access. (1) A plain Express server running
+the literal `send()` function and the literal 409-conflict response body shape — `curl` got a
+perfectly normal response: correct status, correct headers, correct `Content-Length`, correct body.
+(2) The REAL `firebase-functions` v2 `onRequest()` wrapper running under the REAL
+`@google-cloud/functions-framework` CLI (npm-installable; the actual runtime the local Firebase
+emulator uses to host v2 HTTPS functions, as close as this sandbox can get without the full emulator
+suite, which needs Google Cloud network access this sandbox's egress allowlist doesn't have) — same
+clean result. Both ruled out with an actual working request/response cycle, not static reasoning.
+
+**Conclusion, stated plainly**: the response construction and the Functions Framework layer are now
+exonerated by direct evidence. What's left is genuinely outside what this sandbox can test: either
+something specific to the Firebase CLI's own emulator-hub proxying (an additional layer on top of
+functions-framework that only exists in the full `firebase emulators:exec` runtime, not reproducible
+here), or something on the Qt/QML XMLHttpRequest client side.
+
+**Did NOT ship a third guessed fix.** Instead, closed the actual diagnostic gap: `xhr.statusText` has
+never been logged anywhere across 11 rounds, and it's the one field that could tell us WHY Qt's XHR
+implementation considers this a failure (connection reset / refused / timed out / etc.) rather than
+just confirming status is 0. Added it, along with `xhr.getAllResponseHeaders()` defensively, to
+`_send()`'s failure log (`qml/model/Gateway.qml`). This is the same category of move as round 7's
+`tryVerify` → poll-loop replacement: build the diagnostic that answers the question on the next real
+run, rather than guess a fix without evidence a second/third time.
+
 ## Next step
 
-1. This needs live evidence this sandbox cannot produce. The single most useful thing Taher could
-   capture on a local run: a raw packet/response capture (e.g. `curl -v` reproducing the exact
-   conflict scenario against a locally running emulator, or Qt network debug logging via
-   `QT_LOGGING_RULES="qt.network.*=true"`) -- specifically the actual response headers/bytes for the
-   409, byte-compared against a normal 200's. Nine rounds of client-side-log-only analysis have been
-   exhausted; this is the one category of evidence that hasn't been tried.
-2. If the `send()` hardening above ever produces a logged 500 with a stack trace on a future run,
-   that would definitively answer whether this is a serialization crash -- worth checking the next
-   CI log specifically for that, even though the current theory doesn't strongly point there.
-3. `orderMath.js`/`qml/helper/OrderMath.js` parity -- still deferred/pending, unchanged.
-4. Phase 2 probe -- still needs Taher to run it locally, unchanged, independent of everything else.
+1. Re-run. This is the single most informative log this bug has ever had a chance to produce — read
+   `statusText`/the headers dump specifically, whatever the outcome.
+2. If `statusText` reveals a real Qt-side network error description, that finally gives something
+   concrete to fix, rather than infer.
+3. If it's still empty/unhelpful even with this: that itself is evidence (points more strongly at
+   Firebase CLI's own proxy layer, which genuinely needs Taher's local machine to investigate further
+   — this sandbox has exhausted what it can test).
+4. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+5. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.

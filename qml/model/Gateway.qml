@@ -357,8 +357,27 @@ QtObject {
                     OutboxStore.markSent(item.requestId)
                     mutationConflicted(item.entity, item.entityId, conflict.current)
                 } else {
-                    console.warn("[Gateway] recordMutation failed", xhr.status,
-                                 item.entity, item.entityId, xhr.responseText)
+                    // 11th round (2026-08-24): two working repros this round
+                    // (plain Express, and the real firebase-functions v2 +
+                    // functions-framework wrapper -- as close to what the
+                    // local emulator actually runs as this sandbox can get)
+                    // both send this exact response shape/headers cleanly.
+                    // That rules out the response construction and the
+                    // framework layer with actual evidence, not just
+                    // inspection -- see CHECKPOINT.md. What's never been
+                    // logged, across 11 rounds, is xhr.statusText -- the one
+                    // field Qt's XHR implementation would use to describe
+                    // *why* a request failed at the network level (refused /
+                    // reset / timed out / etc.), which is exactly the
+                    // missing piece now that status===0 + a clean server-side
+                    // completion is confirmed. Logging it (and any response
+                    // headers, defensively -- likely empty on a true
+                    // transport failure, but free to check) rather than
+                    // guessing a fix a third time.
+                    var headersSeen = ""
+                    try { headersSeen = xhr.getAllResponseHeaders() } catch (e) { headersSeen = "<getAllResponseHeaders threw: " + e + ">" }
+                    console.warn("[Gateway] recordMutation failed", xhr.status, "statusText:", xhr.statusText,
+                                 item.entity, item.entityId, xhr.responseText, "headers:", headersSeen)
                     OutboxStore.markFailed(item.requestId)
                 }
             }
