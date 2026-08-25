@@ -38,6 +38,7 @@ const PROJECT_ID = "inventorymanager-48392"; // MUST match FirebaseService.qml's
                                               // only which host it talks to.
 const TENANT_ID = "e2e-tenant";
 const TEST_UID = "e2e-owner";
+const SECOND_UID = "e2e-staff";
 const SUPPLIER_ID = "SUP-001";
 const SUPPLIER_NAME = "E2E Supplier";
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || "";
@@ -111,11 +112,36 @@ async function main() {
         name: SUPPLIER_NAME
     });
 
+    // Second identity, for genuine multi-user scenarios (e.g.
+    // tst_OrdersStoreE2E.qml's conflict test) -- a real second Auth user
+    // and tenant member, not two requests from the same session standing
+    // in for one.
+    await auth.createUser({ uid: SECOND_UID, email: "e2e-staff@example.com" })
+        .catch((e) => {
+            if (e.code !== "auth/uid-already-exists") throw e;
+        });
+
+    await db.doc("users/" + SECOND_UID).set({
+        tenantId: TENANT_ID,
+        tenantName: "E2E Test Co",
+        role: "staff",
+        name: "E2E Staff"
+    });
+    await db.doc("tenants/" + TENANT_ID + "/members/" + SECOND_UID).set({
+        uid: SECOND_UID,
+        role: "staff",
+        status: "active",
+        name: "E2E Staff"
+    });
+
     const idToken = await mintIdToken(TEST_UID);
+    const secondIdToken = await mintIdToken(SECOND_UID);
 
     const fixture = {
         idToken: idToken,
         uid: TEST_UID,
+        secondIdToken: secondIdToken,
+        secondUid: SECOND_UID,
         tenantId: TENANT_ID,
         supplierId: SUPPLIER_ID,
         supplierName: SUPPLIER_NAME

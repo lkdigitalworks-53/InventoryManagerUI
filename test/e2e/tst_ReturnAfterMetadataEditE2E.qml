@@ -123,6 +123,9 @@ TestCase {
                                             // everything is seeded/created fresh within the test
         dm.stockErrorMsg = ""
         lastConflict = null
+        // See tst_OrdersE2E.qml's init() -- same shared-singleton contamination
+        // fix, same reasoning (CHECKPOINT.md, second run).
+        OutboxStore.clear()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
     }
 

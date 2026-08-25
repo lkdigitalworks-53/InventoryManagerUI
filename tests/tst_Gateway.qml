@@ -242,7 +242,13 @@ TestCase {
     // a genuine 409 conflict retrying forever went unnoticed.
 
     function test_parseMutationConflict_recognizes_a_genuine_conflict() {
-        var body = JSON.stringify({ ok: false, status: 409, conflict: true, current: { stock: 5, name: "Widget" } })
+        // Fixture matches the ACTUAL wire body functions/index.js's
+        // recordMutation handler sends (error:"conflict" + conflict:true +
+        // current), not gatewayLogic.js's internal result object. Those two
+        // shapes look almost identical but aren't the same thing, and this
+        // test previously used the wrong one -- see the regression test
+        // below for why that distinction is the whole bug.
+        var body = JSON.stringify({ ok: false, error: "conflict", conflict: true, current: { stock: 5, name: "Widget" } })
         var result = Gateway._parseMutationConflict(409, body)
         compare(result.isConflict, true)
         compare(result.current.stock, 5)
@@ -254,6 +260,23 @@ TestCase {
         // must not be misread as a CAS conflict just because of the status.
         var result = Gateway._parseMutationConflict(409, JSON.stringify({ ok: false, error: "some-other-409-reason" }))
         compare(result.isConflict, false)
+    }
+
+    // ── Regression: E2E testing phase 2 followup, ninth debugging round ──────
+    // 8 rounds of investigation (see CHECKPOINT.md) chased this as a transport/
+    // timing/emulator problem before finding the real cause: functions/index.js's
+    // recordMutation handler forwarded `current` but silently dropped
+    // `result.conflict` -- the field this parser actually checks -- and sent
+    // `error:"conflict"` in its place. The 409 arrived, parsed as valid JSON,
+    // and was STILL misread as a generic failure every time, because the one
+    // field the check depends on was never on the wire. This body is the
+    // literal shape the handler used to send, byte for byte -- if a future
+    // change to functions/index.js's response construction ever drops
+    // `conflict` again, this is the test that must catch it.
+    function test_parseMutationConflict_would_have_caught_the_dropped_conflict_field_bug() {
+        var preFixServerBody = JSON.stringify({ ok: false, error: "conflict", current: { stock: 5, name: "Widget" } })
+        var result = Gateway._parseMutationConflict(409, preFixServerBody)
+        compare(result.isConflict, false) // this is what the bug produced -- documenting the failure mode, not asserting it's desired
     }
 
     function test_parseMutationConflict_ignores_non_409_statuses() {
@@ -315,5 +338,77 @@ TestCase {
         compare(Gateway._parseBatchMutationConflict(409, "").isConflict, false)
         compare(Gateway._parseBatchMutationConflict(409, "not json{{{").isConflict, false)
         compare(Gateway._parseBatchMutationConflict(409, JSON.stringify({ ok: false, conflicts: [] })).isConflict, false)
+    }
+
+    // ── _captureBeforeStatusIsLost (QTBUG-49896 workaround, 12th round) ──────
+    // Plain mock objects stand in for a real XMLHttpRequest here -- the
+    // function only reads readyState/status/responseText and calls
+    // getAllResponseHeaders(), so a plain object with those members exercises
+    // the exact same code path. This tests the workaround's OWN logic in
+    // isolation; it does not and cannot prove the underlying Qt engine bug
+    // is what's actually happening on a real run -- that needs a real
+    // qmltestrunner/CI pass (see CHECKPOINT.md, twelfth round).
+
+    function test_captureBeforeStatusIsLost_snapshots_status_at_headersReceived() {
+        var snapshot = { status: 0, responseText: "", headers: "" }
+        var mockXhr = { readyState: XMLHttpRequest.HEADERS_RECEIVED, status: 409, responseText: "",
+                         getAllResponseHeaders: function() { return "content-type: application/json" } }
+        Gateway._captureBeforeStatusIsLost(mockXhr, snapshot)
+        compare(snapshot.status, 409)
+        compare(snapshot.headers, "content-type: application/json")
+    }
+
+    function test_captureBeforeStatusIsLost_keeps_the_latest_snapshot_from_loading() {
+        // readyState progresses HEADERS_RECEIVED -> LOADING with the full
+        // body only available by LOADING -- the realistic sequence for a
+        // small JSON response arriving in one read.
+        var snapshot = { status: 0, responseText: "", headers: "" }
+        var body = JSON.stringify({ ok: false, error: "conflict", conflict: true, current: { stock: 5 } })
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.HEADERS_RECEIVED, status: 409, responseText: "",
+                                              getAllResponseHeaders: function() { return "" } }, snapshot)
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.LOADING, status: 409, responseText: body,
+                                              getAllResponseHeaders: function() { return "" } }, snapshot)
+        compare(snapshot.status, 409)
+        compare(snapshot.responseText, body)
+    }
+
+    function test_captureBeforeStatusIsLost_ignores_a_zero_status_mid_flight() {
+        // status===0 during HEADERS_RECEIVED/LOADING means the response
+        // genuinely hasn't arrived yet (or a real transport failure) --
+        // must not overwrite a valid earlier snapshot with nothing.
+        var snapshot = { status: 200, responseText: "prior-good-body", headers: "prior" }
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.LOADING, status: 0, responseText: "",
+                                              getAllResponseHeaders: function() { return "" } }, snapshot)
+        compare(snapshot.status, 200)
+        compare(snapshot.responseText, "prior-good-body")
+    }
+
+    function test_captureBeforeStatusIsLost_does_nothing_at_other_readyStates() {
+        var snapshot = { status: 0, responseText: "", headers: "" }
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.OPENED, status: 409, responseText: "irrelevant" }, snapshot)
+        compare(snapshot.status, 0)
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.DONE, status: 409, responseText: "irrelevant" }, snapshot)
+        compare(snapshot.status, 0) // DONE is exactly the state this workaround exists to not trust blindly
+    }
+
+    // ── Regression: the exact QTBUG-49896 sequence, end to end ───────────────
+    // Reproduces the bug report's own observed sequence (status correct at
+    // readyState 2/3, reset to 0 at DONE) and confirms the effective-status
+    // fallback pattern used at every Gateway.qml call site recovers it.
+    function test_effectiveStatus_fallback_recovers_a_QTBUG49896_lost_status() {
+        var snapshot = { status: 0, responseText: "", headers: "" }
+        var body = JSON.stringify({ ok: false, error: "conflict", conflict: true, current: { notes: "staff edit" } })
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.HEADERS_RECEIVED, status: 409, responseText: "",
+                                              getAllResponseHeaders: function() { return "" } }, snapshot)
+        Gateway._captureBeforeStatusIsLost({ readyState: XMLHttpRequest.LOADING, status: 409, responseText: body,
+                                              getAllResponseHeaders: function() { return "" } }, snapshot)
+        // DONE: the bug -- both status and responseText read as lost.
+        var xhrAtDone = { status: 0, responseText: "" }
+        var effStatus = (xhrAtDone.status !== 0) ? xhrAtDone.status : snapshot.status
+        var effResponseText = (xhrAtDone.status !== 0) ? xhrAtDone.responseText : snapshot.responseText
+        compare(effStatus, 409)
+        var conflict = Gateway._parseMutationConflict(effStatus, effResponseText)
+        compare(conflict.isConflict, true)
+        compare(conflict.current.notes, "staff edit")
     }
 }

@@ -127,6 +127,14 @@ TestCase {
         TransactionStore.entries = []
         dm.stockErrorMsg = ""
         lastConflict = null
+        // OutboxStore is a singleton shared across the whole test/e2e process
+        // (CHECKPOINT.md, second run) — this file's own negative-path test
+        // (test_completeOrder_rejects_when_stock_insufficient) leaves a
+        // stock_batch item queued, which then gets retried by every
+        // subsequent recordMutation call system-wide, including in OTHER
+        // files' tests. tst_OrdersStoreE2E.qml already had this fix; this
+        // file was the other half of the gap.
+        OutboxStore.clear()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
     }
 

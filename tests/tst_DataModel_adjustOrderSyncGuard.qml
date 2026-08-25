@@ -39,6 +39,7 @@ TestCase {
         Gateway.mode = "gateway"
         OutboxStore.clear()
         AuthStore.idToken = ""
+        AuthStore._settings.sessionJson = "" // see tst_Gateway.qml header / CHECKPOINT.md 2026-08-18 for why
         dm.stockErrorMsg = ""
     }
 
