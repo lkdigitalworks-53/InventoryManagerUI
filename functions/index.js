@@ -48,11 +48,31 @@ function scopedDb(env) {
     return getFirestore(admin.app(), databaseId);
 }
 
+// Not currently proven to be the cause of the status-0 failure documented in
+// CHECKPOINT.md (E2E testing phase 2 followup, ninth/tenth rounds) -- that
+// investigation is still open. This is a safety net, not a fix: res.json()
+// calls JSON.stringify() internally, completely unguarded before this
+// change. If a future response body ever contains something JSON.stringify
+// can't handle (a circular reference, a BigInt, etc.), that would throw
+// synchronously INSIDE this function, uncaught by anything -- which could
+// leave the connection in a half-sent state (Express may have already
+// written status/headers before the .json() call fails on the body),
+// something a client-side XHR would very plausibly report as a bare
+// connection failure rather than a clean 500. Wrapping this turns that
+// invisible failure mode into a logged, diagnosable one on whichever
+// response actually triggers it next, instead of guessing further.
 function send(res, status, body) {
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    res.status(status).json(body);
+    try {
+        res.status(status).json(body);
+    } catch (e) {
+        console.error("send() failed to serialize response body", { status: status, error: String(e), bodyKeys: body ? Object.keys(body) : null });
+        if (!res.headersSent) {
+            res.status(500).json({ ok: false, error: "response-serialization-failed" });
+        }
+    }
 }
 
 async function deriveContext(db, uid) {

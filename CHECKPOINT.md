@@ -1105,18 +1105,66 @@ everything else in this file; verified by direct code reading, a `node` re-imple
 parser logic, and `node --check`'s syntax pass on `functions/index.js`, not by executing the actual
 test suite.
 
+## Eleventh round: ninth/tenth round's fix was real but WRONG for this failure -- corrected (2026-08-24)
+
+Taher supplied a fresh CI run (`results.xml` + full raw log) from PR #45, which merges `ce3ea33`
+(the tenth round's `conflict:true` fix) into main. **Confirmed via the checkout log
+(`HEAD is now at 0705796 Merge ce3ea33c... into 3adbc189...`) that this run genuinely tested the fix
+commit.** The E2E conflict test failed identically anyway -- same message, same "notes field is ''"
+diagnostic, same 4-attempt pattern.
+
+**Why the ninth-round diagnosis was wrong**: it required the client to receive a real HTTP 409 with a
+parseable JSON body that merely lacked one field. The actual client-side log line is
+`[Gateway] recordMutation failed 0 order ORD-006` -- `xhr.status` is literally `0`, not 409, with an
+empty `responseText`. A field-name mismatch inside a successfully-parsed body was never the failure
+mode; ninth round should have reconciled its theory against the "status 0, empty responseText" fact
+that FOURTH round had already established, and didn't. Correcting that now rather than letting it
+stand. The `conflict: true` forwarding fix itself is still correct and worth keeping -- it closes a
+real gap for the day a genuine 409-with-body DOES reach a client (e.g. possibly real production
+HTTPS, vs. this local-emulator path) -- it's just not what this test has been hitting.
+
+**Re-confirmed with fresh evidence, tighter than before**: cross-referenced the raw emulator log
+against the client-side failure -- `Finished "asia-south1-recordMutation" in 25.29ms` at
+18:14:02.2143735, `[Gateway] recordMutation failed 0 order ORD-006` at 18:14:02.2180373, 3.7ms later.
+The server's own `Finished` log (tied to the response stream's finish event, not just the handler
+function returning) fires cleanly every time -- no exception, no crash indication anywhere in the raw
+log. This is about as close to "the server genuinely completes sending a full response, and the
+client still doesn't receive it" as static log reading can prove.
+
+**New, confirmed-separate finding**: the recurring `stock_batch BAT-2026-001 recordMutation failed 0`
+noise in `tst_OrdersE2E.qml` and `tst_ReturnAfterMetadataEditE2E.qml` is the SAME
+OutboxStore-is-a-shared-singleton contamination second round already found and fixed -- but only for
+`tst_OrdersStoreE2E.qml`. The other two files never got the same `OutboxStore.clear()` in `init()`.
+Fixed both now. Unrelated to the order-conflict failure (different entity/ID), but a real, confirmed,
+low-risk fix worth landing regardless.
+
+**What I did NOT do: guess a tenth root cause.** Exhausted the checkable static-analysis angles this
+round (request-body construction, CORS header consistency across response paths, token validity/size,
+whether `current`'s fields could contain non-JSON-safe Firestore types -- traced the actual data flow;
+they can't, every field in this entity's documents is client-authored plain JSON, never a
+`FieldValue.serverTimestamp()`-derived value on the working doc) and found nothing further to
+implicate with confidence. Round 7 already noted the same dead end from the code side
+("no obvious serialization risk found by inspection"). This sandbox has no live Firestore/Functions
+emulator access (network egress doesn't include Firebase/Google Cloud domains) and can't reproduce
+this directly, same standing limitation as before.
+
+**What I did instead**: hardened `send()` (`functions/index.js`) with a try/catch around
+`res.status(status).json(body)`, which currently has zero error handling anywhere. If a future
+response body ever contains something `JSON.stringify` can't serialize cleanly, this turns a
+previously-uncaught, potentially connection-corrupting failure into a logged 500 instead. This is
+explicitly a safety net and diagnostic improvement, NOT a claimed fix for the status-0 bug -- said
+directly rather than dressed up as more than it is.
+
 ## Next step
 
-1. Taher: run `qmltestrunner` (or CI) to confirm `tst_Gateway.qml` passes for real, and specifically
-   re-run `test/e2e/tst_OrdersStoreE2E.qml`'s conflict test -- this is the one that should now go from
-   a 45s timeout to actually passing.
-2. Real gap, not fixed here: `functions/index.js` has no handler-level test coverage at all (only the
-   `lib/*Logic.js` layer does). This exact bug lived in the untested seam between them. Worth a
-   follow-up session scoping what a req/res-mocking harness for `functions/index.js` would take --
-   not attempted in this round, which was scoped to the one confirmed bug.
-3. Given all five stores' `mutationConflicted` handlers have been silently unreachable in production
-   until this fix, worth deciding whether any of them warrant a dedicated conflict-scenario test of
-   their own (today only `OrdersStore`'s is covered, via the E2E test that found this bug) -- not
-   decided here, flagging rather than picking for Taher.
-4. `orderMath.js`/`qml/helper/OrderMath.js` parity -- still deferred/pending, unchanged.
-5. Phase 2 probe -- still needs Taher to run it locally, unchanged, independent of everything else.
+1. This needs live evidence this sandbox cannot produce. The single most useful thing Taher could
+   capture on a local run: a raw packet/response capture (e.g. `curl -v` reproducing the exact
+   conflict scenario against a locally running emulator, or Qt network debug logging via
+   `QT_LOGGING_RULES="qt.network.*=true"`) -- specifically the actual response headers/bytes for the
+   409, byte-compared against a normal 200's. Nine rounds of client-side-log-only analysis have been
+   exhausted; this is the one category of evidence that hasn't been tried.
+2. If the `send()` hardening above ever produces a logged 500 with a stack trace on a future run,
+   that would definitively answer whether this is a serialization crash -- worth checking the next
+   CI log specifically for that, even though the current theory doesn't strongly point there.
+3. `orderMath.js`/`qml/helper/OrderMath.js` parity -- still deferred/pending, unchanged.
+4. Phase 2 probe -- still needs Taher to run it locally, unchanged, independent of everything else.

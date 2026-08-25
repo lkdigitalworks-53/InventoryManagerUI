@@ -2035,3 +2035,35 @@ each look internally consistent can still disagree with each other. When a bug r
 identically across many attempts with a fully-parseable, correctly-arriving response, treat "the two
 ends might be using different field names for the same concept" as a first-class hypothesis, not a
 last resort after transport/timing theories are exhausted.
+
+**Correction (2026-08-24, eleventh round)**: this bug is real and the fix is real, but it was NOT
+the cause of `tst_OrdersStoreE2E.qml`'s conflict-test failure. A fresh CI run against the fix commit
+failed identically. The tell was in evidence already on record: the client-side failure log reads
+`recordMutation failed 0`, not `recordMutation failed 409` -- `xhr.status` is literally `0`, meaning
+no response ever arrived at all, which makes a dropped-field-inside-a-parsed-body theory impossible
+regardless of how well it explains everything else. See Skill 44.
+
+## Skill 44: A fix that explains every symptom except the one status code is still the wrong fix
+
+**What happened**: Skill 43's diagnosis fit almost everything about
+`test_two_users_editing_the_same_order_produces_a_real_conflict`'s failure -- server completes
+normally, CAS correctly rejects, `mutationConflicted` never fires, identical failure every retry.
+The one piece of evidence it never squared against itself was already sitting in `CHECKPOINT.md`
+from four rounds earlier: `xhr.status` on every failing attempt is `0`, not `409`, with an empty
+`responseText`. A theory built on "the 409 arrives but is misparsed" cannot be reconciled with
+"no response arrives at all" -- those are mutually exclusive, not two framings of the same fact. The
+fix got implemented, tested (with a unit test that, correctly, tests the parser logic in isolation
+and says nothing about whether a real 409 ever reaches it), and pushed, before that contradiction got
+checked.
+
+**The general lesson**: a diagnosis that produces a clean narrative explaining most of the symptoms
+is not the same as a diagnosis that's been checked against literally all of them, especially the
+most specific, most mechanical piece of evidence available (an exact status code, an exact byte
+count, an exact error string) -- those are cheap to check and disproportionately likely to falsify a
+theory that otherwise "reads" correctly. Before implementing a fix for a bug with an existing
+diagnostic trail, re-derive the trail's own most concrete data points and confirm the new theory is
+compatible with each one, not just consistent with the trail's prose summary of itself. This is the
+same failure class the whole `test/e2e` debugging trail already teaches (Skills 40/42/43) from a
+different angle: prose summaries compress away the detail that falsifies a plausible-looking theory,
+and the fix is always to go back to the primary evidence, not the summary of it -- including your
+own summary, written two paragraphs ago in the same document.
