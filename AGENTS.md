@@ -505,7 +505,13 @@ env.
   (`@firebase/rules-unit-testing`; needs the emulator, `firebase emulators:exec --only firestore
   "node --test test/"`)
 - `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — QML tests for the client-side gateway
-  bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`)
+  bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`). **Every XHR call site
+  in `Gateway.qml` (`_send`, `_sendBatch`, `_sendDelta`, `runCutover`, `provisionMember`) works
+  around [QTBUG-49896](https://bugreports.qt.io/browse/QTBUG-49896) via
+  `_captureBeforeStatusIsLost()`** — QML's `XMLHttpRequest` can lose `xhr.status` (reset to 0) at
+  the readyState 3->4 transition for non-2xx responses. Unresolved upstream, no fix version. If you
+  add a new XHR call anywhere in this file, it needs the same snapshot-and-fallback pattern, or its
+  error/conflict path will silently never fire in practice — see Skill 45 for the full story.
 - `FIRESTORE_RULES.md`
 - `qml/model/TransactionStore.qml`, `qml/model/StockBatchStore.qml`
 
