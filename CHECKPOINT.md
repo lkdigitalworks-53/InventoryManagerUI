@@ -1246,13 +1246,81 @@ documented bug matching the exact status code and exact transition), but it's st
 a bug this sandbox cannot reproduce directly, applied without a real Qt runtime to confirm against.
 Next CI log's raw-status/effective-status pair is what actually settles it.
 
+## Post-PR#45 review session (2026-08-26)
+
+Taher merged PR #45 (this branch, `docs/e2e-testing-phase2-followup`) into `main` at `cf01870`.
+Confirmed via `git merge-base --is-ancestor` that this branch is now fully contained in `main` — no
+drift, no unmerged commits. This session branched `review/post-pr45-qml-audit` off current `main` and
+ran a combined correctness + over-engineering review (`qt-qml-review` + `ponytail-review` skills)
+scoped to PR #45's own diff (`3adbc18..db258d6`, isolated from PR #47 which landed separately in the
+same window) plus a full-repo deterministic lint pass for completeness.
+
+**Scope decision, stated plainly**: the full-repo lint pass returned 4,379 findings across 143 of 148
+QML files — almost entirely `JS-1`/`JS-2` (`var` instead of `let`/`const`, loose `==`/`!=`) and `ORD-1`
+(attribute-ordering convention), pre-existing across the whole codebase, not introduced by PR #45. This
+session did **not** attempt to fix that debt: doing so file-by-file would be a five-figure-line diff
+unrelated to what was just merged, high-regression-risk with no way to verify behavior preservation
+without a real Qt build (which this session was told not to run), and would bury the PR #45-relevant
+findings in noise. Flagging it as a real, quantified backlog item instead — see "On the horizon" if
+Taher wants a dedicated cleanup pass, scoped and branched separately.
+
+**Gateway.qml `_captureBeforeStatusIsLost` workaround (13th round's QTBUG-49896 fix) — read closely,
+found no bug.** Traced all 5 call sites (`_send`, `_sendBatch`, `_sendDelta`, `runCutover`,
+`provisionMember`): every one consistently converted to the `effStatus`/`effResponseText` fallback, no
+raw `xhr.status`/`xhr.responseText` left un-substituted in any DONE-state branch. The snapshot-refresh
+guard (`if (xhr.status !== 0)`) correctly avoids a spurious zero-during-LOADING clobbering a
+previously-good snapshot, and correctly falls through to a real `status: 0` when the request never got
+a response at all (genuine network failure vs. QTBUG-49896's spurious loss stay distinguishable). New
+code in this function uses `===`/`!==` throughout, an improvement over the file's own `var`/`==`
+baseline elsewhere. This is unconfirmed-until-next-CI-run by the checkpoint's own honest admission
+(13 rounds, no real Qt runtime available here) — that stands; this review found nothing to add to or
+subtract from that assessment.
+
+**Real gap found and closed: `send()`'s new try/catch (functions/index.js) had zero test coverage.**
+The 13th/round-adjacent hardening added in this PR (`res.status(status).json(body)` wrapped in
+try/catch, falling back to a logged 500 on serialization failure) was only reachable via a live HTTPS
+round trip — no unit test exercised it. Extracted `send()` into `functions/lib/httpResponse.js`
+(zero Firebase-SDK dependency, same pattern as `cutoverLogic.js`/`gatewayLogic.js`), `index.js` now
+imports it. Added `functions/test/httpResponse.test.js`: 4 tests (normal path sets CORS headers and
+forwards status/body; a circular-reference body triggers the try/catch and falls back to a logged 500;
+the fallback write is correctly skipped when `headersSent` is already true, avoiding a second
+`ERR_HTTP_HEADERS_SENT`-style throw; CORS headers are still set even when serialization fails). Ran
+the full `functions` suite (`node --test`) before and after: 94 → 98 passing, 0 failing. Behavior-
+preserving — `send()`'s logic is byte-for-byte identical, just relocated.
+
+**Architecture observation, not fixed this session**: PR #45 added `import "../components"` to
+`InventoryStore.qml`, `OrdersStore.qml`, `StaffStore.qml`, `SupplierStore.qml` so `Toast.show(...)`
+(a `qml/components` singleton) resolves deterministically instead of relying on load-order luck — this
+is itself a real, correct fix (explains the recurring Toast-under-qmltestrunner friction across earlier
+rounds). But it also means four Firebase-backed data-layer singletons now directly import and call into
+the UI component tree to trigger toast notifications — a data/presentation layering violation that
+predates this PR (the `Toast.show()` calls themselves aren't new) but that PR #45 made load-bearing
+rather than accidental. Flagging for Taher's call: the more layered alternative is stores emitting a
+signal (e.g. `entityStaleRefresh(message)`) that a UI-layer listener turns into `Toast.show()`, keeping
+stores presentation-agnostic and easier to unit-test in isolation. Not executed this session — real
+behavioral risk to reshuffle without the ability to build/run and visually confirm toasts still fire,
+and out of scope of what PR #45 itself introduced as new logic.
+
+**ponytail-review (over-engineering pass) on the PR #45 diff**: one real finding, not fixed (per the
+skill's own contract — list, don't auto-apply). `qml/model/Gateway.qml` L382-684 (5 call sites):
+`shrink:` the `_snap`/`effStatus`/`effResponseText` fallback pattern is duplicated identically 5 times;
+could collapse to one `_resolveEffective(xhr, snap) → {status, responseText}` helper called from each
+site. Deliberately not applied: the checkpoint's own 12th-round note frames the 5x duplication as
+intentional defensive symmetry during an active, unconfirmed bug hunt — collapsing it now would make
+the next real CI run's per-call-site behavior harder to isolate if the fix doesn't fully hold.
+Recommend revisiting once QTBUG-49896 is confirmed fixed and the diagnostic is retired. Everything
+else in the diff (the `send()` try/catch, the `conflict: result.conflict === true` forwarding fix, the
+4 store files' `import "../components"`) is minimal and load-bearing — nothing else to cut.
+
+**Branch**: `review/post-pr45-qml-audit`, off current `main` (`cf01870`). Pushed.
+
 ## Next step
 
-1. Re-run. Read the `raw-status:`/`effective-status:` pair in the next failure log (if any) first,
-   before anything else — that's the direct confirm/refute signal.
-2. If effective-status recovers 409 correctly: the conflict test should finally pass. If it's still 0
-   even with the snapshot: this specific manifestation isn't QTBUG-49896 after all (or is a related-
-   but-distinct variant), and that's still useful — it would mean status is being lost even earlier
-   than HEADERS_RECEIVED, which is a different, narrower question than the last 12 rounds explored.
-3. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
-4. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
+1. Re-run CI / real `qmltestrunner`. Read the `raw-status:`/`effective-status:` pair in the next
+   failure log (if any) first — that's still the direct confirm/refute signal for QTBUG-49896, unchanged
+   by this session.
+2. Taher's call on the Toast/store-layering observation above — signal-based refactor or leave as is.
+3. Taher's call on the full-repo lint backlog (4,379 findings, pre-existing) — dedicated cleanup branch,
+   or leave as tracked debt.
+4. `orderMath.js`/`qml/helper/OrderMath.js` parity — still deferred/pending, unchanged.
+5. Phase 2 probe — still needs Taher to run it locally, unchanged, independent of everything else.
