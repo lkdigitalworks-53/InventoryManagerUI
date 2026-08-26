@@ -2284,7 +2284,7 @@ bug class as Bug 3, and found to have been done correctly and completely, unlike
 
 **Writing this plan surfaced a real, cheap-to-close gap in the prior session's own tests**: the
 `rename` and `skip` branches of `_upsertManySync`'s conflict-policy dispatch had no direct test at
-all, even though `rename` is exactly what `fb180d8` (one of the three bugs Skill 42 fixed) touches.
+all, even though `rename` is exactly what `e571ed3` (one of the three bugs Skill 42 fixed) touches.
 Closed immediately rather than just noted — `tests/tst_InventoryStore_upsertMany.qml` gained
 `test_rename_policy_with_blank_sku_generates_a_fresh_unique_sku`,
 `test_rename_policy_with_provided_sku_gets_a_renamed_suffix_not_a_fresh_one` (asserts the rename

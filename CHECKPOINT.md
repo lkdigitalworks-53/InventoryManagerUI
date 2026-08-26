@@ -4,7 +4,7 @@
 **Branch:** `pr_taher_bug_fixes` (existing, already has an open PR; NOT a new branch — Taher's
 request named this branch, not "create a new branch," which is otherwise this session's standing
 instruction)
-**Status:** Done. All 4 CI checks green on `5f64f57` (QML/Functions/Firestore-Rules/**E2E** —
+**Status:** Done. All 4 CI checks green on `8f5daf0` (QML/Functions/Firestore-Rules/**E2E** —
 confirmed via GitHub Checks API), including the E2E job that was red before this session. PR
 ready for Taher's review.
 
@@ -101,7 +101,7 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
     grepped the whole repo for references to each old path, updated all 9 hits, then re-grepped to
     confirm zero remained.
 17. While writing the new plan's coverage table, found `_upsertManySync`'s `rename`/`skip`
-    conflict-policy branches had no direct test at all — `rename` is exactly what `fb180d8` (one
+    conflict-policy branches had no direct test at all — `rename` is exactly what `e571ed3` (one
     of Skill 46's three bugs) touches. Added 3 new cases to `tests/tst_InventoryStore_upsertMany.qml`
     rather than just noting the gap. An `str_replace` edit dropped the file's closing `TestCase {}`
     brace; the scratch-copy verification run caught it as a compile error before anything was
@@ -114,8 +114,8 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
 19. Added `SKILLS.md` Skill 47 (this consolidation + the coverage-gap catch) and pointed
     `AGENTS.md`'s Testing & QA Agent scope at the new folder.
 20. This checkpoint update.
-21. Pushed steps 15-19's work (`ad9f040`, `5f64f57`). Fetched again: no further drift.
-22. Checked the real GitHub Checks API against `5f64f57` — **all 4 checks green**: QML Tests,
+21. Pushed steps 15-19's work (`b70e398`, `8f5daf0`). Fetched again: no further drift.
+22. Checked the real GitHub Checks API against `8f5daf0` — **all 4 checks green**: QML Tests,
     Functions Tests, Firestore Rules Tests, and (the one that mattered) **E2E Tests**. Updated the
     test plan's §2 and this checkpoint with the confirmed result rather than leaving it as "check
     this once CI runs" — it's now actually been checked. Session complete; PR ready for Taher.
@@ -133,9 +133,20 @@ explicit say-so. `/superpowers:requesting-code-review`, `/qt-development-skills:
   real test suite). The qmllint output that WAS captured for `SalesPage.qml` is pure environment
   noise (missing Controls/Layouts modules) — didn't chase further; noted in Skill 46.
 
+## Rebase, 2026-08-25
+
+Rebased onto `main` @ `cf01870` (was `3adbc18` via merge commit `aba371b`) — linear history now,
+all 15 non-merge commits replayed, every SHA changed. Two real conflicts: `CHECKPOINT.md` (kept
+branch version, per standing rule) and `SKILLS.md` (a genuine numbering collision — both branches
+independently wrote Skills 42-44; resolved by renumbering this branch's two unique entries to 46
+and 47, keeping main's 42-45 untouched, per Taher's explicit call). Full repo sweep afterward for
+every stale SHA/skill-number reference across `CHECKPOINT.md`, `SKILLS.md`, and the test plan doc —
+all updated to match. Re-verified post-rebase: 645 QML tests + 94 Functions tests, 0 failed (scratch
+copy, same Qt-version workaround as before). Force-pushed with `--force-with-lease` against the
+known prior tip; lease held clean.
+
 ## Next steps
 
 - Get Taher's go-ahead (or pushback) on the trade-off above.
-- Commit + push to `pr_taher_bug_fixes` (never `main` without explicit say-so) once reviewed.
 - After merge, real CI (Qt 6.8) is the actual confirmation this session's scratch-copy
   verification stood in for — worth a quick look once it runs.

@@ -1,12 +1,17 @@
 # Test plan — `pr_taher_bug_fixes`
 
-**Branch:** `pr_taher_bug_fixes` (`main` @ `bc0a8fb` → `4944c1d`, later merged forward with
-`main` @ `3adbc18` in `aba371b` — that merge brought in an unrelated feature
-(`fix/return-analysis-revenue-not-updated`) and is **out of scope** for this plan; see its own
-coverage in `docs/superpowers/specs/2026-08-20-return-analysis-revenue-bug-CHECKPOINT.md`)
-**Date:** 2026-08-22
-**Covers:** all 12 commits specific to this PR — the 8 Taher wrote (`03319ee` … `fb180d8`) plus
-the 4 from this review session (`c81e8ba`, `b5e2488`, `050c1a5`, `4944c1d`). Full list and
+**Branch:** `pr_taher_bug_fixes`, **rebased onto `main` @ `cf01870`** (2026-08-25) — linear history,
+no merge commit; every commit SHA below is post-rebase. Two waves of unrelated `main` content are
+now part of this branch's tree as a result and are **out of scope** for this plan:
+`fix/return-analysis-revenue-not-updated` (see `docs/superpowers/specs/2026-08-20-return-analysis-
+revenue-bug-CHECKPOINT.md`) and `docs/e2e-testing-phase2-followup` — the latter includes a real
+`functions/index.js` fix in the same CAS/conflict subsystem this plan's Bug 1 touches
+(`ce3ea33`, forwarding the `conflict` flag through 409 responses — see `SKILLS.md` Skill 43 for
+that one). Confirmed no interaction with anything in this plan: full suite re-run after the
+rebase, 645 QML + 94 Functions tests, 0 failed.
+**Date:** 2026-08-22 (original), updated 2026-08-25 for the rebase
+**Covers:** all 12 commits specific to this PR — the 8 Taher wrote (`c4f276a` … `e571ed3`) plus
+the 4 from this review session (`45b3d85`, `ca75cf5`, `0fa2c32`, `519d8d0`). Full list and
 per-commit narrative: `SKILLS.md` Skill 46.
 
 **Purpose of this doc:** one place that says, per change, exactly what's covered by a test that
@@ -35,9 +40,9 @@ rather than repeated per row:
 
 | File | Change it covers | Scenarios |
 |---|---|---|
-| `tests/tst_InventoryStore_cloneSymmetry.qml` (new, 6 cases) | `652998f`'s `_clone()`/`addProduct()` field drift (Bug 1 — the actual CI-breaking bug) | **Unit/regression**: `_newProductDoc()`'s field set exactly matches `_clone()`'s whitelist (`Object.keys` equality, both content and count); `supplierId` is present at creation, not just defaulted later; survives a second `_clone()` pass unchanged. |
-| `tests/tst_InventoryStore_upsertMany.qml` (new, 11 cases) | `03319ee`/`652998f`/`fb180d8`'s SKU-generation changes, and the overwrite-clobber bug (Bug 2) found this session | **Unit**: `generateSku()` with an explicit suffix; two distinct suffixes never collide (the actual mechanism `03319ee` fixed). **Functional, all 3 `_conflictPolicy` branches** (previously only implicitly exercised, never directly tested): `overwrite` with blank sku preserves the real existing sku (regression for Bug 2) / `overwrite` with blank sku on a legacy no-sku record still synthesizes one (edge case) / `overwrite` with a provided sku keeps it verbatim (negative — confirms the fix doesn't over-preserve) / `rename` with blank sku generates a fresh unique one, original product untouched / `rename` with a provided sku goes through `ImportMath.renameSku`, not `generateSku` / `skip` leaves the matched product completely untouched (CRUD: no-op branch). **Multi-record**: two same-named new rows in one batch get distinct SKUs (the original `03319ee` bug, direct regression test). |
-| `tests/tst_StockSnapshotMath.qml` (new, 14 cases) | `05eb0e4`'s stock-snapshot export column misalignment (Bug 3) | **Unit**: `columnCount()`/`buildRow()`/`buildTotalRow()` return exactly one cell per header column, for both `showSup` true/false. **Regression**: the non-supplier row leads with `productId` (the exact bug — it used to omit this and shift every value left). **Functional**: full column-order assertion for the supplier view (all 11 positions individually). **Edge cases**: `sellingPrice` missing falls back to `price`; `stock`/`minStock` missing default to `0`, not `undefined`. |
+| `tests/tst_InventoryStore_cloneSymmetry.qml` (new, 6 cases) | `7fb306a`'s `_clone()`/`addProduct()` field drift (Bug 1 — the actual CI-breaking bug) | **Unit/regression**: `_newProductDoc()`'s field set exactly matches `_clone()`'s whitelist (`Object.keys` equality, both content and count); `supplierId` is present at creation, not just defaulted later; survives a second `_clone()` pass unchanged. |
+| `tests/tst_InventoryStore_upsertMany.qml` (new, 11 cases) | `c4f276a`/`7fb306a`/`e571ed3`'s SKU-generation changes, and the overwrite-clobber bug (Bug 2) found this session | **Unit**: `generateSku()` with an explicit suffix; two distinct suffixes never collide (the actual mechanism `c4f276a` fixed). **Functional, all 3 `_conflictPolicy` branches** (previously only implicitly exercised, never directly tested): `overwrite` with blank sku preserves the real existing sku (regression for Bug 2) / `overwrite` with blank sku on a legacy no-sku record still synthesizes one (edge case) / `overwrite` with a provided sku keeps it verbatim (negative — confirms the fix doesn't over-preserve) / `rename` with blank sku generates a fresh unique one, original product untouched / `rename` with a provided sku goes through `ImportMath.renameSku`, not `generateSku` / `skip` leaves the matched product completely untouched (CRUD: no-op branch). **Multi-record**: two same-named new rows in one batch get distinct SKUs (the original `c4f276a` bug, direct regression test). |
+| `tests/tst_StockSnapshotMath.qml` (new, 14 cases) | `b6b88cf`'s stock-snapshot export column misalignment (Bug 3) | **Unit**: `columnCount()`/`buildRow()`/`buildTotalRow()` return exactly one cell per header column, for both `showSup` true/false. **Regression**: the non-supplier row leads with `productId` (the exact bug — it used to omit this and shift every value left). **Functional**: full column-order assertion for the supplier view (all 11 positions individually). **Edge cases**: `sellingPrice` missing falls back to `price`; `stock`/`minStock` missing default to `0`, not `undefined`. |
 
 **This is the strongest claim in this doc: these 31 new cases (plus the pre-existing 500) were
 actually executed, not asserted.** Re-run it yourself: see `AGENTS.md`'s Testing & QA Agent
@@ -56,7 +61,7 @@ document and not the real `functions/lib/gatewayLogic.js` CAS check running serv
 run against the real emulator (which this sandbox cannot start — no Firebase emulator, and Qt 6.4.2
 here vs CI's 6.8) is the actual end-to-end confirmation.
 
-**Confirmed 2026-08-22, same day, via the GitHub Checks API against commit `5f64f57`:** all four
+**Confirmed 2026-08-22, same day, via the GitHub Checks API against commit `8f5daf0`:** all four
 checks green — QML Tests, Functions Tests, Firestore Rules Tests, **and E2E Tests**. Before this
 session's fixes, E2E was the one red check (see Skill 46); everything else was already green. This
 is the one claim in this whole plan that this sandbox structurally couldn't settle on its own, and
@@ -71,10 +76,10 @@ target, no QTest `.cpp` file, checked this session).
 
 | File / change | What changed | Trace performed this session |
 |---|---|---|
-| `qml/pages/InventoryPage.qml` — `baf2fab` (search by product ID) | `filteredProducts`'s `hay` string gained `p.productId` | Read the full filter function; confirmed the new field is concatenated before `name`/`sku`/`category`, so existing name/sku/category search behavior is unchanged (pure addition, not a reorder) — a page-level UI page, not extractable to a `.pragma library` helper without a bigger refactor than this PR's scope. |
-| `qml/pages/InventoryPage.qml` — `a6f8be5` (delegate text when SKU absent) | Moved the `" | "` separator outside the SKU-conditional so it always appears before the price | Traced both branches by hand (see the review conversation): SKU present → identical output to before; SKU absent → separator now correctly appears (previously price ran directly into productId with no separator — that was the bug). |
-| `qml/pages/OrderDetailDialog.qml` — `9a11e28` + this session's `050c1a5` | Visibility gated on `productId` instead of `sku`; SKU segment now conditional on `ohRow._sku` being non-empty | Traced all 4 combinations of (productId present/absent) × (sku present/absent) by hand; only the previously-broken "productId present, sku absent" case needed the fix, and it now renders without a dangling `"SKU: "` label. |
-| `src/XlsxService.cpp` — `d111a0e` (order channel column in orders export) | Inserted a "Channel" column at position 5 in `kOrderHeaders`, `writeOrdersSheet`'s per-row/per-line writes, and every `setColumnWidth` call | **Re-checked this session specifically for the same bug class as Bug 3** (an inserted column not fully propagated): confirmed every `doc.write(r, N, ...)` index after the insertion point was incremented by exactly 1, all the way through the line-item columns, and every `setColumnWidth` call likewise — unlike the SalesPage bug, this one was done completely and correctly. Still zero test coverage: this project has no C++ test harness at all (no CMake test target, no QTest `.cpp` files exist anywhere in the repo), so this confirmation is static trace, not a run. |
+| `qml/pages/InventoryPage.qml` — `6ece50a` (search by product ID) | `filteredProducts`'s `hay` string gained `p.productId` | Read the full filter function; confirmed the new field is concatenated before `name`/`sku`/`category`, so existing name/sku/category search behavior is unchanged (pure addition, not a reorder) — a page-level UI page, not extractable to a `.pragma library` helper without a bigger refactor than this PR's scope. |
+| `qml/pages/InventoryPage.qml` — `6167309` (delegate text when SKU absent) | Moved the `" | "` separator outside the SKU-conditional so it always appears before the price | Traced both branches by hand (see the review conversation): SKU present → identical output to before; SKU absent → separator now correctly appears (previously price ran directly into productId with no separator — that was the bug). |
+| `qml/pages/OrderDetailDialog.qml` — `52facf1` + this session's `0fa2c32` | Visibility gated on `productId` instead of `sku`; SKU segment now conditional on `ohRow._sku` being non-empty | Traced all 4 combinations of (productId present/absent) × (sku present/absent) by hand; only the previously-broken "productId present, sku absent" case needed the fix, and it now renders without a dangling `"SKU: "` label. |
+| `src/XlsxService.cpp` — `ad9f5f7` (order channel column in orders export) | Inserted a "Channel" column at position 5 in `kOrderHeaders`, `writeOrdersSheet`'s per-row/per-line writes, and every `setColumnWidth` call | **Re-checked this session specifically for the same bug class as Bug 3** (an inserted column not fully propagated): confirmed every `doc.write(r, N, ...)` index after the insertion point was incremented by exactly 1, all the way through the line-item columns, and every `setColumnWidth` call likewise — unlike the SalesPage bug, this one was done completely and correctly. Still zero test coverage: this project has no C++ test harness at all (no CMake test target, no QTest `.cpp` files exist anywhere in the repo), so this confirmation is static trace, not a run. |
 
 ## 4. On-device / manual checklist
 
@@ -87,7 +92,7 @@ hands to an accountant or a supplier), in priority order:
    "Channel" lands in its own column and every column after it (Staff onward, including all the
    line-item columns) still lines up with its header.
 2. **Bulk-import a CSV where several existing products' rows omit the SKU column entirely**
-   (the real-world scenario `03319ee`/Bug 2 are about), confirm after import that those products'
+   (the real-world scenario `c4f276a`/Bug 2 are about), confirm after import that those products'
    SKUs are unchanged from before the import — this is the one behavior in this PR that's easy to
    get "looks right" wrong (Section 1 tests it directly, but only against a fabricated local array;
    worth one real click-through against real app state).
@@ -100,10 +105,10 @@ hands to an accountant or a supplier), in priority order:
 
 ## 5. What this plan deliberately does not cover
 
-- **The `aba371b` merge-from-`main` content** (the `fix/return-analysis-revenue-not-updated`
-  feature) — separately designed, implemented, and tested; see its own checkpoint
-  (`docs/superpowers/specs/2026-08-20-return-analysis-revenue-bug-CHECKPOINT.md`) and Skill 42's
-  own entry there if one exists by the time you're reading this.
+- **The `main`-originated content now in this branch's tree from the rebase** — two separate
+  features, each already designed/implemented/tested on its own: `fix/return-analysis-revenue-
+  not-updated` (see `docs/superpowers/specs/2026-08-20-return-analysis-revenue-bug-CHECKPOINT.md`
+  and `SKILLS.md` Skill 42) and `docs/e2e-testing-phase2-followup` (`SKILLS.md` Skills 43-45).
 - **The full `_normalizeOrder`-style unification** flagged as a deferred trade-off in Skill 46 —
   not implemented, so nothing here tests it. `_normalizeRecord` (bulk import's own doc-shape
   builder) still independently duplicates `_newProductDoc()`/`_clone()`'s shape; a future test
