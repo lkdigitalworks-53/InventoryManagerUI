@@ -81,7 +81,36 @@ TestCase {
         Gateway.mode = "gateway"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
-        StockBatchStore.batches = []
+        // NOT []. Unlike SupplierStore/StaffStore's ID minting (a local
+        // scan floors a REAL Firestore counter), StockBatchStore's
+        // _nextBatchId() is PURELY local -- it scans this array for the
+        // highest "BAT-<year>-NNN" and has no server-side fallback at all.
+        // Any product created with stock > 0 anywhere in this whole
+        // qmltestrunner process (InventoryStore.addProduct()'s companion
+        // "Initial stock" batch, e.g. tst_InventoryE2E.qml's very first
+        // test) mints "BAT-<year>-001" against WHATEVER this array locally
+        // holds at that moment -- resetting to [] here makes this file
+        // blind to batches minted earlier in the SAME run, and it mints
+        // the identical "next" id again, colliding for real. First run
+        // hit exactly this (results.xml, 2026-08-26): "Gateway.
+        // mutationConflicted fired for stock_batch/BAT-2026-001, server
+        // has: {...note:'Initial stock'...}" -- that's InventoryStore's
+        // companion-batch note, not this file's own. Syncing for real
+        // (matching what the real app always does before minting) is the
+        // only fix that's reliable regardless of what else has run before
+        // this file this session -- resetting to some other hardcoded
+        // guess would just move the same class of collision elsewhere.
+        //
+        // This is worth Taher's attention as a real, separate finding:
+        // _nextBatchId()'s lack of a server-side counter (unlike Staff/
+        // Supplier) is a genuine latent risk in production too, not just
+        // a test artifact -- two real devices with incomplete local
+        // caches could mint the same "next" batch id concurrently. Not
+        // fixed here; flagged in CHECKPOINT.md rather than fixed
+        // opportunistically mid-test-fix.
+        StockBatchStore.syncFromFirebase()
+        tryVerify(function() { return !StockBatchStore.loadingMore && !StockBatchStore.hasMore }, 5000,
+                  "StockBatchStore never finished syncing from the emulator before this test's init()")
         OutboxStore.clear()
         lastConflict = null
         Gateway.mutationConflicted.connect(_onMutationConflicted)

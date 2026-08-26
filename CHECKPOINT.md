@@ -126,15 +126,52 @@ limitation as every QML test in this whole effort. `functions/test/index.handler
 WAS actually run and verified, since that's plain Node. All 4 QML files balance-checked (brace/paren
 parity against a Python-based check, not real QML parsing) but not executed.
 
+## Backlog items 1-3, follow-up: real E2E run found 2 genuine bugs in my own new tests (2026-08-26)
+
+Taher ran the real suite against `aba89b2` (confirmed via checkout log) — 3 failures, all confined to
+the 3 new/extended files from items 1-3, nothing else broken. Traced both root causes fully before
+touching anything (not guessed):
+
+**SupplierStore (1 failure, 1 file)**: `tst_SupplierStoreE2E.qml`'s `init()` reset
+`SupplierStore.suppliers = []`, deviating from the convention every OTHER E2E file already follows
+(seeding the known fixture supplier). `SupplierStore.nextSupplierId()` floors its mint on the highest
+supplierId found in this LOCAL array, combined with a real Firestore counter that seed.js's own
+supplier creation never touches (`seed.js` writes `SUP-001` directly via `db.doc(...).set(...)`,
+bypassing the counter entirely). An empty local array meant the first real mint attempt produced
+`SUP-001` again — a genuine, correctly-detected CAS conflict against seed.js's own canonical supplier
+(confirmed: the failure's `current.name` is exactly `seed.js`'s `SUPPLIER_NAME`, "E2E Supplier"). Fix:
+seed `SupplierStore.suppliers` with the fixture supplier in `init()`, matching every other file.
+
+**StockBatchStore (2 failures, 1 file)**: different, and more interesting — a real, pre-existing
+latent bug this new test happened to be the first thing ever sensitive enough to expose.
+`StockBatchStore._nextBatchId()` is PURELY local (scans the `batches` array's highest
+`BAT-<year>-NNN`) with NO server-side counter fallback, unlike Staff/Supplier. Any product created
+with `stock > 0` anywhere in the same process triggers `InventoryStore.addProduct()`'s companion
+"Initial stock" batch creation (confirmed by reading `InventoryStore.qml:451`, not assumed) — which
+mints `BAT-<year>-001` against whatever `batches` locally holds AT THAT MOMENT. Since
+`tst_InventoryE2E.qml`'s very first test creates a product with stock, it mints `BAT-2026-001` first,
+for real, server-side. My new file's `init()` reset `StockBatchStore.batches = []`, hiding that from
+`_nextBatchId()`'s scan, so it minted the identical id again — a genuine collision (confirmed:
+`current.note` in the failure is exactly `"Initial stock"`, `InventoryStore`'s companion-batch
+wording, not either of my own tests' `"E2E test batch"`/`"Conflict test batch"`). Fix: sync
+`StockBatchStore` from the real emulator in `init()` (`syncFromFirebase()` + wait for
+`!loadingMore && !hasMore`) instead of blindly resetting — robust regardless of what else has run
+earlier in the same process, unlike hardcoding some other assumed-safe starting id would have been.
+
+**Real finding, not fixed here, flagged for Taher**: `_nextBatchId()`'s lack of a server-side counter
+(unlike `nextSupplierId()`/`nextStaffId()`, which both use `FirebaseService.mintCounterValue`) is a
+genuine latent risk in *production*, not just a test artifact — two real devices with incomplete
+local caches could concurrently mint the same "next" batch id. This E2E fix doesn't touch that; it
+was surfaced as a side effect of debugging the test failure, and deserves its own deliberate decision
+(add a real counter matching Staff/Supplier's pattern?) rather than an opportunistic fix mid-round.
+
 ## Next step
 
-1. Taher: run the real E2E suite (`qmltestrunner -input test/e2e`) to confirm all 3 new/extended
-   files actually pass — this is the one thing this sandbox cannot verify itself.
-2. Two small things surfaced along the way, not acted on: `StockBatchStore.qml`'s stale
-   `_onMutationConflicted` comment (see above), and confirming (or not) whether the "real app almost
-   certainly never hits this in practice" note in `tst_InventoryE2E.qml`'s `initTestCase()` about
-   `AuthService`'s construction-order wipe has ever been traced against `Main.qml`'s actual bootstrap
-   sequence — flagged there as "worth Taher's own quick confirmation," still unconfirmed.
-3. Items 4 (`orderMath.js` parity) and 5 (account-switch-mid-sync) remain known tech debt, explicitly
-   deferred per Taher's instruction, not attempted this round.
-4. Phase 2 probe — closed (see the "Phase 2 probe: answered" section above), unchanged.
+1. Taher: re-run the real suite to confirm both fixes hold — this sandbox verified them by reasoning
+   through the exact mechanism (mintCounterValue's seed-vs-existing-value logic, `_nextBatchId()`'s
+   scan, `InventoryStore.addProduct()`'s companion-batch call site), not by executing qmltestrunner,
+   same standing limitation as every QML file in this whole effort.
+2. Consider whether `_nextBatchId()` deserves the same real-counter treatment as Staff/Supplier —
+   flagged above, not decided or scheduled here.
+3. Items 4/5 still deliberately untouched, per Taher's instruction — unchanged.
+4. Phase 2 probe — closed, unchanged.

@@ -58,7 +58,21 @@ TestCase {
         Gateway.mode = "gateway"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
-        SupplierStore.suppliers = []
+        // NOT []. SupplierStore.nextSupplierId() floors its mint on the
+        // highest supplierId number found in this LOCAL array (seedMax),
+        // combined with a real Firestore counter -- but the counter is
+        // never pre-seeded (seed.js writes SUP-001 directly, bypassing the
+        // counter entirely), so an empty local array here makes
+        // nextSupplierId() mint "SUP-001" again on a fresh counter,
+        // colliding with seed.js's real SUP-001. First real run of this
+        // file hit exactly that (results.xml, 2026-08-26): "Gateway.
+        // mutationConflicted fired for supplier/SUP-001, server has:
+        // {...name:'E2E Supplier'...}" -- E2E Supplier is seed.js's exact
+        // SUPPLIER_NAME. Matching the convention every OTHER E2E file
+        // already uses (tst_InventoryE2E.qml, tst_OrdersE2E.qml, etc.)
+        // fixes it: seed the known fixture supplier so seedMax correctly
+        // floors at 1.
+        SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
         OutboxStore.clear()
         lastConflict = null
         Gateway.mutationConflicted.connect(_onMutationConflicted)
