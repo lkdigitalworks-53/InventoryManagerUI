@@ -70,10 +70,71 @@ implementation, checking what specifically?) before it can get a real complexity
 #5, the checkpoint history is explicit that this was left for Taher's own call on the trade-off, not
 something to size and schedule without that input.
 
+## Backlog items 1-3: complete (2026-08-25)
+
+**Item 1 (tenant guard on ActivityLog/CategoryStore/OrderChannelStore): turned out to need zero code
+changes.** Investigated before touching anything (per the discipline this session's earlier mistakes
+made non-negotiable) — the `Component.onCompleted` guard already existed in all three stores, and
+`Main.qml`'s central `onTenantContextReady` resync already calls all three
+(`ActivityLog.syncFromFirebase()`, `OrderChannelStore.syncFromFirebase()`,
+`CategoryStore.syncFromFirebase()`). Nearly reported this as a bug based on a `grep -A 25` window
+that cut off one line short of `CategoryStore`'s call — caught it by re-viewing the full function
+before writing anything down. The original backlog description was simply stale; closed, no commit
+needed for this item specifically.
+
+**Item 2 (`functions/index.js` handler-level tests): done.** New file
+`functions/test/index.handlers.test.js` (14 tests) plus a shared harness
+`functions/test/testSupport/handlerHarness.js`. Covers `recordMutation`, `recordDelta`,
+`recordMutationsBatch` — the three endpoints sharing the auth->validate->apply->respond shape and
+Skill 43's exact risk class. Deliberately does NOT cover `acquireLock`/`releaseLock`/
+`provisionMember`/`runCutover`/`computeAnalysis` — a scope boundary, stated plainly rather than
+silently incomplete, since those share less of this specific risk pattern. Technique (mocking
+firebase-admin + local `lib/` deps via `require.cache` injection, `node-mocks-http` for req/res) is
+written up as Skill 46. One OPTIONS-preflight test was attempted and dropped — hung due to a
+`cors`-middleware/mock interaction unrelated to this codebase's own logic; not worth fighting.
+Verified with a real `npm ci` (matching CI exactly, not just the existing node_modules) + `node --test`:
+all 109 tests pass (14 new + 95 pre-existing, nothing broken). `node-mocks-http` added as a
+devDependency — `functions/package.json` and `functions/package-lock.json` both updated.
+
+**Item 3 (dedicated conflict tests for the other 4 `mutationConflicted`-connected stores): done, with
+one honest scope note.** Extended `tst_InventoryE2E.qml` with a conflict test (it already had the
+signal-handling scaffolding, just no test exercising it). Created `tst_StaffStoreE2E.qml` and
+`tst_SupplierStoreE2E.qml` from scratch, closely mirroring `tst_InventoryE2E.qml`'s proven structure
+rather than improvising new boilerplate. All three follow the same shape as
+`tst_OrdersStoreE2E.qml`'s proven conflict test, simplified now that QTBUG-49896 is actually fixed
+(10s wait instead of the old investigation's 45s; no need for the elaborate diagnostic-on-failure
+logic that only existed because the bug was still unsolved).
+
+**`StockBatchStore` needed a different scenario, found by actually reading the code first**: every
+numeric mutation in that store (`consumeFifo`/`topUpOldest`/`restoreFifo`) goes through
+`Gateway.recordDelta`, not `recordMutation` — confirmed by grepping the whole file, not assumed.
+`recordDelta`'s atomic floor/clamp semantics make a CAS conflict structurally impossible there; the
+ONLY `recordMutation` call anywhere in the store is `addBatch`'s "create" action. So
+`tst_StockBatchStoreE2E.qml`'s conflict test exercises a duplicate-create collision instead of an
+update collision — the actually-reachable path — with a direct (non-`StockBatchStore`-API)
+server-side update in between so the reconciliation assertion checks a real change, not an echo. This
+is explained at length in the file's own header comment, not left implicit.
+
+**Also found in the process, not fixed (out of this item's scope)**: `StockBatchStore.qml`'s own
+`_onMutationConflicted` comment claims a conflict can happen via "qtyRemaining via plain
+recordMutation" — that doesn't match the current code (it's `recordDelta` now). Reads like a stale
+comment surviving a past `recordDelta` conversion. Flagging for Taher rather than fixing opportunistically
+mid-backlog-item.
+
+**Not run against a real `qmltestrunner`/Cloud Functions emulator** — same standing sandbox
+limitation as every QML test in this whole effort. `functions/test/index.handlers.test.js` (item 2)
+WAS actually run and verified, since that's plain Node. All 4 QML files balance-checked (brace/paren
+parity against a Python-based check, not real QML parsing) but not executed.
+
 ## Next step
 
-1. Taher: confirm/adjust the priority order above, and give the missing context for #4 (or confirm
-   it should get its own scoping pass first) and a direction on #5.
-2. Once confirmed, start on #1 — smallest, clearest, real bug, good first move after a long branch.
-3. Docs (`AGENTS.md`, `SKILLS.md`, `README.md`) already updated this session for the QTBUG-49896
-   workaround and the Phase 2 probe's conclusion; no further doc wrap-up owed for the merged PR.
+1. Taher: run the real E2E suite (`qmltestrunner -input test/e2e`) to confirm all 3 new/extended
+   files actually pass — this is the one thing this sandbox cannot verify itself.
+2. Two small things surfaced along the way, not acted on: `StockBatchStore.qml`'s stale
+   `_onMutationConflicted` comment (see above), and confirming (or not) whether the "real app almost
+   certainly never hits this in practice" note in `tst_InventoryE2E.qml`'s `initTestCase()` about
+   `AuthService`'s construction-order wipe has ever been traced against `Main.qml`'s actual bootstrap
+   sequence — flagged there as "worth Taher's own quick confirmation," still unconfirmed.
+3. Items 4 (`orderMath.js` parity) and 5 (account-switch-mid-sync) remain known tech debt, explicitly
+   deferred per Taher's instruction, not attempted this round.
+4. Phase 2 probe — closed (see the "Phase 2 probe: answered" section above), unchanged.
