@@ -175,3 +175,35 @@ was surfaced as a side effect of debugging the test failure, and deserves its ow
    flagged above, not decided or scheduled here.
 3. Items 4/5 still deliberately untouched, per Taher's instruction — unchanged.
 4. Phase 2 probe — closed, unchanged.
+
+## Stale comment fixed; mintCounterValue decision moved to the new roadmap doc (2026-08-26)
+
+Fixed `StockBatchStore.qml`'s stale `_onMutationConflicted` comment (see prior round's flag) —
+confirmed by re-reading the whole file that `consumeFifo`/`topUpOldest`/`restoreFifo` all use
+`Gateway.recordDelta`, corrected the comment to describe the actually-reachable conflict path
+(`addBatch`'s create action) instead.
+
+**Did not implement the `mintCounterValue` conversion this round.** Taher asked for it directly, but
+investigating the actual blast radius first (per this whole effort's standing discipline) found it's
+substantially bigger than "swap one function": `addBatch()`/`addBatchMany()` are called *synchronously*
+today, and `InventoryStore.qml`'s bulk-import loop (~line 660-731) depends on that — it mints N batch
+ids in a tight synchronous loop, each call relying on seeing the previous call's freshly-pushed local
+entry to avoid colliding within that same loop. Converting `_nextBatchId()` to async cascades into
+restructuring that loop's control flow — a real change to a working, sensitive, otherwise-unrelated
+production feature. Wrote up two real options (full async parity with Staff/Supplier vs. a smaller
+retry-on-conflict fix that touches only `StockBatchStore.qml`) in the new
+`docs/superpowers/E2E-TESTING-ROADMAP.md`, leaning towards the smaller option, but flagged for
+Taher's decision rather than picked unilaterally given the risk/scope difference between the two.
+
+**New standing doc**: `docs/superpowers/E2E-TESTING-ROADMAP.md` — a living roadmap (not archived like
+this file will eventually be) for all pending E2E-testing-arising work, per Taher's request to
+maintain this going forward rather than re-deriving the pending list from scattered checkpoint rounds
+each time. This CHECKPOINT.md will still track active session-by-session progress; the roadmap doc is
+where the durable, cross-session pending list lives now.
+
+## Next step
+
+1. Taher: decide on the `_nextBatchId()` fix approach (Option A or B in the roadmap doc) — not
+   implemented pending that.
+2. Everything else: see `docs/superpowers/E2E-TESTING-ROADMAP.md` going forward, rather than this
+   file's own history.
