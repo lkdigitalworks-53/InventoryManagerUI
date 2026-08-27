@@ -2274,7 +2274,7 @@ returning zero hits, not just assumed clean after one pass.
 
 **The new `pr_taher_bug_fixes` test plan** (`2026-08-22-pr_taher_bug_fixes-test-plan.md`, the first
 plan seeded directly into the new folder) follows the same three-tier structure
-`2026-08-08-review-round2-test-plan.md` established: what's genuinely been run (31 new cases, via
+`2026-08-08-review-round2-test-plan.md` established: what's genuinely been run (25 new cases, via
 the Skill 42 scratch-copy workaround — 531/531 passing), what a real Qt 6.8 + Firebase emulator CI
 run will confirm that this sandbox structurally cannot (the actual E2E tests that failed pre-fix),
 and what has zero automated coverage with a static trace instead (`InventoryPage.qml`'s two UI-page
@@ -2296,4 +2296,35 @@ scratch-copy run (which this session runs before ever claiming "done," not after
 immediately as a compile error rather than a silent no-op test file — the fix was one line, but the
 catch is the point: static review of a diff doesn't substitute for actually running it, even for a
 change that "obviously" just adds test functions.
+
+## Skill 48: Standard test plan structure (Taher's convention) — UT / Regression / E2E, then an on-device plan with 5 fixed sections
+
+**Files**: `docs/superpowers/test-plans/2026-08-22-pr_taher_bug_fixes-test-plan.md` (restructured
+to this format), memory edit #9 (records the convention for future sessions).
+
+**The convention, stated once so it doesn't have to be re-derived each time**: every test plan
+going forward opens with three sections listing what's already covered by a test that's genuinely
+been *run* — Unit Tests, Regression Tests, and E2E — each as its own section, not folded together.
+Unit and regression are a real distinction worth keeping separate even when the same test file
+holds both kinds: a unit test checks a piece of logic is correct on its own terms (would exist even
+if nothing had ever broken); a regression test exists *because* something broke, and pins down the
+specific defect. The same file can have both — `tst_InventoryStore_upsertMany.qml` has 6 unit cases
+and 3 regression cases — and conflating them loses the "why does this test exist" information a
+reviewer actually wants. After those three sections, a separate **On-Device Test Plan** follows
+with five fixed sections regardless of feature: Happy Path, Negative, Edge Cases, Affected Areas,
+Regression Tests. "Affected Areas" is where a file-by-file coverage table belongs (what used to be
+called a "gap list" in earlier plans in this folder) — every file the change touches, whether it
+has automated coverage, and where to look on-device if it doesn't. The on-device "Regression Tests"
+section is the manual-click-through counterpart to the automated regression section above it, not
+a duplicate of it — same bugs, phrased as "how would you notice if this came back" rather than as
+assertions.
+
+**A miscounted claim, found and fixed while doing this restructure**: the `pr_taher_bug_fixes`
+test plan had been asserting "31 new cases" since it was first written, repeated verbatim into this
+folder's `README.md` and into Skill 47's own write-up. Actually counting each file's
+`function test_...` declarations (`grep -oE "function test_[a-zA-Z0-9_]+" tests/tst_*.qml`) instead
+of trusting the carried-forward number: 4 + 9 + 12 = **25**, not 31. All three places corrected in
+the same pass as the restructure — a wrong number copied three times isn't three independent
+confirmations of it, it's one mistake with three symptoms. Recounting a real artifact (test
+functions in a file) is cheap; re-asserting a remembered number is not the same as checking it.
 

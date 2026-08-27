@@ -145,6 +145,18 @@ all updated to match. Re-verified post-rebase: 645 QML tests + 94 Functions test
 copy, same Qt-version workaround as before). Force-pushed with `--force-with-lease` against the
 known prior tip; lease held clean.
 
+## Test plan restructure, 2026-08-26
+
+Taher set a standing convention (recorded in memory): every test plan opens with Unit
+Tests/Regression Tests/E2E sections (each genuinely run), then a separate On-Device Test Plan with
+Happy Path/Negative/Edge Cases/Affected Areas/Regression Tests sections. Rewrote the
+`pr_taher_bug_fixes` test plan to this format. While doing it, actually counted each test file's
+`function test_...` declarations instead of trusting the "31 new cases" figure carried since the
+plan was first written — real count is **25** (18 unit + 7 regression). Fixed in three places:
+the test plan itself, `docs/superpowers/test-plans/README.md`'s index entry, and Skill 47's own
+write-up (which had repeated the same wrong number). Added `SKILLS.md` Skill 48 for the convention
+and the miscounted-number lesson.
+
 ## Next steps
 
 - Get Taher's go-ahead (or pushback) on the trade-off above.

@@ -1,118 +1,157 @@
 # Test plan — `pr_taher_bug_fixes`
 
-**Branch:** `pr_taher_bug_fixes`, **rebased onto `main` @ `cf01870`** (2026-08-25) — linear history,
+**Branch:** `pr_taher_bug_fixes`, rebased onto `main` @ `cf01870` (2026-08-25) — linear history,
 no merge commit; every commit SHA below is post-rebase. Two waves of unrelated `main` content are
 now part of this branch's tree as a result and are **out of scope** for this plan:
-`fix/return-analysis-revenue-not-updated` (see `docs/superpowers/specs/2026-08-20-return-analysis-
-revenue-bug-CHECKPOINT.md`) and `docs/e2e-testing-phase2-followup` — the latter includes a real
-`functions/index.js` fix in the same CAS/conflict subsystem this plan's Bug 1 touches
-(`ce3ea33`, forwarding the `conflict` flag through 409 responses — see `SKILLS.md` Skill 43 for
-that one). Confirmed no interaction with anything in this plan: full suite re-run after the
-rebase, 645 QML + 94 Functions tests, 0 failed.
-**Date:** 2026-08-22 (original), updated 2026-08-25 for the rebase
+`fix/return-analysis-revenue-not-updated` (`docs/superpowers/specs/2026-08-20-return-analysis-
+revenue-bug-CHECKPOINT.md`, `SKILLS.md` Skill 42) and `docs/e2e-testing-phase2-followup`
+(`SKILLS.md` Skills 43-45) — the latter includes a real `functions/index.js` fix in the same
+CAS/conflict subsystem this plan's Bug 1 touches, confirmed non-interacting via a full post-rebase
+suite re-run (645 QML + 94 Functions tests, 0 failed).
+**Date:** 2026-08-22, restructured 2026-08-26 to the standard UT/Regression/E2E/on-device format
+(`SKILLS.md` Skill 48).
 **Covers:** all 12 commits specific to this PR — the 8 Taher wrote (`c4f276a` … `e571ed3`) plus
-the 4 from this review session (`45b3d85`, `ca75cf5`, `0fa2c32`, `519d8d0`). Full list and
-per-commit narrative: `SKILLS.md` Skill 46.
+the 4 from this review session (`45b3d85`, `ca75cf5`, `0fa2c32`, `519d8d0`). Full per-commit
+narrative: `SKILLS.md` Skill 46 (the three bugs) and Skill 47 (the test-plan consolidation).
 
-**Purpose of this doc:** one place that says, per change, exactly what's covered by a test that
-has genuinely been RUN, what's covered only by static trace, and what has zero coverage of any
-kind — instead of leaving that spread across 12 commit messages and a skill entry. Mirrors
-`2026-08-08-review-round2-test-plan.md`'s three-tier structure (also now in this same folder).
+Every count below comes from a genuine `qmltestrunner`/`node --test` run (verified 2026-08-26 by
+counting each file's actual `function test_...` declarations, not carried forward from an earlier
+approximate claim) — see "How this was verified" at the end for exact commands and the one
+sandbox caveat that applies throughout (Qt 6.4.2 here vs CI's 6.8, worked around with a throwaway
+scratch copy; real CI on Qt 6.8 is what actually confirms the E2E section).
 
 ---
 
-## 1. What's actually verified — automated, genuinely run
+## 1. Unit test coverage
 
-Every file below was run with a real `qmltestrunner -input tests -platform offscreen` in this
-session — **531 passed, 0 failed** as of the last run. Two honest caveats, stated once here
-rather than repeated per row:
+Pure-logic correctness, independent of any specific bug — would exist even if nothing had ever
+broken. 18 cases.
 
-- This Cloud sandbox only has Qt **6.4.2** installed (`apt`); CI runs **6.8**. A real, unrelated
-  API difference (`Settings` moved `Qt.labs.settings` → `QtCore` between those versions) makes 14
-  pre-existing files fail to compile under 6.4.2 — confirmed identical on `main`, nothing to do
-  with this PR. To get a genuine run of everything including those 14 (and thereby everything
-  below), verification was done in a **throwaway scratch copy** with a temporary compat shim
-  (`Qt.labs.settings` swapped in, `location:` properties stripped) — the real working tree was
-  never touched by the shim, and the scratch copy was deleted after. Full detail: `SKILLS.md`
-  Skill 46.
-- "Run" here means `qmltestrunner`, not the real app. Nothing in this section touched a device,
-  the Felgo `App` context, or a real Firestore/Cloud-Functions backend.
+| File | Cases |
+|---|---|
+| `tests/tst_InventoryStore_cloneSymmetry.qml` | `test_newProductDoc_sends_supplierId_at_creation` — `supplierId` is part of the create payload at all, separate from the drift-with-`_clone()` question §2 covers. |
+| `tests/tst_InventoryStore_upsertMany.qml` | `test_generateSku_uses_the_explicit_numOfProducts_suffix` (correct prefix/year/suffix format); `test_overwrite_with_blank_sku_falls_back_to_generated_when_existing_also_has_none` (legacy-data fallback still works); `test_overwrite_with_a_provided_sku_keeps_the_provided_value` (doesn't over-preserve); `test_rename_policy_with_blank_sku_generates_a_fresh_unique_sku`; `test_rename_policy_with_provided_sku_gets_a_renamed_suffix_not_a_fresh_one` (goes through `ImportMath.renameSku`, not `generateSku`); `test_skip_policy_leaves_the_existing_product_untouched`. |
+| `tests/tst_StockSnapshotMath.qml` | `test_columnCount_matches_SalesPage_snapHeaders_supplier_view` / `_non_supplier_view`; `test_buildRow_supplier_view_has_exactly_one_cell_per_header_column` / `_non_supplier_view_has_exactly_one_cell_per_header_column`; `test_buildRow_supplier_view_column_order`; `test_buildTotalRow_supplier_view_has_exactly_one_cell_per_header_column` / `_non_supplier_view_has_exactly_one_cell_per_header_column`; `test_buildTotalRow_supplier_view_places_label_and_total_under_supplier_and_stock` / `_non_supplier_view_places_label_and_total_under_category_and_stock`; `test_buildRow_falls_back_to_price_when_sellingPrice_missing`; `test_buildRow_handles_zero_stock_and_missing_minStock`. |
 
-| File | Change it covers | Scenarios |
+## 2. Regression test coverage
+
+Tests that exist *specifically because* a bug was found — each one pins down the exact defect so
+it can't come back silently. 7 cases.
+
+| Test | Regression for | What it locks down |
 |---|---|---|
-| `tests/tst_InventoryStore_cloneSymmetry.qml` (new, 6 cases) | `7fb306a`'s `_clone()`/`addProduct()` field drift (Bug 1 — the actual CI-breaking bug) | **Unit/regression**: `_newProductDoc()`'s field set exactly matches `_clone()`'s whitelist (`Object.keys` equality, both content and count); `supplierId` is present at creation, not just defaulted later; survives a second `_clone()` pass unchanged. |
-| `tests/tst_InventoryStore_upsertMany.qml` (new, 11 cases) | `c4f276a`/`7fb306a`/`e571ed3`'s SKU-generation changes, and the overwrite-clobber bug (Bug 2) found this session | **Unit**: `generateSku()` with an explicit suffix; two distinct suffixes never collide (the actual mechanism `c4f276a` fixed). **Functional, all 3 `_conflictPolicy` branches** (previously only implicitly exercised, never directly tested): `overwrite` with blank sku preserves the real existing sku (regression for Bug 2) / `overwrite` with blank sku on a legacy no-sku record still synthesizes one (edge case) / `overwrite` with a provided sku keeps it verbatim (negative — confirms the fix doesn't over-preserve) / `rename` with blank sku generates a fresh unique one, original product untouched / `rename` with a provided sku goes through `ImportMath.renameSku`, not `generateSku` / `skip` leaves the matched product completely untouched (CRUD: no-op branch). **Multi-record**: two same-named new rows in one batch get distinct SKUs (the original `c4f276a` bug, direct regression test). |
-| `tests/tst_StockSnapshotMath.qml` (new, 14 cases) | `b6b88cf`'s stock-snapshot export column misalignment (Bug 3) | **Unit**: `columnCount()`/`buildRow()`/`buildTotalRow()` return exactly one cell per header column, for both `showSup` true/false. **Regression**: the non-supplier row leads with `productId` (the exact bug — it used to omit this and shift every value left). **Functional**: full column-order assertion for the supplier view (all 11 positions individually). **Edge cases**: `sellingPrice` missing falls back to `price`; `stock`/`minStock` missing default to `0`, not `undefined`. |
+| `test_newProductDoc_fields_exactly_match_clone_whitelist`, `test_clone_preserves_supplierId_across_a_second_touch`, `test_clone_key_count_matches_created_doc_key_count` (`tst_InventoryStore_cloneSymmetry.qml`) | **Bug 1** — `addProduct()`'s create payload silently missing `supplierId`, breaking `_clone()` symmetry | `_newProductDoc()` and `_clone()`'s field sets stay exactly equal (same keys, same count) — the mechanism the server's CAS check (`functions/lib/gatewayLogic.js` `_deepEqual`) requires to avoid a false 409. |
+| `test_overwrite_with_blank_sku_preserves_the_existing_sku` (`tst_InventoryStore_upsertMany.qml`) | **Bug 2** — overwrite generated a brand-new SKU instead of preserving the existing one | A blank `sku` column on an overwrite row no longer clobbers the product's real SKU. |
+| `test_generateSku_with_different_explicit_numbers_never_collide`, `test_new_rows_in_one_batch_get_distinct_skus` (`tst_InventoryStore_upsertMany.qml`) | The **original bug** `c4f276a` fixed — every SKU-less row in one import batch collided on the same suffix (`products.length` read once, frozen for the whole loop) | Two same-named new products in one batch get distinct SKUs. |
+| `test_buildRow_non_supplier_view_leads_with_productId` (`tst_StockSnapshotMath.qml`) | **Bug 3** — the non-supplier export row omitted `productId`, shifting every column left | Confirms the leading column is `productId`, not `name`. |
 
-**This is the strongest claim in this doc: these 31 new cases (plus the pre-existing 500) were
-actually executed, not asserted.** Re-run it yourself: see `AGENTS.md`'s Testing & QA Agent
-section for the exact command, and `SKILLS.md` Skill 46 for the scratch-copy workaround if your
-sandbox has the same Qt-version gap. **Update, same day:** real CI now confirms this independently
-too — see §2.
+## 3. E2E test coverage
 
-## 2. What CI will verify that this sandbox cannot — real Qt 6.8 + real Firebase emulator
+`test/e2e/tst_InventoryE2E.qml`, run via `firebase emulators:exec` against a real Firestore/Auth
+emulator — the only layer in this plan that exercises the real server-side CAS check, not a
+fabricated local product.
 
-`test/e2e/tst_InventoryE2E.qml`'s `test_updateProduct_persists_to_emulator` and
-`test_deleteProduct_removes_from_emulator` are the tests that actually failed on the real CI run
-against this branch before this session's fixes (confirmed via the GitHub Checks API, not
-guessed — see Skill 46). Section 1's `tst_InventoryStore_cloneSymmetry.qml` tests the same
-invariant these two rely on, but against a **fabricated local product**, not a real Firestore
-document and not the real `functions/lib/gatewayLogic.js` CAS check running server-side. The E2E
-run against the real emulator (which this sandbox cannot start — no Firebase emulator, and Qt 6.4.2
-here vs CI's 6.8) is the actual end-to-end confirmation.
+| Test | Status |
+|---|---|
+| `test_addProduct_creates_real_emulator_doc` | Passed before and after this session's fixes — creation has no CAS "before" to compare, so Bug 1 never affected it. |
+| `test_updateProduct_persists_to_emulator` | **Failed before the fix** (false 409 from Bug 1), confirmed green after — via the real GitHub Checks API against this branch's CI run, all four checks (QML/Functions/Firestore-Rules/**E2E**) green. |
+| `test_deleteProduct_removes_from_emulator` | Same as above — failed before, confirmed green after, same root cause. |
 
-**Confirmed 2026-08-22, same day, via the GitHub Checks API against commit `8f5daf0`:** all four
-checks green — QML Tests, Functions Tests, Firestore Rules Tests, **and E2E Tests**. Before this
-session's fixes, E2E was the one red check (see Skill 46); everything else was already green. This
-is the one claim in this whole plan that this sandbox structurally couldn't settle on its own, and
-it's now settled by the actual CI run, not by inference from the local scratch-copy workaround.
+This is the one section this sandbox cannot run itself (no local Firebase emulator, Qt 6.4.2 vs
+CI's 6.8) — its result comes from the real CI run, not a local workaround.
 
-## 3. What has NO automated coverage — static trace only, no test file exists
+---
 
-Not "untested this round" — these files/functions have never had a test harness, consistent with
-this project's established pattern (UI pages need the full Felgo `App` context and don't load
-under `qmltestrunner`; there is no C++ test harness of any kind in this repo — no CMake test
-target, no QTest `.cpp` file, checked this session).
+## 4. On-device test plan
 
-| File / change | What changed | Trace performed this session |
+### Happy path
+
+1. Bulk-import a CSV of brand-new products, several sharing a first-and-last-initial (so they'd
+   get the same SKU prefix), all with blank SKU cells — confirm every imported product gets a
+   distinct SKU (the original sibling bug, `c4f276a`).
+2. Bulk-import a CSV that updates several *existing* products' stock/price but leaves the SKU
+   column blank for all of them — confirm every product's SKU is completely unchanged afterward
+   (Bug 2).
+3. Add a single new product via the "Add Product" dialog, then immediately edit it (price or
+   stock) — confirm the edit saves without an unexpected "conflict" error (Bug 1, the real E2E
+   failure this session fixed).
+4. View the stock-snapshot export from the Sales page as an owner/admin (`canViewSuppliers`) —
+   confirm all 11 columns (Product ID through Tax%) line up correctly, Total row included.
+5. View the same export as a staff user without `canViewSuppliers` — confirm all 7 columns line
+   up (this is the combination that was actually broken pre-fix, Bug 3).
+6. Export the orders sheet, confirm the "Channel" column sits correctly among Staff/tax/line-item
+   columns (`ad9f5f7` — verified correct by static trace this session, never click-tested).
+7. Search the inventory list by typing a product ID (not name/SKU/category) — confirm it matches
+   (`6ece50a`).
+8. Open a completed order's history for a product that has a SKU — confirm the row reads
+   "`<productId> | SKU: <sku> | ₹<price>`".
+
+### Negative
+
+1. Bulk-import a CSV row whose `productId` doesn't match any existing product and has no SKU,
+   using the "overwrite" policy — since there's nothing to overwrite, confirm this doesn't crash
+   and produces a sane fallback (worth confirming which path it actually takes — this plan's
+   automated tests only exercise the matched case).
+2. Add a product with a name under 2 characters via the "Add Product" dialog's SKU-suggest button
+   — `generateSku()` returns `""` for `name.length < 2`; confirm the UI handles an empty
+   suggestion gracefully rather than showing a malformed SKU.
+3. Try to view the stock-snapshot export with zero products in inventory — confirm the Total row
+   still renders with correct column count (grandTotal = 0) rather than an empty/malformed row.
+
+### Edge cases
+
+1. A product created before this fix landed (so it has no `supplierId` field in Firestore at
+   all) — edit it once now that the fix is live; confirm the edit succeeds (existing pre-fix
+   data, distinct from "new data created after the fix," and not covered by any automated test
+   since those all start from a freshly-created record).
+2. Overwrite an existing product whose *stored* SKU is itself already blank (legacy data,
+   pre-dating SKU enforcement) with a CSV row that also has a blank SKU — confirm a SKU gets
+   synthesized rather than staying permanently blank (covered automatedly by
+   `test_overwrite_with_blank_sku_falls_back_to_generated_when_existing_also_has_none`, worth one
+   real click-through since it's a legacy-data path).
+3. A product with a completely blank SKU (not just "no supplierId") viewed in an order's history
+   — confirm the row reads "`<productId> | ₹<price>`" with no dangling "SKU: " label (fixed this
+   session, cosmetic).
+4. Import a CSV batch large enough that `pullProductId()`'s minted numeric suffix crosses from
+   3 digits to 4 (e.g. product #999 → #1000) — confirm the generated SKU still looks sane
+   (`padStart(3,'0')` only pads, doesn't truncate, so this should be fine, but hasn't been
+   click-tested).
+
+### Affected areas
+
+Every file this PR touches, and its current automated-coverage status, for anyone deciding where
+else to look:
+
+| File | Automated coverage | Notes |
 |---|---|---|
-| `qml/pages/InventoryPage.qml` — `6ece50a` (search by product ID) | `filteredProducts`'s `hay` string gained `p.productId` | Read the full filter function; confirmed the new field is concatenated before `name`/`sku`/`category`, so existing name/sku/category search behavior is unchanged (pure addition, not a reorder) — a page-level UI page, not extractable to a `.pragma library` helper without a bigger refactor than this PR's scope. |
-| `qml/pages/InventoryPage.qml` — `6167309` (delegate text when SKU absent) | Moved the `" | "` separator outside the SKU-conditional so it always appears before the price | Traced both branches by hand (see the review conversation): SKU present → identical output to before; SKU absent → separator now correctly appears (previously price ran directly into productId with no separator — that was the bug). |
-| `qml/pages/OrderDetailDialog.qml` — `52facf1` + this session's `0fa2c32` | Visibility gated on `productId` instead of `sku`; SKU segment now conditional on `ohRow._sku` being non-empty | Traced all 4 combinations of (productId present/absent) × (sku present/absent) by hand; only the previously-broken "productId present, sku absent" case needed the fix, and it now renders without a dangling `"SKU: "` label. |
-| `src/XlsxService.cpp` — `ad9f5f7` (order channel column in orders export) | Inserted a "Channel" column at position 5 in `kOrderHeaders`, `writeOrdersSheet`'s per-row/per-line writes, and every `setColumnWidth` call | **Re-checked this session specifically for the same bug class as Bug 3** (an inserted column not fully propagated): confirmed every `doc.write(r, N, ...)` index after the insertion point was incremented by exactly 1, all the way through the line-item columns, and every `setColumnWidth` call likewise — unlike the SalesPage bug, this one was done completely and correctly. Still zero test coverage: this project has no C++ test harness at all (no CMake test target, no QTest `.cpp` files exist anywhere in the repo), so this confirmation is static trace, not a run. |
+| `qml/model/InventoryStore.qml` | Unit + regression (§1, §2) | `generateSku`, `_upsertManySync`, `_newProductDoc`, `_clone` |
+| `qml/helper/StockSnapshotMath.js` (new) | Unit + regression (§1, §2) | Extracted specifically to make Bug 3 testable |
+| `qml/pages/SalesPage.qml` | Indirect only — the helper is tested, the page's call site isn't | Confirm on-device (happy path #4-#5) |
+| `qml/pages/InventoryPage.qml` | **None** — UI page, no test harness under this project's convention | Search-by-ID (happy path #7) and delegate text (no dedicated scenario, low risk) |
+| `qml/pages/OrderDetailDialog.qml` | **None** — UI page | Happy path #8, edge case #3 |
+| `src/XlsxService.cpp` | **None** — zero C++ test harness exists anywhere in this repo | Happy path #6; re-checked by static trace this session for the same "column added, index not fully shifted" bug class as Bug 3 and found correct, but never click-tested |
+| `functions/index.js` (from the rebase, not this PR) | Node unit tests, `functions/test/` | Out of scope — see header |
 
-## 4. On-device / manual checklist
+### Regression tests
 
-For the row in §3 with the highest blast radius if wrong (silently wrong data in a file someone
-hands to an accountant or a supplier), in priority order:
+On-device re-verification of the 3 bugs found this session, for anyone who wants to confirm on a
+real device/emulator rather than trust the automated suite:
 
-1. **Export the orders sheet after this branch, open it in Excel/LibreOffice, eyeball the header
-   row against the first few data rows.** This is the one item worth actually clicking through —
-   it's the only §3 change touching money/tax figures in a file that leaves the app. Confirm
-   "Channel" lands in its own column and every column after it (Staff onward, including all the
-   line-item columns) still lines up with its header.
-2. **Bulk-import a CSV where several existing products' rows omit the SKU column entirely**
-   (the real-world scenario `c4f276a`/Bug 2 are about), confirm after import that those products'
-   SKUs are unchanged from before the import — this is the one behavior in this PR that's easy to
-   get "looks right" wrong (Section 1 tests it directly, but only against a fabricated local array;
-   worth one real click-through against real app state).
-3. **View the stock-snapshot export (Sales page) as a staff-role user (no `canViewSuppliers`)**
-   and as an owner/admin, confirm every column header matches its column's data for both — Section
-   1 tests the row-shaping function directly, but not that `SalesPage.qml` actually calls it with
-   the right arguments in the real page context.
-4. Everything else in §3 (delegate text, order-history dialog text, search-by-productId) is
-   low-risk/cosmetic-or-additive; a quick look is enough, not worth a dedicated numbered scenario.
+1. **Bug 1 (false CAS conflict):** happy path #3 above. If this ever regresses, the symptom is a
+   "conflict"/sync error on the *second* edit of a product, never the first.
+2. **Bug 2 (SKU clobber):** happy path #2 above. If this regresses, existing products' SKUs
+   silently change after any bulk edit that omits the SKU column.
+3. **Bug 3 (export misalignment):** happy path #5 above (the non-supplier view is the one that
+   was actually broken — #4 was already fine before the fix). If this regresses, column headers
+   stop matching their data, most visibly the last column or two going blank.
 
-## 5. What this plan deliberately does not cover
+---
 
-- **The `main`-originated content now in this branch's tree from the rebase** — two separate
-  features, each already designed/implemented/tested on its own: `fix/return-analysis-revenue-
-  not-updated` (see `docs/superpowers/specs/2026-08-20-return-analysis-revenue-bug-CHECKPOINT.md`
-  and `SKILLS.md` Skill 42) and `docs/e2e-testing-phase2-followup` (`SKILLS.md` Skills 43-45).
-- **The full `_normalizeOrder`-style unification** flagged as a deferred trade-off in Skill 46 —
-  not implemented, so nothing here tests it. `_normalizeRecord` (bulk import's own doc-shape
-  builder) still independently duplicates `_newProductDoc()`/`_clone()`'s shape; a future test
-  for THAT drift risk would need the unification to exist first.
-- **Setting up any C++ test harness for `XlsxService.cpp`.** The gap in §3 is real and repo-wide
-  (not introduced by this PR), but building one is a project-level infrastructure decision, not
-  something to fold into a bug-fix PR's test plan unilaterally.
+## How this was verified
+
+- QML: `qmltestrunner -input tests -platform offscreen` (Qt 6.4.2 in this sandbox vs CI's 6.8 —
+  the `Settings`/`QtCore` API gap between them is worked around with a throwaway scratch copy;
+  see `SKILLS.md` Skill 46 for the exact technique). §1+§2's 25 cases, plus the pre-existing
+  suite, all passing post-rebase (645 QML tests total, 0 failed).
+- Cloud Functions: `cd functions && npm test` — 94 tests, 0 failed.
+- E2E: confirmed via the real GitHub Checks API against this branch's CI run, not locally — see §3.
