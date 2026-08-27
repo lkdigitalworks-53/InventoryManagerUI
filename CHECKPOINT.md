@@ -70,10 +70,140 @@ implementation, checking what specifically?) before it can get a real complexity
 #5, the checkpoint history is explicit that this was left for Taher's own call on the trade-off, not
 something to size and schedule without that input.
 
+## Backlog items 1-3: complete (2026-08-25)
+
+**Item 1 (tenant guard on ActivityLog/CategoryStore/OrderChannelStore): turned out to need zero code
+changes.** Investigated before touching anything (per the discipline this session's earlier mistakes
+made non-negotiable) — the `Component.onCompleted` guard already existed in all three stores, and
+`Main.qml`'s central `onTenantContextReady` resync already calls all three
+(`ActivityLog.syncFromFirebase()`, `OrderChannelStore.syncFromFirebase()`,
+`CategoryStore.syncFromFirebase()`). Nearly reported this as a bug based on a `grep -A 25` window
+that cut off one line short of `CategoryStore`'s call — caught it by re-viewing the full function
+before writing anything down. The original backlog description was simply stale; closed, no commit
+needed for this item specifically.
+
+**Item 2 (`functions/index.js` handler-level tests): done.** New file
+`functions/test/index.handlers.test.js` (14 tests) plus a shared harness
+`functions/test/testSupport/handlerHarness.js`. Covers `recordMutation`, `recordDelta`,
+`recordMutationsBatch` — the three endpoints sharing the auth->validate->apply->respond shape and
+Skill 43's exact risk class. Deliberately does NOT cover `acquireLock`/`releaseLock`/
+`provisionMember`/`runCutover`/`computeAnalysis` — a scope boundary, stated plainly rather than
+silently incomplete, since those share less of this specific risk pattern. Technique (mocking
+firebase-admin + local `lib/` deps via `require.cache` injection, `node-mocks-http` for req/res) is
+written up as Skill 46. One OPTIONS-preflight test was attempted and dropped — hung due to a
+`cors`-middleware/mock interaction unrelated to this codebase's own logic; not worth fighting.
+Verified with a real `npm ci` (matching CI exactly, not just the existing node_modules) + `node --test`:
+all 109 tests pass (14 new + 95 pre-existing, nothing broken). `node-mocks-http` added as a
+devDependency — `functions/package.json` and `functions/package-lock.json` both updated.
+
+**Item 3 (dedicated conflict tests for the other 4 `mutationConflicted`-connected stores): done, with
+one honest scope note.** Extended `tst_InventoryE2E.qml` with a conflict test (it already had the
+signal-handling scaffolding, just no test exercising it). Created `tst_StaffStoreE2E.qml` and
+`tst_SupplierStoreE2E.qml` from scratch, closely mirroring `tst_InventoryE2E.qml`'s proven structure
+rather than improvising new boilerplate. All three follow the same shape as
+`tst_OrdersStoreE2E.qml`'s proven conflict test, simplified now that QTBUG-49896 is actually fixed
+(10s wait instead of the old investigation's 45s; no need for the elaborate diagnostic-on-failure
+logic that only existed because the bug was still unsolved).
+
+**`StockBatchStore` needed a different scenario, found by actually reading the code first**: every
+numeric mutation in that store (`consumeFifo`/`topUpOldest`/`restoreFifo`) goes through
+`Gateway.recordDelta`, not `recordMutation` — confirmed by grepping the whole file, not assumed.
+`recordDelta`'s atomic floor/clamp semantics make a CAS conflict structurally impossible there; the
+ONLY `recordMutation` call anywhere in the store is `addBatch`'s "create" action. So
+`tst_StockBatchStoreE2E.qml`'s conflict test exercises a duplicate-create collision instead of an
+update collision — the actually-reachable path — with a direct (non-`StockBatchStore`-API)
+server-side update in between so the reconciliation assertion checks a real change, not an echo. This
+is explained at length in the file's own header comment, not left implicit.
+
+**Also found in the process, not fixed (out of this item's scope)**: `StockBatchStore.qml`'s own
+`_onMutationConflicted` comment claims a conflict can happen via "qtyRemaining via plain
+recordMutation" — that doesn't match the current code (it's `recordDelta` now). Reads like a stale
+comment surviving a past `recordDelta` conversion. Flagging for Taher rather than fixing opportunistically
+mid-backlog-item.
+
+**Not run against a real `qmltestrunner`/Cloud Functions emulator** — same standing sandbox
+limitation as every QML test in this whole effort. `functions/test/index.handlers.test.js` (item 2)
+WAS actually run and verified, since that's plain Node. All 4 QML files balance-checked (brace/paren
+parity against a Python-based check, not real QML parsing) but not executed.
+
+## Backlog items 1-3, follow-up: real E2E run found 2 genuine bugs in my own new tests (2026-08-26)
+
+Taher ran the real suite against `aba89b2` (confirmed via checkout log) — 3 failures, all confined to
+the 3 new/extended files from items 1-3, nothing else broken. Traced both root causes fully before
+touching anything (not guessed):
+
+**SupplierStore (1 failure, 1 file)**: `tst_SupplierStoreE2E.qml`'s `init()` reset
+`SupplierStore.suppliers = []`, deviating from the convention every OTHER E2E file already follows
+(seeding the known fixture supplier). `SupplierStore.nextSupplierId()` floors its mint on the highest
+supplierId found in this LOCAL array, combined with a real Firestore counter that seed.js's own
+supplier creation never touches (`seed.js` writes `SUP-001` directly via `db.doc(...).set(...)`,
+bypassing the counter entirely). An empty local array meant the first real mint attempt produced
+`SUP-001` again — a genuine, correctly-detected CAS conflict against seed.js's own canonical supplier
+(confirmed: the failure's `current.name` is exactly `seed.js`'s `SUPPLIER_NAME`, "E2E Supplier"). Fix:
+seed `SupplierStore.suppliers` with the fixture supplier in `init()`, matching every other file.
+
+**StockBatchStore (2 failures, 1 file)**: different, and more interesting — a real, pre-existing
+latent bug this new test happened to be the first thing ever sensitive enough to expose.
+`StockBatchStore._nextBatchId()` is PURELY local (scans the `batches` array's highest
+`BAT-<year>-NNN`) with NO server-side counter fallback, unlike Staff/Supplier. Any product created
+with `stock > 0` anywhere in the same process triggers `InventoryStore.addProduct()`'s companion
+"Initial stock" batch creation (confirmed by reading `InventoryStore.qml:451`, not assumed) — which
+mints `BAT-<year>-001` against whatever `batches` locally holds AT THAT MOMENT. Since
+`tst_InventoryE2E.qml`'s very first test creates a product with stock, it mints `BAT-2026-001` first,
+for real, server-side. My new file's `init()` reset `StockBatchStore.batches = []`, hiding that from
+`_nextBatchId()`'s scan, so it minted the identical id again — a genuine collision (confirmed:
+`current.note` in the failure is exactly `"Initial stock"`, `InventoryStore`'s companion-batch
+wording, not either of my own tests' `"E2E test batch"`/`"Conflict test batch"`). Fix: sync
+`StockBatchStore` from the real emulator in `init()` (`syncFromFirebase()` + wait for
+`!loadingMore && !hasMore`) instead of blindly resetting — robust regardless of what else has run
+earlier in the same process, unlike hardcoding some other assumed-safe starting id would have been.
+
+**Real finding, not fixed here, flagged for Taher**: `_nextBatchId()`'s lack of a server-side counter
+(unlike `nextSupplierId()`/`nextStaffId()`, which both use `FirebaseService.mintCounterValue`) is a
+genuine latent risk in *production*, not just a test artifact — two real devices with incomplete
+local caches could concurrently mint the same "next" batch id. This E2E fix doesn't touch that; it
+was surfaced as a side effect of debugging the test failure, and deserves its own deliberate decision
+(add a real counter matching Staff/Supplier's pattern?) rather than an opportunistic fix mid-round.
+
 ## Next step
 
-1. Taher: confirm/adjust the priority order above, and give the missing context for #4 (or confirm
-   it should get its own scoping pass first) and a direction on #5.
-2. Once confirmed, start on #1 — smallest, clearest, real bug, good first move after a long branch.
-3. Docs (`AGENTS.md`, `SKILLS.md`, `README.md`) already updated this session for the QTBUG-49896
-   workaround and the Phase 2 probe's conclusion; no further doc wrap-up owed for the merged PR.
+1. Taher: re-run the real suite to confirm both fixes hold — this sandbox verified them by reasoning
+   through the exact mechanism (mintCounterValue's seed-vs-existing-value logic, `_nextBatchId()`'s
+   scan, `InventoryStore.addProduct()`'s companion-batch call site), not by executing qmltestrunner,
+   same standing limitation as every QML file in this whole effort.
+2. Consider whether `_nextBatchId()` deserves the same real-counter treatment as Staff/Supplier —
+   flagged above, not decided or scheduled here.
+3. Items 4/5 still deliberately untouched, per Taher's instruction — unchanged.
+4. Phase 2 probe — closed, unchanged.
+
+## Stale comment fixed; mintCounterValue decision moved to the new roadmap doc (2026-08-26)
+
+Fixed `StockBatchStore.qml`'s stale `_onMutationConflicted` comment (see prior round's flag) —
+confirmed by re-reading the whole file that `consumeFifo`/`topUpOldest`/`restoreFifo` all use
+`Gateway.recordDelta`, corrected the comment to describe the actually-reachable conflict path
+(`addBatch`'s create action) instead.
+
+**Did not implement the `mintCounterValue` conversion this round.** Taher asked for it directly, but
+investigating the actual blast radius first (per this whole effort's standing discipline) found it's
+substantially bigger than "swap one function": `addBatch()`/`addBatchMany()` are called *synchronously*
+today, and `InventoryStore.qml`'s bulk-import loop (~line 660-731) depends on that — it mints N batch
+ids in a tight synchronous loop, each call relying on seeing the previous call's freshly-pushed local
+entry to avoid colliding within that same loop. Converting `_nextBatchId()` to async cascades into
+restructuring that loop's control flow — a real change to a working, sensitive, otherwise-unrelated
+production feature. Wrote up two real options (full async parity with Staff/Supplier vs. a smaller
+retry-on-conflict fix that touches only `StockBatchStore.qml`) in the new
+`docs/superpowers/E2E-TESTING-ROADMAP.md`, leaning towards the smaller option, but flagged for
+Taher's decision rather than picked unilaterally given the risk/scope difference between the two.
+
+**New standing doc**: `docs/superpowers/E2E-TESTING-ROADMAP.md` — a living roadmap (not archived like
+this file will eventually be) for all pending E2E-testing-arising work, per Taher's request to
+maintain this going forward rather than re-deriving the pending list from scattered checkpoint rounds
+each time. This CHECKPOINT.md will still track active session-by-session progress; the roadmap doc is
+where the durable, cross-session pending list lives now.
+
+## Next step
+
+1. Taher: decide on the `_nextBatchId()` fix approach (Option A or B in the roadmap doc) — not
+   implemented pending that.
+2. Everything else: see `docs/superpowers/E2E-TESTING-ROADMAP.md` going forward, rather than this
+   file's own history.

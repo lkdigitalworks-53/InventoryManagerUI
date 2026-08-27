@@ -54,14 +54,19 @@ QtObject {
     }
 
     // Component 3's client-side half (review finding C3, 2026-08-06) — see
-    // OrdersStore._onMutationConflicted for the full explanation. This is
-    // the store most likely to actually see this signal fire in practice:
-    // consumeFifo/topUpOldest/restoreFifo still mutate an existing batch's
-    // qtyRemaining via plain recordMutation (the still-open, separately-
-    // tracked gap noted in the review — not yet converted to recordDelta),
-    // so a genuine two-devices-selling-the-same-product race can produce a
-    // real CAS conflict here, unlike a pure recordDelta caller which can't
-    // conflict this way. Reuses _normalizeBatches (same as _load()).
+    // OrdersStore._onMutationConflicted for the full explanation. Correction
+    // (2026-08-26, backlog follow-up): this comment previously claimed
+    // consumeFifo/topUpOldest/restoreFifo could hit this via "plain
+    // recordMutation" on qtyRemaining — that no longer matches the code
+    // (confirmed by reading the whole file): all three go through
+    // Gateway.recordDelta now, whose atomic server-side floor/clamp makes a
+    // CAS conflict structurally impossible there. The only recordMutation
+    // call in this store is addBatch's "create" action — a genuine conflict
+    // here means a duplicate-create attempt (e.g. two devices, or a retry
+    // after a dropped response, minting the same batchId — see
+    // tst_StockBatchStoreE2E.qml and CHECKPOINT.md for the concrete
+    // scenario this was verified against). Reuses _normalizeBatches (same
+    // as _load()).
     function _onMutationConflicted(entity, entityId, current) {
         if (entity !== "stock_batch") return
         var arr = batches.slice()

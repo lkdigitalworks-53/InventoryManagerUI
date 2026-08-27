@@ -2107,3 +2107,44 @@ sites had the identical vulnerable pattern — this bug isn't specific to confli
 (recovered) one side by side, specifically so the next real run can confirm or refute this rather than
 taking it on faith. Thirteen rounds in, a plausible-sounding root cause with strong circumstantial
 support (Skill 44's own lesson) still isn't the same as a confirmed one until a real run says so.
+
+## Skill 46: Testing a real firebase-functions v2 HTTPS handler without a live emulator
+
+**Problem**: `functions/index.js`'s exported HTTPS handlers (`recordMutation`, `recordDelta`,
+`recordMutationsBatch`, etc.) had zero direct test coverage — only `functions/lib/*.js`'s pure logic
+was tested. That untested seam is exactly where Skill 43's bug lived: a value computed correctly one
+function down, silently dropped when the HTTP response got built by hand. No live Firebase emulator
+is available in this environment (or in most quick local iteration) to test against.
+
+**Approach that works**: `functions.onRequest(opts, handler)`'s exported result is directly callable
+as `(req, res) => {...}` — confirmed by actually invoking it through the real
+`@google-cloud/functions-framework` CLI (Skill 45's investigation). This means the real handler can
+be tested directly, with two things mocked:
+
+1. **`firebase-admin` / `firebase-admin/firestore`, and any local `./lib/*.js` dependency you want
+   to stub** — inject fakes into Node's `require.cache` (keyed by each dependency's *resolved
+   absolute path*, via `require.resolve(...)`) *before* requiring `index.js`. Since `index.js` calls
+   `admin.initializeApp()` at module load time, the mock must be in place first. This works
+   identically across Node versions (unlike `node:test`'s newer `mock.module()`), and needs no
+   changes to `index.js` itself.
+2. **`req`/`res`** — use `node-mocks-http` rather than hand-rolling a mock response object.
+   firebase-functions v2's wrapper does more than a thin passthrough (it runs `cors` middleware and
+   waits on the response stream's real `'finish'` event before resolving) — a hand-rolled mock either
+   needs to be a real `EventEmitter` emitting `'finish'`, or hits confusing hangs. `node-mocks-http`
+   already handles this correctly; not worth re-deriving.
+
+**What to mock vs. what to keep real**: mock the *data-touching* functions from `lib/gatewayLogic.js`/
+`lib/batchMutationLogic.js` (`applyMutation`, `applyDelta`, `applyMutationsBatch`) so tests can inject
+canned results including the exact conflict shape (`{ conflict: true, current: {...} }`) — but keep
+the *pure* functions from those same modules real (`parseBearerToken`, `validateMutationRequest`,
+etc.), since those already have their own dedicated test files and re-mocking them would just
+duplicate that coverage while hiding real validation bugs. The goal is testing `index.js`'s own logic
+(auth, `deriveContext`, and — the one that matters — translating a `lib/` result into an HTTP
+response), not re-testing `lib/`'s own correctness.
+
+**One thing not worth chasing**: an OPTIONS-preflight test hung indefinitely — `cors` middleware
+intercepts and completes OPTIONS requests itself, and `node-mocks-http`'s mock doesn't reliably
+propagate that middleware's own completion path to a resolved promise. Since OPTIONS handling here is
+unmodified `cors` package behavior, not this codebase's own logic, it wasn't worth fighting that
+mock/middleware interaction for — dropped, with a comment explaining why, rather than either silently
+omitted or endlessly debugged.
