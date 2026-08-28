@@ -46,13 +46,32 @@ decision is now made and acted on.
       arc", with an honest note on how the risk estimate compared to what reading the code found
 
 ### Remaining before this session ends
-- [ ] Final `git diff` read-through (already done for the two source files; not yet re-confirmed
-      after the doc edits above)
-- [ ] Verify no other file references the removed `_nextBatchId()` name
-- [ ] `git add -A`, commit with full message, push using PAT injected into the URL (never
-      `.git/config`), verify clean with `grep -i "ghp_" .git/config`, redact token in any shown output
-- [ ] Present the PAT-exposure flag again in the final summary (was pasted in plaintext in chat this
-      session — recommend revoking/rotating regardless of task outcome)
+- [x] First real CI run: 2 failures, both root-caused and fixed (see below) — Skill 48 added
+- [ ] Final `git diff` read-through of the CI-fix round
+- [ ] `git add -A`, commit, push using PAT injected into the URL, verify clean, redact in output
+
+## CI round 1 — 2 failures, both root-caused via full call-stack trace (not patched blind)
+
+1. **`InventoryStore_upsertMany::test_scan_sums_batch_ids_across_multiple_qualifying_rows`**
+   (Actual 3, Expected 2) — my own test's expected `neededProductIds` was wrong: a zero-stock new row
+   still needs a product id (only the *batch* id is stock-gated). Implementation was correct; fixed
+   the test's expected value (3, not 2) and its comment.
+2. **`DataModel_adjustOrderSyncGuard::test_proceeds_normally_once_transaction_history_is_synced`**
+   (Actual 3, Expected 4, missing the `stock_batch` mutation) — traced the full call stack: this
+   test's `init()` never seeded `StockBatchStore.batches`, so `StockBatchStore.restoreFifo("B1", ...)`
+   has *always* fallen through to `topUpOldest`'s synthetic-batch fallback rather than the normal
+   existing-batch `recordDelta` path the test's own header comment describes and intends. Invisible
+   before this session's change only because that fallback used to be fully synchronous; now it mints
+   an id over a real network round-trip, so its mutation isn't enqueued yet when the test's synchronous
+   assertion runs. Fixed by seeding a matching `B1` batch in `init()` — makes the test exercise the
+   path it always claimed to, which is fully synchronous regardless (`recordDelta` on a known id never
+   mints anything). See SKILLS Skill 48 for the full trace and why this wasn't just "add a `tryVerify`."
+
+**Not touched, flagged only**: `tst_OrderMetadataEditPreservesConsumption.qml` also seeds
+`StockBatchStore.batches = []` with a `consumption` referencing `batchId: "B1"`, so it hits the same
+`topUpOldest` fallback — but none of its assertions depend on that mutation landing synchronously, so
+it wasn't failing and wasn't touched (out of scope for this fix-forward round; per systematic-debugging
+convention, no bundled changes beyond what CI actually flagged).
 
 ## Known, accepted limitations (not fixed, flagged instead)
 

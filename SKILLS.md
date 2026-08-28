@@ -2365,3 +2365,42 @@ correctness-critical piece — does the reserved range size match what the loop 
 unit-testable without a live emulator, rather than buried where only an E2E run could ever catch an
 off-by-one. See `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md` for the
 full design.
+
+## Skill 48: A sync-to-async conversion didn't create a bug — it surfaced one a coincidence was hiding
+
+**What happened**: first real CI run after Skill 47's change failed 2 tests.
+`InventoryStore_upsertMany::test_scan_sums_batch_ids_across_multiple_qualifying_rows` (Actual 3,
+Expected 2) was simply my own new test's expected value being wrong — I'd miscounted, forgetting a
+zero-stock new row still needs a product id (only the *batch* id is stock-gated). Fixed the test.
+
+The other, `DataModel_adjustOrderSyncGuard::test_proceeds_normally_once_transaction_history_is_synced`
+(Actual 3, Expected 4, missing exactly the `stock_batch` mutation), was worth tracing all the way
+through rather than patching the count. Full trace: test → `DataModel._tryAdjustOrder` →
+`StockBatchStore.restoreFifo("B1", "SKU-1", 1)` → `getById("B1")`. This test's `init()` never seeded
+`StockBatchStore.batches` — `getById` has *always* returned `null` here, so `restoreFifo` has always
+fallen through to `topUpOldest`'s synthetic-batch-creation fallback, never the normal existing-batch
+`recordDelta` path the test's own header comment describes and clearly intends
+(`StockBatchStore.restoreFifo -> Gateway.recordDelta("stock_batch", B1, ...)` — naming a direct delta
+on an existing batch, not a synthesized one). This was invisible before Skill 47's change only because
+`topUpOldest`→`addBatch` used to be fully synchronous (local-array scan) — either code path produced
+exactly one `stock_batch` mutation before the test's assertion ran, so the missing fixture never
+mattered. Once `addBatch` mints its id over a real network round-trip, the fallback path's mutation
+is still in flight when the assertion runs (this is a bare unit test, no Firestore backend) — the
+coincidence that made two different code paths look identical stopped holding, and only then did the
+gap show up.
+
+**The actual lesson**: when a fix changes timing (sync → async) and a previously-passing test starts
+failing on a *count*, the reflex to bump the expected count or add a `tryVerify` wait is a symptom
+patch — it doesn't ask *which code path produced the count before*, only whether the new number can be
+made to match. Tracing backward through the exact call stack (not just to the failing assertion, but
+through every function it called) found that the test was never exercising the path its own comments
+say it exercises. The fix is the same size as a symptom patch (one added fixture value) but is a
+different fix: it makes the test exercise its actually-documented scenario, and doing so happens to
+sidestep the async gap entirely (`recordDelta` on a known id never mints anything, so it stays
+synchronous regardless of Skill 47). A stray `tryVerify` would have "fixed" the assertion while leaving
+the test silently testing the wrong path (and pointlessly waiting on a mint call that will never
+resolve without a real backend, in a file that has none).
+
+**Fixed**: seeded `StockBatchStore.batches` in `tst_DataModel_adjustOrderSyncGuard.qml`'s `init()`
+with a batch matching the fixture's own consumption record (`B1`, `SKU-1`, `qtyConsumed: 2`), so
+`restoreFifo` takes the path the test already claimed to cover.
