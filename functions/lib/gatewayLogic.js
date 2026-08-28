@@ -151,9 +151,9 @@ async function applyMutation(db, params) {
 
         const currentSnap = await txn.get(workingRef);
         const current = currentSnap.exists ? currentSnap.data() : null;
-        console.log("[gatewaLogic]: applyMutation before: ", JSON.stringify(params.before));
-        console.log("[gatewaLogic]: applyMutation current: ", JSON.stringify(current));
         if (!_deepEqual(current, params.before)) {
+            console.log("[gatewayLogic]: applyMutation conflict, before: ", JSON.stringify(params.before));
+            console.log("[gatewayLogic]: applyMutation conflict, current: ", JSON.stringify(current));
             return { ok: false, status: 409, conflict: true, current: current };
         }
 

@@ -444,7 +444,7 @@ BottomSheet {
 
         if (products.count === 0 && _orderStatus !== "completed" &&
                 statuses[Math.max(0, statusCombo.currentIndex)] === "completed") {
-            stockErrorLabel.text = qsTr("Atleast add one item in the order to complete.")
+            stockErrorLabel.text = qsTr("At least add one item in the order to complete.")
             return
         }
         var chIdx = channelCombo.currentIndex

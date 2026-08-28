@@ -186,7 +186,7 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
     doc.setColumnWidth(2, 24);   // Customer
     doc.setColumnWidth(3, 24);   // Email
     doc.setColumnWidth(4, 16);   // Phone
-    doc.setColumnWidth(5, 20);   // orderChannel
+    doc.setColumnWidth(5, 20);   // Channel
     doc.setColumnWidth(6, 20);   // Staff
     doc.setColumnWidth(7, 14);   // Status
     doc.setColumnWidth(8, 12);   // Date
@@ -268,7 +268,7 @@ void writeReadmeSheet(Document &doc, const QString &kind)
             {"Customer *",      "yes", "text",   "Customer name. Repeats on every line of the same order."},
             {"Email",           "no",  "text",   "Repeats on every line of the same order."},
             {"Phone",           "no",  "text",   "Repeats on every line of the same order."},
-            {"Channel",         "no",  "text",   "Channel through which sale ahs been made. Informational on export."},
+            {"Channel",         "no",  "text",   "Channel through which sale has been made. Informational on export."},
             {"Staff",           "no",  "text",   "Salesperson name. Informational on export."},
             {"Status *",        "yes", "text",   "One of: pending, processing, completed, out of stock."},
             {"Date *",          "yes", "date",   "yyyy-MM-dd preferred. Blank defaults to import day (skews time-series)."},
