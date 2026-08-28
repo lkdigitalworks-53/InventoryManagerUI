@@ -86,6 +86,49 @@ speculatively — don't know yet whether it's a real gap worth a follow-up until
 now tracked in `docs/superpowers/E2E-TESTING-ROADMAP.md` ("Needs Taher's input") so it doesn't get
 lost if this test plan itself isn't the next thing someone opens.
 
+## 2026-08-29 — on-device results + two testing-environment gaps documented
+
+Taher tested on-device: happy path confirmed working. Two categories in the test plan are currently
+**blocked by pre-existing, out-of-scope-for-this-branch gaps**, not skipped:
+
+- `main.qml`'s root `Navigation { enabled: isOnline }` disables the entire app's interactivity the
+  moment connectivity drops — offline/airplane-mode scenarios that assumed "start an action already
+  offline" (the plan's original N1/N2/N4) aren't executable through the UI at all. What remains
+  executable and still answers the same question: drop connectivity *after* a request is already
+  dispatched (folded into a rewritten N3). Corrected in the test plan rather than left inaccurate.
+- No current way to log a second session into the same tenant as staff/manager — blocks E2 (concurrent
+  restock) outright. Implementation pending, separate from this branch. Noted this exercises the same
+  already-accepted `mintCounterValue` CAS mechanism Products/Orders/Staff/Suppliers already rely on —
+  inherited risk, not new risk from this branch.
+
+Also sharpened the "failed mint silently swallowed" finding while re-reading it for this update: it's
+specifically that the **companion** stock-batch write is exposed, not the **primary** entity mint —
+`addProduct`'s own productId mint already fails loudly and aborts cleanly; the batch created right
+after, on an already-committed product, has no equivalent path. Updated both the test plan and the
+roadmap entry with this framing. Neither gap is a merge blocker — both are narrow, already tracked
+with a clear next step, and structurally different from (not a regression of) the correctly-handled
+primary-entity pattern used everywhere else in the app.
+
+Updated: test plan (Status note, corrected N1-N6, E2, order of attack, sign-off checklist),
+`docs/superpowers/E2E-TESTING-ROADMAP.md` (sharpened finding + new standalone "testing environment
+limitations" note near the top, since both gaps constrain any future concurrent/offline item, not
+just this one), this file.
+
+## Recommendation on merge
+
+Given: happy path confirmed on-device; the one open finding (failed companion-batch mint) is narrow,
+already tracked, and not a regression of the app's primary-entity error-handling pattern; the two
+blocked categories (offline depth, true multi-device) are pre-existing product/test-infrastructure
+gaps unrelated to this branch's own correctness, and blocking merge on them would effectively block
+all future concurrent-mutation work indefinitely — **this branch looks safe to merge.**
+
+One thing worth doing before or shortly after merge that is *not* blocked by either gap Taher
+mentioned, and is squarely actionable right now: run `test/e2e/tst_StockBatchStoreE2E.qml` against a
+real Firestore/Cloud Functions emulator at least once. It's the only automated proof the actual
+counter mechanism (year-scoped, sequential minting) works against real Firestore, and it has not been
+run in either CI round so far — everything else in this branch has been verified by CI, the on-device
+pass, or both, but that one file hasn't been verified by anything yet.
+
 ## Known, accepted limitations (not fixed, flagged instead)
 
 - **Midnight year-rollover during upsertMany**: `currentYear` is captured once at the top of
