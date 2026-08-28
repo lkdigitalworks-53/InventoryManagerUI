@@ -73,6 +73,17 @@ decision is now made and acted on.
 it wasn't failing and wasn't touched (out of scope for this fix-forward round; per systematic-debugging
 convention, no bundled changes beyond what CI actually flagged).
 
+## On-device test plan
+
+Written: `docs/superpowers/specs/2026-08-28-async-stock-batch-id-minting-test-plan.md`. Follows the
+happy/negative/edge/monkey/regression structure from `docs/superpowers/specs/2026-07-14-test-plan.md`
+(the closest precedent — same class of change, id minting, for a different entity). Headline finding
+surfaced while writing it, not yet verified either way: **3 of the 4 call sites that create a batch
+pass no callback to `addBatch`/`topUpOldest` at all**, so a failed mint (new failure mode — a network
+call where there used to be an instant local scan) is silently swallowed with no user-facing signal.
+Flagged as the top-priority on-device scenario (N4 in the plan) rather than guessed at or fixed
+speculatively — don't know yet whether it's a real gap worth a follow-up until someone runs it.
+
 ## Known, accepted limitations (not fixed, flagged instead)
 
 - **Midnight year-rollover during upsertMany**: `currentYear` is captured once at the top of

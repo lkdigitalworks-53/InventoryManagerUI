@@ -3,6 +3,7 @@
 **Date:** 2026-08-27
 **Branch:** `feature/async-stock-batch-id-minting`
 **Status:** Implemented this session.
+**Test plan:** `docs/superpowers/specs/2026-08-28-async-stock-batch-id-minting-test-plan.md`
 
 ## Where this picks up
 
