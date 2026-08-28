@@ -2148,3 +2148,183 @@ propagate that middleware's own completion path to a resolved promise. Since OPT
 unmodified `cors` package behavior, not this codebase's own logic, it wasn't worth fighting that
 mock/middleware interaction for — dropped, with a comment explaining why, rather than either silently
 omitted or endlessly debugged.
+
+## Skill 47: Reviewing `pr_taher_bug_fixes` — a `_clone()`/create-payload drift, a SKU-clobber, and an export column shift
+
+**Files**: `qml/model/InventoryStore.qml` (`_newProductDoc()` new, `_idSuffixNumber()` new,
+`generateSku()`, `_upsertManySync()`), `qml/helper/StockSnapshotMath.js` (new),
+`qml/pages/SalesPage.qml`, `qml/pages/OrderDetailDialog.qml`,
+`tests/tst_InventoryStore_cloneSymmetry.qml` (new), `tests/tst_InventoryStore_upsertMany.qml`
+(new), `tests/tst_StockSnapshotMath.qml` (new).
+
+**Context**: Taher had already pushed 8 commits to `pr_taher_bug_fixes` (branched off `main` @
+`bc0a8fb`) fixing real bugs in bulk-import SKU generation, the inventory search field, an order-
+history display, and an analysis export. The PR's CI showed QML/Functions/Firestore-Rules Tests
+green but **E2E Tests failing**; none of the eight commits added a single test. This session's job
+was to find why E2E failed and cover the untested surface — not to re-litigate the eight fixes
+themselves, most of which were correct.
+
+**Bug 1 (the actual CI failure) — `_clone()`/create-payload drift, same failure class as Skill 20-
+ish's OrdersStore incident** (see `tests/tst_OrdersStore_normalization.qml`'s own header comment for
+that precedent). One of the eight commits added `supplierId` to `InventoryStore._clone()`'s field
+whitelist — correctly, it's needed so the bulk-import/overwrite path can carry it — but never added
+it to `addProduct()`'s create payload. `functions/lib/gatewayLogic.js`'s CAS check (`_deepEqual`)
+bails out on `aKeys.length !== bKeys.length` before comparing a single value, so: create a product
+via `addProduct()` (doc has no `supplierId` key) → any later edit reads it back through `_clone()`
+first (`updateProduct`/`deleteProduct` both start with `var arr = _clone()`) → that clone now carries
+`supplierId: ""`, a key the real Firestore doc doesn't have → key-count mismatch → false 409
+conflict. `test/e2e/tst_InventoryE2E.qml`'s `test_updateProduct_persists_to_emulator` and
+`test_deleteProduct_removes_from_emulator` both create-then-touch-again, which is exactly this.
+Confirmed against the actual GitHub Checks API (`gh`/`curl` weren't available; used
+`api.github.com/repos/.../commits/{sha}/check-runs` directly with a session PAT) rather than
+guessed — QML/Functions/Firestore-Rules all green, only E2E red, matching this theory exactly (a
+CAS/emulator-only failure mode, invisible to the offline QML unit suite).
+
+**Fix**: extracted `addProduct`'s doc-building into `_newProductDoc()` — a pure function (no async
+args; `id`/`supplierId` are already-resolved values by the time `addProduct` calls it) — and added
+`supplierId` there. Deliberately **not** the full `_normalizeOrder`-style unification OrdersStore
+uses (one canonical shape function called by every path, including bulk-import) — `_normalizeRecord`
+(bulk-import's own doc-builder) still independently duplicates this shape and has to be checked by
+hand against `_newProductDoc`/`_clone()` if any of the three changes. Flagged to Taher as a
+trade-off (smaller/faster fix now vs. the structurally-safer unification as a follow-up), not
+decided unilaterally. `tests/tst_InventoryStore_cloneSymmetry.qml` locks the fields-match invariant
+down directly (`Object.keys(_newProductDoc(...))` vs `Object.keys(_clone()[0])`) instead of by
+inspection, mirroring `tst_OrdersStore_normalization.qml`'s approach for the same bug class.
+
+**Bug 2 — SKU clobber on overwrite**: `_upsertManySync`'s "overwrite" branch (existing product,
+matched by `productId`) generated a brand-new SKU whenever the imported row's `sku` column was
+blank — but a blank `sku` on an *overwrite* row just means the CSV round-trip didn't carry that
+column, not that the product's real SKU should be replaced; `updateProduct`'s merge only skips
+`undefined` fields, so the synthetic SKU silently overwrote the real one every time. New-row/rename
+are correct to generate fresh (nothing to preserve there). Fixed to prefer
+`arr[existingIdx].sku`, only falling back to `generateSku()` if the stored product itself also has
+none (legacy-data edge case). `tests/tst_InventoryStore_upsertMany.qml` covers this plus the
+original generate-unique-SKU-per-batch fix directly (calling `_upsertManySync`/`generateSku` with
+stub `pullProductId`/`resolveSupplierForRecord` functions — both already plain synchronous
+functions by design, so no Gateway/network mocking needed for the overwrite-only scenarios).
+
+**Bug 3 — `SalesPage.qml`'s stock-snapshot export column shift**: one of the eight commits added a
+leading "Product ID" column plus three trailing ones (Cost Price/Selling Price/Tax%) to
+`snapHeaders` without updating every `snapRows.push(...)` to match — the non-supplier-view data row
+kept its old field count against the new header, shifting every value one column left (Name lands
+under "Product ID", ..., Status ends up blank), and both views' Total rows were short several
+trailing columns. `src/XlsxService.cpp`'s `renderAnalysisSections()` loops
+`col < headers.size() && col < line.size()`, so this never crashes or fails anything — it just
+silently writes a wrong spreadsheet. Nothing caught it because nothing tested it: `SalesPage.qml` is
+a UI page, not unit-tested under this project's existing convention (`tests/` only covers
+`.pragma library` helpers — see the Testing & QA Agent section of `AGENTS.md`). Fix: extracted the
+row/column shaping (not the `qsTr()` headers, not the `TransactionStore`/`SupplierStore` lookups —
+just the pure array-building) into `qml/helper/StockSnapshotMath.js`, following the exact
+`ImportMath.js`/`OrderMath.js` pattern this codebase already uses for testable pure logic, rather
+than either leaving it untestable in-page or over-extracting the whole export function (which would
+have dragged in translation-context and singleton-mocking complexity for no real benefit — the bug
+was purely in the array shaping, not the lookups). `tests/tst_StockSnapshotMath.qml` asserts
+row/header column-count parity for both `showSup` branches plus the total row, and specifically
+locks down "the non-supplier row leads with `productId`" as its own case.
+
+**Sandbox environment note, worth knowing before trusting a "tests pass" claim from a Cloud
+session on this repo**: this Cloud sandbox's `apt`-installable Qt is **6.4.2**; CI runs **6.8**.
+Concretely, `Settings` moved from `Qt.labs.settings` to `QtCore` partway through Qt 6's life —
+`import QtCore; Settings { ... }` (what every store in this app actually uses) fails to compile
+under 6.4.2 with `Settings is not a type`, and since one failed-to-compile singleton breaks the
+whole `qml/model` qmldir for every file that transitively imports it, this shows up as **14 files
+failing at `compile()`** with zero relation to whatever the actual diff touches (confirmed
+identical on `main` — not something this PR or this session caused). A real `qmltestrunner -input
+tests` run in this sandbox will always show that exact 14-file signature as a floor; anything
+beyond those 14 is a real signal. To verify new/changed test files anyway without waiting for CI,
+this session did the verification in a **throwaway scratch copy only** (`Qt.labs.settings` compat
+shim swapped in, `location:` properties stripped — neither change touched the real working tree),
+confirmed **498 passed, 0 failed** across the whole suite there, then discarded the scratch copy.
+Don't "fix" the real `AuthStore.qml`/etc. for this — they're already correct for Qt 6.8; the gap is
+this sandbox's Qt version, not the code.
+
+## Skill 47: Consolidating scattered test plans into `docs/superpowers/test-plans/`, and the `pr_taher_bug_fixes` test plan
+
+**Files**: `docs/superpowers/test-plans/` (new folder, 9 files moved into it via `git mv` + 1 new
+one), `docs/superpowers/test-plans/README.md` (new — the combined index), plus every file that
+referenced a moved path by name (`docs/superpowers/plans/2026-07-10-product-tax-export-size-
+field.md`, `.../2026-07-11-product-adjustment-reason.md`, and four files under `specs/` —
+`2026-08-11-ledger-sync-race-CHECKPOINT.md`, `2026-07-10-product-tax-export-size-field-
+CHECKPOINT.md`, `2026-07-10-product-tax-export-size-field-design.md`,
+`2026-08-08-review-round2-design.md`, `2026-07-29-async-write-sequencing-design.md`). Also 2 new
+test cases in `tests/tst_InventoryStore_upsertMany.qml` (found missing while writing the test
+plan below — see the last paragraph).
+
+**The mess, found by grep**: before this session, "test plan" documents existed in three
+different places — `docs/superpowers/` root (3 on-device manual checklists), `docs/superpowers/
+specs/` (6 automated-coverage plans, interleaved with unrelated design docs and session
+checkpoints), and 2 more `docs/superpowers/plans/` design docs that have a test-plan *section*
+inline rather than being standalone plans (those two were left where they are — a design doc
+with an embedded test-plan section isn't the same artifact as a standalone plan file, and moving
+it would separate the plan from the design decisions it's testing). Nothing indicated which of
+the 9 standalone files was current for a given feature versus superseded by a later one for the
+same feature — e.g. `2026-07-14-test-plan.md` says outright, in its own addendum, "don't treat
+this document as complete on its own anymore," but you'd only find that by opening it.
+
+**The fix**: one new folder, `docs/superpowers/test-plans/`, holding all 9 standalone plans
+(moved with `git mv`, preserving blame/history) plus a `README.md` that indexes every one of them
+newest-first with its branch/feature, a one-line description of what kind of coverage it actually
+represents (automated-and-run / automated-but-unverified-in-that-session / on-device-only), and an
+explicit "chains" section calling out the two multi-part sequences (`2026-07-14` →
+`2026-07-17-part2` for order-import-stock; `2026-07-29` → `2026-08-08-in-detail` →
+`2026-08-08-review-round2` for async-write-sequencing) so a reader doesn't stop at the first file
+in a chain and miss that it's out of date. Every file elsewhere in the repo that referenced one of
+the 9 by its old path was grepped for and updated — checked afterward with the same grep pattern
+returning zero hits, not just assumed clean after one pass.
+
+**The new `pr_taher_bug_fixes` test plan** (`2026-08-22-pr_taher_bug_fixes-test-plan.md`, the first
+plan seeded directly into the new folder) follows the same three-tier structure
+`2026-08-08-review-round2-test-plan.md` established: what's genuinely been run (25 new cases, via
+the Skill 42 scratch-copy workaround — 531/531 passing), what a real Qt 6.8 + Firebase emulator CI
+run will confirm that this sandbox structurally cannot (the actual E2E tests that failed pre-fix),
+and what has zero automated coverage with a static trace instead (`InventoryPage.qml`'s two UI-page
+changes, `OrderDetailDialog.qml`'s dialog text, and `XlsxService.cpp`'s order-channel column — this
+last one re-checked specifically for the same "inserted column, index shift not fully propagated"
+bug class as Bug 3, and found to have been done correctly and completely, unlike the SalesPage bug).
+
+**Writing this plan surfaced a real, cheap-to-close gap in the prior session's own tests**: the
+`rename` and `skip` branches of `_upsertManySync`'s conflict-policy dispatch had no direct test at
+all, even though `rename` is exactly what `e571ed3` (one of the three bugs Skill 42 fixed) touches.
+Closed immediately rather than just noted — `tests/tst_InventoryStore_upsertMany.qml` gained
+`test_rename_policy_with_blank_sku_generates_a_fresh_unique_sku`,
+`test_rename_policy_with_provided_sku_gets_a_renamed_suffix_not_a_fresh_one` (asserts the rename
+path calls `ImportMath.renameSku`, not `generateSku`, for a row that already has a sku — a
+distinction the code gets right but nothing previously pinned down), and
+`test_skip_policy_leaves_the_existing_product_untouched`. Caught a real mistake writing the second
+of these: an `str_replace` edit dropped the `TestCase {}` block's own closing brace, and the
+scratch-copy run (which this session runs before ever claiming "done," not after) caught it
+immediately as a compile error rather than a silent no-op test file — the fix was one line, but the
+catch is the point: static review of a diff doesn't substitute for actually running it, even for a
+change that "obviously" just adds test functions.
+
+## Skill 48: Standard test plan structure (Taher's convention) — UT / Regression / E2E, then an on-device plan with 5 fixed sections
+
+**Files**: `docs/superpowers/test-plans/2026-08-22-pr_taher_bug_fixes-test-plan.md` (restructured
+to this format), memory edit #9 (records the convention for future sessions).
+
+**The convention, stated once so it doesn't have to be re-derived each time**: every test plan
+going forward opens with three sections listing what's already covered by a test that's genuinely
+been *run* — Unit Tests, Regression Tests, and E2E — each as its own section, not folded together.
+Unit and regression are a real distinction worth keeping separate even when the same test file
+holds both kinds: a unit test checks a piece of logic is correct on its own terms (would exist even
+if nothing had ever broken); a regression test exists *because* something broke, and pins down the
+specific defect. The same file can have both — `tst_InventoryStore_upsertMany.qml` has 6 unit cases
+and 3 regression cases — and conflating them loses the "why does this test exist" information a
+reviewer actually wants. After those three sections, a separate **On-Device Test Plan** follows
+with five fixed sections regardless of feature: Happy Path, Negative, Edge Cases, Affected Areas,
+Regression Tests. "Affected Areas" is where a file-by-file coverage table belongs (what used to be
+called a "gap list" in earlier plans in this folder) — every file the change touches, whether it
+has automated coverage, and where to look on-device if it doesn't. The on-device "Regression Tests"
+section is the manual-click-through counterpart to the automated regression section above it, not
+a duplicate of it — same bugs, phrased as "how would you notice if this came back" rather than as
+assertions.
+
+**A miscounted claim, found and fixed while doing this restructure**: the `pr_taher_bug_fixes`
+test plan had been asserting "31 new cases" since it was first written, repeated verbatim into this
+folder's `README.md` and into Skill 47's own write-up. Actually counting each file's
+`function test_...` declarations (`grep -oE "function test_[a-zA-Z0-9_]+" tests/tst_*.qml`) instead
+of trusting the carried-forward number: 4 + 9 + 12 = **25**, not 31. All three places corrected in
+the same pass as the restructure — a wrong number copied three times isn't three independent
+confirmations of it, it's one mistake with three symptoms. Recounting a real artifact (test
+functions in a file) is cheap; re-asserting a remembered number is not the same as checking it.
+

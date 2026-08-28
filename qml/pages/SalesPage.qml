@@ -8,6 +8,7 @@ import "../model"
 import "../helper/BreakdownMath.js" as BreakdownMath
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/RealisedMath.js" as RealisedMath
+import "../helper/StockSnapshotMath.js" as StockSnapshotMath
 
 // Modern sales report — segmented period pill, gradient hero card with area
 // chart, weekly bar breakdown, top items list. All numbers from SalesStore.
@@ -512,7 +513,7 @@ Item {
                     Text {
                         visible: root._viewMode === root._MODE_REVENUE
                                  && (root._periodTax > 0 || root._periodDiscount > 0)
-                        text: qsTr("incl. %1 tax · %2 discount")
+                        text: qsTr("excl. %1 tax · incl. %2 discount")
                               .arg(SalesStore.formatCurrency(root._periodTax))
                               .arg(SalesStore.formatCurrency(root._periodDiscount))
                         color: Qt.rgba(1,1,1,0.92)
@@ -1484,9 +1485,9 @@ Item {
             // bottom so the user can sanity-check the chart.
             var showSup = root.canViewSuppliers
             var snapHeaders = showSup
-                    ? [qsTr("Name"), qsTr("SKU"), qsTr("Category"), qsTr("Supplier"),
-                       qsTr("Stock"), qsTr("Min stock"), qsTr("Status")]
-                    : [qsTr("Name"), qsTr("SKU"), qsTr("Category"),
+                    ? [qsTr("Product ID"), qsTr("Name"), qsTr("SKU"), qsTr("Category"), qsTr("Supplier"),
+                       qsTr("Stock"), qsTr("Min stock"), qsTr("Cost Price"), qsTr("Selling Price"), qsTr("Status"), qsTr("Tax%")]
+                    : [qsTr("Product ID"), qsTr("Name"), qsTr("SKU"), qsTr("Category"),
                        qsTr("Stock"), qsTr("Min stock"), qsTr("Status")]
             var snapRows = []
             var inv = (InventoryStore.products || []).slice()
@@ -1515,17 +1516,9 @@ Item {
                 var status = s <= 0 ? qsTr("Out of stock")
                             : s <= (p.minStock || 0) ? qsTr("Low")
                             : qsTr("In stock")
-                if (showSup)
-                    snapRows.push([p.name || "", p.sku || "", p.category || "",
-                                   sup, s, p.minStock || 0, status])
-                else
-                    snapRows.push([p.name || "", p.sku || "", p.category || "",
-                                   s, p.minStock || 0, status])
+                snapRows.push(StockSnapshotMath.buildRow(p, showSup, sup, status))
             }
-            if (showSup)
-                snapRows.push(["", "", "", qsTr("Total"), grandTotal, "", ""])
-            else
-                snapRows.push(["", "", qsTr("Total"), grandTotal, "", ""])
+            snapRows.push(StockSnapshotMath.buildTotalRow(showSup, qsTr("Total"), grandTotal))
             return {
                 title: qsTr("Current stock snapshot") + partyTag,
                 suggestedName: "current_stock_" + stamp + ".xlsx",

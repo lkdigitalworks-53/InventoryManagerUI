@@ -1,7 +1,7 @@
 # Test plan (part 2) — fix/order-import-stock-and-holistic-bugs
 
 **Covers:** everything committed on this branch after the 2026-07-14 test plan
-(`docs/superpowers/specs/2026-07-14-test-plan.md`) was written. Three phases:
+(`docs/superpowers/test-plans/2026-07-14-test-plan.md`) was written. Three phases:
 
 - **Phase A — the 3 Critical fixes + 2 follow-ons** (commits `5549541`, `f3eaa4c`, `b03a74f`,
   `c40f595`, `fae5613`, `948bb0f`): cross-order stock oversell in import batches, `AddStaffDialog`'s

@@ -78,7 +78,7 @@ QtObject {
         orders = arr
         revision++
         _refreshCounts()
-        Toast.show(qsTr("This order was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        Toast.show(qsTr("This order was updated elsewhere — your change didn't save. \nRefreshed to the latest version."))
     }
 
     onAutoApproveEnabledChanged: {

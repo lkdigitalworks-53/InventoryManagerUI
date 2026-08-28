@@ -316,4 +316,4 @@ in this doc.
    it lands on top of an already-hardened write path underneath it.
 
 Each component ships independently and is individually testable — see the companion test plan,
-`docs/superpowers/specs/2026-07-29-async-write-sequencing-test-plan.md`.
+`docs/superpowers/test-plans/2026-07-29-async-write-sequencing-test-plan.md`.

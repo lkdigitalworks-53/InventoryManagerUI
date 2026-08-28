@@ -890,13 +890,13 @@ git commit -m "feat(import): read Size/Taxable/Tax % columns during product impo
 ### Task 7: On-device test plan doc
 
 **Files:**
-- Create: `docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md`
+- Create: `docs/superpowers/test-plans/2026-07-10-on-device-test-plan-tax-size.md`
 
 **Interfaces:** none — documentation only.
 
 - [x] **Step 1: Write the on-device test plan**
 
-Create `docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md` (matching the naming/structure of the existing `2026-06-19-on-device-test-plan-revenue-reconciliation.md` and `2026-06-21-custome-device-test-plan.md`):
+Create `docs/superpowers/test-plans/2026-07-10-on-device-test-plan-tax-size.md` (matching the naming/structure of the existing `2026-06-19-on-device-test-plan-revenue-reconciliation.md` and `2026-06-21-custome-device-test-plan.md`):
 
 ```markdown
 # On-device test plan — product tax export/import + Size field
@@ -956,7 +956,7 @@ under `qmltestrunner`.
 - [x] **Step 2: Commit**
 
 ```bash
-git add docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md
+git add docs/superpowers/test-plans/2026-07-10-on-device-test-plan-tax-size.md
 git commit -m "docs: on-device test plan for tax export/import + Size field"
 ```
 
