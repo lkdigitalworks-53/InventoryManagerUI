@@ -273,6 +273,20 @@ App (Main.qml)
   `StaffStore.addStaff`, and `ActivityLog` — fixed; see SKILLS Skill 12's `putMany()`). Single-doc
   `put()` per changed record; `putMany()` only for a genuinely multi-doc action (e.g.
   `approveAllPending`).
+- **ID minting** (updated 2026-08-27): `products`, `suppliers`, `staff`, `orders`, and now
+  `stockBatches` (`counters/stockBatches-<year>` — year-scoped, see below) all mint sequential
+  human-readable ids off a real Firestore-transaction-backed counter via
+  `FirebaseService.mintCounterValue`/`mintCounterBatch` — never `max(existing local ids) + 1`, which
+  isn't safe under concurrent access or id reuse after delete (see
+  `docs/superpowers/E2E-TESTING-ROADMAP.md`'s history and SKILLS Skill 47). Each domain follows the
+  same two-function split: `addX(fields, callback)` (async, mints its own id, one-at-a-time UI use)
+  and `addXWithId(id, fields)` / `addXWithIdMany(docs)` (sync, given an already-reserved id — used by
+  bulk-import loops that reserve a whole range up front via `mintCounterBatch` before running a
+  synchronous loop against it). Adding id-minting to a new domain should follow this exact split
+  rather than inventing a new shape. `StockBatchStore`'s counter is keyed **per year**
+  (`BAT-<year>-NNN` resets every Jan 1 by existing design) instead of one global counter like
+  `counters/suppliers` — check whether a new domain's id format has a similar reset/scoping
+  requirement before assuming a single global counter is correct.
 - Any new `Settings { category: "..." }` block (device-local `QSettings` persistence — all six
   stores: `AuthStore`, `OutboxStore`, `OrdersStore`, `PartyStore`, `CategoryStore`,
   `OrderChannelStore`, all fixed as of 2026-08-18) needs an explicit `location:

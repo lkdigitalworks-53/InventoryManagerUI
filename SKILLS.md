@@ -2238,7 +2238,7 @@ confirmed **498 passed, 0 failed** across the whole suite there, then discarded 
 Don't "fix" the real `AuthStore.qml`/etc. for this — they're already correct for Qt 6.8; the gap is
 this sandbox's Qt version, not the code.
 
-## Skill 47: Consolidating scattered test plans into `docs/superpowers/test-plans/`, and the `pr_taher_bug_fixes` test plan
+## Skill 48: Consolidating scattered test plans into `docs/superpowers/test-plans/`, and the `pr_taher_bug_fixes` test plan
 
 **Files**: `docs/superpowers/test-plans/` (new folder, 9 files moved into it via `git mv` + 1 new
 one), `docs/superpowers/test-plans/README.md` (new — the combined index), plus every file that
@@ -2297,7 +2297,7 @@ immediately as a compile error rather than a silent no-op test file — the fix 
 catch is the point: static review of a diff doesn't substitute for actually running it, even for a
 change that "obviously" just adds test functions.
 
-## Skill 48: Standard test plan structure (Taher's convention) — UT / Regression / E2E, then an on-device plan with 5 fixed sections
+## Skill 49: Standard test plan structure (Taher's convention) — UT / Regression / E2E, then an on-device plan with 5 fixed sections
 
 **Files**: `docs/superpowers/test-plans/2026-08-22-pr_taher_bug_fixes-test-plan.md` (restructured
 to this format), memory edit #9 (records the convention for future sessions).
@@ -2328,3 +2328,40 @@ the same pass as the restructure — a wrong number copied three times isn't thr
 confirmations of it, it's one mistake with three symptoms. Recounting a real artifact (test
 functions in a file) is cheap; re-asserting a remembered number is not the same as checking it.
 
+## Skill 50: Converting a sync id-minter to async without touching its bulk-import loop's actual shape
+
+**What happened**: `docs/superpowers/E2E-TESTING-ROADMAP.md` left `StockBatchStore._nextBatchId()`'s
+async conversion "blocked on a decision, not effort" — the doc's own estimate was that Option A
+(full parity with Staff/Supplier's real Firestore counter) forces "a real change to a working,
+sensitive bulk-import feature, unrelated to anything else in this effort," and leaned toward Option B
+(retry-on-conflict, no `addBatch()` contract change) for that reason. Taher's instruction named
+Option A explicitly.
+
+**What reading the code first found**: `InventoryStore.upsertMany` already solves this exact shape of
+problem — reserve N ids in one round-trip before a synchronous loop runs — twice over, for products
+and for suppliers, via `FirebaseService.mintCounterBatch` plus a pre-scan and a `pullXId()` closure.
+`SupplierStore` already has the exact sync/async split this needed: `addSupplier()` (async, mints its
+own id, one-at-a-time UI use) vs. `addSupplierWithId()`/`addSupplierWithIdMany()` (sync, given a
+pre-reserved id, bulk-import use). Converting `StockBatchStore.addBatch()` to async and adding
+`addBatchWithId()` for the bulk path isn't novel restructuring of the loop — it's adding a *third*
+reservation of a shape the file already has twice, using a split the codebase already has a working
+precedent for. That's a materially smaller risk than "unrelated restructuring of a sensitive loop."
+
+**The actual lesson**: a roadmap/backlog entry's own risk estimate is itself a claim worth re-checking
+against the current code before treating it as settled, not just before implementing the option it
+didn't recommend. The entry wasn't wrong given what was known when it was written; it was written
+before anyone had traced exactly how much of the target shape (reserve-then-loop, sync/async split)
+the file already had. "The doc says this is risky" and "reading the code says this is risky" turned
+out to be different findings — worth stating that difference honestly rather than either silently
+overriding the doc's framing or silently deferring to it without re-checking.
+
+**Fixed**: `StockBatchStore.nextBatchId(callback)` mints off a real, **year-scoped**
+(`counters/stockBatches-<year>`) Firestore counter — year-scoped specifically because `BAT-<year>-NNN`
+resets every year by existing design, and a single global counter (like `counters/suppliers`) would
+silently break that contract. `addBatch()` is now async; `addBatchWithId()` (sync, pre-reserved id)
+handles the bulk-import path. `upsertMany`'s pre-scan gained `neededBatchIds`, computed by a newly
+extracted pure helper (`_scanUpsertManyNeeds`) specifically so the one genuinely new,
+correctness-critical piece — does the reserved range size match what the loop actually consumes? — is
+unit-testable without a live emulator, rather than buried where only an E2E run could ever catch an
+off-by-one. See `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md` for the
+full design.

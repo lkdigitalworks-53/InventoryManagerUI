@@ -8,53 +8,6 @@ current thinking. Ordered roughly by priority within each status group, not chro
 
 ---
 
-## In progress
-
-### `StockBatchStore._nextBatchId()` has no server-side counter — real production risk, fix approach needs a decision
-
-**Found:** 2026-08-26, as a side effect of debugging `tst_StockBatchStoreE2E.qml`'s first real CI
-failure (see `docs/superpowers/specs/2026-08-25-e2e-testing-phase2-followup-CHECKPOINT.md`'s
-follow-up round).
-
-**What's wrong:** unlike `SupplierStore.nextSupplierId()` / `StaffStore.nextStaffId()` (both use
-`FirebaseService.mintCounterValue` — a real Firestore-transaction-backed counter), `_nextBatchId()`
-purely scans the local `batches` array for the highest `BAT-<year>-NNN` and returns +1. Two clients
-with incomplete/stale local caches (or, as happened in the E2E suite, one client whose cache was
-never populated in the first place) can independently compute the identical "next" id and both
-attempt to create it.
-
-**Why this isn't data-corruption-risk, but is a reliability gap:** Firestore's CAS check on
-`applyMutation` already rejects the second colliding create — confirmed working end-to-end by
-`tst_StockBatchStoreE2E.qml`'s conflict test. So nobody's data gets silently overwritten. The actual
-harm: the LOSING client's create is dropped, `StockBatchStore._onMutationConflicted` reconciles that
-client's local cache to match the winner's doc, and — today — nothing retries the losing client's
-own intended batch. A real restock action could silently vanish from the acting user's perspective.
-
-**Blocked on a decision, not effort — two real options, meaningfully different risk/scope:**
-
-- **Option A — full parity with Staff/Supplier.** Convert `_nextBatchId()` to async
-  (`mintCounterValue`-backed), which cascades: `addBatch()` and `addBatchMany()` are both called
-  *synchronously* today, and `InventoryStore.qml`'s bulk-import loop (`upsertMany`, ~line 660-731)
-  relies on that — it calls `addBatch(..., deferWrite=true)` once per imported row in a tight
-  synchronous `for` loop, depending on each call seeing the previous call's freshly-pushed local
-  entry to avoid collisions *within* that loop. Converting to async means restructuring that loop to
-  sequence N mint calls one at a time (or minting a range up front) — a real change to a working,
-  sensitive bulk-import feature, unrelated to anything else in this effort. Higher effort, higher
-  risk, but closes the gap at the source and matches the established pattern exactly.
-- **Option B — retry-on-conflict, zero changes to `addBatch()`'s contract.** Leave `addBatch()`/
-  `addBatchMany()` fully synchronous (no changes anywhere in `InventoryStore.qml` or the import
-  loop). Instead, extend `StockBatchStore._onMutationConflicted()`'s handling of a `stock_batch`
-  create-conflict specifically: instead of only reconciling the local cache to the winner's doc,
-  automatically re-mint a fresh id (now collision-aware, since the local cache just learned about the
-  winner) and re-attempt the create with the original doc's data. Smaller, contained, touches only
-  `StockBatchStore.qml`. Doesn't prevent the first collision, but does prevent the silent data loss —
-  the actual harm identified above.
-
-Leaning towards B for the effort/risk trade-off, but this is Taher's call — not implemented pending
-his decision.
-
----
-
 ## Needs Taher's input before it can be scoped or started
 
 ### `orderMath.js` / `qml/helper/OrderMath.js` parity
@@ -122,3 +75,13 @@ noted here so it doesn't get lost given how test-development-adjacent it is.
   found).
 - Stale comment in `StockBatchStore.qml`'s `_onMutationConflicted` (claimed a conflict path that no
   longer exists post-`recordDelta`-conversion) — corrected.
+- `StockBatchStore._nextBatchId()`'s missing server-side counter (above) — **Option A implemented**
+  2026-08-27, per Taher's explicit direction, not Option B as this doc leaned toward. Worth recording
+  honestly: reading `InventoryStore.upsertMany` end to end first showed the actual blast radius was
+  smaller than this doc's original estimate — the file already reserves ids in bulk for products and
+  suppliers the same way Option A needed for batches, and `SupplierStore` already had the exact
+  sync/async function-split precedent (`addSupplier` vs. `addSupplierWithId`/`addSupplierWithIdMany`)
+  this needed. Doesn't mean the original "leaning towards B" call was wrong given what was known when
+  it was written — it means a risk estimate is worth re-checking against the current code, not just
+  taken as settled, once there's a decision to actually act on. Design:
+  `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 47.

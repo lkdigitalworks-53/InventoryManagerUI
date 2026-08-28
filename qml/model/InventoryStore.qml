@@ -484,6 +484,8 @@ QtObject {
 
                 // Initial stock is treated as the first FIFO batch. Skip when stock
                 // is 0 — there's nothing to consume from a zero-quantity batch.
+                // addBatch is async (mints its own batchId) — fire-and-forget here,
+                // same as before this call site's return value was ever used.
                 if (stock > 0) {
                     StockBatchStore.addBatch(id, supplierId, stock, batchCost, "Initial stock");
                 }
@@ -525,7 +527,11 @@ QtObject {
     // transactionItems/stockBatchItems: caller-provided arrays this pushes
     // the built (but not-yet-written) docs into, instead of each call firing
     // its own individual Gateway write — see addBatchMany/recordCreatedMany.
-    function _bookImportedProduct(doc, transactionItems, stockBatchItems) {
+    // pullBatchId: caller-supplied closure pulling from a pre-reserved
+    // batch-id range (see upsertMany) — StockBatchStore.addBatch can't be
+    // used here any more since it's async (mints its own id); this loop is
+    // synchronous, same reason pullProductId/nameToSupplierId exist.
+    function _bookImportedProduct(doc, transactionItems, stockBatchItems, pullBatchId) {
         var supplierId = doc.supplierId || "";
         var batchCost = (typeof doc.price === "number" && !isNaN(doc.price)) ? doc.price : 0;
         var txDoc = TransactionStore.recordCreated(doc.productId, doc.name, doc.stock, batchCost, {
@@ -537,7 +543,7 @@ QtObject {
         }, supplierId, true);
         if (txDoc) transactionItems.push(txDoc);
         if (doc.stock > 0) {
-            var batchDoc = StockBatchStore.addBatch(doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock", true);
+            var batchDoc = StockBatchStore.addBatchWithId(pullBatchId(), doc.productId, supplierId, doc.stock, batchCost, "Imported opening stock", true);
             if (batchDoc) stockBatchItems.push(batchDoc);
         }
     }
@@ -575,22 +581,32 @@ QtObject {
     // pools. All new/renamed rows are collected into a single
     // Gateway.recordMutations() call at the end instead of one
     // recordMutation() per row, matching SupplierStore.upsertMany's pattern.
-    function upsertMany(records, callback) {
-        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] };
-        if (!records || records.length === 0) { if (callback) callback(counts); return; }
-
-        var byIdPre = {};
-        for (var pi = 0; pi < products.length; ++pi) byIdPre[products[pi].productId] = true;
-
+    // Pure — no FirebaseService/network calls, and no reliance on the
+    // singletons directly (existingProductIds/supplierNameExists are
+    // passed in) — extracted specifically so this counting logic is
+    // unit-testable without a live emulator. This is the correctness-
+    // critical piece of the reservation scheme: an undercount here means
+    // the loop below runs out of pre-reserved ids mid-way; an overcount
+    // just wastes a few counter values, harmlessly.
+    //
+    // neededBatchIds mirrors neededProductIds' exact branching (a row
+    // creates a new product doc iff it doesn't match an existing one, OR
+    // it does and the conflict policy is "rename") — a companion FIFO
+    // batch only exists for those same rows, and only when incoming stock
+    // is positive (see _bookImportedProduct).
+    function _scanUpsertManyNeeds(records, existingProductIds, supplierNameExists) {
         var neededProductIds = 0;
+        var neededBatchIds = 0;
         var newSupplierNames = []; // unique, first-seen order
         var seenNames = {};
         for (var qi = 0; qi < records.length; ++qi) {
             var rr = records[qi];
             var pol = rr._conflictPolicy || "skip";
-            var existsAlready = !!(rr.productId && byIdPre[rr.productId]);
+            var existsAlready = !!(rr.productId && existingProductIds[rr.productId]);
+            var willCreateNewRow;
             if (existsAlready) {
-                if (pol === "rename") neededProductIds++;
+                willCreateNewRow = (pol === "rename");
+                if (willCreateNewRow) neededProductIds++;
             } else {
                 // A row that doesn't match an existing product is a new
                 // product, full stop — always needs a freshly minted id,
@@ -599,16 +615,33 @@ QtObject {
                 // doesn't match anything yet. Trusting a typed-but-unknown
                 // id here is how two different rows can end up minting/
                 // keeping the exact same number.
+                willCreateNewRow = true;
                 neededProductIds++;
             }
+            if (willCreateNewRow && (parseInt(rr.stock) || 0) > 0) neededBatchIds++;
+
             if (!rr.supplierId && rr.supplier) {
                 var key = String(rr.supplier).trim().toLowerCase();
-                if (key.length > 0 && !seenNames[key] && !SupplierStore.findByName(rr.supplier)) {
+                if (key.length > 0 && !seenNames[key] && !supplierNameExists(rr.supplier)) {
                     seenNames[key] = true;
                     newSupplierNames.push(String(rr.supplier).trim());
                 }
             }
         }
+        return { neededProductIds: neededProductIds, neededBatchIds: neededBatchIds, newSupplierNames: newSupplierNames };
+    }
+
+    function upsertMany(records, callback) {
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] };
+        if (!records || records.length === 0) { if (callback) callback(counts); return; }
+
+        var byIdPre = {};
+        for (var pi = 0; pi < products.length; ++pi) byIdPre[products[pi].productId] = true;
+
+        var scan = _scanUpsertManyNeeds(records, byIdPre, function(name) { return !!SupplierStore.findByName(name); });
+        var neededProductIds = scan.neededProductIds;
+        var neededBatchIds = scan.neededBatchIds;
+        var newSupplierNames = scan.newSupplierNames;
 
         var seedProductMax = 0;
         for (var si = 0; si < products.length; ++si) {
@@ -619,6 +652,20 @@ QtObject {
         for (var sj = 0; sj < SupplierStore.suppliers.length; ++sj) {
             var n2 = parseInt(String(SupplierStore.suppliers[sj].supplierId).split('-')[1]);
             if (!isNaN(n2) && n2 > seedSupplierMax) seedSupplierMax = n2;
+        }
+        // Batch ids are year-scoped (BAT-<year>-NNN resets every year — see
+        // StockBatchStore.nextBatchId) so both the seed scan and the
+        // counter path itself are keyed off the current year, captured
+        // once here (see the design doc's note on the accepted midnight-
+        // rollover edge case).
+        var currentYear = new Date().getFullYear();
+        var batchPrefix = "BAT-" + currentYear + "-";
+        var seedBatchMax = 0;
+        for (var bk = 0; bk < StockBatchStore.batches.length; ++bk) {
+            var bid = String(StockBatchStore.batches[bk].batchId || "");
+            if (bid.indexOf(batchPrefix) !== 0) continue;
+            var n3 = parseInt(bid.substring(batchPrefix.length));
+            if (!isNaN(n3) && n3 > seedBatchMax) seedBatchMax = n3;
         }
 
         FirebaseService.mintCounterBatch("counters/products", seedProductMax, neededProductIds,
@@ -635,32 +682,45 @@ QtObject {
                     if (callback) callback(counts);
                     return;
                 }
+                FirebaseService.mintCounterBatch("counters/stockBatches-" + currentYear, seedBatchMax, neededBatchIds,
+                    function(batchOk, batchStart) {
+                    if (!batchOk) {
+                        console.warn("[InventoryStore] could not reserve stock batch ids — import aborted");
+                        if (callback) callback(counts);
+                        return;
+                    }
 
-                var nameToSupplierId = {};
-                var supplierItems = [];
-                for (var ni = 0; ni < newSupplierNames.length; ++ni) {
-                    var newSupId = 'SUP-' + String(supStart + ni + 1).padStart(3, '0');
-                    var supDoc = SupplierStore.addSupplierWithId(newSupId, newSupplierNames[ni], true);
-                    if (supDoc) supplierItems.push(supDoc);
-                    nameToSupplierId[newSupplierNames[ni].toLowerCase()] = newSupId;
-                }
-                if (supplierItems.length > 0) SupplierStore.addSupplierWithIdMany(supplierItems);
+                    var nameToSupplierId = {};
+                    var supplierItems = [];
+                    for (var ni = 0; ni < newSupplierNames.length; ++ni) {
+                        var newSupId = 'SUP-' + String(supStart + ni + 1).padStart(3, '0');
+                        var supDoc = SupplierStore.addSupplierWithId(newSupId, newSupplierNames[ni], true);
+                        if (supDoc) supplierItems.push(supDoc);
+                        nameToSupplierId[newSupplierNames[ni].toLowerCase()] = newSupId;
+                    }
+                    if (supplierItems.length > 0) SupplierStore.addSupplierWithIdMany(supplierItems);
 
-                var mintedProductIdx = 0;
-                function pullProductId() {
-                    mintedProductIdx++;
-                    return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0');
-                }
-                function resolveSupplierForRecord(r) {
-                    if (r.supplierId) return r.supplierId;
-                    if (!r.supplier) return "";
-                    var byId = _resolveSupplierIdSyncKnown(r.supplier);
-                    if (byId) return byId;
-                    return nameToSupplierId[String(r.supplier).trim().toLowerCase()] || "";
-                }
+                    var mintedProductIdx = 0;
+                    function pullProductId() {
+                        mintedProductIdx++;
+                        return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0');
+                    }
+                    var mintedBatchIdx = 0;
+                    function pullBatchId() {
+                        mintedBatchIdx++;
+                        return batchPrefix + String(batchStart + mintedBatchIdx).padStart(3, '0');
+                    }
+                    function resolveSupplierForRecord(r) {
+                        if (r.supplierId) return r.supplierId;
+                        if (!r.supplier) return "";
+                        var byId = _resolveSupplierIdSyncKnown(r.supplier);
+                        if (byId) return byId;
+                        return nameToSupplierId[String(r.supplier).trim().toLowerCase()] || "";
+                    }
 
-                _upsertManySync(records, pullProductId, resolveSupplierForRecord, counts);
-                if (callback) callback(counts);
+                    _upsertManySync(records, pullProductId, resolveSupplierForRecord, pullBatchId, counts);
+                    if (callback) callback(counts);
+                });
             });
         });
     }
@@ -686,7 +746,7 @@ QtObject {
     // new/renamed row into `mutationItems` and fires ONE
     // Gateway.recordMutations() call at the end instead of one
     // recordMutation() per row.
-    function _upsertManySync(records, pullProductId, resolveSupplierForRecord, counts) {
+    function _upsertManySync(records, pullProductId, resolveSupplierForRecord, pullBatchId, counts) {
         var arr = _clone();
         var byId = {};
         var updatedProducts = counts.updatedProducts;
@@ -723,7 +783,7 @@ QtObject {
                     arr.push(renamedDoc);
                     byId[r.productId] = arr.length - 1;
                     mutationItems.push({ entityId: renamedDoc.productId, action: "create", before: null, after: renamedDoc });
-                    _bookImportedProduct(renamedDoc, transactionItems, stockBatchItems);
+                    _bookImportedProduct(renamedDoc, transactionItems, stockBatchItems, pullBatchId);
                     counts.added++;
                     continue;
                 }
@@ -776,7 +836,7 @@ QtObject {
                 arr.push(doc);
                 byId[doc.productId] = arr.length - 1;
                 mutationItems.push({ entityId: doc.productId, action: "create", before: null, after: doc });
-                _bookImportedProduct(doc, transactionItems, stockBatchItems);
+                _bookImportedProduct(doc, transactionItems, stockBatchItems, pullBatchId);
                 counts.added++;
             }
         }
@@ -942,7 +1002,9 @@ QtObject {
                 // shared mutable value to race on), so it's out of C4's
                 // scope — only consumeFifo/topUpOldest/restoreFifo (which
                 // mutate an EXISTING batch's qtyRemaining) are the still-open
-                // part of that gap, tracked separately.
+                // part of that gap, tracked separately. addBatch is async
+                // (mints its own batchId) — fire-and-forget here, same as
+                // before this call site's return value was ever used.
                 StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
 
                 if (callback) callback(true, supplierFailed)
