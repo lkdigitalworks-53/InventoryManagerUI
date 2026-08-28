@@ -24,7 +24,7 @@ Item {
 
     Timer {
         id: dismissTimer
-        interval: 1800
+        interval: 5000
         repeat: false
         running: false
         onTriggered: slideDown.restart()
