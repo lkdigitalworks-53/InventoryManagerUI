@@ -82,7 +82,9 @@ surfaced while writing it, not yet verified either way: **3 of the 4 call sites 
 pass no callback to `addBatch`/`topUpOldest` at all**, so a failed mint (new failure mode — a network
 call where there used to be an instant local scan) is silently swallowed with no user-facing signal.
 Flagged as the top-priority on-device scenario (N4 in the plan) rather than guessed at or fixed
-speculatively — don't know yet whether it's a real gap worth a follow-up until someone runs it.
+speculatively — don't know yet whether it's a real gap worth a follow-up until someone runs it. Also
+now tracked in `docs/superpowers/E2E-TESTING-ROADMAP.md` ("Needs Taher's input") so it doesn't get
+lost if this test plan itself isn't the next thing someone opens.
 
 ## Known, accepted limitations (not fixed, flagged instead)
 

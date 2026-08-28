@@ -10,6 +10,27 @@ current thinking. Ordered roughly by priority within each status group, not chro
 
 ## Needs Taher's input before it can be scoped or started
 
+### Failed batch-id mint is silently swallowed at 3 of 4 call sites
+
+Found while writing the on-device test plan for the async batch-id-minting change
+(`docs/superpowers/specs/2026-08-28-async-stock-batch-id-minting-test-plan.md`, scenario N4) — **not
+yet confirmed on a real device**, flagged now rather than held back until someone runs it.
+`StockBatchStore.addBatch()` calls back with `null` and logs a `console.warn` if `nextBatchId()`'s
+mint fails — but `InventoryStore.addProduct()`'s "Initial stock" call, `InventoryStore.restock()`'s
+call, and five of six `topUpOldest()` call sites in `DataModel.qml` pass no callback at all
+(fire-and-forget, unchanged from before the async conversion — see
+`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`). Before that conversion
+this was harmless (a local array scan can't fail); now it's a real network call that can. If it fails,
+the surrounding operation — a product created, stock restocked, an order returned — still reports
+success to the user, but the FIFO batch ledger backing it silently never gets its entry: a
+data-integrity drift with no user-facing signal and no retry.
+
+Needs, in order: (1) N4 actually run on a device to confirm this is reachable and not just
+theoretical; (2) if confirmed, a decision on the fix shape — surface an error to the caller (touches
+all 4 call sites' UI), some retry-on-next-sync mechanism (bigger, would touch `OutboxStore`/`Gateway`,
+neither of which currently know anything about batch-id minting), or something narrower scoped just
+to this. Not scoped or estimated yet — deliberately, same reason as the two entries below.
+
 ### `orderMath.js` / `qml/helper/OrderMath.js` parity
 
 Long-deferred. Not enough carried-forward context to define "parity" honestly (parity with what
