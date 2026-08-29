@@ -625,12 +625,16 @@ env.
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file
   (QML has no established pattern here for reading an external JSON file synchronously in a test).
-  - **Handler-level tests** (`functions/test/index.handlers.test.js`, SKILLS Skill 46;
-    `index.handlers.remaining.test.js`, Skill 52) cover `functions/index.js`'s exported HTTPS
-    handlers themselves — auth, request wiring, and the response-building code — the layer none of
-    the `lib/` unit tests above touch. All 8 endpoints now covered: `recordMutation`/`recordDelta`/
-    `recordMutationsBatch` in the first file; `acquireLock`/`releaseLock`/`provisionMember`/
-    `runCutover`/`computeAnalysis` in the second. Both share one harness,
+  - **Handler-level tests** (`functions/test/index.handlers.test.js`, SKILLS Skill 46 /
+    Skill 53; `index.handlers.remaining.test.js`, Skill 52) cover `functions/index.js`'s exported
+    HTTPS handlers themselves — auth, request wiring, and the response-building code — the layer
+    none of the `lib/` unit tests above touch. All 8 endpoints now covered: `recordMutation`/
+    `recordDelta`/`recordMutationsBatch` in the first file; `acquireLock`/`releaseLock`/
+    `provisionMember`/`runCutover`/`computeAnalysis` in the second. As of Skill 53 the first file's
+    coverage is symmetric across its three endpoints (401/403/405/500 on each, not just
+    `recordMutation`) — before that, `recordDelta`/`recordMutationsBatch` were noticeably thinner,
+    an artifact of the file growing across separate passes chasing `recordMutation`'s own Skill 43
+    regression rather than one symmetric pass. Both share one harness,
     `functions/test/testSupport/handlerHarness.js`: install fakes into Node's `require.cache` (keyed
     by each dependency's resolved absolute path) for `firebase-admin`/`firebase-admin/firestore`
     *before* `index.js`'s first `require()` — index.js reads several of these at module load time,

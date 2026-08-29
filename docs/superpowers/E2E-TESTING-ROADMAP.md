@@ -118,12 +118,21 @@ noted here so it doesn't get lost given how test-development-adjacent it is.
   `JSON.stringify`-failure `catch` block has no reachable trigger through any current handler's real
   response bodies (all hand-built from plain fields) — same conclusion, same non-urgency. Neither is
   new; both pre-date this arc and apply equally to the 3 endpoints Skill 46 already covered.
-  **One pre-existing gap found, not fixed (different backlog item, not reopened without asking
-  first)**: `recordMutation`/`recordDelta`/`recordMutationsBatch` (Skill 46's original scope, marked
-  resolved under backlog item 2) are still missing method-not-allowed (405) tests for all three, and
-  `recordDelta` specifically is still missing invalid-token (401) and write-failed (500) tests that
-  `recordMutation` has. Found while comparing coverage output before/after this arc, not while
-  editing those endpoints — flagged here rather than silently bundled into this branch's diff.
+  **One pre-existing gap found, not fixed in this arc — since resolved, see below**:
+  `recordMutation`/`recordDelta`/`recordMutationsBatch` (Skill 46's original scope, marked resolved
+  under backlog item 2) were missing method-not-allowed (405) tests for all three, and `recordDelta`
+  specifically was missing invalid-token (401) and write-failed (500) tests that `recordMutation`
+  had. Found while comparing coverage output before/after this arc, not while editing those
+  endpoints — flagged here rather than silently bundled into this branch's diff.
+
+- **`recordMutation`/`recordDelta`/`recordMutationsBatch` handler-test parity** (2026-08-30) — the
+  gap flagged directly above is closed. `recordDelta`/`recordMutationsBatch` now have the same
+  401/403/405/500 coverage `recordMutation` already had; `recordMutation` itself gained the one
+  405 test it was missing too. 11 new tests, `functions/` suite now 174 passing, `index.js` line
+  coverage 95.32% → 99.32%. Design: `docs/superpowers/specs/2026-08-30-handler-parity-coverage-gap-
+  design.md`; technique: SKILLS Skill 53. This was the only item on this roadmap not gated on
+  Taher's input — the three entries above it under "Needs Taher's input" are still exactly that,
+  untouched.
 
 - QTBUG-49896 (QML XHR losing `status` at DONE) — root cause found and fixed, confirmed on a real CI
   run. Skills 40-45.

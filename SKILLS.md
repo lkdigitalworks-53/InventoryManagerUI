@@ -2471,3 +2471,47 @@ reachable trigger through any current handler's real response-construction code 
 in this file is built from plain, non-circular fields by hand. Both are pre-existing, not introduced by
 this arc's changes, and both apply equally to the 3 endpoints Skill 46 already covered, not just the 5
 this arc added.
+
+## Skill 53: Closing a coverage asymmetry that was an authoring artifact, not a scope decision
+
+**Problem**: `docs/superpowers/E2E-TESTING-ROADMAP.md` flagged, but didn't fix, an asymmetry in
+`functions/test/index.handlers.test.js`: `recordMutation` had a full auth/error matrix (401
+missing-token, 401 invalid-token, 403 no-tenant-context, 400 invalid-body, 500 write-failed) but
+`recordDelta` only had 3 tests and `recordMutationsBatch` only 3, missing most of that matrix, and
+none of the three had a 405 method-not-allowed test. All three endpoints share the exact same
+`OPTIONS` → method-check → token-parse → `verifyIdToken` → validate → `deriveContext` → lib-call →
+response-translation shape, so there was no structural reason for one to be covered better than the
+other two.
+
+**Root cause**: not a deliberate scope decision. The file's own header comment says its purpose is
+catching Skill 43's bug class (a `lib/` result silently mis-forwarded into the HTTP response) —
+Skill 43's actual bug lived specifically in `recordMutation`'s conflict-forwarding, so that's the
+endpoint that got the full investigative pass. `recordDelta`/`recordMutationsBatch` each got just
+enough to prove the same response-forwarding pattern once (their own conflict-shape regression
+test) plus a happy path, not because anyone decided they needed less coverage, but because the file
+grew across several separate sessions each focused on whatever bug or feature motivated that
+session, never a single symmetric coverage pass across all three.
+
+**Fix**: added the missing cells — `recordMutation` gained a 405 test (the one thing it was
+missing); `recordDelta` gained 401 invalid-token, 403, 400, 405, and 500 tests; `recordMutationsBatch`
+gained 401 missing-token, 401 invalid-token, 403, 405, and 500 tests. 11 new tests total, all
+mirroring `recordMutation`'s existing test bodies verbatim in structure (same `mockState.
+verifyIdToken` override for 401, same `mockState.docs = {}` for 403, same `mockReq({ method: "GET"
+})` for 405, same `require.cache`-swap-then-restore pattern for the 500 write-failed case — applied
+to `GatewayLogic.applyDelta` and `BatchMutationLogic.applyMutationsBatch` respectively instead of
+`GatewayLogic.applyMutation`). No harness changes needed — `testSupport/handlerHarness.js` already
+exposed everything required, confirming the roadmap's own "no new mocking needed" note.
+
+**Result**: `functions/` suite 163 → 174 tests, 0 failures. `index.js` line coverage 95.32% →
+99.32%. The two lines still uncovered (`send()`'s `JSON.stringify`-failure catch, `canAssignRole`'s
+unreachable `else` branch) are the same two pre-existing, already-documented findings from Skill 52
+— confirmed still true, not rediscovered as new gaps, and deliberately not touched here: there is no
+legitimate code path that reaches either one, so a test forcing them would be exercising test-only
+scaffolding, not real behavior.
+
+**Lesson, generalized**: a file's own justification comment ("this file exists to catch bug class
+X") is worth re-reading with a skeptical eye once the file has grown past its original single
+motivating bug — it can explain *why* coverage is asymmetric across the things the file nominally
+covers equally, without anyone having decided that asymmetry was correct. Worth checking any test
+file that grew incrementally across several unrelated sessions for the same pattern: does its
+current coverage match its stated scope, or just its history?
