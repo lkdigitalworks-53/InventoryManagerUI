@@ -882,6 +882,13 @@ BottomSheet {
         if (understocked > 0) msg += " · " + understocked + " completed with insufficient stock"
         if (failedAdjustments > 0) msg += " · " + failedAdjustments + " overwrite" + (failedAdjustments === 1 ? "" : "s") + " could not be applied (insufficient stock)"
         if (_warnRows.length > 0) msg += " · " + _warnRows.length + " warning(s)"
+        // Bulk-import chunking fix: a large import is sent as several
+        // background batches, not one synchronous write — say so instead of
+        // implying everything is already durably saved server-side the
+        // instant this dialog closes. If any batch is later rejected, the
+        // owning store rolls the affected rows back and notifies separately
+        // (Toast + activity log) — this message only covers the local commit.
+        if (counts.chunked) msg += " · still syncing to your workspace in the background"
 
         ActivityLog.record("import",
             (mode === "products" ? "Imported products" : "Imported orders"),

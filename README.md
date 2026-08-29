@@ -629,4 +629,32 @@ isolation —
    (only Orders had it — see SKILLS Skill 36 for the full mechanism and why the other stores were
    already safe).
 
+**Update 2026-08-29 (bulk-import chunking):** reported symptom — importing a CSV with more than
+200 rows silently stopped saving past row 200, with no error shown and the import dialog reporting
+full success anyway. Root cause: `Gateway.recordMutations()` sent an arbitrarily large batch as ONE
+HTTP call, with no awareness of `functions/lib/batchMutationLogic.js`'s 200-item cap; a batch over
+that cap gets a definitive 400 from the server, but `_sendBatch()`'s failure handling treated it
+identically to a transient network blip — `OutboxStore.markFailed()`, retried with backoff forever,
+never terminating, entirely silently — while `InventoryStore`/`OrdersStore` had already committed
+every row to local state before the HTTP round-trip even started. Fixed at the single choke point
+all three affected stores (`InventoryStore`, `OrdersStore`, `SupplierStore`) share:
+`Gateway.recordMutations()` now transparently splits an oversized `items` array into multiple
+`<=maxBatchSize` outbox entries, and `_sendBatch()` now classifies a batch failure as terminal
+(a definitive, payload-shape validation error that can never succeed on retry — narrower than "any
+4xx," see SKILLS Skill 52) or transient (unchanged existing retry behavior) instead of treating
+every non-conflict failure the same. A terminal failure now fires `batchMutationFailedPermanently`,
+which each store reconciles through the exact same signal-driven pattern already used for CAS
+conflicts (`mutationConflicted`) — rolling back the specific rows that never reached Firestore and
+surfacing it via the existing `Toast`/`ActivityLog`, no new UI mechanism. "Survives interruption"
+didn't need new persistence: `OutboxStore` already durably queues (and auto-resumes on relaunch)
+every chunk before `recordMutations()` returns, and the server's existing `requestId:entityId`
+audit-log dedup already makes a chunk that partially committed before a crash safe to retry — an
+initially-planned `ImportSessionStore` duplicating that tracking was cut in a `/ponytail` pass
+before any code was written (see Skill 52 for the full reasoning). 33 new test cases across
+`tests/tst_Gateway.qml`, `tests/tst_InventoryStore_upsertMany.qml`,
+`tests/tst_OrdersStore_mutations.qml`, a new `tests/tst_SupplierStore_batchMutationFailedPermanently.qml`,
+a new `test/e2e/tst_BulkImportChunkingE2E.qml` (first file to exercise `Gateway.batchFunctionUrl`
+against the real emulator), and 1 pinning regression test in `functions/test/batchMutationLogic.test.js`
+(run and verified — 110/110 passing).
+
 ---

@@ -61,6 +61,32 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
+    }
+
+    // Bulk-import chunking fix: every item Gateway.recordMutations("order", ...)
+    // sends is a brand-new order (action "create" — see upsertMany), so a
+    // permanent rejection always means "this order was added to `orders`
+    // optimistically and never actually reached Firestore" — safe to just
+    // remove it.
+    function _onBatchMutationFailedPermanently(entity, items, error) {
+        if (entity !== "order" || !items || items.length === 0) return
+        var arr = orders.slice()
+        for (var i = 0; i < items.length; ++i) {
+            var idx = -1
+            for (var j = 0; j < arr.length; ++j) {
+                if (arr[j].orderId === items[i].entityId) { idx = j; break }
+            }
+            if (idx >= 0) arr.splice(idx, 1)
+        }
+        orders = arr
+        revision++
+        _refreshCounts()
+        Toast.show(qsTr("%1 imported order(s) couldn't be saved and were removed. Please re-check and re-import them.").arg(items.length))
+        ActivityLog.record("import_error",
+            qsTr("Order import failed"),
+            qsTr("%1 order(s) were rejected (%2) and removed from your device.").arg(items.length).arg(error),
+            "")
     }
 
     // Component 3's client-side half (review finding C3, 2026-08-06): a
@@ -307,6 +333,10 @@ QtObject {
             orders = arr;
             revision++;
             _refreshCounts();
+            // See InventoryStore.upsertMany's identical comment: >maxBatchSize
+            // rows means the send below is split into multiple background
+            // chunks, not one synchronous "already saved" write.
+            counts.chunked = mutationItems.length > Gateway.maxBatchSize;
             if (mutationItems.length > 0) Gateway.recordMutations("order", mutationItems);
             counts.addedIds = addedIds;
             counts.updatedOrders = updatedOrders;

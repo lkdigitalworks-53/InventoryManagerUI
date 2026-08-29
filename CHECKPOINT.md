@@ -137,5 +137,56 @@ change plus one reconciliation handler each.
    Confirmed the bug report's two line-number pointers are both correct and found the additional,
    unreported infinite-silent-retry consequence plus the two other affected stores.
 4. Created branch `fix/bulk-import-chunking-durable-status` off `main`.
-5. This checkpoint.
-(continues below as implementation proceeds)
+5. Wrote this checkpoint (root cause + initial design).
+6. Ran `/ponytail:ponytail` against the design **before writing any implementation code** — cut a
+   planned `ImportSessionStore` singleton and a `batchMutationSucceeded` signal, both duplicating
+   state/behavior `OutboxStore` already provides. Full reasoning in SKILLS Skill 52 and the
+   response to Taher; not re-duplicated here.
+7. Implemented `Gateway.qml`: `maxBatchSize` (mirrors server's 200), `_chunkItems()`,
+   `recordMutations()` rewritten to chunk, `_classifyBatchMutationFailure()`,
+   `batchMutationFailedPermanently` signal, wired into `_sendBatch()`'s failure branch. Brace-
+   balance sanity check via `node -e` (no qmllint available) — clean.
+8. Wired `_onBatchMutationFailedPermanently` (rollback + `Toast` + `ActivityLog`) into
+   `InventoryStore.qml`, `OrdersStore.qml`, `SupplierStore.qml`, each connected in
+   `Component.onCompleted` alongside the existing `mutationConflicted` connection.
+9. `ImportPreviewDialog._finishApply()`: honest "still syncing in the background" note when
+   `counts.chunked` is true; `counts.chunked` added to both `InventoryStore._upsertManySync` and
+   `OrdersStore.upsertMany`'s returned counts.
+10. `functions/lib/batchMutationLogic.js`: cross-reference comment only, no behavior change
+    (the 200 cap itself is correct and deliberate — confirmed in Phase 1).
+11. Checked the 3 UI files that map `ActivityLog` `kind` → icon (`ActivityPage.qml`,
+    `NotificationsSheet.qml`, `DashboardPage.qml`) — an unregistered `"import_error"` kind falls
+    through to the SAME `IconType.questioncircle` a registered `"activity"` mapping would also
+    produce, so left unregistered rather than touching 3 files for a cosmetically-identical
+    result. Flagged to Taher as a one-line follow-up if a distinct warning glyph is wanted later.
+12. Tests written:
+    - `functions/test/batchMutationLogic.test.js`: 1 new pinning regression test. **Ran
+      `npm test` — 110/110 passing** (genuinely verified, not just written).
+    - `tests/tst_Gateway.qml`: 17 new tests (`_chunkItems`, the chunking regression itself,
+      requestId stability, the full `_classifyBatchMutationFailure` matrix).
+    - `tests/tst_InventoryStore_upsertMany.qml`: 6 new tests (`counts.chunked`, rollback handler,
+      live-signal wiring).
+    - `tests/tst_OrdersStore_mutations.qml`: 3 new tests (rollback handler, live-signal wiring).
+    - New `tests/tst_SupplierStore_batchMutationFailedPermanently.qml`: 4 tests — first unit test
+      file for this store (previously e2e-only).
+    - New `test/e2e/tst_BulkImportChunkingE2E.qml`: 2 tests against the real Firebase emulator —
+      the actual reported bug (250 rows, both chunks verified landed) and a genuine permanent
+      rejection (invalid action → real 400 → rollback + `ActivityLog` entry, verified end to end).
+    - Total: **33 new test cases**, counted via `grep -oE "function test_...|^test\("` diffed
+      against each file's `main` baseline, not estimated.
+    - QML-side tests **NOT RUN IN THIS SANDBOX** — no Qt/qmltestrunner toolchain, consistent with
+      every existing test file in this repo. Needs a real `qmltestrunner` pass (`tests/` +
+      `test/e2e/`, the latter needs the Firebase emulator) before merge.
+13. Docs: `SKILLS.md` Skill 52 (full root-cause + the ponytail-driven `ImportSessionStore` cut,
+    written so it doesn't have to be re-derived), `AGENTS.md` (fixed a now-stale claim that
+    `Gateway.batchFunctionUrl` wasn't exercised in `test/e2e/` — it now is; added a Feature Status
+    row), `README.md` (dated Update paragraph in the existing Concurrency & Conflict Resolution
+    section, matching that section's established format).
+14. This checkpoint, finalized.
+15. Commit, then push to the branch using the provided PAT (per this session's explicit
+    instruction — no additional confirmation step).
+
+## Final status: implementation + docs complete, functions tests verified (110/110), QML tests
+written to convention but unrun (sandbox has no Qt toolchain — flagged, not hidden). Pushed to
+`fix/bulk-import-chunking-durable-status`, not `main`. Not built or run on-device, per standing
+instruction.

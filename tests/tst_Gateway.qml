@@ -411,4 +411,179 @@ TestCase {
         compare(conflict.isConflict, true)
         compare(conflict.current.notes, "staff edit")
     }
+
+    // ── Bulk-import chunking fix (2026-08-29) ────────────────────────────────
+    // Root cause: recordMutations() sent an arbitrarily large `items` array
+    // as ONE outbox entry / ONE HTTP call. Past 200 items,
+    // functions/lib/batchMutationLogic.js's validateBatchMutationRequest
+    // rejects the whole thing with 400 batch-too-large — and because
+    // _sendBatch treated that identically to a transient failure, it retried
+    // the SAME oversized batch forever (OutboxStore's backoff caps at 10min
+    // but never gives up), completely silently, while the calling store had
+    // already committed every row locally. See CHECKPOINT.md for the full
+    // trace across InventoryStore/OrdersStore/SupplierStore.
+
+    function test_chunkItems_returns_a_single_chunk_when_under_the_limit() {
+        var chunks = Gateway._chunkItems([{ entityId: "a" }, { entityId: "b" }], 200)
+        compare(chunks.length, 1)
+        compare(chunks[0].length, 2)
+    }
+
+    function test_chunkItems_splits_evenly_at_the_boundary() {
+        var items = []
+        for (var i = 0; i < 400; ++i) items.push({ entityId: "e" + i })
+        var chunks = Gateway._chunkItems(items, 200)
+        compare(chunks.length, 2, "exactly 2x the limit must not leave a trailing empty chunk")
+        compare(chunks[0].length, 200)
+        compare(chunks[1].length, 200)
+    }
+
+    function test_chunkItems_splits_with_a_remainder() {
+        var items = []
+        for (var i = 0; i < 250; ++i) items.push({ entityId: "e" + i })
+        var chunks = Gateway._chunkItems(items, 200)
+        compare(chunks.length, 2)
+        compare(chunks[0].length, 200)
+        compare(chunks[1].length, 50)
+        compare(chunks[1][0].entityId, "e200", "chunk boundaries must not drop or duplicate an item")
+    }
+
+    function test_chunkItems_returns_empty_for_no_items() {
+        compare(Gateway._chunkItems([], 200).length, 0)
+        compare(Gateway._chunkItems(null, 200).length, 0)
+    }
+
+    // ── Regression: the exact reported bug — >200 rows must not be sent as
+    // one oversized outbox entry ──────────────────────────────────────────────
+
+    function test_recordMutations_splits_an_oversized_batch_into_multiple_outbox_entries() {
+        Gateway.mode = "gateway"
+        var items = []
+        for (var i = 0; i < 250; ++i) {
+            items.push({ entityId: "p" + i, action: "create", before: null, after: { name: "Product " + i } })
+        }
+        var requestId = Gateway.recordMutations("inventory", items)
+
+        verify(requestId.length > 0)
+        // This is the actual regression: before the fix, this was 1 entry of
+        // 250 items, which the server unconditionally rejects — every retry,
+        // forever, identically.
+        compare(OutboxStore.pendingCount, 2, "250 items at a 200 cap must produce 2 outbox entries, not 1")
+        compare(OutboxStore.items[0].items.length, 200)
+        compare(OutboxStore.items[1].items.length, 50)
+        verify(OutboxStore.items[0].items.length <= Gateway.maxBatchSize)
+        verify(OutboxStore.items[1].items.length <= Gateway.maxBatchSize)
+    }
+
+    function test_recordMutations_gives_each_chunk_a_distinct_but_related_requestId() {
+        // Distinct requestIds so OutboxStore never coalesces/overwrites one
+        // chunk with another; related (shared prefix) so a stable id
+        // survives retries of that SAME chunk — this is what keeps a retry
+        // idempotent against the server's requestId:entityId audit-log
+        // dedup in applyMutationsBatch, including across an app relaunch
+        // that resumes a partially-sent import from what OutboxStore
+        // persisted to disk before the interruption.
+        Gateway.mode = "gateway"
+        var items = []
+        for (var i = 0; i < 300; ++i) items.push({ entityId: "p" + i, action: "create", before: null, after: {} })
+        var requestId = Gateway.recordMutations("inventory", items)
+
+        compare(OutboxStore.pendingCount, 2)
+        verify(OutboxStore.items[0].requestId !== OutboxStore.items[1].requestId)
+        compare(OutboxStore.items[0].requestId, requestId + "-c0")
+        compare(OutboxStore.items[1].requestId, requestId + "-c1")
+    }
+
+    function test_recordMutations_under_the_limit_is_unaffected_by_chunking() {
+        // Must not regress the pre-existing, already-tested small-batch
+        // shape (test_recordMutations_in_gateway_mode_enqueues_one_batch_item
+        // above) — a single chunk keeps the PLAIN requestId, no "-c0" suffix.
+        Gateway.mode = "gateway"
+        var requestId = Gateway.recordMutations("inventory", [
+            { entityId: "p1", action: "create", before: null, after: {} }
+        ])
+        compare(OutboxStore.pendingCount, 1)
+        compare(OutboxStore.items[0].requestId, requestId)
+    }
+
+    function test_recordMutations_direct_mode_is_unaffected_by_chunking() {
+        // direct mode's _writeDirectBatch talks straight to FirebaseService,
+        // not the capped Cloud Function — out of scope for this fix (see
+        // CHECKPOINT.md), and must keep behaving exactly as before.
+        Gateway.mode = "direct"
+        var items = []
+        for (var i = 0; i < 250; ++i) items.push({ entityId: "p" + i, action: "create", before: null, after: {} })
+        Gateway.recordMutations("inventory", items)
+        compare(OutboxStore.pendingCount, 0, "direct mode must never touch the outbox")
+    }
+
+    // ── _classifyBatchMutationFailure ────────────────────────────────────────
+    // Deliberately narrow: only the specific validateBatchMutationRequest
+    // error strings are terminal. Everything else (malformed body, 5xx, or a
+    // 4xx whose error isn't one of these five) falls through to the existing
+    // markFailed/backoff retry path completely unchanged — same conservative
+    // default as _parseMutationConflict elsewhere in this file: when unsure,
+    // retry rather than silently give up.
+
+    function test_classifyBatchMutationFailure_treats_a_malformed_body_as_non_terminal() {
+        var result = Gateway._classifyBatchMutationFailure(400, "not json{{{")
+        compare(result.terminal, false)
+    }
+
+    function test_classifyBatchMutationFailure_treats_an_empty_body_as_non_terminal() {
+        var result = Gateway._classifyBatchMutationFailure(400, "")
+        compare(result.terminal, false)
+    }
+
+    function test_classifyBatchMutationFailure_treats_a_body_without_ok_false_as_non_terminal() {
+        var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ error: { code: 400 } }))
+        compare(result.terminal, false)
+    }
+
+    function test_classifyBatchMutationFailure_recognizes_batch_too_large_as_terminal() {
+        // The exact reported bug's server response shape.
+        var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ ok: false, error: "batch-too-large" }))
+        compare(result.terminal, true)
+        compare(result.error, "batch-too-large")
+    }
+
+    function test_classifyBatchMutationFailure_recognizes_every_definitive_validation_error() {
+        var definitiveErrors = ["unsupported-entity", "missing-fields", "empty-batch", "batch-too-large", "unsupported-action"]
+        for (var i = 0; i < definitiveErrors.length; ++i) {
+            var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ ok: false, error: definitiveErrors[i] }))
+            compare(result.terminal, true, definitiveErrors[i] + " must be classified as terminal")
+        }
+    }
+
+    function test_classifyBatchMutationFailure_does_not_treat_auth_or_tenant_failures_as_terminal() {
+        // 401/403 describe CALLER STATE (token, tenant context) that can
+        // legitimately change between attempts without the payload changing
+        // at all — unlike the five errors above, retrying these might
+        // actually succeed (e.g. after AuthService.ensureFreshToken() runs
+        // on the next drainNow()). Must keep retrying via markFailed.
+        compare(Gateway._classifyBatchMutationFailure(401, JSON.stringify({ ok: false, error: "invalid-token" })).terminal, false)
+        compare(Gateway._classifyBatchMutationFailure(403, JSON.stringify({ ok: false, error: "no-tenant-context" })).terminal, false)
+    }
+
+    function test_classifyBatchMutationFailure_treats_a_well_formed_5xx_as_non_terminal() {
+        // Same reasoning as test_classifyDeltaResponse_treats_a_well_formed_5xx_as_non_terminal
+        // above: a well-formed ok:false body doesn't make a 5xx definitive —
+        // status range is checked FIRST, before the error-string allowlist.
+        var result = Gateway._classifyBatchMutationFailure(500, JSON.stringify({ ok: false, error: "batch-too-large" }))
+        compare(result.terminal, false, "5xx must never be terminal regardless of the error string")
+    }
+
+    function test_classifyBatchMutationFailure_ignores_a_2xx_status() {
+        var result = Gateway._classifyBatchMutationFailure(200, JSON.stringify({ ok: true }))
+        compare(result.terminal, false)
+    }
+
+    function test_classifyBatchMutationFailure_does_not_treat_an_unrecognized_4xx_error_as_terminal() {
+        // Conservative default: an error string this classifier doesn't
+        // recognize (e.g. a future validation error added to
+        // batchMutationLogic.js without updating this allowlist) must keep
+        // retrying, not silently give up on an unfamiliar rejection.
+        var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ ok: false, error: "some-future-error" }))
+        compare(result.terminal, false)
+    }
 }

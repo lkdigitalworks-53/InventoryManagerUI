@@ -52,6 +52,39 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
+    }
+
+    // Bulk-import chunking fix: every item Gateway.recordMutations("supplier", ...)
+    // sends is a brand-new supplier discovered during a product import (see
+    // addSupplierWithIdMany), so a permanent rejection always means "this
+    // supplier was added optimistically and never actually reached
+    // Firestore" — safe to just remove it.
+    //
+    // Known gap, not solved here (documented rather than silently ignored):
+    // if some of the SAME import's product rows already reference this
+    // supplierId locally, they're left pointing at a now-removed local
+    // supplier until the next full re-sync. In practice a supplier chunk
+    // failing here means a genuine validation bug in addSupplierWithIdMany's
+    // payload (post-chunking-fix, size is no longer a possible cause), which
+    // should be rare — cascading a rollback into InventoryStore's products
+    // for this edge case was judged out of proportion for this fix.
+    function _onBatchMutationFailedPermanently(entity, items, error) {
+        if (entity !== "supplier" || !items || items.length === 0) return
+        var arr = suppliers.slice()
+        for (var i = 0; i < items.length; ++i) {
+            var idx = -1
+            for (var j = 0; j < arr.length; ++j) {
+                if (arr[j].supplierId === items[i].entityId) { idx = j; break }
+            }
+            if (idx >= 0) arr.splice(idx, 1)
+        }
+        suppliers = arr
+        Toast.show(qsTr("%1 new supplier(s) from your import couldn't be saved and were removed.").arg(items.length))
+        ActivityLog.record("import_error",
+            qsTr("Supplier import failed"),
+            qsTr("%1 supplier(s) were rejected (%2) and removed from your device.").arg(items.length).arg(error),
+            "")
     }
 
     // Component 3's client-side half (review finding C3, 2026-08-06) — see

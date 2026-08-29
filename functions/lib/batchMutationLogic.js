@@ -20,6 +20,12 @@
 
 const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual } = require("./gatewayLogic");
 
+// Mirrored client-side as Gateway.qml's `maxBatchSize` property (no shared
+// build-time constant between this Node runtime and the QML client — see
+// that property's comment). If this value ever changes, update both; this
+// file's own test below and tests/tst_Gateway.qml both pin the value they
+// each hold so a drift fails a test on both sides instead of failing silently
+// in production the way the original bug did.
 const MAX_BATCH_SIZE = 200;
 
 // Validates + normalizes a recordMutationsBatch request body. Returns
