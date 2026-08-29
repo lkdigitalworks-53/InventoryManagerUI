@@ -492,6 +492,20 @@ TestCase {
         compare(InventoryStore.products.length, 1, "nothing to remove, must not throw or touch unrelated rows")
     }
 
+    function test_onBatchMutationFailedPermanently_is_a_no_op_for_empty_items() {
+        // Distinct branch from "ignores other entities" above: entity DOES
+        // match "inventory" here, so this exercises the `!items ||
+        // items.length === 0` half of the guard, not the entity check.
+        InventoryStore.products = [{ productId: "PRD-425", name: "Kept", sku: "K-1", category: "General",
+            stock: 1, minStock: 1, price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "" }]
+
+        InventoryStore._onBatchMutationFailedPermanently("inventory", [], "missing-fields")
+        compare(InventoryStore.products.length, 1)
+        InventoryStore._onBatchMutationFailedPermanently("inventory", null, "missing-fields")
+        compare(InventoryStore.products.length, 1)
+    }
+
     // End-to-end through the real signal (not just the handler directly) —
     // confirms Component.onCompleted's Gateway.batchMutationFailedPermanently
     // connection is actually live, matching production wiring.

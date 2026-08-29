@@ -453,6 +453,26 @@ TestCase {
         compare(Gateway._chunkItems(null, 200).length, 0)
     }
 
+    // Branch not exercised by any of the above (all pass 200 explicitly):
+    // recordMutations() always calls _chunkItems(normalized, maxBatchSize),
+    // so `size` is never actually 0/negative in production — but the
+    // fallback exists in the code and coverage means testing it anyway,
+    // not just the paths production happens to take.
+    function test_chunkItems_falls_back_to_items_length_when_size_is_not_positive() {
+        var items = [{ entityId: "a" }, { entityId: "b" }, { entityId: "c" }]
+        compare(Gateway._chunkItems(items, 0).length, 1, "size=0 must fall back to one chunk of everything, not zero-length chunks")
+        compare(Gateway._chunkItems(items, 0)[0].length, 3)
+        compare(Gateway._chunkItems(items, -5).length, 1)
+    }
+
+    function test_maxBatchSize_matches_the_servers_MAX_BATCH_SIZE() {
+        // Same literal pinned from the other side in
+        // functions/test/batchMutationLogic.test.js — see that test's
+        // comment for why both sides hardcode 200 rather than each other's
+        // dynamic constant.
+        compare(Gateway.maxBatchSize, 200)
+    }
+
     // ── Regression: the exact reported bug — >200 rows must not be sent as
     // one oversized outbox entry ──────────────────────────────────────────────
 
@@ -535,8 +555,24 @@ TestCase {
         compare(result.terminal, false)
     }
 
+    // Distinct from the malformed/empty cases above: "null" is VALID JSON —
+    // JSON.parse succeeds and returns null, so this exercises the `!body`
+    // check itself rather than the try/catch around a parse failure.
+    function test_classifyBatchMutationFailure_treats_a_valid_json_null_body_as_non_terminal() {
+        var result = Gateway._classifyBatchMutationFailure(400, "null")
+        compare(result.terminal, false)
+    }
+
     function test_classifyBatchMutationFailure_treats_a_body_without_ok_false_as_non_terminal() {
         var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ error: { code: 400 } }))
+        compare(result.terminal, false)
+    }
+
+    // Distinct from the "unrecognized error string" test further below:
+    // this hits `typeof body.error !== "string"` itself (error missing
+    // entirely), not the allowlist check that runs after it.
+    function test_classifyBatchMutationFailure_treats_ok_false_without_an_error_string_as_non_terminal() {
+        var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ ok: false }))
         compare(result.terminal, false)
     }
 

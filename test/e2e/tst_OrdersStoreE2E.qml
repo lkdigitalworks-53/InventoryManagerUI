@@ -217,6 +217,25 @@ TestCase {
         compare(renamedDoc.fields.customer.stringValue, "Should Be Renamed")
     }
 
+    // Bulk-import chunking fix (2026-08-29): counts.chunked is set inside
+    // upsertMany's mintCounterBatch callback, which no unit test can reach
+    // synchronously (see tst_OrdersStore_mutations.qml's file header on
+    // this store's async-minting testability limit) -- this is the only
+    // place this specific branch is actually exercised.
+    function test_upsertMany_sets_chunked_true_for_more_than_maxBatchSize_new_orders() {
+        var records = []
+        for (var i = 0; i < 201; ++i) {
+            records.push({ orderId: "", customer: "Chunk Order Customer " + i, products: [], _conflictPolicy: "skip" })
+        }
+        var received = null
+        var done = false
+        OrdersStore.upsertMany(records, function(counts) { received = counts; done = true })
+
+        tryVerify(function() { return done }, 15000, "upsertMany callback never fired for 201 new orders")
+        compare(received.added, 201)
+        compare(received.chunked, true, "201 new orders must be flagged as chunked (>Gateway.maxBatchSize=200)")
+    }
+
     function test_upsertMany_overwrite_policy_updates_envelope_fields_in_place() {
         var existingId = _addOrder("Original Name", 1, 20)
         var existingDocPath = "tenants/" + fixture.tenantId + "/orders/" + existingId

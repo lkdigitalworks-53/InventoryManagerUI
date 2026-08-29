@@ -45,6 +45,17 @@ TestCase {
         compare(SupplierStore.suppliers.length, 1)
     }
 
+    function test_is_a_no_op_for_empty_items() {
+        // Distinct branch from "ignores other entities" above: entity DOES
+        // match "supplier" here, exercising the `!items || items.length
+        // === 0` half of the guard.
+        SupplierStore.suppliers = [{ supplierId: "SUP-625", name: "Kept" }]
+        SupplierStore._onBatchMutationFailedPermanently("supplier", [], "missing-fields")
+        compare(SupplierStore.suppliers.length, 1)
+        SupplierStore._onBatchMutationFailedPermanently("supplier", null, "missing-fields")
+        compare(SupplierStore.suppliers.length, 1)
+    }
+
     // End-to-end through the real signal — confirms Component.onCompleted's
     // Gateway.batchMutationFailedPermanently connection is actually live.
     function test_gateway_signal_reaches_SupplierStore_and_rolls_back() {
