@@ -78,14 +78,6 @@ without his input.
 
 ## Explicitly scoped out — not forgotten, just not this round
 
-### `functions/index.js` handler tests for the other 5 endpoints
-
-`functions/test/index.handlers.test.js` (added for backlog item 2) covers `recordMutation`/
-`recordDelta`/`recordMutationsBatch` — the three sharing the auth→validate→apply→respond shape and
-Skill 43's specific response-contract risk. `acquireLock`/`releaseLock`/`provisionMember`/
-`runCutover`/`computeAnalysis` share less of that exact risk pattern and weren't covered. Worth doing
-eventually; not urgent since nothing found so far implicates them specifically.
-
 ### Phase 2 probe (Felgo headless component testing)
 
 Closed as answered, not "still open" — see the phase-2-followup checkpoint's own entry. Felgo's SDK
@@ -112,6 +104,26 @@ noted here so it doesn't get lost given how test-development-adjacent it is.
 ---
 
 ## Resolved this arc (for context — full detail in `docs/superpowers/specs/` and `SKILLS.md`)
+
+- **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/
+  `releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis` now covered in
+  `functions/test/index.handlers.remaining.test.js` (49 new tests; full `functions/` suite now 163
+  tests, all passing). `provisionMember`/`computeAnalysis` had zero coverage anywhere before this
+  (their logic lives directly in `index.js`, not a `lib/` module) — everything else only had the
+  three endpoints Skill 46 covered. Design/approach: Skill 52.
+  **Two new, honest findings, not fixed, flagged instead**: (1) `canAssignRole()`'s `else return
+  false` branch is unreachable via its only call site (`provisionMember` already gates non-owner/
+  admin callers earlier) — likely-dead defensive code, not exported so not directly testable either;
+  worth a look next time `provisionMember` is touched, not urgent on its own. (2) `send()`'s
+  `JSON.stringify`-failure `catch` block has no reachable trigger through any current handler's real
+  response bodies (all hand-built from plain fields) — same conclusion, same non-urgency. Neither is
+  new; both pre-date this arc and apply equally to the 3 endpoints Skill 46 already covered.
+  **One pre-existing gap found, not fixed (different backlog item, not reopened without asking
+  first)**: `recordMutation`/`recordDelta`/`recordMutationsBatch` (Skill 46's original scope, marked
+  resolved under backlog item 2) are still missing method-not-allowed (405) tests for all three, and
+  `recordDelta` specifically is still missing invalid-token (401) and write-failed (500) tests that
+  `recordMutation` has. Found while comparing coverage output before/after this arc, not while
+  editing those endpoints — flagged here rather than silently bundled into this branch's diff.
 
 - QTBUG-49896 (QML XHR losing `status` at DONE) — root cause found and fixed, confirmed on a real CI
   run. Skills 40-45.

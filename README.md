@@ -221,6 +221,15 @@ See `AGENTS.md`'s **Testing & QA Agent** section for what each layer actually co
 `SKILLS.md` Skill 40 for the E2E layer's specific gotchas (Cloud Functions cold starts, singleton
 construction order, per-function emulator URLs) before adding a new scenario there.
 
+**Update 2026-08-29:** all 8 `functions/index.js` HTTPS handlers now have handler-level test
+coverage (auth, request wiring, response-building — not just the `lib/` pure-logic layer the table
+above already listed). `recordMutation`/`recordDelta`/`recordMutationsBatch` were covered first
+(`functions/test/index.handlers.test.js`, Skill 46); `acquireLock`/`releaseLock`/`provisionMember`/
+`runCutover`/`computeAnalysis` — the 5 explicitly deferred at the time — are now covered too
+(`index.handlers.remaining.test.js`, Skill 52). `functions/` suite: 163 tests, all passing.
+`provisionMember`/`computeAnalysis` had zero coverage anywhere before this, since their logic lives
+directly in `index.js` rather than a testable `lib/` module.
+
 ---
 
 ## Qt Skills Cheat Sheet

@@ -1,149 +1,93 @@
-# CHECKPOINT — async stock batch id minting
+# CHECKPOINT — functions/index.js handler tests for the 5 remaining endpoints
 
-**Session date:** 2026-08-27
-**Branch:** `feature/async-stock-batch-id-minting`
+**Session date:** 2026-08-29
+**Branch:** `test/functions-remaining-endpoint-handlers` (off `main` @ `61f85e0`)
 **Previous arc archived to:**
-`docs/superpowers/specs/2026-08-26-post-merge-backlog-and-roadmap-decision-CHECKPOINT.md`
+`docs/superpowers/specs/2026-08-29-async-stock-batch-id-minting-CHECKPOINT.md`
 
 ## What this session is
 
-`docs/superpowers/E2E-TESTING-ROADMAP.md`'s "In progress" item left `StockBatchStore._nextBatchId()`'s
-async conversion blocked on Taher's decision between Option A (full async parity with Staff/Supplier,
-cascades into `InventoryStore.upsertMany`'s bulk-import loop) and Option B (retry-on-conflict, smaller,
-contained). The doc leaned toward B. This session's instruction named Option A explicitly — that
-decision is now made and acted on.
+Picked up `docs/superpowers/E2E-TESTING-ROADMAP.md`'s "Explicitly scoped out" item:
+`functions/index.js` handler tests for the 5 endpoints Skill 46's original handler-test file
+deliberately left uncovered — `acquireLock`, `releaseLock`, `provisionMember`, `runCutover`,
+`computeAnalysis`. Deliberately did NOT touch the three "Needs Taher's input" items (silent
+batch-id-mint failure, `orderMath.js` parity, account-switch-mid-sync) — none of them are scoped
+or decided yet, and none of this session's instructions named one explicitly the way the last
+session named "Option A."
 
-## Status: implementation complete, not yet committed/pushed as of this checkpoint
+## Status: implementation complete, verified, not yet committed/pushed as of this checkpoint
 
 ### Done
 - [x] Fresh clone, branch created, previous CHECKPOINT.md archived
-- [x] Read `InventoryStore.upsertMany`/`SupplierStore` end to end before designing — found the actual
-      blast radius is smaller than the roadmap doc estimated (see design doc, SKILLS Skill 50)
-- [x] Design doc written: `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`
-- [x] `StockBatchStore.qml`: `_nextBatchId()` → `nextBatchId(callback)` (real, year-scoped Firestore
-      counter `counters/stockBatches-<year>`), `addBatch()` converted to async, new
-      `addBatchWithId()` for the bulk-import path, `_buildBatchDoc()` extracted, `topUpOldest()`'s
-      synthetic-batch call site updated to chain its callback correctly
-- [x] `InventoryStore.qml`: `upsertMany` reserves a third id range (batch ids) via a new, pure,
-      unit-testable `_scanUpsertManyNeeds` helper; `_bookImportedProduct`/`_upsertManySync` threaded
-      with `pullBatchId`; the two other `addBatch` call sites (`addProduct`, `restock`) updated with
-      comments only (no behavior change — they already discarded the return value)
-- [x] `test/e2e/tst_StockBatchStoreE2E.qml`: rewrote the 2 existing tests that relied on `addBatch`'s
-      old synchronous return (would have silently broken), added 2 new tests
-      (`addBatchWithId`, `nextBatchId` real-counter sequencing), updated the `init()` comment
-- [x] `tests/tst_StockBatchStore.qml` (new) — unit tests for pure logic + guard clauses
-- [x] `tests/tst_InventoryStore_upsertMany.qml` (new) — unit tests for `_scanUpsertManyNeeds`
-      (the correctness-critical new logic) + smoke tests for `upsertMany` itself
-- [x] `qt_qml_lint.py` run on all 5 touched/new files — no new findings beyond this codebase's
-      pre-existing, consistent conventions (`var`, loose equality in older code, no `id: root` on
-      TestCase files — confirmed 0/56 existing test files use it)
-- [x] Brace/paren/bracket balance check on all 5 files — all balanced
-- [x] `SKILLS.md` — Skill 50 added
-- [x] `AGENTS.md` — new "ID minting" bullet under Store & Firebase Agent documenting the
-      `addX`/`addXWithId`/`addXWithIdMany` split as the established pattern for future domains
-- [x] `README.md` — dated update note under Concurrency & Conflict Resolution
-- [x] `docs/superpowers/E2E-TESTING-ROADMAP.md` — item moved from "In progress" to "Resolved this
-      arc", with an honest note on how the risk estimate compared to what reading the code found
+- [x] Read `functions/index.js` end to end (all 8 handlers) plus `lib/lockLogic.js`,
+      `lib/cutoverLogic.js`, and their existing test files before designing — confirmed
+      `acquireLock`/`releaseLock`/`runCutover` delegate their Firestore work to already-fully-tested
+      `lib/` modules (same shape as Skill 46's 3 endpoints), while `provisionMember`/
+      `computeAnalysis` have zero delegation — their logic lives directly in `index.js` with no
+      prior coverage anywhere. Two different problems, not one.
+- [x] Extended `functions/test/testSupport/handlerHarness.js`: LockLogic/CutoverLogic mocking
+      (mock only their Firestore-writing exports, keep `validate*`/`buildCutoverMarker` real — same
+      convention Skill 46 established for GatewayLogic/BatchMutationLogic); Firestore mock deepened
+      with `doc().set()`, `runTransaction()`, and `collection().orderBy().limit().startAfter().get()`
+      with real doc-id cursor semantics (needed for `provisionMember`'s transaction and
+      `computeAnalysis`'s `readAllPaged` pagination, neither of which existed before)
+- [x] Verified the harness extension didn't break Skill 46's original 3-endpoint file — ran it
+      standalone against the extended harness before writing anything new: 14/14 still pass
+- [x] `functions/test/index.handlers.remaining.test.js` (new) — 49 tests across the 5 endpoints:
+      auth (missing/invalid token), request validation (real, unmocked `validate*` functions),
+      no-tenant-context, method-not-allowed, the lib-result-forwarding seam (holder info, conflicts,
+      `after`), and for `provisionMember`/`computeAnalysis` specifically: `canAssignRole`'s both
+      branches, `findOrCreateAuthUser`'s new/existing/invite-by-uid paths, the transaction's
+      existing-user-tenant-preservation merge logic, `readAllPaged`'s actual 2-page pagination
+      (501 synthetic docs — the one test in this file that would catch a cursor off-by-one; every
+      other fixture fits in a single page and wouldn't exercise that branch at all), and the
+      `needsOrders` read-skipping optimization for sold/purchased view modes
+- [x] Found and fixed a real gap in my own first pass via the coverage report, not by guessing:
+      missing `releaseLock` invalid-token test
+- [x] Found one broken approach and root-caused it properly rather than working around it blind:
+      tried to patch `require.cache[firestorePath].exports.getFirestore` mid-test to simulate a
+      transaction failure — silently had no effect (test asserted 500, got 200). Root cause:
+      `index.js` destructures `const { getFirestore } = require(...)` at MODULE LOAD time, so its
+      local binding is fixed to whatever was in `require.cache` before `index.js`'s first
+      `require()` — a later mutation of `require.cache` doesn't reach it. Same load-order
+      constraint Skill 46 already documented, hit from the opposite direction (fixing after first
+      require, not before). Fixed with a `mockState.runTransactionError` flag read live inside the
+      one `runTransaction` closure `index.js` actually holds — full trace in SKILLS Skill 52.
+- [x] Full `functions/` suite: **163 tests, 0 failures** (114 pre-existing + 49 new)
+- [x] Coverage check (`node --test --experimental-test-coverage`): `index.js` line coverage
+      93.27% → 95.32%. All 5 target endpoints at 100% line coverage on their own logic. Remaining
+      gaps in `index.js` are entirely pre-existing and outside this session's scope — see "Findings
+      not fixed" below.
+- [x] Syntax check (`node -c`) + brace/paren/bracket balance check on both touched/new files — clean
+- [x] `SKILLS.md` — Skill 52 added
+- [x] `AGENTS.md` — Testing & QA Agent section: new bullet under the `functions/test/` entry
+      documenting the handler-level test files and the harness's `require.cache`-timing rule
+- [x] `README.md` — dated update note under **Testing**
+- [x] `docs/superpowers/E2E-TESTING-ROADMAP.md` — item moved from "Explicitly scoped out" to
+      "Resolved this arc"; findings below folded into that entry too
 
-### Remaining before this session ends
-- [x] First real CI run: 2 failures, both root-caused and fixed (see below) — Skill 51 added
-- [ ] Final `git diff` read-through of the CI-fix round
-- [ ] `git add -A`, commit, push using PAT injected into the URL, verify clean, redact in output
+### Findings surfaced, not fixed (flagged, per this repo's established discipline)
 
-## CI round 1 — 2 failures, both root-caused via full call-stack trace (not patched blind)
-
-1. **`InventoryStore_upsertMany::test_scan_sums_batch_ids_across_multiple_qualifying_rows`**
-   (Actual 3, Expected 2) — my own test's expected `neededProductIds` was wrong: a zero-stock new row
-   still needs a product id (only the *batch* id is stock-gated). Implementation was correct; fixed
-   the test's expected value (3, not 2) and its comment.
-2. **`DataModel_adjustOrderSyncGuard::test_proceeds_normally_once_transaction_history_is_synced`**
-   (Actual 3, Expected 4, missing the `stock_batch` mutation) — traced the full call stack: this
-   test's `init()` never seeded `StockBatchStore.batches`, so `StockBatchStore.restoreFifo("B1", ...)`
-   has *always* fallen through to `topUpOldest`'s synthetic-batch fallback rather than the normal
-   existing-batch `recordDelta` path the test's own header comment describes and intends. Invisible
-   before this session's change only because that fallback used to be fully synchronous; now it mints
-   an id over a real network round-trip, so its mutation isn't enqueued yet when the test's synchronous
-   assertion runs. Fixed by seeding a matching `B1` batch in `init()` — makes the test exercise the
-   path it always claimed to, which is fully synchronous regardless (`recordDelta` on a known id never
-   mints anything). See SKILLS Skill 51 for the full trace and why this wasn't just "add a `tryVerify`."
-
-**Not touched, flagged only**: `tst_OrderMetadataEditPreservesConsumption.qml` also seeds
-`StockBatchStore.batches = []` with a `consumption` referencing `batchId: "B1"`, so it hits the same
-`topUpOldest` fallback — but none of its assertions depend on that mutation landing synchronously, so
-it wasn't failing and wasn't touched (out of scope for this fix-forward round; per systematic-debugging
-convention, no bundled changes beyond what CI actually flagged).
-
-## On-device test plan
-
-Written: `docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`. Follows the
-happy/negative/edge/monkey/regression structure from `docs/superpowers/test-plans/2026-07-14-test-plan.md`
-(the closest precedent — same class of change, id minting, for a different entity). Headline finding
-surfaced while writing it, not yet verified either way: **3 of the 4 call sites that create a batch
-pass no callback to `addBatch`/`topUpOldest` at all**, so a failed mint (new failure mode — a network
-call where there used to be an instant local scan) is silently swallowed with no user-facing signal.
-Flagged as the top-priority on-device scenario (N4 in the plan) rather than guessed at or fixed
-speculatively — don't know yet whether it's a real gap worth a follow-up until someone runs it. Also
-now tracked in `docs/superpowers/E2E-TESTING-ROADMAP.md` ("Needs Taher's input") so it doesn't get
-lost if this test plan itself isn't the next thing someone opens.
-
-## 2026-08-29 — on-device results + two testing-environment gaps documented
-
-Taher tested on-device: happy path confirmed working. Two categories in the test plan are currently
-**blocked by pre-existing, out-of-scope-for-this-branch gaps**, not skipped:
-
-- `main.qml`'s root `Navigation { enabled: isOnline }` disables the entire app's interactivity the
-  moment connectivity drops — offline/airplane-mode scenarios that assumed "start an action already
-  offline" (the plan's original N1/N2/N4) aren't executable through the UI at all. What remains
-  executable and still answers the same question: drop connectivity *after* a request is already
-  dispatched (folded into a rewritten N3). Corrected in the test plan rather than left inaccurate.
-- No current way to log a second session into the same tenant as staff/manager — blocks E2 (concurrent
-  restock) outright. Implementation pending, separate from this branch. Noted this exercises the same
-  already-accepted `mintCounterValue` CAS mechanism Products/Orders/Staff/Suppliers already rely on —
-  inherited risk, not new risk from this branch.
-
-Also sharpened the "failed mint silently swallowed" finding while re-reading it for this update: it's
-specifically that the **companion** stock-batch write is exposed, not the **primary** entity mint —
-`addProduct`'s own productId mint already fails loudly and aborts cleanly; the batch created right
-after, on an already-committed product, has no equivalent path. Updated both the test plan and the
-roadmap entry with this framing. Neither gap is a merge blocker — both are narrow, already tracked
-with a clear next step, and structurally different from (not a regression of) the correctly-handled
-primary-entity pattern used everywhere else in the app.
-
-Updated: test plan (Status note, corrected N1-N6, E2, order of attack, sign-off checklist),
-`docs/superpowers/E2E-TESTING-ROADMAP.md` (sharpened finding + new standalone "testing environment
-limitations" note near the top, since both gaps constrain any future concurrent/offline item, not
-just this one), this file.
-
-## Recommendation on merge
-
-Given: happy path confirmed on-device; the one open finding (failed companion-batch mint) is narrow,
-already tracked, and not a regression of the app's primary-entity error-handling pattern; the two
-blocked categories (offline depth, true multi-device) are pre-existing product/test-infrastructure
-gaps unrelated to this branch's own correctness, and blocking merge on them would effectively block
-all future concurrent-mutation work indefinitely — **this branch looks safe to merge.**
-
-One thing worth doing before or shortly after merge that is *not* blocked by either gap Taher
-mentioned, and is squarely actionable right now: run `test/e2e/tst_StockBatchStoreE2E.qml` against a
-real Firestore/Cloud Functions emulator at least once. It's the only automated proof the actual
-counter mechanism (year-scoped, sequential minting) works against real Firestore, and it has not been
-run in either CI round so far — everything else in this branch has been verified by CI, the on-device
-pass, or both, but that one file hasn't been verified by anything yet.
-
-## Known, accepted limitations (not fixed, flagged instead)
-
-- **Midnight year-rollover during upsertMany**: `currentYear` is captured once at the top of
-  `upsertMany`, before any network round-trips. An import somehow still running across a real Dec 31
-  → Jan 1 boundary reserves batch ids under the old year's counter for rows processed after midnight.
-  Pre-existing-shape edge case (the old synchronous version had the same property), not made worse by
-  this change, not worth solving for an import that would need to run for hours across literal
-  midnight.
-- **Two more `deferWrite`-into-`addBatchMany` callers do not currently exist** for `addBatch` (only
-  `addBatchWithId` is used that way, by the bulk-import path) — `addBatch`'s `deferWrite`/no-callback
-  combination is preserved for interface parity with `addBatchWithId` but has no current caller; not
-  removed since it's a legitimate, cheap-to-keep option, not dead weight that obscures anything.
+- **`canAssignRole()`'s `else return false` branch is unreachable** via its only call site —
+  `provisionMember` already gates non-owner/admin callers earlier. Not exported, so not directly
+  unit-testable either. Likely-dead defensive code, not a bug. Worth a look next time
+  `provisionMember` is touched; not urgent enough to act on unilaterally.
+- **`send()`'s `JSON.stringify`-failure `catch` block has no reachable trigger** through any current
+  handler's real response bodies (all hand-built from plain, non-circular fields). Pre-existing,
+  applies equally to all 8 endpoints, not something this session's changes created or could fix by
+  adding a test — there's no legitimate code path that reaches it.
+- **A pre-existing gap in Skill 46's original scope, found while comparing coverage output, NOT
+  fixed here**: `recordMutation`/`recordDelta`/`recordMutationsBatch` are still missing
+  method-not-allowed (405) tests for all three, and `recordDelta` specifically is still missing
+  invalid-token (401) and write-failed (500) tests that `recordMutation` already has. That's a
+  different, already-"resolved" backlog item — reopening it wasn't part of this session's brief, so
+  it's flagged in the roadmap rather than silently bundled into this branch's diff. Cheap to close
+  if/when it's picked up: same harness, same pattern, no new mocking needed.
 
 ## Next action if resumed
 
-Rebased and pushed as of `774738b` (2026-08-29) — working tree clean, nothing pending. If resumed:
-branch is ready to merge per the recommendation above. Only open item: run
-`test/e2e/tst_StockBatchStoreE2E.qml` against a real emulator (not done yet, not a merge blocker).
+Working tree has all changes described above; nothing committed yet as of this checkpoint. If
+resumed: `git add -A`, review the diff, commit, push using PAT injected into the URL per the
+standing workflow rule, verify `.git/config` is clean of the token, redact in any terminal output
+shown. No build/run requested or performed this session (QML side untouched entirely — this arc is
+Cloud Functions test coverage only).
