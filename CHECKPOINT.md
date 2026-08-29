@@ -144,7 +144,6 @@ pass, or both, but that one file hasn't been verified by anything yet.
 
 ## Next action if resumed
 
-If interrupted before the remaining steps above: re-run `git status` and `git diff --stat` on this
-branch first — all source/test/doc edits described as "Done" above should already be present in the
-working tree (nothing has been committed yet as of this checkpoint's writing). Finish the "Remaining"
-checklist in order.
+Rebased and pushed as of `774738b` (2026-08-29) — working tree clean, nothing pending. If resumed:
+branch is ready to merge per the recommendation above. Only open item: run
+`test/e2e/tst_StockBatchStoreE2E.qml` against a real emulator (not done yet, not a merge blocker).
