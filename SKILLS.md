@@ -2404,3 +2404,70 @@ resolve without a real backend, in a file that has none).
 **Fixed**: seeded `StockBatchStore.batches` in `tst_DataModel_adjustOrderSyncGuard.qml`'s `init()`
 with a batch matching the fixture's own consumption record (`B1`, `SKU-1`, `qtyConsumed: 2`), so
 `restoreFifo` takes the path the test already claimed to cover.
+
+## Skill 52: Extending Skill 46's handler-test harness to endpoints with no `lib/` module to mock
+
+**Problem**: `docs/superpowers/E2E-TESTING-ROADMAP.md`'s "explicitly scoped out" backlog item —
+handler-level tests for `acquireLock`/`releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis`,
+the 5 of 8 `functions/index.js` endpoints `index.handlers.test.js` (Skill 46) deliberately left
+uncovered. Two different shapes hid inside one backlog line:
+
+1. **`acquireLock`/`releaseLock`/`runCutover`** delegate their actual Firestore work to a `lib/`
+   module (`lockLogic.js`, `cutoverLogic.js`) that already has its own full, passing pure-logic test
+   file — exactly Skill 46's `GatewayLogic`/`BatchMutationLogic` shape. Extended the same
+   `require.cache`-injection harness to mock `LockLogic.acquireLock`/`releaseLock` and
+   `CutoverLogic.deleteCollection`/`zeroInventoryStock` (the Firestore-writing exports), while keeping
+   `validateAcquireRequest`/`validateReleaseRequest`/`validateCutoverRequest`/`buildCutoverMarker` real
+   — same "mock the seam that's actually untested, not the logic something else already proves" rule
+   Skill 46 established.
+2. **`provisionMember`/`computeAnalysis`** are a genuinely different shape: their logic (`canAssignRole`,
+   `findOrCreateAuthUser`, the provisioning transaction, `readAllPaged`'s pagination, the product/
+   supplier/order lookup-map builders) lives directly in `index.js`, in no `lib/` file, with zero
+   coverage anywhere before this arc — there's no lower layer to delegate correctness to. These needed
+   the harness's Firestore mock itself extended: `db.doc().set()`, `db.runTransaction()` (txn.get/set/
+   delete delegating to the same synchronous doc store), and `db.collection().orderBy().limit()
+   .startAfter().get()` with real cursor semantics keyed on doc id (matching `readAllPaged`'s own
+   `startAfter(lastDoc)` usage) — enough to exercise that logic for real, not stub it out.
+
+**Reused rather than re-derived**: `computeAnalysis`'s revenue/profit path (`RealisedMath.totals`) was
+tested with the SAME fixture (`sale_plus_return_nets_down`) `realisedMath.test.js` already trusts,
+asserting the endpoint's response matches that fixture's already-proven `expected.totals` — proves
+*this endpoint's wiring* (Firestore doc → `readAllPaged` → `RealisedMath`) without re-deriving
+`RealisedMath`'s own math a second time in a different file.
+
+**A pagination bug class this harness makes newly testable**: `ANALYSIS_PAGE_SIZE` is 500, and every
+other computeAnalysis test fixture fits in a single page — none of them would ever touch the
+`startAfter` cursor branch at all. Added one dedicated test seeding 501 synthetic transaction docs,
+asserting both that the total count across pages is exactly 501 (no doc dropped or double-counted at
+the page boundary) and that `collection().get()` was actually called 2+ times (proving the second page
+was fetched, not silently short-circuited). This is the one test in the new file whose absence would
+have let a real off-by-one at the pagination boundary ship silently.
+
+**One `require.cache` pattern that does NOT work, and why**: tried swapping
+`require.cache[firestorePath].exports.getFirestore` mid-test (after `installMocks()` already ran) to
+simulate `provisionMember`'s `db.runTransaction()` failing. Failed with the response still `200`, not
+the expected `500`. Root cause: `index.js` does `const { getFirestore } = require("firebase-admin/
+firestore")` — a plain destructure — at MODULE LOAD time. That copies the *function reference* into
+`index.js`'s own local `const` once; it is not a live binding to `module.exports`, so any later
+mutation of `require.cache[...].exports` has zero effect on the reference `index.js` already holds.
+This is the same load-order constraint Skill 46 already worked around for `GatewayLogic`/
+`BatchMutationLogic` (install the mock into `require.cache` *before* `index.js`'s first `require()`)
+— the difference here is a fix attempted *after* that first require, which is exactly the case that
+constraint rules out. Fixed properly: added a `mockState.runTransactionError` flag read *inside* the
+one `runTransaction` closure `index.js` actually holds a reference to (read live, at call time, from
+the shared mutable `mockState` object — the same mechanism every other error-injection flag in this
+harness already uses), rather than trying to swap the module out from under an already-bound
+reference.
+
+**Two honest, not-fixed findings surfaced by chasing coverage numbers rather than trusting them**:
+`index.js`'s `canAssignRole()` has an `else return false` branch (line ~506) that is unreachable via
+its only call site — `provisionMember` already rejects any caller whose role isn't `owner`/`admin`
+before `canAssignRole` is ever invoked, so it's only ever called with one of those two actor roles.
+Not exported, so not directly unit-testable either. Likely-dead defensive code, not a bug — flagged in
+the roadmap rather than deleted speculatively or force-tested via an artificial export. Similarly,
+`send()`'s `catch` block (the `JSON.stringify`-failure safety net documented in its own header comment
+as "not currently proven to be the cause of" a *different*, already-closed investigation) has no
+reachable trigger through any current handler's real response-construction code — every response body
+in this file is built from plain, non-circular fields by hand. Both are pre-existing, not introduced by
+this arc's changes, and both apply equally to the 3 endpoints Skill 46 already covered, not just the 5
+this arc added.

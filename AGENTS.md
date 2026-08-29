@@ -625,6 +625,23 @@ env.
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file
   (QML has no established pattern here for reading an external JSON file synchronously in a test).
+  - **Handler-level tests** (`functions/test/index.handlers.test.js`, SKILLS Skill 46;
+    `index.handlers.remaining.test.js`, Skill 52) cover `functions/index.js`'s exported HTTPS
+    handlers themselves — auth, request wiring, and the response-building code — the layer none of
+    the `lib/` unit tests above touch. All 8 endpoints now covered: `recordMutation`/`recordDelta`/
+    `recordMutationsBatch` in the first file; `acquireLock`/`releaseLock`/`provisionMember`/
+    `runCutover`/`computeAnalysis` in the second. Both share one harness,
+    `functions/test/testSupport/handlerHarness.js`: install fakes into Node's `require.cache` (keyed
+    by each dependency's resolved absolute path) for `firebase-admin`/`firebase-admin/firestore`
+    *before* `index.js`'s first `require()` — index.js reads several of these at module load time,
+    so a mock installed afterward has no effect on the reference index.js already holds (see Skill
+    52 for the exact failure mode this causes if you get the order wrong). Mock each `lib/` module's
+    Firestore-writing exports only (`applyMutation`, `acquireLock`, `deleteCollection`, ...); keep
+    each module's pure `validate*`/`build*` exports real, since those already have their own
+    dedicated test files. `provisionMember`/`computeAnalysis` have no `lib/` module to delegate to
+    (their logic lives directly in `index.js`), so the harness's Firestore mock is a little deeper
+    for those two: `runTransaction`, and `collection().orderBy().limit().startAfter().get()` with
+    real doc-id cursor semantics for `readAllPaged`'s pagination.
 - **New, separate test surface: `test/e2e/`** (`qmltestrunner -input test/e2e`, run in CI's
   `e2e-tests` job against the real Firebase Local Emulator Suite — Firestore + Auth + Functions,
   started via `firebase emulators:start`, seeded via `node test/e2e/seed.js`) — real code path
