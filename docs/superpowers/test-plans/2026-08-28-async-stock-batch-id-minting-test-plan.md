@@ -5,10 +5,10 @@ counter, `counters/stockBatches-<year>`), `addBatch()` converted to async, new `
 the bulk-import path, and `InventoryStore.upsertMany`'s new third id-range reservation
 (`neededBatchIds`, via the extracted `_scanUpsertManyNeeds` helper). Full design:
 `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`. Debugging notes from the
-first CI round (2 failures, both root-caused and fixed): SKILLS Skill 48.
+first CI round (2 failures, both root-caused and fixed): SKILLS Skill 51.
 
 **Read this first:** `mintCounterValue`/`mintCounterBatch` themselves are proven — Products/Orders/
-Staff/Suppliers have used them since `docs/superpowers/specs/2026-07-14-test-plan.md` (Section 3
+Staff/Suppliers have used them since `docs/superpowers/test-plans/2026-07-14-test-plan.md` (Section 3
 there covers the same class of bug this branch closes for stock batches: id reuse after delete,
 concurrent-mint collisions, fresh-tenant first mint). What's new and unverified against a real device
 here is narrower: (1) batch ids specifically, with their **year-scoped** counter (nothing else in this
@@ -39,7 +39,7 @@ update, `addBatch`/`topUpOldest`'s guard clauses. All 18 passed in the first CI 
 `tests/tst_InventoryStore_upsertMany.qml` (16 tests) — the correctness-critical `_scanUpsertManyNeeds`
 pre-scan: `neededProductIds`/`neededBatchIds` counted correctly across new/rename/skip/overwrite rows,
 zero-stock vs. positive-stock gating, non-numeric stock treated as zero, new-supplier-name collection.
-One test's own expected value was wrong on the first CI run (fixed, see Skill 48) — the other 15
+One test's own expected value was wrong on the first CI run (fixed, see Skill 51) — the other 15
 passed first try.
 
 `test/e2e/tst_StockBatchStoreE2E.qml` (4 tests, needs a real Firestore/Cloud Functions emulator —
@@ -86,7 +86,7 @@ sites that pass straight through the same guard clauses/parameters as before.
       `SUP-`/`ORD-` prefixes) — untouched, still going through the same `mintCounterValue` path as
       before this branch.
 - [ ] Bulk product import: existing-row overwrite, rename-on-conflict, and the duplicate-row
-      collapsing behavior from `docs/superpowers/specs/2026-07-14-test-plan.md` — all untouched;
+      collapsing behavior from `docs/superpowers/test-plans/2026-07-14-test-plan.md` — all untouched;
       this branch only added a third reservation call *alongside* the existing product/supplier ones,
       same chained-callback shape.
 - [ ] Analysis → **Value** view (`Σ open batch qty × unit cost`) and **Current** stock view — read
@@ -141,7 +141,7 @@ below as a continuation rather than its own precondition.
 | E1 | **Batch id reuse after delete/adjustment**, mirroring `2026-07-14-test-plan.md`'s E1 but for batches specifically. Note the current highest `BAT-<year>-NNN`. Fully consume/write off a batch (or otherwise remove its influence), then create a new one via Restock. | New batch gets the next sequential number — **never** reuses a number from a batch that's since been fully consumed or written off. This is the entire reason `_nextBatchId()`'s local-scan approach was replaced. |
 | E2 | **Concurrent restock**, two devices/sessions restocking the *same or different* products within the same second. **Currently blocked** — no way to log a second session into the same tenant as staff/manager yet (implementation pending, separate from this branch); a same-owner-account session on two physical devices simultaneously may work as a substitute if Firebase Auth doesn't restrict concurrent sessions for one account — untested, worth trying opportunistically, not worth blocking on. | Both succeed, each batch gets a **different** id, neither silently overwrites the other's counter advance. This exercises the *same* `mintCounterValue` CAS mechanism already relied on (and already accepted with the identical caveat) for Products/Orders/Staff/Suppliers — not new, unverified risk from this branch specifically, just inherited, already-accepted risk from an already-shipped pattern. |
 | E3 | **Large bulk import**, 50+ new rows, most with positive stock, a handful at zero. | Import completes in reasonable time (one `mintCounterBatch` round-trip for the whole batch-id range, not one network call per row); exactly as many batches created as positive-stock rows; all `BAT-<year>-NNN` sequential, no gaps or duplicates. |
-| E4 | **The rare fallback path.** Deliberately engineer a return/restore against a product where the *specific* batch id the sale recorded no longer exists in the local store (e.g. via a stock reconcile/edit that clears batch history, if the app exposes one — otherwise may need a direct Firestore edit in a test tenant). Then return part of that sale. | `restoreFifo` falls through to `topUpOldest`'s synthetic-batch creation (the path this branch made async) — confirm the return still completes and a new drift-repair batch eventually appears, not just that the order return itself reports success. This is the exact path SKILLS Skill 48 traced through during CI debugging; it has real E2E coverage (`tst_StockBatchStoreE2E.qml`) but zero on-device verification so far. |
+| E4 | **The rare fallback path.** Deliberately engineer a return/restore against a product where the *specific* batch id the sale recorded no longer exists in the local store (e.g. via a stock reconcile/edit that clears batch history, if the app exposes one — otherwise may need a direct Firestore edit in a test tenant). Then return part of that sale. | `restoreFifo` falls through to `topUpOldest`'s synthetic-batch creation (the path this branch made async) — confirm the return still completes and a new drift-repair batch eventually appears, not just that the order return itself reports success. This is the exact path SKILLS Skill 51 traced through during CI debugging; it has real E2E coverage (`tst_StockBatchStoreE2E.qml`) but zero on-device verification so far. |
 | E5 | **Order completion hitting the FIFO drift guard.** `DataModel.qml`'s order-completion flow has its own drift-repair (`topUpOldest` → retry `consumeFifo`) for when recorded batches can't cover a sale despite `product.stock` saying they should. Genuinely hard to trigger deliberately (requires the ledger and stock count to already disagree) — if you happen to hit it naturally during other testing, confirm the order still completes (just a beat slower, one real network round-trip mid-completion) rather than hanging or erroring. | Order completes normally; note if you observe any perceptible pause on this specific path. |
 | E6 | **Year boundary** — not practically testable except very close to real Dec 31 → Jan 1 midnight, and even then only for whichever operation happens to straddle it. Skip unless the test window genuinely includes that date; the design doc documents this as an accepted limitation, not something to chase down. | N/A — informational only, see Section 5. |
 

@@ -2366,9 +2366,9 @@ unit-testable without a live emulator, rather than buried where only an E2E run 
 off-by-one. See `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md` for the
 full design.
 
-## Skill 48: A sync-to-async conversion didn't create a bug — it surfaced one a coincidence was hiding
+## Skill 51: A sync-to-async conversion didn't create a bug — it surfaced one a coincidence was hiding
 
-**What happened**: first real CI run after Skill 47's change failed 2 tests.
+**What happened**: first real CI run after Skill 50's change failed 2 tests.
 `InventoryStore_upsertMany::test_scan_sums_batch_ids_across_multiple_qualifying_rows` (Actual 3,
 Expected 2) was simply my own new test's expected value being wrong — I'd miscounted, forgetting a
 zero-stock new row still needs a product id (only the *batch* id is stock-gated). Fixed the test.
@@ -2381,7 +2381,7 @@ through rather than patching the count. Full trace: test → `DataModel._tryAdju
 fallen through to `topUpOldest`'s synthetic-batch-creation fallback, never the normal existing-batch
 `recordDelta` path the test's own header comment describes and clearly intends
 (`StockBatchStore.restoreFifo -> Gateway.recordDelta("stock_batch", B1, ...)` — naming a direct delta
-on an existing batch, not a synthesized one). This was invisible before Skill 47's change only because
+on an existing batch, not a synthesized one). This was invisible before Skill 50's change only because
 `topUpOldest`→`addBatch` used to be fully synchronous (local-array scan) — either code path produced
 exactly one `stock_batch` mutation before the test's assertion ran, so the missing fixture never
 mattered. Once `addBatch` mints its id over a real network round-trip, the fallback path's mutation
@@ -2397,7 +2397,7 @@ through every function it called) found that the test was never exercising the p
 say it exercises. The fix is the same size as a symptom patch (one added fixture value) but is a
 different fix: it makes the test exercise its actually-documented scenario, and doing so happens to
 sidestep the async gap entirely (`recordDelta` on a known id never mints anything, so it stays
-synchronous regardless of Skill 47). A stray `tryVerify` would have "fixed" the assertion while leaving
+synchronous regardless of Skill 50). A stray `tryVerify` would have "fixed" the assertion while leaving
 the test silently testing the wrong path (and pointlessly waiting on a mint call that will never
 resolve without a real backend, in a file that has none).
 

@@ -9,10 +9,10 @@ revenue-bug-CHECKPOINT.md`, `SKILLS.md` Skill 42) and `docs/e2e-testing-phase2-f
 CAS/conflict subsystem this plan's Bug 1 touches, confirmed non-interacting via a full post-rebase
 suite re-run (645 QML + 94 Functions tests, 0 failed).
 **Date:** 2026-08-22, restructured 2026-08-26 to the standard UT/Regression/E2E/on-device format
-(`SKILLS.md` Skill 48).
+(`SKILLS.md` Skill 49).
 **Covers:** all 12 commits specific to this PR — the 8 Taher wrote (`c4f276a` … `e571ed3`) plus
 the 4 from this review session (`45b3d85`, `ca75cf5`, `0fa2c32`, `519d8d0`). Full per-commit
-narrative: `SKILLS.md` Skill 46 (the three bugs) and Skill 47 (the test-plan consolidation).
+narrative: `SKILLS.md` Skill 46 (the three bugs) and Skill 48 (the test-plan consolidation).
 
 Every count below comes from a genuine `qmltestrunner`/`node --test` run (verified 2026-08-26 by
 counting each file's actual `function test_...` declarations, not carried forward from an earlier

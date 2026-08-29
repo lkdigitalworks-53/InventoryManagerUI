@@ -27,7 +27,7 @@ so future test plans don't silently assume they're testable and quietly skip the
 unconfirmed either way — see below — and is explicitly not treated as a merge blocker.**
 
 Found while writing the on-device test plan for the async batch-id-minting change
-(`docs/superpowers/specs/2026-08-28-async-stock-batch-id-minting-test-plan.md`). `StockBatchStore.
+(`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`). `StockBatchStore.
 addBatch()` calls back with `null` and logs a `console.warn` if `nextBatchId()`'s mint fails — but
 `InventoryStore.addProduct()`'s "Initial stock" call, `InventoryStore.restock()`'s call, and five of
 six `topUpOldest()` call sites in `DataModel.qml` pass no callback at all (fire-and-forget, unchanged
@@ -134,4 +134,4 @@ noted here so it doesn't get lost given how test-development-adjacent it is.
   this needed. Doesn't mean the original "leaning towards B" call was wrong given what was known when
   it was written — it means a risk estimate is worth re-checking against the current code, not just
   taken as settled, once there's a decision to actually act on. Design:
-  `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 47.
+  `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 50.

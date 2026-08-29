@@ -18,7 +18,7 @@ decision is now made and acted on.
 ### Done
 - [x] Fresh clone, branch created, previous CHECKPOINT.md archived
 - [x] Read `InventoryStore.upsertMany`/`SupplierStore` end to end before designing — found the actual
-      blast radius is smaller than the roadmap doc estimated (see design doc, SKILLS Skill 47)
+      blast radius is smaller than the roadmap doc estimated (see design doc, SKILLS Skill 50)
 - [x] Design doc written: `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`
 - [x] `StockBatchStore.qml`: `_nextBatchId()` → `nextBatchId(callback)` (real, year-scoped Firestore
       counter `counters/stockBatches-<year>`), `addBatch()` converted to async, new
@@ -38,7 +38,7 @@ decision is now made and acted on.
       pre-existing, consistent conventions (`var`, loose equality in older code, no `id: root` on
       TestCase files — confirmed 0/56 existing test files use it)
 - [x] Brace/paren/bracket balance check on all 5 files — all balanced
-- [x] `SKILLS.md` — Skill 47 added
+- [x] `SKILLS.md` — Skill 50 added
 - [x] `AGENTS.md` — new "ID minting" bullet under Store & Firebase Agent documenting the
       `addX`/`addXWithId`/`addXWithIdMany` split as the established pattern for future domains
 - [x] `README.md` — dated update note under Concurrency & Conflict Resolution
@@ -46,7 +46,7 @@ decision is now made and acted on.
       arc", with an honest note on how the risk estimate compared to what reading the code found
 
 ### Remaining before this session ends
-- [x] First real CI run: 2 failures, both root-caused and fixed (see below) — Skill 48 added
+- [x] First real CI run: 2 failures, both root-caused and fixed (see below) — Skill 51 added
 - [ ] Final `git diff` read-through of the CI-fix round
 - [ ] `git add -A`, commit, push using PAT injected into the URL, verify clean, redact in output
 
@@ -65,7 +65,7 @@ decision is now made and acted on.
    an id over a real network round-trip, so its mutation isn't enqueued yet when the test's synchronous
    assertion runs. Fixed by seeding a matching `B1` batch in `init()` — makes the test exercise the
    path it always claimed to, which is fully synchronous regardless (`recordDelta` on a known id never
-   mints anything). See SKILLS Skill 48 for the full trace and why this wasn't just "add a `tryVerify`."
+   mints anything). See SKILLS Skill 51 for the full trace and why this wasn't just "add a `tryVerify`."
 
 **Not touched, flagged only**: `tst_OrderMetadataEditPreservesConsumption.qml` also seeds
 `StockBatchStore.batches = []` with a `consumption` referencing `batchId: "B1"`, so it hits the same
@@ -75,8 +75,8 @@ convention, no bundled changes beyond what CI actually flagged).
 
 ## On-device test plan
 
-Written: `docs/superpowers/specs/2026-08-28-async-stock-batch-id-minting-test-plan.md`. Follows the
-happy/negative/edge/monkey/regression structure from `docs/superpowers/specs/2026-07-14-test-plan.md`
+Written: `docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`. Follows the
+happy/negative/edge/monkey/regression structure from `docs/superpowers/test-plans/2026-07-14-test-plan.md`
 (the closest precedent — same class of change, id minting, for a different entity). Headline finding
 surfaced while writing it, not yet verified either way: **3 of the 4 call sites that create a batch
 pass no callback to `addBatch`/`topUpOldest` at all**, so a failed mint (new failure mode — a network

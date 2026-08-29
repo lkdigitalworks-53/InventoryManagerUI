@@ -278,7 +278,7 @@ App (Main.qml)
   human-readable ids off a real Firestore-transaction-backed counter via
   `FirebaseService.mintCounterValue`/`mintCounterBatch` — never `max(existing local ids) + 1`, which
   isn't safe under concurrent access or id reuse after delete (see
-  `docs/superpowers/E2E-TESTING-ROADMAP.md`'s history and SKILLS Skill 47). Each domain follows the
+  `docs/superpowers/E2E-TESTING-ROADMAP.md`'s history and SKILLS Skill 50). Each domain follows the
   same two-function split: `addX(fields, callback)` (async, mints its own id, one-at-a-time UI use)
   and `addXWithId(id, fields)` / `addXWithIdMany(docs)` (sync, given an already-reserved id — used by
   bulk-import loops that reserve a whole range up front via `mintCounterBatch` before running a
@@ -544,7 +544,7 @@ env.
 **Responsibilities**:
 - Write every new test plan (automated coverage map, or an on-device manual checklist) into
   `docs/superpowers/test-plans/` directly — not `specs/` or `plans/` — and add it to that folder's
-  `README.md` index (consolidated there 2026-08-22, see SKILLS Skill 47). Follow the existing
+  `README.md` index (consolidated there 2026-08-22, see SKILLS Skill 48). Follow the existing
   naming convention (`YYYY-MM-DD-<branch-or-feature>-test-plan.md`, or `YYYY-MM-DD-on-device-
   test-plan-<feature>.md` for manual-only) and note in the index whether it supersedes or chains
   with an existing plan for the same feature area.

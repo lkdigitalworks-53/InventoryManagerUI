@@ -7,18 +7,9 @@ instruction)
 **Status:** Done. All 4 CI checks green on `8f5daf0` (QML/Functions/Firestore-Rules/**E2E** —
 confirmed via GitHub Checks API), including the E2E job that was red before this session. PR
 ready for Taher's review.
-=======
-# CHECKPOINT — async stock batch id minting
-
-**Session date:** 2026-08-27
-**Branch:** `feature/async-stock-batch-id-minting`
-**Previous arc archived to:**
-`docs/superpowers/specs/2026-08-26-post-merge-backlog-and-roadmap-decision-CHECKPOINT.md`
->>>>>>> 859d5a2 (feat: async stock batch id minting (roadmap Option A))
 
 ## What this session is
 
-<<<<<<< HEAD
 Review the PR's latest commits, fix the failing CI tests, find any hidden bugs/affected areas
 the eight existing commits missed, and add test coverage for the new code (previously zero).
 Commit/push without waiting for per-push permission this session, but never to `main` without

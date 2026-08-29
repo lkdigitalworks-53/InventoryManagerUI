@@ -463,7 +463,7 @@ branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
 class of gap Staff/Supplier/Order/Product ids already had closed — a real Firestore-transaction-backed
 counter (`counters/stockBatches-<year>`, year-scoped so the existing per-year reset stays intact)
 instead of a local-array max-scan, which wasn't safe under concurrent access. Design:
-`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 47.
+`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 50.
 - `ConfirmReturnSheet` now holds the order lock through the user's actual confirm/cancel decision,
   not just until `OrderDetailDialog` closes.
 - The partial-multi-line-completion gap (one line's successful stock deduction staying applied when
