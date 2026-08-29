@@ -36,6 +36,25 @@ TestCase {
         TransactionStore.entries = []
         TransactionStore.revision = 0
         InventoryStore.products = []
+        // Matches _completedOrder()'s consumption record below (batchId
+        // "B1", qtyConsumed 2) -- without this, StockBatchStore.getById
+        // ("B1") finds nothing and StockBatchStore.restoreFifo falls
+        // through to topUpOldest's synthetic-batch-creation fallback
+        // instead of the normal existing-batch recordDelta path this file
+        // documents and intends to exercise (see
+        // test_proceeds_normally_once_transaction_history_is_synced's
+        // fan-out comment). That fallback is now async (see
+        // docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md)
+        // -- fine for the real synthetic-batch case it exists for, but
+        // this fixture was never meant to exercise that rare edge case;
+        // it means "a return against the batch the sale actually
+        // consumed," which stays fully synchronous regardless.
+        StockBatchStore.batches = [{
+            batchId: "B1", productId: "SKU-1", supplierId: "S1",
+            qtyReceived: 2, qtyRemaining: 0, unitCost: 50,
+            receivedDate: "2026-08-01T00:00:00.000Z", poId: "", note: "",
+            createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z"
+        }]
         Gateway.mode = "gateway"
         OutboxStore.clear()
         AuthStore.idToken = ""

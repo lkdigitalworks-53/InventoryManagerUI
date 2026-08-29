@@ -81,33 +81,28 @@ TestCase {
         Gateway.mode = "gateway"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
-        // NOT []. Unlike SupplierStore/StaffStore's ID minting (a local
-        // scan floors a REAL Firestore counter), StockBatchStore's
-        // _nextBatchId() is PURELY local -- it scans this array for the
-        // highest "BAT-<year>-NNN" and has no server-side fallback at all.
-        // Any product created with stock > 0 anywhere in this whole
-        // qmltestrunner process (InventoryStore.addProduct()'s companion
-        // "Initial stock" batch, e.g. tst_InventoryE2E.qml's very first
-        // test) mints "BAT-<year>-001" against WHATEVER this array locally
-        // holds at that moment -- resetting to [] here makes this file
-        // blind to batches minted earlier in the SAME run, and it mints
-        // the identical "next" id again, colliding for real. First run
-        // hit exactly this (results.xml, 2026-08-26): "Gateway.
-        // mutationConflicted fired for stock_batch/BAT-2026-001, server
-        // has: {...note:'Initial stock'...}" -- that's InventoryStore's
-        // companion-batch note, not this file's own. Syncing for real
-        // (matching what the real app always does before minting) is the
-        // only fix that's reliable regardless of what else has run before
-        // this file this session -- resetting to some other hardcoded
-        // guess would just move the same class of collision elsewhere.
-        //
-        // This is worth Taher's attention as a real, separate finding:
-        // _nextBatchId()'s lack of a server-side counter (unlike Staff/
-        // Supplier) is a genuine latent risk in production too, not just
-        // a test artifact -- two real devices with incomplete local
-        // caches could mint the same "next" batch id concurrently. Not
-        // fixed here; flagged in CHECKPOINT.md rather than fixed
-        // opportunistically mid-test-fix.
+        // NOT []. As of 2026-08-27, StockBatchStore.nextBatchId() now
+        // mints off a REAL Firestore counter ("counters/stockBatches-
+        // <year>"), same shape as SupplierStore.nextSupplierId() -- see
+        // this file's header and docs/superpowers/specs/
+        // 2026-08-27-async-stock-batch-id-minting-design.md. That closes
+        // the actual production race this comment used to describe
+        // (concurrent mints from incomplete local caches), but the LOCAL
+        // seedMax scan (nextBatchId's floor against the counter doc not
+        // existing yet) still matters here for the exact reason
+        // SupplierStore's init() seeds its fixture: any product created
+        // with stock > 0 anywhere in this qmltestrunner process
+        // (InventoryStore.addProduct()'s companion "Initial stock" batch,
+        // e.g. tst_InventoryE2E.qml's first test) already advanced the
+        // real counter for this year -- resetting to [] here wouldn't
+        // cause a collision any more (the counter, not this array, is now
+        // the source of truth for "next"), but it WOULD leave this file's
+        // own local cache stale relative to what the counter already
+        // reflects, which is exactly the kind of drift
+        // syncFromFirebase() exists to avoid. Syncing for real (matching
+        // what the real app always does before minting) stays the most
+        // robust choice regardless of what else has run earlier in the
+        // same process.
         StockBatchStore.syncFromFirebase()
         tryVerify(function() { return !StockBatchStore.loadingMore && !StockBatchStore.hasMore }, 5000,
                   "StockBatchStore never finished syncing from the emulator before this test's init()")
@@ -124,13 +119,59 @@ TestCase {
         AuthStore.tenantId = ""
     }
 
+    // addBatch is async now (mints its own batchId via a real Firestore
+    // counter -- see StockBatchStore.nextBatchId) -- same
+    // callback-plus-tryVerify pattern tst_SupplierStoreE2E.qml's
+    // _createSupplier helper already establishes for the same reason.
+    function _createBatch(productId, supplierId, qty, unitCost, note) {
+        var createdDoc = null
+        var done = false
+        StockBatchStore.addBatch(productId, supplierId, qty, unitCost, note, false,
+            function(doc) { done = true; createdDoc = doc })
+        tryVerify(function() { return done }, 5000, "addBatch callback never fired")
+        return createdDoc
+    }
+
     function test_addBatch_creates_real_emulator_doc() {
-        var doc = StockBatchStore.addBatch("prod-e2e-1", "sup-e2e-1", 10, 5, "E2E test batch")
-        verify(doc !== null, "addBatch returned null")
+        var doc = _createBatch("prod-e2e-1", "sup-e2e-1", 10, 5, "E2E test batch")
+        verify(doc !== null, "addBatch did not return a created record")
         var docPath = "tenants/" + fixture.tenantId + "/stock_batches/" + doc.batchId
         var serverDoc = _pollEmulatorDoc(docPath, doc.batchId, function(d) { return d !== null }, 5000,
                                           "batch doc never appeared in the emulator")
         compare(Number(serverDoc.fields.qtyReceived.integerValue), 10)
+    }
+
+    function test_addBatchWithId_creates_real_emulator_doc_with_a_pre_reserved_id() {
+        // The bulk-import path: skips nextBatchId's mint round-trip
+        // entirely, given an already-reserved id (as InventoryStore.
+        // upsertMany's pullBatchId() would hand it).
+        var doc = StockBatchStore.addBatchWithId("BAT-" + new Date().getFullYear() + "-900",
+                                                  "prod-e2e-prereserved", "sup-e2e-1", 7, 3, "Prereserved id test")
+        verify(doc !== null, "addBatchWithId returned null")
+        compare(doc.batchId, "BAT-" + new Date().getFullYear() + "-900")
+        var docPath = "tenants/" + fixture.tenantId + "/stock_batches/" + doc.batchId
+        var serverDoc = _pollEmulatorDoc(docPath, doc.batchId, function(d) { return d !== null }, 5000,
+                                          "batch doc never appeared in the emulator")
+        compare(Number(serverDoc.fields.qtyReceived.integerValue), 7)
+    }
+
+    // The actual point of Option A (see the design doc): proves batchId
+    // minting is now backed by a real Firestore transaction counter, not
+    // just "still happens to produce different ids in this one test run".
+    function test_nextBatchId_mints_sequential_ids_via_a_real_counter() {
+        var first = null
+        var second = null
+        StockBatchStore.nextBatchId(function(id) { first = id })
+        tryVerify(function() { return first !== null }, 5000, "first nextBatchId callback never fired")
+        StockBatchStore.nextBatchId(function(id) { second = id })
+        tryVerify(function() { return second !== null }, 5000, "second nextBatchId callback never fired")
+        verify(first.length > 0, "first mint returned an empty id")
+        verify(second.length > 0, "second mint returned an empty id")
+        verify(first !== second, "two sequential mints returned the same batchId")
+        var prefix = "BAT-" + new Date().getFullYear() + "-"
+        var firstNum = parseInt(first.substring(prefix.length))
+        var secondNum = parseInt(second.substring(prefix.length))
+        compare(secondNum, firstNum + 1)
     }
 
     function _firestoreFieldsToPlain(fields) {
@@ -157,8 +198,8 @@ TestCase {
 
     function test_duplicate_create_for_the_same_batch_id_produces_a_real_conflict() {
         // First identity creates the batch normally, for real.
-        var doc = StockBatchStore.addBatch("prod-e2e-conflict", "sup-e2e-1", 20, 5, "Conflict test batch")
-        verify(doc !== null, "addBatch returned null")
+        var doc = _createBatch("prod-e2e-conflict", "sup-e2e-1", 20, 5, "Conflict test batch")
+        verify(doc !== null, "addBatch did not return a created record")
         var batchId = doc.batchId
         var docPath = "tenants/" + fixture.tenantId + "/stock_batches/" + batchId
         _pollEmulatorDoc(docPath, batchId, function(d) { return d !== null }, 5000,

@@ -6,56 +6,59 @@ checkpoint (those live in `docs/superpowers/specs/`, archived once their arc clo
 updated in place as items resolve or new ones surface. Each entry: status, what it is, why it matters,
 current thinking. Ordered roughly by priority within each status group, not chronologically.
 
----
-
-## In progress
-
-### `StockBatchStore._nextBatchId()` has no server-side counter — real production risk, fix approach needs a decision
-
-**Found:** 2026-08-26, as a side effect of debugging `tst_StockBatchStoreE2E.qml`'s first real CI
-failure (see `docs/superpowers/specs/2026-08-25-e2e-testing-phase2-followup-CHECKPOINT.md`'s
-follow-up round).
-
-**What's wrong:** unlike `SupplierStore.nextSupplierId()` / `StaffStore.nextStaffId()` (both use
-`FirebaseService.mintCounterValue` — a real Firestore-transaction-backed counter), `_nextBatchId()`
-purely scans the local `batches` array for the highest `BAT-<year>-NNN` and returns +1. Two clients
-with incomplete/stale local caches (or, as happened in the E2E suite, one client whose cache was
-never populated in the first place) can independently compute the identical "next" id and both
-attempt to create it.
-
-**Why this isn't data-corruption-risk, but is a reliability gap:** Firestore's CAS check on
-`applyMutation` already rejects the second colliding create — confirmed working end-to-end by
-`tst_StockBatchStoreE2E.qml`'s conflict test. So nobody's data gets silently overwritten. The actual
-harm: the LOSING client's create is dropped, `StockBatchStore._onMutationConflicted` reconciles that
-client's local cache to match the winner's doc, and — today — nothing retries the losing client's
-own intended batch. A real restock action could silently vanish from the acting user's perspective.
-
-**Blocked on a decision, not effort — two real options, meaningfully different risk/scope:**
-
-- **Option A — full parity with Staff/Supplier.** Convert `_nextBatchId()` to async
-  (`mintCounterValue`-backed), which cascades: `addBatch()` and `addBatchMany()` are both called
-  *synchronously* today, and `InventoryStore.qml`'s bulk-import loop (`upsertMany`, ~line 660-731)
-  relies on that — it calls `addBatch(..., deferWrite=true)` once per imported row in a tight
-  synchronous `for` loop, depending on each call seeing the previous call's freshly-pushed local
-  entry to avoid collisions *within* that loop. Converting to async means restructuring that loop to
-  sequence N mint calls one at a time (or minting a range up front) — a real change to a working,
-  sensitive bulk-import feature, unrelated to anything else in this effort. Higher effort, higher
-  risk, but closes the gap at the source and matches the established pattern exactly.
-- **Option B — retry-on-conflict, zero changes to `addBatch()`'s contract.** Leave `addBatch()`/
-  `addBatchMany()` fully synchronous (no changes anywhere in `InventoryStore.qml` or the import
-  loop). Instead, extend `StockBatchStore._onMutationConflicted()`'s handling of a `stock_batch`
-  create-conflict specifically: instead of only reconciling the local cache to the winner's doc,
-  automatically re-mint a fresh id (now collision-aware, since the local cache just learned about the
-  winner) and re-attempt the create with the original doc's data. Smaller, contained, touches only
-  `StockBatchStore.qml`. Doesn't prevent the first collision, but does prevent the silent data loss —
-  the actual harm identified above.
-
-Leaning towards B for the effort/risk trade-off, but this is Taher's call — not implemented pending
-his decision.
+**Testing environment limitations (noted 2026-08-29, applies to any future item here, not just the
+one below):** two gaps constrain what can actually be verified on-device right now, independent of
+any specific change. (1) `main.qml`'s root `Navigation { enabled: isOnline }` disables the *entire*
+app's interactivity the moment connectivity drops — offline/airplane-mode testing can only exercise
+"connectivity drops mid-request," never "start an action already offline," since the latter can't be
+initiated through the UI at all. (2) There's currently no way to log a second test session into the
+same tenant as staff/manager, which blocks genuine multi-device concurrent testing (a same-owner-
+account session on two physical devices may work as an untested substitute). Neither is this
+repo's/branch's own defect — both are pre-existing product/test-infrastructure gaps, tracked here only
+so future test plans don't silently assume they're testable and quietly skip them instead.
 
 ---
 
 ## Needs Taher's input before it can be scoped or started
+
+### Failed batch-id mint is silently swallowed at 3 of 4 call sites
+
+**Status (2026-08-29): happy path confirmed working on-device by Taher. This specific gap remains
+unconfirmed either way — see below — and is explicitly not treated as a merge blocker.**
+
+Found while writing the on-device test plan for the async batch-id-minting change
+(`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`). `StockBatchStore.
+addBatch()` calls back with `null` and logs a `console.warn` if `nextBatchId()`'s mint fails — but
+`InventoryStore.addProduct()`'s "Initial stock" call, `InventoryStore.restock()`'s call, and five of
+six `topUpOldest()` call sites in `DataModel.qml` pass no callback at all (fire-and-forget, unchanged
+from before the async conversion — see
+`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`). Before that conversion
+this was harmless (a local array scan can't fail); now it's a real network call that can.
+
+Worth being precise about *what kind* of gap this is: `addProduct`'s own productId mint is handled
+correctly (`nextProductId` failing aborts the whole add and tells the caller — fail loudly, nothing
+half-completes). The stock batch created immediately after is a separate, best-effort side-effect on
+an *already-committed* product, with no equivalent path. This isn't the same pre-existing risk class
+as everywhere else in the app (every other entity's primary mint fails loudly); it's specifically a
+secondary/companion write that used to be infallible and no longer is. If it fails, the surrounding
+operation — a product created, stock restocked, an order returned — still reports success to the
+user, but the FIFO batch ledger backing it silently never gets its entry: a data-integrity drift with
+no user-facing signal and no retry.
+
+**On-device confirmation is currently narrower than originally planned, not blocked outright**:
+`main.qml`'s root `Navigation { enabled: isOnline }` disables the entire app's interactivity the
+moment connectivity drops, so "start an action already offline" isn't executable through the UI at
+all — that rules out the plan's original N1/N2/N4 framing. What remains executable, and still answers
+the same question, is dropping connectivity *after* a request is already dispatched (the plan's N3):
+tap Save while online, then go offline before the batch's own mint round-trip would plausibly finish,
+then reconnect and check whether the batch eventually appears. That's the one on-device result this
+entry is still waiting on.
+
+Needs, in order: (1) the plan's N3 actually run on a device to confirm this is reachable and not just
+theoretical; (2) if confirmed, a decision on the fix shape — surface an error to the caller (touches
+all 4 call sites' UI), some retry-on-next-sync mechanism (bigger, would touch `OutboxStore`/`Gateway`,
+neither of which currently know anything about batch-id minting), or something narrower scoped just
+to this. Not scoped or estimated yet — deliberately, same reason as the two entries below.
 
 ### `orderMath.js` / `qml/helper/OrderMath.js` parity
 
@@ -122,3 +125,13 @@ noted here so it doesn't get lost given how test-development-adjacent it is.
   found).
 - Stale comment in `StockBatchStore.qml`'s `_onMutationConflicted` (claimed a conflict path that no
   longer exists post-`recordDelta`-conversion) — corrected.
+- `StockBatchStore._nextBatchId()`'s missing server-side counter (above) — **Option A implemented**
+  2026-08-27, per Taher's explicit direction, not Option B as this doc leaned toward. Worth recording
+  honestly: reading `InventoryStore.upsertMany` end to end first showed the actual blast radius was
+  smaller than this doc's original estimate — the file already reserves ids in bulk for products and
+  suppliers the same way Option A needed for batches, and `SupplierStore` already had the exact
+  sync/async function-split precedent (`addSupplier` vs. `addSupplierWithId`/`addSupplierWithIdMany`)
+  this needed. Doesn't mean the original "leaning towards B" call was wrong given what was known when
+  it was written — it means a risk estimate is worth re-checking against the current code, not just
+  taken as settled, once there's a decision to actually act on. Design:
+  `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 50.
