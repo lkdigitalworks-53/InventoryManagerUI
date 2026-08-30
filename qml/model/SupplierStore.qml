@@ -71,14 +71,9 @@ QtObject {
     // for this edge case was judged out of proportion for this fix.
     function _onBatchMutationFailedPermanently(entity, items, error) {
         if (entity !== "supplier" || !items || items.length === 0) return
-        var arr = suppliers.slice()
-        for (var i = 0; i < items.length; ++i) {
-            var idx = -1
-            for (var j = 0; j < arr.length; ++j) {
-                if (arr[j].supplierId === items[i].entityId) { idx = j; break }
-            }
-            if (idx >= 0) arr.splice(idx, 1)
-        }
+        var failedIds = {}
+        for (var i = 0; i < items.length; ++i) failedIds[items[i].entityId] = true
+        var arr = suppliers.filter(function(s) { return !failedIds[s.supplierId] })
         suppliers = arr
         Toast.show(qsTr("%1 new supplier(s) from your import couldn't be saved and were removed.").arg(items.length))
         ActivityLog.record("import_error",

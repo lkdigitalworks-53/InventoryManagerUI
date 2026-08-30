@@ -230,3 +230,33 @@ Firestore Rules: confirmed via reading `firestore.rules` directly that this fix 
 the generic working-tier fallback rule only governs the `direct`-mode path, which this fix
 deliberately leaves untouched. Documented as "not applicable" in the test plan rather than silently
 omitted, since the person explicitly asked what's covered in rules tests.
+
+## Code review pass (2026-08-29, same day)
+
+Full review per `/superpowers:requesting-code-review` + `/ponytail:ponytail-review` +
+`/qt-development-skills:qt-qml-review`, scoped to this fix's own diff (`61f85e0..HEAD`), matching
+qt-qml-review's own diff-scope instruction to only report issues on changed lines.
+
+- Phase 1 lint: ran the deterministic linter, filtered to lines this fix actually added. 24 hits,
+  23 were JS-1/JS-2 (`var`/`==`) matching this codebase's own pervasive pre-existing house style —
+  declined on purpose, changing only the new lines would make them LESS consistent with their
+  immediate surroundings. 1 ORD-1 finding (`Gateway.qml:519`) checked by hand and confirmed a false
+  positive — no child object exists there, the linter's brace-heuristic is misreading an inline
+  `try/catch`.
+- Deep analysis (6-agent checklist, applied manually — no subagent dispatch tool in this
+  environment): Layout/Delegate agents N/A (no visual tree in the touched files). One real finding
+  — the rollback loop in all 3 stores' `_onBatchMutationFailedPermanently` was
+  O(items.length × arr.length); shrunk to O(items.length + arr.length) via a Set + `.filter()`.
+  Traced all 4 existing tests per store by hand against the new logic before committing — same
+  observable behavior confirmed, not re-run in sandbox (same qmltestrunner limitation as
+  everything else in this branch).
+- Considered and declined: extracting a shared cross-store helper for the ~90%-identical handler.
+  The pre-existing `_onMutationConflicted` handler already has the identical duplicated-3x shape,
+  unrefactored, for its whole history — introducing a new shared pattern for only the NEW handler
+  while leaving the established one duplicated would be inconsistent, not an improvement. Flagged
+  as a separate, larger decision, not folded into this branch.
+- ponytail-review: same nested-loop finding, `net: -15 lines` (verified via `git diff --stat`,
+  9 insertions / 24 deletions — not the initially-estimated -9, caught and corrected before
+  committing).
+- 164/164 functions tests re-verified (unaffected — QML-only change). Brace balance re-verified on
+  all 3 touched files.

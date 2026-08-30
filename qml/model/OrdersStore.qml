@@ -71,14 +71,9 @@ QtObject {
     // remove it.
     function _onBatchMutationFailedPermanently(entity, items, error) {
         if (entity !== "order" || !items || items.length === 0) return
-        var arr = orders.slice()
-        for (var i = 0; i < items.length; ++i) {
-            var idx = -1
-            for (var j = 0; j < arr.length; ++j) {
-                if (arr[j].orderId === items[i].entityId) { idx = j; break }
-            }
-            if (idx >= 0) arr.splice(idx, 1)
-        }
+        var failedIds = {}
+        for (var i = 0; i < items.length; ++i) failedIds[items[i].entityId] = true
+        var arr = orders.filter(function(o) { return !failedIds[o.orderId] })
         orders = arr
         revision++
         _refreshCounts()

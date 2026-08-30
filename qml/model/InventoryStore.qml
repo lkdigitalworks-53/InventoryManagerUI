@@ -58,14 +58,9 @@ QtObject {
     // just remove it, never a "revert someone else's edit" case.
     function _onBatchMutationFailedPermanently(entity, items, error) {
         if (entity !== "inventory" || !items || items.length === 0) return
-        var arr = products.slice()
-        for (var i = 0; i < items.length; ++i) {
-            var idx = -1
-            for (var j = 0; j < arr.length; ++j) {
-                if (arr[j].productId === items[i].entityId) { idx = j; break }
-            }
-            if (idx >= 0) arr.splice(idx, 1)
-        }
+        var failedIds = {}
+        for (var i = 0; i < items.length; ++i) failedIds[items[i].entityId] = true
+        var arr = products.filter(function(p) { return !failedIds[p.productId] })
         products = arr
         Toast.show(qsTr("%1 imported row(s) couldn't be saved and were removed. Please re-check and re-import them.").arg(items.length))
         ActivityLog.record("import_error",
