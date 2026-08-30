@@ -7,7 +7,7 @@
 **Covers:** the reported bug — bulk product/order/supplier import silently failed past 200 rows
 (server's `MAX_BATCH_SIZE`), retried the same doomed request forever in total silence, and the UI
 reported success regardless with no rollback. Full root cause + design trade-offs: `CHECKPOINT.md`
-and `SKILLS.md` Skill 52.
+and `SKILLS.md` Skill 55.
 
 Every count below comes from `grep -c "function test_"` / `grep -c "^test("` on each file, diffed
 against its `main`-branch baseline, not carried forward from memory.
@@ -117,7 +117,7 @@ branch that doesn't touch `firestore.rules`.
 | `qml/model/OrdersStore.qml` | Unit + regression (§1, §2) + E2E (§3, `counts.chunked` specifically) | Rollback handler |
 | `qml/model/SupplierStore.qml` | Unit + regression (§1, §2) | Rollback handler; new unit test file (none existed before this fix) |
 | `qml/pages/ImportPreviewDialog.qml` | **None** — see §6 | H1/H2/H3 on-device steps are this line's only coverage |
-| `functions/lib/batchMutationLogic.js` | Unchanged logic, comment only; existing 110-case Functions suite covers it, +1 new pin | No behavior change — confirmed by Phase 1 root-cause investigation that the 200 cap itself is correct |
+| `functions/lib/batchMutationLogic.js` | Unchanged logic, comment only; Functions suite covers it (110 cases at the time this fix landed, +1 new pin; now 164 after `feature/async-stock-batch-id-minting`'s and #55's unrelated additions merged into this branch) | No behavior change — confirmed by Phase 1 root-cause investigation that the 200 cap itself is correct |
 
 ---
 
@@ -160,7 +160,10 @@ a project-wide priority, this line would be trivial to add coverage for at that 
   positives from this codebase's own malformed-JSON string test fixtures, e.g. `"not json{{{"`) —
   see `SKILLS.md` for why the naive check isn't trusted on its own in this repo.
 - Functions: `cd functions && npm test` — 110 tests, 0 failed, re-run after every change in this
-  branch.
+  fix specifically. After this branch was rebased onto `main`'s subsequent `#55` (unrelated
+  handler-coverage work, merged into this branch on GitHub directly, not by this fix), the suite
+  grew to 164 — re-run once more post-merge to confirm: 164/164 passing, this fix's own tests still
+  among them.
 - CI: real GitHub Actions run on this branch — QML, Functions, Firestore Rules, and E2E jobs all
   green (confirmed by Taher; this sandbox's GitHub API access hit an unauthenticated rate limit
   when attempting to double-check independently).

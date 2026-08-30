@@ -140,7 +140,7 @@ change plus one reconciliation handler each.
 5. Wrote this checkpoint (root cause + initial design).
 6. Ran `/ponytail:ponytail` against the design **before writing any implementation code** — cut a
    planned `ImportSessionStore` singleton and a `batchMutationSucceeded` signal, both duplicating
-   state/behavior `OutboxStore` already provides. Full reasoning in SKILLS Skill 52 and the
+   state/behavior `OutboxStore` already provides. Full reasoning in SKILLS Skill 55 and the
    response to Taher; not re-duplicated here.
 7. Implemented `Gateway.qml`: `maxBatchSize` (mirrors server's 200), `_chunkItems()`,
    `recordMutations()` rewritten to chunk, `_classifyBatchMutationFailure()`,
@@ -177,7 +177,7 @@ change plus one reconciliation handler each.
     - QML-side tests **NOT RUN IN THIS SANDBOX** — no Qt/qmltestrunner toolchain, consistent with
       every existing test file in this repo. Needs a real `qmltestrunner` pass (`tests/` +
       `test/e2e/`, the latter needs the Firebase emulator) before merge.
-13. Docs: `SKILLS.md` Skill 52 (full root-cause + the ponytail-driven `ImportSessionStore` cut,
+13. Docs: `SKILLS.md` Skill 55 (full root-cause + the ponytail-driven `ImportSessionStore` cut,
     written so it doesn't have to be re-derived), `AGENTS.md` (fixed a now-stale claim that
     `Gateway.batchFunctionUrl` wasn't exercised in `test/e2e/` — it now is; added a Feature Status
     row), `README.md` (dated Update paragraph in the existing Concurrency & Conflict Resolution
