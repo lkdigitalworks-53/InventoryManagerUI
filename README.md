@@ -230,6 +230,13 @@ above already listed). `recordMutation`/`recordDelta`/`recordMutationsBatch` wer
 `provisionMember`/`computeAnalysis` had zero coverage anywhere before this, since their logic lives
 directly in `index.js` rather than a testable `lib/` module.
 
+**Update 2026-08-30:** `index.handlers.test.js`'s coverage across `recordMutation`/`recordDelta`/
+`recordMutationsBatch` is now symmetric (Skill 53) — each has its own 401/403/405/500 case, not
+just `recordMutation`. `functions/` suite: 174 tests, all passing. `index.js` line coverage
+95.32% → 99.32%; the only two remaining uncovered lines are pre-existing, already-documented
+unreachable code (`canAssignRole`'s dead `else` branch, `send()`'s unreachable serialization-failure
+catch), not new gaps.
+
 ---
 
 ## Qt Skills Cheat Sheet

@@ -1,93 +1,127 @@
-# CHECKPOINT — functions/index.js handler tests for the 5 remaining endpoints
+# CHECKPOINT — handler-test parity for recordMutation/recordDelta/recordMutationsBatch
 
-**Session date:** 2026-08-29
-**Branch:** `test/functions-remaining-endpoint-handlers` (off `main` @ `61f85e0`)
+**Session date:** 2026-08-30
+**Branch:** `test/handler-parity-coverage-gap` (off `main` @ `d1087b6`)
 **Previous arc archived to:**
-`docs/superpowers/specs/2026-08-29-async-stock-batch-id-minting-CHECKPOINT.md`
+`docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md`
+(archived with a correction note — that file claimed its work was "not yet committed" but it had
+in fact already merged as `d1087b6`/PR #55 by the time this session started; whoever merged it
+didn't update the checkpoint. Flagged, not silently rewritten.)
 
 ## What this session is
 
-Picked up `docs/superpowers/E2E-TESTING-ROADMAP.md`'s "Explicitly scoped out" item:
-`functions/index.js` handler tests for the 5 endpoints Skill 46's original handler-test file
-deliberately left uncovered — `acquireLock`, `releaseLock`, `provisionMember`, `runCutover`,
-`computeAnalysis`. Deliberately did NOT touch the three "Needs Taher's input" items (silent
-batch-id-mint failure, `orderMath.js` parity, account-switch-mid-sync) — none of them are scoped
-or decided yet, and none of this session's instructions named one explicitly the way the last
-session named "Option A."
+Instructed to pick up the next actionable item from `docs/superpowers/E2E-TESTING-ROADMAP.md`.
+Read the roadmap fresh (not trusted from prior-session memory, which turned out to be stale — the
+multi-user-conflict E2E test that a prior arc's memory recorded as an open investigation is
+actually resolved: QTBUG-49896 root-caused and fixed, confirmed on a real CI run, per the roadmap's
+"Resolved this arc" section). Found the roadmap's three "Needs Taher's input" items are all
+explicitly marked not scoped or estimated yet, deliberately — implementing any of those without
+Taher's actual decision would be guessing at something the roadmap itself says isn't safe to guess
+at. The one item that's genuinely actionable without his input: a flagged-but-not-fixed test
+coverage asymmetry in `functions/test/index.handlers.test.js` (`recordDelta`/`recordMutationsBatch`
+missing most of the 401/403/405/500 matrix `recordMutation` already had). Picked that up. Full
+reasoning: `docs/superpowers/specs/2026-08-30-handler-parity-coverage-gap-design.md`.
 
-## Status: implementation complete, verified, not yet committed/pushed as of this checkpoint
+**Process note**: this session's instructions explicitly waived the normal live-approval gate
+between spec and implementation (single-prompt constraint, stated up front). Design doc was written
+and acted on in the same pass, not across an approval round-trip — flagged explicitly in the design
+doc itself rather than silently treated as equivalent to approval.
+
+## Status: implementation complete, verified, committed, pushed
 
 ### Done
-- [x] Fresh clone, branch created, previous CHECKPOINT.md archived
-- [x] Read `functions/index.js` end to end (all 8 handlers) plus `lib/lockLogic.js`,
-      `lib/cutoverLogic.js`, and their existing test files before designing — confirmed
-      `acquireLock`/`releaseLock`/`runCutover` delegate their Firestore work to already-fully-tested
-      `lib/` modules (same shape as Skill 46's 3 endpoints), while `provisionMember`/
-      `computeAnalysis` have zero delegation — their logic lives directly in `index.js` with no
-      prior coverage anywhere. Two different problems, not one.
-- [x] Extended `functions/test/testSupport/handlerHarness.js`: LockLogic/CutoverLogic mocking
-      (mock only their Firestore-writing exports, keep `validate*`/`buildCutoverMarker` real — same
-      convention Skill 46 established for GatewayLogic/BatchMutationLogic); Firestore mock deepened
-      with `doc().set()`, `runTransaction()`, and `collection().orderBy().limit().startAfter().get()`
-      with real doc-id cursor semantics (needed for `provisionMember`'s transaction and
-      `computeAnalysis`'s `readAllPaged` pagination, neither of which existed before)
-- [x] Verified the harness extension didn't break Skill 46's original 3-endpoint file — ran it
-      standalone against the extended harness before writing anything new: 14/14 still pass
-- [x] `functions/test/index.handlers.remaining.test.js` (new) — 49 tests across the 5 endpoints:
-      auth (missing/invalid token), request validation (real, unmocked `validate*` functions),
-      no-tenant-context, method-not-allowed, the lib-result-forwarding seam (holder info, conflicts,
-      `after`), and for `provisionMember`/`computeAnalysis` specifically: `canAssignRole`'s both
-      branches, `findOrCreateAuthUser`'s new/existing/invite-by-uid paths, the transaction's
-      existing-user-tenant-preservation merge logic, `readAllPaged`'s actual 2-page pagination
-      (501 synthetic docs — the one test in this file that would catch a cursor off-by-one; every
-      other fixture fits in a single page and wouldn't exercise that branch at all), and the
-      `needsOrders` read-skipping optimization for sold/purchased view modes
-- [x] Found and fixed a real gap in my own first pass via the coverage report, not by guessing:
-      missing `releaseLock` invalid-token test
-- [x] Found one broken approach and root-caused it properly rather than working around it blind:
-      tried to patch `require.cache[firestorePath].exports.getFirestore` mid-test to simulate a
-      transaction failure — silently had no effect (test asserted 500, got 200). Root cause:
-      `index.js` destructures `const { getFirestore } = require(...)` at MODULE LOAD time, so its
-      local binding is fixed to whatever was in `require.cache` before `index.js`'s first
-      `require()` — a later mutation of `require.cache` doesn't reach it. Same load-order
-      constraint Skill 46 already documented, hit from the opposite direction (fixing after first
-      require, not before). Fixed with a `mockState.runTransactionError` flag read live inside the
-      one `runTransaction` closure `index.js` actually holds — full trace in SKILLS Skill 52.
-- [x] Full `functions/` suite: **163 tests, 0 failures** (114 pre-existing + 49 new)
-- [x] Coverage check (`node --test --experimental-test-coverage`): `index.js` line coverage
-      93.27% → 95.32%. All 5 target endpoints at 100% line coverage on their own logic. Remaining
-      gaps in `index.js` are entirely pre-existing and outside this session's scope — see "Findings
-      not fixed" below.
-- [x] Syntax check (`node -c`) + brace/paren/bracket balance check on both touched/new files — clean
-- [x] `SKILLS.md` — Skill 52 added
-- [x] `AGENTS.md` — Testing & QA Agent section: new bullet under the `functions/test/` entry
-      documenting the handler-level test files and the harness's `require.cache`-timing rule
+- [x] Fresh clone, branch created off `main` @ `d1087b6`
+- [x] Read `docs/superpowers/E2E-TESTING-ROADMAP.md` end to end before picking an item — confirmed
+      the only unblocked item, rejected guessing at the three Taher-gated ones
+- [x] Read `functions/index.js`'s `recordMutation`/`recordDelta`/`recordMutationsBatch` handlers and
+      the full existing `functions/test/index.handlers.test.js` end to end before writing anything,
+      to confirm the roadmap's "cheap to close, no new mocking needed" claim rather than trust it
+      blind — confirmed correct by inspection of `testSupport/handlerHarness.js`
+- [x] Ran the baseline suite before touching anything: 163/163 passing
+- [x] Design doc written: `docs/superpowers/specs/2026-08-30-handler-parity-coverage-gap-design.md`
+      — problem table, root-cause explanation (authoring artifact, not a deliberate scope decision),
+      exact list of the 11 cells being filled, explicit note on what's deliberately NOT being
+      touched (the two pre-existing unreachable-code findings from Skill 52)
+- [x] 11 new tests added to `functions/test/index.handlers.test.js`, mirroring `recordMutation`'s
+      existing test bodies exactly in structure: `recordMutation` +1 (405), `recordDelta` +5 (401
+      invalid-token, 403, 400, 405, 500), `recordMutationsBatch` +5 (401 missing-token, 401
+      invalid-token, 403, 405, 500)
+- [x] File header comment updated to describe the now-symmetric coverage instead of the old
+      "these three share the shape" framing that didn't mention the asymmetry
+- [x] Full `functions/` suite: **174 tests, 0 failures** (163 pre-existing + 11 new)
+- [x] Coverage check (`node --test --experimental-test-coverage`): `index.js` line coverage 95.32%
+      → 99.32%. The two lines still uncovered (`send()`'s `JSON.stringify`-failure catch,
+      `canAssignRole`'s unreachable `else`) are the same two pre-existing findings from Skill 52 —
+      re-confirmed unreachable, not newly discovered, deliberately not force-tested
+- [x] Syntax check (`node -c`) on the touched file — clean
+- [x] `SKILLS.md` — Skill 53 added
+- [x] `AGENTS.md` — Testing & QA Agent handler-tests bullet updated to note the parity fix
 - [x] `README.md` — dated update note under **Testing**
-- [x] `docs/superpowers/E2E-TESTING-ROADMAP.md` — item moved from "Explicitly scoped out" to
-      "Resolved this arc"; findings below folded into that entry too
+- [x] `docs/superpowers/E2E-TESTING-ROADMAP.md` — the flagged gap's entry updated with a pointer to
+      the fix; a new "Resolved this arc" entry added
+- [x] Stale prior-arc `CHECKPOINT.md` archived with an honest correction note (see above)
 
-### Findings surfaced, not fixed (flagged, per this repo's established discipline)
+### Findings surfaced, not fixed (same discipline as the prior two arcs)
 
-- **`canAssignRole()`'s `else return false` branch is unreachable** via its only call site —
-  `provisionMember` already gates non-owner/admin callers earlier. Not exported, so not directly
-  unit-testable either. Likely-dead defensive code, not a bug. Worth a look next time
-  `provisionMember` is touched; not urgent enough to act on unilaterally.
-- **`send()`'s `JSON.stringify`-failure `catch` block has no reachable trigger** through any current
-  handler's real response bodies (all hand-built from plain, non-circular fields). Pre-existing,
-  applies equally to all 8 endpoints, not something this session's changes created or could fix by
-  adding a test — there's no legitimate code path that reaches it.
-- **A pre-existing gap in Skill 46's original scope, found while comparing coverage output, NOT
-  fixed here**: `recordMutation`/`recordDelta`/`recordMutationsBatch` are still missing
-  method-not-allowed (405) tests for all three, and `recordDelta` specifically is still missing
-  invalid-token (401) and write-failed (500) tests that `recordMutation` already has. That's a
-  different, already-"resolved" backlog item — reopening it wasn't part of this session's brief, so
-  it's flagged in the roadmap rather than silently bundled into this branch's diff. Cheap to close
-  if/when it's picked up: same harness, same pattern, no new mocking needed.
+- Nothing new. The two remaining `index.js` coverage gaps (`send()`'s unreachable catch,
+  `canAssignRole()`'s unreachable `else`) are the exact same findings Skill 52 already surfaced and
+  flagged — re-confirmed still true and still out of this session's scope, not re-litigated.
+
+### Explicitly not touched, and why
+
+- The three "Needs Taher's input" roadmap items (silent batch-id-mint swallow, `orderMath.js`
+  parity, account-switch-mid-sync) — all still waiting on his scoping decision, untouched.
+- `review/post-pr45-qml-audit` (PR #49) — a different branch/PR Taher is handling directly per the
+  roadmap's own coordination note; not inspected or touched, per this repo's standing rule against
+  managing branches outside the one currently being worked on.
+- No production code changed. This arc is test-file-only.
 
 ## Next action if resumed
 
-Working tree has all changes described above; nothing committed yet as of this checkpoint. If
-resumed: `git add -A`, review the diff, commit, push using PAT injected into the URL per the
-standing workflow rule, verify `.git/config` is clean of the token, redact in any terminal output
-shown. No build/run requested or performed this session (QML side untouched entirely — this arc is
-Cloud Functions test coverage only).
+Nothing pending — this arc's changes are committed and pushed to
+`test/handler-parity-coverage-gap`. If resuming a future session: check whether Taher has scoped
+any of the three "Needs Taher's input" roadmap items yet before picking a next item; if not,
+re-read the roadmap fresh rather than trusting any prior session's memory of its contents (this
+session found that memory stale once already).
+
+---
+
+## Addendum (same session, same branch): correcting an overstated sandbox limitation
+
+After the work above was pushed, Taher pushed back on framing the item choice as gated by sandbox
+execution limits, and asked for two standing conventions to be written down in the repo rather than
+repeated each session. Writing them down surfaced that one of the limitations stated earlier in
+this session ("sandbox can't run qmltestrunner") was an untested assumption, not a checked fact —
+so this addendum corrects that in the same pass rather than leaving it wrong on `main`.
+
+**Done:**
+- [x] Checked instead of assumed: `apt-cache policy qt6-declarative-dev` → real 6.4.2 candidate
+      exists via the already-allowlisted `archive.ubuntu.com`
+- [x] Installed the full `qml6-module-*` set needed by this repo's actual test suite (several
+      install-run-read-next-missing-module rounds — see SKILLS Skill 54 for the exact list)
+- [x] Ran the real suite: **315 of 337 test files pass**, 22 fail at `compile()` with a known,
+      pre-existing, Qt-version-drift cause (`AuthStore.qml`'s `import QtCore; Settings {...}` isn't
+      valid QML until later than this sandbox's apt 6.4.2; CI runs 6.8) — same root cause Skill 47
+      already documented in 2026-08-22, at a smaller 14-file count then (suite has grown since)
+- [x] Checked instead of assumed, for Firebase too: `firebase-tools` installs via `npm` and
+      `firebase emulators:start` runs past config/port-checking, failing specifically at the
+      emulator jar download with `Host not in allowlist: storage.googleapis.com` — a precise,
+      actionable finding, not the vague "Firebase doesn't work here" stated earlier this session
+- [x] Fixed 2 pre-existing wrong "Skill 46" cross-references in `AGENTS.md` (both should have said
+      Skill 47) — found while verifying the sandbox note they were attached to
+- [x] Added `scripts/setup-sandbox-qmltestrunner.sh` — the discovered package list as a runnable,
+      idempotent script, so a future session doesn't repeat the trial-and-error. **Caught and fixed
+      a real bug in it before committing**: `apt-get update` exits non-zero because of this
+      sandbox's pre-existing broken `deb.nodesource.com` entry (unrelated to Qt), which would have
+      killed the script under `set -e` before it ever reached the install step — confirmed the bug
+      by actually running the script (exit code 100), not by inspection alone; fixed with `|| true`
+      on that one line, re-ran to confirm exit 0 and unchanged 315/22 test result
+- [x] New `## Session & Sandbox Conventions` section added near the top of `AGENTS.md` with the two
+      standing rules Taher asked for, plus the corroborating correction above
+- [x] SKILLS.md Skill 54 written up
+
+**Explicitly not done:** no change to `AuthStore.qml` or any other production QML — the 22-file
+compile floor is a sandbox Qt-version artifact, not a code bug; "fixing" it in the real source would
+mean downgrading working, CI-correct code to match this sandbox's older `apt` Qt, which would be
+backwards.
+

@@ -14,8 +14,21 @@
 // into an HTTP response" shape and the same response-contract risk.
 // acquireLock/releaseLock/provisionMember/runCutover/computeAnalysis are
 // NOT covered here — a deliberate scope boundary, not an oversight (see
-// CHECKPOINT.md's backlog note). They share less of this exact risk
-// pattern and can be a follow-up if/when they need it.
+// index.handlers.remaining.test.js, Skill 52). They share less of this
+// exact risk pattern and were covered separately.
+//
+// Coverage across the three endpoints below is symmetric as of Skill 53
+// (see docs/superpowers/E2E-TESTING-ROADMAP.md and
+// docs/superpowers/specs/2026-08-30-handler-parity-coverage-gap-design.md):
+// each of recordMutation/recordDelta/recordMutationsBatch has its own
+// 401 missing-token, 401 invalid-token, 403 no-tenant-context, 400
+// invalid-request, 405 method-not-allowed, and 500 write-failed case, on
+// top of whatever endpoint-specific success/conflict-forwarding tests it
+// already had. Before Skill 53, recordDelta and recordMutationsBatch had
+// noticeably thinner coverage than recordMutation — not a deliberate
+// scope decision, just an artifact of this file having grown across
+// several separate passes chasing recordMutation's own Skill 43
+// regression rather than one symmetric pass across all three.
 //
 // Real Firebase emulator is not available in this environment — these tests
 // invoke the ACTUAL exported handler functions with mocked auth/Firestore/
@@ -135,6 +148,13 @@ test("recordMutation: GatewayLogic.applyMutation throwing -> 500 write-failed, n
     }
 });
 
+test("recordMutation: GET request -> 405 method-not-allowed", async () => {
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ method: "GET", body: validMutationBody() }), res);
+    assert.equal(res.statusCode, 405);
+    assert.equal(jsonBody(res).error, "method-not-allowed");
+});
+
 // Note: an OPTIONS-preflight test was attempted here and dropped. The
 // firebase-functions v2 wrapper's built-in `cors` middleware intercepts and
 // terminates OPTIONS requests itself, before this codebase's own handler
@@ -174,6 +194,54 @@ test("recordDelta: missing Authorization header -> 401 missing-token", async () 
     assert.equal(res.statusCode, 401);
 });
 
+test("recordDelta: verifyIdToken throwing -> 401 invalid-token", async () => {
+    mockState.verifyIdToken = async () => { throw new Error("bad token"); };
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody() }), res);
+    assert.equal(res.statusCode, 401);
+    assert.equal(jsonBody(res).error, "invalid-token");
+});
+
+test("recordDelta: authenticated but no matching user/tenant doc -> 403 no-tenant-context", async () => {
+    mockState.verifyIdToken = async () => ({ uid: "ghost-uid" });
+    mockState.docs = {}; // no users/ghost-uid doc at all
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody() }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(jsonBody(res).error, "no-tenant-context");
+});
+
+test("recordDelta: invalid entity -> 400 from validateDeltaRequest, unmodified", async () => {
+    seedHappyPathAuth(mockState);
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({ entity: "not-a-real-entity" }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "unsupported-entity");
+});
+
+test("recordDelta: GatewayLogic.applyDelta throwing -> 500 write-failed, not an unhandled rejection", async () => {
+    seedHappyPathAuth(mockState);
+    const gatewayLogicPath = require.resolve("../lib/gatewayLogic");
+    const cached = require.cache[gatewayLogicPath].exports;
+    const original = cached.applyDelta;
+    cached.applyDelta = async () => { throw new Error("simulated Firestore failure"); };
+    try {
+        const res = mockRes();
+        await handlers.recordDelta(mockReq({ body: validDeltaBody() }), res);
+        assert.equal(res.statusCode, 500);
+        assert.equal(jsonBody(res).error, "write-failed");
+    } finally {
+        cached.applyDelta = original;
+    }
+});
+
+test("recordDelta: GET request -> 405 method-not-allowed", async () => {
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ method: "GET", body: validDeltaBody() }), res);
+    assert.equal(res.statusCode, 405);
+    assert.equal(jsonBody(res).error, "method-not-allowed");
+});
+
 // ── recordMutationsBatch ─────────────────────────────────────────────────
 
 test("recordMutationsBatch: success path returns 200 ok:true", async () => {
@@ -209,4 +277,51 @@ test("recordMutationsBatch: empty items array -> 400 empty-batch from validateBa
     await handlers.recordMutationsBatch(mockReq({ body: validBatchBody({ items: [] }) }), res);
     assert.equal(res.statusCode, 400);
     assert.equal(jsonBody(res).error, "empty-batch");
+});
+
+test("recordMutationsBatch: missing Authorization header -> 401 missing-token", async () => {
+    const res = mockRes();
+    await handlers.recordMutationsBatch(mockReq({ headers: { origin: "http://localhost" }, body: validBatchBody() }), res);
+    assert.equal(res.statusCode, 401);
+    assert.equal(jsonBody(res).error, "missing-token");
+});
+
+test("recordMutationsBatch: verifyIdToken throwing -> 401 invalid-token", async () => {
+    mockState.verifyIdToken = async () => { throw new Error("bad token"); };
+    const res = mockRes();
+    await handlers.recordMutationsBatch(mockReq({ body: validBatchBody() }), res);
+    assert.equal(res.statusCode, 401);
+    assert.equal(jsonBody(res).error, "invalid-token");
+});
+
+test("recordMutationsBatch: authenticated but no matching user/tenant doc -> 403 no-tenant-context", async () => {
+    mockState.verifyIdToken = async () => ({ uid: "ghost-uid" });
+    mockState.docs = {}; // no users/ghost-uid doc at all
+    const res = mockRes();
+    await handlers.recordMutationsBatch(mockReq({ body: validBatchBody() }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(jsonBody(res).error, "no-tenant-context");
+});
+
+test("recordMutationsBatch: GatewayLogic.applyMutationsBatch throwing -> 500 write-failed, not an unhandled rejection", async () => {
+    seedHappyPathAuth(mockState);
+    const batchMutationLogicPath = require.resolve("../lib/batchMutationLogic");
+    const cached = require.cache[batchMutationLogicPath].exports;
+    const original = cached.applyMutationsBatch;
+    cached.applyMutationsBatch = async () => { throw new Error("simulated Firestore failure"); };
+    try {
+        const res = mockRes();
+        await handlers.recordMutationsBatch(mockReq({ body: validBatchBody() }), res);
+        assert.equal(res.statusCode, 500);
+        assert.equal(jsonBody(res).error, "write-failed");
+    } finally {
+        cached.applyMutationsBatch = original;
+    }
+});
+
+test("recordMutationsBatch: GET request -> 405 method-not-allowed", async () => {
+    const res = mockRes();
+    await handlers.recordMutationsBatch(mockReq({ method: "GET", body: validBatchBody() }), res);
+    assert.equal(res.statusCode, 405);
+    assert.equal(jsonBody(res).error, "method-not-allowed");
 });
