@@ -45,7 +45,27 @@ happened — analysis only. "Do not build or run app" (this session's standing i
 covering the actual Felgo/Qt app, not automated test suites; flagged explicitly rather than assumed,
 since running verification suites will be needed once an item is chosen and implemented.
 
-## Status: analysis complete, no item chosen yet, awaiting Taher's direction
+## Update: Taher picked item 1 (batch-id mint), immediately hit its own stated blocker
+
+Asked which of the 3 to scope next; he picked the batch-id-mint item. Before any fix-shape design:
+re-confirmed N3 (`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`
+§3.2) is a **physical on-device action** — tap Save while online, toggle airplane mode ON before the
+mint round-trip completes, wait, toggle back OFF, observe whether the batch eventually appears.
+Neither buildable-and-run here (this session's standing "no build/run" instruction) nor something a
+synthetic test can fully stand in for: this exact codebase already has one precedent (QTBUG-49896)
+of real on-device Qt/XHR network behavior diverging from what code-reading alone predicted, found
+only by an actual run. Read `StockBatchStore.nextBatchId()` (`:192-199`) — it delegates to
+`FirebaseService.mintCounterValue(key, seedMax, function(ok, value){...})`, so a forced-`ok:false`
+or never-resolving stub IS constructible as a store-level test, but it only proves "the code handles
+a clean ok:false correctly," not "a real mid-flight connectivity drop actually produces ok:false
+rather than silently hanging" — the second question is exactly the kind QTBUG-49896 turned out to
+answer unpredictably in this codebase. Presented Taher the exact N3 steps to run himself plus this
+honest caveat, rather than either (a) blocking silently or (b) building the synthetic test and
+presenting it as equivalent confirmation. Awaiting his choice: run N3 himself / have me build the
+synthetic stopgap test now (explicitly non-equivalent) / skip verification and pick a fix shape on
+the unconfirmed assumption anyway.
+
+## Status: item 1 selected, blocked on N3 on-device confirmation, awaiting Taher's choice of path
 
 ### Done
 - [x] Fresh clone, branch created off `main` @ `ad84ccc`
@@ -72,8 +92,16 @@ since running verification suites will be needed once an item is chosen and impl
 
 ## Next action if resumed
 
-Check for Taher's decision on which of the three items (if any) to proceed with, and at what scope.
-If none yet: re-present the three findings above rather than re-deriving them from scratch — this
-session already did the investigation; don't repeat it. Once he picks one (or none): branch off
-`main` fresh for that specific item, run brainstorming's design step, then writing-plans, per normal
-flow.
+Item 1 (batch-id mint) is picked but stuck on N3. Check chat history for which path Taher chose:
+- **Ran N3 himself, reports result** → if "batch never appeared": proceed to the 3-shape decision
+  in this file's item-1 writeup above (narrower fix recommended first). If "batch appeared fine":
+  this item may not need fixing at all (ponytail rung 1) — confirm with Taher before closing it out.
+- **Asked for the synthetic stopgap test** → build it in `tests/tst_StockBatchStoreE2E.qml` or a new
+  file, forcing `FirebaseService.mintCounterValue`'s callback to `ok:false`/never-resolve, verify
+  `topUpOldest`/`addBatch`/call-site behavior. Still flag results as "code confirmed to behave as
+  read, real-world N3 still open" — don't let a passing synthetic test get treated as N3 done.
+- **Said skip verification, pick a shape anyway** → proceed to the 3-shape table, but the checkpoint
+  and any commit message should say explicitly that this was done without N3 confirmation, at
+  Taher's direction, not silently.
+
+If none of the above yet: re-ask, don't guess which path he meant.
