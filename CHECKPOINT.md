@@ -65,7 +65,12 @@ presenting it as equivalent confirmation. Awaiting his choice: run N3 himself / 
 synthetic stopgap test now (explicitly non-equivalent) / skip verification and pick a fix shape on
 the unconfirmed assumption anyway.
 
-## Status: item 1 selected, blocked on N3 on-device confirmation, awaiting Taher's choice of path
+## Status: waiting on Taher's own N3 result — no further code/design work until he reports back
+
+Taher chose to run N3 himself rather than have a synthetic stopgap built or skip verification.
+Gave him the exact repro steps + what to capture. Nothing left for me to do on this item until he
+reports the result — do not guess an outcome, do not pre-build a fix for either branch of the
+result in the meantime (would risk building for the wrong branch and wasting the work).
 
 ### Done
 - [x] Fresh clone, branch created off `main` @ `ad84ccc`
@@ -92,16 +97,14 @@ the unconfirmed assumption anyway.
 
 ## Next action if resumed
 
-Item 1 (batch-id mint) is picked but stuck on N3. Check chat history for which path Taher chose:
-- **Ran N3 himself, reports result** → if "batch never appeared": proceed to the 3-shape decision
-  in this file's item-1 writeup above (narrower fix recommended first). If "batch appeared fine":
-  this item may not need fixing at all (ponytail rung 1) — confirm with Taher before closing it out.
-- **Asked for the synthetic stopgap test** → build it in `tests/tst_StockBatchStoreE2E.qml` or a new
-  file, forcing `FirebaseService.mintCounterValue`'s callback to `ok:false`/never-resolve, verify
-  `topUpOldest`/`addBatch`/call-site behavior. Still flag results as "code confirmed to behave as
-  read, real-world N3 still open" — don't let a passing synthetic test get treated as N3 done.
-- **Said skip verification, pick a shape anyway** → proceed to the 3-shape table, but the checkpoint
-  and any commit message should say explicitly that this was done without N3 confirmation, at
-  Taher's direction, not silently.
+Waiting on Taher's N3 result. Check chat history for his report:
+- **"Batch never appeared" (bug confirmed real)** → proceed to the 3-shape decision in this file's
+  item-1 writeup above. Ask him to pick a shape (narrower fix is my recommendation, not his default)
+  before writing any code — still under brainstorming's gate.
+- **"Batch appeared fine" (bug not reproduced)** → don't assume it's fully safe; ask whether he wants
+  to retry N3 a couple more times (timing-sensitive — "before it would plausibly complete" is a guess
+  about round-trip timing that could've been wrong once) before closing the item as a non-issue.
+- **Ambiguous/couldn't complete the test** → don't guess which branch this falls into; ask what
+  happened and whether he wants to retry or switch to the synthetic-stopgap path instead.
 
-If none of the above yet: re-ask, don't guess which path he meant.
+If no report yet: don't nudge or re-ask — he's doing this on his own time outside this session.
