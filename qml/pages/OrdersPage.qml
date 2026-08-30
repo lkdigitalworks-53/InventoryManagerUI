@@ -260,20 +260,65 @@ Item {
                                    :                   Constants.grad4
                         }
 
-                        ColumnLayout {
-                            spacing: dp(4)
+                        RowLayout {
                             Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
-                            Text {
-                                text: OrdersStore.formatCurrency(modelData.total || 0)
-                                color: Constants.textPrimary
-                                font.pixelSize: sp(Constants.fsBody)
-                                font.bold: true
-                                horizontalAlignment: Text.AlignRight
-                                Layout.alignment: Qt.AlignRight
+                            spacing: dp(Constants.space2)
+
+                            ColumnLayout {
+                                spacing: dp(4)
+                                Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                                Text {
+                                    text: OrdersStore.formatCurrency(modelData.total || 0)
+                                    color: Constants.textPrimary
+                                    font.pixelSize: sp(Constants.fsBody)
+                                    font.bold: true
+                                    horizontalAlignment: Text.AlignRight
+                                    Layout.alignment: Qt.AlignRight
+                                }
+                                StatusPill {
+                                    Layout.alignment: Qt.AlignRight
+                                    status: modelData.status || "pending"
+                                }
                             }
-                            StatusPill {
-                                Layout.alignment: Qt.AlignRight
-                                status: modelData.status || "pending"
+
+                            // Delete button. deleteOrderClicked(...) was
+                            // already wired end-to-end (DataModel role check
+                            // + completed-order guard, confirm dialog in
+                            // Main.qml) — this was the only missing piece.
+                            // Not status-gated here on purpose: a completed
+                            // order still shows the icon, and tapping it
+                            // surfaces DataModel's own specific "reopen it
+                            // to pending first" message rather than this
+                            // row silently re-deriving that same rule.
+                            Rectangle {
+                                id: deleteOrderBtn
+                                Layout.preferredWidth: dp(28)
+                                Layout.preferredHeight: dp(28)
+                                visible: root.canDeleteOrders
+                                radius: dp(Constants.radiusPill)
+                                color: deleteOrderArea.pressed
+                                        ? Qt.rgba(0.94, 0.27, 0.27, 0.18)
+                                        : "transparent"
+                                Behavior on color { ColorAnimation { duration: Constants.durFast } }
+
+                                Icon {
+                                    anchors.centerIn: parent
+                                    name: "trash"
+                                    size: sp(16)
+                                    color: Constants.danger
+                                }
+                                MouseArea {
+                                    id: deleteOrderArea
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    // Accept the tap so it doesn't bubble to
+                                    // the ListCard's own onClicked, which
+                                    // would also fire orderDetailsClicked.
+                                    onClicked: function(mouse) {
+                                        mouse.accepted = true
+                                        root.deleteOrderClicked(modelData.orderId)
+                                    }
+                                }
                             }
                         }
                     }

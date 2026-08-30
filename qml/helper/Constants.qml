@@ -152,6 +152,12 @@ Item {
         "analytics": IconType.barchart,
         "secure":    IconType.lock,
         "delete":    IconType.trash,
+        // Distinct from "delete" above: that key is claimed by colorIconSet
+        // (full-color Twemoji SVG for activity/history entries, ignores
+        // `color`). This one resolves through iconMap so it's a tintable
+        // monochrome glyph — needed for a small destructive row action that
+        // must render in Constants.danger.
+        "trash":     IconType.trash,
         "gallery":   IconType.image,
         "web":       IconType.globe,
         "clipboard": IconType.clipboard,
