@@ -347,6 +347,7 @@ Item {
             // was the only missing piece.
             Rectangle {
                 id: deleteBtn
+                objectName: "deleteBtn"
                 Layout.preferredHeight: dp(28)
                 Layout.preferredWidth: dp(28)
                 visible: card.canManage

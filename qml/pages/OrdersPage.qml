@@ -292,6 +292,7 @@ Item {
                             // row silently re-deriving that same rule.
                             Rectangle {
                                 id: deleteOrderBtn
+                                objectName: "deleteOrderBtn"
                                 Layout.preferredWidth: dp(28)
                                 Layout.preferredHeight: dp(28)
                                 visible: root.canDeleteOrders
