@@ -2515,3 +2515,64 @@ motivating bug — it can explain *why* coverage is asymmetric across the things
 covers equally, without anyone having decided that asymmetry was correct. Worth checking any test
 file that grew incrementally across several unrelated sessions for the same pattern: does its
 current coverage match its stated scope, or just its history?
+
+## Skill 54: Verifying sandbox execution capability instead of asserting it — real `qmltestrunner` works here, the Firebase emulator specifically doesn't (and exactly why)
+
+**Problem**: stated to Taher, mid-session, that this Cloud sandbox "can't run qmltestrunner" and
+"can't run the Firebase emulator" as a blanket justification for scoping a task to Cloud-Functions-
+only work. Both claims were assumptions carried over from general priors about the sandbox
+(restricted network egress, no Qt toolchain by default), not something actually checked against
+*this* sandbox's real capabilities. Taher pushed back: sandbox execution limits — real or assumed —
+shouldn't gate what code gets written, since CI and his own machine are the actual verification
+layer regardless. That pushback is what prompted actually checking instead of continuing to assert.
+
+**What checking found — qmltestrunner**: `apt-cache policy qt6-declarative-dev` shows a real,
+installable `6.4.2+dfsg-4build3` candidate from `archive.ubuntu.com` (already on this sandbox's
+network allowlist). Installed it plus every `qml6-module-*` package the actual test suite's imports
+needed — this took several rounds of install-run-read-the-next-missing-module, not one shot:
+
+```
+qt6-declarative-dev qml6-module-qttest qml6-module-qtquick qml6-module-qtqml \
+qml6-module-qtquick-controls qml6-module-qtqml-workerscript qml6-module-qt-labs-platform \
+qml6-module-qt-labs-qmlmodels qml6-module-qt-labs-folderlistmodel qml6-module-qtquick-layouts \
+qml6-module-qtquick-dialogs qml6-module-qtquick-shapes qml6-module-qtqml-models \
+qml6-module-qtquick-window
+```
+
+Run headless with `QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input tests -platform
+offscreen` (note: the binary is at `/usr/lib/qt6/bin/qmltestrunner`, not on `PATH` by default).
+Result: **315 passed, 22 failed** — every failure is `Type AuthStore unavailable`, all from the
+same root cause Skill 47 already documented (`AuthStore.qml` does `import QtCore; Settings { ... }`,
+and `Settings` didn't move into the `QtCore` QML module until a later Qt 6 minor than this
+sandbox's apt-installable 6.4.2 — CI runs 6.8, where it's fine). One failed-to-compile singleton
+breaks the whole `qml/model` qmldir for every file that transitively imports it, so this shows up as
+a fixed-size floor unrelated to whatever a given session's diff touches — confirmed by running on
+an unmodified `main` checkout too, same 22. (Skill 47's version of this note said 14 files, from
+2026-08-22 — the suite has grown since; same root cause, bigger blast radius, not a new problem.)
+
+**What checking found — Firebase emulator**: `npm install -g firebase-tools` succeeds (npm registry
+is allowlisted) and `firebase emulators:start` runs — gets past config parsing, port-checking, all
+of it — right up to `firestore: downloading cloud-firestore-emulator-v1.22.0.jar...`, which fails
+with `Error: download failed, status 403: Host not in allowlist: storage.googleapis.com`. Precise,
+not vague: it's specifically the emulator JAR download that's blocked, nothing upstream of it. If
+this sandbox's network allowlist ever adds `storage.googleapis.com`, the emulator itself may well
+start — untested past that point, since it wasn't reachable to test further.
+
+**Fix (to the two prior sessions' documentation, not to any code)**: `AGENTS.md`'s Testing & QA
+Agent section had two separate wrong "Skill 46" cross-references (should've been Skill 47 both
+times — Skill 46 is the unrelated Firebase-functions-handler-testing skill) — both corrected in
+place rather than left wrong, with a forward-pointer to this skill for the current package list and
+count. Also added `scripts/setup-sandbox-qmltestrunner.sh` — the package list above as a runnable
+script, so the next Cloud session doesn't repeat the several rounds of trial and error it took to
+find it.
+
+**Lesson, generalized, and the actual point of writing this down**: "the sandbox can't do X" is a
+claim like any other technical claim — it needs a check, not a recollection. The check here (`apt-
+cache policy`, an actual install-and-run attempt, reading the exact 403 message instead of stopping
+at "it failed") took a handful of tool calls and turned a vague, overly broad limitation into two
+precise, different findings: one capability that was simply never tried before (qmltestrunner — now
+usable directly, no scratch-copy trick needed) and one that's genuinely blocked, with the exact
+missing allowlist entry named. Vague unverified limitations are worse than either outcome on its
+own: they make a real block ("Firebase emulator needs `storage.googleapis.com` allowlisted") sound
+the same as a solvable one ("nobody had checked whether `apt` has Qt"), and Taher can't act on
+either without knowing which is which.

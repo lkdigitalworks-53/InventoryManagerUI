@@ -8,6 +8,42 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 
 ---
 
+## Session & Sandbox Conventions (established 2026-08-30)
+
+Two standing rules, written down once so they don't need repeating each session:
+
+**1. Sandbox execution limits are not a reason to leave code unwritten.** A Cloud sandbox session
+can't build the actual Felgo/Qt app (Windows/Felgo toolchain, Taher's machine only) and can't run
+the Firebase Local Emulator Suite end-to-end (confirmed 2026-08-30: `firebase-tools` installs and
+runs fine via `npm`, but the emulator's own jar download 403s specifically because
+`storage.googleapis.com` isn't in the sandbox's network allowlist — a precise, checkable reason, not
+a vague "Firebase doesn't work here"). Neither limit is a reason to skip writing QML, Cloud
+Functions, or E2E test code that depends on them. Taher has the full toolchain locally, CI
+(`checks.yml`) runs the real suite on every push, and either can hand back logs/output for
+follow-up debugging. Write the code, push it, let CI and Taher's machine be the verification layer
+— don't gate *writing* code on whether *this particular session* can prove it green.
+
+  **Corroborating correction, same date:** a Cloud session had previously stated as fact that this
+  sandbox "can't run qmltestrunner" — untested assumption, not a checked one. It was wrong: a real
+  `qmltestrunner` runs directly in this sandbox via `apt` (no scratch-copy trick needed), and as of
+  2026-08-30, 315 of 337 QML test files pass for real, with a known 22-file floor from a Qt-version
+  API drift (6.4.2 here vs CI's 6.8), not a real failure. Run
+  `scripts/setup-sandbox-qmltestrunner.sh` to install the exact `apt` package set (see SKILLS Skill
+  54 for the discovery process and current failure signature). General lesson, not just a QML one: check a capability (`apt-cache
+  policy`, an actual install attempt) before asserting it's unavailable — this one cost a mid-session
+  correction that a five-minute check would have avoided.
+
+**2. Don't wait for a chat-window "looks good" before pushing.** Taher's actual review loop is:
+Claude pushes to a branch in the same pass → CI runs the real suite → Taher reviews the diff on
+GitHub and runs on-device tests → any follow-up happens in a later session with his findings as
+input. There's no chat-sandbox review step in that loop by design — waiting for one just stalls
+work Taher can't act on until it's already on GitHub. This isn't new (session mechanics already
+say Claude pushes autonomously); the clarification is *why*: it's not just permission to skip
+asking, it's a description of where verification actually happens — GitHub CI and Taher's own
+machine, not this chat.
+
+---
+
 ## Current Feature Status
 
 | Feature | Status |
@@ -605,14 +641,21 @@ env.
   is the one that actually *proves* the fix rather than documenting intent: it fails
   (`pendingCount` comes back `0`) without the fix, because the write never reached a real file.
 - `tests/tst_InventoryStore_cloneSymmetry.qml`, `tests/tst_InventoryStore_upsertMany.qml`,
-  `tests/tst_StockSnapshotMath.qml` (2026-08-22, SKILLS Skill 46, review of `pr_taher_bug_fixes`) —
+  `tests/tst_StockSnapshotMath.qml` (2026-08-22, SKILLS Skill 47, review of `pr_taher_bug_fixes`) —
   first-ever direct unit coverage for `InventoryStore`'s create/clone symmetry and bulk-import SKU
   handling (previously zero tests touched `_upsertManySync`/`generateSku`/`addProduct`'s payload at
   all), plus new coverage for `SalesPage.qml`'s stock-snapshot export via a newly-extracted pure
   helper, `qml/helper/StockSnapshotMath.js` (same pattern as `ImportMath.js`/`OrderMath.js`). Verified
-  clean (498 passed, 0 failed) in a throwaway scratch copy with a Qt-6.4.2 compat shim — see Skill 46
+  clean (498 passed, 0 failed) in a throwaway scratch copy with a Qt-6.4.2 compat shim — see Skill 47
   for why this Cloud sandbox's real `qmltestrunner` run always shows 14 unrelated pre-existing
   compile failures (`Settings is not a type` under Qt 6.4.2 vs CI's 6.8) that aren't a real signal.
+  [Corrected 2026-08-30: both "Skill 46" references above were wrong — that sandbox note is Skill
+  47, not 46 (46 is the unrelated Firebase-functions-handler-testing skill); fixed here rather than
+  left wrong. Also, that note undersold what's actually possible: **Skill 54** confirms a real
+  `qmltestrunner` run (not just a throwaway scratch copy) works directly in this sandbox given the
+  right `apt` package set, which needed more than Skill 47 alone lists. Current floor is 22 files
+  (was 14 — suite has grown since), same root cause, not a new problem. Run
+  `scripts/setup-sandbox-qmltestrunner.sh` instead of rediscovering the package list by hand.]
 - 26 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
   2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17 + 3 from 2026-08-22). Historical baseline before
   those 9 new suites (pre-2026-08-22 count; the 3 newest aren't included in this older tally):

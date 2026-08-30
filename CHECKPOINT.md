@@ -83,3 +83,45 @@ Nothing pending — this arc's changes are committed and pushed to
 any of the three "Needs Taher's input" roadmap items yet before picking a next item; if not,
 re-read the roadmap fresh rather than trusting any prior session's memory of its contents (this
 session found that memory stale once already).
+
+---
+
+## Addendum (same session, same branch): correcting an overstated sandbox limitation
+
+After the work above was pushed, Taher pushed back on framing the item choice as gated by sandbox
+execution limits, and asked for two standing conventions to be written down in the repo rather than
+repeated each session. Writing them down surfaced that one of the limitations stated earlier in
+this session ("sandbox can't run qmltestrunner") was an untested assumption, not a checked fact —
+so this addendum corrects that in the same pass rather than leaving it wrong on `main`.
+
+**Done:**
+- [x] Checked instead of assumed: `apt-cache policy qt6-declarative-dev` → real 6.4.2 candidate
+      exists via the already-allowlisted `archive.ubuntu.com`
+- [x] Installed the full `qml6-module-*` set needed by this repo's actual test suite (several
+      install-run-read-next-missing-module rounds — see SKILLS Skill 54 for the exact list)
+- [x] Ran the real suite: **315 of 337 test files pass**, 22 fail at `compile()` with a known,
+      pre-existing, Qt-version-drift cause (`AuthStore.qml`'s `import QtCore; Settings {...}` isn't
+      valid QML until later than this sandbox's apt 6.4.2; CI runs 6.8) — same root cause Skill 47
+      already documented in 2026-08-22, at a smaller 14-file count then (suite has grown since)
+- [x] Checked instead of assumed, for Firebase too: `firebase-tools` installs via `npm` and
+      `firebase emulators:start` runs past config/port-checking, failing specifically at the
+      emulator jar download with `Host not in allowlist: storage.googleapis.com` — a precise,
+      actionable finding, not the vague "Firebase doesn't work here" stated earlier this session
+- [x] Fixed 2 pre-existing wrong "Skill 46" cross-references in `AGENTS.md` (both should have said
+      Skill 47) — found while verifying the sandbox note they were attached to
+- [x] Added `scripts/setup-sandbox-qmltestrunner.sh` — the discovered package list as a runnable,
+      idempotent script, so a future session doesn't repeat the trial-and-error. **Caught and fixed
+      a real bug in it before committing**: `apt-get update` exits non-zero because of this
+      sandbox's pre-existing broken `deb.nodesource.com` entry (unrelated to Qt), which would have
+      killed the script under `set -e` before it ever reached the install step — confirmed the bug
+      by actually running the script (exit code 100), not by inspection alone; fixed with `|| true`
+      on that one line, re-ran to confirm exit 0 and unchanged 315/22 test result
+- [x] New `## Session & Sandbox Conventions` section added near the top of `AGENTS.md` with the two
+      standing rules Taher asked for, plus the corroborating correction above
+- [x] SKILLS.md Skill 54 written up
+
+**Explicitly not done:** no change to `AuthStore.qml` or any other production QML — the 22-file
+compile floor is a sandbox Qt-version artifact, not a code bug; "fixing" it in the real source would
+mean downgrading working, CI-correct code to match this sandbox's older `apt` Qt, which would be
+backwards.
+
