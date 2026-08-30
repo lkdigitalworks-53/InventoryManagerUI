@@ -29,11 +29,23 @@ unconfirmed either way — see below — and is explicitly not treated as a merg
 Found while writing the on-device test plan for the async batch-id-minting change
 (`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`). `StockBatchStore.
 addBatch()` calls back with `null` and logs a `console.warn` if `nextBatchId()`'s mint fails — but
-`InventoryStore.addProduct()`'s "Initial stock" call, `InventoryStore.restock()`'s call, and five of
-six `topUpOldest()` call sites in `DataModel.qml` pass no callback at all (fire-and-forget, unchanged
-from before the async conversion — see
+`InventoryStore.addProduct()`'s "Initial stock" call, `InventoryStore.restock()`'s call, and 3 of 6
+`topUpOldest()` call sites in `DataModel.qml` (`:689`, `:971`, `:1097` — `:538`, `:626`, `:1031` do
+pass one) pass no callback at all (fire-and-forget, unchanged from before the async conversion — see
 `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`). Before that conversion
 this was harmless (a local array scan can't fail); now it's a real network call that can.
+
+**Correction (2026-08-30):** the "five of six" count above was wrong — re-checked directly against
+current `DataModel.qml`, it's 3 of 6. More importantly, the 3 call sites that DO pass a callback
+aren't actually protected either: `StockBatchStore.topUpOldest()` (`:418-460`) never gives its own
+callback an error channel. The no-existing-batches branch (`:427-429`) calls back unconditionally
+regardless of whether its internal `addBatch()` call's `doc` came back `null` on a failed mint; the
+existing-batches branch (`:442-459`) calls back unconditionally regardless of `result.ok` on the
+`Gateway.recordDelta` write. So the real defect isn't "N call sites forgot to wait" — it's that
+`topUpOldest()` itself has no way to tell ANY caller a top-up silently failed, whether or not that
+caller bothers to wait for it. Widens the eventual fix's blast radius: whichever shape gets picked
+below needs to touch `topUpOldest()`'s own callback contract, not just the call sites that currently
+skip passing one.
 
 Worth being precise about *what kind* of gap this is: `addProduct`'s own productId mint is handled
 correctly (`nextProductId` failing aborts the whole add and tells the caller — fail loudly, nothing
@@ -65,6 +77,24 @@ to this. Not scoped or estimated yet — deliberately, same reason as the two en
 Long-deferred. Not enough carried-forward context to define "parity" honestly (parity with what
 reference implementation, checking which specific values) — needs a quick scoping conversation before
 this can get a real complexity/effort estimate rather than a guess.
+
+**Scoping findings (2026-08-30), decision still pending:** re-read both files directly rather than
+trusting the header comment's claim. Source parity is real today — `functions/lib/orderMath.js` vs
+`qml/helper/OrderMath.js` diff to zero once comment-only punctuation (em-dash vs `--`) and the
+CommonJS/`.pragma library` boilerplate are normalized. The actual gap is **test-coverage** parity,
+not source parity: `realisedMath.js`/`breakdownMath.js` (OrderMath's two sibling ports) each have a
+direct fixture pair — `functions/test/fixtures/*Fixtures.js` mirrored by `tests/tst_*ParityFixtures.
+qml` — plus their own `functions/test/*.test.js`. `orderMath.js` has none of that: no
+`functions/test/orderMath.test.js`, no `tst_OrderMathParityFixtures.qml`. Its 7 exported functions
+get only whatever indirect exercise falls out of being a dependency of `realisedMath`/`breakdownMath`
+(`eventDate`, `allocate`, `spreadOrderDelta`, `spreadLineDeltaBySupplier`, `eventProfit` — 5 of 7).
+`lineTax` and `refundPerUnit` are called from precisely zero places in `functions/` (grepped) — they're
+QML-only call paths (`OrderDetailDialog.qml`, `DataModel.qml`) — so on the Node side they have zero
+coverage, direct or indirect, despite `tests/tst_OrderMath.qml` already testing both thoroughly
+client-side (6 dedicated test functions between them). This is now a well-scoped item (bring
+`orderMath.js` up to the same parity-fixture pattern its two siblings already use) rather than an
+open-ended one — still not started; the "worth doing now vs. leave as-is since the untested 2
+functions are currently dead code server-side" call is Taher's, not assumed here.
 
 ### Account-switch-mid-sync edge case (the `loadingMore` single-flight guard)
 
