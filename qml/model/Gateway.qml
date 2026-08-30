@@ -77,7 +77,16 @@ QtObject {
     // store that calls recordMutation should connect to this and patch its
     // own local array for `entityId` from `current` — the queued write is
     // already dropped (not retried) by the time this fires, see _send.
-    signal mutationConflicted(string entity, string entityId, var current)
+    // `action` (2026-08-30): the original item.action ("delete"/"update"/
+    // "create") that conflicted -- added so a store can word its reconcile
+    // toast correctly. A rejected delete-conflict means the record still
+    // legitimately exists (someone else edited it after this client's
+    // stale `before`), and gets pushed back into the local array by the
+    // same current-patch logic below; telling the user "your change didn't
+    // save" is misleading when what they attempted was a delete. Additive
+    // param -- existing 3-arg listeners still connect fine, they just
+    // don't see it.
+    signal mutationConflicted(string entity, string entityId, var current, string action)
 
     property int inFlight: 0
 
@@ -398,7 +407,7 @@ QtObject {
                     // comment for why retry can never succeed here. The
                     // owning store reconciles its cache via the signal below.
                     OutboxStore.markSent(item.requestId)
-                    mutationConflicted(item.entity, item.entityId, conflict.current)
+                    mutationConflicted(item.entity, item.entityId, conflict.current, item.action)
                 } else {
                     // 11th round (2026-08-24): two working repros this round
                     // (plain Express, and the real firebase-functions v2 +
