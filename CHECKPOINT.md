@@ -190,3 +190,43 @@ change plus one reconciliation handler each.
 written to convention but unrun (sandbox has no Qt toolchain — flagged, not hidden). Pushed to
 `fix/bulk-import-chunking-durable-status`, not `main`. Not built or run on-device, per standing
 instruction.
+
+## Post-CI follow-up (2026-08-29, same day)
+
+CI ran green on this branch (QML, Functions, Firestore Rules, E2E jobs all passed) — first real
+confirmation the QML/E2E tests actually work, not just written-to-convention.
+
+Rebase (separate turn, see git log for the merge-conflict resolution against
+`feature/async-stock-batch-id-minting` landing on `main`) already covered above.
+
+Coverage-gap audit: diffed every new branch in `Gateway.qml`/`InventoryStore.qml`/
+`OrdersStore.qml`/`SupplierStore.qml` against the existing test suite line-by-line rather than
+assuming "has tests" meant "fully covered." Found 9 real gaps (untested `_chunkItems` fallback
+branch, two distinct `_classifyBatchMutationFailure` branches, the empty-items half of 3 stores'
+guard clauses, an unknown-orderId no-op case, a missed `revision++` assertion, and
+`OrdersStore.upsertMany`'s `counts.chunked` line which needed an E2E test since it's set inside an
+async callback no unit test can reach). Closed all 9, committed separately (`7b5a3ad`) so the
+coverage work is auditable independent of the original fix.
+
+One gap deliberately NOT closed: `ImportPreviewDialog._finishApply`'s new conditional has no
+automated test at any tier — confirmed via `find` that zero page/dialog components in this repo
+have ever had a unit test file, so building a first-of-its-kind `BottomSheet` harness for one line
+was judged disproportionate. Covered via on-device steps instead (test plan §5.1, H1-H3). Flagged
+explicitly, not silently skipped.
+
+Wrote `docs/superpowers/test-plans/2026-08-29-bulk-import-chunking-test-plan.md` following this
+project's established test-plan convention (`2026-08-28-async-stock-batch-id-minting-test-plan.md`
+for the on-device Happy/Negative/Edge/Monkey structure, `2026-08-22-pr_taher_bug_fixes-test-plan.md`
+for the Unit/Regression/E2E coverage-table structure). Caught and fixed a real arithmetic error
+before finalizing: an initial "25 unit + 12 regression + 3 E2E = 40" categorization didn't reconcile
+against the actual 42 test cases (verified via `grep -c` diffed against the `main` baseline) — root
+cause was miscounting which bucket 3 of the tests belonged to. Recounted properly: 27 unit-tier +
+15 regression-tier = 42 exactly, with the 3 E2E-tier tests being a subset already inside that
+27+15, not a third additive bucket. Every table's row-sum re-verified against its header count
+before treating the document as done — this exact kind of arithmetic slip is documented as a known
+failure mode in `SKILLS.md`, worth catching here rather than repeating it.
+
+Firestore Rules: confirmed via reading `firestore.rules` directly that this fix doesn't touch it —
+the generic working-tier fallback rule only governs the `direct`-mode path, which this fix
+deliberately leaves untouched. Documented as "not applicable" in the test plan rather than silently
+omitted, since the person explicitly asked what's covered in rules tests.
