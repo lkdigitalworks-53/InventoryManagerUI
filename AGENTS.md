@@ -8,6 +8,42 @@ Each agent is scoped to a specific domain, enabling efficient parallel developme
 
 ---
 
+## Session & Sandbox Conventions (established 2026-08-30)
+
+Two standing rules, written down once so they don't need repeating each session:
+
+**1. Sandbox execution limits are not a reason to leave code unwritten.** A Cloud sandbox session
+can't build the actual Felgo/Qt app (Windows/Felgo toolchain, Taher's machine only) and can't run
+the Firebase Local Emulator Suite end-to-end (confirmed 2026-08-30: `firebase-tools` installs and
+runs fine via `npm`, but the emulator's own jar download 403s specifically because
+`storage.googleapis.com` isn't in the sandbox's network allowlist — a precise, checkable reason, not
+a vague "Firebase doesn't work here"). Neither limit is a reason to skip writing QML, Cloud
+Functions, or E2E test code that depends on them. Taher has the full toolchain locally, CI
+(`checks.yml`) runs the real suite on every push, and either can hand back logs/output for
+follow-up debugging. Write the code, push it, let CI and Taher's machine be the verification layer
+— don't gate *writing* code on whether *this particular session* can prove it green.
+
+  **Corroborating correction, same date:** a Cloud session had previously stated as fact that this
+  sandbox "can't run qmltestrunner" — untested assumption, not a checked one. It was wrong: a real
+  `qmltestrunner` runs directly in this sandbox via `apt` (no scratch-copy trick needed), and as of
+  2026-08-30, 315 of 337 QML test files pass for real, with a known 22-file floor from a Qt-version
+  API drift (6.4.2 here vs CI's 6.8), not a real failure. Run
+  `scripts/setup-sandbox-qmltestrunner.sh` to install the exact `apt` package set (see SKILLS Skill
+  54 for the discovery process and current failure signature). General lesson, not just a QML one: check a capability (`apt-cache
+  policy`, an actual install attempt) before asserting it's unavailable — this one cost a mid-session
+  correction that a five-minute check would have avoided.
+
+**2. Don't wait for a chat-window "looks good" before pushing.** Taher's actual review loop is:
+Claude pushes to a branch in the same pass → CI runs the real suite → Taher reviews the diff on
+GitHub and runs on-device tests → any follow-up happens in a later session with his findings as
+input. There's no chat-sandbox review step in that loop by design — waiting for one just stalls
+work Taher can't act on until it's already on GitHub. This isn't new (session mechanics already
+say Claude pushes autonomously); the clarification is *why*: it's not just permission to skip
+asking, it's a description of where verification actually happens — GitHub CI and Taher's own
+machine, not this chat.
+
+---
+
 ## Current Feature Status
 
 | Feature | Status |
@@ -273,6 +309,20 @@ App (Main.qml)
   `StaffStore.addStaff`, and `ActivityLog` — fixed; see SKILLS Skill 12's `putMany()`). Single-doc
   `put()` per changed record; `putMany()` only for a genuinely multi-doc action (e.g.
   `approveAllPending`).
+- **ID minting** (updated 2026-08-27): `products`, `suppliers`, `staff`, `orders`, and now
+  `stockBatches` (`counters/stockBatches-<year>` — year-scoped, see below) all mint sequential
+  human-readable ids off a real Firestore-transaction-backed counter via
+  `FirebaseService.mintCounterValue`/`mintCounterBatch` — never `max(existing local ids) + 1`, which
+  isn't safe under concurrent access or id reuse after delete (see
+  `docs/superpowers/E2E-TESTING-ROADMAP.md`'s history and SKILLS Skill 50). Each domain follows the
+  same two-function split: `addX(fields, callback)` (async, mints its own id, one-at-a-time UI use)
+  and `addXWithId(id, fields)` / `addXWithIdMany(docs)` (sync, given an already-reserved id — used by
+  bulk-import loops that reserve a whole range up front via `mintCounterBatch` before running a
+  synchronous loop against it). Adding id-minting to a new domain should follow this exact split
+  rather than inventing a new shape. `StockBatchStore`'s counter is keyed **per year**
+  (`BAT-<year>-NNN` resets every Jan 1 by existing design) instead of one global counter like
+  `counters/suppliers` — check whether a new domain's id format has a similar reset/scoping
+  requirement before assuming a single global counter is correct.
 - Any new `Settings { category: "..." }` block (device-local `QSettings` persistence — all six
   stores: `AuthStore`, `OutboxStore`, `OrdersStore`, `PartyStore`, `CategoryStore`,
   `OrderChannelStore`, all fixed as of 2026-08-18) needs an explicit `location:
@@ -505,7 +555,13 @@ env.
   (`@firebase/rules-unit-testing`; needs the emulator, `firebase emulators:exec --only firestore
   "node --test test/"`)
 - `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — QML tests for the client-side gateway
-  bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`)
+  bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`). **Every XHR call site
+  in `Gateway.qml` (`_send`, `_sendBatch`, `_sendDelta`, `runCutover`, `provisionMember`) works
+  around [QTBUG-49896](https://bugreports.qt.io/browse/QTBUG-49896) via
+  `_captureBeforeStatusIsLost()`** — QML's `XMLHttpRequest` can lose `xhr.status` (reset to 0) at
+  the readyState 3->4 transition for non-2xx responses. Unresolved upstream, no fix version. If you
+  add a new XHR call anywhere in this file, it needs the same snapshot-and-fallback pattern, or its
+  error/conflict path will silently never fire in practice — see Skill 45 for the full story.
 - `FIRESTORE_RULES.md`
 - `qml/model/TransactionStore.qml`, `qml/model/StockBatchStore.qml`
 
@@ -519,9 +575,15 @@ env.
 ### 9. Testing & QA Agent
 
 **Purpose**: Owns the QML test harness and unit coverage for pure logic.
-**Scope**: `tests/`, `functions/test/`, `test/e2e/`
+**Scope**: `tests/`, `functions/test/`, `test/e2e/`, `docs/superpowers/test-plans/`
 
 **Responsibilities**:
+- Write every new test plan (automated coverage map, or an on-device manual checklist) into
+  `docs/superpowers/test-plans/` directly — not `specs/` or `plans/` — and add it to that folder's
+  `README.md` index (consolidated there 2026-08-22, see SKILLS Skill 48). Follow the existing
+  naming convention (`YYYY-MM-DD-<branch-or-feature>-test-plan.md`, or `YYYY-MM-DD-on-device-
+  test-plan-<feature>.md` for manual-only) and note in the index whether it supersedes or chains
+  with an existing plan for the same feature area.
 - Write Qt Quick Test (`TestCase`) suites for **pure, headless-testable logic** — primarily the
   `.pragma library` JS helpers (e.g. `qml/helper/BreakdownMath.js`). Page-level QML that needs the
   full Felgo `App` context (`dp()`/`sp()`/`Theme`/`GlassHeader`) cannot load under the runner — keep
@@ -578,8 +640,25 @@ env.
   QSettings org-identifier fix and its regression coverage. The `tst_OutboxStore.qml` durability case
   is the one that actually *proves* the fix rather than documenting intent: it fails
   (`pendingCount` comes back `0`) without the fix, because the write never reached a real file.
-- 23 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
-  2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17). Historical baseline before those 9 new suites:
+- `tests/tst_InventoryStore_cloneSymmetry.qml`, `tests/tst_InventoryStore_upsertMany.qml`,
+  `tests/tst_StockSnapshotMath.qml` (2026-08-22, SKILLS Skill 47, review of `pr_taher_bug_fixes`) —
+  first-ever direct unit coverage for `InventoryStore`'s create/clone symmetry and bulk-import SKU
+  handling (previously zero tests touched `_upsertManySync`/`generateSku`/`addProduct`'s payload at
+  all), plus new coverage for `SalesPage.qml`'s stock-snapshot export via a newly-extracted pure
+  helper, `qml/helper/StockSnapshotMath.js` (same pattern as `ImportMath.js`/`OrderMath.js`). Verified
+  clean (498 passed, 0 failed) in a throwaway scratch copy with a Qt-6.4.2 compat shim — see Skill 47
+  for why this Cloud sandbox's real `qmltestrunner` run always shows 14 unrelated pre-existing
+  compile failures (`Settings is not a type` under Qt 6.4.2 vs CI's 6.8) that aren't a real signal.
+  [Corrected 2026-08-30: both "Skill 46" references above were wrong — that sandbox note is Skill
+  47, not 46 (46 is the unrelated Firebase-functions-handler-testing skill); fixed here rather than
+  left wrong. Also, that note undersold what's actually possible: **Skill 54** confirms a real
+  `qmltestrunner` run (not just a throwaway scratch copy) works directly in this sandbox given the
+  right `apt` package set, which needed more than Skill 47 alone lists. Current floor is 22 files
+  (was 14 — suite has grown since), same root cause, not a new problem. Run
+  `scripts/setup-sandbox-qmltestrunner.sh` instead of rediscovering the package list by hand.]
+- 26 suites total (14 pre-existing + 3 from the 2026-08-08 session + 1 from 2026-08-10 + 2 from
+  2026-08-11 + 1 from 2026-08-12 + 2 from 2026-08-17 + 3 from 2026-08-22). Historical baseline before
+  those 9 new suites (pre-2026-08-22 count; the 3 newest aren't included in this older tally):
   **140 cases pass, 0 fail** — none of the 9 newest suites have been run under a real `qmltestrunner`
   yet (this repo's Cloud sessions don't have the Windows/Felgo toolchain; the 3 from 2026-08-08 have
   Node-side twins that do pass, 7/7, via `cd functions && npm test` — the other 6 have no Node-side
@@ -589,6 +668,27 @@ env.
   test`) — covers the Node-ported `functions/lib/` math. Not part of the `qmltestrunner` suite; a
   different runtime, kept in parity via the paired fixture files above, not by sharing one file
   (QML has no established pattern here for reading an external JSON file synchronously in a test).
+  - **Handler-level tests** (`functions/test/index.handlers.test.js`, SKILLS Skill 46 /
+    Skill 53; `index.handlers.remaining.test.js`, Skill 52) cover `functions/index.js`'s exported
+    HTTPS handlers themselves — auth, request wiring, and the response-building code — the layer
+    none of the `lib/` unit tests above touch. All 8 endpoints now covered: `recordMutation`/
+    `recordDelta`/`recordMutationsBatch` in the first file; `acquireLock`/`releaseLock`/
+    `provisionMember`/`runCutover`/`computeAnalysis` in the second. As of Skill 53 the first file's
+    coverage is symmetric across its three endpoints (401/403/405/500 on each, not just
+    `recordMutation`) — before that, `recordDelta`/`recordMutationsBatch` were noticeably thinner,
+    an artifact of the file growing across separate passes chasing `recordMutation`'s own Skill 43
+    regression rather than one symmetric pass. Both share one harness,
+    `functions/test/testSupport/handlerHarness.js`: install fakes into Node's `require.cache` (keyed
+    by each dependency's resolved absolute path) for `firebase-admin`/`firebase-admin/firestore`
+    *before* `index.js`'s first `require()` — index.js reads several of these at module load time,
+    so a mock installed afterward has no effect on the reference index.js already holds (see Skill
+    52 for the exact failure mode this causes if you get the order wrong). Mock each `lib/` module's
+    Firestore-writing exports only (`applyMutation`, `acquireLock`, `deleteCollection`, ...); keep
+    each module's pure `validate*`/`build*` exports real, since those already have their own
+    dedicated test files. `provisionMember`/`computeAnalysis` have no `lib/` module to delegate to
+    (their logic lives directly in `index.js`), so the harness's Firestore mock is a little deeper
+    for those two: `runTransaction`, and `collection().orderBy().limit().startAfter().get()` with
+    real doc-id cursor semantics for `readAllPaged`'s pagination.
 - **New, separate test surface: `test/e2e/`** (`qmltestrunner -input test/e2e`, run in CI's
   `e2e-tests` job against the real Firebase Local Emulator Suite — Firestore + Auth + Functions,
   started via `firebase emulators:start`, seeded via `node test/e2e/seed.js`) — real code path

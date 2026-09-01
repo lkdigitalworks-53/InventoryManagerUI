@@ -399,7 +399,7 @@ BottomSheet {
                 needFromStock = Math.max(0, p.quantity - origQty)
             }
             if (inv && needFromStock > inv.stock)
-                stockErrors.push(p.name + ": only " + inv.stock + " in stock, need " + needFromStock + " more")
+                stockErrors.push(p.name + ": only " + inv.stock + " in stock, need " + (needFromStock - inv.stock) + " more")
         }
         if (stockErrors.length > 0) {
             stockErrorLabel.text = stockErrors.join("\n")
@@ -441,6 +441,12 @@ BottomSheet {
         }
 
         var statuses = ["pending","processing","completed"]
+
+        if (products.count === 0 && _orderStatus !== "completed" &&
+                statuses[Math.max(0, statusCombo.currentIndex)] === "completed") {
+            stockErrorLabel.text = qsTr("At least add one item in the order to complete.")
+            return
+        }
         var chIdx = channelCombo.currentIndex
         var channel = (chIdx >= 0 && chIdx < OrderChannelStore.channels.length)
                 ? OrderChannelStore.channels[chIdx]
@@ -1026,8 +1032,14 @@ BottomSheet {
                             }
                         }
                         Text {
-                            visible: ohRow._sku.length > 0
-                            text: qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
+                            visible: modelData.productId && modelData.productId.length > 0
+                            // Gating visibility on productId (rather than SKU, as
+                            // before this fix) means this row can now render for a
+                            // product that legitimately has no SKU — don't leave a
+                            // dangling "SKU: " label with nothing after it in that case.
+                            text: ohRow._sku.length > 0
+                                    ? qsTr("%1 | SKU: %2 | ₹%3").arg(modelData.productId).arg(ohRow._sku).arg(modelData.unitPrice)
+                                    : qsTr("%1 | ₹%2").arg(modelData.productId).arg(modelData.unitPrice)
                             color: Constants.textSecondary
                             font.pixelSize: sp(Constants.fsCaption)
                         }

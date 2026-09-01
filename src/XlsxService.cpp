@@ -25,7 +25,7 @@ const QStringList kProductHeaders = {
 // for each line of the same order so the sheet stays human-friendly. Orders
 // with zero line items still emit a single row with empty product columns.
 const QStringList kOrderHeaders = {
-    "Order ID", "Customer", "Email", "Phone", "Staff", "Status", "Date", "Notes",
+    "Order ID", "Customer", "Email", "Phone", "Channel", "Staff", "Status", "Date", "Notes",
     "Order Subtotal", "Order Discount", "Order Tax", "Tax Collected", "Order Total",
     "Product ID", "SKU", "Product Name", "Quantity", "Unit Price",
     "Discount Type", "Discount Value", "Tax %", "Line Tax", "Line Total"
@@ -116,6 +116,7 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
         const QString customer = variantToString(o.value("customer"));
         const QString email = variantToString(o.value("email"));
         const QString phone = variantToString(o.value("phone"));
+        const QString orderChannel = variantToString(o.value("orderChannel"));
         const QString staffName = variantToString(o.value("staffName"));
         const QString status = variantToString(o.value("status"));
         const QString date = variantToString(o.value("date"));
@@ -130,15 +131,16 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
             doc.write(r, 2,  customer);
             doc.write(r, 3,  email);
             doc.write(r, 4,  phone);
-            doc.write(r, 5,  staffName);
-            doc.write(r, 6,  status);
-            doc.write(r, 7,  date);
-            doc.write(r, 8,  notes);
-            doc.write(r, 9,  subtotal);
-            doc.write(r, 10, discount);
-            doc.write(r, 11, tax);
-            doc.write(r, 12, tax);            // Tax Collected (same as Order Tax)
-            doc.write(r, 13, total);
+            doc.write(r, 5,  orderChannel);
+            doc.write(r, 6,  staffName);
+            doc.write(r, 7,  status);
+            doc.write(r, 8,  date);
+            doc.write(r, 9,  notes);
+            doc.write(r, 10,  subtotal);
+            doc.write(r, 11, discount);
+            doc.write(r, 12, tax);
+            doc.write(r, 13, tax);            // Tax Collected (same as Order Tax)
+            doc.write(r, 14, total);
         };
 
         if (items.isEmpty()) {
@@ -166,16 +168,16 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
             const double lineNet = lineGross - lineDisc;
             const double lineTax = (taxable && taxPct > 0) ? (lineNet * (taxPct / 100.0)) : 0.0;
 
-            doc.write(row, 14, lineProductId);
-            doc.write(row, 15, sku);
-            doc.write(row, 16, variantToString(line.value("name")));
-            doc.write(row, 17, qty);
-            doc.write(row, 18, unitPrice);
-            doc.write(row, 19, lnDiscType);
-            doc.write(row, 20, lnDiscVal);
-            doc.write(row, 21, taxable ? taxPct : 0.0);
-            doc.write(row, 22, lineTax);
-            doc.write(row, 23, lineGross);
+            doc.write(row, 15, lineProductId);
+            doc.write(row, 16, sku);
+            doc.write(row, 17, variantToString(line.value("name")));
+            doc.write(row, 18, qty);
+            doc.write(row, 19, unitPrice);
+            doc.write(row, 20, lnDiscType);
+            doc.write(row, 21, lnDiscVal);
+            doc.write(row, 22, taxable ? taxPct : 0.0);
+            doc.write(row, 23, lineTax);
+            doc.write(row, 24, lineGross);
             ++row;
         }
     }
@@ -184,25 +186,26 @@ void writeOrdersSheet(Document &doc, const QVariantList &orders)
     doc.setColumnWidth(2, 24);   // Customer
     doc.setColumnWidth(3, 24);   // Email
     doc.setColumnWidth(4, 16);   // Phone
-    doc.setColumnWidth(5, 20);   // Staff
-    doc.setColumnWidth(6, 14);   // Status
-    doc.setColumnWidth(7, 12);   // Date
-    doc.setColumnWidth(8, 28);   // Notes
-    doc.setColumnWidth(9, 14);   // Order Subtotal
-    doc.setColumnWidth(10, 14);  // Order Discount
-    doc.setColumnWidth(11, 12);  // Order Tax
-    doc.setColumnWidth(12, 14);  // Tax Collected
-    doc.setColumnWidth(13, 14);  // Order Total
-    doc.setColumnWidth(14, 12);  // Product ID
-    doc.setColumnWidth(15, 14);  // SKU
-    doc.setColumnWidth(16, 28);  // Product Name
-    doc.setColumnWidth(17, 10);  // Quantity
-    doc.setColumnWidth(18, 12);  // Unit Price
-    doc.setColumnWidth(19, 14);  // Discount Type
-    doc.setColumnWidth(20, 14);  // Discount Value
-    doc.setColumnWidth(21, 8);   // Tax %
-    doc.setColumnWidth(22, 12);  // Line Tax
-    doc.setColumnWidth(23, 14);  // Line Total
+    doc.setColumnWidth(5, 20);   // Channel
+    doc.setColumnWidth(6, 20);   // Staff
+    doc.setColumnWidth(7, 14);   // Status
+    doc.setColumnWidth(8, 12);   // Date
+    doc.setColumnWidth(9, 28);   // Notes
+    doc.setColumnWidth(10, 14);   // Order Subtotal
+    doc.setColumnWidth(11, 14);  // Order Discount
+    doc.setColumnWidth(12, 12);  // Order Tax
+    doc.setColumnWidth(13, 14);  // Tax Collected
+    doc.setColumnWidth(14, 14);  // Order Total
+    doc.setColumnWidth(15, 12);  // Product ID
+    doc.setColumnWidth(16, 14);  // SKU
+    doc.setColumnWidth(17, 28);  // Product Name
+    doc.setColumnWidth(18, 10);  // Quantity
+    doc.setColumnWidth(19, 12);  // Unit Price
+    doc.setColumnWidth(20, 14);  // Discount Type
+    doc.setColumnWidth(21, 14);  // Discount Value
+    doc.setColumnWidth(22, 8);   // Tax %
+    doc.setColumnWidth(23, 12);  // Line Tax
+    doc.setColumnWidth(24, 14);  // Line Total
 }
 
 void writeReadmeSheet(Document &doc, const QString &kind)
@@ -265,6 +268,7 @@ void writeReadmeSheet(Document &doc, const QString &kind)
             {"Customer *",      "yes", "text",   "Customer name. Repeats on every line of the same order."},
             {"Email",           "no",  "text",   "Repeats on every line of the same order."},
             {"Phone",           "no",  "text",   "Repeats on every line of the same order."},
+            {"Channel",         "no",  "text",   "Channel through which sale has been made. Informational on export."},
             {"Staff",           "no",  "text",   "Salesperson name. Informational on export."},
             {"Status *",        "yes", "text",   "One of: pending, processing, completed, out of stock."},
             {"Date *",          "yes", "date",   "yyyy-MM-dd preferred. Blank defaults to import day (skews time-series)."},

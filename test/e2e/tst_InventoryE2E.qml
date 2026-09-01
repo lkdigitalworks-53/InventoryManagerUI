@@ -262,4 +262,78 @@ TestCase {
         _pollEmulatorDoc(docPath, id, function(d) { return d === null }, 5000,
                           "product doc was never removed from the emulator")
     }
+
+    // Converts a Firestore REST doc's typed field wrappers (stringValue,
+    // integerValue, etc.) into a plain object matching what the client's
+    // own before/after payloads look like -- needed to build the second
+    // user's `before` accurately (it must match the CURRENT server state,
+    // not the first user's now-stale local cache, or its own write would
+    // itself get rejected as a conflict). Verbatim copy of
+    // tst_OrdersStoreE2E.qml's helper of the same name.
+    function _firestoreFieldsToPlain(fields) {
+        function convertValue(v) {
+            if (v.stringValue !== undefined) return v.stringValue
+            if (v.integerValue !== undefined) return Number(v.integerValue)
+            if (v.doubleValue !== undefined) return v.doubleValue
+            if (v.booleanValue !== undefined) return v.booleanValue
+            if (v.nullValue !== undefined) return null
+            if (v.timestampValue !== undefined) return v.timestampValue
+            if (v.arrayValue !== undefined) {
+                var arr = (v.arrayValue.values || [])
+                var out = []
+                for (var i = 0; i < arr.length; ++i) out.push(convertValue(arr[i]))
+                return out
+            }
+            if (v.mapValue !== undefined) return _firestoreFieldsToPlain(v.mapValue.fields || {})
+            return null
+        }
+        var plain = {}
+        for (var key in fields) plain[key] = convertValue(fields[key])
+        return plain
+    }
+
+    // Backlog item (CHECKPOINT.md, post-merge planning): QTBUG-49896 broke
+    // Gateway.mutationConflicted's delivery identically for all five stores
+    // connected to it (Orders/Inventory/Staff/Supplier/StockBatch) -- only
+    // OrdersStore's reconciliation path had actually been proven end to end
+    // by a real conflict test before now. This is Inventory's. Simpler than
+    // tst_OrdersStoreE2E.qml's version: _createProduct already leaves
+    // InventoryStore's own local cache holding the pre-second-write state,
+    // so no extra cache manipulation is needed to engineer the staleness --
+    // the natural post-create state already IS the stale copy this test
+    // needs. A 10s wait (not the old investigation's 45s) since the
+    // underlying mechanism is now confirmed working, not still being
+    // diagnosed.
+    function test_two_users_editing_the_same_product_produces_a_real_conflict() {
+        var id = _createProduct("Conflict Test Widget", "SKU-CONFLICT-1", 10)
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
+        var doc = _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000,
+                                    "product doc never appeared before the conflict test")
+
+        // Second identity writes to the SAME product via the real Gateway
+        // path (not InventoryStore's own API, so InventoryStore's local
+        // cache is left deliberately stale for the first identity's side
+        // below).
+        var plainProduct = _firestoreFieldsToPlain(doc.fields)
+        var secondUserAfter = Object.assign({}, plainProduct, { name: "Changed By Second User" })
+        var savedToken = AuthStore.idToken
+        AuthStore.idToken = fixture.secondIdToken
+        Gateway.recordMutation("inventory", id, "update", plainProduct, secondUserAfter)
+        _pollEmulatorDoc(docPath, id, function(d) {
+            return d !== null && d.fields.name.stringValue === "Changed By Second User"
+        }, 5000, "second identity's write never actually changed the server's product name -- conflict setup failed")
+        AuthStore.idToken = savedToken
+
+        // First identity, still holding its stale local copy (from right
+        // after _createProduct, before the write above), now tries its own
+        // update via the normal InventoryStore path.
+        lastConflict = null
+        InventoryStore.updateProduct(id, { stock: 999 }, "e2e conflict test")
+
+        tryVerify(function() { return lastConflict !== null }, 10000,
+                  "Gateway.mutationConflicted never fired for a genuine inventory CAS conflict")
+        compare(lastConflict.entity, "inventory")
+        compare(lastConflict.entityId, id)
+        compare(lastConflict.current.name, "Changed By Second User")
+    }
 }

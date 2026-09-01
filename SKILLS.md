@@ -2107,3 +2107,472 @@ sites had the identical vulnerable pattern — this bug isn't specific to confli
 (recovered) one side by side, specifically so the next real run can confirm or refute this rather than
 taking it on faith. Thirteen rounds in, a plausible-sounding root cause with strong circumstantial
 support (Skill 44's own lesson) still isn't the same as a confirmed one until a real run says so.
+
+## Skill 46: Testing a real firebase-functions v2 HTTPS handler without a live emulator
+
+**Problem**: `functions/index.js`'s exported HTTPS handlers (`recordMutation`, `recordDelta`,
+`recordMutationsBatch`, etc.) had zero direct test coverage — only `functions/lib/*.js`'s pure logic
+was tested. That untested seam is exactly where Skill 43's bug lived: a value computed correctly one
+function down, silently dropped when the HTTP response got built by hand. No live Firebase emulator
+is available in this environment (or in most quick local iteration) to test against.
+
+**Approach that works**: `functions.onRequest(opts, handler)`'s exported result is directly callable
+as `(req, res) => {...}` — confirmed by actually invoking it through the real
+`@google-cloud/functions-framework` CLI (Skill 45's investigation). This means the real handler can
+be tested directly, with two things mocked:
+
+1. **`firebase-admin` / `firebase-admin/firestore`, and any local `./lib/*.js` dependency you want
+   to stub** — inject fakes into Node's `require.cache` (keyed by each dependency's *resolved
+   absolute path*, via `require.resolve(...)`) *before* requiring `index.js`. Since `index.js` calls
+   `admin.initializeApp()` at module load time, the mock must be in place first. This works
+   identically across Node versions (unlike `node:test`'s newer `mock.module()`), and needs no
+   changes to `index.js` itself.
+2. **`req`/`res`** — use `node-mocks-http` rather than hand-rolling a mock response object.
+   firebase-functions v2's wrapper does more than a thin passthrough (it runs `cors` middleware and
+   waits on the response stream's real `'finish'` event before resolving) — a hand-rolled mock either
+   needs to be a real `EventEmitter` emitting `'finish'`, or hits confusing hangs. `node-mocks-http`
+   already handles this correctly; not worth re-deriving.
+
+**What to mock vs. what to keep real**: mock the *data-touching* functions from `lib/gatewayLogic.js`/
+`lib/batchMutationLogic.js` (`applyMutation`, `applyDelta`, `applyMutationsBatch`) so tests can inject
+canned results including the exact conflict shape (`{ conflict: true, current: {...} }`) — but keep
+the *pure* functions from those same modules real (`parseBearerToken`, `validateMutationRequest`,
+etc.), since those already have their own dedicated test files and re-mocking them would just
+duplicate that coverage while hiding real validation bugs. The goal is testing `index.js`'s own logic
+(auth, `deriveContext`, and — the one that matters — translating a `lib/` result into an HTTP
+response), not re-testing `lib/`'s own correctness.
+
+**One thing not worth chasing**: an OPTIONS-preflight test hung indefinitely — `cors` middleware
+intercepts and completes OPTIONS requests itself, and `node-mocks-http`'s mock doesn't reliably
+propagate that middleware's own completion path to a resolved promise. Since OPTIONS handling here is
+unmodified `cors` package behavior, not this codebase's own logic, it wasn't worth fighting that
+mock/middleware interaction for — dropped, with a comment explaining why, rather than either silently
+omitted or endlessly debugged.
+
+## Skill 47: Reviewing `pr_taher_bug_fixes` — a `_clone()`/create-payload drift, a SKU-clobber, and an export column shift
+
+**Files**: `qml/model/InventoryStore.qml` (`_newProductDoc()` new, `_idSuffixNumber()` new,
+`generateSku()`, `_upsertManySync()`), `qml/helper/StockSnapshotMath.js` (new),
+`qml/pages/SalesPage.qml`, `qml/pages/OrderDetailDialog.qml`,
+`tests/tst_InventoryStore_cloneSymmetry.qml` (new), `tests/tst_InventoryStore_upsertMany.qml`
+(new), `tests/tst_StockSnapshotMath.qml` (new).
+
+**Context**: Taher had already pushed 8 commits to `pr_taher_bug_fixes` (branched off `main` @
+`bc0a8fb`) fixing real bugs in bulk-import SKU generation, the inventory search field, an order-
+history display, and an analysis export. The PR's CI showed QML/Functions/Firestore-Rules Tests
+green but **E2E Tests failing**; none of the eight commits added a single test. This session's job
+was to find why E2E failed and cover the untested surface — not to re-litigate the eight fixes
+themselves, most of which were correct.
+
+**Bug 1 (the actual CI failure) — `_clone()`/create-payload drift, same failure class as Skill 20-
+ish's OrdersStore incident** (see `tests/tst_OrdersStore_normalization.qml`'s own header comment for
+that precedent). One of the eight commits added `supplierId` to `InventoryStore._clone()`'s field
+whitelist — correctly, it's needed so the bulk-import/overwrite path can carry it — but never added
+it to `addProduct()`'s create payload. `functions/lib/gatewayLogic.js`'s CAS check (`_deepEqual`)
+bails out on `aKeys.length !== bKeys.length` before comparing a single value, so: create a product
+via `addProduct()` (doc has no `supplierId` key) → any later edit reads it back through `_clone()`
+first (`updateProduct`/`deleteProduct` both start with `var arr = _clone()`) → that clone now carries
+`supplierId: ""`, a key the real Firestore doc doesn't have → key-count mismatch → false 409
+conflict. `test/e2e/tst_InventoryE2E.qml`'s `test_updateProduct_persists_to_emulator` and
+`test_deleteProduct_removes_from_emulator` both create-then-touch-again, which is exactly this.
+Confirmed against the actual GitHub Checks API (`gh`/`curl` weren't available; used
+`api.github.com/repos/.../commits/{sha}/check-runs` directly with a session PAT) rather than
+guessed — QML/Functions/Firestore-Rules all green, only E2E red, matching this theory exactly (a
+CAS/emulator-only failure mode, invisible to the offline QML unit suite).
+
+**Fix**: extracted `addProduct`'s doc-building into `_newProductDoc()` — a pure function (no async
+args; `id`/`supplierId` are already-resolved values by the time `addProduct` calls it) — and added
+`supplierId` there. Deliberately **not** the full `_normalizeOrder`-style unification OrdersStore
+uses (one canonical shape function called by every path, including bulk-import) — `_normalizeRecord`
+(bulk-import's own doc-builder) still independently duplicates this shape and has to be checked by
+hand against `_newProductDoc`/`_clone()` if any of the three changes. Flagged to Taher as a
+trade-off (smaller/faster fix now vs. the structurally-safer unification as a follow-up), not
+decided unilaterally. `tests/tst_InventoryStore_cloneSymmetry.qml` locks the fields-match invariant
+down directly (`Object.keys(_newProductDoc(...))` vs `Object.keys(_clone()[0])`) instead of by
+inspection, mirroring `tst_OrdersStore_normalization.qml`'s approach for the same bug class.
+
+**Bug 2 — SKU clobber on overwrite**: `_upsertManySync`'s "overwrite" branch (existing product,
+matched by `productId`) generated a brand-new SKU whenever the imported row's `sku` column was
+blank — but a blank `sku` on an *overwrite* row just means the CSV round-trip didn't carry that
+column, not that the product's real SKU should be replaced; `updateProduct`'s merge only skips
+`undefined` fields, so the synthetic SKU silently overwrote the real one every time. New-row/rename
+are correct to generate fresh (nothing to preserve there). Fixed to prefer
+`arr[existingIdx].sku`, only falling back to `generateSku()` if the stored product itself also has
+none (legacy-data edge case). `tests/tst_InventoryStore_upsertMany.qml` covers this plus the
+original generate-unique-SKU-per-batch fix directly (calling `_upsertManySync`/`generateSku` with
+stub `pullProductId`/`resolveSupplierForRecord` functions — both already plain synchronous
+functions by design, so no Gateway/network mocking needed for the overwrite-only scenarios).
+
+**Bug 3 — `SalesPage.qml`'s stock-snapshot export column shift**: one of the eight commits added a
+leading "Product ID" column plus three trailing ones (Cost Price/Selling Price/Tax%) to
+`snapHeaders` without updating every `snapRows.push(...)` to match — the non-supplier-view data row
+kept its old field count against the new header, shifting every value one column left (Name lands
+under "Product ID", ..., Status ends up blank), and both views' Total rows were short several
+trailing columns. `src/XlsxService.cpp`'s `renderAnalysisSections()` loops
+`col < headers.size() && col < line.size()`, so this never crashes or fails anything — it just
+silently writes a wrong spreadsheet. Nothing caught it because nothing tested it: `SalesPage.qml` is
+a UI page, not unit-tested under this project's existing convention (`tests/` only covers
+`.pragma library` helpers — see the Testing & QA Agent section of `AGENTS.md`). Fix: extracted the
+row/column shaping (not the `qsTr()` headers, not the `TransactionStore`/`SupplierStore` lookups —
+just the pure array-building) into `qml/helper/StockSnapshotMath.js`, following the exact
+`ImportMath.js`/`OrderMath.js` pattern this codebase already uses for testable pure logic, rather
+than either leaving it untestable in-page or over-extracting the whole export function (which would
+have dragged in translation-context and singleton-mocking complexity for no real benefit — the bug
+was purely in the array shaping, not the lookups). `tests/tst_StockSnapshotMath.qml` asserts
+row/header column-count parity for both `showSup` branches plus the total row, and specifically
+locks down "the non-supplier row leads with `productId`" as its own case.
+
+**Sandbox environment note, worth knowing before trusting a "tests pass" claim from a Cloud
+session on this repo**: this Cloud sandbox's `apt`-installable Qt is **6.4.2**; CI runs **6.8**.
+Concretely, `Settings` moved from `Qt.labs.settings` to `QtCore` partway through Qt 6's life —
+`import QtCore; Settings { ... }` (what every store in this app actually uses) fails to compile
+under 6.4.2 with `Settings is not a type`, and since one failed-to-compile singleton breaks the
+whole `qml/model` qmldir for every file that transitively imports it, this shows up as **14 files
+failing at `compile()`** with zero relation to whatever the actual diff touches (confirmed
+identical on `main` — not something this PR or this session caused). A real `qmltestrunner -input
+tests` run in this sandbox will always show that exact 14-file signature as a floor; anything
+beyond those 14 is a real signal. To verify new/changed test files anyway without waiting for CI,
+this session did the verification in a **throwaway scratch copy only** (`Qt.labs.settings` compat
+shim swapped in, `location:` properties stripped — neither change touched the real working tree),
+confirmed **498 passed, 0 failed** across the whole suite there, then discarded the scratch copy.
+Don't "fix" the real `AuthStore.qml`/etc. for this — they're already correct for Qt 6.8; the gap is
+this sandbox's Qt version, not the code.
+
+## Skill 48: Consolidating scattered test plans into `docs/superpowers/test-plans/`, and the `pr_taher_bug_fixes` test plan
+
+**Files**: `docs/superpowers/test-plans/` (new folder, 9 files moved into it via `git mv` + 1 new
+one), `docs/superpowers/test-plans/README.md` (new — the combined index), plus every file that
+referenced a moved path by name (`docs/superpowers/plans/2026-07-10-product-tax-export-size-
+field.md`, `.../2026-07-11-product-adjustment-reason.md`, and four files under `specs/` —
+`2026-08-11-ledger-sync-race-CHECKPOINT.md`, `2026-07-10-product-tax-export-size-field-
+CHECKPOINT.md`, `2026-07-10-product-tax-export-size-field-design.md`,
+`2026-08-08-review-round2-design.md`, `2026-07-29-async-write-sequencing-design.md`). Also 2 new
+test cases in `tests/tst_InventoryStore_upsertMany.qml` (found missing while writing the test
+plan below — see the last paragraph).
+
+**The mess, found by grep**: before this session, "test plan" documents existed in three
+different places — `docs/superpowers/` root (3 on-device manual checklists), `docs/superpowers/
+specs/` (6 automated-coverage plans, interleaved with unrelated design docs and session
+checkpoints), and 2 more `docs/superpowers/plans/` design docs that have a test-plan *section*
+inline rather than being standalone plans (those two were left where they are — a design doc
+with an embedded test-plan section isn't the same artifact as a standalone plan file, and moving
+it would separate the plan from the design decisions it's testing). Nothing indicated which of
+the 9 standalone files was current for a given feature versus superseded by a later one for the
+same feature — e.g. `2026-07-14-test-plan.md` says outright, in its own addendum, "don't treat
+this document as complete on its own anymore," but you'd only find that by opening it.
+
+**The fix**: one new folder, `docs/superpowers/test-plans/`, holding all 9 standalone plans
+(moved with `git mv`, preserving blame/history) plus a `README.md` that indexes every one of them
+newest-first with its branch/feature, a one-line description of what kind of coverage it actually
+represents (automated-and-run / automated-but-unverified-in-that-session / on-device-only), and an
+explicit "chains" section calling out the two multi-part sequences (`2026-07-14` →
+`2026-07-17-part2` for order-import-stock; `2026-07-29` → `2026-08-08-in-detail` →
+`2026-08-08-review-round2` for async-write-sequencing) so a reader doesn't stop at the first file
+in a chain and miss that it's out of date. Every file elsewhere in the repo that referenced one of
+the 9 by its old path was grepped for and updated — checked afterward with the same grep pattern
+returning zero hits, not just assumed clean after one pass.
+
+**The new `pr_taher_bug_fixes` test plan** (`2026-08-22-pr_taher_bug_fixes-test-plan.md`, the first
+plan seeded directly into the new folder) follows the same three-tier structure
+`2026-08-08-review-round2-test-plan.md` established: what's genuinely been run (25 new cases, via
+the Skill 42 scratch-copy workaround — 531/531 passing), what a real Qt 6.8 + Firebase emulator CI
+run will confirm that this sandbox structurally cannot (the actual E2E tests that failed pre-fix),
+and what has zero automated coverage with a static trace instead (`InventoryPage.qml`'s two UI-page
+changes, `OrderDetailDialog.qml`'s dialog text, and `XlsxService.cpp`'s order-channel column — this
+last one re-checked specifically for the same "inserted column, index shift not fully propagated"
+bug class as Bug 3, and found to have been done correctly and completely, unlike the SalesPage bug).
+
+**Writing this plan surfaced a real, cheap-to-close gap in the prior session's own tests**: the
+`rename` and `skip` branches of `_upsertManySync`'s conflict-policy dispatch had no direct test at
+all, even though `rename` is exactly what `e571ed3` (one of the three bugs Skill 42 fixed) touches.
+Closed immediately rather than just noted — `tests/tst_InventoryStore_upsertMany.qml` gained
+`test_rename_policy_with_blank_sku_generates_a_fresh_unique_sku`,
+`test_rename_policy_with_provided_sku_gets_a_renamed_suffix_not_a_fresh_one` (asserts the rename
+path calls `ImportMath.renameSku`, not `generateSku`, for a row that already has a sku — a
+distinction the code gets right but nothing previously pinned down), and
+`test_skip_policy_leaves_the_existing_product_untouched`. Caught a real mistake writing the second
+of these: an `str_replace` edit dropped the `TestCase {}` block's own closing brace, and the
+scratch-copy run (which this session runs before ever claiming "done," not after) caught it
+immediately as a compile error rather than a silent no-op test file — the fix was one line, but the
+catch is the point: static review of a diff doesn't substitute for actually running it, even for a
+change that "obviously" just adds test functions.
+
+## Skill 49: Standard test plan structure (Taher's convention) — UT / Regression / E2E, then an on-device plan with 5 fixed sections
+
+**Files**: `docs/superpowers/test-plans/2026-08-22-pr_taher_bug_fixes-test-plan.md` (restructured
+to this format), memory edit #9 (records the convention for future sessions).
+
+**The convention, stated once so it doesn't have to be re-derived each time**: every test plan
+going forward opens with three sections listing what's already covered by a test that's genuinely
+been *run* — Unit Tests, Regression Tests, and E2E — each as its own section, not folded together.
+Unit and regression are a real distinction worth keeping separate even when the same test file
+holds both kinds: a unit test checks a piece of logic is correct on its own terms (would exist even
+if nothing had ever broken); a regression test exists *because* something broke, and pins down the
+specific defect. The same file can have both — `tst_InventoryStore_upsertMany.qml` has 6 unit cases
+and 3 regression cases — and conflating them loses the "why does this test exist" information a
+reviewer actually wants. After those three sections, a separate **On-Device Test Plan** follows
+with five fixed sections regardless of feature: Happy Path, Negative, Edge Cases, Affected Areas,
+Regression Tests. "Affected Areas" is where a file-by-file coverage table belongs (what used to be
+called a "gap list" in earlier plans in this folder) — every file the change touches, whether it
+has automated coverage, and where to look on-device if it doesn't. The on-device "Regression Tests"
+section is the manual-click-through counterpart to the automated regression section above it, not
+a duplicate of it — same bugs, phrased as "how would you notice if this came back" rather than as
+assertions.
+
+**A miscounted claim, found and fixed while doing this restructure**: the `pr_taher_bug_fixes`
+test plan had been asserting "31 new cases" since it was first written, repeated verbatim into this
+folder's `README.md` and into Skill 47's own write-up. Actually counting each file's
+`function test_...` declarations (`grep -oE "function test_[a-zA-Z0-9_]+" tests/tst_*.qml`) instead
+of trusting the carried-forward number: 4 + 9 + 12 = **25**, not 31. All three places corrected in
+the same pass as the restructure — a wrong number copied three times isn't three independent
+confirmations of it, it's one mistake with three symptoms. Recounting a real artifact (test
+functions in a file) is cheap; re-asserting a remembered number is not the same as checking it.
+
+## Skill 50: Converting a sync id-minter to async without touching its bulk-import loop's actual shape
+
+**What happened**: `docs/superpowers/E2E-TESTING-ROADMAP.md` left `StockBatchStore._nextBatchId()`'s
+async conversion "blocked on a decision, not effort" — the doc's own estimate was that Option A
+(full parity with Staff/Supplier's real Firestore counter) forces "a real change to a working,
+sensitive bulk-import feature, unrelated to anything else in this effort," and leaned toward Option B
+(retry-on-conflict, no `addBatch()` contract change) for that reason. Taher's instruction named
+Option A explicitly.
+
+**What reading the code first found**: `InventoryStore.upsertMany` already solves this exact shape of
+problem — reserve N ids in one round-trip before a synchronous loop runs — twice over, for products
+and for suppliers, via `FirebaseService.mintCounterBatch` plus a pre-scan and a `pullXId()` closure.
+`SupplierStore` already has the exact sync/async split this needed: `addSupplier()` (async, mints its
+own id, one-at-a-time UI use) vs. `addSupplierWithId()`/`addSupplierWithIdMany()` (sync, given a
+pre-reserved id, bulk-import use). Converting `StockBatchStore.addBatch()` to async and adding
+`addBatchWithId()` for the bulk path isn't novel restructuring of the loop — it's adding a *third*
+reservation of a shape the file already has twice, using a split the codebase already has a working
+precedent for. That's a materially smaller risk than "unrelated restructuring of a sensitive loop."
+
+**The actual lesson**: a roadmap/backlog entry's own risk estimate is itself a claim worth re-checking
+against the current code before treating it as settled, not just before implementing the option it
+didn't recommend. The entry wasn't wrong given what was known when it was written; it was written
+before anyone had traced exactly how much of the target shape (reserve-then-loop, sync/async split)
+the file already had. "The doc says this is risky" and "reading the code says this is risky" turned
+out to be different findings — worth stating that difference honestly rather than either silently
+overriding the doc's framing or silently deferring to it without re-checking.
+
+**Fixed**: `StockBatchStore.nextBatchId(callback)` mints off a real, **year-scoped**
+(`counters/stockBatches-<year>`) Firestore counter — year-scoped specifically because `BAT-<year>-NNN`
+resets every year by existing design, and a single global counter (like `counters/suppliers`) would
+silently break that contract. `addBatch()` is now async; `addBatchWithId()` (sync, pre-reserved id)
+handles the bulk-import path. `upsertMany`'s pre-scan gained `neededBatchIds`, computed by a newly
+extracted pure helper (`_scanUpsertManyNeeds`) specifically so the one genuinely new,
+correctness-critical piece — does the reserved range size match what the loop actually consumes? — is
+unit-testable without a live emulator, rather than buried where only an E2E run could ever catch an
+off-by-one. See `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md` for the
+full design.
+
+## Skill 51: A sync-to-async conversion didn't create a bug — it surfaced one a coincidence was hiding
+
+**What happened**: first real CI run after Skill 50's change failed 2 tests.
+`InventoryStore_upsertMany::test_scan_sums_batch_ids_across_multiple_qualifying_rows` (Actual 3,
+Expected 2) was simply my own new test's expected value being wrong — I'd miscounted, forgetting a
+zero-stock new row still needs a product id (only the *batch* id is stock-gated). Fixed the test.
+
+The other, `DataModel_adjustOrderSyncGuard::test_proceeds_normally_once_transaction_history_is_synced`
+(Actual 3, Expected 4, missing exactly the `stock_batch` mutation), was worth tracing all the way
+through rather than patching the count. Full trace: test → `DataModel._tryAdjustOrder` →
+`StockBatchStore.restoreFifo("B1", "SKU-1", 1)` → `getById("B1")`. This test's `init()` never seeded
+`StockBatchStore.batches` — `getById` has *always* returned `null` here, so `restoreFifo` has always
+fallen through to `topUpOldest`'s synthetic-batch-creation fallback, never the normal existing-batch
+`recordDelta` path the test's own header comment describes and clearly intends
+(`StockBatchStore.restoreFifo -> Gateway.recordDelta("stock_batch", B1, ...)` — naming a direct delta
+on an existing batch, not a synthesized one). This was invisible before Skill 50's change only because
+`topUpOldest`→`addBatch` used to be fully synchronous (local-array scan) — either code path produced
+exactly one `stock_batch` mutation before the test's assertion ran, so the missing fixture never
+mattered. Once `addBatch` mints its id over a real network round-trip, the fallback path's mutation
+is still in flight when the assertion runs (this is a bare unit test, no Firestore backend) — the
+coincidence that made two different code paths look identical stopped holding, and only then did the
+gap show up.
+
+**The actual lesson**: when a fix changes timing (sync → async) and a previously-passing test starts
+failing on a *count*, the reflex to bump the expected count or add a `tryVerify` wait is a symptom
+patch — it doesn't ask *which code path produced the count before*, only whether the new number can be
+made to match. Tracing backward through the exact call stack (not just to the failing assertion, but
+through every function it called) found that the test was never exercising the path its own comments
+say it exercises. The fix is the same size as a symptom patch (one added fixture value) but is a
+different fix: it makes the test exercise its actually-documented scenario, and doing so happens to
+sidestep the async gap entirely (`recordDelta` on a known id never mints anything, so it stays
+synchronous regardless of Skill 50). A stray `tryVerify` would have "fixed" the assertion while leaving
+the test silently testing the wrong path (and pointlessly waiting on a mint call that will never
+resolve without a real backend, in a file that has none).
+
+**Fixed**: seeded `StockBatchStore.batches` in `tst_DataModel_adjustOrderSyncGuard.qml`'s `init()`
+with a batch matching the fixture's own consumption record (`B1`, `SKU-1`, `qtyConsumed: 2`), so
+`restoreFifo` takes the path the test already claimed to cover.
+
+## Skill 52: Extending Skill 46's handler-test harness to endpoints with no `lib/` module to mock
+
+**Problem**: `docs/superpowers/E2E-TESTING-ROADMAP.md`'s "explicitly scoped out" backlog item —
+handler-level tests for `acquireLock`/`releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis`,
+the 5 of 8 `functions/index.js` endpoints `index.handlers.test.js` (Skill 46) deliberately left
+uncovered. Two different shapes hid inside one backlog line:
+
+1. **`acquireLock`/`releaseLock`/`runCutover`** delegate their actual Firestore work to a `lib/`
+   module (`lockLogic.js`, `cutoverLogic.js`) that already has its own full, passing pure-logic test
+   file — exactly Skill 46's `GatewayLogic`/`BatchMutationLogic` shape. Extended the same
+   `require.cache`-injection harness to mock `LockLogic.acquireLock`/`releaseLock` and
+   `CutoverLogic.deleteCollection`/`zeroInventoryStock` (the Firestore-writing exports), while keeping
+   `validateAcquireRequest`/`validateReleaseRequest`/`validateCutoverRequest`/`buildCutoverMarker` real
+   — same "mock the seam that's actually untested, not the logic something else already proves" rule
+   Skill 46 established.
+2. **`provisionMember`/`computeAnalysis`** are a genuinely different shape: their logic (`canAssignRole`,
+   `findOrCreateAuthUser`, the provisioning transaction, `readAllPaged`'s pagination, the product/
+   supplier/order lookup-map builders) lives directly in `index.js`, in no `lib/` file, with zero
+   coverage anywhere before this arc — there's no lower layer to delegate correctness to. These needed
+   the harness's Firestore mock itself extended: `db.doc().set()`, `db.runTransaction()` (txn.get/set/
+   delete delegating to the same synchronous doc store), and `db.collection().orderBy().limit()
+   .startAfter().get()` with real cursor semantics keyed on doc id (matching `readAllPaged`'s own
+   `startAfter(lastDoc)` usage) — enough to exercise that logic for real, not stub it out.
+
+**Reused rather than re-derived**: `computeAnalysis`'s revenue/profit path (`RealisedMath.totals`) was
+tested with the SAME fixture (`sale_plus_return_nets_down`) `realisedMath.test.js` already trusts,
+asserting the endpoint's response matches that fixture's already-proven `expected.totals` — proves
+*this endpoint's wiring* (Firestore doc → `readAllPaged` → `RealisedMath`) without re-deriving
+`RealisedMath`'s own math a second time in a different file.
+
+**A pagination bug class this harness makes newly testable**: `ANALYSIS_PAGE_SIZE` is 500, and every
+other computeAnalysis test fixture fits in a single page — none of them would ever touch the
+`startAfter` cursor branch at all. Added one dedicated test seeding 501 synthetic transaction docs,
+asserting both that the total count across pages is exactly 501 (no doc dropped or double-counted at
+the page boundary) and that `collection().get()` was actually called 2+ times (proving the second page
+was fetched, not silently short-circuited). This is the one test in the new file whose absence would
+have let a real off-by-one at the pagination boundary ship silently.
+
+**One `require.cache` pattern that does NOT work, and why**: tried swapping
+`require.cache[firestorePath].exports.getFirestore` mid-test (after `installMocks()` already ran) to
+simulate `provisionMember`'s `db.runTransaction()` failing. Failed with the response still `200`, not
+the expected `500`. Root cause: `index.js` does `const { getFirestore } = require("firebase-admin/
+firestore")` — a plain destructure — at MODULE LOAD time. That copies the *function reference* into
+`index.js`'s own local `const` once; it is not a live binding to `module.exports`, so any later
+mutation of `require.cache[...].exports` has zero effect on the reference `index.js` already holds.
+This is the same load-order constraint Skill 46 already worked around for `GatewayLogic`/
+`BatchMutationLogic` (install the mock into `require.cache` *before* `index.js`'s first `require()`)
+— the difference here is a fix attempted *after* that first require, which is exactly the case that
+constraint rules out. Fixed properly: added a `mockState.runTransactionError` flag read *inside* the
+one `runTransaction` closure `index.js` actually holds a reference to (read live, at call time, from
+the shared mutable `mockState` object — the same mechanism every other error-injection flag in this
+harness already uses), rather than trying to swap the module out from under an already-bound
+reference.
+
+**Two honest, not-fixed findings surfaced by chasing coverage numbers rather than trusting them**:
+`index.js`'s `canAssignRole()` has an `else return false` branch (line ~506) that is unreachable via
+its only call site — `provisionMember` already rejects any caller whose role isn't `owner`/`admin`
+before `canAssignRole` is ever invoked, so it's only ever called with one of those two actor roles.
+Not exported, so not directly unit-testable either. Likely-dead defensive code, not a bug — flagged in
+the roadmap rather than deleted speculatively or force-tested via an artificial export. Similarly,
+`send()`'s `catch` block (the `JSON.stringify`-failure safety net documented in its own header comment
+as "not currently proven to be the cause of" a *different*, already-closed investigation) has no
+reachable trigger through any current handler's real response-construction code — every response body
+in this file is built from plain, non-circular fields by hand. Both are pre-existing, not introduced by
+this arc's changes, and both apply equally to the 3 endpoints Skill 46 already covered, not just the 5
+this arc added.
+
+## Skill 53: Closing a coverage asymmetry that was an authoring artifact, not a scope decision
+
+**Problem**: `docs/superpowers/E2E-TESTING-ROADMAP.md` flagged, but didn't fix, an asymmetry in
+`functions/test/index.handlers.test.js`: `recordMutation` had a full auth/error matrix (401
+missing-token, 401 invalid-token, 403 no-tenant-context, 400 invalid-body, 500 write-failed) but
+`recordDelta` only had 3 tests and `recordMutationsBatch` only 3, missing most of that matrix, and
+none of the three had a 405 method-not-allowed test. All three endpoints share the exact same
+`OPTIONS` → method-check → token-parse → `verifyIdToken` → validate → `deriveContext` → lib-call →
+response-translation shape, so there was no structural reason for one to be covered better than the
+other two.
+
+**Root cause**: not a deliberate scope decision. The file's own header comment says its purpose is
+catching Skill 43's bug class (a `lib/` result silently mis-forwarded into the HTTP response) —
+Skill 43's actual bug lived specifically in `recordMutation`'s conflict-forwarding, so that's the
+endpoint that got the full investigative pass. `recordDelta`/`recordMutationsBatch` each got just
+enough to prove the same response-forwarding pattern once (their own conflict-shape regression
+test) plus a happy path, not because anyone decided they needed less coverage, but because the file
+grew across several separate sessions each focused on whatever bug or feature motivated that
+session, never a single symmetric coverage pass across all three.
+
+**Fix**: added the missing cells — `recordMutation` gained a 405 test (the one thing it was
+missing); `recordDelta` gained 401 invalid-token, 403, 400, 405, and 500 tests; `recordMutationsBatch`
+gained 401 missing-token, 401 invalid-token, 403, 405, and 500 tests. 11 new tests total, all
+mirroring `recordMutation`'s existing test bodies verbatim in structure (same `mockState.
+verifyIdToken` override for 401, same `mockState.docs = {}` for 403, same `mockReq({ method: "GET"
+})` for 405, same `require.cache`-swap-then-restore pattern for the 500 write-failed case — applied
+to `GatewayLogic.applyDelta` and `BatchMutationLogic.applyMutationsBatch` respectively instead of
+`GatewayLogic.applyMutation`). No harness changes needed — `testSupport/handlerHarness.js` already
+exposed everything required, confirming the roadmap's own "no new mocking needed" note.
+
+**Result**: `functions/` suite 163 → 174 tests, 0 failures. `index.js` line coverage 95.32% →
+99.32%. The two lines still uncovered (`send()`'s `JSON.stringify`-failure catch, `canAssignRole`'s
+unreachable `else` branch) are the same two pre-existing, already-documented findings from Skill 52
+— confirmed still true, not rediscovered as new gaps, and deliberately not touched here: there is no
+legitimate code path that reaches either one, so a test forcing them would be exercising test-only
+scaffolding, not real behavior.
+
+**Lesson, generalized**: a file's own justification comment ("this file exists to catch bug class
+X") is worth re-reading with a skeptical eye once the file has grown past its original single
+motivating bug — it can explain *why* coverage is asymmetric across the things the file nominally
+covers equally, without anyone having decided that asymmetry was correct. Worth checking any test
+file that grew incrementally across several unrelated sessions for the same pattern: does its
+current coverage match its stated scope, or just its history?
+
+## Skill 54: Verifying sandbox execution capability instead of asserting it — real `qmltestrunner` works here, the Firebase emulator specifically doesn't (and exactly why)
+
+**Problem**: stated to Taher, mid-session, that this Cloud sandbox "can't run qmltestrunner" and
+"can't run the Firebase emulator" as a blanket justification for scoping a task to Cloud-Functions-
+only work. Both claims were assumptions carried over from general priors about the sandbox
+(restricted network egress, no Qt toolchain by default), not something actually checked against
+*this* sandbox's real capabilities. Taher pushed back: sandbox execution limits — real or assumed —
+shouldn't gate what code gets written, since CI and his own machine are the actual verification
+layer regardless. That pushback is what prompted actually checking instead of continuing to assert.
+
+**What checking found — qmltestrunner**: `apt-cache policy qt6-declarative-dev` shows a real,
+installable `6.4.2+dfsg-4build3` candidate from `archive.ubuntu.com` (already on this sandbox's
+network allowlist). Installed it plus every `qml6-module-*` package the actual test suite's imports
+needed — this took several rounds of install-run-read-the-next-missing-module, not one shot:
+
+```
+qt6-declarative-dev qml6-module-qttest qml6-module-qtquick qml6-module-qtqml \
+qml6-module-qtquick-controls qml6-module-qtqml-workerscript qml6-module-qt-labs-platform \
+qml6-module-qt-labs-qmlmodels qml6-module-qt-labs-folderlistmodel qml6-module-qtquick-layouts \
+qml6-module-qtquick-dialogs qml6-module-qtquick-shapes qml6-module-qtqml-models \
+qml6-module-qtquick-window
+```
+
+Run headless with `QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input tests -platform
+offscreen` (note: the binary is at `/usr/lib/qt6/bin/qmltestrunner`, not on `PATH` by default).
+Result: **315 passed, 22 failed** — every failure is `Type AuthStore unavailable`, all from the
+same root cause Skill 47 already documented (`AuthStore.qml` does `import QtCore; Settings { ... }`,
+and `Settings` didn't move into the `QtCore` QML module until a later Qt 6 minor than this
+sandbox's apt-installable 6.4.2 — CI runs 6.8, where it's fine). One failed-to-compile singleton
+breaks the whole `qml/model` qmldir for every file that transitively imports it, so this shows up as
+a fixed-size floor unrelated to whatever a given session's diff touches — confirmed by running on
+an unmodified `main` checkout too, same 22. (Skill 47's version of this note said 14 files, from
+2026-08-22 — the suite has grown since; same root cause, bigger blast radius, not a new problem.)
+
+**What checking found — Firebase emulator**: `npm install -g firebase-tools` succeeds (npm registry
+is allowlisted) and `firebase emulators:start` runs — gets past config parsing, port-checking, all
+of it — right up to `firestore: downloading cloud-firestore-emulator-v1.22.0.jar...`, which fails
+with `Error: download failed, status 403: Host not in allowlist: storage.googleapis.com`. Precise,
+not vague: it's specifically the emulator JAR download that's blocked, nothing upstream of it. If
+this sandbox's network allowlist ever adds `storage.googleapis.com`, the emulator itself may well
+start — untested past that point, since it wasn't reachable to test further.
+
+**Fix (to the two prior sessions' documentation, not to any code)**: `AGENTS.md`'s Testing & QA
+Agent section had two separate wrong "Skill 46" cross-references (should've been Skill 47 both
+times — Skill 46 is the unrelated Firebase-functions-handler-testing skill) — both corrected in
+place rather than left wrong, with a forward-pointer to this skill for the current package list and
+count. Also added `scripts/setup-sandbox-qmltestrunner.sh` — the package list above as a runnable
+script, so the next Cloud session doesn't repeat the several rounds of trial and error it took to
+find it.
+
+**Lesson, generalized, and the actual point of writing this down**: "the sandbox can't do X" is a
+claim like any other technical claim — it needs a check, not a recollection. The check here (`apt-
+cache policy`, an actual install-and-run attempt, reading the exact 403 message instead of stopping
+at "it failed") took a handful of tool calls and turned a vague, overly broad limitation into two
+precise, different findings: one capability that was simply never tried before (qmltestrunner — now
+usable directly, no scratch-copy trick needed) and one that's genuinely blocked, with the exact
+missing allowlist entry named. Vague unverified limitations are worse than either outcome on its
+own: they make a real block ("Firebase emulator needs `storage.googleapis.com` allowlisted") sound
+the same as a solvable one ("nobody had checked whether `apt` has Qt"), and Taher can't act on
+either without knowing which is which.

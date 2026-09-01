@@ -1,7 +1,7 @@
 # Design — Round 2: I1–I4 + 3 known gaps (async-write-sequencing review)
 
 **Status: all 7 items implemented, committed, and pushed as of 2026-08-08.** Test plan:
-`docs/superpowers/specs/2026-08-08-review-round2-test-plan.md`.
+`docs/superpowers/test-plans/2026-08-08-review-round2-test-plan.md`.
 
 **Branch:** `fix/async-write-sequencing-review-fixes` (continuing directly — this is already
 the fix-implementation branch, C1–C8 are its first 8 commits).

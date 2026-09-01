@@ -184,7 +184,7 @@ Taher's fix, committed directly (`e512c3f`, `2c23e16`): `_resetAndFetch()` now s
 `if (loadingMore) return`, applied to `TransactionStore` first, then extended to every other
 paginated store with the same shape (`InventoryStore`, `OrdersStore`, `StaffStore`,
 `StockBatchStore`, `SupplierStore`). Also added a detailed test plan doc (`b9c86fc`,
-`docs/superpowers/specs/2026-08-08-async-write-sequencing-test-plan-in-detail.md`).
+`docs/superpowers/test-plans/2026-08-08-async-write-sequencing-test-plan-in-detail.md`).
 
 Asked me (this session) to: review the fix, document it properly for future improvements, and check
 the two stores Taher's pass didn't touch (`SalesStore`, `AuthStore`) plus anywhere else this bug

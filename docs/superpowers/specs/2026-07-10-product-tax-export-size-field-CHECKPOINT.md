@@ -161,7 +161,7 @@
 ## Next steps
 
 - Taher reviews the full branch diff.
-- Taher runs the on-device test plan (`docs/superpowers/2026-07-10-on-device-test-plan-tax-size.md`)
+- Taher runs the on-device test plan (`docs/superpowers/test-plans/2026-07-10-on-device-test-plan-tax-size.md`)
   when he builds/runs the app (his call, not done automatically here).
 - Push once Taher provides a PAT.
 - Then `superpowers:finishing-a-development-branch` for the merge/PR decision.

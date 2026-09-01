@@ -221,6 +221,22 @@ See `AGENTS.md`'s **Testing & QA Agent** section for what each layer actually co
 `SKILLS.md` Skill 40 for the E2E layer's specific gotchas (Cloud Functions cold starts, singleton
 construction order, per-function emulator URLs) before adding a new scenario there.
 
+**Update 2026-08-29:** all 8 `functions/index.js` HTTPS handlers now have handler-level test
+coverage (auth, request wiring, response-building — not just the `lib/` pure-logic layer the table
+above already listed). `recordMutation`/`recordDelta`/`recordMutationsBatch` were covered first
+(`functions/test/index.handlers.test.js`, Skill 46); `acquireLock`/`releaseLock`/`provisionMember`/
+`runCutover`/`computeAnalysis` — the 5 explicitly deferred at the time — are now covered too
+(`index.handlers.remaining.test.js`, Skill 52). `functions/` suite: 163 tests, all passing.
+`provisionMember`/`computeAnalysis` had zero coverage anywhere before this, since their logic lives
+directly in `index.js` rather than a testable `lib/` module.
+
+**Update 2026-08-30:** `index.handlers.test.js`'s coverage across `recordMutation`/`recordDelta`/
+`recordMutationsBatch` is now symmetric (Skill 53) — each has its own 401/403/405/500 case, not
+just `recordMutation`. `functions/` suite: 174 tests, all passing. `index.js` line coverage
+95.32% → 99.32%; the only two remaining uncovered lines are pre-existing, already-documented
+unreachable code (`canAssignRole`'s dead `else` branch, `send()`'s unreachable serialization-failure
+catch), not new gaps.
+
 ---
 
 ## Qt Skills Cheat Sheet
@@ -458,6 +474,12 @@ branch, design: `docs/superpowers/specs/2026-08-08-review-round2-design.md`):
 - All 3 dialogs' (`OrderDetailDialog`, `EditProductDialog`, `StaffDetailDialog`) "try again"
   lock-denial message now actually retries the lock acquisition, instead of re-showing the same
   stale message forever.
+
+**Update 2026-08-27:** `StockBatchStore`'s batch-id minting (`BAT-<year>-NNN`) now closes the same
+class of gap Staff/Supplier/Order/Product ids already had closed — a real Firestore-transaction-backed
+counter (`counters/stockBatches-<year>`, year-scoped so the existing per-year reset stays intact)
+instead of a local-array max-scan, which wasn't safe under concurrent access. Design:
+`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`; lesson: SKILLS Skill 50.
 - `ConfirmReturnSheet` now holds the order lock through the user's actual confirm/cancel decision,
   not just until `OrderDetailDialog` closes.
 - The partial-multi-line-completion gap (one line's successful stock deduction staying applied when

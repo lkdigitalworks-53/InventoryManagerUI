@@ -54,14 +54,19 @@ QtObject {
     }
 
     // Component 3's client-side half (review finding C3, 2026-08-06) — see
-    // OrdersStore._onMutationConflicted for the full explanation. This is
-    // the store most likely to actually see this signal fire in practice:
-    // consumeFifo/topUpOldest/restoreFifo still mutate an existing batch's
-    // qtyRemaining via plain recordMutation (the still-open, separately-
-    // tracked gap noted in the review — not yet converted to recordDelta),
-    // so a genuine two-devices-selling-the-same-product race can produce a
-    // real CAS conflict here, unlike a pure recordDelta caller which can't
-    // conflict this way. Reuses _normalizeBatches (same as _load()).
+    // OrdersStore._onMutationConflicted for the full explanation. Correction
+    // (2026-08-26, backlog follow-up): this comment previously claimed
+    // consumeFifo/topUpOldest/restoreFifo could hit this via "plain
+    // recordMutation" on qtyRemaining — that no longer matches the code
+    // (confirmed by reading the whole file): all three go through
+    // Gateway.recordDelta now, whose atomic server-side floor/clamp makes a
+    // CAS conflict structurally impossible there. The only recordMutation
+    // call in this store is addBatch's "create" action — a genuine conflict
+    // here means a duplicate-create attempt (e.g. two devices, or a retry
+    // after a dropped response, minting the same batchId — see
+    // tst_StockBatchStoreE2E.qml and CHECKPOINT.md for the concrete
+    // scenario this was verified against). Reuses _normalizeBatches (same
+    // as _load()).
     function _onMutationConflicted(entity, entityId, current) {
         if (entity !== "stock_batch") return
         var arr = batches.slice()
@@ -155,12 +160,11 @@ QtObject {
 
     // ── Identity helpers ───────────────────────────────────────────────────
 
-    function _nextBatchId() {
-        // BAT-yyyy-NNN where NNN is monotonic across the whole year. Easier
-        // to scan than a pure timestamp suffix and avoids id collisions when
-        // two restocks happen within the same millisecond.
-        var year = new Date().getFullYear()
-        var prefix = "BAT-" + year + "-"
+    function _batchIdPrefixForYear(year) {
+        return "BAT-" + year + "-"
+    }
+
+    function _seedBatchMaxForPrefix(prefix) {
         var max = 0
         for (var i = 0; i < batches.length; ++i) {
             var id = String(batches[i].batchId || "")
@@ -168,7 +172,30 @@ QtObject {
             var num = parseInt(id.substring(prefix.length))
             if (!isNaN(num) && num > max) max = num
         }
-        return prefix + String(max + 1).padStart(3, '0')
+        return max
+    }
+
+    // Async — see FirebaseService.mintCounterValue for why max(existing)+1
+    // isn't safe (id reuse after delete, concurrent-restock collisions --
+    // this is exactly the gap docs/superpowers/E2E-TESTING-ROADMAP.md's
+    // "no server-side counter" entry flagged). Mirrors
+    // SupplierStore.nextSupplierId()/StaffStore.nextStaffId() exactly,
+    // except the counter doc is keyed PER YEAR
+    // ("counters/stockBatches-<year>"), not a single global counter --
+    // BAT-<year>-NNN numbering resets every year by existing design (see
+    // the id-format contract this preserves), and a single global counter
+    // would silently break that. seedMax still floors the mint against
+    // this year's highest LOCAL id, same purpose as nextSupplierId's seed:
+    // covers the counter doc not existing yet (first deploy of this
+    // feature, or first batch of a new year) without reissuing an id
+    // that's already in local use.
+    function nextBatchId(callback) {
+        var year = new Date().getFullYear()
+        var prefix = _batchIdPrefixForYear(year)
+        var seedMax = _seedBatchMaxForPrefix(prefix)
+        FirebaseService.mintCounterValue("counters/stockBatches-" + year, seedMax, function(ok, value) {
+            callback(ok ? (prefix + String(value).padStart(3, '0')) : "")
+        })
     }
 
     function getById(batchId) {
@@ -203,22 +230,13 @@ QtObject {
 
     // ── Mutations ──────────────────────────────────────────────────────────
 
-    // Record a new receipt. `qty` and `unitCost` are immutable on the doc
-    // (later FIFO consumption only touches `qtyRemaining`). Returns the
-    // batch document including its generated id.
-    //
-    // deferWrite: when true, skips the individual Gateway.recordMutation
-    // call but still performs the local `batches` update synchronously (so
-    // sequential _nextBatchId() numbering across many calls in the same
-    // loop stays collision-free, exactly as it already is today) — the
-    // caller is responsible for collecting the returned doc and passing it
-    // to addBatchMany() once the whole batch is built. Used by bulk import,
-    // which would otherwise fire one individual write per row.
-    function addBatch(productId, supplierId, qty, unitCost, note, deferWrite) {
-        if (!productId || !qty || qty <= 0) return null
+    // Shared doc shape for addBatch/addBatchWithId — `id` is always
+    // ALREADY minted by the caller (addBatch mints its own via
+    // nextBatchId; addBatchWithId is handed a pre-reserved one).
+    function _buildBatchDoc(id, productId, supplierId, qty, unitCost, note) {
         var nowIso = new Date().toISOString()
-        var doc = {
-            batchId: _nextBatchId(),
+        return {
+            batchId: id,
             productId: productId,
             supplierId: supplierId || "",
             qtyReceived: qty,
@@ -230,6 +248,48 @@ QtObject {
             createdAt: nowIso,
             updatedAt: nowIso
         }
+    }
+
+    // Record a new receipt, minting its own id (async — see nextBatchId).
+    // callback (optional) fires with the created doc, or null if the input
+    // was invalid or minting failed. `qty` and `unitCost` are immutable on
+    // the doc (later FIFO consumption only touches `qtyRemaining`).
+    //
+    // deferWrite: when true, skips the individual Gateway.recordMutation
+    // call but still performs the local `batches` update. NOT used by the
+    // bulk-import loop any more (that needs ids reserved synchronously up
+    // front, before the loop runs — see addBatchWithId); kept for callers
+    // that mint their own id but want to batch the write with siblings via
+    // addBatchMany (none currently do, preserved for parity with
+    // addBatchWithId's identical parameter).
+    function addBatch(productId, supplierId, qty, unitCost, note, deferWrite, callback) {
+        if (!productId || !qty || qty <= 0) { if (callback) callback(null); return }
+        nextBatchId(function(id) {
+            if (!id) {
+                console.warn("[StockBatchStore] could not mint a batchId — addBatch aborted")
+                if (callback) callback(null)
+                return
+            }
+            var doc = _buildBatchDoc(id, productId, supplierId, qty, unitCost, note)
+            var arr = batches.slice()
+            arr.push(doc)
+            batches = arr
+            if (!deferWrite) Gateway.recordMutation("stock_batch", doc.batchId, "create", null, doc)
+            if (callback) callback(doc)
+        })
+    }
+
+    // Creates a batch record with an ALREADY-MINTED id (skips nextBatchId's
+    // network round-trip). Used by InventoryStore.upsertMany's bulk-import
+    // loop, which reserves a whole range of batch ids in ONE round-trip up
+    // front via FirebaseService.mintCounterBatch — exact mirror of
+    // SupplierStore.addSupplierWithId. deferWrite: see addBatch's identical
+    // parameter; the bulk-import loop passes true and collects the
+    // returned docs for one addBatchMany() call instead of one write per
+    // row.
+    function addBatchWithId(id, productId, supplierId, qty, unitCost, note, deferWrite) {
+        if (!id || !productId || !qty || qty <= 0) return null
+        var doc = _buildBatchDoc(id, productId, supplierId, qty, unitCost, note)
         var arr = batches.slice()
         arr.push(doc)
         batches = arr
@@ -237,9 +297,9 @@ QtObject {
         return doc
     }
 
-    // Companion to addBatch(..., true) — fires ONE Gateway.recordMutations()
-    // call for every doc collected across a bulk-import loop, instead of
-    // one recordMutation() per row.
+    // Companion to addBatchWithId(..., true) — fires ONE
+    // Gateway.recordMutations() call for every doc collected across a
+    // bulk-import loop, instead of one recordMutation() per row.
     function addBatchMany(docs) {
         if (!docs || docs.length === 0) return
         var mutationItems = []
@@ -360,8 +420,13 @@ QtObject {
         var ordered = forProduct(productId)
         if (ordered.length === 0) {
             // No batches at all — synthesize one labelled "Adjustment".
-            addBatch(productId, "", deficit, 0, "Adjustment (drift repair)")
-            if (callback) callback()
+            // addBatch is async now (mints its own id) — chain callback()
+            // off ITS callback rather than firing immediately, so a caller
+            // waiting on topUpOldest's callback doesn't get told "done"
+            // before the synthetic batch's id-mint round-trip finishes.
+            addBatch(productId, "", deficit, 0, "Adjustment (drift repair)", false, function(doc) {
+                if (callback) callback()
+            })
             return
         }
         // Top up the newest batch — assumption: drift came from an unrecorded

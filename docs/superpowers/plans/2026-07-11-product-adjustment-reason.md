@@ -807,13 +807,13 @@ git commit -m "feat(restock): add optional Reason field"
 
 ### Task 5: On-device test plan doc
 
-**Files:** Create `docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md`
+**Files:** Create `docs/superpowers/test-plans/2026-07-11-on-device-test-plan-adjustment-reason.md`
 
 **Interfaces:** none — documentation only.
 
 - [x] **Step 1: Write the on-device test plan**
 
-Create `docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md`:
+Create `docs/superpowers/test-plans/2026-07-11-on-device-test-plan-adjustment-reason.md`:
 
 ```markdown
 # On-device test plan — Reason field for product adjustments
@@ -867,7 +867,7 @@ or App-context stores that can't run under `qmltestrunner` regardless.
 - [x] **Step 2: Commit**
 
 ```bash
-git add docs/superpowers/2026-07-11-on-device-test-plan-adjustment-reason.md
+git add docs/superpowers/test-plans/2026-07-11-on-device-test-plan-adjustment-reason.md
 git commit -m "docs: on-device test plan for reason field feature"
 ```
 
