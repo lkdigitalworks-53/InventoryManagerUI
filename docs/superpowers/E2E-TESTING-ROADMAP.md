@@ -78,18 +78,6 @@ than have a synthetic stopgap built or skip verification — no result reported 
 session. Still waiting; not re-prompted mid-session per that session's own note not to nudge him on
 his own timeline.
 
-### `orderMath.js` / `qml/helper/OrderMath.js` parity — now scoped: it's a coverage gap, not a source gap
-
-**2026-09-01, re-verified against current code:** source parity between `functions/lib/orderMath.js`
-and `qml/helper/OrderMath.js` already holds — no logic delta once comment/boilerplate differences are
-normalized. The real gap is test-coverage parity: `orderMath.js` is missing the direct
-fixture-pair pattern its sibling modules (`realisedMath`, `breakdownMath`) already have
-(`functions/test/fixtures/*.js` + `tests/tst_*ParityFixtures.qml` + a dedicated
-`functions/test/*.test.js`). Specifically, `lineTax()` and `refundPerUnit()` have zero Node-side
-test coverage today (confirmed via `grep` across `functions/test/` — neither name appears anywhere).
-Well-scoped now; what's still open is whether it's worth doing given the effort of standing up the
-fixture-pair pattern for two functions, which is Taher's call, not a further-scoping question.
-
 ### Account-switch-mid-sync edge case (the `loadingMore` single-flight guard)
 
 The `if (loadingMore) return` guard (Skill 39) that fixed the concurrent-reset race has a known,
@@ -130,6 +118,24 @@ lines move out of `index.js` entirely and gain 100% coverage in their new home. 
 `index.js` gap (`canAssignRole()`'s unreachable `else`, Skill 52/53) is untouched, out of scope here.
 **2026-09-01: merged into `main`** (confirmed via GitHub API, `merged_at: 2026-09-01T03:06:26Z`) —
 closed, not just mergeable.
+
+### `orderMath.js` / `qml/helper/OrderMath.js` parity — resolved, 2026-09-01
+
+Scoping (source parity holds, real gap is `lineTax()`/`refundPerUnit()` having zero Node-side
+coverage) confirmed, then implemented same session with Taher's go-ahead: `functions/test/
+fixtures/orderMathFixtures.js` + `functions/test/orderMath.test.js` (Node, fixture-pair pattern
+matching `realisedMath`/`breakdownMath`) and `tests/tst_OrderMathParityFixtures.qml` (QML side of
+the pair). 6 new edge-case tests added to `tests/tst_OrderMath.qml` first, as the source-of-truth
+this repo's convention requires fixtures to trace back to — covering branches the existing suite
+didn't reach (percent-type discount + its clamps, flat-discount clamps, null/undefined line,
+non-numeric price, taxable-true-but-zero-rate, negative/zero `originalQty` clamps).
+`lineTax`/`refundPerUnit` (`functions/lib/orderMath.js:77-114,290-297`) confirmed at 100% line AND
+branch coverage via direct lcov `BRDA` inspection, not just the summary percentage (summary branch
+% can look deceptively high/low across an entire file when other functions in it are un-instrumented
+by the tests that ran). Verified for real: `qmltestrunner` (38/38 in `tst_OrderMath.qml`, 13/13 in
+the new parity file) and `node --test` (190/190 across all of `functions/`, up from 178). Scope held
+to just these two functions, matching what was presented — `allocate`/`spreadOrderDelta`/
+`spreadLineDeltaBySupplier`/`eventProfit`'s coverage is unchanged, out of scope here.
 
 ---
 

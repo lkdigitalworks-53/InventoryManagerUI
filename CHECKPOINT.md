@@ -1,7 +1,9 @@
-# CHECKPOINT — roadmap check-in + item 1 (batch-id mint) analysis presented
+# CHECKPOINT — item 2 (orderMath.js parity) implemented; item 1 awaiting Taher's N3 result
 
 **Session date:** 2026-09-01
-**Branch:** `docs/2026-09-01-roadmap-triage-and-item1-analysis` (off `main` @ `50874b5`, post-PR#49-merge)
+**Branch:** `feature/2026-09-01-ordermath-linetax-refund-coverage` (off `main` @ `50874b5`,
+post-PR#49-merge; also merged in `docs/2026-09-01-roadmap-triage-and-item1-analysis`'s commits so
+today's session lives on one branch instead of two diverging ones)
 **Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-01-pr49-landing-CHECKPOINT.md`
 (its own arc — landing PR #49 — closed; confirmed merged via GitHub API,
 `merged_at: 2026-09-01T03:06:26Z`).
@@ -91,3 +93,55 @@ this turn** — this file is for resumability, not a substitute for that convers
 Waiting on Taher's response to what was presented this turn: either his N3 result (unblocks item 1's
 fix-shape decision), a decision to prioritize item 2 or item 3 instead, or some combination. Don't
 guess which — check chat history for his actual reply before proceeding to design work on anything.
+
+---
+
+## Update, same day: item 2 implemented
+
+Taher's reply: proceed with item 2 now while he runs item 1's N3 test himself in parallel. "No
+production code changed" above no longer holds — test code was added (item 2 is test-coverage work
+by definition; no `qml/`-app or `functions/lib/` source changed, only `functions/test/` and `tests/`).
+
+**Done, this update:**
+- `functions/test/fixtures/orderMathFixtures.js` + `functions/test/orderMath.test.js` — Node
+  fixture-pair tests for `lineTax`/`refundPerUnit`, following the `realisedMath`/`breakdownMath`
+  pattern already established in this repo.
+- 6 new edge-case tests added to `tests/tst_OrderMath.qml` (the QML suite, source-of-truth per this
+  repo's fixture convention) to close branches the existing suite didn't reach.
+- `tests/tst_OrderMathParityFixtures.qml` — new paired QML file, same convention as
+  `tst_RealisedMathParityFixtures.qml`.
+- Coverage confirmed 100% line AND branch for `lineTax`/`refundPerUnit` specifically
+  (`functions/lib/orderMath.js:77-114,290-297`) via direct lcov `BRDA` record inspection — not the
+  file-level summary %, which is a different (and in this case, less informative) number since the
+  file's other functions aren't exercised by this test file alone.
+- All verified for real, not assumed: ran `scripts/setup-sandbox-qmltestrunner.sh` then
+  `qmltestrunner` directly (38/38 pass in `tst_OrderMath.qml`, 13/13 in the new parity file) and
+  `node --test` (190/190 across all of `functions/`, up from 178 before this session).
+- `qt_qml_lint.py` run on all touched/new QML files; only pre-existing-convention warnings
+  (`var` vs `let/const`, missing top-level `id: root`) that every sibling test file in this repo
+  already has — confirmed against `tst_RealisedMathParityFixtures.qml` (80 of the same class) as a
+  baseline, not fixed, since fixing only the new file would make it inconsistent with everything
+  around it.
+- Brace/paren/bracket balance verified on all 4 touched/new files.
+- Roadmap's item 2 entry moved from "Needs Taher's input" to "Resolved this arc" section (matching
+  how PR #49's entry is handled) — actual detail in that entry, not duplicated here.
+- **Branch consolidation**: caught mid-session that item 2's work had started directly on `main`
+  (a genuine process slip — "always create a branch before implementing" wasn't followed for the
+  first several tool calls). Fixed before any commit by branching off with the uncommitted changes
+  intact, then merging in `docs/2026-09-01-roadmap-triage-and-item1-analysis` so today's session
+  lands as one coherent branch instead of two that would've conflicted on
+  `E2E-TESTING-ROADMAP.md`. That `docs/...` branch can be treated as merged/superseded by this one
+  going forward.
+
+**Scope held**: only `lineTax`/`refundPerUnit`, matching what was scoped and presented to Taher.
+`allocate`/`spreadOrderDelta`/`spreadLineDeltaBySupplier`/`eventProfit` in the same file are
+unchanged — their coverage state is a separate, unscoped question, not silently swept in.
+
+**Not done, deliberately**: no Firestore rules tests, no e2e test — `lineTax`/`refundPerUnit` are
+pure functions (no Firestore reads/writes, no UI surface), so those test types don't apply to this
+item. Noted rather than skipped silently.
+
+## Next action if resumed
+
+Item 2 is done and pushed. Item 1 still waiting on Taher's N3 result. Item 3 untouched. Check chat
+history for whichever of those has moved before starting new design work.
