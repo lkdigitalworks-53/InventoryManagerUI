@@ -1,73 +1,93 @@
-# CHECKPOINT — landing PR #49 (`review/post-pr45-qml-audit`)
+# CHECKPOINT — roadmap check-in + item 1 (batch-id mint) analysis presented
 
 **Session date:** 2026-09-01
-**Branch:** `review/post-pr45-qml-audit` (existing PR #49, updated in place — not a new branch)
-**Previous checkpoint archived to:**
-`docs/superpowers/specs/2026-08-30-handler-parity-coverage-gap-CHECKPOINT.md` (no correction needed
-— that session's own status was accurate and complete as written).
+**Branch:** `docs/2026-09-01-roadmap-triage-and-item1-analysis` (off `main` @ `50874b5`, post-PR#49-merge)
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-01-pr49-landing-CHECKPOINT.md`
+(its own arc — landing PR #49 — closed; confirmed merged via GitHub API,
+`merged_at: 2026-09-01T03:06:26Z`).
 
 ## What this session is
 
-Instructed to investigate PR #49 specifically: check whether it's still needed, whether it's been
-superseded/duplicated by other merged work, and if genuine, complete it. Not a roadmap pick — a
-direct, scoped ask.
+Fresh clone, read `CHECKPOINT.md` and `docs/superpowers/E2E-TESTING-ROADMAP.md` live. Instructed to
+confirm PR #49's resolution and pick up the next roadmap item; if it's gated on Taher's input,
+analyze and present rather than guess.
 
-PR #49 had sat since 2026-08-26 flagged `mergeable: false` / `dirty`, with a roadmap coordination
-note guessing it overlapped Skill 52/53's handler-test work and that "Taher is handling this
-directly." Six days later, explicit instruction to actually resolve it rather than keep deferring.
+## PR #49 — checked, not blindly "removed" as asked
 
-## Investigation (done before touching anything)
+Taher's instruction was "remove that item from roadmap if still there." Checked first: the roadmap's
+PR #49 entry is not a stale blocking item — it already lived under "Coordination / process (not
+code)" correctly marked `resolved, 2026-09-01`, consistent with how every other closed item in this
+doc stays documented under "Resolved this arc" for context (the doc is explicit about being a living
+record, not just a todo list). Deleting it would have thrown away accurate history for no reason.
+What it actually needed: one stale sentence ("PR #49 itself now mergeable; Taher to review/merge via
+GitHub") corrected to reflect that it's now actually merged, not just mergeable — fixed, with the
+GitHub API's `merged_at` timestamp as the citation. Flagging this rather than silently doing what was
+asked, since what was asked didn't match what the doc actually needed.
 
-- Confirmed via `git diff main...review/post-pr45-qml-audit` + reading `main`'s current
-  `functions/index.js`: the extraction (`send()` → `functions/lib/httpResponse.js`) is **not** on
-  `main`. Not a duplicate of anything already merged — Skill 53 (PR #56, merged) treated `send()`'s
-  try/catch as unreachable/untestable-in-place and deliberately didn't force coverage; this PR takes
-  the different, better approach of extracting it so it's directly unit-testable, matching the
-  established `cutoverLogic.js`/`gatewayLogic.js` pattern.
-- Confirmed the "dirty" flag's actual cause instead of trusting the roadmap's guess:
-  `git merge --no-commit --no-ff review/post-pr45-qml-audit` onto `main` produced exactly **one**
-  conflict — `CHECKPOINT.md` (expected, rewritten every session). `functions/index.js`, the new
-  `lib/httpResponse.js`, and its test file all merged clean. No real collision with Skill 52/53's
-  work despite both touching handler-adjacent code.
-- Verdict: genuine, non-duplicate, low-risk, well-tested. Worth completing.
+## Roadmap item picked up: item 1 (silent batch-id-mint swallow) — status check, not new work
 
-## Status: implementation complete, verified, committed, pushed
+All three open roadmap items are explicitly gated on Taher's input (roadmap's own framing, unchanged
+this session). Per the 2026-08-30 triage session (on the never-merged, now-superseded
+`docs/2026-08-30-roadmap-next-item-triage` branch), Taher had already picked item 1 and chosen to run
+its on-device N3 test himself rather than have a synthetic stopgap built. No result has come back yet
+as of this session.
+
+**Re-verified the analysis directly against current code rather than trusting that branch's
+carried-forward claims** (it predates the PR #49 merge, so treated as informative, not authoritative):
+
+- Confirmed and corrected a documentation error the abandoned branch had already found but never
+  landed on `main`: the roadmap's "five of six" call-site claim (and the entry title's separate,
+  also-wrong "3 of 4") didn't match `DataModel.qml`/`StockBatchStore.qml`. Actual, grep-verified
+  counts — `InventoryStore.qml:490` (addProduct) and `:1008` (restock) both call
+  `StockBatchStore.addBatch()` with no callback (2 of 2 unprotected); `DataModel.qml` calls
+  `topUpOldest()` at 6 sites, 3 with a callback (`:538,:626,:1031`) and 3 without (`:689,:971,:1097`).
+- New finding, verified by reading `topUpOldest()` (`StockBatchStore.qml:418-460`) directly:
+  its callback fires unconditionally regardless of `result.ok` — contrast `addBatch()`, which
+  correctly passes `callback(null)` on failure vs. `callback(doc)` on success. So the 3 `topUpOldest`
+  call sites that DO pass a callback still get no error signal. This is the detail that widens the
+  fix's scope past "add missing callbacks" — the callback *contract* needs the fix first.
+- Both corrections written into `docs/superpowers/E2E-TESTING-ROADMAP.md` in place.
+
+**orderMath.js parity (item 2), re-verified same way**: source parity confirmed still holding; real
+gap is `lineTax()`/`refundPerUnit()` having zero Node-side test coverage (confirmed via `grep` across
+`functions/test/` — neither name appears). This scoping was also done on the abandoned branch and
+never landed on `main` — brought forward and written into the roadmap entry.
+
+**Full corrected analysis, the N3 status, and item 2/3's current state presented to Taher in-chat
+this turn** — this file is for resumability, not a substitute for that conversation.
 
 ### Done
-- [x] Fresh clone at session start
-- [x] Fetched PR #49 metadata + diff via GitHub API (PAT, transient, not stored)
-- [x] Simulated merge against current `main` on a throwaway branch first, to find the real conflict
-      before deciding how to resolve it — found only `CHECKPOINT.md`, confirmed code merges clean
-- [x] Updated PR #49's own branch (`review/post-pr45-qml-audit`) directly — merged `main` forward,
-      resolved the `CHECKPOINT.md` conflict by taking `main`'s version (this file), rather than
-      opening a competing duplicate PR
-- [x] `npm install` in `functions/`, full suite run: **178/178 passing** (was 174 on `main`; +4 new
-      from `httpResponse.test.js`)
-- [x] Coverage check (`node --test --experimental-test-coverage`): `index.js` 99.32% → 99.88%;
-      `httpResponse.js` 100%. Confirmed by direct measurement, not by trusting the PR body's own
-      description of its tests
-- [x] `node -c` syntax check on all three touched/added JS files — clean
-- [x] `SKILLS.md` — Skill 55 added (the actual finding: "likely conflicts" ≠ "does conflict";
-      checked instead of deferred)
-- [x] `AGENTS.md` — Testing & QA Agent section: `httpResponse.js` extraction noted alongside the
-      existing handler-test coverage description
-- [x] `README.md` — dated 2026-09-01 update note under **Testing**
-- [x] `docs/superpowers/E2E-TESTING-ROADMAP.md` — the stale "likely conflicts" coordination note
-      replaced with the resolved outcome
-- [x] Stale `CHECKPOINT.md` (2026-08-30 session) archived, no correction needed
-- [x] Committed and pushed to `review/post-pr45-qml-audit` (PAT used transiently in push URL only,
-      not stored in git config)
+- [x] Fresh clone, branch created off current `main` (post-PR#49-merge)
+- [x] Read `CHECKPOINT.md`, `docs/superpowers/E2E-TESTING-ROADMAP.md` live
+- [x] Verified PR #49's merge status via GitHub API rather than trusting the doc or the instruction
+      at face value
+- [x] Corrected the PR #49 entry's one stale sentence (mergeable → actually merged)
+- [x] Re-verified item 1's call-site counts directly against `DataModel.qml`/`StockBatchStore.qml`
+      via `grep` + direct reads — corrected the roadmap's two inconsistent, wrong counts
+- [x] Found and documented `topUpOldest()`'s missing error channel in its callback contract (new
+      finding this session, via direct code read)
+- [x] Re-verified and landed item 2's (orderMath.js) scoping, previously done but never merged
+- [x] Added a 2026-09-01 check-in note on item 1's N3 status (still awaiting Taher's on-device result)
+- [x] Archived the completed PR#49-landing `CHECKPOINT.md` to `docs/superpowers/specs/`
+- [x] This file
+- [x] Committed and pushed (PAT used transiently in push URL only)
 
 ### Explicitly not touched, and why
-
-- `canAssignRole()`'s unreachable `else` — the one remaining `index.js` coverage gap, pre-existing,
-  already documented by Skill 52/53, out of scope for this PR specifically.
-- No other branches/PRs inspected or managed beyond #49, per standing rule.
-- App not built or run, per standing instruction.
+- No production code changed — this session is doc-only (roadmap corrections + this checkpoint),
+  consistent with all three roadmap items being gated on Taher's input and brainstorming's hard
+  gate (no implementation before an approved design).
+- The abandoned `docs/2026-08-30-roadmap-next-item-triage` branch left as-is on the remote (not
+  deleted, not merged as-is — it's behind current `main` by the PR #49 merge, so merging it directly
+  would have reverted `functions/lib/httpResponse.js`). Its useful, still-accurate content was
+  independently re-verified and re-applied fresh on this branch instead. Flagging it here so a
+  future session doesn't act on that branch directly.
+- Item 1's fix shape untouched — still needs Taher's N3 result before a shape decision is even
+  well-founded (surface error / retry-on-sync / narrower fix — see roadmap entry).
+- Item 3 (`loadingMore` guard) — no code or doc changes; Skill 39 already documents the `_resetPending`
+  fix design in full, nothing new to verify or add. Still purely Taher's rarity-vs-complexity call.
 
 ## Next action if resumed
 
-Nothing pending on this branch — PR #49 is now mergeable (verified via a local merge simulation,
-not just re-checking the GitHub API flag, since that flag can lag). Taher to review and merge via
-GitHub. If resuming a future session before that merge happens: don't re-do this investigation from
-scratch — this file plus SKILLS Skill 55 already has the full "was it real / is it done" answer.
+Waiting on Taher's response to what was presented this turn: either his N3 result (unblocks item 1's
+fix-shape decision), a decision to prioritize item 2 or item 3 instead, or some combination. Don't
+guess which — check chat history for his actual reply before proceeding to design work on anything.
