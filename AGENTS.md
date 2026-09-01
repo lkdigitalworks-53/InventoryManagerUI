@@ -677,7 +677,11 @@ env.
     coverage is symmetric across its three endpoints (401/403/405/500 on each, not just
     `recordMutation`) — before that, `recordDelta`/`recordMutationsBatch` were noticeably thinner,
     an artifact of the file growing across separate passes chasing `recordMutation`'s own Skill 43
-    regression rather than one symmetric pass. Both share one harness,
+    regression rather than one symmetric pass. `index.js`'s CORS-tagged `send()` response helper is
+    extracted to `functions/lib/httpResponse.js` (Skill 55, same zero-Firebase-SDK extraction
+    pattern as `cutoverLogic.js`/`gatewayLogic.js`), with its own `functions/test/httpResponse.test.js`
+    directly covering the JSON.stringify-failure fallback added in PR #45 — previously reachable
+    only through a live HTTPS round trip. Both share one harness,
     `functions/test/testSupport/handlerHarness.js`: install fakes into Node's `require.cache` (keyed
     by each dependency's resolved absolute path) for `firebase-admin`/`firebase-admin/firestore`
     *before* `index.js`'s first `require()` — index.js reads several of these at module load time,

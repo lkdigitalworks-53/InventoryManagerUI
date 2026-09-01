@@ -2576,3 +2576,27 @@ missing allowlist entry named. Vague unverified limitations are worse than eithe
 own: they make a real block ("Firebase emulator needs `storage.googleapis.com` allowlisted") sound
 the same as a solvable one ("nobody had checked whether `apt` has Qt"), and Taher can't act on
 either without knowing which is which.
+
+## Skill 55: A PR flagged as "likely conflicts" for 6 days turned out to have exactly one conflicting
+line, and it wasn't in the code
+
+PR #49 (`review/post-pr45-qml-audit`) sat since 2026-08-26 flagged in the roadmap as `mergeable:
+false` / `dirty`, with a coordination note guessing it overlapped Skill 52/53's handler-test work on
+the same function. Guess wasn't checked before this session — it was checked now, on explicit
+instruction to resolve it. `git merge --no-commit --no-ff` against current `main` surfaced exactly
+one conflict: `CHECKPOINT.md`, which conflicts on every branch older than a session or two by design
+(it's rewritten every session). `functions/index.js`, the new `lib/httpResponse.js`, and its test
+file all merged clean — the extraction touched the same function Skill 52/53 later added tests for,
+but at the call-site/wiring level, not the same lines, so no actual collision.
+
+**Verification before completion, not instead of it**: ran the full `functions/` suite after
+resolving (178/178, up from 174 on `main` — the 4 new `httpResponse.test.js` tests), checked
+coverage before claiming the extraction improved anything (`index.js` 99.32% → 99.88%, the two
+try/catch lines move out of `index.js` entirely and land at 100% coverage in their new home,
+confirmed by direct measurement not by trusting the PR body's description of its own tests).
+
+**Generalized point**: "mergeable: false" from the GitHub API doesn't say what conflicts, only that
+something does — a stale checkpoint doc and a genuine logic collision produce the identical API
+response. A 6-day-old dirty flag on a small, well-scoped, well-tested PR was worth 90 seconds of
+`git merge --no-commit` to actually look at, rather than continuing to defer it on the strength of a
+plausible-sounding guess from a different session that never checked either.
