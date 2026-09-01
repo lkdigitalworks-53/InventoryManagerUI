@@ -139,3 +139,21 @@ knowing before this ships, not blocking it.
   or call `StorageService.deleteProductPhoto` for the deleted product. Not
   touched — cleaning that up changes delete's blast radius and deserves its
   own review, not a drive-by inside a UI ticket.
+
+---
+
+## Post-hoc correction (2026-09-01)
+
+Section 4a above ("Permission / business-rule block ... already fully handled ... No code
+change; verified and covered by tests") was **wrong** — verified by static trace, not by
+execution. A real CI run of the tests this same document promised would cover it found that
+`DataModel.qml`'s dispatcher Connections block referenced an undeclared `logic` identifier
+(should have been `dispatcher`) at every one of these call sites, pre-existing on `main`. Every
+`logic.errorOccurred(...)` line threw a `ReferenceError` before doing anything — meaning the
+"already fully handled" error modal for a blocked delete almost certainly never actually
+appeared in the real app either, silently, until this branch's tests forced real execution
+through these handlers for the first time. Fixed in `qml/model/DataModel.qml` (34 call sites,
+`logic.` → `dispatcher.`); full writeup in `docs/superpowers/KNOWN-ISSUES.md`.
+
+Leaving the original section above as written rather than editing it, so the gap between "traced
+and looked correct" and "actually correct" stays visible.

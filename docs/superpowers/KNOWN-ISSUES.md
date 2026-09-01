@@ -111,30 +111,45 @@ its own review, not a drive-by inside a UI ticket that was scoped to "add the mi
 
 ---
 
-## Sandbox capability: qmltestrunner *can* run here — Skill 54 supersedes the earlier blanket "no toolchain" assumption
+## CI ran `feature/product-order-delete-ui`'s tests — one real bug found and fixed, two tests reclassified
 
-`feature/product-order-delete-ui`'s 5 new/extended test files (`tst_DataModel_deleteGuards.qml`,
-`tst_InventoryStore_mutationConflicted.qml`, 2 cases added to `tst_OrdersStore_sync.qml`,
-`tst_InventoryPage_deleteButton.qml`, `tst_OrdersPage_deleteButton.qml`) were all written and
-committed as "NOT RUN IN THIS SANDBOX," carried over from an earlier standing assumption that this
-sandbox has no Qt toolchain at all. `main` picked up SKILLS.md Skill 54 (merged after that
-assumption was written) documenting the opposite, checked and confirmed rather than assumed: a
-real `qt6-declarative-dev` + `qml6-module-*` set installs cleanly from this sandbox's existing apt
-allowlist, and a prior session's full suite run got **315 passed, 22 failed** headless
-(`QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input tests -platform offscreen`), with
-every failure traced to a specific Qt-version mismatch (6.4.2 here vs 6.8 on CI/Taher's machine),
-not a real regression.
+Update, 2026-09-01, to the entry that used to be here: this session flagged that qmltestrunner
+*can* run (Skill 54) and recommended actually running this branch's new tests before merge.
+That happened — real CI run, real `results.xml` — and it was worth doing:
 
-**Two of this session's five new files are the first page-level UI-interaction tests in this
-repo's suite** (`tst_InventoryPage_deleteButton.qml`, `tst_OrdersPage_deleteButton.qml`) — exactly
-the kind of new-pattern risk Skill 54's install would let someone actually confirm instead of
-guessing at.
+**Real bug found and fixed:** all 9 `DataModel_deleteGuards` tests failed with
+`ReferenceError: logic is not defined`, thrown from inside `DataModel.qml`'s own dispatcher
+Connections block (`onDeleteOrder`, `onDeleteProduct`, and by the same pattern every other
+handler in that block — `onAddOrder`, `onAdjustOrder`, `onUpdateStaff`, `onDeleteStaff`, etc.,
+34 call sites total). `logic` was never declared anywhere in that file; the correctly-wired
+property is `dispatcher` (`property alias dispatcher: _logicBus.target`, set from `Main.qml`'s
+`DataModel { dispatcher: logic }`). This is **pre-existing on `main`**, not introduced by this
+branch — `DataModel.qml` isn't part of this branch's diff. It went uncaught because no test had
+ever exercised these handlers via a real signal dispatch before this branch's tests did; every
+prior test either called a deeper private function directly (bypassing the buggy line, like the
+existing `_tryAdjustOrder` precedent) or didn't touch this file at all.
 
-**Decision:** flagged here rather than acted on unprompted this session — installing the toolchain
-and running the actual suite is real, separate work with its own tool-call budget, outside what
-was asked for in the rebase-and-push task this entry was written during. Recommend doing this
-before merge, specifically for the two new UI-interaction files, using Skill 54's already-proven
-package list and invocation rather than rediscovering it.
+**What this means beyond the test failure:** because the guard-refusal lines throw *before*
+emitting anything, a blocked delete (wrong role, open-order reference, completed-order status)
+was very likely failing **silently** in the real running app too — no crash, no error modal,
+nothing visible, just a console `ReferenceError` nobody sees on a device. This directly
+contradicts what this document's spec doc and test plan claimed about the permission/business-
+rule error path being "already fully handled, verified" — that verification was a static code
+trace, and a trace reading `logic.errorOccurred(...)` has no way to notice `logic` doesn't
+resolve. Fixed: all 34 real call sites renamed `logic.` → `dispatcher.` in
+`qml/model/DataModel.qml`.
+
+**Two tests reclassified, not fixed as tests:** `tst_InventoryPage_deleteButton.qml` and
+`tst_OrdersPage_deleteButton.qml` failed to *compile* — `InventoryPage.qml` → `GlassHeader` →
+`Constants.qml` → `import Felgo`, and `.github/workflows/checks.yml`'s "QML Tests" job installs
+plain Qt 6.8 only, confirmed by reading the workflow file rather than guessing. No full-Page QML
+test can compile under that job, for any page, ever — not something fixable by editing the test.
+Moved to `test/felgo-dependent/` (no CI job scans it; see that directory's README) rather than
+deleted or left silently failing.
+
+**Decision:** both closed out this session — bug fixed, tests relocated with their content
+intact for manual runs on a Felgo-equipped machine. Full detail:
+`docs/superpowers/test-plans/2026-08-30-product-order-delete-ui-test-plan.md`.
 
 ---
 

@@ -1,29 +1,28 @@
 import QtQuick
 import QtTest
-import "../qml/pages"
-import "../qml/model"
+import "../../qml/pages"
+import "../../qml/model"
 
 // Coverage for the actual button added this branch: ProductCard's trash
 // icon inside InventoryPage.qml, wired to card.deleteClicked() ->
 // root.deleteProductClicked(productId).
 //
-// FLAGGED, READ BEFORE TRUSTING THIS FILE: every other test in this suite
-// (51 pre-existing files, all model/store/logic layer) exercises a
-// singleton or a plain QML type directly. This is the first test in the
-// project that instantiates a full Page and simulates a tap on it.
-// InventoryPage carries real dependencies (InventoryStore singleton,
-// AvatarBadge/StockProgressBar/StatusPill/ListCard components, a
-// ScrollView/Flickable layout chain) that a bare TestCase may or may not
-// satisfy cleanly without the app's normal Felgo bootstrap -- I have no
-// way to compile-check this without a Qt toolchain, so treat this file as
-// the first one to run (and the most likely to need adjustment) once
-// qmltestrunner is available. If it fails outright rather than reporting
-// a real assertion failure, that's a setup problem with THIS file, not
-// evidence the button itself is broken -- the button's own logic (does
-// tapping it call deleteProductClicked with the right id) is a direct
-// copy of the already-shipped Restock button's Rectangle+MouseArea idiom.
+// RELOCATED 2026-09-01, was tests/tst_InventoryPage_deleteButton.qml.
+// Original placement failed CI outright: InventoryPage.qml -> GlassHeader
+// -> Constants.qml (line 4) -> `import Felgo` -- and this repo's
+// .github/workflows/checks.yml "QML Tests" job installs plain Qt 6.8 only,
+// no Felgo. Every real Page transitively needs Constants, so no full-Page
+// test can ever compile under that job -- not a bug in this file or in
+// InventoryPage.qml, a hard architectural wall. Moved here (a directory no
+// workflow job points qmltestrunner at, confirmed against
+// .github/workflows/checks.yml at move time) rather than deleted, since
+// the button logic itself is still worth this exact coverage on a machine
+// that actually has Felgo (Taher's dev machine, Qt Creator with the Felgo
+// SDK) -- run manually there, or fold into an on-device checklist; see
+// docs/superpowers/test-plans/2026-08-30-product-order-delete-ui-test-plan.md.
 //
-// NOT RUN IN THIS SANDBOX.
+// Everything below is unchanged from the original file -- same content,
+// different location and this corrected header.
 TestCase {
     id: testCase
     name: "InventoryPage_deleteButton"
