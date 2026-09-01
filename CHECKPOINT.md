@@ -1,10 +1,10 @@
 # CHECKPOINT — feature/product-order-delete-ui
 
 Session date: 2026-08-30
-Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `ad84ccc`, 4 commits
-ahead, pushed)
+Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `9bc6710`, 7 commits
+ahead, about to push)
 
-## Status: rebased, known issues logged, pushing now
+## Status: second rebase done, pushing
 
 Single-pass session per explicit instruction — no interactive review gate used; decisions
 documented in the spec doc for after-the-fact review instead.
@@ -72,10 +72,21 @@ Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) de
 - Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
   higher risk" framing, which undersold what was actually wrong.
 
-## Remaining
+## Also done (fourth pass, same session) — second rebase
 
-- Push this pass's fix (DataModel.qml) + relocation (test/felgo-dependent/) + doc corrections.
-- CI should be re-triggered to confirm — that's the actual verification, not a local claim.
+`origin/main` moved 12 commits (2 more PRs merged: #49 review/post-pr45-qml-audit, #58
+feature/2026-09-01-ordermath-linetax-refund-coverage — unrelated work, other sessions active on
+this repo concurrently). Rebased clean: only conflict was `CHECKPOINT.md` again (modify/delete —
+origin/main had it modified, my first commit deletes/renames it as part of the archive step),
+resolved the same way as the first rebase (accept the delete, a later commit in this branch
+recreates it fresh with my content). Everything else applied without conflict (AGENTS.md,
+README.md, SKILLS.md, functions/*, tests/tst_OrderMath*, new spec docs from the other PRs — zero
+overlap with this branch's files). Force-pushed after.
+
+Also unresolved from last turn: the previous push (`b37d3e9`) never triggered a CI run despite
+every other push to this branch/PR triggering normally — checked workflow config, permissions,
+queued/in-progress runs, nothing explained it. Flagged to Taher, not re-diagnosed this pass;
+this rebase's push is a fresh commit SHA, worth checking whether *it* triggers normally.
 
 ## Key facts for resuming if interrupted before push
 
