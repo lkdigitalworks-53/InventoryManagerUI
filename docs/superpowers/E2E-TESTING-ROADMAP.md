@@ -21,19 +21,32 @@ so future test plans don't silently assume they're testable and quietly skip the
 
 ## Needs Taher's input before it can be scoped or started
 
-### Failed batch-id mint is silently swallowed at 3 of 4 call sites
+### Failed batch-id mint is silently swallowed — 2 `addBatch` call sites uncallbacked, 3 of 6 `topUpOldest` call sites uncallbacked, and `topUpOldest`'s own callback carries no error signal
 
 **Status (2026-08-29): happy path confirmed working on-device by Taher. This specific gap remains
 unconfirmed either way — see below — and is explicitly not treated as a merge blocker.**
 
+**2026-09-01 correction, re-verified directly against current `DataModel.qml`/`StockBatchStore.qml`
+(not carried forward from a stale count):** the previous "five of six" figure was wrong and the
+title's "3 of 4" was also wrong — neither matched the code. Actual counts:
+- `InventoryStore.addProduct()`'s "Initial stock" call (`:490`) and `InventoryStore.restock()`'s call
+  (`:1008`) both call `StockBatchStore.addBatch()` with **no callback at all** — 2 of 2 unprotected.
+- `DataModel.qml` calls `StockBatchStore.topUpOldest()` at 6 sites (`:538, :626, :689, :971, :1031,
+  :1097`). 3 of them (`:538, :626, :1031`) pass a callback; 3 (`:689, :971, :1097`) don't.
+
+**Second, more important finding this correction surfaced**: `topUpOldest()`'s callback (`:418-460`)
+calls `callback()` unconditionally at the end of its `Gateway.recordDelta` response handler — it
+does NOT check `result.ok` before firing it (contrast `addBatch()`, which correctly distinguishes
+`callback(null)` on mint failure from `callback(doc)` on success). So the 3 `topUpOldest` call sites
+that DO wait on a callback are still not actually told whether the top-up succeeded — they just get
+told "done." This widens the eventual fix's scope beyond "add missing callbacks at 5 call sites": the
+callback *contract itself* needs an error channel before any call site's callback would even have
+something meaningful to check.
+
 Found while writing the on-device test plan for the async batch-id-minting change
-(`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`). `StockBatchStore.
-addBatch()` calls back with `null` and logs a `console.warn` if `nextBatchId()`'s mint fails — but
-`InventoryStore.addProduct()`'s "Initial stock" call, `InventoryStore.restock()`'s call, and five of
-six `topUpOldest()` call sites in `DataModel.qml` pass no callback at all (fire-and-forget, unchanged
-from before the async conversion — see
-`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`). Before that conversion
-this was harmless (a local array scan can't fail); now it's a real network call that can.
+(`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`). Before the
+async conversion this was harmless (a local array scan can't fail); now it's a real network call that
+can (see `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`).
 
 Worth being precise about *what kind* of gap this is: `addProduct`'s own productId mint is handled
 correctly (`nextProductId` failing aborts the whole add and tells the caller — fail loudly, nothing
@@ -60,11 +73,10 @@ all 4 call sites' UI), some retry-on-next-sync mechanism (bigger, would touch `O
 neither of which currently know anything about batch-id minting), or something narrower scoped just
 to this. Not scoped or estimated yet — deliberately, same reason as the two entries below.
 
-### `orderMath.js` / `qml/helper/OrderMath.js` parity
-
-Long-deferred. Not enough carried-forward context to define "parity" honestly (parity with what
-reference implementation, checking which specific values) — needs a quick scoping conversation before
-this can get a real complexity/effort estimate rather than a guess.
+**2026-09-01 check-in**: as of the 2026-08-30 triage session, Taher chose to run N3 himself rather
+than have a synthetic stopgap built or skip verification — no result reported back yet as of this
+session. Still waiting; not re-prompted mid-session per that session's own note not to nudge him on
+his own timeline.
 
 ### Account-switch-mid-sync edge case (the `loadingMore` single-flight guard)
 
@@ -104,7 +116,26 @@ Branch updated: `main` merged forward into `review/post-pr45-qml-audit`, conflic
 `functions/` suite re-run clean (178/178). `index.js` line coverage 99.32% → 99.88% — the try/catch
 lines move out of `index.js` entirely and gain 100% coverage in their new home. The one remaining
 `index.js` gap (`canAssignRole()`'s unreachable `else`, Skill 52/53) is untouched, out of scope here.
-PR #49 itself now mergeable; Taher to review/merge via GitHub.
+**2026-09-01: merged into `main`** (confirmed via GitHub API, `merged_at: 2026-09-01T03:06:26Z`) —
+closed, not just mergeable.
+
+### `orderMath.js` / `qml/helper/OrderMath.js` parity — resolved, 2026-09-01
+
+Scoping (source parity holds, real gap is `lineTax()`/`refundPerUnit()` having zero Node-side
+coverage) confirmed, then implemented same session with Taher's go-ahead: `functions/test/
+fixtures/orderMathFixtures.js` + `functions/test/orderMath.test.js` (Node, fixture-pair pattern
+matching `realisedMath`/`breakdownMath`) and `tests/tst_OrderMathParityFixtures.qml` (QML side of
+the pair). 6 new edge-case tests added to `tests/tst_OrderMath.qml` first, as the source-of-truth
+this repo's convention requires fixtures to trace back to — covering branches the existing suite
+didn't reach (percent-type discount + its clamps, flat-discount clamps, null/undefined line,
+non-numeric price, taxable-true-but-zero-rate, negative/zero `originalQty` clamps).
+`lineTax`/`refundPerUnit` (`functions/lib/orderMath.js:77-114,290-297`) confirmed at 100% line AND
+branch coverage via direct lcov `BRDA` inspection, not just the summary percentage (summary branch
+% can look deceptively high/low across an entire file when other functions in it are un-instrumented
+by the tests that ran). Verified for real: `qmltestrunner` (38/38 in `tst_OrderMath.qml`, 13/13 in
+the new parity file) and `node --test` (190/190 across all of `functions/`, up from 178). Scope held
+to just these two functions, matching what was presented — `allocate`/`spreadOrderDelta`/
+`spreadLineDeltaBySupplier`/`eventProfit`'s coverage is unchanged, out of scope here.
 
 ---
 

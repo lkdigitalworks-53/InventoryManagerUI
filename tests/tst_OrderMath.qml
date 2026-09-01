@@ -563,6 +563,10 @@ TestCase {
         fuzzyCompare(OM.lineTax(ln, { originalQty: 5, bookedRate: 0 }), 0, 0.001)
         // Non-zero booked rate: orig 1@5% (=1) + added 1@10% (=2) → 3.
         fuzzyCompare(OM.lineTax(ln, { originalQty: 1, bookedRate: 5 }), 3, 0.001)
+        // originalQty omitted-as-falsy (0) with qty>0 (distinct from the zero-qty
+        // guard test, which short-circuits before this line is ever reached):
+        // all 2 units treated as "added" at curRate (currentRate omitted) -> 4.
+        fuzzyCompare(OM.lineTax(ln, { originalQty: 0, bookedRate: 5 }), 4, 0.001)
         // Discount per vintage: net (40-10)=30, per-unit 15 → orig 0 + added 1.5.
         fuzzyCompare(OM.lineTax({ quantity: 2, price: 20, taxable: true, taxPercent: 10,
                                   discountType: "flat", discountValue: 10 },
@@ -595,5 +599,63 @@ TestCase {
                                   discountType: "flat", discountValue: 2 },
                                 { originalQty: 1, bookedRate: 0, currentRate: 10 }), 1.9, 0.001,
                      "matches the screenshot scenario (qty 1->2, discount 2, tax 10%)")
+    }
+
+    // ── lineTax: percent-type discount (branch not exercised above — every
+    // prior case used discountType "flat") ──
+    function test_lineTax_percent_discount_type() {
+        // gross 200, 15% off -> disc 30, net 170, tax 10% = 17.
+        fuzzyCompare(OM.lineTax({ quantity: 2, price: 100, taxable: true, taxPercent: 10,
+                                  discountType: "percent", discountValue: 15 }), 17, 0.001)
+        // Clamp: negative percent treated as 0 -> no discount, net 200, tax 20.
+        fuzzyCompare(OM.lineTax({ quantity: 2, price: 100, taxable: true, taxPercent: 10,
+                                  discountType: "percent", discountValue: -5 }), 20, 0.001,
+                     "negative discount% clamps to 0")
+        // Clamp: >100% treated as 100 -> net 0, tax 0.
+        compare(OM.lineTax({ quantity: 2, price: 100, taxable: true, taxPercent: 10,
+                             discountType: "percent", discountValue: 150 }), 0)
+        // discountValue omitted on a percent-type line -> parseFloat(undefined)
+        // is NaN, falls back to 0 (the OTHER branch of that fallback -- every
+        // case above happened to supply a truthy discountValue).
+        fuzzyCompare(OM.lineTax({ quantity: 2, price: 100, taxable: true, taxPercent: 10,
+                                  discountType: "percent" }), 20, 0.001)
+    }
+
+    // ── lineTax: flat-discount clamps (negative value, value exceeding gross) ──
+    function test_lineTax_flat_discount_clamps() {
+        // Negative flat discount clamps to 0 -> full net 200, tax 10% = 20.
+        fuzzyCompare(OM.lineTax({ quantity: 2, price: 100, taxable: true, taxPercent: 10,
+                                  discountType: "flat", discountValue: -10 }), 20, 0.001,
+                     "negative flat discount clamps to 0")
+        // Discount exceeding gross (200) clamps to gross -> net 0, tax 0.
+        compare(OM.lineTax({ quantity: 2, price: 100, taxable: true, taxPercent: 10,
+                            discountType: "flat", discountValue: 500 }), 0)
+    }
+
+    // ── lineTax: falsy line + non-numeric price (both fall back to their guard) ──
+    function test_lineTax_null_line_and_non_numeric_price() {
+        compare(OM.lineTax(null), 0)
+        compare(OM.lineTax(undefined), 0)
+        // price missing entirely -> typeof check fails -> price treated as 0.
+        compare(OM.lineTax({ quantity: 3, taxable: true, taxPercent: 10 }), 0)
+    }
+
+    // ── lineTax: taxable=true but taxPercent<=0 (distinct from taxable=false —
+    // same result, different branch: taxable's guard short-circuits before
+    // taxPercent is ever read when taxable is false) ──
+    function test_lineTax_taxable_true_zero_rate() {
+        compare(OM.lineTax({ quantity: 2, price: 20, taxable: true, taxPercent: 0,
+                             discountType: "flat", discountValue: 0 }), 0)
+    }
+
+    // ── lineTax: negative originalQty clamps to 0 (malformed/defensive input —
+    // opts.originalQty || 0 doesn't filter negatives, the explicit clamp does) ──
+    function test_lineTax_negative_original_qty_clamps() {
+        var ln = { quantity: 2, price: 20, taxable: true, taxPercent: 10,
+                   discountType: "flat", discountValue: 0 }
+        // originalUnits clamped to 0 -> all 2 units treated as "added" at bookedRate
+        // fallback (curRate, since currentRate omitted) = same as no-split single rate.
+        fuzzyCompare(OM.lineTax(ln, { originalQty: -3, bookedRate: 0 }), 4, 0.001,
+                     "negative originalQty clamps to 0, all units taxed as added at curRate")
     }
 }
