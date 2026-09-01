@@ -52,12 +52,30 @@ documented in the spec doc for after-the-fact review instead.
   exists here — that assumption is now outdated per `main`'s own Skill 54, not yet acted on),
   and the memory/remote branch-name mismatch noticed earlier this session.
 
+## Also done (third pass, same session) — CI debug from attached logs
+
+Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) debugged and fixed:
+
+- **9x `DataModel_deleteGuards` failures** — `ReferenceError: logic is not defined` in
+  `DataModel.qml`'s dispatcher Connections block. Pre-existing bug on `main` (file isn't in this
+  branch's diff), never caught before since no test had exercised these handlers via real signal
+  dispatch. Root cause: `logic` never declared anywhere in the file; correct identifier is
+  `dispatcher`. Fixed all 34 real call sites (`logic.` → `dispatcher.`), left the one comment
+  mention alone (describes the correct external call pattern). Real-world implication: a blocked
+  delete likely failed silently in production too, not just in the new toast — correction note
+  added to the spec doc and KNOWN-ISSUES.md rather than silently editing the earlier claim.
+- **2x compile failures** (`tst_InventoryPage_deleteButton`, `tst_OrdersPage_deleteButton`) —
+  `Type X unavailable` traced to `Constants.qml`'s `import Felgo`, which the CI "QML Tests" job
+  (plain Qt 6.8 only, confirmed by reading `.github/workflows/checks.yml`) can never satisfy.
+  Architectural, not a test bug. Moved both files to new `test/felgo-dependent/` (no workflow job
+  scans it), with a README and corrected header comments; content/assertions unchanged.
+- Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
+  higher risk" framing, which undersold what was actually wrong.
+
 ## Remaining
 
-- Nothing outstanding from this session's asks. Skill 54's qmltestrunner install +
-  actually running this branch's 5 test files (2 of them this repo's first page-level UI tests)
-  is flagged in KNOWN-ISSUES.md as the natural next step, not done here — separate scope from
-  what was asked this turn.
+- Push this pass's fix (DataModel.qml) + relocation (test/felgo-dependent/) + doc corrections.
+- CI should be re-triggered to confirm — that's the actual verification, not a local claim.
 
 ## Key facts for resuming if interrupted before push
 

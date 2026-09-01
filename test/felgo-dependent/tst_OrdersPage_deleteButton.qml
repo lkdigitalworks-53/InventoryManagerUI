@@ -1,20 +1,20 @@
 import QtQuick
 import QtTest
-import "../qml/pages"
-import "../qml/model"
+import "../../qml/pages"
+import "../../qml/model"
 
 // Coverage for the actual button added this branch: the trash icon in
 // OrdersPage.qml's order row, wired to root.deleteOrderClicked(orderId)
 // (already-existing plumbing this branch didn't touch, per DataModel's
 // onDeleteOrder handler covered in tst_DataModel_deleteGuards.qml).
 //
-// Same caveat as tst_InventoryPage_deleteButton.qml -- first-of-its-kind
-// page-level UI test in this suite, not compile-checked (no toolchain
-// here). Treat a hard failure here as a test-setup problem to fix, not
-// proof the button itself doesn't work -- it's a direct copy of the
-// Restock idiom pattern used elsewhere in this same branch.
-//
-// NOT RUN IN THIS SANDBOX.
+// RELOCATED 2026-09-01, was tests/tst_OrdersPage_deleteButton.qml. Same
+// root cause and reasoning as tst_InventoryPage_deleteButton.qml in this
+// directory: OrdersPage.qml -> GlassHeader -> Constants.qml -> `import
+// Felgo`, and the "QML Tests" CI job installs plain Qt only, no Felgo.
+// Confirmed via an actual CI run, not guessed. Not runnable under that
+// job for any full Page, moved rather than deleted -- run manually on a
+// machine with Felgo (Taher's dev box, Qt Creator + Felgo SDK).
 TestCase {
     id: testCase
     name: "OrdersPage_deleteButton"

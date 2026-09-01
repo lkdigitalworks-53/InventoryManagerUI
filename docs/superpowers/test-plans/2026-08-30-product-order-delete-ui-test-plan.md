@@ -14,15 +14,36 @@ logic anyway, since it had **zero** test coverage before this branch despite bei
 already-shipped code — that gap predates this branch, closing it wasn't optional given the
 explicit ask to check delete-failure notification.
 
-**Status (2026-08-30):** written and committed this session, **nothing executed against a real
-Qt toolchain** (none available in this sandbox, per this project's standing rule against
-installing one here — see `SKILLS.md`). Two of the five test files
-(`tst_InventoryPage_deleteButton.qml`, `tst_OrdersPage_deleteButton.qml`) are the **first
-page-level UI-interaction tests in this repo's 51-file `tests/` suite** — every existing file
-tests a singleton or plain type directly. Treat those two as higher-risk than the rest: if they
-fail to even *compile* rather than reporting a real assertion failure, that's most likely a
-test-setup problem (Felgo Page bootstrap, layout sizing) worth fixing in the test file itself,
-not evidence the buttons don't work.
+**Status (2026-09-01, updated after first real CI run):** two real findings came out of the
+first CI run of this branch's tests — both fixed or resolved below, not still open.
+
+1. **All 9 `DataModel_deleteGuards` tests failed on CI** — `ReferenceError: logic is not
+   defined` at every `logic.errorOccurred(...)`/`logic.orderDeleted(...)`/etc. call inside
+   `DataModel.qml`'s dispatcher-signal Connections block. This was a genuine, **pre-existing**
+   bug in `DataModel.qml` (not introduced by this branch — that file isn't part of this branch's
+   diff), never caught before because no test had ever exercised these handlers via a real
+   signal dispatch until this branch's tests did. `logic` was never declared anywhere in the
+   file; the correctly-wired property is `dispatcher` (`property alias dispatcher:
+   _logicBus.target`). This means the earlier claim in this document and in the spec doc that
+   the permission/business-rule error modal "already fully handled, verified" was **wrong** —
+   verified by static trace only, which doesn't catch an undefined-identifier bug. Fixed: all 34
+   real `logic.` call sites in that Connections block renamed to `dispatcher.` (one more
+   occurrence is a code comment describing the correct *external* call pattern, left alone).
+   Full run-through worth knowing: because the guard-refusal branches hit this line *before*
+   emitting anything, a blocked delete previously failed silently in production too — no crash,
+   no message, nothing — not just a missing toast for the success case.
+2. **Both page-level UI tests failed to compile** — `Type InventoryPage/OrdersPage unavailable`,
+   traced through `GlassHeader` → `Constants.qml` → `import Felgo`, and this repo's
+   `.github/workflows/checks.yml` "QML Tests" job installs plain Qt 6.8 only, no Felgo. This
+   isn't a fixable bug in the test files or in `InventoryPage.qml`/`OrdersPage.qml` — it's a hard
+   architectural wall: no full-Page QML test can ever compile under that job, for any page, ever.
+   Moved to `test/felgo-dependent/` (a directory no CI job points `qmltestrunner` at — see that
+   directory's README) rather than deleted; run manually on a machine with the real Felgo SDK, or
+   treat their specific checks (below, folded into H1–H3) as on-device checklist items instead.
+
+The three model-layer files that stayed in `tests/` (`tst_InventoryStore_mutationConflicted.qml`,
+the 2 cases added to `tst_OrdersStore_sync.qml`) passed clean on the same CI run — no changes
+needed there.
 
 ---
 
@@ -44,15 +65,18 @@ not evidence the buttons don't work.
   update-conflict keeps the original wording.
 - **`tests/tst_OrdersStore_sync.qml`** (2 new tests appended to the existing file, 12 total in
   the section that matters here) — same `action`-branch coverage as above, for orders.
-- **`tests/tst_InventoryPage_deleteButton.qml`** (4 tests) — the actual button: visible when
-  `canManage` true, hidden when false, tapping it emits `deleteProductClicked` with the right
-  id, and the tap doesn't also bubble into `viewProductClicked`.
-- **`tests/tst_OrdersPage_deleteButton.qml`** (5 tests) — same shape for orders, plus one test
-  specifically confirming the button stays visible on a `completed` order (the deliberate
-  no-row-level-status-gating decision from the spec doc — DataModel's own guard message
-  explains the block on tap instead).
+### 1.2 Relocated after the first CI run — see `test/felgo-dependent/`
 
-### 1.2 Not covered by any committed test, on purpose — see spec doc
+- **`test/felgo-dependent/tst_InventoryPage_deleteButton.qml`** (4 tests) and
+  **`test/felgo-dependent/tst_OrdersPage_deleteButton.qml`** (5 tests) — the actual button
+  checks (visible/hidden per permission, tapping emits the right signal with the right id, tap
+  doesn't bubble to the card's own `onClicked`, and for orders specifically that the button stays
+  visible on a `completed` order per the deliberate no-row-status-gating decision). Content
+  unchanged from the original `tests/` versions — only the location and header comment changed,
+  once CI proved they can't compile under the Felgo-free "QML Tests" job. Run manually on a
+  machine with the Felgo SDK, or treat their assertions as the concrete version of H1–H3 below.
+
+### 1.3 Not covered by any committed test, on purpose — see spec doc
 
 - **`Gateway._send`'s single-item conflict-emit change** (`item.action` added as the 4th arg to
   `mutationConflicted`) — this codebase's own `tests/tst_Gateway.qml` documents that `_send`'s
