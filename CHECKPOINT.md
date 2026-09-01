@@ -1,9 +1,10 @@
 # CHECKPOINT — feature/product-order-delete-ui
 
 Session date: 2026-08-30
-Branch: `feature/product-order-delete-ui` (off `main`, 2 commits ahead at last check)
+Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `ad84ccc`, 4 commits
+ahead, pushed)
 
-## Status: implementation + tests complete, about to commit tests and push
+## Status: rebased, known issues logged, pushing now
 
 Single-pass session per explicit instruction — no interactive review gate used; decisions
 documented in the spec doc for after-the-fact review instead.
@@ -29,13 +30,34 @@ documented in the spec doc for after-the-fact review instead.
 8. Wrote test plan: `docs/superpowers/test-plans/2026-08-30-product-order-delete-ui-test-plan.md`,
    added its row to `docs/superpowers/test-plans/README.md`'s index.
 
-## Remaining in this session
+## Also done (second pass, same session)
 
-- Commit the 5 test files + test plan (2 commits: tests, then docs — or combined, deciding at
-  commit time).
-- Update this checkpoint's status to "pushed" once done.
-- Push to `origin` using the session PAT (URL-only, never written to `.git/config` — already
-  scrubbed once after `git clone` auto-wrote it there).
+- Rebased onto `origin/main` (3 new commits: Skill 53 handler-parity test coverage, Skill 54
+  sandbox-capability correction, `main` merge). Two conflicts:
+  - `CHECKPOINT.md` — kept mine per explicit instruction (main's version described the
+    unrelated handler-parity-coverage-gap session; this file is scratch/current-session by
+    convention anyway).
+  - `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md` —
+    add/add: both this branch and `main` independently archived the same stale prior
+    CHECKPOINT.md. Took `main`'s version — strict superset of mine, with an added "Post-hoc
+    correction" section documenting the exact same commit-vs-checkpoint discrepancy I'd noticed
+    myself but hadn't written into the archived file.
+  - Everything else (`AGENTS.md`, `SKILLS.md`, `README.md`, `functions/test/*`,
+    `scripts/setup-sandbox-qmltestrunner.sh`) applied clean, no overlap with this branch.
+  - Force-pushed after rebase (`--force-with-lease`), history rewritten, new SHAs.
+- Added 6 entries to `docs/superpowers/KNOWN-ISSUES.md` (existing file, appended, not
+  replaced): the `_send` terminal-failure gap as it applies to deletes, staff delete's
+  identical missing-UI gap, product-delete's orphaned stock-batch/photo gap, the Skill-54
+  sandbox-capability discovery (this session's 5 test files were written assuming no toolchain
+  exists here — that assumption is now outdated per `main`'s own Skill 54, not yet acted on),
+  and the memory/remote branch-name mismatch noticed earlier this session.
+
+## Remaining
+
+- Nothing outstanding from this session's asks. Skill 54's qmltestrunner install +
+  actually running this branch's 5 test files (2 of them this repo's first page-level UI tests)
+  is flagged in KNOWN-ISSUES.md as the natural next step, not done here — separate scope from
+  what was asked this turn.
 
 ## Key facts for resuming if interrupted before push
 
