@@ -237,6 +237,14 @@ just `recordMutation`. `functions/` suite: 174 tests, all passing. `index.js` li
 unreachable code (`canAssignRole`'s dead `else` branch, `send()`'s unreachable serialization-failure
 catch), not new gaps.
 
+**Update 2026-09-01:** landed PR #49 — `index.js`'s `send()` response helper extracted to
+`functions/lib/httpResponse.js` (Skill 55, same pattern as `cutoverLogic.js`/`gatewayLogic.js`),
+with direct unit coverage (`functions/test/httpResponse.test.js`, 4 tests) for the
+serialization-failure fallback that was previously only reachable via a live HTTPS round trip.
+`functions/` suite: 178 tests, all passing. `index.js` line coverage 99.32% → 99.88% — those lines
+now live (and are 100% covered) in `httpResponse.js` instead. The one remaining `index.js` gap
+(`canAssignRole`'s dead `else`) is unchanged, out of scope here.
+
 ---
 
 ## Qt Skills Cheat Sheet

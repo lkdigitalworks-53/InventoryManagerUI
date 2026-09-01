@@ -93,13 +93,18 @@ directly.
 
 ## Coordination / process (not code)
 
-### PR #49 (`review/post-pr45-qml-audit`) likely conflicts with this session's `functions/index.js` work
+### PR #49 (`review/post-pr45-qml-audit`) — resolved, 2026-09-01
 
-Different session, already showing `mergeable: false` / `dirty` against `main` as of 2026-08-26 —
-extracts `send()` into `functions/lib/httpResponse.js` with its own test file, which overlaps with
-this effort's own changes to the same function (the try/catch safety net, PR #45) and its own test
-coverage (`functions/test/index.handlers.test.js`, backlog item 2). Taher is handling this directly;
-noted here so it doesn't get lost given how test-development-adjacent it is.
+Was flagged 2026-08-26 as `mergeable: false` / `dirty`. Re-checked instead of trusted: the only
+actual conflict was `CHECKPOINT.md` (expected — living doc, rewritten every session). The real
+change (`send()` extracted to `functions/lib/httpResponse.js`, 4 new direct-coverage tests for the
+try/catch fallback added in PR #45) merged clean against `functions/index.js` and against Skill 53's
+later `index.handlers.test.js` parity work — no functional overlap, despite touching adjacent code.
+Branch updated: `main` merged forward into `review/post-pr45-qml-audit`, conflict resolved, full
+`functions/` suite re-run clean (178/178). `index.js` line coverage 99.32% → 99.88% — the try/catch
+lines move out of `index.js` entirely and gain 100% coverage in their new home. The one remaining
+`index.js` gap (`canAssignRole()`'s unreachable `else`, Skill 52/53) is untouched, out of scope here.
+PR #49 itself now mergeable; Taher to review/merge via GitHub.
 
 ---
 
