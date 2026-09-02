@@ -23,6 +23,15 @@ QtObject {
     readonly property int _pageSize: 50
     property bool hasMore: true
     property bool loadingMore: false
+
+    // Set instead of the reset being silently dropped when _resetAndFetch()
+    // arrives while a fetch is already in flight (see the guard below) --
+    // e.g. a genuine account switch mid-sync. Consumed by _fetchFromFirebase's
+    // callback the moment loadingMore goes back to false: that in-flight
+    // fetch chain is abandoned (its result is for the stale tenant/account)
+    // and a fresh _resetAndFetch() runs immediately instead. Design: SKILLS.md
+    // Skill 39's "residual trade-off" note.
+    property bool _resetPending: false
     property var _cursor: null
 
     property Settings _settings: Settings {
@@ -90,7 +99,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
-        if (loadingMore) return
+        if (loadingMore) { _resetPending = true; return }
         orders = [];
         hasMore = true;
         _cursor = null;
@@ -131,6 +140,11 @@ QtObject {
         loadingMore = true;
         FirebaseService.query("orders", { limit: _pageSize, startAfter: _cursor }, function(ok, result) {
             loadingMore = false;
+            if (_resetPending) {
+                _resetPending = false;
+                _resetAndFetch();
+                return;
+            }
             if (!ok || !result) {
                 console.warn("[OrdersStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return;

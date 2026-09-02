@@ -34,6 +34,15 @@ QtObject {
     property bool loadingMore: false
     property var _cursor: null
 
+    // Set instead of the reset being silently dropped when _resetAndFetch()
+    // arrives while a fetch is already in flight (see the guard below) --
+    // e.g. a genuine account switch mid-sync. Consumed by _fetchFromFirebase's
+    // callback the moment loadingMore goes back to false: that in-flight
+    // fetch chain is abandoned (its result is for the stale tenant/account)
+    // and a fresh _resetAndFetch() runs immediately instead. Design: SKILLS.md
+    // Skill 39's "residual trade-off" note.
+    property bool _resetPending: false
+
     // Retry-timer for a failed sync page. Without this, hasMore stays stuck
     // at true forever after a single transient network failure -- and once
     // OrdersStore.applyAdjustment/DataModel._tryAdjustOrder start refusing
@@ -70,7 +79,7 @@ QtObject {
         console.debug("[TransactionStore._resetAndFetch]", "TransactionStore.hasMore =",
                     hasMore, " loadingMore =", loadingMore,
                     " entries.length =", entries.length )
-        if (loadingMore) return
+        if (loadingMore) { _resetPending = true; return }
         if (_retryTimer) _retryTimer.stop()
         entries = []
         hasMore = true
@@ -104,6 +113,16 @@ QtObject {
             console.debug("[TransactionStore.onFetchCompleted] inside callback of firebase function", "TransactionStore.hasMore =",
                                 TransactionStore.hasMore, " loadingMore =", TransactionStore.loadingMore,
                                 " entries.length =", TransactionStore.entries.length, " ok: ", ok )
+            if (_resetPending) {
+                // A genuine reset (e.g. account switch) arrived mid-fetch.
+                // This page's result is for the now-stale tenant -- discard
+                // it unprocessed and start the real reset immediately,
+                // rather than finishing this chain and resetting a second
+                // time right after.
+                _resetPending = false
+                _resetAndFetch()
+                return
+            }
             if (!ok || !result) {
                 console.warn("[TransactionStore] Firestore sync failed, retrying",
                              "(attempt " + (_retryAttempt + 1) + ")",

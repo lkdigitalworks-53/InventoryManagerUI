@@ -13,9 +13,19 @@ app's interactivity the moment connectivity drops — offline/airplane-mode test
 "connectivity drops mid-request," never "start an action already offline," since the latter can't be
 initiated through the UI at all. (2) There's currently no way to log a second test session into the
 same tenant as staff/manager, which blocks genuine multi-device concurrent testing (a same-owner-
-account session on two physical devices may work as an untested substitute). Neither is this
-repo's/branch's own defect — both are pre-existing product/test-infrastructure gaps, tracked here only
-so future test plans don't silently assume they're testable and quietly skip them instead.
+account session on two physical devices may work as an untested substitute). (3) (added 2026-09-01,
+found while implementing item 3 below) `FirebaseService.query`/`get`/`put` are plain `function`
+declarations on a `pragma Singleton` — not injectable (confirmed directly: reassigning
+`FirebaseService.query` from a test throws `Cannot assign to read-only property`). Any test needing
+to control the timing or outcome of a Firestore call has no way to exercise the real store singletons
+under `qmltestrunner` — the only workaround so far (`tst_TenantContextRaceGuard.qml`, now also
+`tst_ResetPendingGuard.qml`) is a hand-written parallel model of the store's control flow, which
+proves the *logic* is sound but carries its own risk: if the real `_resetAndFetch`/`_fetchFromFirebase`
+pattern changes later without the mirror being updated too, those tests would keep passing while no
+longer testing what's actually shipped. Not urgent enough to justify a refactor on its own — noted so
+it doesn't get rediscovered from scratch next time this class of bug shows up. None of the three are
+this repo's/branch's own defect — all are pre-existing product/test-infrastructure gaps, tracked here
+only so future test plans don't silently assume they're testable and quietly skip them instead.
 
 ---
 
@@ -78,14 +88,6 @@ than have a synthetic stopgap built or skip verification — no result reported 
 session. Still waiting; not re-prompted mid-session per that session's own note not to nudge him on
 his own timeline.
 
-### Account-switch-mid-sync edge case (the `loadingMore` single-flight guard)
-
-The `if (loadingMore) return` guard (Skill 39) that fixed the concurrent-reset race has a known,
-explicitly-accepted trade-off: a genuine account switch mid-sync won't interrupt the in-flight fetch.
-Deliberately left unimplemented pending Taher's own call on whether the added complexity to fix this
-properly is worth it given how rarely this scenario likely occurs — not something to default on
-without his input.
-
 ---
 
 ## Explicitly scoped out — not forgotten, just not this round
@@ -119,26 +121,6 @@ lines move out of `index.js` entirely and gain 100% coverage in their new home. 
 **2026-09-01: merged into `main`** (confirmed via GitHub API, `merged_at: 2026-09-01T03:06:26Z`) —
 closed, not just mergeable.
 
-### `orderMath.js` / `qml/helper/OrderMath.js` parity — resolved, 2026-09-01
-
-Scoping (source parity holds, real gap is `lineTax()`/`refundPerUnit()` having zero Node-side
-coverage) confirmed, then implemented same session with Taher's go-ahead: `functions/test/
-fixtures/orderMathFixtures.js` + `functions/test/orderMath.test.js` (Node, fixture-pair pattern
-matching `realisedMath`/`breakdownMath`) and `tests/tst_OrderMathParityFixtures.qml` (QML side of
-the pair). 6 new edge-case tests added to `tests/tst_OrderMath.qml` first, as the source-of-truth
-this repo's convention requires fixtures to trace back to — covering branches the existing suite
-didn't reach (percent-type discount + its clamps, flat-discount clamps, null/undefined line,
-non-numeric price, taxable-true-but-zero-rate, negative/zero `originalQty` clamps).
-`lineTax`/`refundPerUnit` (`functions/lib/orderMath.js:77-114,290-297`) confirmed at 100% line AND
-branch coverage via direct lcov `BRDA` inspection, not just the summary percentage (summary branch
-% can look deceptively high/low across an entire file when other functions in it are un-instrumented
-by the tests that ran). Verified for real: `qmltestrunner` (38/38 in `tst_OrderMath.qml`, 13/13 in
-the new parity file) and `node --test` (190/190 across all of `functions/`, up from 178). Scope held
-to just these two functions, matching what was presented — `allocate`/`spreadOrderDelta`/
-`spreadLineDeltaBySupplier`/`eventProfit`'s coverage is unchanged, out of scope here.
-
----
-
 ## Resolved this arc (for context — full detail in `docs/superpowers/specs/` and `SKILLS.md`)
 
 - **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/
@@ -169,6 +151,44 @@ to just these two functions, matching what was presented — `allocate`/`spreadO
   design.md`; technique: SKILLS Skill 53. This was the only item on this roadmap not gated on
   Taher's input — the three entries above it under "Needs Taher's input" are still exactly that,
   untouched.
+
+- **`orderMath.js`/`qml/helper/OrderMath.js` parity** (2026-09-01) — scoping (source parity holds,
+  real gap is `lineTax()`/`refundPerUnit()` having zero Node-side coverage) confirmed, then
+  implemented same session with Taher's go-ahead: `functions/test/fixtures/orderMathFixtures.js` +
+  `functions/test/orderMath.test.js` (Node, fixture-pair pattern matching `realisedMath`/
+  `breakdownMath`) and `tests/tst_OrderMathParityFixtures.qml` (QML side of the pair). 6 new
+  edge-case tests added to `tests/tst_OrderMath.qml` first, as the source-of-truth this repo's
+  convention requires fixtures to trace back to — covering branches the existing suite didn't reach
+  (percent-type discount + its clamps, flat-discount clamps, null/undefined line, non-numeric price,
+  taxable-true-but-zero-rate, negative/zero `originalQty` clamps). `lineTax`/`refundPerUnit`
+  (`functions/lib/orderMath.js:77-114,290-297`) confirmed at 100% line AND branch coverage via direct
+  lcov `BRDA` inspection, not just the summary percentage (summary branch % can look deceptively
+  high/low across an entire file when other functions in it are un-instrumented by the tests that
+  ran). Verified for real: `qmltestrunner` (38/38 in `tst_OrderMath.qml`, 13/13 in the new parity
+  file) and `node --test` (190/190 across all of `functions/`, up from 178). Scope held to just
+  these two functions, matching what was presented — `allocate`/`spreadOrderDelta`/
+  `spreadLineDeltaBySupplier`/`eventProfit`'s coverage is unchanged, out of scope here.
+
+- **Account-switch-mid-sync edge case (the `loadingMore` single-flight guard)** (2026-09-01) — the
+  `if (loadingMore) return` guard (Skill 39) that fixed the concurrent-reset race had a known,
+  explicitly-accepted trade-off: a genuine account switch mid-sync would silently drop instead of
+  interrupting the in-flight fetch. Taher gave the go-ahead same session. Fix: `_resetAndFetch()` now
+  sets a `_resetPending` flag (plus which reset it is, for stores where that matters) instead of
+  dropping when `loadingMore` is true; the in-flight fetch's callback checks that flag the instant it
+  completes and, if set, abandons the now-stale response unprocessed and re-runs `_resetAndFetch()`
+  immediately rather than applying data for an account the app has already moved on from. Applied
+  identically to all 6 paginated stores (`TransactionStore`, `InventoryStore`, `OrdersStore`,
+  `StaffStore`, `StockBatchStore`, `SupplierStore`) — verified each has the exact same
+  `_resetAndFetch`/`_fetchFromFirebase` shape before editing, not assumed. New test file
+  `tests/tst_ResetPendingGuard.qml` (6 tests, all passing) models the race with a minimal plain-JS
+  object mirroring the real control flow — the same technique `tst_TenantContextRaceGuard.qml`
+  already established in this repo — since the real singletons can't be exercised this way under
+  `qmltestrunner`: `FirebaseService.query` turned out to be a read-only method (confirmed by trying
+  to reassign it), and importing the real stores to work around that hits this sandbox's separate,
+  pre-existing `AuthStore unavailable`/`QtCore` compile issue. Full `tests/` suite re-run: 340 passed
+  (up from 315), 22 failed — same pre-existing count, same pre-existing cause, confirmed via the
+  error text, not just the number. **On-device/CI confirmation that the real singletons behave the
+  same way as the model is still outstanding** — this session couldn't verify that part directly.
 
 - QTBUG-49896 (QML XHR losing `status` at DONE) — root cause found and fixed, confirmed on a real CI
   run. Skills 40-45.

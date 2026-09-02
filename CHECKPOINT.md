@@ -145,3 +145,59 @@ item. Noted rather than skipped silently.
 
 Item 2 is done and pushed. Item 1 still waiting on Taher's N3 result. Item 3 untouched. Check chat
 history for whichever of those has moved before starting new design work.
+
+---
+
+## Update, same day: item 3 implemented (`_resetPending` guard)
+
+**Branch:** `feature/2026-09-01-loadingMore-resetPending-guard` (off `main`, post-item-2-merge)
+
+Taher's reply: go ahead with item 3 while N3 (item 1) is still outstanding.
+
+**Done:**
+- `_resetPending` flag added to all 6 paginated stores (`TransactionStore`, `InventoryStore`,
+  `OrdersStore`, `StaffStore`, `StockBatchStore`, `SupplierStore`) per Skill 39's already-designed
+  fix. Verified each store's `_resetAndFetch`/`_fetchFromFirebase` shape individually before editing
+  any of them (all 6 identical; only `TransactionStore` additionally has retry-timer logic, which the
+  fix slots into cleanly without touching).
+- Full detail (mechanism, scope, verification) is in the roadmap's "Resolved this arc" entry for this
+  item — not duplicated here.
+- **Process note, worth recording honestly**: made two editing mistakes on `TransactionStore.qml`
+  mid-session — a `str_replace` call clipped `if (_retryTimer) _retryTimer.stop()`, and the fix for
+  that clipped `entries = []` in turn. Both caught via `git diff main` immediately after, before
+  moving to the next file, and fixed before anything was committed. Diffed every one of the 6 files
+  individually against `main` after editing, not just at the end — that's what caught these in time.
+- Spent real effort finding a way to test the async half of this fix (the callback consuming
+  `_resetPending`), not just the synchronous "sets the flag" half. First attempt (monkey-patching
+  `FirebaseService.query` from a test) failed outright — QML `function` declarations on a singleton
+  turned out to be read-only, confirmed by the actual error, not assumed. Found the right answer
+  already sitting in this repo: `tst_TenantContextRaceGuard.qml`'s minimal-plain-JS-object technique,
+  which sidesteps that entirely. New file `tests/tst_ResetPendingGuard.qml`, 6 tests, models both the
+  old (buggy) and fixed behavior side by side so the fix's actual effect is visible in the test
+  output, not just asserted.
+- `qt_qml_lint.py` and brace/paren/bracket balance run on all 7 touched files. One balance-check flag
+  on `TransactionStore.qml` (paren/bracket) — confirmed pre-existing on `main` before this change via
+  direct comparison, not touched by this diff.
+- Full `tests/` suite re-run: 340 passed (up from 315 pre-item-2, 334 immediately post-item-2's 13+6
+  additions — the extra 6 here are `tst_ResetPendingGuard.qml`'s own tests), 22 failed — same count,
+  same cause (`AuthStore`/`QtCore`), confirmed via the actual error text each time, not just trusted
+  because the number matched.
+- Roadmap updated: item 3 moved to "Resolved this arc." Also relocated item 2's entry there from
+  "Coordination / process (not code)" while touching this file anyway — it never actually fit that
+  heading's own definition ("not code"), a mis-categorization from earlier this session, corrected
+  now rather than left for someone else to notice. **One roadmap-editing mistake happened and was
+  caught before commit**: a `str_replace` meant to remove item 3 from "Needs Taher's input" was
+  scoped too broadly and swallowed the entire "Explicitly scoped out" section (Phase 2 probe) along
+  with it, leaving a duplicated heading. Caught immediately by grepping the doc's heading structure
+  right after, recovered the lost section's exact original text from `git show main:...`, and
+  rebuilt the section correctly before it was ever committed.
+
+**Not verified, and can't be from here**: whether the real singletons (not the minimal-object model)
+actually behave this way under real Firestore timing. That's on-device/CI, same category of
+limitation as item 1's N3 test — flagging it as outstanding rather than treating the model's passing
+tests as equivalent proof.
+
+## Next action if resumed
+
+Item 3 is done and pushed, pending Taher's on-device/CI confirmation the real stores match the model.
+Item 1 still waiting on N3. Check chat history for what's moved before starting new work.
