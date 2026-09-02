@@ -73,6 +73,7 @@ machine, not this chat.
 | Cloud Functions env-awareness (all 4 functions resolve db per request) | ✅ Done — pending real deploy/emulator verification |
 | Paginated reads, all 6 growing stores (fixes silent truncation past Firestore's internal page-size threshold) | ✅ Done — pending qmltestrunner run |
 | Write-path fix (no more collection-wide bulk overwrite on a single mutation) | ✅ Done |
+| Bulk-import chunking (>200 rows split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 57 |
 | `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
 | SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
 | India compliance roadmap (design) | 📋 Approved — P0 substantially implemented, see below |
@@ -705,7 +706,9 @@ env.
     `Gateway.functionUrl` (`recordMutation`), `Gateway.deltaFunctionUrl` (`recordDelta`, added
     2026-08-16 for the Orders scenario — `StockBatchStore.consumeFifo`/`InventoryStore.deductStock`
     go through this, not `recordMutation`), restored in `cleanup()`. `Gateway.batchFunctionUrl`
-    isn't wired yet — nothing in `test/e2e/` exercises a deferred-write batch path so far.
+    is now also wired — `test/e2e/tst_BulkImportChunkingE2E.qml` (2026-08-29, bulk-import
+    chunking fix) is the first file to exercise it, against `recordMutationsBatch` specifically
+    (its own separate Cloud Function, its own separate cold start — see below).
   - **The Cloud Functions Emulator cold-starts each function on its own first real invocation** —
     `initTestCase()` in each file pays that cost with a dedicated warm-up POST (bypassing
     Gateway/OutboxStore) before any real test runs, sized for a one-time cold start rather than

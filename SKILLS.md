@@ -2576,7 +2576,6 @@ missing allowlist entry named. Vague unverified limitations are worse than eithe
 own: they make a real block ("Firebase emulator needs `storage.googleapis.com` allowlisted") sound
 the same as a solvable one ("nobody had checked whether `apt` has Qt"), and Taher can't act on
 either without knowing which is which.
-
 ## Skill 55: A PR flagged as "likely conflicts" for 6 days turned out to have exactly one conflicting
 line, and it wasn't in the code
 
@@ -2664,3 +2663,80 @@ to interpret itself. General lesson: a script verified only in this sandbox's No
 verified against CI's pinned version — check what CI actually runs before treating a local pass as
 proof, especially for anything touching CLI argument/glob-expansion semantics that differ by
 runtime version.
+## Skill 57: Bulk-import chunking — an oversized batch retried forever in silence, and the fix was mostly deletion, not addition
+
+**Files**: `qml/model/Gateway.qml` (`maxBatchSize`, `_chunkItems`, `_classifyBatchMutationFailure`,
+`batchMutationFailedPermanently` signal, `recordMutations()`, `_sendBatch()`),
+`qml/model/InventoryStore.qml` / `OrdersStore.qml` / `SupplierStore.qml`
+(`_onBatchMutationFailedPermanently`), `qml/pages/ImportPreviewDialog.qml` (`_finishApply`),
+`functions/lib/batchMutationLogic.js` (comment only, no behavior change), 33 new test cases across
+`tests/tst_Gateway.qml`, `tests/tst_InventoryStore_upsertMany.qml`, `tests/tst_OrdersStore_mutations.qml`,
+new `tests/tst_SupplierStore_batchMutationFailedPermanently.qml`, new
+`test/e2e/tst_BulkImportChunkingE2E.qml`, plus 1 pinning test in `functions/test/batchMutationLogic.test.js`.
+
+**The bug**: `Gateway.recordMutations()` sent an arbitrarily large `items` array as ONE outbox
+entry / ONE HTTP call, with zero awareness of `functions/lib/batchMutationLogic.js`'s
+`MAX_BATCH_SIZE=200`. Past that cap the server correctly rejects the whole batch with 400
+`batch-too-large` — but `_sendBatch()`'s failure branch treated that identically to a transient
+5xx/network blip (`OutboxStore.markFailed()`), and `OutboxStore`'s backoff schedule caps at 10
+minutes but never terminates. A >200-row import retried the exact same doomed request every 10
+minutes, forever, completely silently, while `InventoryStore._upsertManySync()` (and the identical
+pattern in `OrdersStore.upsertMany()`) had already committed every row to local state and reported
+success before the HTTP round-trip even started. Local and remote state diverged permanently with
+zero user-visible signal — reported as "import finishes but nothing past row 200 actually saved."
+
+**The fix, in one sentence**: chunk once, at the single choke point (`Gateway.recordMutations()`),
+so all 3 callers (`InventoryStore`/`OrdersStore`/`SupplierStore`) get fixed by one change; classify
+batch failures as terminal (never-will-succeed payload-shape errors) vs. transient (keep retrying)
+instead of treating every non-conflict failure the same; reconcile a terminal failure through the
+exact same signal-driven pattern this file already uses for CAS conflicts
+(`mutationConflicted` → `_onMutationConflicted`), reusing `Toast`/`ActivityLog` rather than
+inventing new UI.
+
+**Where "survives interruption" came from for free — the actual point of this skill entry**: the
+first full design pass (see this session's checkpoint) planned a brand-new `ImportSessionStore`
+singleton — a Settings-backed ledger tracking which chunks of a logical import were pending/failed,
+specifically to satisfy "save status so an import survives interruption." A `/ponytail` pass on
+that design before writing any code cut it entirely. Reasoning: `OutboxStore.enqueueBatch()`
+already persists to Settings *before* `recordMutations()` returns — chunking into N
+`enqueueBatch()` calls instead of 1 oversized one means all N chunks are durably on disk before the
+caller's local commit even happens, and `OutboxStore`'s existing drain loop already resumes them
+automatically on relaunch. The server's `requestId:entityId` audit-log dedup (already implemented
+in `applyMutationsBatch`, no client change needed) makes a chunk that partially committed before a
+crash safe to blindly retry, as long as its `requestId` stays stable across retries — which it
+already does, since `OutboxStore` never regenerates a queued item's `requestId`. A parallel session
+ledger would have been tracking a fact `OutboxStore` already tracks, for a durability guarantee
+that already existed structurally the moment chunking landed. The lesson isn't "ponytail cut scope"
+in the generic sense — it's that *the explicitly-requested durability requirement was already
+satisfied by an existing subsystem*, and the design draft almost duplicated it out of momentum
+(having just designed the chunking piece, a tracking-store felt like the natural next component to
+build) rather than actual need. Checking "does something already give me this" before writing a new
+persistence layer would have skipped an entire design phase.
+
+**Narrow terminal-vs-transient classification, not "any 4xx"**: `_classifyBatchMutationFailure`
+only treats the five specific `validateBatchMutationRequest` error strings (`unsupported-entity`,
+`missing-fields`, `empty-batch`, `batch-too-large`, `unsupported-action`) as terminal — deliberately
+narrower than "any 4xx is definitive." 401/403 describe caller *state* (token, tenant context) that
+legitimately changes between retries without the payload changing at all; the five listed errors
+describe the *payload itself*, which is identical on every retry. This mirrors reasoning
+`_parseMutationConflict`'s own header comment already stated for the single-item send path — same
+philosophy, not a new one invented for batches. An unrecognized 4xx error string (e.g. a future
+validation error added to `batchMutationLogic.js` without updating this allowlist) falls through to
+the conservative default (keep retrying), not a silent give-up.
+
+**Every item this path ever sends is `action: "create"`** — confirmed via `grep`, not assumed,
+across all 3 callers. Overwrite/update rows route through the single-item `Gateway.recordMutation`
+via `DataModel.updateProduct`/`updateOrder` instead, which already has working CAS-conflict
+handling and never touches this batch path. This is why the rollback handlers are safe to
+unconditionally *remove* a failed entityId from local state rather than needing to distinguish
+"remove a row that never existed" from "revert someone else's edit" — the latter case structurally
+cannot occur on this path.
+
+**Known, documented gap, not silently ignored**: `SupplierStore`'s rollback doesn't cascade into
+`InventoryStore` — if a product-import CSV discovers a new supplier and that supplier's own batch
+chunk fails permanently while some of the SAME import's product rows (referencing that supplier by
+id) already succeeded, those products are left pointing at a now-locally-removed supplier until the
+next full re-sync. Judged out of proportion for this fix (requires the size cap not to be the
+cause, post-chunking-fix, so a real validation bug in `addSupplierWithIdMany`'s payload — expected
+to be rare) — noted in `SupplierStore.qml`'s handler comment for whoever hits it next, not fixed
+speculatively.

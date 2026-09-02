@@ -411,4 +411,111 @@ TestCase {
         )
         verify(true)
     }
+
+    // ============================================================
+    // Bulk-import chunking fix (2026-08-29)
+    // ============================================================
+
+    // --- counts.chunked: honest completion signal for a large import -----
+    // ImportPreviewDialog._finishApply reads this to decide whether to say
+    // "still syncing in the background" instead of implying the import is
+    // already fully durable.
+
+    function test_upsertMany_sets_chunked_false_for_a_small_import() {
+        var ids = ["PRD-200"]
+        var callIdx = 0
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        InventoryStore._upsertManySync(
+            [{ name: "Widget", sku: "", category: "General", stock: 1, minStock: 1,
+               price: 10, sellingPrice: 12, taxable: false, taxPercent: 0, size: "", supplierId: "" }],
+            function() { return ids[callIdx++] }, _stubResolveSupplier(), _stubPullBatchId(), counts)
+        compare(counts.chunked, false)
+    }
+
+    function test_upsertMany_sets_chunked_true_when_new_rows_exceed_maxBatchSize() {
+        var records = []
+        var ids = []
+        for (var i = 0; i < 201; ++i) {
+            records.push({ name: "Widget " + i, sku: "SKU-" + i, category: "General", stock: 1, minStock: 1,
+                           price: 10, sellingPrice: 12, taxable: false, taxPercent: 0, size: "", supplierId: "" })
+            ids.push("PRD-" + (300 + i))
+        }
+        var callIdx = 0
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        InventoryStore._upsertManySync(records, function() { return ids[callIdx++] }, _stubResolveSupplier(), _stubPullBatchId(), counts)
+        compare(counts.added, 201)
+        compare(counts.chunked, true, "201 new rows must be flagged as chunked (>maxBatchSize=200)")
+    }
+
+    // --- _onBatchMutationFailedPermanently: rollback + notify -------------
+    // Before this, a permanently-rejected batch retried forever in total
+    // silence while `products` already held every row — this is the
+    // missing reconciliation path, same shape as _onMutationConflicted
+    // near the top of this file.
+
+    function test_onBatchMutationFailedPermanently_removes_only_the_failed_rows() {
+        InventoryStore.products = [
+            { productId: "PRD-400", name: "Kept", sku: "K-1", category: "General", stock: 1, minStock: 1,
+              price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "", unit: "pc", description: "", supplierId: "" },
+            { productId: "PRD-401", name: "Failed A", sku: "F-1", category: "General", stock: 1, minStock: 1,
+              price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "", unit: "pc", description: "", supplierId: "" },
+            { productId: "PRD-402", name: "Failed B", sku: "F-2", category: "General", stock: 1, minStock: 1,
+              price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "", unit: "pc", description: "", supplierId: "" }
+        ]
+
+        InventoryStore._onBatchMutationFailedPermanently("inventory", [
+            { entityId: "PRD-401", action: "create" },
+            { entityId: "PRD-402", action: "create" }
+        ], "missing-fields")
+
+        compare(InventoryStore.products.length, 1, "only the two failed rows must be rolled back")
+        compare(InventoryStore.products[0].productId, "PRD-400")
+    }
+
+    function test_onBatchMutationFailedPermanently_ignores_other_entities() {
+        InventoryStore.products = [{ productId: "PRD-410", name: "Kept", sku: "K-1", category: "General",
+            stock: 1, minStock: 1, price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "" }]
+
+        InventoryStore._onBatchMutationFailedPermanently("order", [{ entityId: "PRD-410", action: "create" }], "missing-fields")
+
+        compare(InventoryStore.products.length, 1, "a failure for a DIFFERENT entity must not touch products")
+    }
+
+    function test_onBatchMutationFailedPermanently_is_a_no_op_for_an_unknown_entityId() {
+        InventoryStore.products = [{ productId: "PRD-420", name: "Kept", sku: "K-1", category: "General",
+            stock: 1, minStock: 1, price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "" }]
+
+        InventoryStore._onBatchMutationFailedPermanently("inventory", [{ entityId: "PRD-does-not-exist", action: "create" }], "missing-fields")
+
+        compare(InventoryStore.products.length, 1, "nothing to remove, must not throw or touch unrelated rows")
+    }
+
+    function test_onBatchMutationFailedPermanently_is_a_no_op_for_empty_items() {
+        // Distinct branch from "ignores other entities" above: entity DOES
+        // match "inventory" here, so this exercises the `!items ||
+        // items.length === 0` half of the guard, not the entity check.
+        InventoryStore.products = [{ productId: "PRD-425", name: "Kept", sku: "K-1", category: "General",
+            stock: 1, minStock: 1, price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "" }]
+
+        InventoryStore._onBatchMutationFailedPermanently("inventory", [], "missing-fields")
+        compare(InventoryStore.products.length, 1)
+        InventoryStore._onBatchMutationFailedPermanently("inventory", null, "missing-fields")
+        compare(InventoryStore.products.length, 1)
+    }
+
+    // End-to-end through the real signal (not just the handler directly) —
+    // confirms Component.onCompleted's Gateway.batchMutationFailedPermanently
+    // connection is actually live, matching production wiring.
+    function test_gateway_signal_reaches_InventoryStore_and_rolls_back() {
+        InventoryStore.products = [{ productId: "PRD-430", name: "Will Fail", sku: "F-1", category: "General",
+            stock: 1, minStock: 1, price: 1, sellingPrice: 1, taxable: false, taxPercent: 0, size: "",
+            unit: "pc", description: "", supplierId: "" }]
+
+        Gateway.batchMutationFailedPermanently("inventory", [{ entityId: "PRD-430", action: "create" }], "batch-too-large")
+
+        compare(InventoryStore.products.length, 0, "the live signal connection must reach the store and roll back")
+    }
 }
