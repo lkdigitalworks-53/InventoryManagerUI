@@ -216,7 +216,7 @@ jobs:
       # Tests the comment-building/parsing logic itself before trusting it to post to the PR --
       # a bug here should fail loudly in CI, not silently produce a wrong/garbled comment.
       - name: Run PR comment script's own unit tests
-        run: node --test "./.github/scripts/__tests__/*.test.js"
+        run: node --test .github/scripts/__tests__/*.test.js
 
       - name: Post PR test summary comment
         env:

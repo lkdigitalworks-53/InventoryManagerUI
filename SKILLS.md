@@ -2650,3 +2650,17 @@ still matching after a space or `<testcase `.
 - Runs the comment script's own unit tests (`node --test .github/scripts/__tests__/*.test.js`) as a
   CI step *before* trusting the script to post — a bug in the parser/builder should fail loudly, not
   silently post a garbled comment.
+
+**Follow-up fix, same day, first real PR run:** the quoted form
+(`node --test "./.github/scripts/__tests__/*.test.js"`) passed locally in this sandbox (Node
+v22.22.2) but failed on CI (`actions/setup-node@v4` pinned to `node-version: '20'`) with
+`Could not find '.../__tests__/*.test.js'` — Node 22's test runner accepts a glob pattern as a
+literal CLI argument and expands it itself; Node 20's does not, and with the argument quoted the
+shell never got a chance to expand it either, so Node just looked for a file literally named
+`*.test.js`. Fix: drop the quotes (`node --test .github/scripts/__tests__/*.test.js`) so **bash**
+expands the glob into separate literal file arguments before Node ever sees it — portable across
+any Node version, since at that point Node is just given explicit file paths, not a pattern it has
+to interpret itself. General lesson: a script verified only in this sandbox's Node version isn't
+verified against CI's pinned version — check what CI actually runs before treating a local pass as
+proof, especially for anything touching CLI argument/glob-expansion semantics that differ by
+runtime version.

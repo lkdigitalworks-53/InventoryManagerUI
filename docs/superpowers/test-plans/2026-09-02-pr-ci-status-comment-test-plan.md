@@ -21,7 +21,7 @@ No QML, C++, or app-behavior code was touched.
 
 Pure-logic correctness of the three testable modules, no network/filesystem I/O involved. All run
 via `node --test`, no emulator or Qt toolchain needed — genuinely run in this session
-(`node --test "./.github/scripts/__tests__/*.test.js"` → 39/39 passing, see "How this was
+(`node --test .github/scripts/__tests__/*.test.js` → 39/39 passing, see "How this was
 verified"). 16 cases in `parse-junit.js`, 12 in `build-summary.js`, 5 in `resolve-job-url.js`.
 
 | File | What's covered |
@@ -85,7 +85,7 @@ standing test-plan format.
 ## How this was verified
 
 ```
-$ node --test "./.github/scripts/__tests__/*.test.js"
+$ node --test .github/scripts/__tests__/*.test.js
 # tests 39
 # pass 39
 # fail 0

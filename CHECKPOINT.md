@@ -48,7 +48,7 @@ write, actions: read` at job level, works on forked PRs too).
   update one comment instead of duplicating.
 
 **Tests:** `.github/scripts/__tests__/` — 39 cases total, all genuinely run locally
-(`node --test "./.github/scripts/__tests__/*.test.js"` → 39/39 pass), pure Node so no
+(`node --test .github/scripts/__tests__/*.test.js` → 39/39 pass), pure Node so no
 Qt/Firebase toolchain needed. Caught one real bug during the TDD loop: `name="..."` attribute regex
 had no word boundary and matched inside `classname="..."`, returning the classname as the test
 name — fixed with `\b`.
