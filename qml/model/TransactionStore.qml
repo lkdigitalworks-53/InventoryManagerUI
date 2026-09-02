@@ -401,8 +401,13 @@ QtObject {
     // sum, so a completed order's total reconciles with the reports by
     // construction. Used by OrdersStore.applyAdjustment for completed orders,
     // whose lines (single tax rate each) can't represent mixed-vintage tax.
-    //   tax  = Σ e.tax  over sale + return (returns carry negative tax → netted).
-    //          price_adjust has NO tax field → contributes 0 (revenue-only).
+    //   tax  = Σ e.tax  over sale + return + price_adjust (returns carry
+    //          negative tax → netted; price_adjust carries the signed tax
+    //          delta of a post-completion price/discount edit on a taxable
+    //          line -- see recordPriceAdjust's `taxRate` param. Was
+    //          "revenue-only, 0" before the 2026-09-02 fix -- a discount or
+    //          price edit on a taxable completed-order line left the order's
+    //          booked tax stale at its pre-edit value; see recordPriceAdjust).
     //   net  = Σ e.net  over sale + return  +  Σ e.total over price_adjust (the
     //          signed revenue delta of a price/discount edit folds into net).
     //   total = net + tax, rounded once.
@@ -418,6 +423,7 @@ QtObject {
                 tax += (e.tax !== undefined && e.tax !== null) ? e.tax : 0
             } else if (e.kind === "price_adjust") {
                 net += (e.total || 0)
+                tax += (e.tax !== undefined && e.tax !== null) ? e.tax : 0
             }
         }
         net = Math.round(net * 100) / 100
@@ -519,16 +525,37 @@ QtObject {
     }
 
     // Record a price-only correction on already-sold units (a "modify" that
-    // changed unit price, not quantity). quantity:0 so Units Sold is unaffected;
-    // total carries the signed revenue delta; consumption is empty (the delta has
-    // no unit/cost basis — it's a pure price correction on already-counted units),
-    // so the analysis layer nets `total` straight into Revenue AND Profit (COGS is
-    // unchanged, so the profit delta equals the revenue delta).
-    //   revenueDelta: signed (negative when price dropped → revenue down)
+    // changed unit price, not quantity) OR a per-line discount-rate edit on a
+    // completed order. quantity:0 so Units Sold is unaffected; total carries
+    // the signed revenue delta; consumption is empty (the delta has no
+    // unit/cost basis — it's a pure price/discount correction on already-
+    // counted units), so the analysis layer nets `total` straight into
+    // Revenue AND Profit (COGS is unchanged, so the profit delta equals the
+    // revenue delta).
+    //
+    // `taxRate` (optional, percent 0-100): when the line is taxable, the tax
+    // booked in the ORIGINAL sale event was computed on the PRE-edit net. A
+    // price/discount edit changes net without touching that stamped event
+    // (it's immutable), so the tax delta must be booked here too, proportional
+    // to the SAME revenueDelta this event carries — otherwise
+    // TransactionStore.totalsForOrder (the authoritative source for a
+    // completed order's displayed tax/total, see OrdersStore.applyAdjustment)
+    // stays frozen at the pre-edit tax forever, and a later full return of the
+    // line (which correctly reverses tax at the LIVE, post-edit rate via
+    // OrderMath.allocate) leaves a residual fraction of phantom revenue/tax
+    // in the order (2026-09-02 fix — discount edit showed stale tax, and a
+    // subsequent return left a few cents unreconciled).
+    //   revenueDelta: signed (negative when price/net dropped → revenue down)
+    //   taxDelta:     revenueDelta * (taxRate/100) — same sign convention
     //   perUnitDelta: oldPrice - newPrice (so unitPrice on the event reads the delta)
-    function recordPriceAdjust(order, line, survivingQty, perUnitDelta, reason, note) {
-        if (!survivingQty || survivingQty <= 0 || !perUnitDelta) return
+    // Returns { revenueDelta, taxDelta } so the caller can fold the FULL
+    // customer-owed amount (net delta + its tax) into its own refundAmount
+    // without re-deriving this function's sign math a second time.
+    function recordPriceAdjust(order, line, survivingQty, perUnitDelta, reason, note, taxRate) {
+        if (!survivingQty || survivingQty <= 0 || !perUnitDelta) return { revenueDelta: 0, taxDelta: 0 }
         var revenueDelta = -(survivingQty * perUnitDelta)   // price drop (delta>0) → negative revenue
+        var _rate = (typeof taxRate === "number" && taxRate > 0) ? taxRate : 0
+        var taxDelta = revenueDelta * (_rate / 100)
         // Stamp the per-supplier split of this delta AT WRITE TIME, while the
         // parent order still carries its FIFO consumption lineage. Reading it
         // back from the live order at report time is unsafe: a later full return
@@ -552,6 +579,7 @@ QtObject {
             unitCost: 0,
             unitPrice: -perUnitDelta,
             total: revenueDelta,
+            tax: taxDelta,   // signed tax delta -- see header. 0 for non-taxable lines.
             orderId: order.orderId || "",
             orderChannel: order.orderChannel || "",
             staffId: order.staffId || "",
@@ -562,6 +590,7 @@ QtObject {
             note: note || ""
         }
         _push(doc)
+        return { revenueDelta: revenueDelta, taxDelta: taxDelta }
     }
 
     // Returns entries with timestamp (or date) inside [fromDate, toDate).

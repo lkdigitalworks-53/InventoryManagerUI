@@ -1,188 +1,104 @@
-# CHECKPOINT — feature/product-order-delete-ui
+# CHECKPOINT — price_adjust tax-delta fix implemented, tested (unrun), docs updated, not yet pushed
 
-Session date: 2026-08-30
-Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `de28052`, 9 commits
-ahead, about to push)
+**Session date:** 2026-09-02
+**Branch:** `fix/2026-09-02-price-adjust-tax-delta` (off `main`)
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-02-pr-ci-status-comment-CHECKPOINT.md`
+(unrelated prior session, different branch `feature/pr-ci-status-comment` — untouched this session).
 
-## Status: fourth rebase done, pushing
+## What this session is
 
-Single-pass session per explicit instruction — no interactive review gate used; decisions
-documented in the spec doc for after-the-fact review instead.
+Taher reported a bug via `/superpowers:systematic-debugging`: product cp 50 / sp 60 / tax 5%,
+1-unit order completed (tax 3, total 63). Add a 5% discount, no qty change — expected tax 2.85 /
+total 59.85 (Taher's own worked math), app showed tax still 3. Return the item afterward —
+expected the order to net to exactly 0, app left a 0.15 phantom residual.
 
-## What's done
+## Root cause (traced statically — no Qt toolchain in this sandbox, per standing rule)
 
-1. Archived the stale root `CHECKPOINT.md` (described already-merged handler-test work,
-   commit `d1087b6`) to `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md`.
-2. Branched off `main`.
-3. Wrote spec: `docs/superpowers/specs/2026-08-30-product-order-delete-ui.md`.
-4. Wrote plan: `docs/superpowers/plans/2026-08-30-product-order-delete-ui.md`.
-5. **Commit `ec1d74f`** — row-level delete buttons: `Constants.qml` ("trash" icon token),
-   `InventoryPage.qml` (ProductCard delete button), `OrdersPage.qml` (order row delete button).
-6. **Commit `ba5ab20`** — success toasts (`Main.qml`) + delete-specific conflict wording
-   (`Gateway.qml`'s `mutationConflicted` gains `action` 4th param, `InventoryStore.qml`/
-   `OrdersStore.qml`'s `_onMutationConflicted` branch on it).
-7. Wrote 5 test files (not yet committed): `tests/tst_DataModel_deleteGuards.qml`,
-   `tests/tst_InventoryStore_mutationConflicted.qml`, 2 new cases appended to
-   `tests/tst_OrdersStore_sync.qml`, `tests/tst_InventoryPage_deleteButton.qml`,
-   `tests/tst_OrdersPage_deleteButton.qml` (the last two are this repo's first page-level
-   UI-interaction tests — flagged as higher-risk in their own header comments and in the test
-   plan).
-8. Wrote test plan: `docs/superpowers/test-plans/2026-08-30-product-order-delete-ui-test-plan.md`,
-   added its row to `docs/superpowers/test-plans/README.md`'s index.
+`OrdersStore.applyAdjustment` sources a *completed* order's tax/total from
+`TransactionStore.totalsForOrder(orderId)`, not a live recompute (deliberate — a completed order's
+line objects can't represent mixed-vintage tax). `totalsForOrder` only summed tax from `sale`/
+`return` events. `TransactionStore.recordPriceAdjust` — called by BOTH the discount-rate-edit
+scanner and the price-only-modify block in `DataModel._tryAdjustOrder` — wrote `price_adjust`
+events carrying revenue only, explicitly no tax field ("revenue-only" by prior design). A discount
+or price edit on a *taxable* completed-order line changes net without ever touching the immutable
+original sale event's stamped tax, so the order's authoritative tax stayed frozen forever. A later
+full return correctly reverses tax at the live post-edit rate (that half was never wrong) — which
+is exactly what turned silent staleness into a visible residual.
 
-## Also done (second pass, same session)
+Two call sites, one root cause (found by tracing the function, not grepping "discount" — the
+price-modify site had the identical gap, not something Taher reported but same defect class).
+Full narrative: `SKILLS.md` Skill 57.
 
-- Rebased onto `origin/main` (3 new commits: Skill 53 handler-parity test coverage, Skill 54
-  sandbox-capability correction, `main` merge). Two conflicts:
-  - `CHECKPOINT.md` — kept mine per explicit instruction (main's version described the
-    unrelated handler-parity-coverage-gap session; this file is scratch/current-session by
-    convention anyway).
-  - `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md` —
-    add/add: both this branch and `main` independently archived the same stale prior
-    CHECKPOINT.md. Took `main`'s version — strict superset of mine, with an added "Post-hoc
-    correction" section documenting the exact same commit-vs-checkpoint discrepancy I'd noticed
-    myself but hadn't written into the archived file.
-  - Everything else (`AGENTS.md`, `SKILLS.md`, `README.md`, `functions/test/*`,
-    `scripts/setup-sandbox-qmltestrunner.sh`) applied clean, no overlap with this branch.
-  - Force-pushed after rebase (`--force-with-lease`), history rewritten, new SHAs.
-- Added 6 entries to `docs/superpowers/KNOWN-ISSUES.md` (existing file, appended, not
-  replaced): the `_send` terminal-failure gap as it applies to deletes, staff delete's
-  identical missing-UI gap, product-delete's orphaned stock-batch/photo gap, the Skill-54
-  sandbox-capability discovery (this session's 5 test files were written assuming no toolchain
-  exists here — that assumption is now outdated per `main`'s own Skill 54, not yet acted on),
-  and the memory/remote branch-name mismatch noticed earlier this session.
+## What's implemented, this session
 
-## Also done (third pass, same session) — CI debug from attached logs
+**`qml/model/TransactionStore.qml`:**
+- `recordPriceAdjust(order, line, survivingQty, perUnitDelta, reason, note, taxRate)` — new
+  optional `taxRate` param, computes `taxDelta = revenueDelta * (taxRate/100)` internally, writes
+  it to the event's new `tax` field, **returns** `{revenueDelta, taxDelta}` (previously returned
+  nothing).
+- `totalsForOrder` — now sums `price_adjust.tax` alongside `sale`/`return` tax.
+- Comments corrected (old header asserted "price_adjust has NO tax field" as fact — now false).
 
-Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) debugged and fixed:
+**`qml/model/DataModel.qml`:**
+- Discount-rate-edit scanner (`_finishAdjustmentSync`) — passes the line's current `taxable`/
+  `taxPercent` as `taxRate`, folds `-(revenueDelta + taxDelta)` into `refundAmount` (was just
+  `discDelta`).
+- Price-only-modify block — same pattern, using `d.taxable`/`d.taxPercent` (already available from
+  `OrderAdjust.diffLines`, no new lookup needed).
 
-- **9x `DataModel_deleteGuards` failures** — `ReferenceError: logic is not defined` in
-  `DataModel.qml`'s dispatcher Connections block. Pre-existing bug on `main` (file isn't in this
-  branch's diff), never caught before since no test had exercised these handlers via real signal
-  dispatch. Root cause: `logic` never declared anywhere in the file; correct identifier is
-  `dispatcher`. Fixed all 34 real call sites (`logic.` → `dispatcher.`), left the one comment
-  mention alone (describes the correct external call pattern). Real-world implication: a blocked
-  delete likely failed silently in production too, not just in the new toast — correction note
-  added to the spec doc and KNOWN-ISSUES.md rather than silently editing the earlier claim.
-- **2x compile failures** (`tst_InventoryPage_deleteButton`, `tst_OrdersPage_deleteButton`) —
-  `Type X unavailable` traced to `Constants.qml`'s `import Felgo`, which the CI "QML Tests" job
-  (plain Qt 6.8 only, confirmed by reading `.github/workflows/checks.yml`) can never satisfy.
-  Architectural, not a test bug. Moved both files to new `test/felgo-dependent/` (no workflow job
-  scans it), with a README and corrected header comments; content/assertions unchanged.
-- Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
-  higher risk" framing, which undersold what was actually wrong.
+**Tests written, hand-traced against the implementation, NOT run (no Qt toolchain — always rely on
+CI per standing rule):**
+- `tests/tst_TransactionStore_priceAdjustTax.qml` — new, 11 cases (function-level: tax-delta math,
+  sign flips, zero/negative-rate guards, backward compat, plus the flagship `totalsForOrder`
+  reconciliation tests using Taher's exact numbers, including the full-return-nets-to-zero case and
+  a multi-edit accumulation case).
+- `tests/tst_DataModel_discountEditTax.qml` — new, 3 cases (end-to-end via the REAL
+  `DataModel._tryAdjustOrder` orchestration, not hand-derived formulas — closest automated
+  equivalent to Taher's actual repro steps).
+- `tests/tst_AdjustDiscountRepro.qml` — extended, 1 new case. The existing test in this file
+  already covered this exact discount-scanner code path's NET side, but only ever with
+  `taxable: false` — exactly why the tax-side gap slipped through a prior session that had already
+  fixed the net-side version of this bug class. Closes that specific hole.
 
-## Also done (sixth pass, same session) — fourth rebase
+**Docs updated:**
+- `SKILLS.md` Skill 57 — full root-cause narrative, the two-call-sites finding, the explicit
+  scope-boundary decision (see below), the test-writing note about `tst_AdjustDiscountRepro.qml`'s
+  fixture gap.
+- `AGENTS.md` Current Feature Status table — new row, references Skill 57.
+- `README.md` Testing section — new dated "Update 2026-09-02" paragraph, same convention as the
+  existing 2026-08-29/08-30/09-01 entries.
+- `docs/superpowers/test-plans/2026-09-02-price-adjust-tax-delta-test-plan.md` — full standard
+  format (Skill 49): Unit / Functional-E2E / Regression / Firestore-rules(N/A) sections, then an
+  On-Device Test Plan (Happy Path / Negative / Edge Cases / Affected Areas / Regression Tests).
+  Index row added to `docs/superpowers/test-plans/README.md`.
 
-`origin/main` moved 27 more commits — the chunked-batch-import fix (`fix/bulk-import-chunking-
-durable-status`, flagged as a dangling memory-only branch name back in the first rebase) finally
-landed. Biggest file overlap yet: `qml/model/Gateway.qml` (both branches add something right
-next to `mutationConflicted`'s declaration — main adds a whole new sibling signal
-`batchMutationFailedPermanently`, this branch adds the `action` 4th param to the existing one),
-plus `InventoryStore.qml`/`OrdersStore.qml` (main adds `_onBatchMutationFailedPermanently`, a new
-function; this branch's `_onMutationConflicted` action-branch sits in a different region of the
-same files). Checked both diffs line-by-line *before* rebasing to confirm non-overlap rather than
-assuming; rebase bore it out — only conflict was `CHECKPOINT.md` again, same resolution as the
-last three passes. Verified post-rebase, explicitly, that both sets of changes actually coexist
-in the merged files (not just a clean exit code): my `action === "delete"` branches and main's
-new `_onBatchMutationFailedPermanently` both present in both store files; my 4-arg
-`mutationConflicted` signal and main's new `batchMutationFailedPermanently` signal both declared
-in Gateway.qml; my single-item emit site still passes `item.action`. All 8 touched QML files
-brace-balanced.
+## Explicit scope decision — flagged, not silently fixed or silently ignored
 
-## Key facts for resuming if interrupted before push
+`qml/helper/RealisedMath.js` (`_accumulatePriceAdjust`, feeding the Analysis/Reports "Tax" column)
+has the *same* defect class — never reads `price_adjust.tax` for any event kind, before or after
+this fix. Its Node port (`functions/lib/realisedMath.js`) has the identical gap. This is a
+pre-existing, separate latent inconsistency with its own reconciliation invariants
+(`byDimension` vs `totals`, supplier-filter behavior) — deliberately NOT bundled into this branch
+(per "no bundled refactoring," and to keep this fix's blast radius matched to what Taher actually
+reported). **Needs a decision from Taher**: fix as a follow-up branch, or leave as a known gap for
+now.
 
-- Nothing has been pushed yet as of this checkpoint being written — `origin/main` has no
-  awareness of this branch.
-- Local git identity was not pre-configured in this sandbox; set to
-  `lkdigitalworks-53 <lkdigitalworks@gmail.com>` (matching the last 3 commits' authorship on
-  `main`) to allow committing at all.
-- No toolchain in this sandbox — none of the 5 test files have been run. Brace-balance was
-  checked via a Python character-walk on every touched `.qml` file (all balanced), per this
-  project's established substitute-verification convention.
-- Also noticed but explicitly NOT acted on this session (see spec doc's "Out of scope"): staff
-  delete UI has the identical gap; the memory-recorded active branch
-  `fix/chunked-batch-import-over-200-rows` doesn't exist on the remote (closest match:
-  `fix/bulk-import-chunking-durable-status`) — worth Taher's attention separately, unrelated to
-  this branch.
+## What still needs Taher
 
-## Also done (seventh pass, same session) — doc updates
+- **CI run is the first real proof.** Every test above was written and hand-traced against the
+  implementation, not executed — no Qt/qmltestrunner toolchain in this sandbox. Watch the
+  `qml-tests` job on the PR this branch opens.
+- **The RealisedMath.js scope decision above** — no urgency stated, but genuinely undecided.
+- Everything already carried forward from the archived pr-ci-status-comment checkpoint (coverage
+  reporting decision) is untouched, unrelated to this branch.
 
-Per project convention ("update skills, agents, and readme docs on need basis after every
-change") and explicit ask this pass:
-- **SKILLS.md Skill 58** (new): full writeup of the `logic`/`dispatcher` bug and the missed-
-  AGENTS.md-guidance lesson. Hit a real authoring mistake while writing it — a `str_replace`
-  swapped in my new content where only Skill 52's *heading* should have been touched, silently
-  deleting that heading and orphaning its body under my new section. Caught it by checking
-  `## Skill` heading counts before moving on, not by luck. Repaired by splitting the block back
-  into my actual content (appended at the true end, after Skill 57) and Skill 52 (heading
-  restored, reinserted at its original position before Skill 53) — verified with `git diff`
-  afterward showing **zero deleted lines** relative to the pre-edit file, only additions.
-- **AGENTS.md**: Data Model agent section now documents the `dispatcher` (not `logic`) naming
-  requirement inline, cross-referencing Skill 58. Testing agent scope now includes
-  `test/felgo-dependent/`; its Felgo-page-test guidance is strengthened to point there instead of
-  just saying "don't write these" (since this branch established that writing them anyway, parked
-  correctly, still has value). Feature Status table corrected — Orders/Inventory delete rows now
-  note the button didn't exist until this branch; Staff delete row corrected from a bare "✅ Done"
-  (never accurate — the button never existed) to reflect the still-open gap.
-- **docs/superpowers/test-plans/README.md**: index entry for this branch's test plan updated
-  from the pre-CI "0 run" framing to the actual outcome (bug found+fixed, 2 files relocated, 3
-  pass on CI).
+## How to resume if interrupted
 
-## Remaining
-
-- Nothing outstanding. Push next.
-
-## Also done (eighth pass, same session) — systematic-debugging: Sales Analysis delete bug
-
-Bug report: Sales Analysis value not updating correctly after product delete, other tabs fine,
-asked to check all of them. Followed superpowers:systematic-debugging Phase 1-4 rather than
-patching the one symptom mentioned:
-
-- Traced all 6 SalesPage.qml view modes (Value, Purchased, Current, Revenue, Sold, Profit's
-  Realised + Potential sub-modes) for the same class of dependency (live InventoryStore.getById
-  lookup vs. immutable transaction/batch data) rather than stopping at the first one found.
-- Root cause of the actual reported bug: orphaned StockBatchStore entries from deleteProduct()
-  not cleaning up (already a known, documented, deliberately-deferred gap) collide with
-  potentialProfitByDimension()/SalesPage's duplicate inline Potential-profit walk pricing an
-  orphaned batch's revenue at 0 while still charging its real cogs -- a phantom loss dragging
-  the aggregate "Potential profit" total down.
-- Wrote a failing test first (tst_InventoryStore_potentialProfitOrphanedBatch.qml, 4 cases)
-  against InventoryStore.potentialProfitByDimension before touching the fix, per the Iron Law.
-- Fixed both duplicate implementations (InventoryStore.qml store function; SalesPage.qml's
-  inline mirror) with the same one-line defensive skip -- exclude an orphaned batch entirely,
-  don't price it at 0.
-- Explicitly did NOT fix the upstream orphaned-batch-creation issue itself (deleteProduct not
-  cleaning up StockBatchStore) -- that's the already-deferred, separately-scoped issue; fixing
-  it here would violate "one fix at a time."
-- Explicitly did NOT fix a second, distinct finding from the same audit: the other 5 tabs keep
-  correct totals but mislabel a deleted product's historical breakdown rows (raw productId
-  instead of name, "(uncategorised)" instead of real category) -- different, bigger root cause
-  (no category/name stamped on transaction records at creation time), documented in
-  KNOWN-ISSUES.md as its own item, not bundled into this fix.
-- Both touched files brace-balanced.
-
-## Also done (ninth pass, same session) — systematic-debugging: Inventory Value tab, same session continued
-
-Follow-up bug report on the same debugging thread: Potential-profit fix confirmed working, but
-Inventory Value tab totally unaffected by delete (not just wrong -- zero change at all, any chart).
-
-- Root cause: same orphaned-StockBatchStore-entries issue as the Potential-profit bug, different
-  symptom. totalValue()/valueByProduct()/valueBySupplier() never called getById() at all -- they
-  only need the batch's own qtyRemaining*unitCost, no live product required -- so a deleted
-  product's stock kept counting in full forever. valueByCategory() called getById() but only for
-  the category label, still included the value regardless.
-- Fixed all four functions with the same defensive skip pattern as the Potential-profit fix:
-  exclude a batch entirely once getById(productId) returns nothing. Also fixed SalesPage.qml's
-  filtered _valueMaps() walk (same unguarded pattern); its unfiltered path already delegates to
-  the now-fixed store functions, confirmed by tracing every call site, not assumed.
-- Failing test first: tests/tst_InventoryStore_valueOrphanedBatch.qml (5 cases).
-- Noted honestly: totalValue() itself has zero live callers anywhere in the QML codebase
-  (checked) -- fixed anyway since it's the same function group and now test-covered, but the
-  real user-visible path is _valueMaps -> valueByProduct/valueBySupplier/valueByCategory.
-- Flagged, not decided: should deleting a product with remaining stock even be allowed? The
-  existing guard blocks deletes referenced by open orders but never checks stock. Every fix this
-  session makes the display consistent (exclude deleted-product stock everywhere), not whether
-  allowing the delete in the first place was right. Business decision, not a bug -- documented in
-  KNOWN-ISSUES.md, not acted on.
-- Both touched files brace-balanced.
+Branch `fix/2026-09-02-price-adjust-tax-delta` — as of this checkpoint, all changes above are
+made in the local sandbox working tree but **not yet committed or pushed**. If picking this back
+up: `git status`/`git diff` to see exactly what's staged/unstaged (should match the file list
+above), then commit and push per standing protocol (autonomous, PAT, `Taher (via Claude session)
+<tsowner@lkdigitalworks.com>` per existing repo commit-author convention) if not already done. If
+already pushed, check whether Taher opened a PR and whether CI's `qml-tests` job actually passed —
+if it didn't, that's the next thing to fix, not a reason to assume the hand-traced math was wrong
+without reading the actual failure first.
