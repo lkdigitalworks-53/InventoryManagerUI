@@ -217,6 +217,14 @@ App {
             permissionErrorDlg.open()
         }
 
+        function onProductDeleted(productId) {
+            Toast.show(qsTr("Product deleted"))
+        }
+
+        function onOrderDeleted(orderId) {
+            Toast.show(qsTr("Order deleted"))
+        }
+
         function onSignInWithEmail(email, password) {
             AuthService.signInWithEmail(email, password)
         }

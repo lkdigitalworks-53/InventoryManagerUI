@@ -1,77 +1,101 @@
-# CHECKPOINT — PR CI status comment implemented and pushed
+# CHECKPOINT — feature/product-order-delete-ui
 
-**Session date:** 2026-09-02
-**Branch:** `feature/pr-ci-status-comment` (off `main`)
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-01-ordermath-linetax-refund-coverage-CHECKPOINT.md`
-(unrelated prior arc — item 1/2/3 roadmap triage, still gated on Taher's input, untouched this
-session).
+Session date: 2026-08-30
+Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `d2d9932`, 8 commits
+ahead, about to push)
 
-## What this session is
+## Status: third rebase done, pushing
 
-Two parts. First, Taher asked to investigate test-coverage reporting (unit/PR-diff/overall) across
-the three test suites — researched, **not implemented**, findings and recommendation given, Taher
-said "leave it for now." Second, a new ask: post CI results as a PR comment (success summary, or
-failing-test names + reasons on failure, with a link to the CI job logs). This session implements
-the second one.
+Single-pass session per explicit instruction — no interactive review gate used; decisions
+documented in the spec doc for after-the-fact review instead.
 
-## Coverage-reporting research (not implemented, for context if revisited)
+## What's done
 
-- Node functions & Firestore rules: mature free tooling exists (`node --test
-  --experimental-test-coverage`, Firestore emulator's native `ruleCoverage` endpoint). Near-zero CI
-  time cost.
-- QML/JS: no mature free tool for Qt6. Coco is commercial; `qoverage` is pre-alpha. Recommended
-  **not** gating CI on a pre-alpha tool's numbers — flagged as worse than no number, since it'd get
-  treated as ground truth in merge decisions.
-- Decision needed from Taher before any of this proceeds: Codecov account signup (free for public
-  repos, needs a token), whether QML gets a numeric gate at all (recommended: no, keep the existing
-  manual test-plan matrix), and whether patch-coverage failures should hard-block merge or just
-  comment. **Not decided yet — parked, no code written for this part.**
+1. Archived the stale root `CHECKPOINT.md` (described already-merged handler-test work,
+   commit `d1087b6`) to `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md`.
+2. Branched off `main`.
+3. Wrote spec: `docs/superpowers/specs/2026-08-30-product-order-delete-ui.md`.
+4. Wrote plan: `docs/superpowers/plans/2026-08-30-product-order-delete-ui.md`.
+5. **Commit `ec1d74f`** — row-level delete buttons: `Constants.qml` ("trash" icon token),
+   `InventoryPage.qml` (ProductCard delete button), `OrdersPage.qml` (order row delete button).
+6. **Commit `ba5ab20`** — success toasts (`Main.qml`) + delete-specific conflict wording
+   (`Gateway.qml`'s `mutationConflicted` gains `action` 4th param, `InventoryStore.qml`/
+   `OrdersStore.qml`'s `_onMutationConflicted` branch on it).
+7. Wrote 5 test files (not yet committed): `tests/tst_DataModel_deleteGuards.qml`,
+   `tests/tst_InventoryStore_mutationConflicted.qml`, 2 new cases appended to
+   `tests/tst_OrdersStore_sync.qml`, `tests/tst_InventoryPage_deleteButton.qml`,
+   `tests/tst_OrdersPage_deleteButton.qml` (the last two are this repo's first page-level
+   UI-interaction tests — flagged as higher-risk in their own header comments and in the test
+   plan).
+8. Wrote test plan: `docs/superpowers/test-plans/2026-08-30-product-order-delete-ui-test-plan.md`,
+   added its row to `docs/superpowers/test-plans/README.md`'s index.
 
-## PR CI status comment — implemented, tested, pushed this session
+## Also done (second pass, same session)
 
-New `pr-comment` job appended to `.github/workflows/checks.yml`, `needs: [qml-tests,
-functions-tests, firestore-rules-tests, e2e-tests]`, `if: always() && github.event_name ==
-'pull_request'`. Downloads each job's existing JUnit XML artifact, runs the comment script's own
-unit tests as a CI step (fail loudly, don't post a garbled comment), then posts/updates a single PR
-comment via the built-in `GITHUB_TOKEN` (not Taher's PAT — scoped `permissions: pull-requests:
-write, actions: read` at job level, works on forked PRs too).
+- Rebased onto `origin/main` (3 new commits: Skill 53 handler-parity test coverage, Skill 54
+  sandbox-capability correction, `main` merge). Two conflicts:
+  - `CHECKPOINT.md` — kept mine per explicit instruction (main's version described the
+    unrelated handler-parity-coverage-gap session; this file is scratch/current-session by
+    convention anyway).
+  - `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md` —
+    add/add: both this branch and `main` independently archived the same stale prior
+    CHECKPOINT.md. Took `main`'s version — strict superset of mine, with an added "Post-hoc
+    correction" section documenting the exact same commit-vs-checkpoint discrepancy I'd noticed
+    myself but hadn't written into the archived file.
+  - Everything else (`AGENTS.md`, `SKILLS.md`, `README.md`, `functions/test/*`,
+    `scripts/setup-sandbox-qmltestrunner.sh`) applied clean, no overlap with this branch.
+  - Force-pushed after rebase (`--force-with-lease`), history rewritten, new SHAs.
+- Added 6 entries to `docs/superpowers/KNOWN-ISSUES.md` (existing file, appended, not
+  replaced): the `_send` terminal-failure gap as it applies to deletes, staff delete's
+  identical missing-UI gap, product-delete's orphaned stock-batch/photo gap, the Skill-54
+  sandbox-capability discovery (this session's 5 test files were written assuming no toolchain
+  exists here — that assumption is now outdated per `main`'s own Skill 54, not yet acted on),
+  and the memory/remote branch-name mismatch noticed earlier this session.
 
-**New files, all in `.github/scripts/`:**
-- `parse-junit.js` — dependency-free JUnit XML parser, scoped to the two generators this repo
-  actually uses (`qmltestrunner` and `node --test --test-reporter=junit`).
-- `resolve-job-url.js` — matches a job's display name to its `html_url` from the GitHub "list jobs"
-  API response, so every row/failure links straight to that job's logs.
-- `build-summary.js` — pure function building the comment markdown; no network/filesystem calls, so
-  format changes are testable without mocking anything.
-- `post-ci-comment.js` — thin I/O orchestration: reads artifact files, calls the GitHub API,
-  upserts the comment via a marker comment (`<!-- ci-status-comment:checks.yml -->`) so re-pushes
-  update one comment instead of duplicating.
+## Also done (third pass, same session) — CI debug from attached logs
 
-**Tests:** `.github/scripts/__tests__/` — 39 cases total, all genuinely run locally
-(`node --test .github/scripts/__tests__/*.test.js` → 39/39 pass), pure Node so no
-Qt/Firebase toolchain needed. Caught one real bug during the TDD loop: `name="..."` attribute regex
-had no word boundary and matched inside `classname="..."`, returning the classname as the test
-name — fixed with `\b`.
+Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) debugged and fixed:
 
-**Docs updated:** `SKILLS.md` Skill 56 (full narrative, the caught bug, design decisions),
-`AGENTS.md` feature table, `README.md` Testing section, and a full test plan at
-`docs/superpowers/test-plans/2026-09-02-pr-ci-status-comment-test-plan.md` (UT / functional /
-regression / E2E-N/A / on-device-N/A, per the standard format — this change has no on-device or E2E
-surface since it's CI-only, noted explicitly rather than silently omitted).
+- **9x `DataModel_deleteGuards` failures** — `ReferenceError: logic is not defined` in
+  `DataModel.qml`'s dispatcher Connections block. Pre-existing bug on `main` (file isn't in this
+  branch's diff), never caught before since no test had exercised these handlers via real signal
+  dispatch. Root cause: `logic` never declared anywhere in the file; correct identifier is
+  `dispatcher`. Fixed all 34 real call sites (`logic.` → `dispatcher.`), left the one comment
+  mention alone (describes the correct external call pattern). Real-world implication: a blocked
+  delete likely failed silently in production too, not just in the new toast — correction note
+  added to the spec doc and KNOWN-ISSUES.md rather than silently editing the earlier claim.
+- **2x compile failures** (`tst_InventoryPage_deleteButton`, `tst_OrdersPage_deleteButton`) —
+  `Type X unavailable` traced to `Constants.qml`'s `import Felgo`, which the CI "QML Tests" job
+  (plain Qt 6.8 only, confirmed by reading `.github/workflows/checks.yml`) can never satisfy.
+  Architectural, not a test bug. Moved both files to new `test/felgo-dependent/` (no workflow job
+  scans it), with a README and corrected header comments; content/assertions unchanged.
+- Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
+  higher risk" framing, which undersold what was actually wrong.
 
-## What still needs Taher
+## Also done (fifth pass, same session) — third rebase
 
-- **First real PR run is the actual proof.** Unit/functional tests prove the parsing and
-  comment-building logic is correct in isolation; only a real GitHub Actions run proves the
-  artifact-download → job-list API → comment-post wiring end to end. Watch the first PR this
-  branch opens (or the next PR after merge) for: (a) does the comment appear at all, (b) do the
-  per-job log links actually resolve, (c) does a second push to the same PR update the comment
-  rather than duplicate it.
-- Coverage-reporting decision from the first half of this session — still open, no urgency stated.
+`origin/main` moved 18 more commits (PR-CI-comment tooling under `.github/scripts/`, a
+`_resetPending` guard applied to 6 stores including `InventoryStore.qml`/`OrdersStore.qml` --
+the same two files this branch's `action`-param conflict-toast fix touches). Checked before
+rebasing: main's change sits near the top of each file (`_resetAndFetch`/`_fetchFromFirebase`),
+this branch's change is in `_onMutationConflicted` further down -- different regions, confirmed
+no overlap. Rebase bore that out: only conflict was `CHECKPOINT.md` again, same resolution as
+the last two passes. Verified post-rebase that both changes coexist correctly in both files
+(`_resetPending` present, `action === "delete"` branch present) rather than just trusting a
+clean rebase exit code.
 
-## How to resume if interrupted
+## Key facts for resuming if interrupted before push
 
-Branch `feature/pr-ci-status-comment` is pushed with all changes above. If picking this back up:
-check whether Taher already opened a PR from it and reviewed the live comment behavior — if so,
-follow up on whatever the real run surfaced (link resolution, formatting, anything the mocks didn't
-catch). If not, the branch is ready to open a PR from as-is.
+- Nothing has been pushed yet as of this checkpoint being written — `origin/main` has no
+  awareness of this branch.
+- Local git identity was not pre-configured in this sandbox; set to
+  `lkdigitalworks-53 <lkdigitalworks@gmail.com>` (matching the last 3 commits' authorship on
+  `main`) to allow committing at all.
+- No toolchain in this sandbox — none of the 5 test files have been run. Brace-balance was
+  checked via a Python character-walk on every touched `.qml` file (all balanced), per this
+  project's established substitute-verification convention.
+- Also noticed but explicitly NOT acted on this session (see spec doc's "Out of scope"): staff
+  delete UI has the identical gap; the memory-recorded active branch
+  `fix/chunked-batch-import-over-200-rows` doesn't exist on the remote (closest match:
+  `fix/bulk-import-chunking-durable-status`) — worth Taher's attention separately, unrelated to
+  this branch.

@@ -54,7 +54,7 @@ QtObject {
     // applies to plain recordMutation edits (name/price/category/etc via
     // updateProduct); deductStock/restock/creditStockNoBatch already go
     // through recordDelta, which doesn't use CAS and can't conflict this way.
-    function _onMutationConflicted(entity, entityId, current) {
+    function _onMutationConflicted(entity, entityId, current, action) {
         if (entity !== "inventory") return
         var arr = products.slice()
         var idx = -1
@@ -69,7 +69,15 @@ QtObject {
             arr.splice(idx, 1)
         }
         products = arr
-        Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        // A rejected delete-conflict means the product still legitimately
+        // exists (someone else edited it after this client's stale
+        // `before`) and was just pushed back above — "your change didn't
+        // save" would be confusing for what was actually a delete attempt.
+        if (action === "delete") {
+            Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+        } else {
+            Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        }
     }
 
     function _load() {

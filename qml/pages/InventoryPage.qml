@@ -338,6 +338,41 @@ Item {
                     }
                 }
             }
+
+            // Delete button — same idiom as Restock above: a fixed hit
+            // target with its own MouseArea that accepts the tap so it
+            // doesn't bubble to the card's own onClicked (viewClicked).
+            // deleteClicked() was already wired end-to-end (DataModel role
+            // check + open-order guard, confirm dialog in Main.qml) — this
+            // was the only missing piece.
+            Rectangle {
+                id: deleteBtn
+                objectName: "deleteBtn"
+                Layout.preferredHeight: dp(28)
+                Layout.preferredWidth: dp(28)
+                visible: card.canManage
+                radius: dp(Constants.radiusPill)
+                color: deleteArea.pressed
+                        ? Qt.rgba(0.94, 0.27, 0.27, 0.18)
+                        : "transparent"
+                Behavior on color { ColorAnimation { duration: Constants.durFast } }
+
+                Icon {
+                    anchors.centerIn: parent
+                    name: "trash"
+                    size: sp(16)
+                    color: Constants.danger
+                }
+                MouseArea {
+                    id: deleteArea
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: function(mouse) {
+                        mouse.accepted = true
+                        card.deleteClicked()
+                    }
+                }
+            }
                 }
             }
         }

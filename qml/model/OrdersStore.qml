@@ -70,7 +70,7 @@ QtObject {
     // the server's actual current document, same shape as a real sync
     // (_normalizeOrder), and tells the user so they don't keep looking at a
     // version that silently never saved.
-    function _onMutationConflicted(entity, entityId, current) {
+    function _onMutationConflicted(entity, entityId, current, action) {
         if (entity !== "order") return
         var arr = orders.slice()
         var idx = -1
@@ -87,7 +87,15 @@ QtObject {
         orders = arr
         revision++
         _refreshCounts()
-        Toast.show(qsTr("This order was updated elsewhere — your change didn't save. \nRefreshed to the latest version."))
+        // A rejected delete-conflict means the order still legitimately
+        // exists (someone else edited it after this client's stale
+        // `before`) and was just pushed back above — "your change didn't
+        // save" would be confusing for what was actually a delete attempt.
+        if (action === "delete") {
+            Toast.show(qsTr("Couldn't delete — this order was updated elsewhere. It's been restored with the latest version."))
+        } else {
+            Toast.show(qsTr("This order was updated elsewhere — your change didn't save. \nRefreshed to the latest version."))
+        }
     }
 
     onAutoApproveEnabledChanged: {
