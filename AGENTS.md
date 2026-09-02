@@ -73,7 +73,7 @@ machine, not this chat.
 | Cloud Functions env-awareness (all 4 functions resolve db per request) | ✅ Done — pending real deploy/emulator verification |
 | Paginated reads, all 6 growing stores (fixes silent truncation past Firestore's internal page-size threshold) | ✅ Done — pending qmltestrunner run |
 | Write-path fix (no more collection-wide bulk overwrite on a single mutation) | ✅ Done |
-| Bulk-import chunking (>200 rows split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 55 |
+| Bulk-import chunking (>200 rows split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 57 |
 | `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
 | SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
 | India compliance roadmap (design) | 📋 Approved — P0 substantially implemented, see below |

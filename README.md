@@ -641,7 +641,7 @@ all three affected stores (`InventoryStore`, `OrdersStore`, `SupplierStore`) sha
 `Gateway.recordMutations()` now transparently splits an oversized `items` array into multiple
 `<=maxBatchSize` outbox entries, and `_sendBatch()` now classifies a batch failure as terminal
 (a definitive, payload-shape validation error that can never succeed on retry — narrower than "any
-4xx," see SKILLS Skill 55) or transient (unchanged existing retry behavior) instead of treating
+4xx," see SKILLS Skill 57) or transient (unchanged existing retry behavior) instead of treating
 every non-conflict failure the same. A terminal failure now fires `batchMutationFailedPermanently`,
 which each store reconciles through the exact same signal-driven pattern already used for CAS
 conflicts (`mutationConflicted`) — rolling back the specific rows that never reached Firestore and
@@ -650,7 +650,7 @@ didn't need new persistence: `OutboxStore` already durably queues (and auto-resu
 every chunk before `recordMutations()` returns, and the server's existing `requestId:entityId`
 audit-log dedup already makes a chunk that partially committed before a crash safe to retry — an
 initially-planned `ImportSessionStore` duplicating that tracking was cut in a `/ponytail` pass
-before any code was written (see Skill 55 for the full reasoning). 33 new test cases across
+before any code was written (see Skill 57 for the full reasoning). 33 new test cases across
 `tests/tst_Gateway.qml`, `tests/tst_InventoryStore_upsertMany.qml`,
 `tests/tst_OrdersStore_mutations.qml`, a new `tests/tst_SupplierStore_batchMutationFailedPermanently.qml`,
 a new `test/e2e/tst_BulkImportChunkingE2E.qml` (first file to exercise `Gateway.batchFunctionUrl`
