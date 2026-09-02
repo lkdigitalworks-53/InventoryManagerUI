@@ -13,9 +13,19 @@ app's interactivity the moment connectivity drops — offline/airplane-mode test
 "connectivity drops mid-request," never "start an action already offline," since the latter can't be
 initiated through the UI at all. (2) There's currently no way to log a second test session into the
 same tenant as staff/manager, which blocks genuine multi-device concurrent testing (a same-owner-
-account session on two physical devices may work as an untested substitute). Neither is this
-repo's/branch's own defect — both are pre-existing product/test-infrastructure gaps, tracked here only
-so future test plans don't silently assume they're testable and quietly skip them instead.
+account session on two physical devices may work as an untested substitute). (3) (added 2026-09-01,
+found while implementing item 3 below) `FirebaseService.query`/`get`/`put` are plain `function`
+declarations on a `pragma Singleton` — not injectable (confirmed directly: reassigning
+`FirebaseService.query` from a test throws `Cannot assign to read-only property`). Any test needing
+to control the timing or outcome of a Firestore call has no way to exercise the real store singletons
+under `qmltestrunner` — the only workaround so far (`tst_TenantContextRaceGuard.qml`, now also
+`tst_ResetPendingGuard.qml`) is a hand-written parallel model of the store's control flow, which
+proves the *logic* is sound but carries its own risk: if the real `_resetAndFetch`/`_fetchFromFirebase`
+pattern changes later without the mirror being updated too, those tests would keep passing while no
+longer testing what's actually shipped. Not urgent enough to justify a refactor on its own — noted so
+it doesn't get rediscovered from scratch next time this class of bug shows up. None of the three are
+this repo's/branch's own defect — all are pre-existing product/test-infrastructure gaps, tracked here
+only so future test plans don't silently assume they're testable and quietly skip them instead.
 
 ---
 

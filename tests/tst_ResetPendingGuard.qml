@@ -37,6 +37,14 @@ TestCase {
     // (`_resetPending`). `tag` throughout stands in for "which account's
     // data this is" -- the real code has no such field, this is purely a
     // test hook to tell stale/fresh data apart in assertions.
+    //
+    // Note: `_pendingTag` below exists only here, not in the real stores.
+    // That's intentional, not drift -- the real `_resetAndFetch()` doesn't
+    // take an account/tenant parameter at all; it re-reads whatever the
+    // current auth context is when it actually runs, so it has nothing to
+    // remember between the pending reset being requested and being honored.
+    // This model needs the tag anyway, purely so assertions can tell which
+    // account's data a run ended up with.
     function makeStore(variant) {
         return {
             variant: variant,
