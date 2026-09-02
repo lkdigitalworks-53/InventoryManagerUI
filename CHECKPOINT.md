@@ -1,10 +1,10 @@
 # CHECKPOINT — feature/product-order-delete-ui
 
 Session date: 2026-08-30
-Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `9bc6710`, 7 commits
+Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `d2d9932`, 8 commits
 ahead, about to push)
 
-## Status: second rebase done, pushing
+## Status: third rebase done, pushing
 
 Single-pass session per explicit instruction — no interactive review gate used; decisions
 documented in the spec doc for after-the-fact review instead.
@@ -72,21 +72,17 @@ Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) de
 - Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
   higher risk" framing, which undersold what was actually wrong.
 
-## Also done (fourth pass, same session) — second rebase
+## Also done (fifth pass, same session) — third rebase
 
-`origin/main` moved 12 commits (2 more PRs merged: #49 review/post-pr45-qml-audit, #58
-feature/2026-09-01-ordermath-linetax-refund-coverage — unrelated work, other sessions active on
-this repo concurrently). Rebased clean: only conflict was `CHECKPOINT.md` again (modify/delete —
-origin/main had it modified, my first commit deletes/renames it as part of the archive step),
-resolved the same way as the first rebase (accept the delete, a later commit in this branch
-recreates it fresh with my content). Everything else applied without conflict (AGENTS.md,
-README.md, SKILLS.md, functions/*, tests/tst_OrderMath*, new spec docs from the other PRs — zero
-overlap with this branch's files). Force-pushed after.
-
-Also unresolved from last turn: the previous push (`b37d3e9`) never triggered a CI run despite
-every other push to this branch/PR triggering normally — checked workflow config, permissions,
-queued/in-progress runs, nothing explained it. Flagged to Taher, not re-diagnosed this pass;
-this rebase's push is a fresh commit SHA, worth checking whether *it* triggers normally.
+`origin/main` moved 18 more commits (PR-CI-comment tooling under `.github/scripts/`, a
+`_resetPending` guard applied to 6 stores including `InventoryStore.qml`/`OrdersStore.qml` --
+the same two files this branch's `action`-param conflict-toast fix touches). Checked before
+rebasing: main's change sits near the top of each file (`_resetAndFetch`/`_fetchFromFirebase`),
+this branch's change is in `_onMutationConflicted` further down -- different regions, confirmed
+no overlap. Rebase bore that out: only conflict was `CHECKPOINT.md` again, same resolution as
+the last two passes. Verified post-rebase that both changes coexist correctly in both files
+(`_resetPending` present, `action === "delete"` branch present) rather than just trusting a
+clean rebase exit code.
 
 ## Key facts for resuming if interrupted before push
 
