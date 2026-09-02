@@ -921,13 +921,26 @@ Item {
                 // revenue down when discount up: recordPriceAdjust(qty, perUnitDelta)
                 // yields revenueDelta = -(qty*perUnitDelta). Factor as (1, discDelta)
                 // so revenueDelta = -discDelta exactly, independent of survQ.
-                TransactionStore.recordPriceAdjust(
+                //
+                // taxRate: the line's CURRENT (nl2) taxable/taxPercent -- same
+                // field every other tax computation in this codebase reads
+                // (lineTax/computeOrderTotals). A discount changes net, and on a
+                // taxable line tax is always net*(rate/100), so the discount edit
+                // must book a matching tax delta or the order's authoritative
+                // tax (TransactionStore.totalsForOrder, read by
+                // OrdersStore.applyAdjustment for completed orders) stays stale
+                // at the pre-discount amount (2026-09-02 fix).
+                var discTaxRate = (nl2.taxable && nl2.taxPercent > 0) ? nl2.taxPercent : 0
+                var discAdj = TransactionStore.recordPriceAdjust(
                     o, { productId: ol2.productId || "", name: ol2.name },
                     1, discDelta, "discount",
                     (note ? note + " · " : "") + "discount "
                         + (Math.round(_lineDiscAmt(ol2) * 100) / 100) + "->"
-                        + (Math.round(_lineDiscAmt(nl2) * 100) / 100) + " on " + ol2.name)
-                refundAmount += discDelta   // discount up → refund owed to customer
+                        + (Math.round(_lineDiscAmt(nl2) * 100) / 100) + " on " + ol2.name,
+                    discTaxRate)
+                // discount up → refund owed to customer: the net delta AND its
+                // tax (customer paid tax on the pre-discount price too).
+                refundAmount += -(discAdj.revenueDelta + discAdj.taxDelta)
             }
 
             OrdersStore.applyAdjustment(orderId, enrichedLines, {
@@ -1052,11 +1065,18 @@ Item {
                 var survivingQty = Math.min(d.oldQty, d.newQty)
                 var perUnitDelta = d.oldPrice - d.newPrice
                 if (survivingQty > 0 && perUnitDelta !== 0) {
-                    TransactionStore.recordPriceAdjust(
+                    // d.taxable/d.taxPercent come straight from OrderAdjust.diffLines
+                    // (the line's own current tax fields). Same reasoning as the
+                    // discount-edit block above: a price correction on a taxable
+                    // line changes net, so it must book a matching tax delta too,
+                    // or the order's authoritative tax goes stale (2026-09-02 fix).
+                    var priceTaxRate = (d.taxable && d.taxPercent > 0) ? d.taxPercent : 0
+                    var priceAdj = TransactionStore.recordPriceAdjust(
                         o, { productId: d.productId, name: d.name },
                         survivingQty, perUnitDelta, reason,
-                        (note ? note + " · " : "") + "price " + d.oldPrice + "->" + d.newPrice)
-                    refundAmount += survivingQty * perUnitDelta
+                        (note ? note + " · " : "") + "price " + d.oldPrice + "->" + d.newPrice,
+                        priceTaxRate)
+                    refundAmount += -(priceAdj.revenueDelta + priceAdj.taxDelta)
                 }
             }
         }

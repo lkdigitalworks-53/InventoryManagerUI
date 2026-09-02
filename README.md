@@ -253,6 +253,17 @@ serialization-failure fallback that was previously only reachable via a live HTT
 now live (and are 100% covered) in `httpResponse.js` instead. The one remaining `index.js` gap
 (`canAssignRole`'s dead `else`) is unchanged, out of scope here.
 
+**Update 2026-09-02:** fixed a bug — a discount or price edit on a completed order's *taxable*
+line left the order's authoritative tax stale (`TransactionStore.recordPriceAdjust` booked revenue
+only, no tax delta), and a subsequent full return left a residual fraction of unreconciled
+tax/revenue in the order. QML-only change (`TransactionStore.qml`, `DataModel.qml`); no Cloud
+Functions or Firestore rules surface. 14 new/extended test cases across
+`tests/tst_TransactionStore_priceAdjustTax.qml` (new), `tests/tst_DataModel_discountEditTax.qml`
+(new), and `tests/tst_AdjustDiscountRepro.qml` (extended) — written and hand-traced against the
+implementation but **not run** this session (no Qt toolchain in the sandbox; CI is the first real
+proof). See `SKILLS.md` Skill 57 and
+`docs/superpowers/test-plans/2026-09-02-price-adjust-tax-delta-test-plan.md`.
+
 ---
 
 ## Qt Skills Cheat Sheet
