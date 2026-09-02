@@ -2600,3 +2600,53 @@ something does — a stale checkpoint doc and a genuine logic collision produce 
 response. A 6-day-old dirty flag on a small, well-scoped, well-tested PR was worth 90 seconds of
 `git merge --no-commit` to actually look at, rather than continuing to defer it on the strength of a
 plausible-sounding guess from a different session that never checked either.
+
+## Skill 56: PR CI status comment — researching QML coverage tooling first surfaced why "just add
+% coverage gates" wasn't the ask that got acted on
+
+Taher first asked about generating test-coverage reports (unit/PR-diff/overall) across all three
+test suites. Research (web search, not assumption) found the three layers are not equally tractable:
+Node's built-in `--experimental-test-coverage` and the Firestore emulator's native
+`ruleCoverage` endpoint are mature, free, and near-zero CI-time cost; QML/JS coverage has no mature
+free tool for Qt6 — Coco is commercial, `qoverage` (Qt6-native, `qmldom`-based) is pre-alpha. Recommendation
+given to Taher: don't gate CI on a pre-alpha instrumenter's numbers — a wrong number is worse than
+no number, since it gets treated as ground truth in merge decisions. Deferred rather than
+implemented, on Taher's call — a case of surfacing the tooling gap and recommending against
+building on it rather than proceeding just because a tool technically exists.
+
+**What got implemented instead, same session**: a `pr-comment` job in `checks.yml` that posts (and
+upserts, not duplicates) a single PR comment summarizing all four test jobs — success counts on
+green, per-job failing-test name+reason+logs-link on red. Deliberately thin I/O glue
+(`post-ci-comment.js`) around three pure, independently-unit-tested modules:
+- `parse-junit.js` — dependency-free JUnit XML parser. Scoped narrowly to the two generators this
+  repo actually produces (`qmltestrunner -o results.xml,junitxml` and
+  `node --test --test-reporter=junit`), not a general XML parser.
+- `resolve-job-url.js` — matches a job's display name against the GitHub "list jobs for run" API
+  response to get its direct log-page URL, so every row/failure links straight to that job's logs
+  instead of just the overall run.
+- `build-summary.js` — pure markdown-builder function, network/filesystem-free, so comment format
+  changes can be verified with plain assertions.
+
+**Real bug caught by the test suite, not by inspection**: the first `extractAttr` regex for pulling
+`name="..."` had no word boundary, so it matched inside `classname="..."` and returned the
+classname's value as the test's name. A test titled "unnamed testcase falls back to placeholder
+name" failed with `actual: 'c'` instead of the expected placeholder — caught immediately by running
+`node --test` locally (pure Node, no Qt/Firebase toolchain needed, so this one didn't have to wait
+on CI to catch). Fixed with a `\b` boundary: `classname=` and `name=` share the substring `name=`,
+but `\b` correctly refuses to match at the `s`/`n` boundary inside `classname` (both word chars) while
+still matching after a space or `<testcase `.
+
+**Design decisions worth remembering if this needs extending**:
+- Uses the built-in `GITHUB_TOKEN` scoped via job-level `permissions:` (`pull-requests: write`,
+  `actions: read`), not Taher's PAT — works on forked-PR CI runs (a PAT wouldn't/shouldn't be
+  exposed there) and follows least-privilege, matching the existing per-job `permissions:` pattern
+  already in `checks.yml`.
+- Upsert via a marker comment (`<!-- ci-status-comment:checks.yml -->`) — finds and `PATCH`es the
+  existing comment on re-push instead of accumulating a new comment per push.
+- `continue-on-error: true` on the artifact-download step and defensive `null`-parsed handling for
+  any job with no `results.xml` — a job that crashed before its own upload step (npm ci failure, Qt
+  install failure) is a real, reportable state ("produced no test results"), not a reason to crash
+  the comment job and lose the report entirely.
+- Runs the comment script's own unit tests (`node --test .github/scripts/__tests__/*.test.js`) as a
+  CI step *before* trusting the script to post — a bug in the parser/builder should fail loudly, not
+  silently post a garbled comment.

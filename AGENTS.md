@@ -64,6 +64,7 @@ machine, not this chat.
 | Empty-state UI for Analysis page | ✅ Done |
 | Success toast for key operations | ✅ Done |
 | QML unit-test harness (qmltestrunner, first suite landed) | ✅ Done |
+| PR CI status comment (pass/fail summary + per-job failing-test breakdown + logs links, `checks.yml`) | ✅ Done, `feature/pr-ci-status-comment` — SKILLS.md Skill 56 |
 | Editable per-line price in New Order dialog | ✅ Done |
 | Swipe left/right between Analysis report views | ✅ Done |
 | Add Product advanced section open by default | ✅ Done |
