@@ -221,6 +221,14 @@ See `AGENTS.md`'s **Testing & QA Agent** section for what each layer actually co
 `SKILLS.md` Skill 40 for the E2E layer's specific gotchas (Cloud Functions cold starts, singleton
 construction order, per-function emulator URLs) before adding a new scenario there.
 
+**PR status comment:** a fifth job, `pr-comment`, runs after the four above finish (`if: always()`,
+`pull_request` events only) and posts a single PR comment summarizing results — pass/fail counts on
+green, per-job failing-test name + reason + a direct link to that job's logs on red. Re-pushes
+update the same comment (matched via an HTML marker) rather than piling up duplicates. Logic lives
+in `.github/scripts/` (`parse-junit.js`, `resolve-job-url.js`, `build-summary.js`,
+`post-ci-comment.js`), unit/functional tested independently of any real GitHub Actions run — see
+`SKILLS.md` Skill 56 and `docs/superpowers/test-plans/2026-09-02-pr-ci-status-comment-test-plan.md`.
+
 **Update 2026-08-29:** all 8 `functions/index.js` HTTPS handlers now have handler-level test
 coverage (auth, request wiring, response-building — not just the `lib/` pure-logic layer the table
 above already listed). `recordMutation`/`recordDelta`/`recordMutationsBatch` were covered first
