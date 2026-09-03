@@ -65,7 +65,7 @@ machine, not this chat.
 | Success toast for key operations | ✅ Done |
 | QML unit-test harness (qmltestrunner, first suite landed) | ✅ Done |
 | PR CI status comment (pass/fail summary + per-job failing-test breakdown + logs links, `checks.yml`) | ✅ Done, `feature/pr-ci-status-comment` — SKILLS.md Skill 56 |
-| Fix: completed-order discount/price edit on a taxable line left tax stale, residual after return | ✅ Done, `fix/2026-09-02-price-adjust-tax-delta` — SKILLS.md Skill 57, pending CI run |
+| Fix: completed-order discount/price edit on a taxable line left tax stale (order-level AND Analysis/Reports aggregation) | ✅ Done, `fix/2026-09-02-price-adjust-tax-delta` — SKILLS.md Skill 57. Node-side (`functions/lib/realisedMath.js`) genuinely tested, 194/194 `functions/` suite passing; QML-side pending CI |
 | Editable per-line price in New Order dialog | ✅ Done |
 | Swipe left/right between Analysis report views | ✅ Done |
 | Add Product advanced section open by default | ✅ Done |
