@@ -251,4 +251,94 @@ TestCase {
         compare(_round2(m["S1"].revenue), 180, "net after discount edit = 200 - 20")
         compare(_round2(m["S1"].discount), 20, "discount column reflects the edit")
     }
+
+    // ── 2026-09-02 fix (SKILLS Skill 57): price_adjust events must carry a
+    // proportional tax delta, not just revenue. Reproduces Taher's own bug
+    // numbers: cp 50 / sp 60 / tax 5%, 1 unit sold (net 60, tax 3), then a 5%
+    // discount edit (price_adjust total -3, tax -0.15) — expected net 57,
+    // tax 2.85. See TransactionStore.recordPriceAdjust for where the event's
+    // tax field itself gets stamped; this file only proves the aggregator
+    // folds it in correctly once stamped. ───────────────────────────────────
+
+    function test_price_adjust_tax_share_no_scope_supplier_dimension() {
+        var ev = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0,
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount",
+              supplierSlices: [{ key: "S1", amount: -3 }] }
+        ]
+        var t = RM.totals(ev, null, {})
+        compare(_round2(t.net), 57, "net settles at the discounted 57")
+        compare(_round2(t.tax), 2.85, "THE bug: tax must move off the stale 3, not stay frozen")
+
+        var m = RM.byDimension("supplierId", ev, null, {})
+        compare(_round2(m["S1"].revenue), 57)
+        compare(_round2(m["S1"].tax), 2.85, "supplier dimension row also carries the tax share")
+        compare(_round2(m["S1"].discount), 3)
+    }
+
+    // Same scenario, filtered by the supplier — exercises byDimension's OWN
+    // scope-filtered price_adjust branch (_priceAdjustSupplierAmount +
+    // _priceAdjustTaxShare), a DIFFERENT code path from _accumulatePriceAdjust
+    // the test above exercises.
+    function test_price_adjust_tax_share_supplier_filtered() {
+        var ev = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0, orderChannel: "online",
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount", orderChannel: "online",
+              supplierSlices: [{ key: "S1", amount: -3 }] }
+        ]
+        var tS1 = RM.totals(ev, { supplierId: "S1" }, {})
+        compare(_round2(tS1.net), 57)
+        compare(_round2(tS1.tax), 2.85, "scope-filtered path must also fold in tax")
+
+        var tS2 = RM.totals(ev, { supplierId: "S2" }, {})
+        compare(_round2(tS2.net), 0, "unrelated supplier sees neither the sale nor the adjustment")
+        compare(_round2(tS2.tax), 0)
+    }
+
+    // No supplierSlices AND no orderLookup match (legacy/pre-FIFO event) ->
+    // falls to the "Unknown" ("") bucket, which assigns the WHOLE e.tax
+    // unsplit — structurally different from the two sliced cases above.
+    function test_price_adjust_tax_no_lineage_unknown_bucket() {
+        var ev = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0,
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount" }
+              // no supplierSlices, no orderLookup (lookups: {}) -> no lineage
+        ]
+        var m = RM.byDimension("supplierId", ev, null, {})
+        verify(m[""] !== undefined, "no-lineage adjustment lands in the Unknown bucket")
+        compare(_round2(m[""].revenue), -3)
+        compare(_round2(m[""].tax), -0.15)
+    }
+
+    // The reconciliation invariant must still hold with tax now flowing
+    // through price_adjust events too — proves the fix didn't just move the
+    // number somewhere convenient, it kept byDimension summing to totals.
+    function test_price_adjust_tax_share_invariant_sum_equals_totals() {
+        var ev = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0,
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount",
+              supplierSlices: [{ key: "S1", amount: -3 }] }
+        ]
+        var t = RM.totals(ev, null, {})
+        var fields = ["productId", "supplierId", "category", "channel", "staffId"]
+        for (var f = 0; f < fields.length; ++f) {
+            var m = RM.byDimension(fields[f], ev, null, {})
+            var sumTax = 0
+            var keys = Object.keys(m)
+            for (var k = 0; k < keys.length; ++k) sumTax += m[keys[k]].tax
+            fuzzyCompare(sumTax, t.tax, 0.011, "field=" + fields[f] + " tax")
+        }
+    }
 }

@@ -61,4 +61,47 @@ TestCase {
         compare(_round2(discDelta), 5, "full line discount of 5 is booked (surviving + added units)")
         compare(_round2(eventNet), _round2(correctNet), "event ledger == correct live-order net")
     }
+
+    // ── 2026-09-02: the companion bug this file's original test missed ─────
+    // The test above (and the discount-scanner fix it verified) only ever
+    // exercised taxable:false lines, so the NET side of the discount-scanner
+    // formula was proven correct while the TAX side stayed silently wrong --
+    // the discount-scanner booked a revenue-only price_adjust with no tax
+    // field, leaving TransactionStore.totalsForOrder's tax frozen at the
+    // pre-discount amount for any TAXABLE line. Taher's exact repro: cp 50 /
+    // sp 60 / tax 5%, qty 1, no discount at completion (tax 3, total 63);
+    // edit to add a 5% discount (expected tax 2.85, total 59.85 -- app
+    // showed 3). See TransactionStore.recordPriceAdjust's `taxRate` param
+    // and tst_TransactionStore_priceAdjustTax.qml for the full fix +
+    // reconciliation-after-return coverage; this test keeps this file's own
+    // "mirror the discount-scanner formula by hand" convention complete for
+    // the taxable case so the gap can't silently reopen here again.
+    function test_taxable_line_discount_edit_books_matching_tax_delta() {
+        var oldLine = { productId: "PRD-TAX", name: "Taxed Widget", price: 60, quantity: 1,
+                         taxable: true, taxPercent: 5, discountType: "flat", discountValue: 0 }
+        var newLine = { productId: "PRD-TAX", name: "Taxed Widget", price: 60, quantity: 1,
+                         taxable: true, taxPercent: 5, discountType: "percent", discountValue: 5 }
+
+        var oldQ = oldLine.quantity, newQ = newLine.quantity   // 1, 1 -- no qty change
+        var survQ = Math.min(oldQ, newQ)                       // 1
+        var addedQ = Math.max(0, newQ - oldQ)                  // 0
+        var oldPerUnitDisc = _lineDiscAmt(oldLine) / oldQ       // 0
+        var newPerUnitDisc = _lineDiscAmt(newLine) / newQ       // 3 (5% of 60)
+        var discDelta = survQ * (newPerUnitDisc - oldPerUnitDisc) + addedQ * newPerUnitDisc  // 3
+
+        // The FIXED formula: the discount-scanner's price_adjust must ALSO
+        // book a tax delta = discDelta * (line's current taxPercent / 100),
+        // signed the same way as the net delta (negative = tax booked drops).
+        var taxRate = (newLine.taxable && newLine.taxPercent > 0) ? newLine.taxPercent : 0
+        var taxDeltaBooked = -(discDelta * taxRate / 100)       // -0.15
+
+        var origSaleTax = oldQ * oldLine.price * (taxRate / 100)  // 60 * 5% = 3
+        var eventTax = origSaleTax + taxDeltaBooked                // 3 - 0.15 = 2.85
+        var correctTax = (newQ * newLine.price - _lineDiscAmt(newLine)) * (taxRate / 100)  // 57*5%
+
+        compare(_round2(discDelta), 3, "5% discount on 60 = 3")
+        compare(_round2(taxDeltaBooked), -0.15, "tax must drop by 5% of the discount, not stay frozen")
+        compare(_round2(eventTax), 2.85, "event ledger tax must reconcile to the discounted rate")
+        compare(_round2(eventTax), _round2(correctTax), "event ledger tax == correct live-order tax")
+    }
 }

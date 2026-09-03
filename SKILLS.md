@@ -2664,3 +2664,88 @@ to interpret itself. General lesson: a script verified only in this sandbox's No
 verified against CI's pinned version — check what CI actually runs before treating a local pass as
 proof, especially for anything touching CLI argument/glob-expansion semantics that differ by
 runtime version.
+
+## Skill 57: A "revenue-only" ledger event needs a tax delta too, whenever the line it adjusts is taxable
+
+**Bug, reported by Taher 2026-09-02**: product cp 50 / sp 60 / tax 5%, complete a 1-unit order
+(tax 3, total 63). Add a 5% discount, no quantity change — expected tax 2.85 / total 59.85 per
+Taher's own worked math, app showed tax still 3. Return the item afterward — expected the order
+to net to exactly 0, app left a 0.15 phantom residual.
+
+**Root cause, traced statically (no Qt toolchain in this sandbox — see Skill 54/this file's
+standing rule about relying on CI)**: `OrdersStore.applyAdjustment` deliberately sources a
+*completed* order's tax/total from `TransactionStore.totalsForOrder(orderId)` rather than a live
+recompute, because a completed order's own line objects (single tax rate each) can't represent
+mixed-vintage tax when units were added at a different rate after the fact — a real, intentional
+design choice, not the bug. `totalsForOrder` summed tax from `sale`/`return` events only;
+`TransactionStore.recordPriceAdjust` — the function both the discount-rate-edit scanner and the
+price-only-modify block in `DataModel._tryAdjustOrder` call to book a post-completion line change
+— wrote a `price_adjust` event carrying a signed **revenue** delta and explicitly **no tax field**,
+by prior design (the old header comment said so outright: "price_adjust has NO tax field →
+contributes 0 (revenue-only)"). That's correct for a genuinely tax-free adjustment, but a discount
+or price edit on a *taxable* line changes net without ever touching the immutable original sale
+event's stamped `tax` field — so the order's authoritative tax stayed frozen at its pre-edit value
+forever. A later full return then correctly reverses tax at the *live*, post-edit rate (via
+`OrderMath.allocate` on the current persisted order — that half of the pipeline was never wrong),
+which is exactly what turned a silent staleness into a visible, non-zero residual: the return
+reverses more tax than the frozen sale-event tax minus zero price_adjust contribution ever
+accounted for.
+
+**Two call sites, one root cause — found by tracing the function, not by grepping for "discount"**:
+searching for the literal word "discount" would have found only the discount-rate-edit scanner.
+`recordPriceAdjust` has a second caller (`DataModel.qml`'s price-only-modify block, unit-price
+corrections on already-completed units) that already had access to the line's `taxable`/
+`taxPercent` fields (via `OrderAdjust.diffLines`'s delta objects, which already carry them — no new
+lookup needed) but, like the discount site, never used them for tax. Same defect, same fix,
+one shared root: `recordPriceAdjust` itself is where the fix belongs, not either caller
+individually — fixing only the reported call site would have left the second one's report bug
+un-reported but just as real, waiting to surface on its own.
+
+**Fix**: `recordPriceAdjust` gained an optional `taxRate` parameter and now computes
+`taxDelta = revenueDelta * (taxRate/100)` internally (single source of truth for the sign
+relationship, rather than duplicating that formula at each call site), writes it to the event's new
+`tax` field, and **returns** `{ revenueDelta, taxDelta }` so each caller can fold the *full*
+customer-owed amount (net delta + its tax) into its own `refundAmount` without re-deriving the sign
+math a second time — previously the function returned nothing at all, since nothing needed its
+output before this. `totalsForOrder` now sums `price_adjust.tax` alongside `sale`/`return` tax. Both
+callers pass the line's own current `taxable`/`taxPercent` — the same fields every other tax
+computation in this codebase already reads (`OrderMath.lineTax`, `computeOrderTotals`), so this
+isn't a new convention, just extending an existing one to a call site that had been silently
+exempt.
+
+**Scope boundary — raised, then bundled in on Taher's explicit call**: `qml/helper/RealisedMath.js`
+(and its Node port, `functions/lib/realisedMath.js`) aggregates Analysis/Reports totals from the
+same event log, and its `_accumulatePriceAdjust` helper had the identical gap — it read `e.total`
+for revenue/profit but never `e.tax` for any event kind including `price_adjust`. Flagged to Taher
+as a separate decision rather than silently bundled in the first pass, since it's a different code
+path with its own reconciliation invariants (`byDimension` vs `totals`, supplier-filter behavior).
+Taher's answer: bundle it in, and add tests for both bugs. Fixed the same way as the order-level
+fix — a new `_priceAdjustTaxShare(e, revenueShare)` helper (`revenueShare / e.total` recovers the
+exact proportional tax, since `e.tax/e.total` is a constant ratio per event by construction of
+`recordPriceAdjust`) is now folded into all FIVE places `_accumulatePriceAdjust`/`byDimension`
+distribute a `price_adjust` event's revenue: the order-wide slice loop, the supplier-lineage slice
+loop, the no-lineage "Unknown" bucket, the default single-key branch, and `byDimension`'s own
+scope-filtered branch. `bucketWalk` untouched — it only ever reports `"net"`/`"profit"` metrics,
+never a `"tax"` time series, so there's nothing there to fix.
+
+**The Node port could actually be run and verified for real, unlike the QML side** — 9 tests in
+`functions/test/realisedMath.test.js` (5 pre-existing + 4 new: the two sliced-distribution paths,
+the no-lineage fallback, and a tax-specific reconciliation invariant), executed via
+`node --test test/realisedMath.test.js`, genuinely 9/9 passing. Ran the FULL `functions/` suite
+too (`npm install` then `npm test`) to check for regressions elsewhere that touch RealisedMath
+(`index.js`'s `computeAnalysis` handler is the only other consumer) — 194/194 passing, no
+regressions. This is real, executed proof for the Node port; the QML port (`qml/helper/
+RealisedMath.js`) got the byte-identical fix and a byte-identical `node --check` syntax pass on
+the stripped `.js` file (valid JS, not a QML/Qt-API check), plus the same 4 scenarios mirrored into
+`tests/tst_RealisedMath.qml` and `tests/tst_RealisedMathParityFixtures.qml` — still pending a real
+`qmltestrunner` run via CI, same status as every other QML test in this repo.
+
+**Test-writing note**: found the existing `tests/tst_AdjustDiscountRepro.qml` already covered the
+NET side of this exact discount-scanner code path — but only ever with `taxable: false` fixtures,
+which is precisely why a tax-side gap in the same code could sit unnoticed through a session that
+had *already* fixed and tested the net-side version of this bug class. Extended that file with a
+`taxable: true` companion case using its own established "hand-mirror the formula" convention,
+rather than treating it as fully covered because *a* test with a similar name already existed —
+"there's a test for this area" and "there's a test for this specific combination of fields" are
+different claims, and the gap here was entirely in which fixture values got exercised, not in
+whether the code path was reachable at all.

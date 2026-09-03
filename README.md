@@ -253,6 +253,27 @@ serialization-failure fallback that was previously only reachable via a live HTT
 now live (and are 100% covered) in `httpResponse.js` instead. The one remaining `index.js` gap
 (`canAssignRole`'s dead `else`) is unchanged, out of scope here.
 
+**Update 2026-09-02:** fixed a bug — a discount or price edit on a completed order's *taxable*
+line left the order's authoritative tax stale (`TransactionStore.recordPriceAdjust` booked revenue
+only, no tax delta), and a subsequent full return left a residual fraction of unreconciled
+tax/revenue in the order. Bundled in a second, same-root-cause bug found while investigating the
+first: `RealisedMath.js`'s Analysis/Reports aggregation (`_accumulatePriceAdjust`) had the
+identical gap — a `price_adjust` event contributed revenue/profit/discount to every dimension but
+never tax. Both fixed together, in both the QML original and its Node port
+(`functions/lib/realisedMath.js`) to keep them byte-identical as designed. 26 new/extended test
+cases total across 6 files (11 + 3 new files, 1 + 4 + 3 + 4 extended into existing ones — counted
+via `git diff | grep -c`, not carried forward from memory, per Skill 49's own lesson about
+re-checking a number rather than trusting it). The Node side could actually be executed in this session (unlike
+QML): `node --test test/realisedMath.test.js` → 9/9 passing (4 new), and the full `functions/`
+suite → **194/194 passing**, confirming no regression in `computeAnalysis` (the only other
+`RealisedMath` consumer). QML-side tests (`tests/tst_TransactionStore_priceAdjustTax.qml`,
+`tests/tst_DataModel_discountEditTax.qml`, extended `tests/tst_AdjustDiscountRepro.qml`,
+`tests/tst_RealisedMath.qml`, `tests/tst_RealisedMathParityFixtures.qml`) written and hand-traced
+against the implementation, plus a `node --check` syntax pass on the stripped `.js` helper files —
+still pending a real `qmltestrunner` run via CI, same status as every other QML test in this repo.
+See `SKILLS.md` Skill 57 and
+`docs/superpowers/test-plans/2026-09-02-price-adjust-tax-delta-test-plan.md`.
+
 ---
 
 ## Qt Skills Cheat Sheet

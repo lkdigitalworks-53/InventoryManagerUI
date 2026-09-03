@@ -85,6 +85,61 @@ TestCase {
         compare(_round2(m["S1"].discount), 20)
     }
 
+    // 2026-09-02 fix (SKILLS Skill 57): price_adjust events now carry a
+    // signed tax delta. Mirrors functions/test/fixtures/realisedMathFixtures.js
+    // "price_adjust_tax_share_no_scope_supplier_dimension" / "..._supplier_filtered"
+    // / "..._unknown_bucket" — same literal scenario data, proving the QML
+    // original agrees with the Node port on this fix too.
+    function test_price_adjust_tax_share_no_scope_supplier_dimension() {
+        var entries = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0,
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount",
+              supplierSlices: [{ key: "S1", amount: -3 }] }
+        ]
+        var t = RM.totals(entries, null, {})
+        compare(_round2(t.net), 57)
+        compare(_round2(t.tax), 2.85)
+
+        var m = RM.byDimension("supplierId", entries, null, {})
+        compare(_round2(m["S1"].revenue), 57)
+        compare(_round2(m["S1"].tax), 2.85)
+        compare(_round2(m["S1"].discount), 3)
+    }
+
+    function test_price_adjust_tax_share_supplier_filtered() {
+        var entries = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0, orderChannel: "online",
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount", orderChannel: "online",
+              supplierSlices: [{ key: "S1", amount: -3 }] }
+        ]
+        var tS1 = RM.totals(entries, { supplierId: "S1" }, {})
+        compare(_round2(tS1.net), 57)
+        compare(_round2(tS1.tax), 2.85)
+
+        var tS2 = RM.totals(entries, { supplierId: "S2" }, {})
+        compare(_round2(tS2.net), 0)
+        compare(_round2(tS2.tax), 0)
+    }
+
+    function test_price_adjust_tax_no_lineage_unknown_bucket() {
+        var entries = [
+            { kind: "sale", timestamp: "2026-09-02T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 3, discountShare: 0,
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 50 }] },
+            { kind: "price_adjust", timestamp: "2026-09-02T11:00:00Z", productId: "P1",
+              total: -3, tax: -0.15, reason: "discount" }
+        ]
+        var m = RM.byDimension("supplierId", entries, null, {})
+        compare(_round2(m[""].revenue), -3)
+        compare(_round2(m[""].tax), -0.15)
+    }
+
     // Cross-check the core invariant (Skill 29) on the richest fixture, same
     // as the Node test's equivalent case.
     function test_invariant_sum_byDimension_equals_totals() {
