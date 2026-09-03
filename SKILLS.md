@@ -2713,17 +2713,32 @@ computation in this codebase already reads (`OrderMath.lineTax`, `computeOrderTo
 isn't a new convention, just extending an existing one to a call site that had been silently
 exempt.
 
-**Scope boundary, decided explicitly rather than silently expanded or silently ignored**:
-`qml/helper/RealisedMath.js` (and its Node port, `functions/lib/realisedMath.js`) aggregates
-Analysis/Reports totals from the same event log, and its `_accumulatePriceAdjust` helper has the
-identical gap — it reads `e.total` for revenue/profit but never `e.tax` for any event kind including
-`price_adjust`. That's a **separate, pre-existing** latent inconsistency (the Analysis "Tax" column
-across all orders never reflected `price_adjust` tax, before or after this fix), not something this
-fix makes worse — but fixing it means touching a different file with its own reconciliation
-invariants (`byDimension` vs `totals`, supplier-filter behavior) well outside the specific order-level
-bug Taher reported. Flagged as a follow-up decision rather than bundled into this branch — "same
-defect class, different blast radius" is worth stating honestly instead of either scope-creeping the
-fix or leaving the gap undocumented.
+**Scope boundary — raised, then bundled in on Taher's explicit call**: `qml/helper/RealisedMath.js`
+(and its Node port, `functions/lib/realisedMath.js`) aggregates Analysis/Reports totals from the
+same event log, and its `_accumulatePriceAdjust` helper had the identical gap — it read `e.total`
+for revenue/profit but never `e.tax` for any event kind including `price_adjust`. Flagged to Taher
+as a separate decision rather than silently bundled in the first pass, since it's a different code
+path with its own reconciliation invariants (`byDimension` vs `totals`, supplier-filter behavior).
+Taher's answer: bundle it in, and add tests for both bugs. Fixed the same way as the order-level
+fix — a new `_priceAdjustTaxShare(e, revenueShare)` helper (`revenueShare / e.total` recovers the
+exact proportional tax, since `e.tax/e.total` is a constant ratio per event by construction of
+`recordPriceAdjust`) is now folded into all FIVE places `_accumulatePriceAdjust`/`byDimension`
+distribute a `price_adjust` event's revenue: the order-wide slice loop, the supplier-lineage slice
+loop, the no-lineage "Unknown" bucket, the default single-key branch, and `byDimension`'s own
+scope-filtered branch. `bucketWalk` untouched — it only ever reports `"net"`/`"profit"` metrics,
+never a `"tax"` time series, so there's nothing there to fix.
+
+**The Node port could actually be run and verified for real, unlike the QML side** — 9 tests in
+`functions/test/realisedMath.test.js` (5 pre-existing + 4 new: the two sliced-distribution paths,
+the no-lineage fallback, and a tax-specific reconciliation invariant), executed via
+`node --test test/realisedMath.test.js`, genuinely 9/9 passing. Ran the FULL `functions/` suite
+too (`npm install` then `npm test`) to check for regressions elsewhere that touch RealisedMath
+(`index.js`'s `computeAnalysis` handler is the only other consumer) — 194/194 passing, no
+regressions. This is real, executed proof for the Node port; the QML port (`qml/helper/
+RealisedMath.js`) got the byte-identical fix and a byte-identical `node --check` syntax pass on
+the stripped `.js` file (valid JS, not a QML/Qt-API check), plus the same 4 scenarios mirrored into
+`tests/tst_RealisedMath.qml` and `tests/tst_RealisedMathParityFixtures.qml` — still pending a real
+`qmltestrunner` run via CI, same status as every other QML test in this repo.
 
 **Test-writing note**: found the existing `tests/tst_AdjustDiscountRepro.qml` already covered the
 NET side of this exact discount-scanner code path — but only ever with `taxable: false` fixtures,
