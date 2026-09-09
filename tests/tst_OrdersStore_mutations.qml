@@ -168,6 +168,54 @@ TestCase {
         verify(true)
     }
 
+    // --- Bulk-import chunking fix (2026-08-29) ----------------------------
+    // See tst_InventoryStore_upsertMany.qml's identical section for the
+    // full root-cause writeup; OrdersStore.upsertMany shares the exact same
+    // shape (optimistic commit + fire-and-forget Gateway.recordMutations).
+
+    function test_onBatchMutationFailedPermanently_removes_only_the_failed_orders() {
+        OrdersStore.orders = [
+            { orderId: "ORD-500", customer: "Kept", products: [], status: "pending" },
+            { orderId: "ORD-501", customer: "Failed", products: [], status: "pending" }
+        ]
+        var revisionBefore = OrdersStore.revision
+
+        OrdersStore._onBatchMutationFailedPermanently("order", [{ entityId: "ORD-501", action: "create" }], "missing-fields")
+
+        compare(OrdersStore.orders.length, 1)
+        compare(OrdersStore.orders[0].orderId, "ORD-500")
+        verify(OrdersStore.revision > revisionBefore, "revision must bump so UI bound to it re-renders after a rollback")
+    }
+
+    function test_onBatchMutationFailedPermanently_ignores_other_entities() {
+        OrdersStore.orders = [{ orderId: "ORD-510", customer: "Kept", products: [], status: "pending" }]
+        OrdersStore._onBatchMutationFailedPermanently("inventory", [{ entityId: "ORD-510", action: "create" }], "missing-fields")
+        compare(OrdersStore.orders.length, 1, "a failure for a DIFFERENT entity must not touch orders")
+    }
+
+    function test_onBatchMutationFailedPermanently_is_a_no_op_for_an_unknown_orderId() {
+        OrdersStore.orders = [{ orderId: "ORD-515", customer: "Kept", products: [], status: "pending" }]
+        OrdersStore._onBatchMutationFailedPermanently("order", [{ entityId: "ORD-does-not-exist", action: "create" }], "missing-fields")
+        compare(OrdersStore.orders.length, 1, "nothing to remove, must not throw or touch unrelated rows")
+    }
+
+    function test_onBatchMutationFailedPermanently_is_a_no_op_for_empty_items() {
+        // Distinct branch from "ignores other entities" above: entity DOES
+        // match "order" here, so this exercises the `!items ||
+        // items.length === 0` half of the guard.
+        OrdersStore.orders = [{ orderId: "ORD-516", customer: "Kept", products: [], status: "pending" }]
+        OrdersStore._onBatchMutationFailedPermanently("order", [], "missing-fields")
+        compare(OrdersStore.orders.length, 1)
+        OrdersStore._onBatchMutationFailedPermanently("order", null, "missing-fields")
+        compare(OrdersStore.orders.length, 1)
+    }
+
+    function test_gateway_signal_reaches_OrdersStore_and_rolls_back() {
+        OrdersStore.orders = [{ orderId: "ORD-520", customer: "Will Fail", products: [], status: "pending" }]
+        Gateway.batchMutationFailedPermanently("order", [{ entityId: "ORD-520", action: "create" }], "batch-too-large")
+        compare(OrdersStore.orders.length, 0, "the live signal connection must reach the store and roll back")
+    }
+
     function test_updateOrder_updates_the_specified_fields() {
         OrdersStore.orders = [{
             orderId: "ORD-001", customer: "Old Name", email: "old@x.com", phone: "111",

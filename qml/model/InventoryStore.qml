@@ -47,6 +47,26 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
+    }
+
+    // Bulk-import chunking fix: every item Gateway.recordMutations("inventory", ...)
+    // ever sends is a brand-new row (action "create" — see upsertMany, overwrites
+    // of existing products route through the single-item updateProduct path
+    // instead), so a permanent rejection always means "this row was added to
+    // `products` optimistically and never actually reached Firestore" — safe to
+    // just remove it, never a "revert someone else's edit" case.
+    function _onBatchMutationFailedPermanently(entity, items, error) {
+        if (entity !== "inventory" || !items || items.length === 0) return
+        var failedIds = {}
+        for (var i = 0; i < items.length; ++i) failedIds[items[i].entityId] = true
+        var arr = products.filter(function(p) { return !failedIds[p.productId] })
+        products = arr
+        Toast.show(qsTr("%1 imported row(s) couldn't be saved and were removed. Please re-check and re-import them.").arg(items.length))
+        ActivityLog.record("import_error",
+            qsTr("Product import failed"),
+            qsTr("%1 row(s) were rejected (%2) and removed from your device.").arg(items.length).arg(error),
+            "")
     }
 
     // Component 3's client-side half (review finding C3, 2026-08-06) — see
@@ -856,6 +876,11 @@ QtObject {
         }
 
         products = arr;
+        // >maxBatchSize rows means recordMutations() below splits into
+        // multiple background sends (see Gateway._chunkItems) — the caller's
+        // completion message should say so rather than imply everything is
+        // already durably saved server-side the instant this function returns.
+        counts.chunked = mutationItems.length > Gateway.maxBatchSize;
         if (mutationItems.length > 0) Gateway.recordMutations("inventory", mutationItems);
         if (transactionItems.length > 0) TransactionStore.recordCreatedMany(transactionItems);
         if (stockBatchItems.length > 0) StockBatchStore.addBatchMany(stockBatchItems);

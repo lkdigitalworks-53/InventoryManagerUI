@@ -79,6 +79,15 @@ QtObject {
     // already dropped (not retried) by the time this fires, see _send.
     signal mutationConflicted(string entity, string entityId, var current)
 
+    // Fired when recordMutationsBatch rejects a chunk for a reason that can
+    // never change on retry (see _classifyBatchMutationFailure below) —
+    // the chunk is dropped from the outbox rather than retried forever.
+    // `items` is the chunk's own [{entityId, action, before, after}, ...]
+    // so the owning store can roll back exactly the rows that never made
+    // it to the server. Same "fire once, let every store reconcile" shape
+    // as mutationConflicted above.
+    signal batchMutationFailedPermanently(string entity, var items, string error)
+
     property int inFlight: 0
 
     // Pending recordDelta callbacks, keyed by outbox requestId — NOT
@@ -212,9 +221,37 @@ QtObject {
         })
     }
 
+    // Server-side recordMutationsBatch (functions/lib/batchMutationLogic.js)
+    // hard-rejects any single call over MAX_BATCH_SIZE items with a 400
+    // ("batch-too-large") that can never succeed on retry. Mirrored here so
+    // recordMutations() can chunk BEFORE sending rather than let the outbox
+    // retry an oversized batch forever. If the server's constant ever
+    // changes, functions/test/batchMutationLogic.test.js pins its value and
+    // tests/tst_Gateway.qml pins this one — a drift shows up as a test
+    // failure on both sides rather than silently.
+    readonly property int maxBatchSize: 200
+
+    // Pure/testable: split items into chunks of at most `size`. No-op
+    // wrapper (single chunk) when items already fits.
+    function _chunkItems(items, size) {
+        var out = []
+        if (!items || items.length === 0) return out
+        var n = size > 0 ? size : items.length
+        for (var i = 0; i < items.length; i += n) {
+            out.push(items.slice(i, i + n))
+        }
+        return out
+    }
+
     // Batch counterpart of recordMutation — one call for many items of the
     // SAME entity, e.g. InventoryStore.upsertMany. `items` is
-    // [{entityId, action, before, after}, ...]. Returns the batch requestId.
+    // [{entityId, action, before, after}, ...]. Transparently split into
+    // multiple <=maxBatchSize outbox entries so no caller can ever trip the
+    // server's cap. Each chunk gets its own stable requestId (derived from
+    // one parent id) so retries of that chunk stay idempotent against the
+    // server's requestId:entityId audit-log dedup. Returns the parent
+    // requestId (unchanged shape — no caller currently uses the return
+    // value, verified via grep of every recordMutations() call site).
     function recordMutations(entity, items) {
         var collection = _collectionFor(entity)
         if (!collection || !items || items.length === 0) {
@@ -238,12 +275,15 @@ QtObject {
             return requestId
         }
 
-        OutboxStore.enqueueBatch({
-            requestId: requestId,
-            entity: entity,
-            items: normalized,
-            clientTimestamp: new Date().toISOString()
-        })
+        var chunks = _chunkItems(normalized, maxBatchSize)
+        for (var c = 0; c < chunks.length; ++c) {
+            OutboxStore.enqueueBatch({
+                requestId: chunks.length > 1 ? (requestId + "-c" + c) : requestId,
+                entity: entity,
+                items: chunks[c],
+                clientTimestamp: new Date().toISOString()
+            })
+        }
         drainNow()
         return requestId
     }
@@ -456,6 +496,33 @@ QtObject {
         return { isConflict: true, conflicts: body.conflicts }
     }
 
+    // Definitive, request-SHAPE validation errors from
+    // validateBatchMutationRequest (functions/lib/batchMutationLogic.js) —
+    // these describe a problem with the request itself (batch too large,
+    // an unsupported entity/action, a malformed item), which is identical
+    // on every retry since the payload never changes. Retrying can never
+    // succeed. Deliberately narrower than "any 4xx": auth/tenant-context
+    // failures (401/403) are left OUT on purpose and keep retrying via the
+    // existing markFailed/backoff path below, unchanged — those describe
+    // CALLER STATE that legitimately changes between attempts (token
+    // refresh, tenant context resolving), not the payload. Same reasoning
+    // as _parseMutationConflict's own header comment elsewhere in this file.
+    readonly property var _terminalBatchErrors: ([
+        "unsupported-entity", "missing-fields", "empty-batch",
+        "batch-too-large", "unsupported-action"
+    ])
+
+    // Pure/testable, no XHR — see tst_Gateway.qml.
+    function _classifyBatchMutationFailure(status, responseText) {
+        if (status < 400 || status >= 500) return { terminal: false, error: null }
+        var body = null
+        try { body = JSON.parse(responseText) } catch (e) { return { terminal: false, error: null } }
+        if (!body || body.ok !== false || typeof body.error !== "string")
+            return { terminal: false, error: null }
+        if (_terminalBatchErrors.indexOf(body.error) < 0) return { terminal: false, error: null }
+        return { terminal: true, error: body.error }
+    }
+
     // Batch counterpart of _send — one outbox item, one HTTP call, whatever
     // its `items` count. Same success/failure/backoff handling as _send.
     //
@@ -467,6 +534,14 @@ QtObject {
     // mutationConflicted signal once per conflicting item — every store is
     // already wired to it from the single-item C3 fix, so a batch conflict
     // reconciles through the exact same path with zero new store-side code.
+    //
+    // Permanent-failure handling (chunking fix, this round): a definitive
+    // validation rejection (see _classifyBatchMutationFailure) is dropped
+    // the same way a conflict is — retrying is provably pointless — and
+    // batchMutationFailedPermanently fires so the owning store can roll
+    // back the optimistic local rows that never actually landed and tell
+    // the user, instead of the previous behaviour of retrying forever in
+    // total silence while local state quietly diverged from Firestore.
     function _sendBatch(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             OutboxStore.clearInFlight(item)
@@ -494,9 +569,17 @@ QtObject {
                         mutationConflicted(item.entity, conflict.conflicts[i].entityId, conflict.conflicts[i].current)
                     }
                 } else {
-                    console.warn("[Gateway] recordMutationsBatch failed", "raw-status:", xhr.status, "effective-status:", effStatus,
-                                 item.entity, item.items.length, effResponseText)
-                    OutboxStore.markFailed(item.requestId)
+                    var permFail = _classifyBatchMutationFailure(effStatus, effResponseText)
+                    if (permFail.terminal) {
+                        console.warn("[Gateway] recordMutationsBatch permanently rejected — dropping, notifying stores",
+                                     item.entity, item.items.length, "item(s), reason:", permFail.error)
+                        OutboxStore.markSent(item.requestId)
+                        batchMutationFailedPermanently(item.entity, item.items, permFail.error)
+                    } else {
+                        console.warn("[Gateway] recordMutationsBatch failed", "raw-status:", xhr.status, "effective-status:", effStatus,
+                                     item.entity, item.items.length, effResponseText)
+                        OutboxStore.markFailed(item.requestId)
+                    }
                 }
             }
             OutboxStore.clearInFlight(item)

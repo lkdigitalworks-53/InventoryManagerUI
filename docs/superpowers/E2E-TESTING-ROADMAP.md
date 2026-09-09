@@ -125,7 +125,7 @@ closed, not just mergeable.
 
 - **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/
   `releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis` now covered in
-  `functions/test/index.handlers.remaining.test.js` (49 new tests; full `functions/` suite now 163
+  `functions/test/index.handlers.remaining.test.js` (49 new tests; full `functions/` suite now 164
   tests, all passing). `provisionMember`/`computeAnalysis` had zero coverage anywhere before this
   (their logic lives directly in `index.js`, not a `lib/` module) — everything else only had the
   three endpoints Skill 46 covered. Design/approach: Skill 52.

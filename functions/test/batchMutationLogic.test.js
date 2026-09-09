@@ -62,6 +62,18 @@ test("validateBatchMutationRequest accepts a batch exactly at the max size", () 
     assert.equal(result.ok, true);
 });
 
+// Regression pin (2026-08-29 bulk-import chunking fix): Gateway.qml's
+// `maxBatchSize` property mirrors this literal because there's no shared
+// build-time constant between the Node and QML runtimes. The two tests
+// above use BatchMutationLogic.MAX_BATCH_SIZE dynamically, so they'd still
+// pass at any value and wouldn't catch a drift — this test hardcodes the
+// literal deliberately so a future change to MAX_BATCH_SIZE without a
+// matching change to Gateway.qml fails loudly here instead of silently
+// reproducing the original bug (client sends an oversized batch again).
+test("MAX_BATCH_SIZE stays in sync with Gateway.qml's mirrored maxBatchSize (200)", () => {
+    assert.equal(BatchMutationLogic.MAX_BATCH_SIZE, 200);
+});
+
 test("validateBatchMutationRequest rejects a batch containing an item with a disallowed action", () => {
     const result = BatchMutationLogic.validateBatchMutationRequest(
         validBody({ items: [validItem(), validItem({ entityId: "order-2", action: "rename" })] })
