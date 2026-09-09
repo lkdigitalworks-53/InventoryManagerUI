@@ -1,10 +1,10 @@
 # CHECKPOINT — feature/product-order-delete-ui
 
 Session date: 2026-08-30
-Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `d2d9932`, 8 commits
+Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `de28052`, 9 commits
 ahead, about to push)
 
-## Status: third rebase done, pushing
+## Status: fourth rebase done, pushing
 
 Single-pass session per explicit instruction — no interactive review gate used; decisions
 documented in the spec doc for after-the-fact review instead.
@@ -72,17 +72,23 @@ Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) de
 - Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
   higher risk" framing, which undersold what was actually wrong.
 
-## Also done (fifth pass, same session) — third rebase
+## Also done (sixth pass, same session) — fourth rebase
 
-`origin/main` moved 18 more commits (PR-CI-comment tooling under `.github/scripts/`, a
-`_resetPending` guard applied to 6 stores including `InventoryStore.qml`/`OrdersStore.qml` --
-the same two files this branch's `action`-param conflict-toast fix touches). Checked before
-rebasing: main's change sits near the top of each file (`_resetAndFetch`/`_fetchFromFirebase`),
-this branch's change is in `_onMutationConflicted` further down -- different regions, confirmed
-no overlap. Rebase bore that out: only conflict was `CHECKPOINT.md` again, same resolution as
-the last two passes. Verified post-rebase that both changes coexist correctly in both files
-(`_resetPending` present, `action === "delete"` branch present) rather than just trusting a
-clean rebase exit code.
+`origin/main` moved 27 more commits — the chunked-batch-import fix (`fix/bulk-import-chunking-
+durable-status`, flagged as a dangling memory-only branch name back in the first rebase) finally
+landed. Biggest file overlap yet: `qml/model/Gateway.qml` (both branches add something right
+next to `mutationConflicted`'s declaration — main adds a whole new sibling signal
+`batchMutationFailedPermanently`, this branch adds the `action` 4th param to the existing one),
+plus `InventoryStore.qml`/`OrdersStore.qml` (main adds `_onBatchMutationFailedPermanently`, a new
+function; this branch's `_onMutationConflicted` action-branch sits in a different region of the
+same files). Checked both diffs line-by-line *before* rebasing to confirm non-overlap rather than
+assuming; rebase bore it out — only conflict was `CHECKPOINT.md` again, same resolution as the
+last three passes. Verified post-rebase, explicitly, that both sets of changes actually coexist
+in the merged files (not just a clean exit code): my `action === "delete"` branches and main's
+new `_onBatchMutationFailedPermanently` both present in both store files; my 4-arg
+`mutationConflicted` signal and main's new `batchMutationFailedPermanently` signal both declared
+in Gateway.qml; my single-item emit site still passes `item.action`. All 8 touched QML files
+brace-balanced.
 
 ## Key facts for resuming if interrupted before push
 
