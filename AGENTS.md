@@ -51,9 +51,9 @@ machine, not this chat.
 | Multi-tenant Firebase Auth (email + Google) | ✅ Done |
 | 4-role RBAC (owner / admin / manager / staff) | ✅ Done |
 | Tenant workspace creation & member invitation | ✅ Done |
-| Orders CRUD + delete + auto-approve | ✅ Done |
-| Inventory CRUD + delete | ✅ Done |
-| Staff CRUD + delete + credential provisioning | ✅ Done |
+| Orders CRUD + delete + auto-approve | ✅ Done — delete row-UI landed via `feature/product-order-delete-ui` (the backend logic pre-dated it; the button didn't exist until this branch — see Skill 58) |
+| Inventory CRUD + delete | ✅ Done — same as above, row-level delete button added via `feature/product-order-delete-ui` |
+| Staff CRUD + delete + credential provisioning | ⚠️ Delete logic + confirm-dialog wiring exist; row-level button still missing (identical gap to what Inventory/Orders had before `feature/product-order-delete-ui` — same fix, not yet done, see `docs/superpowers/KNOWN-ISSUES.md`) |
 | Sales analytics from live completed orders | ✅ Done |
 | Analysis page — 6 view modes (Value/Purchased/Current/Revenue/Sold/Profit) | ✅ Done |
 | Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
@@ -266,7 +266,13 @@ App (Main.qml)
 **Scope**: `qml/model/DataModel.qml`
 
 **Responsibilities**:
-- Maintain the `Connections` block that handles all `Logic` signals
+- Maintain the `Connections` block that handles all `Logic` signals. Inside it, always call
+  `dispatcher.<signal>(...)` (the actual wired property, `property alias dispatcher:
+  _logicBus.target`) — **not** `logic`, which reads like a valid reference but isn't declared
+  anywhere in this file and throws `ReferenceError` at runtime, silently, the moment any guard-
+  refusal or success line tries to emit through it. This was a real, long-standing bug (34 call
+  sites) found only because a test finally exercised these handlers via a real signal fire
+  instead of calling a private function directly — see SKILLS Skill 58.
 - Orchestrate cross-store operations (e.g. `tryCompleteOrder`: stock check → deduct → mark complete → record sale)
 - Keep `ordersModel` (ListModel) in sync with `OrdersStore.orders`
 - Expose public methods: `tryCompleteOrder()`, `syncOrdersModel()`, `updateOrderInModel()`
@@ -577,7 +583,8 @@ env.
 ### 9. Testing & QA Agent
 
 **Purpose**: Owns the QML test harness and unit coverage for pure logic.
-**Scope**: `tests/`, `functions/test/`, `test/e2e/`, `docs/superpowers/test-plans/`
+**Scope**: `tests/`, `functions/test/`, `test/e2e/`, `test/felgo-dependent/`,
+`docs/superpowers/test-plans/`
 
 **Responsibilities**:
 - Write every new test plan (automated coverage map, or an on-device manual checklist) into
@@ -588,8 +595,14 @@ env.
   with an existing plan for the same feature area.
 - Write Qt Quick Test (`TestCase`) suites for **pure, headless-testable logic** — primarily the
   `.pragma library` JS helpers (e.g. `qml/helper/BreakdownMath.js`). Page-level QML that needs the
-  full Felgo `App` context (`dp()`/`sp()`/`Theme`/`GlassHeader`) cannot load under the runner — keep
-  the testable math in a pure library and test that.
+  full Felgo `App` context (`dp()`/`sp()`/`Theme`/`GlassHeader`) cannot load under the "QML Tests"
+  CI job — confirmed by an actual CI failure, not just this note: `GlassHeader` → `Constants.qml`
+  → `import Felgo`, and that job installs plain Qt only (see SKILLS Skill 58). Check this section
+  *before* deciding whether a UI change needs a page-level test — it would have saved writing two
+  test files that could never compile there. If a full-Page test is worth writing anyway (e.g. for
+  manual verification on a Felgo-equipped machine), put it in `test/felgo-dependent/` — no CI job's
+  `qmltestrunner -input` scans that directory — not `tests/`. Otherwise keep the testable logic in
+  a pure library and test that.
 - Run the suite headlessly:
   ```bash
   QT_FORCE_STDERR_LOGGING=1 QT_LOGGING_TO_CONSOLE=1 \

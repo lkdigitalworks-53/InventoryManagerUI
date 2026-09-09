@@ -105,3 +105,30 @@ brace-balanced.
   `fix/chunked-batch-import-over-200-rows` doesn't exist on the remote (closest match:
   `fix/bulk-import-chunking-durable-status`) — worth Taher's attention separately, unrelated to
   this branch.
+
+## Also done (seventh pass, same session) — doc updates
+
+Per project convention ("update skills, agents, and readme docs on need basis after every
+change") and explicit ask this pass:
+- **SKILLS.md Skill 58** (new): full writeup of the `logic`/`dispatcher` bug and the missed-
+  AGENTS.md-guidance lesson. Hit a real authoring mistake while writing it — a `str_replace`
+  swapped in my new content where only Skill 52's *heading* should have been touched, silently
+  deleting that heading and orphaning its body under my new section. Caught it by checking
+  `## Skill` heading counts before moving on, not by luck. Repaired by splitting the block back
+  into my actual content (appended at the true end, after Skill 57) and Skill 52 (heading
+  restored, reinserted at its original position before Skill 53) — verified with `git diff`
+  afterward showing **zero deleted lines** relative to the pre-edit file, only additions.
+- **AGENTS.md**: Data Model agent section now documents the `dispatcher` (not `logic`) naming
+  requirement inline, cross-referencing Skill 58. Testing agent scope now includes
+  `test/felgo-dependent/`; its Felgo-page-test guidance is strengthened to point there instead of
+  just saying "don't write these" (since this branch established that writing them anyway, parked
+  correctly, still has value). Feature Status table corrected — Orders/Inventory delete rows now
+  note the button didn't exist until this branch; Staff delete row corrected from a bare "✅ Done"
+  (never accurate — the button never existed) to reflect the still-open gap.
+- **docs/superpowers/test-plans/README.md**: index entry for this branch's test plan updated
+  from the pre-CI "0 run" framing to the actual outcome (bug found+fixed, 2 files relocated, 3
+  pass on CI).
+
+## Remaining
+
+- Nothing outstanding. Push next.
