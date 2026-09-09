@@ -391,6 +391,13 @@ QtObject {
             if (qty <= 0) continue
             if (filterSup && (b.supplierId || "") !== filterSup) continue
             var p = getById(b.productId)
+            // A batch whose product no longer exists (deleteProduct() doesn't
+            // clean up StockBatchStore — see KNOWN-ISSUES.md) has no sellable
+            // price to value it against. Pricing it at 0 while still charging
+            // its real cogs would show it as a phantom loss and drag the
+            // aggregate total down for stock that, from the user's
+            // perspective, no longer exists. Exclude it entirely instead.
+            if (!p) continue
             if (filterCat) {
                 var pcat = (p && p.category) ? p.category : "(uncategorised)"
                 if (pcat !== filterCat) continue

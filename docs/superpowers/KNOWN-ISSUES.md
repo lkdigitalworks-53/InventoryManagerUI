@@ -161,3 +161,43 @@ an active branch. It isn't on `origin` — the closest match by name and apparen
 unrelated to `feature/product-order-delete-ui`, not investigated further here.
 
 
+## Delete: Sales Analysis "Potential profit" went negative for a deleted product's stock — fixed. Six other tabs audited, one more gap found, not fixed
+
+Bug report (2026-09-02): after deleting a product, a value in Sales Analysis wasn't updating
+correctly. Followed `superpowers:systematic-debugging` — traced all 6 `SalesPage.qml` view
+modes (Value, Purchased, Current, Revenue, Sold, Profit×2 sub-modes) rather than guessing at
+the one tab mentioned, since the report asked for exactly that.
+
+**Root cause, confirmed and fixed**: `InventoryStore.deleteProduct()` doesn't clean up that
+product's `StockBatchStore` entries (already documented above, deliberately deferred). The
+orphaned batch then gets walked by both `InventoryStore.potentialProfitByDimension()` (feeds the
+xlsx export's Potential section) and `SalesPage.qml`'s on-screen "Potential" tab, which duplicates
+that walk inline rather than calling the store function. Both priced the batch's revenue at 0
+(`getById(productId)` returns nothing) while still charging its real `cogs` — a phantom loss that
+dragged the "Potential profit on open stock" hero total down by the deleted product's full COGS,
+for stock that, from the user's perspective, no longer exists.
+
+**Fixed**: both places now skip a batch entirely once its product no longer resolves, instead of
+pricing it at 0. Failing test written first (`tests/tst_InventoryStore_potentialProfitOrphanedBatch.qml`,
+4 cases) against the store function — same import tier as `tst_InventoryStore_mutationConflicted.qml`,
+which passed on a real CI run this session, so no reason to expect this one can't. The
+`SalesPage.qml` mirror isn't independently tested (Felgo page, can't run in this CI job) — verified
+by code symmetry with the tested fix instead, same discipline as the rest of this session.
+
+**Second finding, audited but explicitly not fixed here — different, bigger root cause**: the
+other five tabs (Value, Purchased, Revenue, Sold, Profit's Realised sub-mode) keep correct
+*totals* after a delete — those walk the immutable event/batch ledger directly, no live-product
+dependency for the number itself. But their **by-category** breakdown silently reclassifies a
+deleted product's historical contribution into an "(uncategorised)" bucket, and their **by-name**
+breakdown shows the raw `productId` instead of the product's name, because both resolve
+category/name via a live lookup (`InventoryStore.getById`/`.products`) rather than data stamped on
+the transaction record at the time of the sale/purchase. This is correct-by-design for the
+"Current" tab (a live stock snapshot — a deleted product correctly vanishing from it is not a
+bug) but wrong for anything meant to be permanent history. Real fix would mean stamping
+category/name onto each transaction/consumption record at creation time — a schema-level change
+across every write path that creates one, not a one-line defensive check, and a different root
+cause from what's fixed above. Not attempted this pass — flagging it here rather than bundling a
+second, much larger fix into the same change (Iron Law: one fix at a time).
+
+**Decision**: fixed the total-corrupting bug (Potential profit). Documented, not fixed, the
+breakdown-mislabeling issue across the other five tabs — worth its own dedicated design pass.

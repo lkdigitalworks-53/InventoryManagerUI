@@ -132,3 +132,32 @@ change") and explicit ask this pass:
 ## Remaining
 
 - Nothing outstanding. Push next.
+
+## Also done (eighth pass, same session) — systematic-debugging: Sales Analysis delete bug
+
+Bug report: Sales Analysis value not updating correctly after product delete, other tabs fine,
+asked to check all of them. Followed superpowers:systematic-debugging Phase 1-4 rather than
+patching the one symptom mentioned:
+
+- Traced all 6 SalesPage.qml view modes (Value, Purchased, Current, Revenue, Sold, Profit's
+  Realised + Potential sub-modes) for the same class of dependency (live InventoryStore.getById
+  lookup vs. immutable transaction/batch data) rather than stopping at the first one found.
+- Root cause of the actual reported bug: orphaned StockBatchStore entries from deleteProduct()
+  not cleaning up (already a known, documented, deliberately-deferred gap) collide with
+  potentialProfitByDimension()/SalesPage's duplicate inline Potential-profit walk pricing an
+  orphaned batch's revenue at 0 while still charging its real cogs -- a phantom loss dragging
+  the aggregate "Potential profit" total down.
+- Wrote a failing test first (tst_InventoryStore_potentialProfitOrphanedBatch.qml, 4 cases)
+  against InventoryStore.potentialProfitByDimension before touching the fix, per the Iron Law.
+- Fixed both duplicate implementations (InventoryStore.qml store function; SalesPage.qml's
+  inline mirror) with the same one-line defensive skip -- exclude an orphaned batch entirely,
+  don't price it at 0.
+- Explicitly did NOT fix the upstream orphaned-batch-creation issue itself (deleteProduct not
+  cleaning up StockBatchStore) -- that's the already-deferred, separately-scoped issue; fixing
+  it here would violate "one fix at a time."
+- Explicitly did NOT fix a second, distinct finding from the same audit: the other 5 tabs keep
+  correct totals but mislabel a deleted product's historical breakdown rows (raw productId
+  instead of name, "(uncategorised)" instead of real category) -- different, bigger root cause
+  (no category/name stamped on transaction records at creation time), documented in
+  KNOWN-ISSUES.md as its own item, not bundled into this fix.
+- Both touched files brace-balanced.
