@@ -74,7 +74,7 @@ QtObject {
     // applies to plain recordMutation edits (name/price/category/etc via
     // updateProduct); deductStock/restock/creditStockNoBatch already go
     // through recordDelta, which doesn't use CAS and can't conflict this way.
-    function _onMutationConflicted(entity, entityId, current) {
+    function _onMutationConflicted(entity, entityId, current, action) {
         if (entity !== "inventory") return
         var arr = products.slice()
         var idx = -1
@@ -89,7 +89,15 @@ QtObject {
             arr.splice(idx, 1)
         }
         products = arr
-        Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        // A rejected delete-conflict means the product still legitimately
+        // exists (someone else edited it after this client's stale
+        // `before`) and was just pushed back above — "your change didn't
+        // save" would be confusing for what was actually a delete attempt.
+        if (action === "delete") {
+            Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+        } else {
+            Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        }
     }
 
     function _load() {
@@ -250,6 +258,14 @@ QtObject {
         var v = 0
         for (var bi = 0; bi < bs.length; ++bi) {
             var b = bs[bi]
+            // Same fix as valueByProduct/valueBySupplier/valueByCategory
+            // below and potentialProfitByDimension elsewhere in this file:
+            // a batch whose product no longer exists (deleteProduct()
+            // doesn't clean up StockBatchStore -- see KNOWN-ISSUES.md) must
+            // not keep counting toward the total, or a delete has zero
+            // visible effect on this number no matter how much stock the
+            // deleted product had.
+            if (!getById(b.productId)) continue
             v += (b.qtyRemaining || 0) * (b.unitCost || 0)
         }
         return v
@@ -270,6 +286,7 @@ QtObject {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
+            if (!getById(b.productId)) continue
             out[b.productId] = (out[b.productId] || 0) + v
         }
         return out
@@ -285,6 +302,7 @@ QtObject {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
+            if (!getById(b.productId)) continue
             out[b.supplierId || ""] = (out[b.supplierId || ""] || 0) + v
         }
         return out
@@ -300,7 +318,8 @@ QtObject {
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
             var p = getById(b.productId)
-            var cat = (p && p.category) ? p.category : "(uncategorised)"
+            if (!p) continue
+            var cat = p.category ? p.category : "(uncategorised)"
             out[cat] = (out[cat] || 0) + v
         }
         return out
@@ -383,6 +402,13 @@ QtObject {
             if (qty <= 0) continue
             if (filterSup && (b.supplierId || "") !== filterSup) continue
             var p = getById(b.productId)
+            // A batch whose product no longer exists (deleteProduct() doesn't
+            // clean up StockBatchStore — see KNOWN-ISSUES.md) has no sellable
+            // price to value it against. Pricing it at 0 while still charging
+            // its real cogs would show it as a phantom loss and drag the
+            // aggregate total down for stock that, from the user's
+            // perspective, no longer exists. Exclude it entirely instead.
+            if (!p) continue
             if (filterCat) {
                 var pcat = (p && p.category) ? p.category : "(uncategorised)"
                 if (pcat !== filterCat) continue

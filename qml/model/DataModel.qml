@@ -70,16 +70,16 @@ Item {
             OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId,
                 function(ok, newOrderId) {
                     if (!ok) {
-                        logic.errorOccurred("network", "Could not add order — try again")
+                        dispatcher.errorOccurred("network", "Could not add order — try again")
                         return
                     }
                     _syncOrdersModel()
-                    logic.orderAdded(newOrderId)
+                    dispatcher.orderAdded(newOrderId)
 
                     if (OrdersStore.autoApproveEnabled) {
                         _tryCompleteOrder(newOrderId, function(success) {
                             if (!success)
-                                logic.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
+                                dispatcher.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
                         })
                     }
                 })
@@ -108,10 +108,10 @@ Item {
                     // repeated here.
                     _tryCompleteOrder(orderId, function(success) {
                         if (!success) {
-                            logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
+                            dispatcher.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
                             return
                         }
-                        logic.orderUpdated(orderId)
+                        dispatcher.orderUpdated(orderId)
                     })
                     return
                 }
@@ -124,7 +124,7 @@ Item {
                 // never includes `status` at all, so it can never reach this
                 // branch regardless of who's running the import.
                 if (!_hasAnyRole(["owner", "admin", "manager"])) {
-                    logic.errorOccurred("auth", "You do not have permission to reopen a completed order")
+                    dispatcher.errorOccurred("auth", "You do not have permission to reopen a completed order")
                     return
                 }
                 // The completion deducted stock and booked sale events;
@@ -152,26 +152,26 @@ Item {
                 }
                 OrdersStore.updateOrder(orderId, revertFields)
                 _updateOrderInModel(orderId)
-                logic.orderUpdated(orderId)
+                dispatcher.orderUpdated(orderId)
                 return
             }
             // Normal update path (status not changing completed↔non-completed).
             OrdersStore.updateOrder(orderId, fields)
             _updateOrderInModel(orderId)
-            logic.orderUpdated(orderId)
+            dispatcher.orderUpdated(orderId)
         }
 
         function onCompleteOrder(orderId) {
             _tryCompleteOrder(orderId, function(success) {
                 if (!success) {
-                    logic.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
+                    dispatcher.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
                 }
             })
         }
 
         function onDeleteOrder(orderId) {
             if (!_hasAnyRole(["owner", "admin", "manager"])) {
-                logic.errorOccurred("auth", "You do not have permission to delete orders")
+                dispatcher.errorOccurred("auth", "You do not have permission to delete orders")
                 return
             }
             var order = OrdersStore.getById(orderId)
@@ -182,25 +182,25 @@ Item {
                 // see onUpdateOrder's revert branch) before delete is the
                 // safe path; reject rather than silently cascade-reverse as
                 // a side effect of what the user asked for as a plain delete.
-                logic.errorOccurred("order", "Completed orders can't be deleted directly — reopen it to pending first, then delete")
+                dispatcher.errorOccurred("order", "Completed orders can't be deleted directly — reopen it to pending first, then delete")
                 return
             }
             OrdersStore.deleteOrder(orderId)
             _syncOrdersModel()
-            logic.orderDeleted(orderId)
+            dispatcher.orderDeleted(orderId)
         }
 
         function onAdjustOrder(orderId, newLines, reason, condition, note) {
             if (!_hasAnyRole(["owner", "admin", "manager"])) {
-                logic.errorOccurred("auth", "You do not have permission to adjust orders")
+                dispatcher.errorOccurred("auth", "You do not have permission to adjust orders")
                 return
             }
             _tryAdjustOrder(orderId, newLines, reason, condition, note, function(ok) {
                 if (ok) {
                     _updateOrderInModel(orderId)
-                    logic.orderUpdated(orderId)
+                    dispatcher.orderUpdated(orderId)
                 } else {
-                    logic.errorOccurred("order", dataModel.stockErrorMsg || "Could not adjust order")
+                    dispatcher.errorOccurred("order", dataModel.stockErrorMsg || "Could not adjust order")
                 }
             })
         }
@@ -208,22 +208,22 @@ Item {
         // ── Inventory ─────────────────────────────────────────────────────────
         function onAddProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can add products")
+                dispatcher.errorOccurred("auth", "Only owner/admin can add products")
                 return
             }
             InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent,
                 undefined, undefined, undefined, function(ok, productId) {
                     if (!ok) {
-                        logic.errorOccurred("network", "Could not add product — try again")
+                        dispatcher.errorOccurred("network", "Could not add product — try again")
                         return
                     }
-                    logic.productAdded(productId)
+                    dispatcher.productAdded(productId)
                 })
         }
 
         function onUpdateProduct(productId, fields, reason) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can update products")
+                dispatcher.errorOccurred("auth", "Only owner/admin can update products")
                 return
             }
             // Capture the pre-edit stock so we can reconcile the FIFO batch
@@ -234,36 +234,36 @@ Item {
             var oldStock = before ? before.stock : undefined
             InventoryStore.updateProduct(productId, fields, reason)
             _reconcileBatchesForStockEdit(productId, oldStock, fields.stock)
-            logic.productUpdated(productId)
+            dispatcher.productUpdated(productId)
         }
 
         function onRestockProduct(productId, amount) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can restock products")
+                dispatcher.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
             InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed) {
                 if (!ok) {
-                    logic.errorOccurred("network", "Could not restock — try again")
+                    dispatcher.errorOccurred("network", "Could not restock — try again")
                     return
                 }
-                logic.productRestocked(productId)
+                dispatcher.productRestocked(productId)
                 if (supplierFailed) {
-                    logic.errorOccurred("network", "Restocked, but the supplier could not be recorded — edit it manually if needed")
+                    dispatcher.errorOccurred("network", "Restocked, but the supplier could not be recorded — edit it manually if needed")
                 }
             })
         }
 
         function onDeleteProduct(productId) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can delete products")
+                dispatcher.errorOccurred("auth", "Only owner/admin can delete products")
                 return
             }
             // Refuse delete while any open order still references this product;
             // historical (completed/cancelled) orders keep their line-item snapshot.
             var openRefs = OrdersStore.openOrdersForProduct(productId)
             if (openRefs.length > 0) {
-                logic.errorOccurred("inventory",
+                dispatcher.errorOccurred("inventory",
                     "Cannot delete: " + openRefs.length + " open order"
                     + (openRefs.length === 1 ? "" : "s")
                     + " reference this product (" + openRefs.slice(0, 3).join(", ")
@@ -272,7 +272,7 @@ Item {
                 return
             }
             InventoryStore.deleteProduct(productId)
-            logic.productDeleted(productId)
+            dispatcher.productDeleted(productId)
         }
 
         // ── Sales ─────────────────────────────────────────────────────────────
@@ -283,35 +283,35 @@ Item {
         // ── Staff ─────────────────────────────────────────────────────────────
         function onAddStaff(name, email, phone, role, department, joinDate, status, salary) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can add staff")
+                dispatcher.errorOccurred("auth", "Only owner/admin can add staff")
                 return
             }
             StaffStore.addStaff(name, email, phone, role, department, joinDate, status, salary,
                 function(ok, staffId) {
                     if (!ok) {
-                        logic.errorOccurred("network", "Could not add staff — try again")
+                        dispatcher.errorOccurred("network", "Could not add staff — try again")
                         return
                     }
-                    logic.staffAdded(staffId)
+                    dispatcher.staffAdded(staffId)
                 })
         }
 
         function onUpdateStaff(staffId, fields) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can update staff")
+                dispatcher.errorOccurred("auth", "Only owner/admin can update staff")
                 return
             }
             StaffStore.updateStaff(staffId, fields)
-            logic.staffUpdated(staffId)
+            dispatcher.staffUpdated(staffId)
         }
 
         function onDeleteStaff(staffId) {
             if (!_hasAnyRole(["owner", "admin"])) {
-                logic.errorOccurred("auth", "Only owner/admin can delete staff")
+                dispatcher.errorOccurred("auth", "Only owner/admin can delete staff")
                 return
             }
             StaffStore.deleteStaff(staffId)
-            logic.staffDeleted(staffId)
+            dispatcher.staffDeleted(staffId)
         }
     }
 
