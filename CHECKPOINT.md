@@ -161,3 +161,28 @@ patching the one symptom mentioned:
   (no category/name stamped on transaction records at creation time), documented in
   KNOWN-ISSUES.md as its own item, not bundled into this fix.
 - Both touched files brace-balanced.
+
+## Also done (ninth pass, same session) — systematic-debugging: Inventory Value tab, same session continued
+
+Follow-up bug report on the same debugging thread: Potential-profit fix confirmed working, but
+Inventory Value tab totally unaffected by delete (not just wrong -- zero change at all, any chart).
+
+- Root cause: same orphaned-StockBatchStore-entries issue as the Potential-profit bug, different
+  symptom. totalValue()/valueByProduct()/valueBySupplier() never called getById() at all -- they
+  only need the batch's own qtyRemaining*unitCost, no live product required -- so a deleted
+  product's stock kept counting in full forever. valueByCategory() called getById() but only for
+  the category label, still included the value regardless.
+- Fixed all four functions with the same defensive skip pattern as the Potential-profit fix:
+  exclude a batch entirely once getById(productId) returns nothing. Also fixed SalesPage.qml's
+  filtered _valueMaps() walk (same unguarded pattern); its unfiltered path already delegates to
+  the now-fixed store functions, confirmed by tracing every call site, not assumed.
+- Failing test first: tests/tst_InventoryStore_valueOrphanedBatch.qml (5 cases).
+- Noted honestly: totalValue() itself has zero live callers anywhere in the QML codebase
+  (checked) -- fixed anyway since it's the same function group and now test-covered, but the
+  real user-visible path is _valueMaps -> valueByProduct/valueBySupplier/valueByCategory.
+- Flagged, not decided: should deleting a product with remaining stock even be allowed? The
+  existing guard blocks deletes referenced by open orders but never checks stock. Every fix this
+  session makes the display consistent (exclude deleted-product stock everywhere), not whether
+  allowing the delete in the first place was right. Business decision, not a bug -- documented in
+  KNOWN-ISSUES.md, not acted on.
+- Both touched files brace-balanced.

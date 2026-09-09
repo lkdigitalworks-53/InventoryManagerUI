@@ -161,7 +161,7 @@ an active branch. It isn't on `origin` — the closest match by name and apparen
 unrelated to `feature/product-order-delete-ui`, not investigated further here.
 
 
-## Delete: Sales Analysis "Potential profit" went negative for a deleted product's stock — fixed. Six other tabs audited, one more gap found, not fixed
+## Delete: Sales Analysis "Potential profit" went negative, "Inventory Value" didn't move at all — both fixed. Five other tabs' breakdown labels audited, not fixed
 
 Bug report (2026-09-02): after deleting a product, a value in Sales Analysis wasn't updating
 correctly. Followed `superpowers:systematic-debugging` — traced all 6 `SalesPage.qml` view
@@ -183,6 +183,35 @@ pricing it at 0. Failing test written first (`tests/tst_InventoryStore_potential
 which passed on a real CI run this session, so no reason to expect this one can't. The
 `SalesPage.qml` mirror isn't independently tested (Felgo page, can't run in this CI job) — verified
 by code symmetry with the tested fix instead, same discipline as the rest of this session.
+
+**Follow-up report, same session (2026-09-02): "Inventory Value" tab wasn't affected by a delete
+at all — not the total, not any chart.** Confirmed and fixed. Same upstream root cause (orphaned
+`StockBatchStore` entries), different symptom: `totalValue()`, `valueByProduct()`, and
+`valueBySupplier()` never called `getById()` at all — they only need `qtyRemaining × unitCost`
+from the batch's own stamped fields, no live product required, so a deleted product's remaining
+stock kept counting in full, forever, with zero visible effect. `valueByCategory()` did call
+`getById()`, but only to pick the category label (falling back to "(uncategorised)") — it still
+included the value either way, never excluded it. Fixed all four with the same defensive skip:
+exclude a batch entirely once `getById(productId)` returns nothing. This also makes the Value tab
+consistent with "Current," which already excludes a deleted product's stock (it walks
+`InventoryStore.products` directly) — before this fix the two tabs disagreed with each other about
+whether a deleted product's stock still existed. `SalesPage.qml`'s filtered `_valueMaps()` walk had
+the identical unguarded pattern and got the same fix; the unfiltered path already delegates to the
+now-fixed store functions. Failing test first: `tests/tst_InventoryStore_valueOrphanedBatch.qml`
+(5 cases). Note: `totalValue()` itself currently has no live caller anywhere in the QML codebase
+(checked) — fixed anyway since it's part of the same function group and is exercised by the new
+test, but the actual user-visible path is the `_valueMaps` → `valueByProduct/valueBySupplier/
+valueByCategory` chain.
+
+**A bigger question this raises, not decided or acted on**: should deleting a product with
+remaining stock (`qtyRemaining > 0` in any batch) even be allowed in the first place? The existing
+delete guard in `DataModel.onDeleteProduct` already blocks a delete when the product is referenced
+by an *open order* — it does not check remaining stock at all. Every fix above makes the numbers
+consistent by *excluding* a deleted product's leftover stock from every view, which is the right
+symptom-level answer, but doesn't address whether letting a product with stock on hand disappear
+from the catalog (while the physical goods presumably still sit in a warehouse somewhere) is the
+right behavior to allow at all. That's a product/business decision, not a bug — flagging it, not
+deciding it.
 
 **Second finding, audited but explicitly not fixed here — different, bigger root cause**: the
 other five tabs (Value, Purchased, Revenue, Sold, Profit's Realised sub-mode) keep correct

@@ -258,6 +258,14 @@ QtObject {
         var v = 0
         for (var bi = 0; bi < bs.length; ++bi) {
             var b = bs[bi]
+            // Same fix as valueByProduct/valueBySupplier/valueByCategory
+            // below and potentialProfitByDimension elsewhere in this file:
+            // a batch whose product no longer exists (deleteProduct()
+            // doesn't clean up StockBatchStore -- see KNOWN-ISSUES.md) must
+            // not keep counting toward the total, or a delete has zero
+            // visible effect on this number no matter how much stock the
+            // deleted product had.
+            if (!getById(b.productId)) continue
             v += (b.qtyRemaining || 0) * (b.unitCost || 0)
         }
         return v
@@ -278,6 +286,7 @@ QtObject {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
+            if (!getById(b.productId)) continue
             out[b.productId] = (out[b.productId] || 0) + v
         }
         return out
@@ -293,6 +302,7 @@ QtObject {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
+            if (!getById(b.productId)) continue
             out[b.supplierId || ""] = (out[b.supplierId || ""] || 0) + v
         }
         return out
@@ -308,7 +318,8 @@ QtObject {
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
             var p = getById(b.productId)
-            var cat = (p && p.category) ? p.category : "(uncategorised)"
+            if (!p) continue
+            var cat = p.category ? p.category : "(uncategorised)"
             out[cat] = (out[cat] || 0) + v
         }
         return out
