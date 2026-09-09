@@ -121,6 +121,43 @@ lines move out of `index.js` entirely and gain 100% coverage in their new home. 
 **2026-09-01: merged into `main`** (confirmed via GitHub API, `merged_at: 2026-09-01T03:06:26Z`) —
 closed, not just mergeable.
 
+---
+
+## Code-quality observations, 2026-09-01 review (not scoped — priority is for future triage, none of these are urgent)
+
+Found while running `qt-qml-review`/`ponytail-review` against this session's diff (item 2 + item 3).
+None of these are bugs and none are new — all are pre-existing code found adjacent to lines this
+session touched, confirmed via direct diff-against-`main` to predate this session's changes rather
+than assumed. Listed so they don't need rediscovering from scratch, not because any of them need
+action soon.
+
+**Priority: Medium**
+- FirebaseService non-injectable / mirror-model test drift risk — see the testing-environment-
+  limitations callout at the top of this doc (point 3). Not repeated here; that's the canonical entry.
+
+**Priority: Low**
+- `Qt.createQmlObject()` for `TransactionStore`'s retry timer (`TransactionStore.qml:107-108`) — the
+  linter's own words: "slow and uncacheable; use `Loader` or `Component.createObject()`". Not a
+  one-off: 5 `Qt.createQmlObject()` call sites exist across `qml/` total. Worth a single pass across
+  all of them if this is ever prioritized, not a targeted fix for just the retry timer.
+- Untyped `property var` on collection/cursor-style fields (e.g. `_cursor` on all 6 paginated stores) —
+  47 files repo-wide use `property var` somewhere; genuinely pervasive, not something scoped to the 6
+  stores this session touched. A fix on just these 6 would be inconsistent with the other 41 files —
+  a real fix here is a dedicated, deliberate sweep (closer to a full `ponytail-audit` in scope), not
+  an opportunistic cleanup to slip into an unrelated bugfix branch.
+- Property declared after a signal handler (`StockBatchStore.qml:27` `onBatchesChanged: revision++`,
+  `SupplierStore.qml:21` `onSuppliersChanged: revision++`, both followed by more properties below
+  them) — deliberate, readable grouping (the revision-counter property sits next to the handler that
+  bumps it), not a mistake. The mechanical id/properties/signals/... ordering convention is a
+  reasonable default, but this reads fine as written. Lowest priority of anything in this list —
+  arguably not worth ever touching.
+- `functions/test/fixtures/orderMathFixtures.js`'s `cases`/`extra` shape inconsistency (already-merged
+  item 2 code, `functions/test/fixtures/orderMathFixtures.js:26-131`) — `ponytail-review`'s own
+  finding: `shrink: -8 lines possible` by flattening every scenario group to one `cases: [...]` shape.
+  Cosmetic.
+
+---
+
 ## Resolved this arc (for context — full detail in `docs/superpowers/specs/` and `SKILLS.md`)
 
 - **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/

@@ -201,3 +201,43 @@ tests as equivalent proof.
 
 Item 3 is done and pushed, pending Taher's on-device/CI confirmation the real stores match the model.
 Item 1 still waiting on N3. Check chat history for what's moved before starting new work.
+
+---
+
+## Update, same day: review pass + roadmap observations + test plan
+
+Requested: run qt-qml-review/ponytail-review/requesting-code-review against this session's diff, add
+any findings to the roadmap with priority, and write a test plan for item 3 following this repo's
+established template.
+
+**Done:**
+- Three review passes performed directly (no subagent-dispatch tool available in this environment,
+  so `requesting-code-review`'s reviewer role was done in-session rather than literally dispatched).
+  Zero Critical/Important issues in the actual changed lines. Every lint/qmllint hit inside the padded
+  review window traced back to pre-existing adjacent code (confirmed via exact `git diff -U0` added-
+  line numbers, not line-number proximity) — none of it originated from this session's edits.
+- Roadmap updated with all genuine findings, given explicit priority:
+  - The FirebaseService-non-injectable / mirror-model-drift finding went into the existing testing-
+    environment-limitations callout (point 3) — it's a standing constraint, not item-specific.
+  - New section, "Code-quality observations, 2026-09-01 review" — the remaining 4 findings (retry-
+    timer `Qt.createQmlObject()`, repo-wide untyped `property var`, property-after-signal-handler
+    ordering in 2 stores, the fixture file's `cases`/`extra` shape), each with an explicit Medium/Low
+    priority and a one-line reason, all confirmed pre-existing before writing them up, not assumed.
+  - Deliberately did NOT act on any of these beyond documenting them — all are either repo-wide
+    (would need a dedicated sweep, not opportunistic fixing) or deliberate-not-mistaken (the
+    ordering one), matching "flag pre-existing gaps, don't silently fix them in an unrelated diff."
+- `docs/superpowers/test-plans/2026-09-01-loadingMore-resetPending-guard-test-plan.md` — full
+  happy/regression/negative/edge/monkey structure, matching the 2026-08-28 batch-id-minting plan's
+  template exactly. Core scenario (N1): race a real account switch against an in-flight sync and
+  confirm the new account's data wins, not the stale one. Explicit about what's NOT covered
+  automatically and why (Section 1.2: the real singletons aren't exercised by any test that exists,
+  same conclusion as the roadmap's new testability observation, restated here in test-plan terms).
+  Added to `docs/superpowers/test-plans/README.md`'s index per that file's own stated convention.
+- Full `tests/` suite re-run after all doc edits: still 340 passed / 22 failed, unchanged (docs-only
+  changes this update, no QML/JS source touched).
+
+## Next action if resumed
+
+Nothing further from this session without Taher's input: item 1 needs his N3 result, item 3 needs the
+new test plan's N1/N4 run on a real device (not just the model), and the code-quality observations
+are explicitly not-urgent backlog, not next actions. Check chat history before starting new work.
