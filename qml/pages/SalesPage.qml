@@ -960,6 +960,14 @@ Item {
                     var qtyR = bb.qtyRemaining || 0
                     if (qtyR <= 0) continue
                     var prr = InventoryStore.getById(bb.productId)
+                    // Same fix as InventoryStore.potentialProfitByDimension
+                    // (see that function's comment / KNOWN-ISSUES.md): a
+                    // batch whose product was deleted has no price to value
+                    // it against. Excluding it here too, not pricing it at 0
+                    // — that would show real cogs as a phantom loss and drag
+                    // the on-screen "Potential profit" hero number down for
+                    // stock that no longer exists from the user's view.
+                    if (!prr) continue
                     var cat = (prr && prr.category) ? prr.category : qsTr("(uncategorised)")
                     if (root._categoryFilter !== "All" && cat !== root._categoryFilter) continue
                     var sell = prr ? (prr.sellingPrice !== undefined
@@ -1912,7 +1920,12 @@ Item {
             var b = bs[bi]
             if (filterId && b.supplierId !== filterId) continue
             var pc = InventoryStore.getById(b.productId)
-            var cat = (pc && pc.category) ? pc.category : "(uncategorised)"
+            // Same fix as InventoryStore.valueByProduct/valueBySupplier/
+            // valueByCategory: a batch whose product was deleted must be
+            // excluded entirely, not just relabeled as uncategorised while
+            // still counting its value.
+            if (!pc) continue
+            var cat = pc.category ? pc.category : "(uncategorised)"
             if (catOn && cat !== categoryFilter) continue
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue

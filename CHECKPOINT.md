@@ -1,262 +1,188 @@
-# Session Checkpoint — bulk import >200 rows: chunking, error handling, durable status
+# CHECKPOINT — feature/product-order-delete-ui
 
-**Started:** 2026-08-29
-**Branch:** `fix/bulk-import-chunking-durable-status` (new, per standing instruction)
-**Status:** In progress
-**Prior checkpoint:** archived to `docs/superpowers/specs/2026-08-26-pr_taher_bug_fixes-checkpoint.md`
-(preserves the prior session's full step log/history per standing archival convention, rather
-than being overwritten in place).
+Session date: 2026-08-30
+Branch: `feature/product-order-delete-ui` (rebased onto `origin/main` @ `de28052`, 9 commits
+ahead, about to push)
 
-**Rebase note (2026-08-29, later same day):** rebased this branch onto `origin/main` after a
-concurrent session (`feature/async-stock-batch-id-minting`, merged as `#53`) landed and touched
-several of the same files, including `InventoryStore._upsertManySync`'s signature. Per explicit
-instruction, this checkpoint keeps this session's own content as-is rather than merging in that
-session's checkpoint text — checkpoints are session-scoped logs, not something two sessions'
-worth of content merges into meaningfully. That session's own checkpoint is preserved at
-`docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-CHECKPOINT.md` if needed (see its
-own commit for the exact archived filename). The actual code/test conflict resolution from this
-rebase is logged in the Step log below, not here.
+## Status: fourth rebase done, pushing
 
-**Second rebase note (2026-08-30):** rebased again onto `origin/main` after two more concurrent
-sessions landed (`d1087b6`/#55 handler-endpoint coverage, and `test/handler-parity-coverage-gap`
-merged as `#56`). Same principle applied again: this checkpoint's own content kept as-is; the
-`#56` session's checkpoint archived first, to `docs/superpowers/specs/2026-08-30-handler-parity-
-coverage-gap-CHECKPOINT.md`, before being overwritten here. `SKILLS.md` needed renumbering again
-— see the Step log below for exactly what moved.
+Single-pass session per explicit instruction — no interactive review gate used; decisions
+documented in the spec doc for after-the-fact review instead.
 
-**Third rebase note (2026-09-02):** rebased again onto `origin/main` after several more concurrent
-sessions landed (PR #49 handler `httpResponse.js` extraction, `orderMath.js` parity coverage, the
-`_resetPending` account-switch-mid-sync fix touching `InventoryStore`/`OrdersStore`/`SupplierStore`/
-`StaffStore`/`StockBatchStore`/`TransactionStore`, and `feature/pr-ci-status-comment`). Same
-principle again: this checkpoint kept as-is; the PR-CI-status-comment session's own checkpoint
-archived first, to `docs/superpowers/specs/2026-09-02-pr-ci-status-comment-CHECKPOINT.md`.
-`SKILLS.md` needed renumbering again (main now runs through Skill 56). The `_resetPending` fix
-touches a different part of each of the 3 stores this fix also modifies (top-of-file pagination
-state vs. this fix's `upsertMany`/rollback-handler section) — confirmed no line-level overlap
-before assuming a clean auto-merge.
+## What's done
 
-## Ask (Taher, verbatim scope)
+1. Archived the stale root `CHECKPOINT.md` (described already-merged handler-test work,
+   commit `d1087b6`) to `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md`.
+2. Branched off `main`.
+3. Wrote spec: `docs/superpowers/specs/2026-08-30-product-order-delete-ui.md`.
+4. Wrote plan: `docs/superpowers/plans/2026-08-30-product-order-delete-ui.md`.
+5. **Commit `ec1d74f`** — row-level delete buttons: `Constants.qml` ("trash" icon token),
+   `InventoryPage.qml` (ProductCard delete button), `OrdersPage.qml` (order row delete button).
+6. **Commit `ba5ab20`** — success toasts (`Main.qml`) + delete-specific conflict wording
+   (`Gateway.qml`'s `mutationConflicted` gains `action` 4th param, `InventoryStore.qml`/
+   `OrdersStore.qml`'s `_onMutationConflicted` branch on it).
+7. Wrote 5 test files (not yet committed): `tests/tst_DataModel_deleteGuards.qml`,
+   `tests/tst_InventoryStore_mutationConflicted.qml`, 2 new cases appended to
+   `tests/tst_OrdersStore_sync.qml`, `tests/tst_InventoryPage_deleteButton.qml`,
+   `tests/tst_OrdersPage_deleteButton.qml` (the last two are this repo's first page-level
+   UI-interaction tests — flagged as higher-risk in their own header comments and in the test
+   plan).
+8. Wrote test plan: `docs/superpowers/test-plans/2026-08-30-product-order-delete-ui-test-plan.md`,
+   added its row to `docs/superpowers/test-plans/README.md`'s index.
 
-Bulk product import fails past 200 rows because `functions/lib/batchMutationLogic.js` caps a
-single `recordMutationsBatch` call at `MAX_BATCH_SIZE=200` and returns 400. Client never chunks,
-never surfaces the resulting error, and completes the import as if it succeeded — local state
-diverges permanently from Firestore with zero user-visible signal. Fix: chunk large imports
-client-side, persist status durably so an import survives interruption/crash and resumes, handle
-errors/failures properly across **all** stores that go through this path (not just the one
-`InventoryStore.upsertMany` case that surfaced it), and write unit/regression/E2E test coverage.
-Don't build/run the app. Maintain this checkpoint. Branch, don't push to `main`. Push with the
-provided PAT once done, no extra confirmation this session. Don't install Qt tooling.
+## Also done (second pass, same session)
 
-## Phase 1: Root cause investigation (systematic-debugging skill)
+- Rebased onto `origin/main` (3 new commits: Skill 53 handler-parity test coverage, Skill 54
+  sandbox-capability correction, `main` merge). Two conflicts:
+  - `CHECKPOINT.md` — kept mine per explicit instruction (main's version described the
+    unrelated handler-parity-coverage-gap session; this file is scratch/current-session by
+    convention anyway).
+  - `docs/superpowers/specs/2026-08-29-functions-remaining-endpoint-handlers-CHECKPOINT.md` —
+    add/add: both this branch and `main` independently archived the same stale prior
+    CHECKPOINT.md. Took `main`'s version — strict superset of mine, with an added "Post-hoc
+    correction" section documenting the exact same commit-vs-checkpoint discrepancy I'd noticed
+    myself but hadn't written into the archived file.
+  - Everything else (`AGENTS.md`, `SKILLS.md`, `README.md`, `functions/test/*`,
+    `scripts/setup-sandbox-qmltestrunner.sh`) applied clean, no overlap with this branch.
+  - Force-pushed after rebase (`--force-with-lease`), history rewritten, new SHAs.
+- Added 6 entries to `docs/superpowers/KNOWN-ISSUES.md` (existing file, appended, not
+  replaced): the `_send` terminal-failure gap as it applies to deletes, staff delete's
+  identical missing-UI gap, product-delete's orphaned stock-batch/photo gap, the Skill-54
+  sandbox-capability discovery (this session's 5 test files were written assuming no toolchain
+  exists here — that assumption is now outdated per `main`'s own Skill 54, not yet acted on),
+  and the memory/remote branch-name mismatch noticed earlier this session.
 
-Traced the full chain firsthand rather than trusting the bug report's two line-number pointers at
-face value (they were both correct, but the report undersold how deep the problem actually runs):
+## Also done (third pass, same session) — CI debug from attached logs
 
-1. **`functions/lib/batchMutationLogic.js:43`** — `validateBatchMutationRequest` correctly rejects
-   `items.length > MAX_BATCH_SIZE (200)` with `400 batch-too-large`. This is a *deliberate,
-   documented* server-side limit (keeps a single Firestore transaction under ~500 writes; see the
-   file's own header comment) — not itself a bug. Confirmed via `npm test` in `functions/`:
-   109/109 passing baseline before any change (Node-executable, no emulator needed — this is the
-   one part of this fix genuinely verifiable in this sandbox).
-2. **`qml/model/Gateway.qml` `recordMutations(entity, items)`** (client) — accepts an **unbounded**
-   `items` array and enqueues it as **one** `OutboxStore.enqueueBatch()` call, one HTTP request.
-   Zero awareness of the server's 200-item cap. This is root cause #1 — nothing chunks, ever, for
-   any caller.
-3. **`qml/model/Gateway.qml` `_sendBatch()`**, the line the bug report points at (`~L499`,
-   `OutboxStore.markFailed(item.requestId)`) — every non-2xx, non-409 response (including the
-   permanent, payload-shape-only 400 from #1) is treated identically to a transient 5xx/network
-   blip: `markFailed()` bumps `attempts` and reschedules with backoff. **`OutboxStore`'s backoff
-   schedule (`2s,8s,30s,2m,10m`) caps but never terminates** — a batch that is structurally too
-   large retries **forever**, every 10 minutes, always failing the identical way, completely
-   silently (only a `console.warn`). Root cause #2: no terminal/permanent-failure classification
-   for the batch send path (the single-item `_send()` path and the delta path both already have
-   this distinction — `_parseMutationConflict`/`_classifyDeltaResponse` — batch never got it).
-4. **`qml/model/InventoryStore.qml` `_upsertManySync()`** (and the identical pattern in
-   `qml/model/OrdersStore.qml` `upsertMany()`) — commits the **entire** local array
-   (`products = arr` / `orders = arr`) unconditionally, then fires `Gateway.recordMutations(...)`
-   fire-and-forget, then calls back to the caller essentially synchronously. The local commit and
-   the "done" callback have **zero dependency** on whether the remote write will ever succeed.
-   Root cause #3: optimistic-write-without-reconciliation is fine for the *retryable* case
-   (that's this app's whole offline-first design, and it's how every other mutation in the app
-   already works) but there is no analogous reconciliation path for a *permanent* failure the way
-   there already is for a CAS conflict (`Gateway.mutationConflicted` → `_onMutationConflicted` in
-   all three of InventoryStore/OrdersStore/SupplierStore, which patch/rollback local state when the
-   server's decision can never change on retry). Permanent batch failures have no such signal to
-   reconcile against.
-5. **`qml/pages/ImportPreviewDialog.qml` `_finishApply()`** — builds its "Imported N rows" message
-   **purely from local counts**, with zero knowledge of Gateway/Outbox state, and unconditionally
-   calls `importCompleted(msg)`. There is no error branch in this file at all.
+Real CI run (`1_QML_Tests.txt` + `results.xml`, 11 failures out of 709 tests) debugged and fixed:
 
-**Confirmed via `grep`, not assumed:** `Gateway.recordMutations()` has exactly 3 callers —
-`InventoryStore._upsertManySync` (entity `"inventory"`), `OrdersStore.upsertMany` (entity
-`"order"`), `SupplierStore.addSupplierWithIdMany` (entity `"supplier"`, itself only ever called
-*from inside* `InventoryStore.upsertMany` for newly-discovered supplier names in a product CSV).
-All three build `mutationItems`/`docs` where **every item's action is `"create"`** — overwrite/
-update rows never go through this batch path (they route through the single-item
-`Gateway.recordMutation` via `DataModel.updateProduct`/`updateOrder` elsewhere, which already has
-working CAS-conflict handling and is out of scope here). This matters: it means a permanent-failure
-rollback for this path is always "remove a row that was optimistically added and never actually
-existed server-side," never "revert an edit to something that did." Confirms "all the stores" is a
-closed set of exactly 3, all sharing the identical bug shape, all fixed by the same Gateway-level
-change plus one reconciliation handler each.
+- **9x `DataModel_deleteGuards` failures** — `ReferenceError: logic is not defined` in
+  `DataModel.qml`'s dispatcher Connections block. Pre-existing bug on `main` (file isn't in this
+  branch's diff), never caught before since no test had exercised these handlers via real signal
+  dispatch. Root cause: `logic` never declared anywhere in the file; correct identifier is
+  `dispatcher`. Fixed all 34 real call sites (`logic.` → `dispatcher.`), left the one comment
+  mention alone (describes the correct external call pattern). Real-world implication: a blocked
+  delete likely failed silently in production too, not just in the new toast — correction note
+  added to the spec doc and KNOWN-ISSUES.md rather than silently editing the earlier claim.
+- **2x compile failures** (`tst_InventoryPage_deleteButton`, `tst_OrdersPage_deleteButton`) —
+  `Type X unavailable` traced to `Constants.qml`'s `import Felgo`, which the CI "QML Tests" job
+  (plain Qt 6.8 only, confirmed by reading `.github/workflows/checks.yml`) can never satisfy.
+  Architectural, not a test bug. Moved both files to new `test/felgo-dependent/` (no workflow job
+  scans it), with a README and corrected header comments; content/assertions unchanged.
+- Test plan and KNOWN-ISSUES.md updated to match reality instead of the earlier "not yet run,
+  higher risk" framing, which undersold what was actually wrong.
 
-## Phase 2: Design (see full write-up + trade-offs in the response to Taher, not duplicated here)
+## Also done (sixth pass, same session) — fourth rebase
 
-- Chunk in `Gateway.recordMutations()` itself (single choke point → fixes all 3 stores at once,
-  and any future caller, automatically) rather than duplicating chunking logic per store.
-- Reuse `OutboxStore`'s **already-durable** (Settings-backed) enqueue as the crash-survival
-  mechanism for the chunks themselves — enqueueing N chunks synchronously before `recordMutations`
-  returns means every chunk is on disk before the caller's local commit even happens. No new
-  persistence needed for "does the data survive a crash" — that already existed and just needed
-  to be exercised per-chunk instead of per-oversized-batch.
-- Server-side per-item idempotency (`requestId:entityId` audit-log dedup, already implemented in
-  `applyMutationsBatch`) means a chunk that partially committed before a crash/network drop is safe
-  to blindly retry as long as its `requestId` is stable across retries — already true, no new work.
-- Add a narrow, precise terminal/transient classifier for batch failures
-  (`_classifyBatchMutationFailure`), deliberately scoped to the exact `validateBatchMutationRequest`
-  error codes (never-changes-on-retry payload-shape errors) and NOT broadened to "any 4xx" — 401/
-  403 describe caller *state* that legitimately changes between attempts (token refresh, tenant
-  context resolving), same reasoning `_parseMutationConflict`'s own header comment already
-  documents for the single-item path. Matches existing philosophy instead of introducing a new one.
-- New `ImportSessionStore` (Settings-backed, same pattern as `OutboxStore`) is the missing piece:
-  a durable record of "this logical import spans N chunks, here's what's still pending / what
-  permanently failed," so a permanent failure that resolves after the dialog closes (or after a
-  relaunch) is still recoverable/visible, not just silently reconciled in memory.
-- Reuse existing `Toast` (immediate, in-app) and `ActivityLog` (durable, cross-session, bell icon)
-  for surfacing a permanent failure — both already exist and are already the established pattern
-  (`_onMutationConflicted` already uses `Toast`; `_finishApply` already uses `ActivityLog`) rather
-  than inventing a third notification mechanism.
+`origin/main` moved 27 more commits — the chunked-batch-import fix (`fix/bulk-import-chunking-
+durable-status`, flagged as a dangling memory-only branch name back in the first rebase) finally
+landed. Biggest file overlap yet: `qml/model/Gateway.qml` (both branches add something right
+next to `mutationConflicted`'s declaration — main adds a whole new sibling signal
+`batchMutationFailedPermanently`, this branch adds the `action` 4th param to the existing one),
+plus `InventoryStore.qml`/`OrdersStore.qml` (main adds `_onBatchMutationFailedPermanently`, a new
+function; this branch's `_onMutationConflicted` action-branch sits in a different region of the
+same files). Checked both diffs line-by-line *before* rebasing to confirm non-overlap rather than
+assuming; rebase bore it out — only conflict was `CHECKPOINT.md` again, same resolution as the
+last three passes. Verified post-rebase, explicitly, that both sets of changes actually coexist
+in the merged files (not just a clean exit code): my `action === "delete"` branches and main's
+new `_onBatchMutationFailedPermanently` both present in both store files; my 4-arg
+`mutationConflicted` signal and main's new `batchMutationFailedPermanently` signal both declared
+in Gateway.qml; my single-item emit site still passes `item.action`. All 8 touched QML files
+brace-balanced.
 
-## Step log
+## Key facts for resuming if interrupted before push
 
-1. Read `superpowers:systematic-debugging`, `qt-development-skills:qt-qml` skill files.
-2. Fresh clone. Baseline: `main` @ `08d9ab8`. `functions/` baseline `npm test`: 109/109 passing.
-3. Traced the full root-cause chain (above) across `functions/lib/batchMutationLogic.js`,
-   `qml/model/Gateway.qml`, `qml/model/OutboxStore.qml`, `qml/model/InventoryStore.qml`,
-   `qml/model/OrdersStore.qml`, `qml/model/SupplierStore.qml`, `qml/pages/ImportPreviewDialog.qml`.
-   Confirmed the bug report's two line-number pointers are both correct and found the additional,
-   unreported infinite-silent-retry consequence plus the two other affected stores.
-4. Created branch `fix/bulk-import-chunking-durable-status` off `main`.
-5. Wrote this checkpoint (root cause + initial design).
-6. Ran `/ponytail:ponytail` against the design **before writing any implementation code** — cut a
-   planned `ImportSessionStore` singleton and a `batchMutationSucceeded` signal, both duplicating
-   state/behavior `OutboxStore` already provides. Full reasoning in SKILLS Skill 57 and the
-   response to Taher; not re-duplicated here.
-7. Implemented `Gateway.qml`: `maxBatchSize` (mirrors server's 200), `_chunkItems()`,
-   `recordMutations()` rewritten to chunk, `_classifyBatchMutationFailure()`,
-   `batchMutationFailedPermanently` signal, wired into `_sendBatch()`'s failure branch. Brace-
-   balance sanity check via `node -e` (no qmllint available) — clean.
-8. Wired `_onBatchMutationFailedPermanently` (rollback + `Toast` + `ActivityLog`) into
-   `InventoryStore.qml`, `OrdersStore.qml`, `SupplierStore.qml`, each connected in
-   `Component.onCompleted` alongside the existing `mutationConflicted` connection.
-9. `ImportPreviewDialog._finishApply()`: honest "still syncing in the background" note when
-   `counts.chunked` is true; `counts.chunked` added to both `InventoryStore._upsertManySync` and
-   `OrdersStore.upsertMany`'s returned counts.
-10. `functions/lib/batchMutationLogic.js`: cross-reference comment only, no behavior change
-    (the 200 cap itself is correct and deliberate — confirmed in Phase 1).
-11. Checked the 3 UI files that map `ActivityLog` `kind` → icon (`ActivityPage.qml`,
-    `NotificationsSheet.qml`, `DashboardPage.qml`) — an unregistered `"import_error"` kind falls
-    through to the SAME `IconType.questioncircle` a registered `"activity"` mapping would also
-    produce, so left unregistered rather than touching 3 files for a cosmetically-identical
-    result. Flagged to Taher as a one-line follow-up if a distinct warning glyph is wanted later.
-12. Tests written:
-    - `functions/test/batchMutationLogic.test.js`: 1 new pinning regression test. **Ran
-      `npm test` — 110/110 passing** (genuinely verified, not just written).
-    - `tests/tst_Gateway.qml`: 17 new tests (`_chunkItems`, the chunking regression itself,
-      requestId stability, the full `_classifyBatchMutationFailure` matrix).
-    - `tests/tst_InventoryStore_upsertMany.qml`: 6 new tests (`counts.chunked`, rollback handler,
-      live-signal wiring).
-    - `tests/tst_OrdersStore_mutations.qml`: 3 new tests (rollback handler, live-signal wiring).
-    - New `tests/tst_SupplierStore_batchMutationFailedPermanently.qml`: 4 tests — first unit test
-      file for this store (previously e2e-only).
-    - New `test/e2e/tst_BulkImportChunkingE2E.qml`: 2 tests against the real Firebase emulator —
-      the actual reported bug (250 rows, both chunks verified landed) and a genuine permanent
-      rejection (invalid action → real 400 → rollback + `ActivityLog` entry, verified end to end).
-    - Total: **33 new test cases**, counted via `grep -oE "function test_...|^test\("` diffed
-      against each file's `main` baseline, not estimated.
-    - QML-side tests **NOT RUN IN THIS SANDBOX** — no Qt/qmltestrunner toolchain, consistent with
-      every existing test file in this repo. Needs a real `qmltestrunner` pass (`tests/` +
-      `test/e2e/`, the latter needs the Firebase emulator) before merge.
-13. Docs: `SKILLS.md` Skill 57 (full root-cause + the ponytail-driven `ImportSessionStore` cut,
-    written so it doesn't have to be re-derived), `AGENTS.md` (fixed a now-stale claim that
-    `Gateway.batchFunctionUrl` wasn't exercised in `test/e2e/` — it now is; added a Feature Status
-    row), `README.md` (dated Update paragraph in the existing Concurrency & Conflict Resolution
-    section, matching that section's established format).
-14. This checkpoint, finalized.
-15. Commit, then push to the branch using the provided PAT (per this session's explicit
-    instruction — no additional confirmation step).
+- Nothing has been pushed yet as of this checkpoint being written — `origin/main` has no
+  awareness of this branch.
+- Local git identity was not pre-configured in this sandbox; set to
+  `lkdigitalworks-53 <lkdigitalworks@gmail.com>` (matching the last 3 commits' authorship on
+  `main`) to allow committing at all.
+- No toolchain in this sandbox — none of the 5 test files have been run. Brace-balance was
+  checked via a Python character-walk on every touched `.qml` file (all balanced), per this
+  project's established substitute-verification convention.
+- Also noticed but explicitly NOT acted on this session (see spec doc's "Out of scope"): staff
+  delete UI has the identical gap; the memory-recorded active branch
+  `fix/chunked-batch-import-over-200-rows` doesn't exist on the remote (closest match:
+  `fix/bulk-import-chunking-durable-status`) — worth Taher's attention separately, unrelated to
+  this branch.
 
-## Final status: implementation + docs complete, functions tests verified (110/110), QML tests
-written to convention but unrun (sandbox has no Qt toolchain — flagged, not hidden). Pushed to
-`fix/bulk-import-chunking-durable-status`, not `main`. Not built or run on-device, per standing
-instruction.
+## Also done (seventh pass, same session) — doc updates
 
-## Post-CI follow-up (2026-08-29, same day)
+Per project convention ("update skills, agents, and readme docs on need basis after every
+change") and explicit ask this pass:
+- **SKILLS.md Skill 58** (new): full writeup of the `logic`/`dispatcher` bug and the missed-
+  AGENTS.md-guidance lesson. Hit a real authoring mistake while writing it — a `str_replace`
+  swapped in my new content where only Skill 52's *heading* should have been touched, silently
+  deleting that heading and orphaning its body under my new section. Caught it by checking
+  `## Skill` heading counts before moving on, not by luck. Repaired by splitting the block back
+  into my actual content (appended at the true end, after Skill 57) and Skill 52 (heading
+  restored, reinserted at its original position before Skill 53) — verified with `git diff`
+  afterward showing **zero deleted lines** relative to the pre-edit file, only additions.
+- **AGENTS.md**: Data Model agent section now documents the `dispatcher` (not `logic`) naming
+  requirement inline, cross-referencing Skill 58. Testing agent scope now includes
+  `test/felgo-dependent/`; its Felgo-page-test guidance is strengthened to point there instead of
+  just saying "don't write these" (since this branch established that writing them anyway, parked
+  correctly, still has value). Feature Status table corrected — Orders/Inventory delete rows now
+  note the button didn't exist until this branch; Staff delete row corrected from a bare "✅ Done"
+  (never accurate — the button never existed) to reflect the still-open gap.
+- **docs/superpowers/test-plans/README.md**: index entry for this branch's test plan updated
+  from the pre-CI "0 run" framing to the actual outcome (bug found+fixed, 2 files relocated, 3
+  pass on CI).
 
-CI ran green on this branch (QML, Functions, Firestore Rules, E2E jobs all passed) — first real
-confirmation the QML/E2E tests actually work, not just written-to-convention.
+## Remaining
 
-Rebase (separate turn, see git log for the merge-conflict resolution against
-`feature/async-stock-batch-id-minting` landing on `main`) already covered above.
+- Nothing outstanding. Push next.
 
-Coverage-gap audit: diffed every new branch in `Gateway.qml`/`InventoryStore.qml`/
-`OrdersStore.qml`/`SupplierStore.qml` against the existing test suite line-by-line rather than
-assuming "has tests" meant "fully covered." Found 9 real gaps (untested `_chunkItems` fallback
-branch, two distinct `_classifyBatchMutationFailure` branches, the empty-items half of 3 stores'
-guard clauses, an unknown-orderId no-op case, a missed `revision++` assertion, and
-`OrdersStore.upsertMany`'s `counts.chunked` line which needed an E2E test since it's set inside an
-async callback no unit test can reach). Closed all 9, committed separately (`7b5a3ad`) so the
-coverage work is auditable independent of the original fix.
+## Also done (eighth pass, same session) — systematic-debugging: Sales Analysis delete bug
 
-One gap deliberately NOT closed: `ImportPreviewDialog._finishApply`'s new conditional has no
-automated test at any tier — confirmed via `find` that zero page/dialog components in this repo
-have ever had a unit test file, so building a first-of-its-kind `BottomSheet` harness for one line
-was judged disproportionate. Covered via on-device steps instead (test plan §5.1, H1-H3). Flagged
-explicitly, not silently skipped.
+Bug report: Sales Analysis value not updating correctly after product delete, other tabs fine,
+asked to check all of them. Followed superpowers:systematic-debugging Phase 1-4 rather than
+patching the one symptom mentioned:
 
-Wrote `docs/superpowers/test-plans/2026-08-29-bulk-import-chunking-test-plan.md` following this
-project's established test-plan convention (`2026-08-28-async-stock-batch-id-minting-test-plan.md`
-for the on-device Happy/Negative/Edge/Monkey structure, `2026-08-22-pr_taher_bug_fixes-test-plan.md`
-for the Unit/Regression/E2E coverage-table structure). Caught and fixed a real arithmetic error
-before finalizing: an initial "25 unit + 12 regression + 3 E2E = 40" categorization didn't reconcile
-against the actual 42 test cases (verified via `grep -c` diffed against the `main` baseline) — root
-cause was miscounting which bucket 3 of the tests belonged to. Recounted properly: 27 unit-tier +
-15 regression-tier = 42 exactly, with the 3 E2E-tier tests being a subset already inside that
-27+15, not a third additive bucket. Every table's row-sum re-verified against its header count
-before treating the document as done — this exact kind of arithmetic slip is documented as a known
-failure mode in `SKILLS.md`, worth catching here rather than repeating it.
+- Traced all 6 SalesPage.qml view modes (Value, Purchased, Current, Revenue, Sold, Profit's
+  Realised + Potential sub-modes) for the same class of dependency (live InventoryStore.getById
+  lookup vs. immutable transaction/batch data) rather than stopping at the first one found.
+- Root cause of the actual reported bug: orphaned StockBatchStore entries from deleteProduct()
+  not cleaning up (already a known, documented, deliberately-deferred gap) collide with
+  potentialProfitByDimension()/SalesPage's duplicate inline Potential-profit walk pricing an
+  orphaned batch's revenue at 0 while still charging its real cogs -- a phantom loss dragging
+  the aggregate "Potential profit" total down.
+- Wrote a failing test first (tst_InventoryStore_potentialProfitOrphanedBatch.qml, 4 cases)
+  against InventoryStore.potentialProfitByDimension before touching the fix, per the Iron Law.
+- Fixed both duplicate implementations (InventoryStore.qml store function; SalesPage.qml's
+  inline mirror) with the same one-line defensive skip -- exclude an orphaned batch entirely,
+  don't price it at 0.
+- Explicitly did NOT fix the upstream orphaned-batch-creation issue itself (deleteProduct not
+  cleaning up StockBatchStore) -- that's the already-deferred, separately-scoped issue; fixing
+  it here would violate "one fix at a time."
+- Explicitly did NOT fix a second, distinct finding from the same audit: the other 5 tabs keep
+  correct totals but mislabel a deleted product's historical breakdown rows (raw productId
+  instead of name, "(uncategorised)" instead of real category) -- different, bigger root cause
+  (no category/name stamped on transaction records at creation time), documented in
+  KNOWN-ISSUES.md as its own item, not bundled into this fix.
+- Both touched files brace-balanced.
 
-Firestore Rules: confirmed via reading `firestore.rules` directly that this fix doesn't touch it —
-the generic working-tier fallback rule only governs the `direct`-mode path, which this fix
-deliberately leaves untouched. Documented as "not applicable" in the test plan rather than silently
-omitted, since the person explicitly asked what's covered in rules tests.
+## Also done (ninth pass, same session) — systematic-debugging: Inventory Value tab, same session continued
 
-## Code review pass (2026-08-29, same day)
+Follow-up bug report on the same debugging thread: Potential-profit fix confirmed working, but
+Inventory Value tab totally unaffected by delete (not just wrong -- zero change at all, any chart).
 
-Full review per `/superpowers:requesting-code-review` + `/ponytail:ponytail-review` +
-`/qt-development-skills:qt-qml-review`, scoped to this fix's own diff (`61f85e0..HEAD`), matching
-qt-qml-review's own diff-scope instruction to only report issues on changed lines.
-
-- Phase 1 lint: ran the deterministic linter, filtered to lines this fix actually added. 24 hits,
-  23 were JS-1/JS-2 (`var`/`==`) matching this codebase's own pervasive pre-existing house style —
-  declined on purpose, changing only the new lines would make them LESS consistent with their
-  immediate surroundings. 1 ORD-1 finding (`Gateway.qml:519`) checked by hand and confirmed a false
-  positive — no child object exists there, the linter's brace-heuristic is misreading an inline
-  `try/catch`.
-- Deep analysis (6-agent checklist, applied manually — no subagent dispatch tool in this
-  environment): Layout/Delegate agents N/A (no visual tree in the touched files). One real finding
-  — the rollback loop in all 3 stores' `_onBatchMutationFailedPermanently` was
-  O(items.length × arr.length); shrunk to O(items.length + arr.length) via a Set + `.filter()`.
-  Traced all 4 existing tests per store by hand against the new logic before committing — same
-  observable behavior confirmed, not re-run in sandbox (same qmltestrunner limitation as
-  everything else in this branch).
-- Considered and declined: extracting a shared cross-store helper for the ~90%-identical handler.
-  The pre-existing `_onMutationConflicted` handler already has the identical duplicated-3x shape,
-  unrefactored, for its whole history — introducing a new shared pattern for only the NEW handler
-  while leaving the established one duplicated would be inconsistent, not an improvement. Flagged
-  as a separate, larger decision, not folded into this branch.
-- ponytail-review: same nested-loop finding, `net: -15 lines` (verified via `git diff --stat`,
-  9 insertions / 24 deletions — not the initially-estimated -9, caught and corrected before
-  committing).
-- 164/164 functions tests re-verified (unaffected — QML-only change). Brace balance re-verified on
-  all 3 touched files.
+- Root cause: same orphaned-StockBatchStore-entries issue as the Potential-profit bug, different
+  symptom. totalValue()/valueByProduct()/valueBySupplier() never called getById() at all -- they
+  only need the batch's own qtyRemaining*unitCost, no live product required -- so a deleted
+  product's stock kept counting in full forever. valueByCategory() called getById() but only for
+  the category label, still included the value regardless.
+- Fixed all four functions with the same defensive skip pattern as the Potential-profit fix:
+  exclude a batch entirely once getById(productId) returns nothing. Also fixed SalesPage.qml's
+  filtered _valueMaps() walk (same unguarded pattern); its unfiltered path already delegates to
+  the now-fixed store functions, confirmed by tracing every call site, not assumed.
+- Failing test first: tests/tst_InventoryStore_valueOrphanedBatch.qml (5 cases).
+- Noted honestly: totalValue() itself has zero live callers anywhere in the QML codebase
+  (checked) -- fixed anyway since it's the same function group and now test-covered, but the
+  real user-visible path is _valueMaps -> valueByProduct/valueBySupplier/valueByCategory.
+- Flagged, not decided: should deleting a product with remaining stock even be allowed? The
+  existing guard blocks deletes referenced by open orders but never checks stock. Every fix this
+  session makes the display consistent (exclude deleted-product stock everywhere), not whether
+  allowing the delete in the first place was right. Business decision, not a bug -- documented in
+  KNOWN-ISSUES.md, not acted on.
+- Both touched files brace-balanced.

@@ -2740,3 +2740,55 @@ next full re-sync. Judged out of proportion for this fix (requires the size cap 
 cause, post-chunking-fix, so a real validation bug in `addSupplierWithIdMany`'s payload — expected
 to be rare) — noted in `SupplierStore.qml`'s handler comment for whoever hits it next, not fixed
 speculatively.
+
+## Skill 58: `DataModel.qml`'s dispatcher Connections block called an undeclared `logic` — and AGENTS.md already said not to write the tests that found it
+
+**What happened**: `feature/product-order-delete-ui` added row-level delete buttons for products
+and orders. Its new test, `tst_DataModel_deleteGuards.qml`, was the first test ever to fire
+`logic.deleteOrder(...)`/`logic.deleteProduct(...)` as real signals into a real `DataModel`
+instance rather than calling a private function directly. First CI run: all 9 of its tests
+failed, `ReferenceError: logic is not defined`, thrown from every
+`logic.errorOccurred(...)`/`logic.orderDeleted(...)`/etc. call inside `DataModel.qml`'s
+`_logicBus` Connections block. `logic` was never declared anywhere in that file — the correctly
+wired property is `dispatcher` (`property alias dispatcher: _logicBus.target`, set from
+`Main.qml`'s `DataModel { dispatcher: logic }`). Pre-existing on `main`, not introduced by that
+branch — `DataModel.qml` wasn't part of its diff. All 34 real call sites in the block were
+`logic.` and needed renaming to `dispatcher.` (one further mention is a code comment describing
+the correct *external* call pattern from `Main.qml`, left alone).
+
+**Production implication, not just a test artifact**: the guard-refusal lines (role check,
+open-order-reference check, completed-order check) hit `logic.errorOccurred(...)` *before*
+emitting anything, so a blocked delete has very likely been failing completely silently in the
+real running app too — no crash, no error modal, nothing a user would see, just a console
+`ReferenceError`. This directly contradicted an earlier claim in that branch's own spec doc that
+the permission-error path was "already fully handled, verified" — that verification was reading
+the code and confirming `logic.errorOccurred(...)` looked like a normal signal emission, which is
+exactly the failure mode a static trace can't catch. Only real execution surfaced it, and no
+test had ever provided that execution before.
+
+**The second finding, arguably more instructive**: the same CI run also failed to *compile* two
+other new test files (`tst_InventoryPage_deleteButton.qml`, `tst_OrdersPage_deleteButton.qml`) —
+`Type InventoryPage unavailable`, traced through `GlassHeader` → `Constants.qml` → `import
+Felgo`, which the "QML Tests" CI job's plain-Qt install can never satisfy. This document already
+says exactly that, in the Testing & QA Agent section, written before this branch existed: *"Page-
+level QML that needs the full Felgo `App` context (`dp()`/`sp()`/`Theme`/`GlassHeader`) cannot
+load under the runner."* Writing those two test files was avoidable rework — the answer was
+already sitting in this file, one section away from the test-writing conventions being followed,
+and wasn't checked first.
+
+**The actual lesson**: two different kinds of "trust but verify" failure in one CI run. The
+`logic`/`dispatcher` bug is a reminder that reading code carefully is not the same as running it
+— an undefined-identifier bug reads perfectly normally in isolation, because `logic.foo(...)`
+*looks* like every other correct signal emission in the file. Only execution (or, short of that,
+a grep for where the identifier is actually declared) catches it. The Felgo-compile failure is a
+reminder that this project's own architecture docs are a first stop, not a formality — the exact
+constraint that would have prevented writing two doomed test files was already documented, and
+checking AGENTS.md's Testing & QA Agent scope before deciding *what kind* of test to write for a
+UI change would have caught it for free.
+
+**Fixed**: all 34 real `logic.` call sites in `DataModel.qml`'s Connections block renamed to
+`dispatcher.`. The two Felgo-dependent test files were moved (not deleted) to new
+`test/felgo-dependent/` — no CI job's `qmltestrunner -input` points at it, confirmed by reading
+`.github/workflows/checks.yml` rather than assuming; see that directory's README. Full writeup:
+`docs/superpowers/KNOWN-ISSUES.md`, correction notes in
+`docs/superpowers/specs/2026-08-30-product-order-delete-ui.md` and that branch's test plan.

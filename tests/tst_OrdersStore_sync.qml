@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../qml/model"
+import "../qml/components"
 
 // NOT RUN IN THIS SANDBOX — no Qt/qmltestrunner toolchain available.
 // Expected values checked by direct trace against
@@ -8,6 +9,8 @@ import "../qml/model"
 // before merge.
 TestCase {
     name: "OrdersStore_sync"
+
+    SignalSpy { id: toastSpy; target: Toast; signalName: "showRequested" }
 
     function init() {
         OrdersStore.orders = []
@@ -66,6 +69,36 @@ TestCase {
         OrdersStore._onMutationConflicted("order", "ORD-001", { orderId: "ORD-001", status: "completed" })
         compare(OrdersStore.revision, before + 1)
         compare(OrdersStore.completedOrderCount, 1)
+    }
+
+    // ── action-based toast wording (2026-08-30) ─────────────────────────────
+    // Gateway.mutationConflicted grew a 4th `action` param so this handler
+    // can tell a rejected delete-attempt apart from a rejected edit — see
+    // docs/superpowers/specs/2026-08-30-product-order-delete-ui.md. Uses
+    // SignalSpy on Toast.showRequested, new to this file (existing tests
+    // above never asserted on toast text) but a standard QtTest type.
+
+    function test_update_conflict_shows_the_update_worded_toast() {
+        toastSpy.clear()
+        OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
+        OrdersStore._onMutationConflicted("order", "ORD-001", { orderId: "ORD-001", status: "completed" }, "update")
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0],
+                "This order was updated elsewhere — your change didn't save. \nRefreshed to the latest version.")
+    }
+
+    function test_delete_conflict_restores_the_order_and_shows_delete_worded_toast() {
+        toastSpy.clear()
+        // The order was optimistically removed locally by deleteOrder()'s
+        // optimistic apply before the mutation was sent; the server
+        // rejected the delete because someone else's edit landed first.
+        OrdersStore.orders = []
+        OrdersStore._onMutationConflicted("order", "ORD-001", { orderId: "ORD-001", status: "processing" }, "delete")
+        compare(OrdersStore.orders.length, 1, "order must be restored, not stay deleted")
+        compare(OrdersStore.orders[0].orderId, "ORD-001")
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0],
+                "Couldn't delete — this order was updated elsewhere. It's been restored with the latest version.")
     }
 
     function test_resetAndFetch_is_a_no_op_while_a_fetch_is_already_in_flight() {
