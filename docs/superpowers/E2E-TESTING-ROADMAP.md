@@ -33,8 +33,63 @@ only so future test plans don't silently assume they're testable and quietly ski
 
 ### Failed batch-id mint is silently swallowed — 2 `addBatch` call sites uncallbacked, 3 of 6 `topUpOldest` call sites uncallbacked, and `topUpOldest`'s own callback carries no error signal
 
-**Status (2026-08-29): happy path confirmed working on-device by Taher. This specific gap remains
-unconfirmed either way — see below — and is explicitly not treated as a merge blocker.**
+**Status (2026-09-14): CONFIRMED on-device by Taher — this is a real, reproducible data-integrity bug,
+not a theoretical risk.** N3 (below) has a definitive result. Root-caused via direct code tracing to
+match his report exactly, not inferred from the report alone.
+
+**Reproduction (Taher, on-device):** Product P1 at stock 1, one existing batch backing it (qty 1).
+Restocked +10 (same supplier), pressed Submit, immediately went to airplane mode. Product stock
+increased to 11 — confirmed, that write landed. Batch was never created — confirmed both in-app and
+directly in Firestore. Then created and completed an order for 3 units of P1: **the original batch's
+own record changed to show `received: 3, available: 0`** — not a new batch, the *original* one's
+history was rewritten.
+
+**Root cause, traced end to end:**
+1. `InventoryStore.restock()` (`:1044-1073`) makes two separate writes: `Gateway.recordDelta` for
+   `product.stock` (fast, atomic, completes first), then `StockBatchStore.addBatch(...)` for the FIFO
+   batch — **no callback passed**, explicitly commented "fire-and-forget" at the call site. Airplane
+   mode landed in the gap between these two writes: the stock delta had already round-tripped, the
+   batch's own `nextBatchId()` mint round-trip was still in flight when connectivity dropped.
+2. `addBatch()` (`:279-294`): when `nextBatchId`'s mint comes back empty, it `console.warn`s and
+   calls `callback(null)` — but since `restock()` passed no callback, there's nothing to receive that
+   signal. No document is created, no local state changes. Total, silent no-op.
+3. Product now shows stock 11 backed by a FIFO ledger that only has 1 unit recorded — an 10-unit gap
+   with zero user-facing signal, exactly as this entry predicted.
+4. Completing a 3-unit order calls `consumeFifo`, which can only find 1 unit across recorded batches
+   and returns `shortfall: 2`. The order-completion flow's existing drift-repair calls
+   `topUpOldest(productId, 2, callback)`.
+5. **This is the new finding Taher's test surfaced, beyond what this entry originally scoped**:
+   `topUpOldest()` (`:432-474`), when at least one batch already exists, doesn't create a new batch
+   for the shortfall — it applies an *additive* `Gateway.recordDelta` (`{qtyReceived: deficit,
+   qtyRemaining: deficit}`) directly onto the **existing, oldest** batch. `1 + 2 = 3` received,
+   immediately consumed by the 3-unit sale down to `0` remaining — exactly matching what Taher saw.
+   Only when a product has **zero** batches at all (`:435-444`) does `topUpOldest` take the other,
+   safer path already in the code: synthesize a clearly-labeled `"Adjustment (drift repair)"` batch
+   instead of touching an existing one.
+
+**Why step 5 matters on its own, separately from step 1-3's original scope**: the top-up only touches
+`qtyReceived`/`qtyRemaining` — it does **not** touch `unitCost` or `supplierId`. So the 2 phantom
+units inherit the *original* batch's cost and supplier, not the restock's actual ones. If the restock
+had been at a different cost or from a different supplier (this test happened to use the same
+supplier, so that half wasn't exercised, but the mechanism is identical either way), COGS and
+supplier-attribution numbers downstream of this batch would be silently wrong — not just short, wrong
+in a way that looks legitimate. And the original batch's own received-date/history no longer reflects
+what was actually received on that date. This is a second, distinct bug from the same root cause, not
+a restatement of the first — `topUpOldest` already has the *correct* pattern for this (the zero-batch
+branch), it's just not the one used when a batch already exists.
+
+**Ponytail-scale note on a possible fix for step 5 specifically**: making `topUpOldest` always take
+the zero-batch branch (always synthesize a labeled `"Adjustment (drift repair)"` batch, never mutate
+an existing one) is a small, contained, single-function change — it doesn't touch the callback/
+call-site question in steps 1-3 at all, and it doesn't require deciding that first. Worth treating as
+a separable decision, not bundled into whatever's decided about the original silent-swallow gap.
+
+Fix options for steps 1-3 (unchanged from the original framing, still needing Taher's call, still not
+scoped or estimated): surface an error to the caller (touches all 4 call sites' UI), a retry-on-
+next-sync mechanism (bigger — would touch `OutboxStore`/`Gateway`, neither currently knows anything
+about batch-id minting), or something narrower scoped just to this.
+
+---
 
 **2026-09-01 correction, re-verified directly against current `DataModel.qml`/`StockBatchStore.qml`
 (not carried forward from a stale count):** the previous "five of six" figure was wrong and the
@@ -68,25 +123,10 @@ operation — a product created, stock restocked, an order returned — still re
 user, but the FIFO batch ledger backing it silently never gets its entry: a data-integrity drift with
 no user-facing signal and no retry.
 
-**On-device confirmation is currently narrower than originally planned, not blocked outright**:
-`main.qml`'s root `Navigation { enabled: isOnline }` disables the entire app's interactivity the
-moment connectivity drops, so "start an action already offline" isn't executable through the UI at
-all — that rules out the plan's original N1/N2/N4 framing. What remains executable, and still answers
-the same question, is dropping connectivity *after* a request is already dispatched (the plan's N3):
-tap Save while online, then go offline before the batch's own mint round-trip would plausibly finish,
-then reconnect and check whether the batch eventually appears. That's the one on-device result this
-entry is still waiting on.
-
-Needs, in order: (1) the plan's N3 actually run on a device to confirm this is reachable and not just
-theoretical; (2) if confirmed, a decision on the fix shape — surface an error to the caller (touches
-all 4 call sites' UI), some retry-on-next-sync mechanism (bigger, would touch `OutboxStore`/`Gateway`,
-neither of which currently know anything about batch-id minting), or something narrower scoped just
-to this. Not scoped or estimated yet — deliberately, same reason as the two entries below.
-
-**2026-09-01 check-in**: as of the 2026-08-30 triage session, Taher chose to run N3 himself rather
-than have a synthetic stopgap built or skip verification — no result reported back yet as of this
-session. Still waiting; not re-prompted mid-session per that session's own note not to nudge him on
-his own timeline.
+Needs, in order: (1) ~~the plan's N3 actually run on a device to confirm this is reachable and not
+just theoretical~~ **done, confirmed, see above**; (2) a decision on the fix shape for steps 1-3, and
+separately, a decision on whether to fix `topUpOldest`'s existing-batch path (step 5) — see above for
+both. Not scoped or estimated yet — deliberately.
 
 ---
 
