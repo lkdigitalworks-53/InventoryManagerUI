@@ -2861,7 +2861,7 @@ never a `"tax"` time series, so there's nothing there to fix.
 the no-lineage fallback, and a tax-specific reconciliation invariant), executed via
 `node --test test/realisedMath.test.js`, genuinely 9/9 passing. Ran the FULL `functions/` suite
 too (`npm install` then `npm test`) to check for regressions elsewhere that touch RealisedMath
-(`index.js`'s `computeAnalysis` handler is the only other consumer) — 194/194 passing, no
+(`index.js`'s `computeAnalysis` handler is the only other consumer) — 195/195 passing, no
 regressions. This is real, executed proof for the Node port; the QML port (`qml/helper/
 RealisedMath.js`) got the byte-identical fix and a byte-identical `node --check` syntax pass on
 the stripped `.js` file (valid JS, not a QML/Qt-API check), plus the same 4 scenarios mirrored into

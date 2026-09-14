@@ -265,13 +265,13 @@ cases total across 6 files (11 + 3 new files, 1 + 4 + 3 + 4 extended into existi
 via `git diff | grep -c`, not carried forward from memory, per Skill 49's own lesson about
 re-checking a number rather than trusting it). The Node side could actually be executed in this session (unlike
 QML): `node --test test/realisedMath.test.js` → 9/9 passing (4 new), and the full `functions/`
-suite → **194/194 passing**, confirming no regression in `computeAnalysis` (the only other
+suite → **195/195 passing**, confirming no regression in `computeAnalysis` (the only other
 `RealisedMath` consumer). QML-side tests (`tests/tst_TransactionStore_priceAdjustTax.qml`,
 `tests/tst_DataModel_discountEditTax.qml`, extended `tests/tst_AdjustDiscountRepro.qml`,
 `tests/tst_RealisedMath.qml`, `tests/tst_RealisedMathParityFixtures.qml`) written and hand-traced
 against the implementation, plus a `node --check` syntax pass on the stripped `.js` helper files —
 still pending a real `qmltestrunner` run via CI, same status as every other QML test in this repo.
-See `SKILLS.md` Skill 57 and
+See `SKILLS.md` Skill 59 (renumbered from 57 after rebasing onto main) and
 `docs/superpowers/test-plans/2026-09-02-price-adjust-tax-delta-test-plan.md`.
 
 ---

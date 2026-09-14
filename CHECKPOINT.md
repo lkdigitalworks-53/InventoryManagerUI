@@ -1,9 +1,48 @@
-# CHECKPOINT — price_adjust tax-delta fix, BOTH bugs bundled, Node side genuinely run, ready to push
+# CHECKPOINT — price_adjust tax-delta fix, BOTH bugs bundled, rebased onto latest main, ready to push
 
 **Session date:** 2026-09-02
-**Branch:** `fix/2026-09-02-price-adjust-tax-delta` (off `main`)
+**Branch:** `fix/2026-09-02-price-adjust-tax-delta`, rebased onto `main` @ `a6228f4`
 **Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-02-pr-ci-status-comment-CHECKPOINT.md`
 (unrelated prior session, different branch `feature/pr-ci-status-comment` — untouched this session).
+
+## Rebase onto main (post-dated addition — everything below this note was written before the
+## rebase; the fix/tests/docs content it describes is unchanged, only their base commit moved)
+
+`main` had moved forward substantially since this branch was cut (PR #57
+`feature/product-order-delete-ui` merged: row-level delete UI, a real `logic`→`dispatcher`
+rename bug in `DataModel.qml` fixed as Skill 58, plus 2 orphaned-stock-batch Analysis fixes as
+Skill 58/doc updates — see `SKILLS.md`). Taher asked for a rebase, keeping this branch's own
+`CHECKPOINT.md` and merging everything else.
+
+- `git rebase origin/main` — `qml/model/DataModel.qml` auto-merged clean (main's `logic`→
+  `dispatcher` rename and this branch's discount-scanner/price-modify edits are in different
+  parts of the file — verified by re-reading the merged result, not just trusting a clean
+  auto-merge). `AGENTS.md`/`README.md` also auto-merged clean (both files' edits were
+  append-only in different sections).
+- **`CHECKPOINT.md` conflict** — resolved by keeping this branch's version entirely (`git
+  checkout --theirs` during rebase = the commit being replayed), per Taher's explicit
+  instruction. Main's pre-rebase `CHECKPOINT.md` (the delete-UI feature's final session
+  summary, already merged) was archived first, to
+  `docs/superpowers/specs/2026-08-30-product-order-delete-ui-CHECKPOINT.md`, so it isn't lost —
+  same archive-before-overwrite discipline this repo already uses, not skipped just because the
+  instruction said "keep mine."
+- **`SKILLS.md` conflict** — genuinely merged, not resolved by picking one side: main had
+  independently added its OWN "Skill 57" (bulk-import chunking) and "Skill 58" (the
+  `logic`→`dispatcher` bug) while this branch existed. This branch's skill entry (originally
+  numbered 57 too, before either branch could see the other's numbering) was appended after
+  main's Skill 58 and **renumbered to Skill 59** to avoid a duplicate number. Every reference
+  to "Skill 57" meaning THIS branch's skill (`CHECKPOINT.md`, `AGENTS.md`, `README.md`, the test
+  plan) was hand-corrected to "Skill 59" afterward — checked with `grep` per file, not assumed
+  fixed just because the rebase completed; main's own genuine "Skill 57" references (about
+  bulk-import chunking) were left untouched.
+- **`docs/superpowers/test-plans/README.md` conflict** — same pattern: both branches added an
+  index row (main's 2026-08-30 delete-UI row, this branch's 2026-09-02 row). Merged as two rows,
+  newest first, rather than picking one and losing the other.
+- After resolving, re-ran the full `functions/` suite (`npm test` in `functions/`) once more
+  post-rebase — **195/195 passing** (194 from this branch's own pre-rebase run + 1 main added
+  independently, `batchMutationLogic.js`/`.test.js`, unrelated to this fix). Every "194/194"
+  citation this session had already written was updated to 195/195 to match — a stale count
+  left in place after a rebase is exactly the kind of thing Skill 49 already warns about.
 
 ## What this session is
 
@@ -38,7 +77,8 @@ in every dimension row but never `tax`, for any of its four internal distributio
 (order-wide slices, supplier-lineage slices, no-lineage "Unknown" bucket, default single-key). Its
 Node port `functions/lib/realisedMath.js` (a stated "byte-identical port") had the same gap.
 
-Full narrative for both: `SKILLS.md` Skill 57.
+Full narrative for both: `SKILLS.md` Skill 59 (renumbered from 57 during the rebase onto
+`main` — main had independently claimed both Skill 57 and Skill 58 in the meantime).
 
 ## What's implemented, this session
 
@@ -68,7 +108,7 @@ Full narrative for both: `SKILLS.md` Skill 57.
 `price_adjust_tax_share_no_scope_supplier_dimension`, `price_adjust_tax_share_supplier_filtered`,
 `price_adjust_tax_no_lineage_unknown_bucket`, and a tax-specific reconciliation-invariant test).
 Then ran the FULL `functions/` suite (`npm test`) to check for regressions in `computeAnalysis`,
-the only other `RealisedMath` consumer — **194/194 passing**, no regressions anywhere touched.
+the only other `RealisedMath` consumer — **195/195 passing**, no regressions anywhere touched.
 
 **Written and hand-traced against the implementation, NOT run (no Qt toolchain — standing rule,
 CI is the first real proof):**
@@ -91,9 +131,9 @@ recounted here on purpose).
 
 ## Docs updated
 
-- `SKILLS.md` Skill 57 — full root-cause narrative for both bugs, the "flagged then bundled in on
+- `SKILLS.md` Skill 59 (renumbered from 57 — see rebase note above) — full root-cause narrative for both bugs, the "flagged then bundled in on
   Taher's call" scope-boundary paragraph, the Node-genuinely-run vs QML-hand-traced distinction.
-- `AGENTS.md` Current Feature Status table — row updated to cover both bugs and the 194/194 Node
+- `AGENTS.md` Current Feature Status table — row updated to cover both bugs and the 195/195 Node
   result.
 - `README.md` Testing section — dated "Update 2026-09-02" paragraph covering both bugs and the
   real Node test counts (corrected from an initial miscount, see above).
@@ -108,7 +148,7 @@ recounted here on purpose).
 - **CI run is the first real proof for the QML side.** Every QML test above was written and
   hand-traced against the implementation, not executed — no Qt/qmltestrunner toolchain in this
   sandbox. Watch the `qml-tests` job on the PR this branch opens. The Node side already has real
-  executed proof (194/194), which meaningfully de-risks the QML side too since the two files are
+  executed proof (195/195), which meaningfully de-risks the QML side too since the two files are
   byte-identical logic — but it isn't a substitute for the actual `qmltestrunner` run.
 - Everything already carried forward from the archived pr-ci-status-comment checkpoint (coverage
   reporting decision) is untouched, unrelated to this branch.
@@ -122,4 +162,4 @@ pushing twice to the same branch/SHA is a no-op). If pushed, check whether Taher
 whether CI's `qml-tests` job actually passed — if it didn't, that's the next thing to fix, not a
 reason to assume the hand-traced math was wrong without reading the actual failure first. The
 `functions-tests` CI job should be a formality at this point — the exact same suite already passed
-194/194 in this sandbox.
+195/195 in this sandbox.

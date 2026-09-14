@@ -85,7 +85,7 @@ with 3 new fixtures and 4 new test cases (one is a reconciliation-invariant loop
 a single fixture). `npm install` then `node --test test/realisedMath.test.js` →
 **9/9 passing** (5 pre-existing + 4 new). Ran the full `functions/` suite afterward to check
 for regressions in `computeAnalysis` (the only other consumer of `RealisedMath` in
-`functions/`) — **194/194 passing.**
+`functions/`) — **195/195 passing.**
 
 | Test | What it locks down |
 |---|---|
@@ -208,7 +208,7 @@ carries higher confidence already.)
 | `qml/model/TransactionStore.qml` (`recordPriceAdjust`, `totalsForOrder`) | `tests/tst_TransactionStore_priceAdjustTax.qml` (11 cases, written/traced, CI pending) | Order detail Tax/Total fields immediately after any post-completion discount or price edit |
 | `qml/model/DataModel.qml` (discount-scanner + price-modify blocks in `_tryAdjustOrder`) | `tests/tst_DataModel_discountEditTax.qml` (3 cases), `tests/tst_AdjustDiscountRepro.qml` (extended) | Same as above, plus the Recent Sales / transaction ledger view for the `price_adjust` row's own values |
 | `qml/helper/RealisedMath.js` (Analysis "Tax" column, `_accumulatePriceAdjust`) | `tests/tst_RealisedMath.qml` + `tests/tst_RealisedMathParityFixtures.qml` (4 + 3 cases, written/traced, CI pending) | Analysis page's Tax hero figure and by-dimension breakdown, filtered and unfiltered, for a period containing a post-completion taxable discount/price edit |
-| `functions/lib/realisedMath.js` (Node port, feeds `computeAnalysis`) | `functions/test/realisedMath.test.js` (4 new cases) — **genuinely run, 9/9 passing**; full `functions/` suite 194/194 | N/A for now — `computeAnalysis` isn't wired into `SalesPage.qml` yet per `AGENTS.md`; relevant once that cutover happens |
+| `functions/lib/realisedMath.js` (Node port, feeds `computeAnalysis`) | `functions/test/realisedMath.test.js` (4 new cases) — **genuinely run, 9/9 passing**; full `functions/` suite 195/195 | N/A for now — `computeAnalysis` isn't wired into `SalesPage.qml` yet per `AGENTS.md`; relevant once that cutover happens |
 | `firestore.rules` | Not touched, `transactions` is server-write-only | N/A |
 
 ### Regression Tests (manual counterpart)
