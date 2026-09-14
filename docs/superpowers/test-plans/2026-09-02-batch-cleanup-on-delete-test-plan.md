@@ -8,17 +8,23 @@ confirm-dialog copy when stock remains. Full design:
 
 ## 1. Unit tests
 
-### 1.1 Written this pass (`tests/tst_InventoryStore_deleteProductCascade.qml`, 7 cases)
+### 1.1 Written this pass (`tests/tst_InventoryStore_deleteProductCascade.qml`, 6 cases)
+
+**Corrected 2026-09-14 after a real CI failure**, not written correctly the first time: the
+original version tried to verify audit routing by reassigning `Gateway.recordMutation` to a spy
+function. That throws `Cannot assign to read-only property "recordMutation"` — a QML `function`
+member isn't a reassignable JS property. All 7 tests in the file failed identically, every one
+at that same line in `init()`, before reaching any actual assertion. Fixed by removing the spy
+and the one test that depended on it (verifying exactly what `Gateway.recordMutation` was called
+with, without a working spy technique, isn't achievable here — same "not independently unit-
+tested" territory `tst_Gateway.qml` already documents for Gateway's real network dispatch).
+Confirmed safe to call the *real* `Gateway.recordMutation` in the remaining tests rather than
+avoiding it entirely: `tst_DataModel_deleteGuards.qml` already exercises the real,
+pre-cascade `deleteProduct()` → `Gateway.recordMutation` path and passes on CI.
 
 - Cascade removes every batch for the deleted product — both an open (`qtyRemaining > 0`) and an
   already-exhausted (`qtyRemaining === 0`) batch — while leaving another product's batch alone.
-- Each removed batch is routed through `Gateway.recordMutation("stock_batch", batchId, "delete",
-  ...)` — verified by replacing `Gateway.recordMutation` with a recording spy for the test (real
-  `recordMutation` ends in a network write; no mock-HTTP layer exists in this codebase, same
-  limitation `tst_Gateway.qml` documents — this test verifies the *routing*, not the network
-  effect).
-- No batches at all for the product: doesn't throw, product still deletes, exactly one audit
-  call (the product itself).
+- No batches at all for the product: doesn't throw, product still deletes.
 - **Photo-cleanup safety**: `StorageService.deleteProductPhoto` falls through to a native
   `ImageProcessor` singleton only registered by the real app's `main.cpp` — undefined in this
   test environment, same failure class as the `logic`/`dispatcher` bug (Skill 58). Test confirms
@@ -40,6 +46,10 @@ pass on CI *is* the regression check.
 
 ### 1.3 Not independently tested — same reasoning as before
 
+- **Which entity/action `Gateway.recordMutation` was actually called with for each cascaded
+  batch** — not just the network effect. Confirmed no working spy technique exists for a QML
+  `function` member (see 1.1's correction note); verifying call arguments would need inspecting
+  `OutboxStore`'s internal queue directly, unproven and not attempted.
 - The real network effect of the `stock_batch` delete mutations and the product photo delete —
   same untestable-without-mock-HTTP-infrastructure limitation as every other `Gateway`/
   `StorageService` network path in this suite.

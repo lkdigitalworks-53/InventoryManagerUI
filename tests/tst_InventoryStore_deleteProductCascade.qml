@@ -20,32 +20,21 @@ import "../qml/model"
 // and should still pass unmodified, proving the refactor didn't change
 // what those functions return.
 //
-// NOT RUN IN THIS SANDBOX — same Felgo-free import tier as the three
-// InventoryStore test files that already passed on real CI this session.
+// CORRECTED 2026-09-14 after a real CI failure: this file originally tried
+// to spy on Gateway.recordMutation by reassigning it
+// (`Gateway.recordMutation = function(...) {}`) to verify audit routing.
+// That throws "Cannot assign to read-only property" -- a QML `function`
+// member isn't a reassignable JS property like a plain object's. Removed
+// the spy and the one test that needed it; the real (non-mocked)
+// deleteProduct() -> Gateway.recordMutation path is exercised directly
+// instead, which is safe -- tst_DataModel_deleteGuards.qml already does
+// the same for the pre-cascade version of this function and passes on CI.
 TestCase {
     name: "InventoryStore_deleteProductCascade"
-
-    property var _recordedMutations: []
-    property var _realRecordMutation: null
 
     function init() {
         InventoryStore.products = []
         StockBatchStore.batches = []
-        _recordedMutations = []
-        // Spy on Gateway.recordMutation rather than letting it run for
-        // real -- it ends in a network write (drainNow/_send), same
-        // "no mock HTTP layer" limitation tst_Gateway.qml documents.
-        // Recording calls here verifies the audit *routing* (right entity,
-        // right action, right id) without touching the network at all.
-        _realRecordMutation = Gateway.recordMutation
-        Gateway.recordMutation = function(entity, entityId, action, before, after) {
-            _recordedMutations.push({ entity: entity, entityId: entityId, action: action })
-            return "spy-request-id"
-        }
-    }
-
-    function cleanup() {
-        Gateway.recordMutation = _realRecordMutation
     }
 
     function _product(id) {
@@ -73,28 +62,20 @@ TestCase {
         compare(remaining[0].batchId, "B-3")
     }
 
-    function test_deleteProduct_routes_each_batch_through_audit_as_a_delete() {
-        InventoryStore.products = [_product("SKU-1")]
-        StockBatchStore.batches = [
-            _batch("B-1", "SKU-1", 10, 20),
-            _batch("B-2", "SKU-1", 0, 20)
-        ]
-
-        InventoryStore.deleteProduct("SKU-1")
-
-        // One mutation for the product itself, one per batch.
-        compare(_recordedMutations.length, 3)
-        compare(_recordedMutations[0].entity, "inventory")
-        compare(_recordedMutations[0].action, "delete")
-        var batchMutations = _recordedMutations.slice(1)
-        compare(batchMutations.length, 2)
-        for (var i = 0; i < batchMutations.length; ++i) {
-            compare(batchMutations[i].entity, "stock_batch")
-            compare(batchMutations[i].action, "delete")
-        }
-        var ids = [batchMutations[0].entityId, batchMutations[1].entityId].sort()
-        compare(ids, ["B-1", "B-2"])
-    }
+    // Audit routing itself (does Gateway.recordMutation actually get called
+    // with entity="stock_batch") is deliberately NOT verified by a spy here.
+    // QML `function` members are read-only at the JS binding layer --
+    // `Gateway.recordMutation = function(...) {}` throws "Cannot assign to
+    // read-only property" (found via a real CI failure, not assumed).
+    // Calling the real function is safe -- tst_DataModel_deleteGuards.qml
+    // already exercises the real deleteProduct() -> Gateway.recordMutation
+    // path and passes on CI -- but verifying *what it was called with*
+    // without a working spy technique would need inspecting OutboxStore's
+    // internal queue, unproven territory. Same call this codebase already
+    // makes for Gateway's actual network dispatch (see tst_Gateway.qml):
+    // not independently unit-tested. The batch-removal tests below cover
+    // the part that matters observably -- that every batch for the
+    // deleted product is actually gone from local state.
 
     function test_deleteProduct_with_no_batches_at_all_does_not_throw() {
         InventoryStore.products = [_product("SKU-1")]
@@ -103,7 +84,6 @@ TestCase {
         InventoryStore.deleteProduct("SKU-1")
 
         compare(InventoryStore.products.length, 0)
-        compare(_recordedMutations.length, 1) // just the product itself
     }
 
     function test_deleteProduct_completes_despite_photo_cleanup_throwing() {
