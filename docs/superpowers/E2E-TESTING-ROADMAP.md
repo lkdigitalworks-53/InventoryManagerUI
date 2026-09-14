@@ -56,6 +56,100 @@ scoping: probably a shared timeout wrapper at the `_request()`/`_send()` level r
 the per-call pattern five more times, but that's a design decision for whoever picks this up, not
 assumed here.
 
+### Other instances of item 1's async-chain pattern — audited, three lower-priority findings
+
+Found 2026-09-14 while auditing the codebase for other instances of item 1's pattern (chained async
+calls on one user operation, second call unprotected) after Taher asked to check systematically —
+see the "checked, already safe" list at the end of this section for what was ruled out, so a future
+session doesn't need to re-derive it. None of these are anywhere near item 1's severity (financial/
+inventory data corruption); none were fixed this session — documented for later triage, one at a
+time, per Taher's explicit instruction to keep this session scoped to the original issue.
+
+#### Priority: Medium — `StaffStore.deleteStaff()` → `AuthService.cleanupStaffAuthDocs()` orphans auth docs on failure
+
+When a staff member with app-login credentials is removed, the staff record itself deletes durably
+(`Gateway.recordMutation`, `StaffStore.qml:197`), but the cleanup of their auth-related Firestore docs
+— the tenant membership doc and the top-level user doc — goes through `FirebaseService.remove()`
+directly (`AuthService.qml:917,920`), fire-and-forget, with no callback back to `deleteStaff()`'s
+caller at all (`StaffStore.qml:200-201`). If either removal fails (network drop right after the
+staff-delete lands), those docs are permanently orphaned — no retry, no signal. Security-adjacent
+(a former staff member's membership doc could persist after they're supposedly removed) rather than
+data-integrity — hence Medium, not High, despite being conceptually the closest match to item 1's
+pattern (an unprotected companion write after a primary success). There's already a `TODO` in this
+function acknowledging a *different* incompleteness (the Firebase Auth account itself needs a Cloud
+Function to actually delete, out of scope here too).
+
+**Possible fix shape, not scoped**: route both removes through `Gateway.recordMutation(..., "delete",
+...)` instead of calling `FirebaseService.remove` directly — same durability item 1's batches now have,
+without needing item 1's dedicated pending-mint queue (no id-mint involved here, just a delete of an
+already-known doc path, which is exactly what `Gateway.recordMutation` already handles for every
+other delete in this codebase).
+
+#### Priority: Medium-low — `ActivityLog.record()` bypasses the durable write path entirely
+
+Every "product added," "restocked," "staff added" (etc.) notification goes through `ActivityLog.
+record()`, which writes to Firestore via `FirebaseService.put`/`putMany` directly
+(`ActivityLog.qml:121-136`), not through `Gateway.recordMutation`. If that write fails, the entry
+stays visible in the local session's notification list (so nothing looks obviously wrong to the
+user) but is never persisted server-side — permanently lost, won't sync to another device, gone on a
+fresh install. Lower severity than the staff-cleanup finding (it's an audit trail, not inventory or
+auth data) but far more frequently exercised — nearly every entity-creation/mutation flow in the app
+calls this.
+
+**Possible fix shape, not scoped**: same as above — route through `Gateway.recordMutation` instead of
+`FirebaseService.put` directly. `ActivityLog` entries already have a stable, locally-generated id
+(`"act-" + Date.now() + ...`), so — same as item 1's finding that `TransactionStore`'s writes were
+already safe — there's no id-mint risk here at all, purely a "not using the durable write path"
+question.
+
+#### Priority: Low — `CategoryStore`/`OrderChannelStore` config writes, same mechanism, lowest stakes
+
+`CategoryStore._pushToFirebase()` (`CategoryStore.qml:78-84`) and `OrderChannelStore._pushToFirebase()`
+(`OrderChannelStore.qml:89-95`) each have one unprotected `FirebaseService.put` for their whole config
+list (categories, order channels) — same "no retry on failure" mechanism as the two findings above,
+but for app configuration, not transactional or audit data. Easy for a user to notice (their category
+list looks wrong) and just re-save; not chained with anything else (single write, not two calls), so
+it's a narrower match to the original pattern than the two findings above. Lowest priority of this
+group — probably not worth the same investment unless the other two are being done anyway and this
+is cheap to fold in.
+
+#### Checked and found to already be safe — for context, not re-investigation
+
+- **`addProduct`/`restock`'s supplier-creation chain** (`_resolveSupplierId` → `SupplierStore.
+  addSupplier`, `InventoryStore.qml:564-582`) — this session's most direct check against "product
+  creates a supplier," per how the question was originally framed. Already correct: failure is
+  checked and passed back through the callback in both callers, not swallowed. `restock()` treats a
+  failed *new*-supplier creation as non-fatal to the stock update itself (an intentional partial-
+  success design, not a bug) and surfaces `supplierFailed` via its own callback either way — **one
+  open question this session didn't chase down**: whether the UI that calls `restock()` actually
+  reads and displays that flag to the user, or silently drops it. Worth a quick look if anyone's ever
+  investigating restock's UI, not urgent enough to be its own item.
+- **`TransactionStore.recordCreated`/`recordPurchase`/etc.** — locally-generated id (`Date.now()`-
+  based, no server round-trip) plus a `Gateway.recordMutation`-backed write. Same safety profile as
+  the batch-mint fix's own `topUpOldest`/`addBatch` calls, already durable.
+- **`SalesStore.recordSale`** — purely a local derived-data recompute (revenue/orders-by-month/top-
+  products), no network call at all. Not applicable to this pattern.
+- **Order completion's partial-failure rollback** (`DataModel.qml`'s `_afterAllDeltas`, calling
+  `StockBatchStore.restoreFifo`/`InventoryStore.creditStockNoBatch` without waiting on their
+  callbacks) — both route through `Gateway.recordDelta`, durable/retried automatically by the
+  existing Outbox mechanism even though the immediate caller doesn't confirm each one landed before
+  reporting the overall failure. Different from item 1's original gap, where the failing operation
+  genuinely had no retry path at all.
+- **`AuthService`'s tenant-creation and member-management flows** (`setMemberRole`/`setMemberStatus`/
+  `removeMember`/tenant onboarding) — every step's callback is checked and every failure surfaces
+  through `authFailed`/`memberOperationFailed`. Tenant creation even has explicit compensating
+  rollback writes on a later step's failure. One very narrow, low-priority edge case noted but not
+  worth its own item: the rollback writes themselves (`FirebaseService.remove(..., function() {})`)
+  pass an empty callback, so a failure *of the rollback* (after an earlier step already failed) would
+  itself go unnoticed — requires two failures in sequence, arguably not worth guarding against.
+- **`AuthService.leaveWorkspace`** — proceeds to sign out even if the membership-doc removal fails,
+  explicitly documented in the code as an intentional trade-off ("the user doc no longer points here,
+  so the workspace is left"), not an oversight.
+- **`InventoryStore.deleteProduct`** — doesn't cascade-delete the product's batches at all. Not an
+  instance of this pattern (there's no second async call to fail) — a different, pre-existing design
+  question (should deleting a product also clean up its batches?) that's out of scope for an
+  async-chaining audit specifically.
+
 ---
 
 ## Explicitly scoped out — not forgotten, just not this round
