@@ -10,6 +10,6 @@
   "dependencies": {
     "@fiahfy/icns-convert": "0.0.12",
     "png-to-ico": "3.0.1",
-    "sharp": "0.35.2"
+    "sharp": "0.35.4"
   }
 }
