@@ -31,62 +31,7 @@ only so future test plans don't silently assume they're testable and quietly ski
 
 ## Needs Taher's input before it can be scoped or started
 
-### Failed batch-id mint is silently swallowed — 2 `addBatch` call sites uncallbacked, 3 of 6 `topUpOldest` call sites uncallbacked, and `topUpOldest`'s own callback carries no error signal
-
-**Status (2026-08-29): happy path confirmed working on-device by Taher. This specific gap remains
-unconfirmed either way — see below — and is explicitly not treated as a merge blocker.**
-
-**2026-09-01 correction, re-verified directly against current `DataModel.qml`/`StockBatchStore.qml`
-(not carried forward from a stale count):** the previous "five of six" figure was wrong and the
-title's "3 of 4" was also wrong — neither matched the code. Actual counts:
-- `InventoryStore.addProduct()`'s "Initial stock" call (`:490`) and `InventoryStore.restock()`'s call
-  (`:1008`) both call `StockBatchStore.addBatch()` with **no callback at all** — 2 of 2 unprotected.
-- `DataModel.qml` calls `StockBatchStore.topUpOldest()` at 6 sites (`:538, :626, :689, :971, :1031,
-  :1097`). 3 of them (`:538, :626, :1031`) pass a callback; 3 (`:689, :971, :1097`) don't.
-
-**Second, more important finding this correction surfaced**: `topUpOldest()`'s callback (`:418-460`)
-calls `callback()` unconditionally at the end of its `Gateway.recordDelta` response handler — it
-does NOT check `result.ok` before firing it (contrast `addBatch()`, which correctly distinguishes
-`callback(null)` on mint failure from `callback(doc)` on success). So the 3 `topUpOldest` call sites
-that DO wait on a callback are still not actually told whether the top-up succeeded — they just get
-told "done." This widens the eventual fix's scope beyond "add missing callbacks at 5 call sites": the
-callback *contract itself* needs an error channel before any call site's callback would even have
-something meaningful to check.
-
-Found while writing the on-device test plan for the async batch-id-minting change
-(`docs/superpowers/test-plans/2026-08-28-async-stock-batch-id-minting-test-plan.md`). Before the
-async conversion this was harmless (a local array scan can't fail); now it's a real network call that
-can (see `docs/superpowers/specs/2026-08-27-async-stock-batch-id-minting-design.md`).
-
-Worth being precise about *what kind* of gap this is: `addProduct`'s own productId mint is handled
-correctly (`nextProductId` failing aborts the whole add and tells the caller — fail loudly, nothing
-half-completes). The stock batch created immediately after is a separate, best-effort side-effect on
-an *already-committed* product, with no equivalent path. This isn't the same pre-existing risk class
-as everywhere else in the app (every other entity's primary mint fails loudly); it's specifically a
-secondary/companion write that used to be infallible and no longer is. If it fails, the surrounding
-operation — a product created, stock restocked, an order returned — still reports success to the
-user, but the FIFO batch ledger backing it silently never gets its entry: a data-integrity drift with
-no user-facing signal and no retry.
-
-**On-device confirmation is currently narrower than originally planned, not blocked outright**:
-`main.qml`'s root `Navigation { enabled: isOnline }` disables the entire app's interactivity the
-moment connectivity drops, so "start an action already offline" isn't executable through the UI at
-all — that rules out the plan's original N1/N2/N4 framing. What remains executable, and still answers
-the same question, is dropping connectivity *after* a request is already dispatched (the plan's N3):
-tap Save while online, then go offline before the batch's own mint round-trip would plausibly finish,
-then reconnect and check whether the batch eventually appears. That's the one on-device result this
-entry is still waiting on.
-
-Needs, in order: (1) the plan's N3 actually run on a device to confirm this is reachable and not just
-theoretical; (2) if confirmed, a decision on the fix shape — surface an error to the caller (touches
-all 4 call sites' UI), some retry-on-next-sync mechanism (bigger, would touch `OutboxStore`/`Gateway`,
-neither of which currently know anything about batch-id minting), or something narrower scoped just
-to this. Not scoped or estimated yet — deliberately, same reason as the two entries below.
-
-**2026-09-01 check-in**: as of the 2026-08-30 triage session, Taher chose to run N3 himself rather
-than have a synthetic stopgap built or skip verification — no result reported back yet as of this
-session. Still waiting; not re-prompted mid-session per that session's own note not to nudge him on
-his own timeline.
+*(nothing currently — item 1, the last one here, was resolved 2026-09-14; see below)*
 
 ---
 
@@ -122,6 +67,60 @@ lines move out of `index.js` entirely and gain 100% coverage in their new home. 
 closed, not just mergeable.
 
 ## Resolved this arc (for context — full detail in `docs/superpowers/specs/` and `SKILLS.md`)
+
+- **Failed batch-id mint, silently swallowed — confirmed on-device, both decisions implemented**
+  (2026-09-14) — the plan's N3 (restock, drop connectivity right after submit) came back with a
+  definitive result from Taher: the batch was permanently lost, not recovered on reconnect, matching
+  this entry's original prediction exactly. Root-caused end to end against the actual code, not
+  inferred from the report: `InventoryStore.restock()` writes `product.stock` first (fast, atomic —
+  why the stock count updated before airplane mode could be toggled on), then calls
+  `StockBatchStore.addBatch()` with no callback; `addBatch()`'s `nextBatchId()` mint was still in
+  flight when connectivity dropped, and on failure it just warns and returns — nothing to receive
+  that signal since no callback was passed.
+  **Second, worse finding this surfaced, beyond the original scope**: completing an order against
+  that product (3 units, only 1 unit recorded across batches) triggered the existing drift-repair
+  (`topUpOldest`), which — when at least one batch already existed — didn't create a new batch for
+  the shortfall; it applied an additive delta directly onto the *existing* batch's own
+  `qtyReceived`/`qtyRemaining`, rewriting its history (`1 → 3`, confirmed matching exactly what Taher
+  saw). Since the delta only touched quantity fields, the phantom units silently inherited that
+  batch's cost/supplier rather than the actual restock's — a second, distinct bug (wrong data, not
+  just missing data) from the same root cause.
+  **Decision 1 (Taher's call): retry on reconnect, no error/warning surfaced, product hidden from
+  order-entry pickers until resolved.** `StockBatchStore` gained a small, durable (`Settings`-backed,
+  survives a relaunch), retry queue: a failed mint is queued instead of dropped
+  (`_queuePendingMint`), retried automatically on `AuthService.isOnlineChanged` (and defensively at
+  startup, in case the app was relaunched while already online with leftovers) via
+  `retryPendingMints()`/`_retryOnePendingMint()`, deduped against concurrent/overlapping retries via
+  an in-flight set (same pattern `OutboxStore._inFlightKeys` already established). `hasPendingMint
+  (productId)` lets a caller check whether a product has one outstanding; wired into both
+  `NewOrderDialog._rebuildPickerNames()` and `OrderDetailDialog._rebuildCatalog()` to skip such
+  products from the "add a line" picker entirely (existing lines already on an order are untouched —
+  only new selection is blocked). `NewOrderDialog` needed a small structural fix alongside this: its
+  picker resolved selection via a raw `InventoryStore.products[idx]` index with no filtering layer
+  (unlike `OrderDetailDialog`, which already built a separate parallel `catalog` array) — filtering
+  the display names without also fixing this would have silently misaligned every selection after the
+  first hidden product, so a matching parallel `_pickerProducts` array was added, mirroring
+  `OrderDetailDialog`'s already-correct pattern.
+  **Decision 2 (Taher's call, "go with the recommended fix"): `topUpOldest` always synthesizes a new,
+  clearly-labeled batch now, never mutates an existing one's history** — removed the two-branch split
+  entirely (previously: synthesize only when zero batches existed, otherwise mutate the newest one);
+  now always takes the synthesize path regardless. Same `addBatch()` call either way, so this cost
+  nothing extra to make unconditional, and it also means a top-up whose *own* mint fails is covered by
+  Decision 1's same retry queue for free, with no separate handling needed.
+  **Verification**: new `tests/tst_PendingMintAndTopUpSafety.qml` (11 tests, all passing) models both
+  decisions and their interaction using this repo's established minimal-plain-JS-object technique
+  (`tst_TenantContextRaceGuard.qml`'s pattern) — `addBatch`/`topUpOldest` are read-only methods on a
+  `pragma Singleton`, same class of limitation as `FirebaseService.query` found earlier this session,
+  so the real singleton can't be driven deterministically from a test. Full suite re-run: 359 passed
+  (was 178 before this session's various work started), 29 failed — same pre-existing
+  `AuthStore`/`QtCore` cause as always, confirmed via the actual error text and a diff against the
+  failure list from before this change (zero new failures; `StockBatchStore.qml` gaining
+  `import QtCore` for its new `Settings` block changes nothing, since the whole `qml/model` directory
+  was already tainted by `AuthStore.qml`'s own `QtCore` import). **On-device/CI confirmation that the
+  real singleton and the two dialogs behave like the model is still outstanding** — same category of
+  gap as items 2 and 3's own mirror-model tests, flagged rather than treated as equivalent to real
+  verification. New test plan: `docs/superpowers/test-plans/2026-09-14-batch-mint-retry-and-topup-
+  safety-test-plan.md`.
 
 - **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/
   `releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis` now covered in
