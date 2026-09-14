@@ -111,7 +111,7 @@ to close once prioritized; the pattern is fully proven in the two entities that 
 
 ---
 
-## Delete: product delete doesn't clean up stock batches or the product photo
+## Delete: product delete doesn't clean up stock batches or the product photo — RESOLVED 2026-09-02
 
 `InventoryStore.deleteProduct()` splices the product from the local array and routes the delete
 through `Gateway.recordMutation`, but does **not** clean up that product's `StockBatchStore`
@@ -119,9 +119,28 @@ entries or call `StorageService.deleteProductPhoto()`. Both become orphaned afte
 — a stock batch pointing at a productId that no longer resolves to anything, and an unreferenced
 image left in Firebase Storage.
 
-**Decision:** not touched by `feature/product-order-delete-ui` — this changes the blast radius of
-what "delete a product" actually does (cascading deletes across two more subsystems) and deserves
-its own review, not a drive-by inside a UI ticket that was scoped to "add the missing button."
+**Original decision:** not touched by `feature/product-order-delete-ui` — this changes the blast
+radius of what "delete a product" actually does (cascading deletes across two more subsystems)
+and deserves its own review, not a drive-by inside a UI ticket that was scoped to "add the
+missing button."
+
+**Resolved.** Three candidate designs (do-nothing, centralize-the-read-filter, cascade-delete-
+with-audit) were compared via `superpowers:brainstorming` + `ponytail:ponytail-audit` on three
+throwaway branches (deleted after the decision — see
+`docs/superpowers/specs/2026-09-02-cleanup-batches-photo-on-product-delete.md` for the full
+comparison and the final, decided design). Cascade-delete was chosen. `deleteProduct()` now
+removes every batch for the deleted product (audit-preserved via
+`Gateway.recordMutation("stock_batch", ..., "delete", ...)`, mirroring the product's own delete)
+and calls `StorageService.deleteProductPhoto()`, guarded in a `try/catch` since that call falls
+through to a native singleton unavailable outside the real compiled app — same failure class as
+the `logic`/`dispatcher` bug (Skill 58), guarded against directly this time rather than found the
+hard way. The shared `InventoryStore._activeBatches()` filter (from the comparison's middle
+tier) was implemented alongside it as a defensive backstop, replacing the four duplicated inline
+guards added while fixing the two Sales Analysis bugs above. Full test plan:
+`docs/superpowers/test-plans/2026-09-02-batch-cleanup-on-delete-test-plan.md`.
+
+**Still open, not decided**: backfill for batches already orphaned by deletes that happened
+before this shipped, and final confirm-dialog copy — both flagged in the spec doc, not blocking.
 
 ---
 
@@ -217,15 +236,13 @@ now-fixed store functions. Failing test first: `tests/tst_InventoryStore_valueOr
 test, but the actual user-visible path is the `_valueMaps` → `valueByProduct/valueBySupplier/
 valueByCategory` chain.
 
-**A bigger question this raises, not decided or acted on**: should deleting a product with
-remaining stock (`qtyRemaining > 0` in any batch) even be allowed in the first place? The existing
-delete guard in `DataModel.onDeleteProduct` already blocks a delete when the product is referenced
-by an *open order* — it does not check remaining stock at all. Every fix above makes the numbers
-consistent by *excluding* a deleted product's leftover stock from every view, which is the right
-symptom-level answer, but doesn't address whether letting a product with stock on hand disappear
-from the catalog (while the physical goods presumably still sit in a warehouse somewhere) is the
-right behavior to allow at all. That's a product/business decision, not a bug — flagging it, not
-deciding it.
+**A bigger question this raised — answered 2026-09-02**: should deleting a product with
+remaining stock (`qtyRemaining > 0` in any batch) even be allowed in the first place? Answered:
+yes, allowed, with a warning — see the resolved entry above. `deleteProduct()` now shows the
+remaining quantity and value in the confirm dialog and cascades the delete through the stock
+batches rather than leaving them orphaned. Blocking the delete outright was considered and
+rejected — there's no existing way to write off a batch's quantity to zero otherwise, which would
+have trapped a user wanting to remove a discontinued or mis-entered product.
 
 **Second finding, audited but explicitly not fixed here — different, bigger root cause**: the
 other five tabs (Value, Purchased, Revenue, Sold, Profit's Realised sub-mode) keep correct

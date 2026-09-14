@@ -1,8 +1,17 @@
 # Design: clean up stock batches (and the photo) on product delete
 
-Status: design only, not implemented. Raised after merge of `feature/product-order-delete-ui`,
-which shipped two symptom-level fixes (Potential profit, Inventory Value) for the same root
-cause described here — see `docs/superpowers/KNOWN-ISSUES.md`.
+**Status: decided, implementing.** Three tiers (do-nothing, centralize-the-read-filter,
+cascade-delete-with-audit) were compared across three throwaway branches after a
+`superpowers:brainstorming` + `ponytail:ponytail-audit` pass on this doc — Taher picked the
+cascade-delete option (this doc's original recommendation, "Option D" below). Two of that
+option's open questions were cut outright by the audit rather than left dangling: audit-reason
+granularity (no identified need) and a separate role gate for the stock check (redundant with
+the delete action's existing gate). The comparison branches are deleted; this doc is now the
+live spec being implemented.
+
+Raised after merge of `feature/product-order-delete-ui`, which shipped two symptom-level fixes
+(Potential profit, Inventory Value) for the same root cause described here — see
+`docs/superpowers/KNOWN-ISSUES.md`.
 
 ## The issue
 
@@ -101,23 +110,28 @@ exists.
    (e.g. no photo existed) must not roll back or block the product/batch delete. Same function
    already used in `EditProductDialog.qml`'s "remove photo" action; no new Storage-side code
    needed.
+4. **Defensive backstop, layered underneath**: implement the read-side filter from the tier
+   comparison's "Tier B" alongside this (`InventoryStore._activeBatches()`, walking
+   `StockBatchStore.batches` and skipping any entry whose `getById(productId)` comes back empty)
+   and switch `totalValue`/`valueByProduct`/`valueBySupplier`/`valueByCategory`/
+   `potentialProfitByDimension` — and their `SalesPage.qml` mirrors — to read through it instead
+   of the inline `if (!getById(...)) continue` guards added for the two earlier bug fixes. Cheap
+   insurance: if a batch somehow survives the cascade in step 2 (a retried/failed delete
+   mutation, for instance), the two already-shipped fixes stay correct regardless.
 
-## Open questions for Taher, not decided here
+## Decided (cut by the ponytail-audit pass, not left as open questions)
+
+- **Audit-reason granularity** — cut. No identified need to distinguish a cascade-deleted batch's
+  audit reason from a hypothetical future direct-batch-delete feature that doesn't exist yet.
+- **A separate role gate for the stock check** — cut. It's the same delete action, already gated
+  by `canManageInventory`; a second gate for the same actor doing the same thing has no purpose.
+
+## Still genuinely open, not decided here
 
 - **Exact warning copy and whether to show it as a distinct dialog vs. an enhanced version of
   the existing one.** Proposed wording above is a starting point, not final.
 - **Backfill for already-orphaned batches.** This fix only stops *new* deletes from leaving
   orphans — any batch already orphaned by a delete that happened before this ships stays
-  orphaned (though harmless, since the Potential-profit/Inventory-Value fixes already exclude
-  orphaned batches from every calculation that matters). Worth a one-time cleanup script, or not
-  worth the effort given the fixes already in place make it cosmetically invisible either way —
-  Taher's call.
-- **Whether the audit_log's "delete" reason for a cascade-deleted batch should say something
-  more specific than the generic reason `deleteProduct` already uses** (e.g. distinguishing "this
-  batch was removed because its product was deleted" from a hypothetical future direct batch-
-  delete feature, which doesn't exist yet but might one day) — a nice-to-have for
-  audit-trail readability, not required for correctness.
-- **Whether "stock still exists" should also block delete for staff-role reasons** (i.e., does
-  only owner/admin get to see/authorize a stock write-off, same as the existing
-  `canManageInventory` gate) — likely yes by default since it's the same role gate already on
-  the whole delete action, flagging in case there's a reason to split it.
+  orphaned (though harmless, since the Potential-profit/Inventory-Value fixes plus the
+  defensive backstop above make it cosmetically invisible either way). Worth a one-time cleanup
+  script, or not worth the effort — Taher's call, not blocking implementation of the rest.
