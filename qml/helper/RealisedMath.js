@@ -76,6 +76,7 @@ function byDimension(field, entries, scope, lookups) {
                     if (!out[paKeyF]) out[paKeyF] = _emptyRow()
                     out[paKeyF].revenue += paAmt
                     out[paKeyF].profit  += paAmt
+                    out[paKeyF].tax     += _priceAdjustTaxShare(e, paAmt)
                     if (e.reason === "discount") out[paKeyF].discount += -paAmt
                 }
             } else {
@@ -167,6 +168,27 @@ function _priceAdjustSupplierAmount(e, supplierId) {
     return amt
 }
 
+// Proportional tax share for one revenue slice of a price_adjust event.
+// e.tax/e.total is a CONSTANT ratio for a given event — it equals
+// (taxRate/100) exactly, by construction of TransactionStore.recordPriceAdjust
+// (taxDelta = revenueDelta * taxRate/100, and every slice below is itself a
+// portion of that same revenueDelta === e.total). So scaling e.tax by
+// (revenueShare / e.total) recovers the EXACT tax for that slice, not an
+// approximation — the same relationship byDimension already relies on for
+// sale/return rows (tax split by the same fraction as net, see evTax*frac
+// above). Added 2026-09-02 alongside the recordPriceAdjust fix (SKILLS Skill
+// 57) — before this, price_adjust events contributed revenue/profit/discount
+// to every dimension but NEVER tax, so the Analysis "Tax" column silently
+// under/over-reported for any order with a post-completion discount or price
+// edit on a taxable line, even though the underlying event already carried
+// the correct total tax by the time this function runs.
+function _priceAdjustTaxShare(e, revenueShare) {
+    var total = e.total || 0
+    if (total === 0) return 0
+    var tax = (e.tax !== undefined && e.tax !== null) ? e.tax : 0
+    return tax * (revenueShare / total)
+}
+
 // price_adjust: pure revenue correction (no qty / no COGS). Profit delta == the
 // revenue delta. Carried over verbatim from InventoryStore.realisedProfitByDimension
 // so the discount column and supplier attribution behave identically — now also
@@ -185,6 +207,7 @@ function _accumulatePriceAdjust(out, e, field, scope, categoryOf, orderLookup) {
             if (!out[sk]) out[sk] = _emptyRow()
             out[sk].revenue += slices[s].amount
             out[sk].profit  += slices[s].amount
+            out[sk].tax     += _priceAdjustTaxShare(e, slices[s].amount)
             if (isDiscount) out[sk].discount += -(slices[s].amount)
         }
         return
@@ -208,6 +231,7 @@ function _accumulatePriceAdjust(out, e, field, scope, categoryOf, orderLookup) {
                 if (!out[lk]) out[lk] = _emptyRow()
                 out[lk].revenue += lineSlices[ls].amount
                 out[lk].profit  += lineSlices[ls].amount
+                out[lk].tax     += _priceAdjustTaxShare(e, lineSlices[ls].amount)
                 if (isDiscount) out[lk].discount += -(lineSlices[ls].amount)
             }
             return
@@ -216,6 +240,7 @@ function _accumulatePriceAdjust(out, e, field, scope, categoryOf, orderLookup) {
         if (!out[""]) out[""] = _emptyRow()
         out[""].revenue += (e.total || 0)
         out[""].profit  += (e.total || 0)
+        out[""].tax     += (e.tax || 0)
         if (isDiscount) out[""].discount += -(e.total || 0)
         return
     }
@@ -229,6 +254,7 @@ function _accumulatePriceAdjust(out, e, field, scope, categoryOf, orderLookup) {
     if (!out[paKey]) out[paKey] = _emptyRow()
     out[paKey].revenue += (e.total || 0)
     out[paKey].profit  += (e.total || 0)
+    out[paKey].tax     += (e.tax || 0)
     if (isDiscount) out[paKey].discount += -(e.total || 0)
 }
 
