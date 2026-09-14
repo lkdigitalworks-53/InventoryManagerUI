@@ -540,9 +540,20 @@ App {
                         onDeleteProductClicked: function(pid) {
                             var p = InventoryStore.getById(pid)
                             var nm = p ? p.name : pid
+                            var stockQty = (typeof StockBatchStore !== "undefined" && StockBatchStore)
+                                    ? StockBatchStore.remainingFor(pid) : 0
+                            var msg
+                            if (stockQty > 0) {
+                                var stockValue = InventoryStore.valueByProduct()[pid] || 0
+                                msg = "“" + nm + "” has " + stockQty + " units in stock worth " +
+                                      InventoryStore.formatCurrency(stockValue) +
+                                      ". Deleting will remove that stock record too. This cannot be undone."
+                            } else {
+                                msg = "“" + nm + "” will be removed from inventory. This cannot be undone."
+                            }
                             confirmDlg.ask({
                                 title: "Delete product?",
-                                message: "“" + nm + "” will be removed from inventory. This cannot be undone.",
+                                message: msg,
                                 confirmLabel: "Delete product",
                                 onConfirm: function() { logic.deleteProduct(pid) }
                             })

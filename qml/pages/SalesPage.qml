@@ -950,7 +950,7 @@ Item {
                 // the hero totals in one go. Date / channel / staff are
                 // intentionally ignored here — Potential profit is a
                 // batch-level snapshot with no time or sale-event lineage.
-                var bsP = StockBatchStore.batches || []
+                var bsP = InventoryStore._activeBatches()
                 var byNameAccum = {}     // productName → { revenue, cogs, profit }
                 var byCatAccum = {}
                 var bySupAccum = {}      // supplierName → { revenue, cogs, profit }
@@ -960,14 +960,6 @@ Item {
                     var qtyR = bb.qtyRemaining || 0
                     if (qtyR <= 0) continue
                     var prr = InventoryStore.getById(bb.productId)
-                    // Same fix as InventoryStore.potentialProfitByDimension
-                    // (see that function's comment / KNOWN-ISSUES.md): a
-                    // batch whose product was deleted has no price to value
-                    // it against. Excluding it here too, not pricing it at 0
-                    // — that would show real cogs as a phantom loss and drag
-                    // the on-screen "Potential profit" hero number down for
-                    // stock that no longer exists from the user's view.
-                    if (!prr) continue
                     var cat = (prr && prr.category) ? prr.category : qsTr("(uncategorised)")
                     if (root._categoryFilter !== "All" && cat !== root._categoryFilter) continue
                     var sell = prr ? (prr.sellingPrice !== undefined
@@ -1915,16 +1907,11 @@ Item {
         // Walk batches once, applying supplier AND category filters together,
         // so every map reflects the same filtered set.
         var byProduct = {}, bySupplier = {}, byCategory = {}
-        var bs = StockBatchStore.batches || []
+        var bs = InventoryStore._activeBatches()
         for (var bi = 0; bi < bs.length; ++bi) {
             var b = bs[bi]
             if (filterId && b.supplierId !== filterId) continue
             var pc = InventoryStore.getById(b.productId)
-            // Same fix as InventoryStore.valueByProduct/valueBySupplier/
-            // valueByCategory: a batch whose product was deleted must be
-            // excluded entirely, not just relabeled as uncategorised while
-            // still counting its value.
-            if (!pc) continue
             var cat = pc.category ? pc.category : "(uncategorised)"
             if (catOn && cat !== categoryFilter) continue
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
