@@ -280,6 +280,14 @@ App (Main.qml)
   sites) found only because a test finally exercised these handlers via a real signal fire
   instead of calling a private function directly — see SKILLS Skill 58.
 - Orchestrate cross-store operations (e.g. `tryCompleteOrder`: stock check → deduct → mark complete → record sale)
+- Any multi-step async orchestration function here (like `_tryCompleteOrder`) needs its OWN
+  in-flight guard (see `_completingOrderIds`) — do not rely on the entity's own status field for
+  re-entrancy, since that field only updates at the END of the chain it's meant to be guarding, and
+  a second call arriving mid-chain reads the same stale value the first call started with. Do not
+  rely on `LockManager`/pessimistic locking for this either — its server-side `acquireLock`
+  deliberately re-grants a request from the SAME `actorUid` (needed for renewal heartbeats), so it
+  answers "is someone ELSE using this," not "am I already in the middle of this myself." See SKILLS
+  Skill 60.
 - Keep `ordersModel` (ListModel) in sync with `OrdersStore.orders`
 - Expose public methods: `tryCompleteOrder()`, `syncOrdersModel()`, `updateOrderInModel()`
 - Handle `stockErrorMsg` for the stock error dialog in `Main.qml`
@@ -400,6 +408,16 @@ QtObject {
 - Wire delete signals: `onDeleteOrderClicked`, `onDeleteProductClicked`, `onDeleteStaffClicked` → `logic.deleteX(id)`
 - Wire dialog signals back to `logic` signals: e.g. `onOrderCreated: logic.addOrder(...)`
 - Maintain KPI card layouts, table rows, search fields, and action buttons
+- Any dialog whose save can trigger genuinely slow orchestration on the `DataModel` side (stock
+  deduction, sale recording — anything routed through `_tryCompleteOrder`/`_tryAdjustOrder`) must
+  set `busy`/`busyMessage` (`BottomSheet.qml`) before firing the `logic.*` signal and wait for the
+  matching ack (`logic.orderUpdated`/`logic.orderCompletionFailed`, scoped to the dialog's own
+  orderId — both fire for unrelated orders too) before closing. Do NOT fire-and-forget then close
+  immediately: `logic.updateOrder` etc. are plain signals with no return channel, so closing right
+  after emitting one tells the user "done" before the underlying write has even started, and gives
+  nothing to stop them from re-triggering the same action while it's still in flight. See SKILLS
+  Skill 60 (`OrderDetailDialog.qml` was the one dialog in this list that didn't follow this —
+  `RestockDialog`/`AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` already did).
 
 **Responsive Design**:
 - `compact = true` when `width < 520` — 2-line compact card/row layouts

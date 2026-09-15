@@ -394,10 +394,44 @@ Item {
     // design — synchronized calls with a real busy indicator instead of a
     // decorative one — actually gets delivered, for this one flow: the
     // caller now has a genuine "still working" window to show one in.
+    // orderId -> true while a completion for that order is between this
+    // function's entry and its callback. Exists because the check right
+    // above (`o.status === "completed"`) reads OrdersStore's LOCAL cache,
+    // which only flips to "completed" at the very end of this function
+    // (inside _afterAllDeltas, after every line's deduction has actually
+    // resolved) — so a second call for the same order arriving before the
+    // first one finishes sees the exact same stale "pending" status and
+    // sails past that check, re-running the whole stock deduction + sale
+    // recording from scratch. Bug found 2026-09-14: pressing Approve
+    // twice (no indicator existed to say the first press was still
+    // working — see OrderDetailDialog._save()) deducted stock twice and
+    // doubled every Transaction History / Product History / Sales
+    // Analysis entry, while the order's own product-line quantity looked
+    // fine (it's never itself duplicated — only these side effects are).
+    //
+    // Deliberately NOT relying on LockManager for this: acquireLock's
+    // server-side "sameHolder" check (functions/lib/lockLogic.js) always
+    // re-grants a request from the SAME actorUid — required so a lock
+    // renewal heartbeat can re-acquire its own lock — which means it does
+    // NOT stop the same logged-in user from re-entering while their own
+    // previous request is still in flight. This guard is orthogonal to
+    // that: it protects this one entity id in THIS client process,
+    // regardless of who's calling it or how many times the lock was
+    // (re-)granted, so it covers every caller of this function —
+    // OrderDetailDialog's save, OrdersPage._approveAllPending's bulk
+    // loop, and onAddOrder's auto-approve branch alike.
+    property var _completingOrderIds: ({})
+
     function _tryCompleteOrder(orderId, callback) {
         var o = OrdersStore.getById(orderId)
         if (!o) { if (callback) callback(false); return }
         if (o.status === "completed") { if (callback) callback(true); return }
+        if (dataModel._completingOrderIds[orderId]) {
+            dataModel.stockErrorMsg = "This order is already being completed — please wait"
+            if (callback) callback(false)
+            return
+        }
+        dataModel._completingOrderIds[orderId] = true
 
         // ── 1. Stock validation (against product.stock) ──────────────────
         var errs = []
@@ -411,6 +445,7 @@ Item {
             }
         }
         if (errs.length > 0) {
+            delete dataModel._completingOrderIds[orderId]
             OrdersStore.updateOrder(orderId, { status: "out of stock" })
             dataModel.stockErrorMsg = errs.join("\n")
             _updateOrderInModel(orderId)
@@ -468,6 +503,7 @@ Item {
                 OrdersStore.updateOrder(orderId, { status: "out of stock" })
                 dataModel.stockErrorMsg = deltaFailMsg
                 _updateOrderInModel(orderId)
+                delete dataModel._completingOrderIds[orderId]
                 if (callback) callback(false)
                 return
             }
@@ -481,6 +517,7 @@ Item {
             // back so TransactionStore writes the same lineage to every sale doc.
             TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
             _updateOrderInModel(orderId)
+            delete dataModel._completingOrderIds[orderId]
             if (callback) callback(true)
         }
 

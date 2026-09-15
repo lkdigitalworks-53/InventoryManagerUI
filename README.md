@@ -678,4 +678,21 @@ a new `test/e2e/tst_BulkImportChunkingE2E.qml` (first file to exercise `Gateway.
 against the real emulator), and 1 pinning regression test in `functions/test/batchMutationLogic.test.js`
 (run and verified — 110/110 passing).
 
+**Update 2026-09-14 (order-completion double-submit):** reported symptom — approving a pending
+order, then pressing Approve again before the first completion's write resolved (no busy indicator
+existed to say one was in flight), deducted stock and recorded the sale TWICE; order cart still
+showed the correct 1 item, but Transaction History / Product History / Sales Analysis all doubled.
+Root cause: `DataModel._tryCompleteOrder`'s only "already completing" guard read the LOCAL
+`OrdersStore` cache's `status` field, which only flips to `"completed"` at the very end of the same
+async chain it's meant to be guarding — a second call arriving mid-chain sees the same stale
+`"pending"` value and re-runs the whole deduction. `LockManager`'s pessimistic lock didn't (and by
+design, can't) catch this either: its server-side `acquireLock` re-grants a request from the SAME
+`actorUid` (needed for renewal heartbeats), so it stops a different device, not the same user
+double-clicking. Fixed with an explicit `_completingOrderIds` in-flight set in `DataModel.qml`
+(entity-scoped, independent of any caller), plus wiring `OrderDetailDialog.qml` up to the
+`busy`/`busyMessage` mechanism `BottomSheet.qml` already provides — it was the one dialog in this
+codebase that fired its update signal and closed immediately instead of waiting for a real
+completion ack. See SKILLS Skill 60 for the full investigation, including why this can't be tested
+by simply calling the function twice in sequence in this test suite's synchronous harness.
+
 ---

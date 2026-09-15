@@ -2880,13 +2880,12 @@ whether the code path was reachable at all.
 
 ## Skill 60: Finding every instance of a bug pattern — a checklist beats re-deriving the trace from scratch each time
 
-**Context, 2026-09-15**: after fixing the order-completion double-submit bug (see the sibling
-session's Skill 60/61/62 on `fix/2026-09-14-order-completion-double-submit` — numbering will
-collide on merge, renumber per this file's own append-only convention), Taher asked for a
-full-codebase sweep for the same *pattern*, not just the one instance. Found two more Critical
-instances (`ConfirmReturnSheet`/`_tryAdjustOrder` for exchanges, `NewOrderDialog` for duplicate
-order creation) and one Medium (`InviteMemberDialog`) — full detail in the new
-`docs/superpowers/ASYNC-REENTRANCY-BUGS.md`.
+**Context, 2026-09-15**: after fixing the order-completion double-submit bug (see this file's Skill
+61/62/63, from the branch this one was rebased onto — numbering renumbered on merge per this file's
+own append-only convention), Taher asked for a full-codebase sweep for the same *pattern*, not just
+the one instance. Found two more Critical instances (`ConfirmReturnSheet`/`_tryAdjustOrder` for
+exchanges, `NewOrderDialog` for duplicate order creation) and one Medium (`InviteMemberDialog`) —
+full detail in the new `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`.
 
 **The reusable method, distilled into a 4-question checklist** (see that file's own "How to tell if
 a given action is actually at risk" section for the full version):
@@ -2920,3 +2919,75 @@ systematically (grep first, trace only the candidates that survive the grep), ra
 (a) declaring the one fix done and moving on, or (b) re-deriving the full architectural trace from
 scratch for each file by reading it top to bottom. The checklist itself is the reusable artifact —
 put it in the tracking doc, not just in this session's head.
+
+## Skill 61: A local-cache status check can't guard against re-entrancy — the field it reads only updates at the END of the async chain it's supposed to be guarding
+
+**Bug, reported by Taher 2026-09-14 via `/superpowers:systematic-debugging`**: approve a pending
+order, then press Approve again before the first completion's write actually resolves (no busy
+indicator existed to say one was in flight) — stock got deducted twice and the sale recorded
+twice. Order cart still showed the correct 1 item (the order's own product-line quantity is never
+itself duplicated), but Transaction History, Product History, and Sales Analysis all doubled.
+
+**Root cause, traced statically (no Qt toolchain in this sandbox — see Skill 54/this file's
+standing rule about relying on CI)**: `DataModel._tryCompleteOrder`'s only "already completing"
+guard was `if (o.status === "completed") return`, reading `OrdersStore.getById(orderId)` — the
+LOCAL cache. That field only flips to `"completed"` at the very end of the function (inside
+`_afterAllDeltas`, after every line's FIFO consumption + `InventoryStore.deductStock` has actually
+resolved). A second call for the same order arriving before the first one finishes sees the exact
+same stale `"pending"` status, sails straight past the guard, and re-runs the entire stock
+deduction + `SalesStore.recordSale` + `TransactionStore.recordSaleFromOrder` from scratch.
+`SalesStore`'s own dashboard KPI is self-correcting (it recomputes from `OrdersStore` on demand
+rather than accumulating — see its header comment, itself a fix for a near-identical prior bug
+where a summary "was never decremented" on re-completion), so it didn't show the doubling; the
+DISCRETE ledger writes (`TransactionStore.entries`) and stock deltas did, which is exactly what
+Transaction History / Product History / Sales Analysis read from.
+
+**The lock didn't save this, and can't be relied on to**: `LockManager`'s server-side
+`acquireLock` (`functions/lib/lockLogic.js`) grants automatically when `current.holderUid ===
+params.actorUid` ("sameHolder") — required so a renewal heartbeat can re-acquire its own lock, but
+it means the SAME logged-in user re-entering while their own previous request is still in flight
+sails through too. `OrdersPage._approveAllPending()` wraps each completion in a real
+`LockManager.acquire`/`release` pair and still isn't protected against a same-user double-click for
+this reason. Pessimistic locking (this codebase's existing mechanism) answers "is someone ELSE
+using this," not "am I already in the middle of this myself" — those are different questions and
+need different guards.
+
+**Fix — two layers, one root cause ("no in-flight tracking for order completion, at any layer")**:
+1. `DataModel.qml` gained `_completingOrderIds`, an explicit orderId → true in-flight set, set
+   synchronously at `_tryCompleteOrder`'s entry (before any async call) and cleared on every one of
+   its exit paths (stock-validation failure, delta failure, success). Independent of
+   `OrdersStore`'s own stale status field, and independent of who's calling — it protects
+   `OrderDetailDialog`'s save, `OrdersPage._approveAllPending`'s bulk loop, and `onAddOrder`'s
+   auto-approve branch alike, for free.
+2. `OrderDetailDialog.qml` — the dialog used to fire `logic.updateOrder` (a fire-and-forget signal)
+   and call `dlg.close()` on the very next line, with zero connection to whether the underlying
+   write had even started resolving. `BottomSheet.qml` already has a complete `busy`/`busyMessage`
+   mechanism (disables the primary button, blocks tap-outside/Cancel/X) used correctly by
+   `RestockDialog`/`AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` — this dialog was the
+   one holdout that never wired it up. Now sets `busy = true` before firing the update and waits
+   for `logic.orderUpdated`/`logic.orderCompletionFailed` (scoped to the order this dialog issued
+   the save for, since both are on the shared `logic` dispatcher and fire for unrelated orders too)
+   before clearing `busy` and closing/showing the error. Notably, `_tryCompleteOrder`'s own header
+   comment already said this exact design ("round 4," made genuinely async specifically so a
+   caller could show a real busy indicator) was the "ORIGINAL ask" behind making the function async
+   at all — the infrastructure was built for this and simply never got wired up on this one caller.
+
+**Test-writing note**: every store call in this test suite resolves its callback SYNCHRONOUSLY (no
+real network latency in the harness — see `tst_DataModel_adjustOrderSyncGuard.qml`'s header), which
+means a second `_tryCompleteOrder` call issued *after* the first one returns can never actually
+race it in a test. The only way to get a genuinely "still in flight" first call is to have the
+SECOND call originate from INSIDE the first call's own still-executing callback chain — both new
+tests in `tst_DataModel_completeOrderReentrancy.qml` temporarily stub
+`StockBatchStore.consumeFifo` to fire the reentrant call from partway through the first call's FIFO
+step, which is the direct in-process analogue of "second click arrives before the first click's
+write resolves." Restored via a `TestCase`-declared property, not an expando property tacked onto
+the (shared, pragma Singleton) store itself — no other test in this suite does the latter, and it's
+not guaranteed storage.
+
+**Still open, not fixed this pass (flagged to Taher, not bundled in)**: `OrdersPage.qml`'s
+"Approve all pending" banner button has no busy/disabled state of its own either — a double-click
+there is now safe from a DATA-correctness standpoint (Skill 61's `_completingOrderIds` guard
+covers it), but still gives no visual feedback while it's working, same underlying UX gap as this
+bug's report asked about for the single-order path. Left as a follow-up rather than pulled into
+this fix — it's a different file, different UI surface, and the correctness issue (the actual
+reported bug) doesn't depend on it.
