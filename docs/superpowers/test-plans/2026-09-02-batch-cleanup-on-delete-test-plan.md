@@ -81,3 +81,18 @@ pass on CI *is* the regression check.
   question in the spec doc, not decided or acted on here.
 - Exact final wording of the confirm-dialog message — implemented with the spec doc's proposed
   copy; revise directly in `Main.qml` if the wording doesn't land well on-device.
+
+## 5. Follow-up, same day — on-device review found a real regression
+
+Taher's on-device review of this PR found the actual next problem: `StockBatchStore.restoreFifo`/
+`topUpOldest`, called from 11 places in `DataModel.qml` for order reopen/reversal/adjustment,
+synthesize a phantom `unitCost: 0` batch when no batch exists for a productId — exactly what
+happens once `deleteProduct()`'s cascade (above) has done its job and a later reversal tries to
+restore stock for that now-deleted product. Fixed with `_restoreFifoSafe`/`_topUpOldestSafe`
+wrappers checking product existence first; test: `tests/tst_DataModel_restoreFifoSafeGuards.qml`
+(5 cases, skip-path only — same untestable-positive-path reasoning as section 1.3). Full writeup:
+`docs/superpowers/KNOWN-ISSUES.md`.
+
+Also fixed the same review pass: `permissionErrorDlg`, a raw unstyled `QQC.Dialog`, replaced with
+`actionBlockedDlg` (the existing themed `AlertDialog` component, same one `stockErrorDlg` already
+used) — no functional test surface, on-device visual check only.

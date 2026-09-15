@@ -81,3 +81,31 @@ matching this whole session's established correction convention rather
 than silently editing the mistake away.
 
 Re-pushing now.
+
+## Also done (third pass, same session) — on-device review found a real regression + UI fix
+
+Taher tested the PR on-device (confirmed CI/tests fine) and raised three points:
+
+1. Why allow deleting a product after a completed order, and does the batch really get cleaned
+   up when only part of it was sold? Investigated precisely: the STOCK BATCH does get correctly
+   cascade-deleted regardless of qtyRemaining (verified by re-reading the exact code, not
+   assumed). But tracing further surfaced a REAL, separate regression: StockBatchStore.
+   restoreFifo/topUpOldest (11 call sites in DataModel.qml, fired whenever a completed order
+   gets reopened/reversed/adjusted) synthesize a phantom unitCost:0 batch when no batch exists
+   for a productId -- exactly the state deleteProduct()'s own cascade leaves behind on purpose.
+   Fixed with two shared wrappers (_restoreFifoSafe, _topUpOldestSafe) checking product
+   existence first, routing all 11 call sites through them instead of guarding each
+   individually. Test: tests/tst_DataModel_restoreFifoSafeGuards.qml (5 cases, skip-path only).
+2. Proposed blocking delete until all transactions are reverted. Reconsidered rather than
+   implemented -- doesn't solve the trapped-user problem: no way to revert a purchase at all
+   (no such feature), and reverting a sale increases stock, doesn't provide a path to zero.
+   Documented the reasoning in KNOWN-ISSUES.md rather than silently declining.
+3. permissionErrorDlg (raw unstyled QQC.Dialog, hardcoded color) didn't match the app's theme.
+   Replaced with a new actionBlockedDlg instance of the ALREADY-EXISTING AlertDialog component
+   (same one stockErrorDlg already used) -- discovered it already existed before building a
+   duplicate from scratch. Updated the back-button dialog-priority array and removed the now-
+   unused permissionErrorMessage property and QQC import.
+
+All touched files brace-balanced. Docs updated: KNOWN-ISSUES.md (new regression entry, follow-up
+note on the reconsidered blocking proposal), test plan (section 5 added -- briefly lost section 4
+in the same edit, caught immediately via a heading grep, restored).

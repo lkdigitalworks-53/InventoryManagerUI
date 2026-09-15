@@ -244,6 +244,21 @@ batches rather than leaving them orphaned. Blocking the delete outright was cons
 rejected — there's no existing way to write off a batch's quantity to zero otherwise, which would
 have trapped a user wanting to remove a discontinued or mis-entered product.
 
+**Reconsidered again, 2026-09-14, on-device review**: proposed blocking delete until *every*
+transaction referencing the product has been "reverted." Re-examined rather than implemented:
+this doesn't actually solve the trapped-user problem it's aimed at, for two reasons. First,
+there's no way to revert a *purchase* (a received batch) at all — `StockBatchStore` has no
+"return to supplier" or remove-a-batch function — so this would make delete permanently
+impossible for any product that was ever restocked, which is most of them. Second, reverting a
+*sale* (reopening or reversing a completed order) increases remaining stock — it undoes the
+consumption — it doesn't provide any path to reduce stock to zero. A product with genuinely
+excess or unsellable stock would never become deletable under this rule, recreating the exact
+problem blocking delete outright was rejected for the first time around. The actual fix for the
+underlying concern — dangling references surviving a delete — is what shipped this same day: see
+the entry below, which found and fixed a concrete instance of exactly that risk in the order-
+reversal path, using the same "guard every consumer, don't block the action" approach rather than
+restricting when delete is allowed.
+
 **Second finding, audited but explicitly not fixed here — different, bigger root cause**: the
 other five tabs (Value, Purchased, Revenue, Sold, Profit's Realised sub-mode) keep correct
 *totals* after a delete — those walk the immutable event/batch ledger directly, no live-product
@@ -261,3 +276,39 @@ second, much larger fix into the same change (Iron Law: one fix at a time).
 
 **Decision**: fixed the total-corrupting bug (Potential profit). Documented, not fixed, the
 breakdown-mislabeling issue across the other five tabs — worth its own dedicated design pass.
+
+## Delete: cascade-deleting stock batches created a NEW dangling-reference path — found on-device review, fixed
+
+Found during Taher's on-device review of the Tier C cascade-delete PR (2026-09-14), not by a test
+— a real regression introduced by that same PR's own fix.
+
+**The chain**: `deleteProduct()`'s cascade (see the entry above) correctly removes every batch for
+a deleted product. But `StockBatchStore.restoreFifo`/`topUpOldest` — called from **11 places** in
+`DataModel.qml` whenever a completed order gets reopened, reversed, or adjusted (a return or
+exchange with restock, for instance) — fall through to synthesizing a brand-new
+`"Adjustment (drift repair)"` batch at `unitCost: 0` when no batch exists for the productId
+anymore. That fallback is correct for genuine drift on a product that still exists (its original,
+intended purpose). It's wrong once the product has been deleted: it resurrects exactly the
+orphaned-batch problem the cascade was built to prevent, except now with the wrong (zero) cost
+basis, for a product a user explicitly removed. Concretely: sell 1 of 5 units via a completed
+order, delete the product (batch correctly cascades away), later process a return/exchange or
+reopen that order — a phantom batch reappears for a product that no longer exists in the catalog.
+
+**Fixed**: two shared wrappers in `DataModel.qml` (`_restoreFifoSafe`, `_topUpOldestSafe`) check
+`InventoryStore.getById(productId)` first and skip the call entirely — rather than letting it fall
+through to the synthesize-a-batch path — when the product no longer exists. All 11 call sites
+route through these instead of calling `StockBatchStore` directly, rather than guarding each one
+individually (same "one place to get it right" reasoning as `_activeBatches()`). Test:
+`tests/tst_DataModel_restoreFifoSafeGuards.qml` — only the skip path is independently testable;
+the "product still exists, delegates through normally" path chains into a real network round-trip
+to mint a batch id, same untestable-without-mock-HTTP territory as the rest of this session's
+`Gateway`-adjacent tests.
+
+**Worth naming as a pattern, not just this one instance**: this is the second time a fix aimed at
+one symptom (orphaned batches breaking Sales Analysis) needed tracing into a completely different,
+non-obvious corner of the codebase (order reversal/adjustment) to find where the SAME underlying
+resource (a deleted product's batch data) gets touched again. A change that looks contained to
+"what happens at delete time" can have consumers anywhere a productId outlives the product record
+— reversal flows, exports, reports, anything that persists a productId and looks it up later.
+Worth a deliberate sweep for other such consumers before considering this fully closed, not
+assumed complete after one round.
