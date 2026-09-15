@@ -47,26 +47,34 @@ whole-record `recordMutation` — both pre-existing, tracked open items unrelate
 
 ## 1. Unit test coverage
 
-**New file `tests/tst_DataModel_completeOrderReentrancy.qml`** — 4 cases, driving the real
+**New file `tests/tst_DataModel_completeOrderReentrancy.qml`** — 5 cases, driving the real
 `DataModel._tryCompleteOrder` directly (not hand-derived formulas), same child-item-instantiation
-pattern as `tst_DataModel_adjustOrderSyncGuard.qml`. **Written, traced by hand against the
-implementation, NOT run** — no Qt/qmltestrunner toolchain in this session's sandbox (standing rule
-— always rely on CI).
+pattern as `tst_DataModel_adjustOrderSyncGuard.qml`. **Genuinely run via this repo's `qml-tests` CI
+job, not just hand-traced** — and CI caught a real mistake in the first version: it tried to
+reassign `StockBatchStore.consumeFifo` to simulate a race, which threw `Cannot assign to read-only
+property` at runtime (a QML `function` declaration is a compiled, read-only member, not a mutable
+JS property the way a plain object's method would be — see SKILLS Skill 61). The corrected version
+below is what actually ran green.
 
 Every store call in this suite resolves its callback synchronously (no real network latency in the
 harness), so a second `_tryCompleteOrder` call issued *after* the first one returns can never
-actually race it in a test. Both reentrancy cases below temporarily stub
-`StockBatchStore.consumeFifo` to fire the second call from INSIDE the first call's own
-still-executing FIFO step — the direct in-process analogue of "second click arrives before the
-first click's write resolves" — then restore the real implementation via a `TestCase`-declared
-property (not an expando property on the shared singleton).
+actually race it in a test, and — as the CI failure confirmed — a dependency can't be stubbed by
+reassignment to fake an in-flight first call either. The corrected tests instead seed
+`_completingOrderIds` directly to the exact state a genuinely-racing first call would have left
+behind, then confirm a second call is rejected with no side effects — the same style
+`tst_DataModel_adjustOrderSyncGuard.qml` uses for its own guard (`TransactionStore.hasMore = true`,
+set directly rather than orchestrating a real in-progress fetch). This also surfaced a second real
+bug in the test file itself: `dm` is instantiated once for the whole `TestCase`, so
+`_completingOrderIds` was leaking across test functions until `init()` explicitly reset it — see
+Skill 61.
 
 | Test | What it locks down |
 |---|---|
-| `test_second_call_while_first_still_in_flight_is_rejected` | The core fix: a reentrant call fired from inside the first call's FIFO step gets `callback(false)` and a non-empty `stockErrorMsg`, while the original call still succeeds (`callback(true)`) once it's actually alone. |
-| `test_stock_and_transaction_ledger_affected_only_once` | The actual reported symptom: after the same race, `InventoryStore` stock is decremented exactly once (5→4), the FIFO batch (`qtyRemaining`) is consumed exactly once, and `TransactionStore.entries` has exactly 1 row — not 2, which is precisely what Transaction History / Product History / Sales Analysis read from. |
-| `test_still_short_circuits_sequential_non_overlapping_completions` | The guard must not weaken the pre-existing behavior: a genuinely SEQUENTIAL second call, issued after the first has fully finished (status now `"completed"`), still short-circuits to `true` with no further deduction — exactly as before this fix. |
+| `test_rejected_while_already_in_flight` | The core fix: a call is rejected (`callback(false)`, non-empty `stockErrorMsg`) while `_completingOrderIds` marks the order in-flight — the exact state a genuinely-racing second click would find. |
+| `test_rejection_has_no_side_effects` | The actual reported symptom: a rejected in-flight attempt touches ZERO stock, ZERO FIFO batch quantity, ZERO ledger entries, and leaves the order's own status untouched — proving the guard blocks BEFORE any work, not just eventually returns false. |
+| `test_unraced_call_still_succeeds_and_clears_the_guard` | The guard must not weaken the pre-existing behavior: an ordinary call still succeeds and deducts normally, the guard clears once it's done (so the order isn't permanently locked out), and a genuinely SEQUENTIAL second call afterward still short-circuits to `true` with no further deduction — exactly as before this fix. |
 | `test_missing_order_still_rejects_cleanly` | An unknown orderId still fails the same way it did before this fix (guard added below the existing `!o` check, not above it). |
+| `test_guard_clears_even_on_stock_validation_failure` | The OTHER early-exit path (insufficient stock) also clears the guard — a leak here would permanently lock out retrying the order once stock is replenished. |
 
 ## 2. Functional / end-to-end test coverage
 

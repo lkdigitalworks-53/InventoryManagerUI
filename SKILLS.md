@@ -2991,3 +2991,46 @@ covers it), but still gives no visual feedback while it's working, same underlyi
 bug's report asked about for the single-order path. Left as a follow-up rather than pulled into
 this fix — it's a different file, different UI surface, and the correctness issue (the actual
 reported bug) doesn't depend on it.
+
+## Skill 61: A QML `function` declaration is a compiled, read-only member — it can't be monkey-patched from a test the way a plain JS object's method can
+
+**Found via real CI, same session as Skill 60** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
+first version): to simulate a second `_tryCompleteOrder` call arriving while the first is still
+mid-flight, in a test harness where every store call resolves its callback SYNCHRONOUSLY (no real
+network latency — see `tst_DataModel_adjustOrderSyncGuard.qml`'s header), the only apparent way to
+get a genuinely "still in flight" first call is to have a stubbed dependency fire the second call
+from partway through the first call's own execution. Reached for the obvious JS technique:
+`StockBatchStore.consumeFifo = function(...) { ...fire reentrant call...; real.call(...) }`.
+
+**This throws at runtime: `Cannot assign to read-only property "consumeFifo"`.** A `function
+name(...) { }` declared at the top level of a QML `Item`/singleton is compiled into that type's
+meta-object as an invokable method — a fundamentally different thing from a `property var name:
+function(...) {}`, which WOULD be a mutable property holding a function value. Only the latter can
+be reassigned from outside; every store in this codebase (`StockBatchStore`, `InventoryStore`,
+`OrdersStore`, etc.) declares its methods the first way, so **none of them can be stubbed by
+reassignment from a test**, however natural that pattern feels coming from plain JS/Node testing
+(where this project's `functions/` suite uses exactly this kind of stubbing freely, via dependency
+injection into plain modules — see `functions/lib/*.js`'s constructor-injected dependencies).
+
+**Fix — test the guard directly instead of orchestrating a race the harness can't produce**: rather
+than trying to make two REAL calls genuinely overlap, seed the guard's own internal state
+(`dm._completingOrderIds = { orderId: true }`) to the exact condition a racing first call would
+have left behind, then call `_tryCompleteOrder` once and assert it's rejected with no side effects.
+This is the same style `tst_DataModel_adjustOrderSyncGuard.qml` already uses for its own guard
+(`TransactionStore.hasMore = true`, set directly rather than orchestrating a real in-progress
+paginated fetch) — recognized only after CI forced a rewrite, not applied by default the first
+time. Also caught by the same failure: `dm._completingOrderIds` was never reset in `init()` — since
+`DataModel { id: dm }` is instantiated ONCE for the whole `TestCase`, not per test function, any
+property that isn't explicitly reset in `init()` leaks its value across every test in the file. A
+"control" test with no stubbing at all (`test_still_short_circuits_sequential_non_overlapping_completions`)
+failed for exactly this reason — a stale `true` left by an earlier (differently-failing) test in
+the same run.
+
+**General lesson for writing any future QML test that wants to intercept a dependency**: check
+whether the thing you want to stub is a `property var` (stubbable) or a `function` declaration
+(not stubbable by reassignment) before designing the test around interception at all. If it's the
+latter and no test seam already exists, either (a) test the guard/state directly rather than
+re-creating the exact call sequence that would produce it, matching the convention above, or (b)
+flag to Taher that a dependency-injection seam may be worth adding to the production code
+specifically for testability — do not silently work around it with something that only happens to
+compile.

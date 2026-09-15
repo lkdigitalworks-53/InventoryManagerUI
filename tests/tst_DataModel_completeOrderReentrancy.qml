@@ -16,8 +16,7 @@ import "../qml/model"
 // "completed" at the very END of the async chain (inside
 // _afterAllDeltas), so a second call arriving before the first resolves
 // sees the SAME stale "pending" status and re-runs the entire stock
-// deduction + sale recording from scratch. See
-// docs/superpowers/specs/2026-09-14-order-completion-double-submit-CHECKPOINT.md.
+// deduction + sale recording from scratch.
 //
 // Fix: an explicit _completingOrderIds in-flight set, set synchronously
 // at entry (before ANY async call) and cleared on every exit path --
@@ -30,35 +29,29 @@ import "../qml/model"
 // OrdersPage._approveAllPending(), which calls the same
 // _tryCompleteOrder engine with no re-entrancy guard of its own.
 //
-// NOT RUN IN THIS SANDBOX -- no Qt/qmltestrunner toolchain available
-// (standing rule, see AGENTS.md). DataModel.qml is NOT a pragma
-// Singleton, so it's instantiated directly as a child item here, same as
-// tst_DataModel_adjustOrderSyncGuard.qml.
+// GENUINELY RUN VIA CI (this repo's qml-tests job), not just hand-traced
+// -- and CI caught a real mistake in the first version of this file: it
+// tried to reassign StockBatchStore.consumeFifo (a QML `function`
+// declaration, compiled into the singleton as a read-only invokable) the
+// way you'd stub a plain JS object's method. That throws "Cannot assign
+// to read-only property" at runtime -- QML top-level function members are
+// not mutable JS property slots, unlike a `property var` holding a
+// function value. See SKILLS Skill 61.
 //
-// Simulating the race: every store call in this suite resolves its
-// callback SYNCHRONOUSLY (see tst_DataModel_adjustOrderSyncGuard.qml's
-// header) -- there is no real network latency in this harness. That
-// means a second _tryCompleteOrder call issued *after* the first one
-// returns can never actually race it; the only way to get a genuinely
-// "still in flight" first call is to have the SECOND call originate from
-// INSIDE the first call's own still-executing callback chain. Both tests
-// below temporarily stub StockBatchStore.consumeFifo to do exactly that
-// -- fire the reentrant call from partway through the first call's FIFO
-// consumption step, then let the original call proceed -- which is the
-// direct in-process analogue of "second click arrives before the first
-// click's write resolves."
+// Because of that constraint (and because every store call in this
+// suite's harness resolves its callback SYNCHRONOUSLY -- see
+// tst_DataModel_adjustOrderSyncGuard.qml's header -- so a second
+// _tryCompleteOrder call issued *after* the first one returns can never
+// actually race it), the tests below verify the guard directly by
+// pre-seeding _completingOrderIds to the state a genuinely-racing first
+// call would have left it in, then confirming a second call is rejected
+// BEFORE doing any work -- same style as tst_DataModel_adjustOrderSyncGuard.qml's
+// own guard tests, which set TransactionStore.hasMore directly rather
+// than orchestrating a real in-progress fetch.
 TestCase {
     name: "DataModel_completeOrderReentrancy"
 
     DataModel { id: dm }
-
-    // Holds the real StockBatchStore.consumeFifo while a test has it
-    // stubbed, so cleanup() can always restore it. A declared property
-    // here rather than an expando property on the (shared, pragma
-    // Singleton) store itself, since QML property declarations are
-    // guaranteed storage -- an ad hoc JS property tacked onto a
-    // singleton is not a pattern used anywhere else in this suite.
-    property var _originalConsumeFifo: null
 
     function init() {
         OrdersStore.orders = [_pendingOrder()]
@@ -71,18 +64,11 @@ TestCase {
         AuthStore.idToken = ""
         AuthStore._settings.sessionJson = ""
         dm.stockErrorMsg = ""
-    }
-
-    function cleanup() {
-        // Belt-and-suspenders restore in case a test fails mid-body
-        // before reaching its own restore -- StockBatchStore is a
-        // pragma Singleton shared across every test in this file (and
-        // potentially this run), so a stuck stub would corrupt every
-        // test after it.
-        if (_originalConsumeFifo) {
-            StockBatchStore.consumeFifo = _originalConsumeFifo
-            _originalConsumeFifo = null
-        }
+        // dm is constructed once for this whole TestCase (not per test),
+        // so its _completingOrderIds property survives across every test
+        // function unless explicitly reset here -- without this line,
+        // one test's guard state can silently leak into the next.
+        dm._completingOrderIds = ({})
     }
 
     function _product() {
@@ -111,72 +97,55 @@ TestCase {
         }
     }
 
-    // Wires a stub onto StockBatchStore.consumeFifo that fires a second,
-    // reentrant _tryCompleteOrder call for the same order the FIRST time
-    // it's invoked, then defers to the real implementation. Returns
-    // nothing; caller reads results via the closures it captures.
-    function _stubReentrantConsumeFifo(onReentrant) {
-        var real = StockBatchStore.consumeFifo
-        _originalConsumeFifo = real
-        var fired = false
-        StockBatchStore.consumeFifo = function(productId, qty, cb) {
-            if (!fired) {
-                fired = true
-                onReentrant()
-            }
-            real.call(StockBatchStore, productId, qty, cb)
-        }
+    // ── the core regression: a call must be rejected while the order is
+    // already marked in-flight, before doing ANY work ─────────────────────
+
+    function test_rejected_while_already_in_flight() {
+        // Simulates the exact state a genuinely-racing first call leaves
+        // behind between its own entry and its callback -- the state a
+        // second click's call would see if it arrived mid-chain.
+        dm._completingOrderIds = { "ORD-RACE-1": true }
+
+        var result = null
+        dm._tryCompleteOrder("ORD-RACE-1", function(ok) { result = ok })
+
+        compare(result, false, "must be rejected while the guard marks this order in-flight")
+        verify(dm.stockErrorMsg.length > 0, "must tell the caller why, not fail silently")
     }
 
-    // ── the core regression: a second call while the first is still
-    // resolving must be rejected, not re-run the whole completion ────────
-
-    function test_second_call_while_first_still_in_flight_is_rejected() {
-        var results = []
-        _stubReentrantConsumeFifo(function() {
-            dm._tryCompleteOrder("ORD-RACE-1", function(ok) { results.push(ok) })
-        })
-
-        dm._tryCompleteOrder("ORD-RACE-1", function(ok) { results.push(ok) })
-
-        StockBatchStore.consumeFifo = _originalConsumeFifo
-        _originalConsumeFifo = null
-
-        // The reentrant call resolves first (synchronously, from partway
-        // through the outer call's own FIFO step) -- it must have been
-        // rejected outright, not queued or merged.
-        compare(results.length, 2, "both callbacks must have fired exactly once each")
-        compare(results[0], false, "the reentrant call must be rejected while the first is still in flight")
-        compare(results[1], true, "the original call must still succeed once it's actually alone")
-        verify(dm.stockErrorMsg.length > 0, "must tell the caller why the reentrant attempt was rejected")
-    }
-
-    function test_stock_and_transaction_ledger_affected_only_once() {
-        _stubReentrantConsumeFifo(function() {
-            dm._tryCompleteOrder("ORD-RACE-1", function(ok) {})
-        })
+    function test_rejection_has_no_side_effects() {
+        dm._completingOrderIds = { "ORD-RACE-1": true }
 
         dm._tryCompleteOrder("ORD-RACE-1", function(ok) {})
 
-        StockBatchStore.consumeFifo = _originalConsumeFifo
-        _originalConsumeFifo = null
-
-        compare(InventoryStore.getById("SKU-1").stock, 4,
-                "stock must be deducted exactly once (5 - 1), not twice")
-        compare(StockBatchStore.getById("B1").qtyRemaining, 4,
-                "the FIFO batch must be consumed exactly once, not twice")
-        compare(TransactionStore.entries.length, 1,
-                "exactly one sale ledger entry must be recorded, not one per attempt "
-                + "-- this is what Transaction History / Product History / Sales "
-                + "Analysis read from, and is exactly what doubled in the reported bug")
+        // This is the property that actually prevents the reported bug:
+        // rejecting must happen BEFORE any stock/ledger work, not just
+        // eventually resolve to false.
+        compare(InventoryStore.getById("SKU-1").stock, 5,
+                "no stock must be touched by a rejected in-flight attempt")
+        compare(StockBatchStore.getById("B1").qtyRemaining, 5,
+                "no FIFO batch must be touched by a rejected in-flight attempt")
+        compare(TransactionStore.entries.length, 0,
+                "no ledger entry must be written by a rejected in-flight attempt -- this is "
+                + "exactly what Transaction History / Product History / Sales Analysis read "
+                + "from, and exactly what doubled in the reported bug")
+        compare(OrdersStore.orders[0].status, "pending",
+                "the order's own status must be untouched by a rejected in-flight attempt")
     }
 
-    // ── the guard must not weaken the pre-existing status check ──────────
+    // ── the guard must not weaken the pre-existing status check, and must
+    // not linger after a call actually finishes ───────────────────────────
 
-    function test_still_short_circuits_sequential_non_overlapping_completions() {
+    function test_unraced_call_still_succeeds_and_clears_the_guard() {
         var first = null
         dm._tryCompleteOrder("ORD-RACE-1", function(ok) { first = ok })
-        compare(first, true, "the first, unraced call must succeed as before this fix")
+        compare(first, true, "an ordinary, unraced call must still succeed exactly as before this fix")
+        compare(InventoryStore.getById("SKU-1").stock, 4, "stock must be deducted normally")
+        compare(TransactionStore.entries.length, 1, "one sale ledger entry must be recorded normally")
+        verify(!dm._completingOrderIds["ORD-RACE-1"],
+                "the guard must be cleared once the call actually finishes -- otherwise every "
+                + "later legitimate action on this order (adjustments, a future re-open) would "
+                + "be permanently locked out")
 
         // A second, fully SEQUENTIAL call after the first has genuinely
         // finished (status now "completed" -- the pre-existing guard)
@@ -196,5 +165,25 @@ TestCase {
         var result = null
         dm._tryCompleteOrder("ORD-DOES-NOT-EXIST", function(ok) { result = ok })
         compare(result, false, "an unknown order id must still fail as before this fix")
+    }
+
+    function test_guard_clears_even_on_stock_validation_failure() {
+        // Exercises the OTHER early-exit path (insufficient stock),
+        // confirming the guard's cleanup on that branch (added alongside
+        // the two _afterAllDeltas branches) actually runs -- a leaked
+        // guard entry here would permanently lock out retrying the order
+        // once stock is replenished.
+        InventoryStore.products = [{
+            productId: "SKU-1", name: "Widget", sku: "W1", category: "", description: "",
+            unit: "pc", price: 100, sellingPrice: 100, taxable: false, taxPercent: 0,
+            size: "", stock: 0, minStock: 0
+        }]
+
+        var result = null
+        dm._tryCompleteOrder("ORD-RACE-1", function(ok) { result = ok })
+
+        compare(result, false, "must fail when stock is insufficient, as before this fix")
+        verify(!dm._completingOrderIds["ORD-RACE-1"],
+                "the guard must be cleared on the stock-validation-failure path too")
     }
 }
