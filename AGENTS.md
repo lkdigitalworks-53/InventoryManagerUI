@@ -287,7 +287,7 @@ App (Main.qml)
   rely on `LockManager`/pessimistic locking for this either — its server-side `acquireLock`
   deliberately re-grants a request from the SAME `actorUid` (needed for renewal heartbeats), so it
   answers "is someone ELSE using this," not "am I already in the middle of this myself." See SKILLS
-  Skill 60.
+  Skill 61.
 - Keep `ordersModel` (ListModel) in sync with `OrdersStore.orders`
 - Expose public methods: `tryCompleteOrder()`, `syncOrdersModel()`, `updateOrderInModel()`
 - Handle `stockErrorMsg` for the stock error dialog in `Main.qml`
@@ -416,7 +416,7 @@ QtObject {
   immediately: `logic.updateOrder` etc. are plain signals with no return channel, so closing right
   after emitting one tells the user "done" before the underlying write has even started, and gives
   nothing to stop them from re-triggering the same action while it's still in flight. See SKILLS
-  Skill 60 (`OrderDetailDialog.qml` was the one dialog in this list that didn't follow this —
+  Skill 61 (`OrderDetailDialog.qml` was the one dialog in this list that didn't follow this —
   `RestockDialog`/`AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` already did).
 
 **Responsive Design**:

@@ -36,7 +36,7 @@ import "../qml/model"
 //    throws "Cannot assign to read-only property" at runtime. A QML
 //    `function` declaration compiles to a read-only invokable member, not
 //    a mutable JS property the way a plain object's method would be. See
-//    SKILLS Skill 61.
+//    SKILLS Skill 62.
 //
 // 2. Assumed _tryCompleteOrder's happy path resolves its callback
 //    SYNCHRONOUSLY, the way every other DataModel orchestration function
@@ -53,7 +53,7 @@ import "../qml/model"
 //    genuine completion's callback simply never resolves. This isn't a
 //    bug to work around; it's exactly the real "still in flight" state
 //    the guard exists to protect against, and the tests below use it
-//    directly instead of manufacturing a fake one. See SKILLS Skill 62.
+//    directly instead of manufacturing a fake one. See SKILLS Skill 63.
 //    The genuine happy-path (a real Cloud Function actually returning
 //    ok:true) is out of reach for plain `qmltestrunner` and belongs to
 //    the E2E/on-device layer -- see the test plan.

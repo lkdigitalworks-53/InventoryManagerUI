@@ -56,7 +56,7 @@ one ran green:
 1. First version tried to reassign `StockBatchStore.consumeFifo` to simulate a race — threw
    `Cannot assign to read-only property` at runtime. A QML `function` declaration is a compiled,
    read-only member, not a mutable JS property the way a plain object's method would be. See
-   SKILLS Skill 61. That version also leaked `_completingOrderIds` state across test functions
+   SKILLS Skill 62. That version also leaked `_completingOrderIds` state across test functions
    (`dm` is instantiated once for the whole `TestCase`, not per test) since `init()` didn't reset it.
 2. Second version assumed `_tryCompleteOrder`'s happy path resolves synchronously, like every other
    `DataModel` orchestration function in this suite. It doesn't: `InventoryStore.deductStock`'s
@@ -64,7 +64,7 @@ one ran green:
    `XMLHttpRequest` response — with `AuthStore.idToken` empty (this suite's "offline" convention),
    `Gateway._sendDelta` returns immediately without ever invoking the callback at all. There is no
    local-apply shortcut here the way `_tryAdjustOrder`'s callback-less `creditStockNoBatch`/
-   `restoreFifo` have. See SKILLS Skill 62.
+   `restoreFifo` have. See SKILLS Skill 63.
 
 The final version turns limitation 2 into the test mechanism itself: a call's own callback
 genuinely never resolves in this harness, so by the time a second call for the same order is
@@ -114,9 +114,12 @@ introduced, so there is no rules surface to test.
 
 ## On-Device Test Plan
 
-**Prerequisite:** merge this branch and confirm CI (`qml-tests` job) passes first — the automated
-tests above have been traced by hand but not executed; a genuinely green CI run is the first real
-proof the QML syntax and Qt API calls are correct, not just the logic.
+**Prerequisite status:** CI (`qml-tests` job, PR #70) is genuinely green — 818/818 QML tests
+passing (1025/1025 across all four jobs), confirmed via `commits/{sha}/check-runs` after two
+rounds of real CI-driven test-file corrections (Skills 61 and 62). The automated coverage above is
+now a real, executed proof, not a hand-traced claim. On-device verification below is still the
+only coverage for `OrderDetailDialog`'s own busy-state UI (Felgo-dependent, out of this harness's
+reach) and for the true Gateway happy path (needs a live backend).
 
 ### Happy Path
 
@@ -170,7 +173,7 @@ proof the QML syntax and Qt API calls are correct, not just the logic.
 
 | File | Automated coverage | Where to look on-device if it regresses |
 |---|---|---|
-| `qml/model/DataModel.qml` (`_tryCompleteOrder`, new `_completingOrderIds`) | `tests/tst_DataModel_completeOrderReentrancy.qml` (4 cases, written/traced, CI pending) | Stock levels, Transaction History, Product History, and Sales Analysis after any order completion, especially under a slow connection or rapid double-tap |
+| `qml/model/DataModel.qml` (`_tryCompleteOrder`, new `_completingOrderIds`) | `tests/tst_DataModel_completeOrderReentrancy.qml` (6 cases, genuinely run — 818/818 QML tests passing on PR #70) | Stock levels, Transaction History, Product History, and Sales Analysis after any order completion, especially under a slow connection or rapid double-tap |
 | `qml/pages/OrderDetailDialog.qml` (`_save()`, new busy-state wiring, new `Connections` block) | None automated — Felgo-dependent dialog, out of this harness's reach | The Save button / sheet dismissibility during a completing save; also exercise a PLAIN (non-completing) save to confirm it still closes promptly |
 | `qml/pages/OrdersPage.qml` (`_approveAllPending`) | Indirectly covered via `_completingOrderIds` (shared engine) | Bulk-approve with 2+ pending orders, especially double-tapping Approve — correctness only, no busy-state fix here this pass |
 | `functions/lib/lockLogic.js` (`sameHolder`) | Not touched by this fix | N/A — documented as the reason locking alone can't fix this, not modified |

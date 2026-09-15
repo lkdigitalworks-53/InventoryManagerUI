@@ -2992,9 +2992,9 @@ bug's report asked about for the single-order path. Left as a follow-up rather t
 this fix — it's a different file, different UI surface, and the correctness issue (the actual
 reported bug) doesn't depend on it.
 
-## Skill 61: A QML `function` declaration is a compiled, read-only member — it can't be monkey-patched from a test the way a plain JS object's method can
+## Skill 62: A QML `function` declaration is a compiled, read-only member — it can't be monkey-patched from a test the way a plain JS object's method can
 
-**Found via real CI, same session as Skill 60** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
+**Found via real CI, same session as Skill 61** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
 first version): to simulate a second `_tryCompleteOrder` call arriving while the first is still
 mid-flight, in a test harness where every store call resolves its callback SYNCHRONOUSLY (no real
 network latency — see `tst_DataModel_adjustOrderSyncGuard.qml`'s header), the only apparent way to
@@ -3035,10 +3035,10 @@ flag to Taher that a dependency-injection seam may be worth adding to the produc
 specifically for testability — do not silently work around it with something that only happens to
 compile.
 
-## Skill 62: `DataModel._tryCompleteOrder`'s happy path can't resolve synchronously in plain `qmltestrunner` — its callback is wired straight to a real Gateway/XHR round trip, unlike the callback-less local-apply helpers `_tryAdjustOrder` uses
+## Skill 63: `DataModel._tryCompleteOrder`'s happy path can't resolve synchronously in plain `qmltestrunner` — its callback is wired straight to a real Gateway/XHR round trip, unlike the callback-less local-apply helpers `_tryAdjustOrder` uses
 
-**Found via real CI, same session as Skill 60/61** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
-second version): after fixing the read-only-property mistake (Skill 61), one test still failed —
+**Found via real CI, same session as Skill 61/62** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
+second version): after fixing the read-only-property mistake (Skill 62), one test still failed —
 `compare(first, true, ...)` on the most "ordinary" case in the file, a single unraced
 `_tryCompleteOrder` call with no stubbing involved at all. Every other `DataModel` test in this
 suite (`tst_DataModel_adjustOrderSyncGuard.qml` etc.) checks its result synchronously right after
@@ -3063,7 +3063,7 @@ simply never fires, and neither does anything downstream of it in `_tryCompleteO
 parameter at all (fire-and-forget local applies; see `creditStockNoBatch`'s signature and comment:
 "Atomic server-side delta... instead of a whole-record CAS mutation"). `_tryAdjustOrder`'s own
 success determination never waits on a Gateway round trip, so it resolves synchronously regardless
-of `AuthStore.idToken`. `_tryCompleteOrder` is architecturally different on purpose — see Skill 60's
+of `AuthStore.idToken`. `_tryCompleteOrder` is architecturally different on purpose — see Skill 61's
 note that making it genuinely async (waiting on the real deduction) was the whole point of a prior
 design round, specifically so a caller could show a real busy indicator. That same property that
 makes the UI fix meaningful also makes its happy path untestable without a live backend.
@@ -3082,7 +3082,7 @@ synchronous (a plain `InventoryStore.getById(...).stock` comparison, no XHR) and
 in this file that gives genuine, CI-verified proof the guard-cleanup code executes at all — the
 Gateway-dependent success-path cleanup is documented as tested by code review only, not by a
 runtime assertion, with the true happy path deferred to E2E/on-device (same tier as
-`OrderDetailDialog`'s own busy-state UI — see Skill 60 — which needs Felgo/a real device for the
+`OrderDetailDialog`'s own busy-state UI — see Skill 61 — which needs Felgo/a real device for the
 same underlying reason: this is real backend-dependent behavior, not something `qmltestrunner
 -platform offscreen` alone can exercise).
 
@@ -3093,3 +3093,38 @@ every one of its async legs goes through a callback-TAKING Gateway/Store call (`
 (`creditStockNoBatch`, `restoreFifo`). Only the latter resolves synchronously with `AuthStore.idToken`
 empty in this harness; the former requires either a live emulator (E2E tier) or testing the
 in-flight/rejected state directly rather than the eventual success state.
+
+## Skill 64: `git checkout --ours`/`--theirs` mean the OPPOSITE of what they mean in a merge, during a `git rebase`
+
+**Found while rebasing `fix/2026-09-14-order-completion-double-submit` onto `main` after PR #71
+merged, 2026-09-15**: this repo's established rule is "`CHECKPOINT.md` conflict resolution rule:
+keep the branch version automatically." In a normal `git merge`, `--ours` is the branch you're
+currently on (here, the feature branch) and `--theirs` is the branch being merged in — so `--ours`
+would correctly mean "keep the branch version." **During `git rebase`, this is reversed**: at each
+replayed commit, `HEAD` is the commit being built on top of the new base, so `--ours` means "the
+new base" (`main`, in this case) and `--theirs` means "the commit from the branch being replayed" —
+the exact opposite of the merge convention, despite using identical flag names.
+
+Ran `git checkout --ours CHECKPOINT.md` twice during this rebase (once per conflicting commit),
+intending to keep the branch's own checkpoint content per the established rule — both times it
+silently kept `main`'s content instead (the *other* session's checkpoint, for an unrelated audit
+PR). The mistake wasn't caught by the rebase itself (no error, no warning — it's a fully valid,
+silent resolution) — only by checking the actual restored file's content immediately after
+(`head -3 CHECKPOINT.md` showed the wrong title) rather than trusting that the flag name matched
+its merge-time meaning.
+
+**Fix applied**: recovered the correct branch content via `git show <pre-rebase-branch-tip-sha>:
+<path>` (the original branch tip is still reachable from its own ref/reflog, or from `origin` if
+not yet force-pushed over) and manually restored it as a working-tree fixup, then amended it into
+the rebase's own tip commit rather than adding a separate "oops" commit — keeps the log clean, and
+is the same "squash rebase-induced duplicate commits" preference this file already states.
+
+**General lesson — verify the mechanically "obvious" resolution, don't just trust it**: `--ours`/
+`--theirs` are genuinely one of the most commonly misremembered pieces of git semantics precisely
+*because* they invert between merge and rebase with zero syntax difference to signal it. Any
+conflict-resolution rule written in terms of "ours"/"theirs" (as opposed to "keep branch version" /
+"keep main's version" stated plainly) needs to be re-derived for whichever operation is actually in
+progress, not pattern-matched from habit. After ANY automated or flag-based conflict resolution —
+not just this one — check the actual resulting file content against what you expected before
+moving on, the same way CI results get checked via the API rather than assumed from "it should have
+worked."

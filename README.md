@@ -692,7 +692,7 @@ double-clicking. Fixed with an explicit `_completingOrderIds` in-flight set in `
 (entity-scoped, independent of any caller), plus wiring `OrderDetailDialog.qml` up to the
 `busy`/`busyMessage` mechanism `BottomSheet.qml` already provides — it was the one dialog in this
 codebase that fired its update signal and closed immediately instead of waiting for a real
-completion ack. See SKILLS Skill 60 for the full investigation, including why this can't be tested
+completion ack. See SKILLS Skill 61 for the full investigation, including why this can't be tested
 by simply calling the function twice in sequence in this test suite's synchronous harness.
 
 ---
