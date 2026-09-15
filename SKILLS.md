@@ -2877,3 +2877,46 @@ rather than treating it as fully covered because *a* test with a similar name al
 "there's a test for this area" and "there's a test for this specific combination of fields" are
 different claims, and the gap here was entirely in which fixture values got exercised, not in
 whether the code path was reachable at all.
+
+## Skill 60: Finding every instance of a bug pattern — a checklist beats re-deriving the trace from scratch each time
+
+**Context, 2026-09-15**: after fixing the order-completion double-submit bug (see the sibling
+session's Skill 60/61/62 on `fix/2026-09-14-order-completion-double-submit` — numbering will
+collide on merge, renumber per this file's own append-only convention), Taher asked for a
+full-codebase sweep for the same *pattern*, not just the one instance. Found two more Critical
+instances (`ConfirmReturnSheet`/`_tryAdjustOrder` for exchanges, `NewOrderDialog` for duplicate
+order creation) and one Medium (`InviteMemberDialog`) — full detail in the new
+`docs/superpowers/ASYNC-REENTRANCY-BUGS.md`.
+
+**The reusable method, distilled into a 4-question checklist** (see that file's own "How to tell if
+a given action is actually at risk" section for the full version):
+1. Does the action's `DataModel` handler call a callback-TAKING Store/Gateway function
+   (`deductStock`, `recordDelta`/`recordMutation`, an ID-minting call)? Those depend on a real
+   network round trip. A callback-LESS local-apply helper resolves synchronously in this
+   codebase's offline-first design and isn't at risk.
+2. Does the triggering dialog/page wait for a real completion signal before allowing the action
+   again, or does it fire-and-close/reset immediately?
+3. Is there a `DataModel`-layer in-flight guard independent of the UI, or is the UI gap the *only*
+   thing standing between this and a duplicate write?
+4. Is anything relying on `LockManager` for protection here? It doesn't provide any against the
+   SAME user re-entering their own still-resolving action — its server-side `acquireLock`
+   deliberately re-grants the same `actorUid` (needed for renewal heartbeats).
+
+**How the sweep was actually done, mechanically**: `grep`'d every `BottomSheet`-derived dialog
+(`grep -rl "^BottomSheet {"`) for `onPrimaryClicked` presence vs `busy`-usage absence, producing a
+short list of candidates in one pass rather than opening all 20 files cold. Then traced each
+candidate's signal chain (`grep`'ing `Main.qml` for the dialog's own signal name, then the
+resulting `logic.*` signal, then its `DataModel.on*` handler) to answer question 1 above — most
+candidates turned out to call callback-less local-apply Store functions (`EditProductDialog`,
+`StaffDetailDialog`, delete flows) and were **not** actually at risk despite superficially matching
+"has `onPrimaryClicked`, lacks `busy`." Recording those negative results (the "Checked, not
+affected" section) is as valuable as the positive findings — it's the difference between "we
+looked and it's fine" and "we didn't look," which matters the next time someone touches one of
+those files and wonders whether this pattern applies to it too.
+
+**General lesson**: once a bug turns out to be an instance of a *pattern* rather than a one-off,
+the highest-leverage next step is turning the diagnosis into a checklist and running it
+systematically (grep first, trace only the candidates that survive the grep), rather than either
+(a) declaring the one fix done and moving on, or (b) re-deriving the full architectural trace from
+scratch for each file by reading it top to bottom. The checklist itself is the reusable artifact —
+put it in the tracking doc, not just in this session's head.
