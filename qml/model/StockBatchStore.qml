@@ -525,8 +525,7 @@ QtObject {
                 function(result) {
                     if (result && result.ok) {
                         var updated = Object.assign({}, b, {
-                            qtyRemaining: result.after.qtyRemaining,
-                            updatedAt: new Date().toISOString()
+                            qtyRemaining: result.after.qtyRemaining
                         })
                         var arr = []
                         for (var k = 0; k < batches.length; ++k)
@@ -629,8 +628,7 @@ QtObject {
             function(result) {
                 if (result && result.ok) {
                     var updated = Object.assign({}, b, {
-                        qtyRemaining: result.after.qtyRemaining,
-                        updatedAt: new Date().toISOString()
+                        qtyRemaining: result.after.qtyRemaining
                     })
                     var next = []
                     for (var i = 0; i < batches.length; ++i)

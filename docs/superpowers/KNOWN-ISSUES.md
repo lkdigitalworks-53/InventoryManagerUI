@@ -312,3 +312,31 @@ resource (a deleted product's batch data) gets touched again. A change that look
 — reversal flows, exports, reports, anything that persists a productId and looks it up later.
 Worth a deliberate sweep for other such consumers before considering this fully closed, not
 assumed complete after one round.
+
+## Delete: batch stays in Firestore after product delete — CAS-check failure, pre-existing bug found via on-device repro
+
+Reported on-device, exactly reproducible: create a product with stock 10, sell 1 via a
+completed order (batch now `qtyRemaining: 9`), delete the product — product disappears, batch
+stays in Firestore at `qtyRemaining: 9`, confirmed directly in the Firestore console.
+
+**Root cause, pre-existing, not introduced by the cascade-delete feature**: `StockBatchStore`'s
+`consumeFifo`/`restoreFifo`/`topUpOldest` success handlers stamped a fresh, client-generated
+`updatedAt: new Date().toISOString()` onto the local batch cache after every successful
+`Gateway.recordDelta` call. Server-side, `applyDelta` never touches `updatedAt` at all — only the
+delta's target field. So the local cache's `updatedAt` diverges from Firestore's actual stored
+value the moment any batch is first consumed against, restored, or topped up, and stays diverged
+forever. The cascade-delete feature was the first thing to ever send that locally-cached batch as
+a CAS `before` for a delete — the server's `_deepEqual(current, before)` check fails on that one
+field, the delete gets silently rejected as a 409 conflict (conflicts are never retried), and
+`StockBatchStore._onMutationConflicted` quietly restores the batch to the local array with no
+toast (by design) — invisible unless someone checks Firestore directly, exactly what happened
+here. Full trace and the general lesson: SKILLS.md Skill 60.
+
+**Fixed**: removed the synthetic `updatedAt` bump from all three success handlers — the field now
+correctly stays whatever it was, matching what the server's delta-apply path actually does.
+
+**Not independently unit tested** — verifying it needs a real `Gateway.recordDelta` network
+round-trip to fire the success callback, same untestable-without-mock-HTTP territory as every
+other Gateway-adjacent path this session. Verified by exact code trace instead; on-device
+re-test of the original repro is the real confirmation, recommended before considering this
+closed.

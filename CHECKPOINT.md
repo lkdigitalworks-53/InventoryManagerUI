@@ -109,3 +109,38 @@ Taher tested the PR on-device (confirmed CI/tests fine) and raised three points:
 All touched files brace-balanced. Docs updated: KNOWN-ISSUES.md (new regression entry, follow-up
 note on the reconsidered blocking proposal), test plan (section 5 added -- briefly lost section 4
 in the same edit, caught immediately via a heading grep, restored).
+
+## Also done (fourth pass, same session) — the real root cause, found via exact repro
+
+Taher gave an exact, reproducible on-device scenario: create product (stock 10, supplier S1),
+sell 1 via a completed order, delete the product -- product gone, batch stays in Firestore at
+qtyRemaining 9, confirmed directly in Firestore console (not just app UI).
+
+Traced end to end rather than guessed:
+- deleteProduct()'s cascade sends the LOCALLY-CACHED batch object as the CAS `before` for a
+  delete mutation.
+- Server-side applyMutation does a real CAS check (_deepEqual(current, before)) -- legitimate,
+  not the bug.
+- Found the actual bug: StockBatchStore.consumeFifo/restoreFifo/topUpOldest's success handlers
+  stamped a fresh client-generated `updatedAt: new Date().toISOString()` onto the local cache
+  after every successful Gateway.recordDelta call. Server-side applyDelta never touches
+  updatedAt -- only the delta's target field. So local and server permanently diverge on that
+  one field the moment any batch is first consumed against.
+- This predates Tier C entirely -- consumeFifo/restoreFifo/topUpOldest are pre-existing
+  functions. Nothing before the cascade-delete feature ever sent a previously-delta-touched
+  batch through a CAS-protected write, so the drift never surfaced.
+- The delete gets silently rejected as a 409 conflict (conflicts never retried);
+  StockBatchStore._onMutationConflicted DOES exist and DOES fire, quietly restoring the batch
+  to the local array with the server's real (still-existing) document -- no toast by design,
+  invisible unless you check Firestore directly, exactly what happened.
+
+Fixed: removed the synthetic updatedAt bump from all three success handlers (3 occurrences,
+same pattern each time). Object.assign's base object already preserves the field correctly once
+the override is gone.
+
+Not independently unit tested -- verifying needs a real Gateway.recordDelta network round-trip
+to fire the success callback, same untestable territory as every other Gateway-adjacent test
+this session. Verified by exact code trace (client success handler vs server applyDelta, side
+by side, confirming exactly which fields each one touches). Documented in KNOWN-ISSUES.md and
+SKILLS.md Skill 60 (new). On-device re-test of the exact repro is the real verification --
+recommended before considering this closed, not claimed as proven here.
