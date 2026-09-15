@@ -1,7 +1,6 @@
 import Felgo
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls as QQC
 import QtQuick.Layouts
 import QtQuick.Window
 
@@ -19,7 +18,6 @@ App {
 
     property bool compact: width < dp(Constants.compactBreakpoint)
     property string authErrorMessage: ""
-    property string permissionErrorMessage: ""
     property string memberErrorMessage: ""
     property string successMessage: ""
 
@@ -87,7 +85,7 @@ App {
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
-                       forgotPasswordDlg, confirmDlg, stockErrorDlg, permissionErrorDlg,
+                       forgotPasswordDlg, confirmDlg, stockErrorDlg, actionBlockedDlg,
                        importDlg]
         for (var i = 0; i < dialogs.length; ++i) {
             if (dialogs[i] && dialogs[i].opened) {
@@ -208,13 +206,15 @@ App {
         }
 
         function onErrorOccurred(context, message) {
-            // Reuse the permissionErrorDlg as a generic action-blocked popup —
+            // Reuse actionBlockedDlg as a generic action-blocked popup —
             // matches the "you can't do that right now" semantics across contexts.
-            permissionErrorMessage = message ||
-                (context === "auth" ? "You do not have permission for this action"
-                                    : "Action not allowed")
-            permissionErrorDlg.title = context === "auth" ? "Permission Denied" : "Action Blocked"
-            permissionErrorDlg.open()
+            actionBlockedDlg.show({
+                title: context === "auth" ? qsTr("Permission Denied") : qsTr("Action Blocked"),
+                message: message ||
+                    (context === "auth" ? qsTr("You do not have permission for this action")
+                                        : qsTr("Action not allowed")),
+                variant: "error"
+            })
         }
 
         function onProductDeleted(productId) {
@@ -382,24 +382,13 @@ App {
         id: stockErrorDlg
     }
 
-    QQC.Dialog {
-        id: permissionErrorDlg
-        modal: true
-        title: "Permission Denied"
-        anchors.centerIn: parent
-        width: dp(420)
-        standardButtons: QQC.Dialog.Ok
-        Column {
-            width: parent.width
-            spacing: dp(8)
-            Text {
-                text: permissionErrorMessage
-                font.pixelSize: sp(12)
-                color: "#b91c1c"
-                wrapMode: Text.Wrap
-                width: parent.width
-            }
-        }
+    // Replaces a raw, unstyled QQC.Dialog (platform-default OK button,
+    // hardcoded "#b91c1c" text color) that didn't match the rest of the
+    // app's theme — the one popup that didn't, per Taher's on-device PR
+    // review (2026-09-14). Same AlertDialog component stockErrorDlg above
+    // already uses.
+    AlertDialog {
+        id: actionBlockedDlg
     }
 
     // Toast layer. Use Toast.show("...") from anywhere to drive it.
