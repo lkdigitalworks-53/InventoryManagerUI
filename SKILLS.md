@@ -3034,3 +3034,62 @@ re-creating the exact call sequence that would produce it, matching the conventi
 flag to Taher that a dependency-injection seam may be worth adding to the production code
 specifically for testability — do not silently work around it with something that only happens to
 compile.
+
+## Skill 62: `DataModel._tryCompleteOrder`'s happy path can't resolve synchronously in plain `qmltestrunner` — its callback is wired straight to a real Gateway/XHR round trip, unlike the callback-less local-apply helpers `_tryAdjustOrder` uses
+
+**Found via real CI, same session as Skill 60/61** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
+second version): after fixing the read-only-property mistake (Skill 61), one test still failed —
+`compare(first, true, ...)` on the most "ordinary" case in the file, a single unraced
+`_tryCompleteOrder` call with no stubbing involved at all. Every other `DataModel` test in this
+suite (`tst_DataModel_adjustOrderSyncGuard.qml` etc.) checks its result synchronously right after
+the call and that works — so the natural assumption, uncorrected, was that this one would too.
+
+**It doesn't, and can't in this harness.** Traced `InventoryStore.deductStock` (`qml/model/
+InventoryStore.qml`): its callback parameter is invoked directly inside `Gateway.recordDelta`'s own
+callback — `Gateway.recordDelta("inventory", productId, {stock: -qty}, floors, clamps, function(result)
+{ ...; if (callback) callback(result) })`. `Gateway.recordDelta` (`qml/model/Gateway.qml`) enqueues
+onto `OutboxStore` and calls `drainNow()` → `_sendDelta(item)`, which opens a real
+`XMLHttpRequest` to the Cloud Function endpoint; the registered callback only fires from inside
+`xhr.onreadystatechange` once `_classifyDeltaResponse` sees an actual, well-formed response body
+(`_classifyDeltaResponse`'s `isRealResponse` check) — genuinely async, no synchronous shortcut. With
+`AuthStore.idToken` empty (this suite's "offline" convention, used everywhere including the sibling
+file), `_sendDelta` returns immediately at its very first line (`if (!AuthStore.idToken ...)
+{ OutboxStore.clearInFlight(item); return }`) — **without ever invoking the callback at all**, not
+even with a failure result. So in a harness with no live Firebase emulator, `deductStock`'s callback
+simply never fires, and neither does anything downstream of it in `_tryCompleteOrder`.
+
+**Why `_tryAdjustOrder`'s sibling tests don't hit this**: returns/adjustments use
+`StockBatchStore.restoreFifo` / `InventoryStore.creditStockNoBatch` — both take NO callback
+parameter at all (fire-and-forget local applies; see `creditStockNoBatch`'s signature and comment:
+"Atomic server-side delta... instead of a whole-record CAS mutation"). `_tryAdjustOrder`'s own
+success determination never waits on a Gateway round trip, so it resolves synchronously regardless
+of `AuthStore.idToken`. `_tryCompleteOrder` is architecturally different on purpose — see Skill 60's
+note that making it genuinely async (waiting on the real deduction) was the whole point of a prior
+design round, specifically so a caller could show a real busy indicator. That same property that
+makes the UI fix meaningful also makes its happy path untestable without a live backend.
+
+**Fix — stop trying to reach the happy path, and use the "never resolves here" property directly**:
+a call to `_tryCompleteOrder` in this harness sets `_completingOrderIds[orderId] = true` at entry
+and then genuinely never reaches ANY of its own cleanup points (no live server to respond) — which
+is, usefully, an exact stand-in for "still resolving," the real condition the reported bug's second
+click walked into. Two REAL, sequential `_tryCompleteOrder` calls for the same order — no
+monkey-patching, no manual state seeding — reproduce the guard's rejection behavior directly. The
+already-completed short-circuit is tested by seeding `OrdersStore.orders` with `status: "completed"`
+directly (a pure, synchronous, local read — no Gateway involved), matching
+`tst_DataModel_adjustOrderSyncGuard.qml`'s own convention of seeding a guard's precondition rather
+than orchestrating history to produce it. The stock-validation-failure path is also purely local/
+synchronous (a plain `InventoryStore.getById(...).stock` comparison, no XHR) and is the one branch
+in this file that gives genuine, CI-verified proof the guard-cleanup code executes at all — the
+Gateway-dependent success-path cleanup is documented as tested by code review only, not by a
+runtime assertion, with the true happy path deferred to E2E/on-device (same tier as
+`OrderDetailDialog`'s own busy-state UI — see Skill 60 — which needs Felgo/a real device for the
+same underlying reason: this is real backend-dependent behavior, not something `qmltestrunner
+-platform offscreen` alone can exercise).
+
+**General lesson**: before assuming a `DataModel` orchestration function's result is available
+synchronously in a test (the default assumption in this suite, and usually correct), check whether
+every one of its async legs goes through a callback-TAKING Gateway/Store call (`deductStock`,
+`recordDelta`/`recordMutation` directly) or a callback-LESS local-apply helper
+(`creditStockNoBatch`, `restoreFifo`). Only the latter resolves synchronously with `AuthStore.idToken`
+empty in this harness; the former requires either a live emulator (E2E tier) or testing the
+in-flight/rejected state directly rather than the eventual success state.
