@@ -6,6 +6,11 @@ This file defines specialized agents and their roles for the **BusinessManagemen
 
 Each agent is scoped to a specific domain, enabling efficient parallel development and agentic workflows.
 
+**See also:** `docs/superpowers/KNOWN-ISSUES.md` (general deferred-issues log) and
+`docs/superpowers/ASYNC-REENTRANCY-BUGS.md` (severity-ranked tracker for the async
+re-entrancy/double-submit bug class — started 2026-09-15, cross-check any new async orchestration
+work against it).
+
 ---
 
 ## Session & Sandbox Conventions (established 2026-08-30)

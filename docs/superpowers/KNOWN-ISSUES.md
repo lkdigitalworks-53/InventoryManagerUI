@@ -5,6 +5,20 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Async re-entrancy / double-submit bug class — tracked separately, severity-ranked
+
+Found via the 2026-09-14 order-completion double-submit fix (PR #70): a whole *class* of bugs where
+a fire-and-forget signal into an async `DataModel` orchestration function, with no busy state and
+no re-entrancy guard, lets a repeated user action (double-tap, reopen-and-retry) run the same
+mutation twice against stale local state. A full-codebase sweep (2026-09-15) found two more
+Critical instances (`ConfirmReturnSheet`/`_tryAdjustOrder` exchanges, `NewOrderDialog` duplicate
+order creation) and one Medium (`InviteMemberDialog`). Full trace, severity ranking, and the
+checklist used to find them: `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` — kept separate from this
+file since it's one specific, well-defined pattern with its own severity structure, not a grab-bag
+entry.
+
+---
+
 ## Leave-workspace: self-leave rule staged but not deployed
 
 **Status:** Update (2026-07-29) — the deploy this entry was blocked on has now happened.
