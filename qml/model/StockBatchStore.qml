@@ -209,11 +209,42 @@ QtObject {
     // covers the counter doc not existing yet (first deploy of this
     // feature, or first batch of a new year) without reissuing an id
     // that's already in local use.
+    // 2026-09-14, on-device (Taher): with no timeout anywhere in
+    // FirebaseService's underlying request path, a mint attempt that starts
+    // right as connectivity drops can hang indefinitely rather than failing
+    // -- which meant addBatch()'s failure branch (queue for retry, see
+    // above) never even ran, because nothing ever called it back. Confirmed:
+    // over a minute with the app left open, no batch, no retry -- not a
+    // slow retry cycle, a genuine hang. Root cause is app-wide (no request
+    // in this codebase has a timeout; see the roadmap's own item on this),
+    // but fixing that broadly is out of scope for this session -- this is a
+    // narrow, bounded safety net scoped to just the one call item 1's whole
+    // retry-on-reconnect promise depends on, using the exact same pattern
+    // AuthService._postJson already established for this same problem
+    // elsewhere ("20s timeout fallback so a hung request never leaves the
+    // UI silent"). Does NOT abort the underlying request (FirebaseService's
+    // _request encapsulates its own XHR, not exposed here to abort) -- if it
+    // eventually does resolve after this fires, `settled` just discards it.
     function nextBatchId(callback) {
         var year = new Date().getFullYear()
         var prefix = _batchIdPrefixForYear(year)
         var seedMax = _seedBatchMaxForPrefix(prefix)
+        var settled = false
+        var timeoutTimer = Qt.createQmlObject(
+            'import QtQuick; Timer { interval: 15000; running: true; repeat: false }',
+            root, "StockBatchStoreMintTimeoutTimer")
+        timeoutTimer.triggered.connect(function() {
+            if (settled) return
+            settled = true
+            timeoutTimer.destroy()
+            console.warn("[StockBatchStore] batch-id mint timed out after 15s -- treating as failed")
+            callback("")
+        })
         FirebaseService.mintCounterValue("counters/stockBatches-" + year, seedMax, function(ok, value) {
+            if (settled) return
+            settled = true
+            timeoutTimer.stop()
+            timeoutTimer.destroy()
             callback(ok ? (prefix + String(value).padStart(3, '0')) : "")
         })
     }

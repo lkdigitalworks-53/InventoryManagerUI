@@ -14,10 +14,19 @@ Decision 2 in isolation, since it should hold even for drift that has nothing to
 mint.
 
 **Status (2026-09-14):** implemented, modeled in an automated test (`tests/tst_
-PendingMintAndTopUpSafety.qml`, 11/11 passing), **not yet run against the real singletons or the real
-dialogs on a device** — same category of gap as items 2 and 3's own test plans this session:
-`StockBatchStore.addBatch`/`topUpOldest` are read-only methods on a `pragma Singleton`, so the test
-models the control flow rather than driving the real code.
+PendingMintAndTopUpSafety.qml`, originally 11/11 passing), **N1 run on-device by Taher against this
+plan's original scope — failed.** Restocking with a brand-new supplier and dropping connectivity
+right after submit still lost the batch, and the dialog hung (didn't close) for over a minute with
+the app left open, batch still never appeared in Firestore even after reopening. Root cause and fix:
+see the roadmap's item-1 entry's follow-up note (same day) — no XHR timeout anywhere in the codebase
+meant the mint could hang indefinitely rather than failing, so the retry queue this plan tests never
+got a chance to engage. Fixed: `nextBatchId()` now races the real mint against a 15s safety-net timer
+(4 new tests, `tst_PendingMintAndTopUpSafety.qml` now 15/15), and `restock()` no longer nests the
+batch creation inside the stock delta's callback. **Re-run of N1/N2 against this updated code is what
+this test plan is now waiting on** — still not run against the real singletons or the real dialogs on
+a device, same category of gap as items 2 and 3's own test plans this session (`StockBatchStore.
+addBatch`/`topUpOldest`/`nextBatchId` are read-only methods on a `pragma Singleton`, so the test
+models the control flow rather than driving the real code).
 
 ---
 
@@ -83,6 +92,8 @@ productId) are unaffected — this fix didn't touch that early-return line at al
 | N2 | Continuing from N1: turn airplane mode back off, wait a few seconds for reconnect to be detected. | The batch appears (check both the product's batch history and Firestore directly, matching how N1 was originally confirmed). Still no error/warning shown at any point — the whole recovery should be invisible. |
 | N3 | Continuing from N2: once the batch has appeared, check both pickers again. | Product is selectable again in both. |
 | N4 | Same as N1, but this time try to actually **place an order** against the product while it's still offline and pending (before doing N2's reconnect). | Product isn't in the picker to select in the first place — confirm there's no other way to add it to an order while pending (e.g., search box, barcode scan if this app has one, any path that bypasses the combo). |
+| N5 | **The new timeout behavior specifically.** Restock with a brand-new supplier name (not one already used), submit, go to airplane mode immediately. Stay offline for a full **20+ seconds** (past the 15s safety-net timer) before touching anything. | The restock dialog should close on its own well before the 20s mark — it's no longer waiting on the batch at all, only on the stock delta (which may itself still take a while if it's also stuck — see the roadmap's new "no XHR timeout" item; that half isn't fixed by this branch). Check `hasPendingMint` for the product once the dialog closes or once 15s has passed, whichever is checkable first — it should be `true`, confirming the mint's own timeout fired and queued it rather than still silently hanging. |
+| N6 | Continuing from N5: reconnect, wait a few seconds. | Batch appears (same check as N2) — confirms the queued-via-timeout path resolves the same way a queued-via-fast-failure one does. |
 
 ### 3.3 Edge cases
 
@@ -109,17 +120,19 @@ productId) are unaffected — this fix didn't touch that early-return line at al
 
 ## 4. Suggested order of attack
 
-1. **N1** — confirms the picker-hiding half of Decision 1 works at all.
-2. **N2/N3** — confirms the retry-on-reconnect half actually completes the loop.
-3. **E1** — the durability question; if this fails, a relaunch during a real outage would silently
+1. **N5/N6** — the timeout fix specifically, since this is what N1's failure actually traced to. If
+   this doesn't hold, nothing else below matters yet.
+2. **N1** — confirms the picker-hiding half of Decision 1 works at all.
+3. **N2/N3** — confirms the retry-on-reconnect half actually completes the loop.
+4. **E1** — the durability question; if this fails, a relaunch during a real outage would silently
    lose the pending request entirely, which would be worse than not having this fix at all.
-4. **H1/H2** — quick sanity baseline.
-5. **E2, E4** — the multi-item and rapid-flapping variants.
-6. **N4** — checking there's no bypass path around the picker.
-7. **E3** — only if there's an easy way to trigger drift independently; otherwise skip, N1's own
+5. **H1/H2** — quick sanity baseline.
+6. **E2, E4** — the multi-item and rapid-flapping variants.
+7. **N4** — checking there's no bypass path around the picker.
+8. **E3** — only if there's an easy way to trigger drift independently; otherwise skip, N1's own
    order-completion step already exercises Decision 2.
-8. Regression checklist — spot check.
-9. Monkey testing last.
+9. Regression checklist — spot check.
+10. Monkey testing last.
 
 ## 5. Explicitly out of scope for this test plan
 
@@ -132,7 +145,11 @@ productId) are unaffected — this fix didn't touch that early-return line at al
 
 ## 6. Sign-off checklist
 
-- [ ] N1 confirmed on-device — the picker-hiding mechanism.
+- [x] N1 attempted on-device (2026-09-14) — **failed**, root-caused, fixed (see roadmap). Needs
+      re-confirmation against the updated code — reopened below as N5/N6.
+- [ ] N5/N6 confirmed on-device — the timeout-race fix specifically, and that a timed-out mint still
+      resolves correctly once queued.
+- [ ] N1 re-confirmed on-device against the updated code — the picker-hiding mechanism.
 - [ ] N2/N3 confirmed on-device — the retry-and-recover loop closes.
 - [ ] E1 confirmed on-device — durability across a relaunch.
 - [ ] Regression checklist — spot-check at minimum.

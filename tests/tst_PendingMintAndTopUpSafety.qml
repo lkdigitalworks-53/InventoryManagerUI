@@ -190,6 +190,81 @@ TestCase {
         compare(adjustment.unitCost, 0, "honestly unknown, not inherited from the original batch's cost")
     }
 
+    // ── nextBatchId's timeout-race safety net (2026-09-14, on-device) ──────
+    // Standalone from makeStore() above -- this models JUST the timeout-vs-
+    // mint race nextBatchId() now runs internally, not the full addBatch/
+    // pending-queue flow (already covered above). The real function starts
+    // a 15s Timer and calls FirebaseService.mintCounterValue at the same
+    // time, guarded by a `settled` flag so whichever resolves first wins and
+    // the other is discarded. This model lets the test choose which "arm"
+    // resolves and when, instead of waiting on a real timer or a real
+    // network hang.
+    function makeMintRace() {
+        return {
+            settled: false,
+            callback: null,
+            calls: 0,   // how many times callback actually fired -- should never exceed 1
+
+            start: function(callback) {
+                this.settled = false
+                this.callback = callback
+                this.calls = 0
+            },
+            fireTimeout: function() {
+                if (this.settled) return
+                this.settled = true
+                this.calls++
+                this.callback("")
+            },
+            resolveMint: function(id) {
+                if (this.settled) return
+                this.settled = true
+                this.calls++
+                this.callback(id)
+            }
+        }
+    }
+
+    function test_mintRace_resolves_normally_when_mint_answers_first() {
+        var race = makeMintRace()
+        var got = "unset"
+        race.start(function(id) { got = id })
+        race.resolveMint("BAT-1")
+        compare(got, "BAT-1")
+        compare(race.calls, 1)
+    }
+
+    function test_mintRace_timeout_fires_when_mint_never_answers() {
+        // The exact scenario from Taher's on-device report: the underlying
+        // request never comes back at all.
+        var race = makeMintRace()
+        var got = "unset"
+        race.start(function(id) { got = id })
+        race.fireTimeout()
+        compare(got, "", "treated as a failed mint, same as any other addBatch() failure")
+        compare(race.calls, 1)
+    }
+
+    function test_mintRace_late_mint_after_timeout_is_discarded_not_double_fired() {
+        var race = makeMintRace()
+        var callCount = 0
+        var lastValue = null
+        race.start(function(id) { callCount++; lastValue = id })
+        race.fireTimeout()
+        race.resolveMint("BAT-1")   // the original request finally answers, too late
+        compare(callCount, 1, "the late answer must NOT fire the callback a second time")
+        compare(lastValue, "", "the timeout's result stands -- not silently overwritten by the late one")
+    }
+
+    function test_mintRace_timeout_after_mint_already_answered_is_a_noop() {
+        var race = makeMintRace()
+        var callCount = 0
+        race.start(function(id) { callCount++ })
+        race.resolveMint("BAT-1")
+        race.fireTimeout()   // fires after the real answer already arrived
+        compare(callCount, 1, "the timeout must not fire again once the real mint already settled it")
+    }
+
     function test_topUp_with_zero_existing_batches_still_synthesizes_one() {
         var store = makeStore()
         store.topUpOldest("P1", 5)

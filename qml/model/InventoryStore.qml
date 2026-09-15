@@ -1027,6 +1027,27 @@ QtObject {
             var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (current.price || 0);
             var reasonText = (reason || "").trim();
 
+            // 2026-09-14, on-device (Taher): fires immediately here, in
+            // PARALLEL with the stock delta below -- not nested inside its
+            // callback the way it used to be. Nothing here depends on the
+            // delta's result (productId/supplierId/addedQty/batchCost/
+            // reasonText are all already known); the old nesting was
+            // incidental, not a real dependency. It mattered because the
+            // delta can be slow or, with no timeout anywhere in
+            // FirebaseService's request path (separate, already-flagged gap
+            // — see the roadmap), can hang outright: nesting the batch
+            // inside that callback meant a hung delta silently blocked the
+            // batch from ever being attempted at all, which meant item 1's
+            // whole retry-on-reconnect mechanism never got a chance to
+            // engage in the first place. A FIFO batch also doesn't need the
+            // stock counter to have landed to be correct — it's the ledger's
+            // own ground truth (see this file's header comment on why a
+            // pooled stock count is a derived value, not the source of
+            // truth), unlike ActivityLog/TransactionStore below, which stay
+            // gated on delta confirmation deliberately (C4) since THEY
+            // should not record something that might not have landed.
+            StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
+
             // Atomic server-side delta (Component 4) instead of the old
             // optimistic-local-then-whole-record-CAS-mutation pattern —
             // same fix and reasoning as deductStock above. review finding
@@ -1038,9 +1059,10 @@ QtObject {
             // silently stuck retrying forever on the resulting conflict.
             // Local products[] is now updated only once the server confirms
             // (result.after.stock), not optimistically — so the ActivityLog/
-            // TransactionStore/StockBatchStore side effects below also wait
-            // for that confirmation, rather than firing for a write that
-            // might not have actually landed.
+            // TransactionStore side effects below also wait for that
+            // confirmation, rather than firing for a write that might not
+            // have actually landed. (StockBatchStore.addBatch used to be
+            // gated here too — moved above, see that comment.)
             Gateway.recordDelta("inventory", productId, { stock: addedQty }, {}, {}, function(result) {
                 if (!result || !result.ok || !result.after || result.after.stock === undefined) {
                     console.warn("[InventoryStore] restock: recordDelta failed for", productId, result && result.error)
@@ -1060,17 +1082,6 @@ QtObject {
                                        + (reasonText ? " · " + reasonText : ""),
                                    productId);
                 TransactionStore.recordPurchase(productId, addedQty, batchCost, current.name, supplierId, reasonText);
-                // The receipt also lands as a FIFO batch — this is what every
-                // subsequent sale will draw from in date order. The reason
-                // rides along in the batch's existing (currently unrendered)
-                // note field. addBatch creates a brand-new document (no
-                // shared mutable value to race on), so it's out of C4's
-                // scope — only consumeFifo/topUpOldest/restoreFifo (which
-                // mutate an EXISTING batch's qtyRemaining) are the still-open
-                // part of that gap, tracked separately. addBatch is async
-                // (mints its own batchId) — fire-and-forget here, same as
-                // before this call site's return value was ever used.
-                StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
 
                 if (callback) callback(true, supplierFailed)
             })

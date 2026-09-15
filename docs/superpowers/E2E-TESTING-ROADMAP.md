@@ -31,7 +31,30 @@ only so future test plans don't silently assume they're testable and quietly ski
 
 ## Needs Taher's input before it can be scoped or started
 
-*(nothing currently — item 1, the last one here, was resolved 2026-09-14; see below)*
+### No XHR request anywhere in this app has a timeout — confirmed systemic, deliberately deferred
+
+Found 2026-09-14 while fixing item 1's follow-up (see "Resolved this arc" below for the full trace).
+`FirebaseService._request()` (every plain read/write, including `nextBatchId`/`nextProductId`/etc.'s
+underlying mint calls) and `Gateway._send()` (Outbox's own delivery mechanism, a separate XHR
+implementation, used by every durable `recordMutation`/`recordDelta` call) both rely entirely on the
+OS/Qt network stack to eventually decide a request has failed — confirmed via `grep` across all of
+`qml/`, zero `.timeout`/`ontimeout` matches anywhere. Under real dropped connectivity, this can hang
+for a long time rather than failing fast, with no way for any retry mechanism (Outbox's backoff,
+item 1's pending-mint queue, or anything else) to engage, since nothing has actually failed yet from
+the code's own perspective — it's just still waiting.
+
+One instance of this (the batch-id mint specifically) was fixed 2026-09-14, narrowly scoped to just
+that one call, using the exact pattern `AuthService._postJson()` already established elsewhere for
+this same problem (a 15s/20s safety-net `Timer` racing the real request). That fix does **not**
+generalize automatically — every *other* call in the app (product/order/staff/supplier mints, every
+plain Firestore read, every `Gateway`-routed durable write) has the identical exposure and would need
+either the same per-call treatment or a fix at the shared `_request()`/`_send()` level.
+
+Deliberately not done broadly this session — Taher's own call, given the size of the change (touches
+every network call the app makes) relative to what was actually reported (one specific hang). Needs
+scoping: probably a shared timeout wrapper at the `_request()`/`_send()` level rather than repeating
+the per-call pattern five more times, but that's a design decision for whoever picks this up, not
+assumed here.
 
 ---
 
@@ -121,6 +144,36 @@ closed, not just mergeable.
   gap as items 2 and 3's own mirror-model tests, flagged rather than treated as equivalent to real
   verification. New test plan: `docs/superpowers/test-plans/2026-09-14-batch-mint-retry-and-topup-
   safety-test-plan.md`.
+  **Follow-up, same day, after on-device re-test (Taher, N3 re-run on latest code): the fix above was
+  necessary but not sufficient.** Restocking with a brand-new supplier and dropping connectivity right
+  after submit still lost the batch — worse, the app hung (restock dialog never closed), over a
+  minute with the app left open and reopened, batch still never appeared in Firestore. Root cause:
+  **no XHR request anywhere in this codebase has a timeout** (confirmed by grep — zero
+  `.timeout`/`ontimeout` matches in all of `qml/`). `nextBatchId()`'s mint can hang indefinitely
+  rather than failing, which meant `addBatch()`'s failure branch (the retry queue above) never even
+  ran — nothing had failed yet from its own perspective. Separately, `restock()` nested
+  `StockBatchStore.addBatch()` *inside* `Gateway.recordDelta`'s callback, so a slow/hung stock delta
+  blocked the batch from being attempted at all, independent of the mint issue. This is a systemic,
+  app-wide gap — Gateway's own outbox-sending XHR (`Gateway.qml`'s `_send()`, a separate
+  implementation from `FirebaseService._request()`) has the identical gap — but Taher asked for the
+  broad fix to go to the roadmap for a future session (see the new item below) while the batch's own
+  reliability got fixed now: **`nextBatchId()`** now races the real mint against a 15s safety-net
+  `Timer`, mirroring the exact pattern `AuthService._postJson()` already established for this same
+  class of problem elsewhere ("20s timeout fallback so a hung request never leaves the UI silent") —
+  whichever settles first wins, the other is discarded, so a hung request now behaves exactly like a
+  fast one that failed. **`restock()`** now fires `StockBatchStore.addBatch()` immediately after
+  supplier resolution, in parallel with the stock delta rather than nested inside its callback — a
+  FIFO batch doesn't need the stock counter to have landed to be correct (it's the ledger's own ground
+  truth), so there was never a real dependency forcing the old ordering, just an incidental one.
+  `ActivityLog`/`TransactionStore` stay gated on delta confirmation, unchanged, per the original C4
+  design's own reasoning (they record something happened, so unlike a batch they legitimately
+  shouldn't fire for a write that might not have landed). Note: the restock *dialog* itself can still
+  take a while to close if the stock delta specifically is what's hung — that half of the symptom is
+  the broader timeout gap, deferred to the new item below, not silently reintroduced as an unstated
+  limitation. 4 new tests (`tst_PendingMintAndTopUpSafety.qml`, now 15 total) model the timeout-vs-mint
+  race directly: normal resolution, timeout-fires-first, and both orderings of "the other one resolves
+  late" to confirm no double-fire and no duplicate batch risk. Full suite: 363 passed, 29 failed, same
+  pre-existing cause, zero new regressions.
 
 - **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/
   `releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis` now covered in
