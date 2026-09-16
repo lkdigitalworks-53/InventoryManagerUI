@@ -167,3 +167,19 @@ both of Taher's reports:
 
 All 9 touched/new files brace-balanced. Docs (KNOWN-ISSUES.md, this checkpoint) were the
 missing piece -- writing those now, then committing and pushing everything together.
+
+## Also done (sixth pass, same session) — a real CI failure from the previous push, fixed
+
+The stock-restoration-visibility push (previous pass) already made it to the remote and CI ran
+-- QML Tests failed. `tst_OrderMetadataEditPreservesConsumption.qml` (and 3 other pre-existing
+test files) instantiate `DataModel { id: dm }` with no `dispatcher` set. QML's Connections
+defaults `target` to its parent when unset, so `dispatcher` there silently resolves to the
+DataModel instance itself -- which has no `stockRestorationSkipped` function -- and the bare
+`dispatcher.stockRestorationSkipped(...)` call threw. Real production code unaffected (Main.qml
+always wires a real Logic instance). Fixed with a `typeof` guard in both wrapper functions
+rather than touching any of the 4 unrelated test files. Regression test added reproducing the
+exact no-dispatcher setup. Also had to rebase again -- main moved 3 commits, real overlap in
+SKILLS.md (both branches independently used "Skill 60" for different content -- kept both,
+renumbered mine to Skill 65) and KNOWN-ISSUES.md (auto-merged clean). DataModel.qml overlap was
+in a different function (_tryCompleteOrder, unrelated). Verified: 65 total skills, no
+duplicates, no leftover conflict markers.

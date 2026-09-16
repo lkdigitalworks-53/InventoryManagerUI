@@ -379,3 +379,20 @@ which needed a different, tintable icon instead — see the `feature/product-ord
 work). Test: `tests/tst_ActivityLog_deleteEntries.qml` (4 cases) — `ActivityLog.record`'s local
 `entries` update is synchronous, only the Firestore push is fire-and-forget, so this one is
 cleanly and fully testable, unlike most of this session's Gateway-adjacent fixes.
+
+## Delete: pushing the stock-restoration-visibility fix broke a pre-existing, unrelated test on CI
+
+The `Logic.stockRestorationSkipped` fix (entry above) shipped a bare
+`dispatcher.stockRestorationSkipped(productId)` call inside `_restoreFifoSafe`/`_topUpOldestSafe`.
+Real CI run: `tst_OrderMetadataEditPreservesConsumption.qml` failed with `Property
+'stockRestorationSkipped' of object DataModel... is not a function`. That test (and 3 others —
+`tst_DataModel_discountEditTax.qml`, `tst_DataModel_completeOrderReentrancy.qml`,
+`tst_DataModel_adjustOrderSyncGuard.qml`) instantiate `DataModel { id: dm }` with no `dispatcher`
+set at all. QML's `Connections` defaults `target` to its parent when unset — so `dispatcher`
+there silently resolves to the `DataModel` instance itself, which has no such function. Real
+production code is unaffected; `Main.qml` always wires a real `Logic` instance as `dispatcher`.
+
+**Fixed**: guarded the call with `if (dispatcher && typeof dispatcher.stockRestorationSkipped ===
+"function")` in both wrappers, rather than touching any of the 4 unrelated pre-existing test
+files. New regression test added to `tests/tst_DataModel_restoreFifoSafeGuards.qml` reproducing
+the exact no-dispatcher setup.

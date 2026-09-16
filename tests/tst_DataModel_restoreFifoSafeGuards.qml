@@ -37,6 +37,17 @@ import "../qml/logic"
 // path is exactly the bug fix and returns synchronously, before touching
 // StockBatchStore at all -- cleanly testable.
 //
+// CORRECTED after a real CI failure (tst_OrderMetadataEditPreserves
+// Consumption.qml): that pre-existing test wires `DataModel { id: dm }`
+// with no `dispatcher` at all. QML's Connections defaults `target` to its
+// parent when unset, so `dispatcher` there silently resolves to the
+// DataModel instance itself -- which has no `stockRestorationSkipped`
+// function -- and the bare `dispatcher.stockRestorationSkipped(productId)`
+// call threw. Real production code is unaffected (dispatcher is always a
+// real Logic instance there); fixed with a `typeof` guard in DataModel.qml
+// rather than touching the other test file. test_..._does_not_throw_when_
+// dispatcher_lacks_the_signal below reproduces that exact setup.
+//
 // NOT RUN IN THIS SANDBOX -- same Felgo-free import tier as the other
 // DataModel/InventoryStore test files that already passed on real CI.
 TestCase {
@@ -111,5 +122,25 @@ TestCase {
         dm._restoreFifoSafe("B-1", "", 1)
         compare(StockBatchStore.batches.length, 0)
         compare(skippedSpy.count, 0, "an empty productId isn't a deleted product, nothing to notify about")
+    }
+
+    Component {
+        id: bareDataModelComponent
+        // Reproduces the exact setup that crashed on CI: no `dispatcher`
+        // set at all, matching tst_OrderMetadataEditPreservesConsumption.qml
+        // and 3 other pre-existing test files with the same pattern.
+        DataModel { }
+    }
+
+    function test_does_not_throw_when_dispatcher_lacks_the_signal() {
+        var bareDm = bareDataModelComponent.createObject(null)
+        verify(bareDm !== null)
+        StockBatchStore.batches = []
+
+        bareDm._restoreFifoSafe("B-GONE", "SKU-DELETED", 3)
+        bareDm._topUpOldestSafe("SKU-DELETED", 5)
+
+        compare(StockBatchStore.batches.length, 0)
+        bareDm.destroy()
     }
 }

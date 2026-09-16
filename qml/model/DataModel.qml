@@ -62,7 +62,17 @@ Item {
     function _restoreFifoSafe(batchId, productId, qty, callback) {
         if (productId && !InventoryStore.getById(productId)) {
             console.warn("[DataModel] skipping stock restoration for deleted product", productId)
-            dispatcher.stockRestorationSkipped(productId)
+            // Guarded rather than a bare dispatcher.stockRestorationSkipped(...):
+            // real Logic instances always have this signal, but a handful of
+            // pre-existing tests wire `DataModel { id: dm }` with no
+            // `dispatcher` at all -- QML's Connections defaults `target` to
+            // its parent when unset, so `dispatcher` silently resolves to
+            // the DataModel instance itself, which has no such function.
+            // Found via a real CI failure (tst_OrderMetadataEditPreserves
+            // Consumption.qml), not assumed.
+            if (dispatcher && typeof dispatcher.stockRestorationSkipped === "function") {
+                dispatcher.stockRestorationSkipped(productId)
+            }
             if (callback) callback()
             return
         }
@@ -72,7 +82,9 @@ Item {
     function _topUpOldestSafe(productId, deficit, callback) {
         if (productId && !InventoryStore.getById(productId)) {
             console.warn("[DataModel] skipping stock top-up for deleted product", productId)
-            dispatcher.stockRestorationSkipped(productId)
+            if (dispatcher && typeof dispatcher.stockRestorationSkipped === "function") {
+                dispatcher.stockRestorationSkipped(productId)
+            }
             if (callback) callback()
             return
         }
