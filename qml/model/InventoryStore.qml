@@ -1005,6 +1005,10 @@ QtObject {
         if (!found) return
 
         Gateway.recordMutation("inventory", productId, "delete", before, null)
+        ActivityLog.record("product_deleted",
+                           "Product deleted: " + before.name,
+                           (before.sku ? before.sku + " · " : "") + "stock " + (before.stock || 0),
+                           productId)
 
         // Cascade: remove every batch for this product too, not just the
         // ones with qtyRemaining > 0 -- an already-exhausted batch has no

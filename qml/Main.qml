@@ -225,6 +225,10 @@ App {
             Toast.show(qsTr("Order deleted"))
         }
 
+        function onStockRestorationSkipped(productId) {
+            Toast.show(qsTr("Stock wasn't restored — a product on this order was deleted and no longer exists"))
+        }
+
         function onSignInWithEmail(email, password) {
             AuthService.signInWithEmail(email, password)
         }

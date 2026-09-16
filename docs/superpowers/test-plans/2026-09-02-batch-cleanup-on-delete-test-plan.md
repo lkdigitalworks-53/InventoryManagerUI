@@ -96,3 +96,20 @@ wrappers checking product existence first; test: `tests/tst_DataModel_restoreFif
 Also fixed the same review pass: `permissionErrorDlg`, a raw unstyled `QQC.Dialog`, replaced with
 `actionBlockedDlg` (the existing themed `AlertDialog` component, same one `stockErrorDlg` already
 used) — no functional test surface, on-device visual check only.
+
+## 6. Second follow-up, on-device review confirmed Skill 60's fix and raised two more
+
+1. **Silent stock-restoration skip made visible.** Reopening/reversing an order that references a
+   deleted product now shows a Toast ("Stock wasn't restored — a product on this order was
+   deleted and no longer exists") instead of only a `console.warn`. Test:
+   `tests/tst_DataModel_restoreFifoSafeGuards.qml`, 2 new cases verifying
+   `Logic.stockRestorationSkipped` fires with the right productId via `SignalSpy`.
+2. **Activity feed now shows deletes.** `product_deleted`/`order_deleted`/`staff_deleted` all log
+   through `ActivityLog.record(...)`, same as every other mutation, with matching icon/gradient
+   entries in `ActivityPage.qml`. Test: `tests/tst_ActivityLog_deleteEntries.qml` (4 cases) — this
+   one is fully, cleanly testable (no async network dependency for the assertion), unlike most
+   Gateway-adjacent fixes this session.
+
+On-device: H4 — reopen a completed order whose product has been deleted, confirm the Toast
+appears and the order's own status change still completes. H5 — delete a product/order/staff
+member, check the Activity feed shows the corresponding entry with the right icon and title.

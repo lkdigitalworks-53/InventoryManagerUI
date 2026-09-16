@@ -340,3 +340,42 @@ round-trip to fire the success callback, same untestable-without-mock-HTTP terri
 other Gateway-adjacent path this session. Verified by exact code trace instead; on-device
 re-test of the original repro is the real confirmation, recommended before considering this
 closed.
+
+## Delete: reversal/reopen silently skipping stock restoration needed to be visible, not just safe
+
+Follow-up report, on-device (2026-09-15): the Skill 60 fix (batch actually gets deleted now) was
+confirmed working. But testing the *other* direction — reopening a completed order back to
+pending, or reducing its quantities, when the product it referenced has since been deleted —
+looked wrong: "it just vanishes... there's no product or batch to handle the return or revert of
+status." That's `_restoreFifoSafe`/`_topUpOldestSafe` (see the entry above) doing exactly what
+they were built to do — correctly refusing to resurrect a phantom batch — but doing it with only
+a `console.warn`, invisible to whoever's actually processing the reversal. The order's own
+status/quantity change still completes; the stock side of it silently becomes a no-op with no
+indication why.
+
+**Fixed**: both wrappers now also emit a new `Logic.stockRestorationSkipped(productId)` signal
+(via `dispatcher.stockRestorationSkipped(...)`, the correct property post-Skill-58), which
+`Main.qml` turns into a Toast — "Stock wasn't restored — a product on this order was deleted and
+no longer exists." The reversal/reopen still completes either way (blocking it was already
+considered and rejected, see the entry further above); this only makes the consequence visible
+instead of silent. Test: `tests/tst_DataModel_restoreFifoSafeGuards.qml`, extended with 2 cases
+verifying the signal fires with the right productId, using `SignalSpy` on the real `Logic`
+signal — not a repeat of the `Gateway.recordMutation` monkey-patch mistake from earlier.
+
+## Delete: the Activity feed never showed a delete happening at all
+
+Reported same review pass: `product_added`/`product_updated`/`product_restocked`/`staff_added`/
+`staff_updated` all call `ActivityLog.record(...)`; none of the three delete functions
+(`InventoryStore.deleteProduct`, `OrdersStore.deleteOrder`, `StaffStore.deleteStaff`) ever did.
+Deleting something left zero trace in the one place this app already shows a history of what
+happened.
+
+**Fixed**: added the same `ActivityLog.record(...)` call already used by every other mutation in
+each of those three functions (`"product_deleted"`, `"order_deleted"`, `"staff_deleted"`), plus
+matching icon/gradient entries in `ActivityPage.qml` for the three new kinds — reusing the
+`"delete"` icon name, which already existed in `Constants.colorIconSet` for exactly this kind of
+history-feed entry (the same lookup this session avoided for the row-level delete *buttons*,
+which needed a different, tintable icon instead — see the `feature/product-order-delete-ui`
+work). Test: `tests/tst_ActivityLog_deleteEntries.qml` (4 cases) — `ActivityLog.record`'s local
+`entries` update is synchronous, only the Firestore push is fire-and-forget, so this one is
+cleanly and fully testable, unlike most of this session's Gateway-adjacent fixes.

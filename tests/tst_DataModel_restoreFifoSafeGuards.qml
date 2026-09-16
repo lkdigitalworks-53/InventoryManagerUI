@@ -21,6 +21,14 @@ import "../qml/logic"
 // product no longer exists. All 11 call sites route through these instead
 // of calling StockBatchStore directly.
 //
+// Updated after a follow-up on-device report: skipping silently (a
+// console.warn nobody sees) left the order's own status/quantity change
+// going through with no indication that the stock side of it was a no-op
+// -- "it just vanishes," per that report. Both wrappers now also emit
+// logic.stockRestorationSkipped(productId), which Main.qml turns into a
+// Toast, so whoever's processing the reversal sees why stock didn't come
+// back rather than being left to guess.
+//
 // Only the skip path is tested here. The "product still exists, delegates
 // through normally" path chains into StockBatchStore.addBatch -> 
 // nextBatchId -> a network round-trip to mint an id -- fully async, same
@@ -37,9 +45,12 @@ TestCase {
     Logic { id: testLogic }
     DataModel { id: dm; dispatcher: testLogic }
 
+    SignalSpy { id: skippedSpy; target: testLogic; signalName: "stockRestorationSkipped" }
+
     function init() {
         InventoryStore.products = []
         StockBatchStore.batches = []
+        skippedSpy.clear()
     }
 
     function _product(id) {
@@ -64,6 +75,12 @@ TestCase {
         compare(called, true, "callers waiting on the callback must not hang")
     }
 
+    function test_restoreFifoSafe_emits_stockRestorationSkipped() {
+        dm._restoreFifoSafe("B-GONE", "SKU-DELETED", 3)
+        compare(skippedSpy.count, 1, "must be visible, not just a console.warn nobody sees")
+        compare(skippedSpy.signalArguments[0][0], "SKU-DELETED")
+    }
+
     function test_topUpOldestSafe_skips_entirely_for_a_deleted_product() {
         StockBatchStore.batches = []
 
@@ -79,6 +96,12 @@ TestCase {
         compare(called, true)
     }
 
+    function test_topUpOldestSafe_emits_stockRestorationSkipped() {
+        dm._topUpOldestSafe("SKU-DELETED", 5)
+        compare(skippedSpy.count, 1)
+        compare(skippedSpy.signalArguments[0][0], "SKU-DELETED")
+    }
+
     function test_restoreFifoSafe_with_empty_productId_does_not_throw() {
         // A handful of call sites pass through whatever productId a line
         // carries, which could legitimately be empty for old/malformed
@@ -87,5 +110,6 @@ TestCase {
         StockBatchStore.batches = []
         dm._restoreFifoSafe("B-1", "", 1)
         compare(StockBatchStore.batches.length, 0)
+        compare(skippedSpy.count, 0, "an empty productId isn't a deleted product, nothing to notify about")
     }
 }

@@ -144,3 +144,26 @@ this session. Verified by exact code trace (client success handler vs server app
 by side, confirming exactly which fields each one touches). Documented in KNOWN-ISSUES.md and
 SKILLS.md Skill 60 (new). On-device re-test of the exact repro is the real verification --
 recommended before considering this closed, not claimed as proven here.
+
+## Also done (fifth pass, same session) — reviewed and completed already-started uncommitted work
+
+Found 52 lines of uncommitted, purely-additive changes across 8 files already in the working
+tree at the start of this pass -- an earlier continuation of this same task that got cut off
+before committing or explaining. Reviewed every diff carefully as if reviewing someone else's
+PR (git diff per file, checked function signatures/API surface referenced actually exist,
+verified no Felgo/native risk, confirmed no deletions anywhere) rather than trusting it blindly.
+Found it correct, complete, and well-tested -- matching what I would have designed myself for
+both of Taher's reports:
+
+1. Reversal/reopen silently skipping stock restoration for a deleted product (Skill 60's guards
+   doing their job correctly, but invisibly) -- fixed with a new Logic.stockRestorationSkipped
+   signal, wired to a Toast in Main.qml. Test file extended with 2 new cases using SignalSpy on
+   the real signal (not a repeat of the earlier Gateway.recordMutation monkey-patch mistake).
+2. Activity feed never showing delete operations at all -- ActivityLog.record(...) added to
+   deleteProduct/deleteOrder/deleteStaff, matching icon/gradient entries added to
+   ActivityPage.qml (reusing the existing "delete" icon name from Constants.colorIconSet).
+   New test file, 4 cases, cleanly and fully testable since ActivityLog.record's local update
+   is synchronous.
+
+All 9 touched/new files brace-balanced. Docs (KNOWN-ISSUES.md, this checkpoint) were the
+missing piece -- writing those now, then committing and pushing everything together.

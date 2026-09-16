@@ -793,6 +793,10 @@ QtObject {
         if (!found) return
 
         Gateway.recordMutation("order", orderId, "delete", before, null)
+        ActivityLog.record("order_deleted",
+                           "Order deleted: " + (before.customer || orderId),
+                           formatCurrency(before.total || 0) + (before.status ? " · " + before.status : ""),
+                           orderId)
     }
 
     function totalRevenue() {

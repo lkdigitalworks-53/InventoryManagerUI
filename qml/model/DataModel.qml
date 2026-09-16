@@ -62,6 +62,7 @@ Item {
     function _restoreFifoSafe(batchId, productId, qty, callback) {
         if (productId && !InventoryStore.getById(productId)) {
             console.warn("[DataModel] skipping stock restoration for deleted product", productId)
+            dispatcher.stockRestorationSkipped(productId)
             if (callback) callback()
             return
         }
@@ -71,6 +72,7 @@ Item {
     function _topUpOldestSafe(productId, deficit, callback) {
         if (productId && !InventoryStore.getById(productId)) {
             console.warn("[DataModel] skipping stock top-up for deleted product", productId)
+            dispatcher.stockRestorationSkipped(productId)
             if (callback) callback()
             return
         }
