@@ -2880,13 +2880,12 @@ whether the code path was reachable at all.
 
 ## Skill 60: Finding every instance of a bug pattern — a checklist beats re-deriving the trace from scratch each time
 
-**Context, 2026-09-15**: after fixing the order-completion double-submit bug (see the sibling
-session's Skill 60/61/62 on `fix/2026-09-14-order-completion-double-submit` — numbering will
-collide on merge, renumber per this file's own append-only convention), Taher asked for a
-full-codebase sweep for the same *pattern*, not just the one instance. Found two more Critical
-instances (`ConfirmReturnSheet`/`_tryAdjustOrder` for exchanges, `NewOrderDialog` for duplicate
-order creation) and one Medium (`InviteMemberDialog`) — full detail in the new
-`docs/superpowers/ASYNC-REENTRANCY-BUGS.md`.
+**Context, 2026-09-15**: after fixing the order-completion double-submit bug (see this file's Skill
+61/62/63, from the branch this one was rebased onto — numbering renumbered on merge per this file's
+own append-only convention), Taher asked for a full-codebase sweep for the same *pattern*, not just
+the one instance. Found two more Critical instances (`ConfirmReturnSheet`/`_tryAdjustOrder` for
+exchanges, `NewOrderDialog` for duplicate order creation) and one Medium (`InviteMemberDialog`) —
+full detail in the new `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`.
 
 **The reusable method, distilled into a 4-question checklist** (see that file's own "How to tell if
 a given action is actually at risk" section for the full version):
@@ -2920,3 +2919,212 @@ systematically (grep first, trace only the candidates that survive the grep), ra
 (a) declaring the one fix done and moving on, or (b) re-deriving the full architectural trace from
 scratch for each file by reading it top to bottom. The checklist itself is the reusable artifact —
 put it in the tracking doc, not just in this session's head.
+
+## Skill 61: A local-cache status check can't guard against re-entrancy — the field it reads only updates at the END of the async chain it's supposed to be guarding
+
+**Bug, reported by Taher 2026-09-14 via `/superpowers:systematic-debugging`**: approve a pending
+order, then press Approve again before the first completion's write actually resolves (no busy
+indicator existed to say one was in flight) — stock got deducted twice and the sale recorded
+twice. Order cart still showed the correct 1 item (the order's own product-line quantity is never
+itself duplicated), but Transaction History, Product History, and Sales Analysis all doubled.
+
+**Root cause, traced statically (no Qt toolchain in this sandbox — see Skill 54/this file's
+standing rule about relying on CI)**: `DataModel._tryCompleteOrder`'s only "already completing"
+guard was `if (o.status === "completed") return`, reading `OrdersStore.getById(orderId)` — the
+LOCAL cache. That field only flips to `"completed"` at the very end of the function (inside
+`_afterAllDeltas`, after every line's FIFO consumption + `InventoryStore.deductStock` has actually
+resolved). A second call for the same order arriving before the first one finishes sees the exact
+same stale `"pending"` status, sails straight past the guard, and re-runs the entire stock
+deduction + `SalesStore.recordSale` + `TransactionStore.recordSaleFromOrder` from scratch.
+`SalesStore`'s own dashboard KPI is self-correcting (it recomputes from `OrdersStore` on demand
+rather than accumulating — see its header comment, itself a fix for a near-identical prior bug
+where a summary "was never decremented" on re-completion), so it didn't show the doubling; the
+DISCRETE ledger writes (`TransactionStore.entries`) and stock deltas did, which is exactly what
+Transaction History / Product History / Sales Analysis read from.
+
+**The lock didn't save this, and can't be relied on to**: `LockManager`'s server-side
+`acquireLock` (`functions/lib/lockLogic.js`) grants automatically when `current.holderUid ===
+params.actorUid` ("sameHolder") — required so a renewal heartbeat can re-acquire its own lock, but
+it means the SAME logged-in user re-entering while their own previous request is still in flight
+sails through too. `OrdersPage._approveAllPending()` wraps each completion in a real
+`LockManager.acquire`/`release` pair and still isn't protected against a same-user double-click for
+this reason. Pessimistic locking (this codebase's existing mechanism) answers "is someone ELSE
+using this," not "am I already in the middle of this myself" — those are different questions and
+need different guards.
+
+**Fix — two layers, one root cause ("no in-flight tracking for order completion, at any layer")**:
+1. `DataModel.qml` gained `_completingOrderIds`, an explicit orderId → true in-flight set, set
+   synchronously at `_tryCompleteOrder`'s entry (before any async call) and cleared on every one of
+   its exit paths (stock-validation failure, delta failure, success). Independent of
+   `OrdersStore`'s own stale status field, and independent of who's calling — it protects
+   `OrderDetailDialog`'s save, `OrdersPage._approveAllPending`'s bulk loop, and `onAddOrder`'s
+   auto-approve branch alike, for free.
+2. `OrderDetailDialog.qml` — the dialog used to fire `logic.updateOrder` (a fire-and-forget signal)
+   and call `dlg.close()` on the very next line, with zero connection to whether the underlying
+   write had even started resolving. `BottomSheet.qml` already has a complete `busy`/`busyMessage`
+   mechanism (disables the primary button, blocks tap-outside/Cancel/X) used correctly by
+   `RestockDialog`/`AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` — this dialog was the
+   one holdout that never wired it up. Now sets `busy = true` before firing the update and waits
+   for `logic.orderUpdated`/`logic.orderCompletionFailed` (scoped to the order this dialog issued
+   the save for, since both are on the shared `logic` dispatcher and fire for unrelated orders too)
+   before clearing `busy` and closing/showing the error. Notably, `_tryCompleteOrder`'s own header
+   comment already said this exact design ("round 4," made genuinely async specifically so a
+   caller could show a real busy indicator) was the "ORIGINAL ask" behind making the function async
+   at all — the infrastructure was built for this and simply never got wired up on this one caller.
+
+**Test-writing note**: every store call in this test suite resolves its callback SYNCHRONOUSLY (no
+real network latency in the harness — see `tst_DataModel_adjustOrderSyncGuard.qml`'s header), which
+means a second `_tryCompleteOrder` call issued *after* the first one returns can never actually
+race it in a test. The only way to get a genuinely "still in flight" first call is to have the
+SECOND call originate from INSIDE the first call's own still-executing callback chain — both new
+tests in `tst_DataModel_completeOrderReentrancy.qml` temporarily stub
+`StockBatchStore.consumeFifo` to fire the reentrant call from partway through the first call's FIFO
+step, which is the direct in-process analogue of "second click arrives before the first click's
+write resolves." Restored via a `TestCase`-declared property, not an expando property tacked onto
+the (shared, pragma Singleton) store itself — no other test in this suite does the latter, and it's
+not guaranteed storage.
+
+**Still open, not fixed this pass (flagged to Taher, not bundled in)**: `OrdersPage.qml`'s
+"Approve all pending" banner button has no busy/disabled state of its own either — a double-click
+there is now safe from a DATA-correctness standpoint (Skill 61's `_completingOrderIds` guard
+covers it), but still gives no visual feedback while it's working, same underlying UX gap as this
+bug's report asked about for the single-order path. Left as a follow-up rather than pulled into
+this fix — it's a different file, different UI surface, and the correctness issue (the actual
+reported bug) doesn't depend on it.
+
+## Skill 62: A QML `function` declaration is a compiled, read-only member — it can't be monkey-patched from a test the way a plain JS object's method can
+
+**Found via real CI, same session as Skill 61** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
+first version): to simulate a second `_tryCompleteOrder` call arriving while the first is still
+mid-flight, in a test harness where every store call resolves its callback SYNCHRONOUSLY (no real
+network latency — see `tst_DataModel_adjustOrderSyncGuard.qml`'s header), the only apparent way to
+get a genuinely "still in flight" first call is to have a stubbed dependency fire the second call
+from partway through the first call's own execution. Reached for the obvious JS technique:
+`StockBatchStore.consumeFifo = function(...) { ...fire reentrant call...; real.call(...) }`.
+
+**This throws at runtime: `Cannot assign to read-only property "consumeFifo"`.** A `function
+name(...) { }` declared at the top level of a QML `Item`/singleton is compiled into that type's
+meta-object as an invokable method — a fundamentally different thing from a `property var name:
+function(...) {}`, which WOULD be a mutable property holding a function value. Only the latter can
+be reassigned from outside; every store in this codebase (`StockBatchStore`, `InventoryStore`,
+`OrdersStore`, etc.) declares its methods the first way, so **none of them can be stubbed by
+reassignment from a test**, however natural that pattern feels coming from plain JS/Node testing
+(where this project's `functions/` suite uses exactly this kind of stubbing freely, via dependency
+injection into plain modules — see `functions/lib/*.js`'s constructor-injected dependencies).
+
+**Fix — test the guard directly instead of orchestrating a race the harness can't produce**: rather
+than trying to make two REAL calls genuinely overlap, seed the guard's own internal state
+(`dm._completingOrderIds = { orderId: true }`) to the exact condition a racing first call would
+have left behind, then call `_tryCompleteOrder` once and assert it's rejected with no side effects.
+This is the same style `tst_DataModel_adjustOrderSyncGuard.qml` already uses for its own guard
+(`TransactionStore.hasMore = true`, set directly rather than orchestrating a real in-progress
+paginated fetch) — recognized only after CI forced a rewrite, not applied by default the first
+time. Also caught by the same failure: `dm._completingOrderIds` was never reset in `init()` — since
+`DataModel { id: dm }` is instantiated ONCE for the whole `TestCase`, not per test function, any
+property that isn't explicitly reset in `init()` leaks its value across every test in the file. A
+"control" test with no stubbing at all (`test_still_short_circuits_sequential_non_overlapping_completions`)
+failed for exactly this reason — a stale `true` left by an earlier (differently-failing) test in
+the same run.
+
+**General lesson for writing any future QML test that wants to intercept a dependency**: check
+whether the thing you want to stub is a `property var` (stubbable) or a `function` declaration
+(not stubbable by reassignment) before designing the test around interception at all. If it's the
+latter and no test seam already exists, either (a) test the guard/state directly rather than
+re-creating the exact call sequence that would produce it, matching the convention above, or (b)
+flag to Taher that a dependency-injection seam may be worth adding to the production code
+specifically for testability — do not silently work around it with something that only happens to
+compile.
+
+## Skill 63: `DataModel._tryCompleteOrder`'s happy path can't resolve synchronously in plain `qmltestrunner` — its callback is wired straight to a real Gateway/XHR round trip, unlike the callback-less local-apply helpers `_tryAdjustOrder` uses
+
+**Found via real CI, same session as Skill 61/62** (`tests/tst_DataModel_completeOrderReentrancy.qml`,
+second version): after fixing the read-only-property mistake (Skill 62), one test still failed —
+`compare(first, true, ...)` on the most "ordinary" case in the file, a single unraced
+`_tryCompleteOrder` call with no stubbing involved at all. Every other `DataModel` test in this
+suite (`tst_DataModel_adjustOrderSyncGuard.qml` etc.) checks its result synchronously right after
+the call and that works — so the natural assumption, uncorrected, was that this one would too.
+
+**It doesn't, and can't in this harness.** Traced `InventoryStore.deductStock` (`qml/model/
+InventoryStore.qml`): its callback parameter is invoked directly inside `Gateway.recordDelta`'s own
+callback — `Gateway.recordDelta("inventory", productId, {stock: -qty}, floors, clamps, function(result)
+{ ...; if (callback) callback(result) })`. `Gateway.recordDelta` (`qml/model/Gateway.qml`) enqueues
+onto `OutboxStore` and calls `drainNow()` → `_sendDelta(item)`, which opens a real
+`XMLHttpRequest` to the Cloud Function endpoint; the registered callback only fires from inside
+`xhr.onreadystatechange` once `_classifyDeltaResponse` sees an actual, well-formed response body
+(`_classifyDeltaResponse`'s `isRealResponse` check) — genuinely async, no synchronous shortcut. With
+`AuthStore.idToken` empty (this suite's "offline" convention, used everywhere including the sibling
+file), `_sendDelta` returns immediately at its very first line (`if (!AuthStore.idToken ...)
+{ OutboxStore.clearInFlight(item); return }`) — **without ever invoking the callback at all**, not
+even with a failure result. So in a harness with no live Firebase emulator, `deductStock`'s callback
+simply never fires, and neither does anything downstream of it in `_tryCompleteOrder`.
+
+**Why `_tryAdjustOrder`'s sibling tests don't hit this**: returns/adjustments use
+`StockBatchStore.restoreFifo` / `InventoryStore.creditStockNoBatch` — both take NO callback
+parameter at all (fire-and-forget local applies; see `creditStockNoBatch`'s signature and comment:
+"Atomic server-side delta... instead of a whole-record CAS mutation"). `_tryAdjustOrder`'s own
+success determination never waits on a Gateway round trip, so it resolves synchronously regardless
+of `AuthStore.idToken`. `_tryCompleteOrder` is architecturally different on purpose — see Skill 61's
+note that making it genuinely async (waiting on the real deduction) was the whole point of a prior
+design round, specifically so a caller could show a real busy indicator. That same property that
+makes the UI fix meaningful also makes its happy path untestable without a live backend.
+
+**Fix — stop trying to reach the happy path, and use the "never resolves here" property directly**:
+a call to `_tryCompleteOrder` in this harness sets `_completingOrderIds[orderId] = true` at entry
+and then genuinely never reaches ANY of its own cleanup points (no live server to respond) — which
+is, usefully, an exact stand-in for "still resolving," the real condition the reported bug's second
+click walked into. Two REAL, sequential `_tryCompleteOrder` calls for the same order — no
+monkey-patching, no manual state seeding — reproduce the guard's rejection behavior directly. The
+already-completed short-circuit is tested by seeding `OrdersStore.orders` with `status: "completed"`
+directly (a pure, synchronous, local read — no Gateway involved), matching
+`tst_DataModel_adjustOrderSyncGuard.qml`'s own convention of seeding a guard's precondition rather
+than orchestrating history to produce it. The stock-validation-failure path is also purely local/
+synchronous (a plain `InventoryStore.getById(...).stock` comparison, no XHR) and is the one branch
+in this file that gives genuine, CI-verified proof the guard-cleanup code executes at all — the
+Gateway-dependent success-path cleanup is documented as tested by code review only, not by a
+runtime assertion, with the true happy path deferred to E2E/on-device (same tier as
+`OrderDetailDialog`'s own busy-state UI — see Skill 61 — which needs Felgo/a real device for the
+same underlying reason: this is real backend-dependent behavior, not something `qmltestrunner
+-platform offscreen` alone can exercise).
+
+**General lesson**: before assuming a `DataModel` orchestration function's result is available
+synchronously in a test (the default assumption in this suite, and usually correct), check whether
+every one of its async legs goes through a callback-TAKING Gateway/Store call (`deductStock`,
+`recordDelta`/`recordMutation` directly) or a callback-LESS local-apply helper
+(`creditStockNoBatch`, `restoreFifo`). Only the latter resolves synchronously with `AuthStore.idToken`
+empty in this harness; the former requires either a live emulator (E2E tier) or testing the
+in-flight/rejected state directly rather than the eventual success state.
+
+## Skill 64: `git checkout --ours`/`--theirs` mean the OPPOSITE of what they mean in a merge, during a `git rebase`
+
+**Found while rebasing `fix/2026-09-14-order-completion-double-submit` onto `main` after PR #71
+merged, 2026-09-15**: this repo's established rule is "`CHECKPOINT.md` conflict resolution rule:
+keep the branch version automatically." In a normal `git merge`, `--ours` is the branch you're
+currently on (here, the feature branch) and `--theirs` is the branch being merged in — so `--ours`
+would correctly mean "keep the branch version." **During `git rebase`, this is reversed**: at each
+replayed commit, `HEAD` is the commit being built on top of the new base, so `--ours` means "the
+new base" (`main`, in this case) and `--theirs` means "the commit from the branch being replayed" —
+the exact opposite of the merge convention, despite using identical flag names.
+
+Ran `git checkout --ours CHECKPOINT.md` twice during this rebase (once per conflicting commit),
+intending to keep the branch's own checkpoint content per the established rule — both times it
+silently kept `main`'s content instead (the *other* session's checkpoint, for an unrelated audit
+PR). The mistake wasn't caught by the rebase itself (no error, no warning — it's a fully valid,
+silent resolution) — only by checking the actual restored file's content immediately after
+(`head -3 CHECKPOINT.md` showed the wrong title) rather than trusting that the flag name matched
+its merge-time meaning.
+
+**Fix applied**: recovered the correct branch content via `git show <pre-rebase-branch-tip-sha>:
+<path>` (the original branch tip is still reachable from its own ref/reflog, or from `origin` if
+not yet force-pushed over) and manually restored it as a working-tree fixup, then amended it into
+the rebase's own tip commit rather than adding a separate "oops" commit — keeps the log clean, and
+is the same "squash rebase-induced duplicate commits" preference this file already states.
+
+**General lesson — verify the mechanically "obvious" resolution, don't just trust it**: `--ours`/
+`--theirs` are genuinely one of the most commonly misremembered pieces of git semantics precisely
+*because* they invert between merge and rebase with zero syntax difference to signal it. Any
+conflict-resolution rule written in terms of "ours"/"theirs" (as opposed to "keep branch version" /
+"keep main's version" stated plainly) needs to be re-derived for whichever operation is actually in
+progress, not pattern-matched from habit. After ANY automated or flag-based conflict resolution —
+not just this one — check the actual resulting file content against what you expected before
+moving on, the same way CI results get checked via the API rather than assumed from "it should have
+worked."

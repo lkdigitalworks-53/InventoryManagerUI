@@ -4,7 +4,7 @@ Severity-ranked tracker for one specific bug *pattern*, kept separate from
 `docs/superpowers/KNOWN-ISSUES.md` (that file is a flat, chronological log of assorted deferred
 issues with no severity structure; this one is scoped to a single, well-defined defect class and
 ranks every instance found so far by real-world impact). Started 2026-09-15 after fixing the
-order-completion double-submit bug (PR #70, SKILLS Skill 60) and sweeping the rest of the app for
+order-completion double-submit bug (PR #70, SKILLS Skill 61) and sweeping the rest of the app for
 the same shape of defect. Update this file (don't replace it) whenever a new instance is found or
 an existing one is fixed — move fixed items to the bottom under "Fixed" rather than deleting them,
 so the pattern's history stays visible. `KNOWN-ISSUES.md` gets a one-line pointer here rather than
@@ -20,7 +20,7 @@ nothing) before the first attempt's real network round trip resolves, the orches
 second time against the same stale local state the first call started with, producing duplicate
 writes: duplicate stock deductions, duplicate ledger entries, or duplicate records outright. See
 `AGENTS.md`'s Data Model & Orchestration Agent and Pages & Dialogs Agent sections for the standing
-convention this pattern violates, and SKILLS Skill 60 for the original, fully-traced instance.
+convention this pattern violates, and SKILLS Skill 61 for the original, fully-traced instance.
 
 **How to tell if a given action is actually at risk** (the checklist used for this sweep):
 1. Does the action's `DataModel` handler call a **callback-taking** Store/Gateway function
@@ -67,7 +67,7 @@ signal) → `DataModel.onAdjustOrder` → `DataModel._tryAdjustOrder`.
   `_tryAdjustOrder` calls `InventoryStore.deductStock(dCaptured.productId, dCaptured.addedQty,
   function(result) {...})` (`DataModel.qml` ~line 1053) — the exact same callback-taking function
   at the center of the original bug, wired to a real `Gateway.recordDelta` → `XMLHttpRequest` round
-  trip (see SKILLS Skill 62). Pure returns (only `returnedQty`, no additions) go through the
+  trip (see SKILLS Skill 63). Pure returns (only `returnedQty`, no additions) go through the
   callback-less `restoreFifo`/`creditStockNoBatch` path and are not exposed to the *async* race the
   same way, but still have no guard against a same-tick double-invocation if `_tryAdjustOrder`
   itself is ever called twice in immediate succession.
@@ -177,7 +177,7 @@ checking `functions/` before assuming this is UX-only.
 
 ### L-1: `OrdersPage._approveAllPending()` bulk-approve banner has no busy/disabled state
 
-Already flagged in PR #70 (SKILLS Skill 60's "still open" note) — cross-referenced here so this
+Already flagged in PR #70 (SKILLS Skill 61's "still open" note) — cross-referenced here so this
 file is the single place to look. **Data-safe**: it calls the same `_tryCompleteOrder` engine PR #70
 added the `_completingOrderIds` guard to, so a double-click there is now rejected at the
 `DataModel` layer with no duplicate writes. What's still missing is purely cosmetic: the banner's
@@ -243,5 +243,5 @@ The original instance. `_tryCompleteOrder`'s only "already completing" guard rea
 field that only updated at the end of the same async chain it was meant to guard; `OrderDetailDialog`
 fired its update signal and closed immediately with no busy indicator. Fixed with an entity-scoped
 `_completingOrderIds` in-flight set (DataModel layer) plus wiring the dialog up to `BottomSheet`'s
-existing `busy`/`busyMessage` mechanism. Full writeup: SKILLS Skill 60 (root cause), 61–62 (test
+existing `busy`/`busyMessage` mechanism. Full writeup: SKILLS Skill 61 (root cause), 62–63 (test
 file corrections). Branch: `fix/2026-09-14-order-completion-double-submit`, PR #70.

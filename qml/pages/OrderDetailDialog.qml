@@ -207,6 +207,12 @@ BottomSheet {
 
     function openFor(id) {
         orderId = id
+        // Defensive reset, mirroring _lockState's own reset below — busy
+        // should already be false here (the sheet can't close while busy,
+        // so re-opening mid-save shouldn't be reachable), but a stuck
+        // `true` would silently disable Save for whatever order opens next.
+        busy = false
+        _pendingSaveOrderId = ""
 
         var allOrders = OrdersStore.orders
         var o = null
@@ -348,7 +354,32 @@ BottomSheet {
 
     onPrimaryClicked: _save()
 
+    // Which orderId the in-flight save below is for — read by the
+    // Connections block further down to tell a genuine completion ack
+    // for THIS save apart from logic.orderUpdated/orderCompletionFailed
+    // firing for some unrelated order elsewhere in the app (both signals
+    // are on the shared `logic` dispatcher, not scoped to this dialog).
+    property string _pendingSaveOrderId: ""
+
     function _save() {
+        // Bug found 2026-09-14: this dialog used to fire logic.updateOrder
+        // (a fire-and-forget signal) and close immediately, with no
+        // indication that completing an order is a genuinely slow,
+        // multi-step write (stock validation, FIFO deduction, sale
+        // recording — see DataModel._tryCompleteOrder). Nothing stopped
+        // the same user from reopening the order and hitting Save again
+        // before the first save had actually finished, which re-ran the
+        // whole completion a second time — see DataModel._completingOrderIds
+        // for the full writeup and why the lock alone doesn't catch this.
+        // `busy` (BottomSheet.qml) is the fix already used by
+        // RestockDialog/AddProductDialog/AddStaffDialog/ImportPreviewDialog
+        // for exactly this: it disables the primary button and blocks
+        // tap-outside/Cancel/X, so a second click physically can't fire
+        // while a save is in flight. This `if (busy) return` is
+        // defense-in-depth to match those dialogs' own idiom — it should
+        // be unreachable in practice since the button it would guard is
+        // itself disabled while busy.
+        if (busy) return
         if (_lockState !== "granted") {
             if (_lockState === "denied") {
                 stockErrorLabel.text = _lockHolder && _lockHolder.name
@@ -454,6 +485,13 @@ BottomSheet {
         var staffId = staffCombo.currentIndex > 0
                 ? dlg._staffIds[staffCombo.currentIndex]
                 : ""
+        var willComplete = _orderStatus !== "completed" &&
+                (statuses[Math.max(0, statusCombo.currentIndex)] || "pending") === "completed"
+        busy = true
+        busyMessage = willComplete
+                ? qsTr("Completing order — this can take a few seconds")
+                : qsTr("Saving changes")
+        _pendingSaveOrderId = dlg.orderId
         logic.updateOrder(dlg.orderId, {
                               customer: customerField.text,
                               email: emailField.text,
@@ -474,8 +512,30 @@ BottomSheet {
                               orderChannel: channel,
                               staffId: staffId
                           })
-        dlg.orderUpdated(dlg.orderId)
-        dlg.close()
+        // dlg.orderUpdated + dlg.close() now happen in the Connections
+        // block below, once logic actually confirms this specific save —
+        // not here, synchronously, before the real write has even started.
+    }
+
+    // Scoped to _pendingSaveOrderId so this only reacts to the save THIS
+    // dialog instance just issued — logic is a shared dispatcher and both
+    // signals fire for order updates from anywhere in the app (bulk
+    // approve, imports, etc).
+    Connections {
+        target: logic
+        function onOrderUpdated(orderId) {
+            if (!dlg.busy || orderId !== dlg._pendingSaveOrderId) return
+            dlg.busy = false
+            dlg._pendingSaveOrderId = ""
+            dlg.orderUpdated(orderId)
+            dlg.close()
+        }
+        function onOrderCompletionFailed(orderId, errorMessage) {
+            if (!dlg.busy || orderId !== dlg._pendingSaveOrderId) return
+            dlg.busy = false
+            dlg._pendingSaveOrderId = ""
+            stockErrorLabel.text = errorMessage || qsTr("Could not complete order — try again")
+        }
     }
 
     ColumnLayout {
