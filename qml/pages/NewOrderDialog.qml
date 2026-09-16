@@ -18,6 +18,17 @@ BottomSheet {
     signal orderCreated(var order)
     signal manageChannelsRequested()
 
+    // In-flight guard — see ASYNC-REENTRANCY-BUGS.md C-2. `orderCreated` is a
+    // fire-and-forget signal into Main.qml -> logic.addOrder -> DataModel's
+    // OrdersStore.nextOrderId mint (a real, server-coordinated network round
+    // trip). Without this, a double-tap on "Place order" mints two separate
+    // orders — and if autoApproveEnabled is on, double-deducts stock via
+    // _tryCompleteOrder too. There is no DataModel-layer guard for creation
+    // the way _completingOrderIds guards completion (no second call path
+    // into OrdersStore.addOrder the way _approveAllPending gives completion),
+    // so the UI entry point below is the ONLY thing standing between this and
+    // a duplicate order — same category the doc calls out.
+
     property var selectedProducts: []
     property var productNames: []
     // Parallel to productNames, same filtering, same order -- productCombo's
@@ -102,6 +113,11 @@ BottomSheet {
     }
 
     onOpened: {
+        // Defensive reset, matching OrderDetailDialog.openFor()'s idiom — a
+        // fresh open should never inherit a stuck busy state from whatever
+        // happened (or didn't finish happening) the last time this sheet
+        // was used.
+        busy = false
         _rebuildPickerNames()
         productCombo.currentIndex = 0
         customerField.text = ""
@@ -580,6 +596,10 @@ BottomSheet {
     }
 
     function trySubmit() {
+        // Must be the very first check, before any validation even runs —
+        // a second tap arriving while the first request is still in flight
+        // must be a hard no-op, not just skip re-validation.
+        if (busy) return
         var errs = []
         if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name")
         if (selectedProducts.length === 0) errs.push("Add at least one product")
@@ -621,10 +641,46 @@ BottomSheet {
                 ? _staffIds[staffCombo.currentIndex]
                 : ""
 
+        // Set synchronously, before the fire-and-forget emit below — closes
+        // the exact window the original bug lived in. BottomSheet's primary
+        // button already binds `enabled: primaryEnabled && !busy`, so this
+        // also disables the button itself the instant this line runs.
+        busy = true
         orderCreated({ customer: customerField.text, items: totalItems, total: t.total,
                        status: "pending", date: new Date(),
                        email: emailField.text, phone: phoneField.text, products: prods,
                        orderChannel: channel, staffId: staffId })
-        dlg.close()
+        // No dlg.close() here anymore — closing now waits for a real
+        // logic.orderAdded (success) or logic.orderCreationFailed (failure)
+        // signal, via the Connections block below. See ASYNC-REENTRANCY-BUGS.md
+        // C-2 and SKILLS Skill 65.
+    }
+
+    // Waits for the real result of the addOrder round trip fired above,
+    // instead of closing immediately — same shape as OrderDetailDialog's
+    // Connections-on-logic block for _save(). `logic` is reachable by id
+    // here because this dialog is instantiated inline as a child of Main.qml
+    // (same object-tree scope), not through a Component{}/Loader boundary.
+    //
+    // Unlike orderCompletionFailed (scoped by orderId, since an order
+    // already exists by the time completion can fail), orderCreationFailed
+    // carries no id — there is no order yet to scope by when minting itself
+    // fails. That's fine here: only one NewOrderDialog instance exists
+    // app-wide, and BottomSheet's own busy-driven closePolicy/close-button
+    // guard (see BottomSheet.qml) makes it impossible for the user to close
+    // this sheet and re-open a fresh submission while `busy` is still true,
+    // so there is no "wrong request's answer" ambiguity to guard against.
+    Connections {
+        target: logic
+        function onOrderAdded(orderId) {
+            if (!dlg.busy) return
+            dlg.busy = false
+            dlg.close()
+        }
+        function onOrderCreationFailed(errorMessage) {
+            if (!dlg.busy) return
+            dlg.busy = false
+            errorLabel.text = errorMessage || "Could not create order — try again"
+        }
     }
 }

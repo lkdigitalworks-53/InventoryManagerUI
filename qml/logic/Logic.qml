@@ -44,6 +44,7 @@ Item {
 
     // ── Orders feedback (DataModel → UI) ─────────────────────────────────────
     signal orderAdded(string orderId)
+    signal orderCreationFailed(string errorMessage)
     signal orderUpdated(string orderId)
     signal orderDeleted(string orderId)
     signal orderCompletionFailed(string orderId, string errorMessage)

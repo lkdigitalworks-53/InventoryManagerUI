@@ -3128,3 +3128,44 @@ progress, not pattern-matched from habit. After ANY automated or flag-based conf
 not just this one — check the actual resulting file content against what you expected before
 moving on, the same way CI results get checked via the API rather than assumed from "it should have
 worked."
+
+## Skill 65: Fixing a UI-only re-entrancy gap needs a dedicated feedback signal, not the shared generic error bus — even when nothing here needs an entity-ID scope the way completion did
+
+**Context**: `NewOrderDialog`'s double-submit fix (ASYNC-REENTRANCY-BUGS.md C-2) is a UI-only fix —
+unlike completion (PR #70, Skill 61), there's no second call path into `OrdersStore.addOrder` for a
+`DataModel`-layer guard to protect against, so `if (busy) return` + waiting for a real completion
+signal in `trySubmit()` closes the whole gap on its own. But "wait for a real completion signal"
+needed a signal to wait for, and `DataModel.onAddOrder`'s existing failure branch only emitted the
+generic `dispatcher.errorOccurred(context, message)` — the same bus roughly a dozen unrelated
+handlers across products/staff/orders/auth all fire onto.
+
+**Why that generic bus isn't safe to gate a dialog's own `busy` reset on**: `errorOccurred` carries
+no correlation back to which specific request failed — just a `context` string ("network", "auth",
+"order", "inventory") reused across many call sites. Wiring `NewOrderDialog`'s
+`Connections.onErrorOccurred` handler to reset `busy` on ANY `context === "network"` firing would
+have "worked" in the sense of compiling and passing a casual manual test, but it's structurally
+unsound: some OTHER handler's unrelated network failure firing while this dialog happens to be open
+and busy would incorrectly clear this dialog's guard mid-flight — reopening the exact double-submit
+window the fix exists to close, just via a different trigger than a second tap.
+
+**The fix**: added a new, dedicated `orderCreationFailed(string errorMessage)` signal
+(`Logic.qml`) and pointed `DataModel.onAddOrder`'s failure branch at it instead of the generic bus —
+completing a success/failure PAIR that already existed for completion (`orderUpdated`/
+`orderCompletionFailed`) but was only half-built for creation (`orderAdded` existed; no failure
+counterpart did, because nothing needed dialog-side failure feedback for creation before this fix).
+Deliberately did NOT add an orderId parameter the way `orderCompletionFailed(orderId, message)` has
+one — there IS no order yet when creation itself fails, so there's nothing to scope by. This is safe
+specifically because exactly one `NewOrderDialog` instance exists app-wide (declared once in
+`Main.qml`) and `BottomSheet`'s own busy-driven close guards make it impossible to close this sheet
+and start a genuinely independent second submission while the first is still in flight — the
+"which request does this answer belong to" ambiguity that scoping exists to resolve for
+`orderCompletionFailed` simply doesn't arise here. Don't copy the orderId-scoping pattern reflexively
+onto every dedicated failure signal; scope by whatever the actual overlap risk requires, not by
+habit from the nearest precedent.
+
+**General lesson**: when a fix needs a dialog to react to "this specific request I just made either
+succeeded or failed," check whether the failure path already has a signal scoped tightly enough to
+answer that — a shared generic error bus almost never does, even if reusing it would compile and
+pass a quick manual check. Adding the missing half of an already-existing success/failure pair is
+usually a small, low-risk change (one signal, one emit-site swap) and is the actual "correct fix,
+not a shortcut" call here, not scope creep.

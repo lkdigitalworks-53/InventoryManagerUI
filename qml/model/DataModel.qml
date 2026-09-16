@@ -70,7 +70,13 @@ Item {
             OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId,
                 function(ok, newOrderId) {
                     if (!ok) {
-                        dispatcher.errorOccurred("network", "Could not add order — try again")
+                        // Dedicated signal (not the generic errorOccurred bus) so
+                        // NewOrderDialog can reset its own busy state precisely on
+                        // ITS OWN failed request, instead of reacting to any
+                        // unrelated errorOccurred firing elsewhere while it happens
+                        // to be open — mirrors orderCompletionFailed's role for the
+                        // completion flow. See ASYNC-REENTRANCY-BUGS.md C-2.
+                        dispatcher.orderCreationFailed("Could not add order — try again")
                         return
                     }
                     _syncOrdersModel()

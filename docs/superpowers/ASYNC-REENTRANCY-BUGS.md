@@ -10,6 +10,14 @@ an existing one is fixed — move fixed items to the bottom under "Fixed" rather
 so the pattern's history stays visible. `KNOWN-ISSUES.md` gets a one-line pointer here rather than
 duplicating detail.
 
+**2026-09-16 scope review** (`/superpowers:brainstorming`, before picking up the first item): re-ran
+the sweep's own checklist against every `BottomSheet`-derived dialog in `qml/pages/` and found four
+already-safe dialogs the original sweep hadn't listed anywhere (`ProfileSettingsDialog`,
+`ForgotPasswordDialog`, `ManageCategoriesDialog`, `ManageOrderChannelsDialog`) — added to "Checked,
+not affected" below, each with its own trace, per this file's own "checked and found fine is
+different from not checked" standard. No new Critical/Medium instances turned up; the existing
+severity ranking and the "Not yet swept" list stood up to the re-check.
+
 ## The pattern, in one paragraph
 
 A user action fires a fire-and-forget signal into an async, multi-step `DataModel` orchestration
@@ -132,8 +140,10 @@ need a `DataModel`-layer guard the way completion did — there's no *second* ca
 `OrdersStore.addOrder` the way `_approveAllPending` provides for completion, so fixing the one UI
 entry point closes the whole gap.
 
-**Not yet fixed.** Flagged for a dedicated session — likely the next one to pick up given how easily
-this triggers in normal use.
+**Fixed 2026-09-16** — see F-2 at the bottom of this file. Picked as the first item off this
+tracker over C-1: both are Critical, but this one needed no special setup (reopen a completed
+order, choose Exchange) — a plain fast double-tap on the primary "Place order" flow every order
+goes through, exactly as this section originally called out.
 
 ---
 
@@ -214,6 +224,26 @@ from "not checked."
 - **`MemberManagementDialog`** — binds `busy: AuthService.membersBusy`, a real service-level state
   rather than a manually toggled flag. Correct pattern, different implementation shape (bound
   property vs. imperative set/clear) — both are fine.
+- **`ProfileSettingsDialog`** (added 2026-09-16, original sweep missed it) — binds
+  `busy: AuthService.busy`, same bound-service-state pattern as `MemberManagementDialog`.
+  `AuthService.updateProfile` is a real `_postJson` round trip; `onPrimaryClicked` checks `!busy`
+  before firing. Correct, not affected.
+- **`ForgotPasswordDialog`** (added 2026-09-16, original sweep missed it) — `_submit()` itself has
+  no busy guard, but the guard lives one layer up: `Main.qml`'s `onResetRequested` handler sets
+  `forgotPasswordDlg.busy = true` synchronously in the same signal-dispatch turn as `_submit()`'s
+  `resetRequested(...)` emit, before `AuthService.sendPasswordResetEmail`'s real network round trip
+  starts — and `busy` is reset on both the success (`passwordResetSent`) and failure (`authFailed`)
+  paths (`Main.qml:346-347, 357-359`). `BottomSheet`'s primary button already binds
+  `enabled: root.primaryEnabled && !root.busy`, so a second tap is structurally blocked the instant
+  the first tap's handler returns. Correct, just an unusual location for the guard (composing
+  container instead of the dialog itself) — worth knowing so a future refactor that moves this logic
+  doesn't accidentally drop the guard along with it.
+- **`ManageCategoriesDialog` / `ManageOrderChannelsDialog`** (added 2026-09-16, original sweep
+  missed both) — `CategoryStore.addCategory`/`removeCategory`/`setDefault` and
+  `OrderChannelStore.addChannel`/`removeChannel`/`setDefault` take no callback parameter anywhere;
+  confirmed zero Gateway/network involvement (device-local lists, per each dialog's own header
+  comment). Same shape as `EditProductDialog` — no genuine async round trip gates completion, so
+  there is nothing for a repeated tap to race against. Not affected.
 
 ## Not yet swept — flag before assuming clean
 
@@ -245,3 +275,24 @@ fired its update signal and closed immediately with no busy indicator. Fixed wit
 `_completingOrderIds` in-flight set (DataModel layer) plus wiring the dialog up to `BottomSheet`'s
 existing `busy`/`busyMessage` mechanism. Full writeup: SKILLS Skill 61 (root cause), 62–63 (test
 file corrections). Branch: `fix/2026-09-14-order-completion-double-submit`, PR #70.
+
+### F-2 (2026-09-16): `NewOrderDialog` — "Create Order" double-submit (C-2)
+
+`trySubmit()` had no `busy` guard of any kind and called `dlg.close()` immediately after firing the
+fire-and-forget `orderCreated` signal — no wait for `OrdersStore.nextOrderId`'s real, server-mediated
+mint to actually resolve. Unlike completion, there's no second call path into `OrdersStore.addOrder`
+for a `DataModel`-layer guard to protect against (no `_approveAllPending`-equivalent for creation),
+so the fix is entirely at the UI layer: `if (busy) return` as the first line of `trySubmit()`,
+`busy = true` set synchronously before the emit, and a `Connections { target: logic }` block that
+waits for a real `orderAdded` (success, closes) or the new dedicated `orderCreationFailed` (failure,
+shows the error inline, stays open) signal — mirroring `OrderDetailDialog`'s existing pattern from
+PR #70. `orderCreationFailed` is new (`Logic.qml`/`DataModel.onAddOrder`): the previous failure path
+piggybacked on the generic `errorOccurred` bus shared by every `DataModel` handler, which would have
+let an unrelated error elsewhere reset this dialog's `busy` state — traded a working-by-coincidence
+shortcut for a dedicated signal instead, same shape as `orderCompletionFailed`.
+
+Automated coverage: `tests/tst_NewOrderDialogSubmitGuard.qml`, a plain-JS-object stand-in (same
+technique as `tests/tst_AddStaffSyncClose.qml`) — `NewOrderDialog.qml` itself can't load under
+`qmltestrunner` (pulls in `Felgo` via `Constants.qml`). On-device verification of the actual dialog
+is in `docs/superpowers/test-plans/2026-09-16-new-order-double-submit-test-plan.md`. Full writeup:
+SKILLS Skill 65. Branch: `fix/2026-09-16-new-order-double-submit`.
