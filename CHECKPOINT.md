@@ -1,180 +1,124 @@
-# CHECKPOINT — order-completion double-submit fix, CI green, PR #70 open for review
+# CHECKPOINT — 2026-09-18: scoping "next important E2E-roadmap item" (design gate, no code yet)
 
-**Session date:** 2026-09-14
-**Branch:** `fix/2026-09-14-order-completion-double-submit`, off `main` @ `0be21fb`
-**PR:** https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/70 (Taher tested all scenarios on device, confirmed working; rebased onto main post-PR#71 and merging now)
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-02-price-adjust-tax-delta-CHECKPOINT.md`
-(that session's branch had already been merged to `main`; its final CHECKPOINT.md was sitting
-unarchived at the repo root when this session's clone was made — same "may be one commit behind"
-gap flagged as an open item at the end of that session. Archived first, per this repo's own
-archive-before-overwrite discipline, before writing this file.)
+**Session date:** 2026-09-18
+**Branch:** `docs/2026-09-18-idempotency-scoping-checkpoint`, off `main` @ `bec7cd4`
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-14-order-completion-double-submit-CHECKPOINT.md`
+(PR #70 is already merged into `main` as `a66fb8f`; that file was still sitting at the repo root,
+describing the PR as "merging now".)
+**Skills invoked by Taher:** `superpowers:brainstorming` (HARD-GATE: no implementation before an
+approved design), `qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman mode: FULL.
 
-## What this session is
+## Ask
 
-Taher reported a bug via `/superpowers:systematic-debugging` (Stay in full caveman mode - FULL):
-add a pending order, the Orders page's "approve pending" affordance completes it, but completing
-takes noticeable time with zero progress indicator. Pressing Approve a second time (before the
-first press's write resolved) deducted stock and marked the item sold AGAIN. The order cart itself
-still showed the correct 1 item, but Transaction History, Product History, and Sales Analysis pages
-all showed figures for 2 items. Explicit asks: why does a repeated request go unhandled, and block
-the UI during the transaction if needed.
+"Clone the repo and take the next important item from the e2e roadmap."
 
-## Root cause (traced statically — no Qt toolchain in this sandbox, per standing rule)
+## Step log (append-only; resume from the last ticked step)
 
-`DataModel._tryCompleteOrder`'s only "already completing" guard was
-`if (o.status === "completed") return`, reading `OrdersStore.getById(orderId)` — the LOCAL cache.
-That field only flips to `"completed"` at the very end of the function (inside `_afterAllDeltas`,
-after every line's FIFO consumption + `InventoryStore.deductStock` has actually resolved). A second
-call for the same order arriving before the first finishes sees the same stale `"pending"` status,
-sails past the guard, and re-runs the entire stock deduction + `SalesStore.recordSale` +
-`TransactionStore.recordSaleFromOrder` from scratch. `SalesStore`'s dashboard KPI is self-correcting
-(recomputes from `OrdersStore` rather than accumulating — itself a fix for a near-identical prior
-bug, per its own header comment), so it didn't show the doubling; the DISCRETE ledger writes
-(`TransactionStore.entries`) and stock deltas did — exactly what Transaction/Product History and
-Sales Analysis read from.
+- [x] 1. Cloned `lkdigitalworks-53/InventoryManagerUI` fresh (public clone, no token). Commit identity set
+      to `Taher (via Claude session) <tsowner@lkdigitalworks.com>`, the repo's own convention for Claude
+      sessions (latest such commits are dated 2026-09-18). Not verified against the claude.ai account email.
+- [x] 2. Read `CHECKPOINT.md` and `docs/superpowers/E2E-TESTING-ROADMAP.md` on `main`.
+- [x] 3. Checked live GitHub state (not inferred from local): open PRs #72, #73 and 6 older ones.
+- [x] 4. Read `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` and PR #73's diff (adds C-3).
+- [x] 5. Traced the idempotency plumbing in code (findings below) to ground the approach trade-offs.
+- [x] 6. Created this branch, archived the stale checkpoint, wrote this file.
+- [x] 7. Posted findings + Q1-Q3 to Taher (PR #74 opened as draft).
+- [x] 8. Taher asked: rebase PR #73 first, report if mergeable, then discuss scope. Rebased
+      `docs/2026-09-16-order-completion-idempotency-gap-v2` onto `main` @ `bec7cd4`. One conflict, in
+      `E2E-TESTING-ROADMAP.md` (both sides inserted after the XHR-timeout item). Kept both whole; C-3 entry
+      placed first (Critical before the Medium/Low audit findings, and it references the timeout item just
+      above it). `ASYNC-REENTRANCY-BUGS.md` auto-merged. Diff vs `main` is exactly the same 2 files, +103/-0.
+      Commit re-authored to `Taher (via Claude session)`, force-pushed with lease. CI on `88bf85b`: all 5
+      checks green, `mergeable_state: clean`. Trial merge of rebased #73 with PR #72: no conflicts.
+- [x] 9. Taher asked: should C-2 (PR #72) merge before C-3 starts, and when should C-1 start? Verified
+      before answering: PR #72 touches only ~8 lines of `DataModel.qml` (`onAddOrder` failure branch, near
+      line 73), 1 line of `Logic.qml`, and `NewOrderDialog.qml`, so there is almost no code overlap with
+      C-3 (`_tryCompleteOrder`, ~line 425) or C-1 (`_tryAdjustOrder`, ~line 763, `ConfirmReturnSheet`).
+      The real conflict cost between PRs is docs: `SKILLS.md` numbering, `AGENTS.md`, `README.md`,
+      `ASYNC-REENTRANCY-BUGS.md`, `CHECKPOINT.md`. One real code dependency: `onAddOrder`'s auto-approve
+      branch calls `_tryCompleteOrder`, so C-3 must build on #72's `onAddOrder`. C-1 confirmed still
+      unguarded on #72's branch (`ConfirmReturnSheet` still closes right after `confirmed(...)` and releases
+      the lock in `onClosed`). #72's dialog test is a plain-JS stand-in, so green CI does not prove the real
+      dialog; its test plan has an on-device section.
+- [ ] 10. **Scope discussion with Taher** (his call after step 8). Q1-Q3 below still open. Then brainstorming
+      step 4/5 (approaches, design in sections, approval), design doc under `docs/superpowers/specs/`,
+      then `superpowers:writing-plans`.
 
-**Why the existing UI gave no protection:** `OrderDetailDialog._save()` fired `logic.updateOrder`
-(a fire-and-forget signal) and called `dlg.close()` on the very next line — zero connection to
-whether the underlying write had even started resolving. Nothing stopped the user from reopening
-the order and hitting Save again while the first save's async chain was still running.
+**Provenance note (Taher asked directly):** the item was NOT taken from the list on `main`'s
+`E2E-TESTING-ROADMAP.md`. The detailed C-3 entry lives in `ASYNC-REENTRANCY-BUGS.md`; the roadmap only gets a
+pointer to it via PR #73, which was unmerged and conflicted at the time. The roadmap items actually on `main`
+(XHR timeout, staff cleanup, ActivityLog, Category/Channel writes) were passed over on my own judgement.
 
-**Why `LockManager` doesn't (and structurally can't) catch this either:** traced
-`functions/lib/lockLogic.js`'s `acquireLock` — it grants automatically when
-`current.holderUid === params.actorUid` ("sameHolder"), required so a lock-renewal heartbeat can
-re-acquire its own lock. That means the SAME logged-in user re-entering while their own previous
-request is still in flight sails through too. `OrdersPage._approveAllPending()` already wraps each
-completion in a real `LockManager.acquire`/`release` pair and still isn't protected against a
-same-user double-click, for this exact reason.
+Not done, deliberately: no code, no tests, no test plan, no `SKILLS.md`/`AGENTS.md`/`README.md` edits.
+There is no change to test or document yet; the test plan is written together with the approved design.
+App not built or run (standing instruction). No Qt tooling installed in the sandbox (standing instruction).
 
-**Notable confirming detail:** `_tryCompleteOrder`'s own header comment already says making this
-function genuinely async (round 4 of the async-write-sequencing design) was specifically so a
-caller could show "a real busy indicator instead of a decorative one" — the infrastructure for
-this fix already existed and was simply never wired up on `OrderDetailDialog`'s side.
+## Live state found (2026-09-18)
 
-## Fix — two layers, one root cause ("no in-flight tracking for order completion, at any layer")
+- `main`'s roadmap is **stale**: it does not list C-3. That entry only exists in PR #73
+  (`docs/2026-09-16-order-completion-idempotency-gap-v2`), which was `mergeable_state: dirty` (fixed in step 8: now rebased, CI green, clean).
+- PR #72 (`fix/2026-09-16-new-order-double-submit`, C-2 fix): CI all green (QML, Functions, Rules, E2E,
+  summary comment), `mergeable_state: clean`, awaiting Taher's merge.
+- C-1 (`ConfirmReturnSheet` -> `_tryAdjustOrder` double-deduct) is still unfixed and Critical.
+- Roadmap items on `main` are: systemic XHR timeout (deferred by Taher), `StaffStore.deleteStaff` orphaned
+  auth docs (Medium), `ActivityLog.record` bypasses durable path (Medium-low), Category/OrderChannel config
+  writes (Low).
 
-1. **`qml/model/DataModel.qml`** — new `_completingOrderIds` property (orderId → true while a
-   completion is between entry and callback), set synchronously right after the existing
-   `!o`/`already-completed` checks and before any async call, cleared on all 3 remaining exit
-   paths (stock-validation failure, delta failure, success). Independent of `OrdersStore`'s own
-   stale status field and of which caller invokes it — protects `OrderDetailDialog`'s save,
-   `OrdersPage._approveAllPending`'s bulk loop, and `onAddOrder`'s auto-approve branch alike.
-2. **`qml/pages/OrderDetailDialog.qml`** — wired up to `BottomSheet.qml`'s existing
-   `busy`/`busyMessage` mechanism (already used correctly by `RestockDialog`/`AddProductDialog`/
-   `AddStaffDialog`/`ImportPreviewDialog` — this dialog was the one holdout). `_save()` now sets
-   `busy = true` + a message before firing `logic.updateOrder`, and a new `Connections { target:
-   logic }` block waits for `logic.orderUpdated`/`logic.orderCompletionFailed` — scoped to
-   `_pendingSaveOrderId`, since both signals are on the shared dispatcher and fire for unrelated
-   orders too — before clearing `busy` and closing (success) or showing the error without closing
-   (failure). Also added a defensive `if (busy) return` at the top of `_save()` and a `busy = false`
-   / `_pendingSaveOrderId = ""` reset in `openFor()`, matching this dialog's own existing defensive
-   idioms elsewhere (`_lockState` reset).
+## Code findings that shape the design
 
-## Tests (TDD — written before the fix, per `superpowers:test-driven-development`)
+- The server already has transport-level idempotency: `recordMutation`/`recordDelta`/batch carry a
+  `requestId`, the `audit_log` doc id IS that id, and a repeat returns `idempotentReplay: true` without
+  re-applying (`functions/index.js` header, `functions/lib/gatewayLogic.js` ~138-150 and ~187-194).
+- It is defeated one layer up: `Gateway._nextRequestId()` (`qml/model/Gateway.qml:130`) mints a fresh
+  `"req-" + Date.now() + "-" + random` per call, so a re-run of `_tryCompleteOrder` after its in-memory
+  guard is lost gets new ids and the server cannot recognise them as the same operation.
+- `StockBatchStore.consumeFifo` plans from *local* `qtyRemaining` and reconciles floor rejections against
+  the server's `current`; its plan is therefore not stable across attempts.
+- `Gateway.recordDelta` coalesces queued deltas for the same entity+entityId, so the surviving
+  `requestId` can belong to an earlier call. Any caller-supplied key scheme has to account for that.
+- Reasoning, not measured: adding XHR timeouts *before* operation-level idempotency turns "hung" into
+  "outcome unknown", which is the exact state that produces double-apply on retry. PR #73 makes the same
+  ordering argument.
 
-**New file `tests/tst_DataModel_completeOrderReentrancy.qml`** — 6 cases, real
-`DataModel._tryCompleteOrder` calls, same child-item-instantiation pattern as
-`tst_DataModel_adjustOrderSyncGuard.qml`. **Genuinely run via CI on PR #70 — 818/818 QML tests
-passing (1025/1025 overall), confirmed via `commits/{sha}/check-runs`** — but only after two rounds
-of real CI-driven corrections to the test file itself, both worth remembering for future sessions:
+## Candidate approaches for C-3 (Taher's stated direction: general, not a one-call patch)
 
-1. **Round 1 (Skill 62):** the first version tried to reassign `StockBatchStore.consumeFifo` to
-   simulate a race — threw `Cannot assign to read-only property` at runtime. A QML top-level
-   `function` declaration compiles to a read-only invokable member, not a mutable JS property the
-   way a plain object's method would be; none of this codebase's store methods can be stubbed by
-   reassignment. That version also leaked `_completingOrderIds` state across test functions (`dm`
-   is instantiated once for the whole `TestCase`, not per test) since `init()` never reset it.
-2. **Round 2 (Skill 63):** the corrected version still assumed `_tryCompleteOrder`'s happy path
-   resolves synchronously, like every other `DataModel` orchestration function in this suite. It
-   doesn't: `InventoryStore.deductStock`'s callback is wired straight to `Gateway.recordDelta`'s own
-   callback, which only fires from a REAL `XMLHttpRequest` response — with `AuthStore.idToken`
-   empty (this suite's "offline" convention), `Gateway._sendDelta` returns immediately without ever
-   invoking the callback at all. No local-apply shortcut here, unlike `_tryAdjustOrder`'s
-   callback-less `creditStockNoBatch`/`restoreFifo`.
+- A. Stable operation keys only: callers pass a deterministic `requestId` into `recordDelta`/`recordMutation`.
+  Smallest diff, no server change. Holes: FIFO plan drift (partial-drain case), same key + different delta is
+  silently replayed with the old `after`, key reuse across a legitimate re-completion needs an epoch.
+- B. Write-ahead intent + stable keys: persist the plan on the order first (one durable mutation), derive every
+  step's key from the intent id, resume from the persisted plan on retry. Closes A's holes; reusable for C-1.
+  Costs: order schema field, Firestore rules/validation, old-client compatibility, resume trigger design.
+  Logic can live in a pure JS helper so it is measurable in Node (100% coverage claim checkable there).
+- C. Server-side `completeOrder` Cloud Function with a Firestore transaction: true atomicity, fully
+  Node-testable here. Costs: no precedent in this codebase, offline-first tension, must re-home FIFO/top-up
+  and tax/discount math, deploy-order coupling with client releases. Largest blast radius.
+- Recommendation on record: B, scoped first to `_tryCompleteOrder`, C-1 as the second consumer; A only if
+  Taher wants a stopgap. Not a new network layer.
 
-The final version turns limitation 2 into the test mechanism: two REAL sequential
-`_tryCompleteOrder` calls for the same order, since the first call's own callback genuinely never
-resolves in this harness — no monkey-patching, no manually-seeded state. The already-completed
-short-circuit and missing-order cases seed their own preconditions directly (same convention
-`tst_DataModel_adjustOrderSyncGuard.qml` uses for its own guard). The genuine Gateway happy path
-(a live Cloud Function actually returning `ok:true`) remains out of reach for plain `qmltestrunner`
-— documented as an E2E/on-device gap, same tier as `OrderDetailDialog`'s own busy-state UI.
+## Proposed sequencing (recommendation, awaiting Taher's decision)
 
-No automated coverage for `OrderDetailDialog`'s own busy-state UI wiring — Felgo-dependent dialog,
-out of this harness's reach (see `test/felgo-dependent/README.md`); on-device only, see the test
-plan.
+1. Merge PR #73 (docs, clean, CI green). No dependency on anything.
+2. Taher device-checks PR #72 (same bar as PR #70), then merge it. Everything after branches from `main`.
+3. Same sitting: on-device repro of C-1 (double-tap Confirm on an exchange with extra quantity). C-1 and C-2
+   were found by static trace/sweep, not reproduced; only the original #70 bug and C-3 were.
+4. C-3 *design* (docs only) proceeds now, in parallel. C-3 *implementation* branches after #72 merges.
+5. C-1 fix (same two-layer pattern as #70/#72: in-flight guard + busy wiring, lock release moved to after
+   completion) starts right after #72 merges, before C-3 implementation. Open point: a busy state with no
+   XHR timeout can stay stuck forever, so C-1's sheet needs a defined exit.
+   Trade-off on record: fixing C-1 first adds a third in-memory guard that C-3 may later restructure;
+   waiting for C-3 leaves an easy-to-trigger Critical open for a multi-session arc.
 
-## Docs updated this session
+## Open decisions for Taher
 
-- `SKILLS.md` — appended **Skill 61** (root cause + fix writeup), **Skill 62** (QML `function`
-  members are read-only, can't be monkey-patched), and **Skill 63** (`_tryCompleteOrder`'s happy
-  path needs a live Gateway backend to test) — all append-only.
-- `AGENTS.md` — Data Model & Orchestration Agent section: new bullet on the in-flight-guard
-  convention (`_completingOrderIds`) and why `LockManager` can't substitute for it. Pages &
-  Dialogs Agent section: new bullet on the busy/wait-for-ack convention for any dialog whose save
-  can trigger slow `DataModel` orchestration.
-- `README.md` — new dated entry under "Concurrency & Conflict Resolution" (2026-09-14).
-- `docs/superpowers/test-plans/2026-09-14-order-completion-double-submit-test-plan.md` — new,
-  standard format (Skill 49): automated coverage sections 1–4, then On-Device Test Plan
-  (Happy Path / Negative / Edge Cases / Affected Areas / Regression Tests).
-- `docs/superpowers/test-plans/README.md` — new index row, newest first.
-- `docs/superpowers/specs/2026-09-02-price-adjust-tax-delta-CHECKPOINT.md` — archived copy of the
-  previous session's final CHECKPOINT.md (see note at top of this file).
+- Q1. Confirm the item: C-3/idempotency (with C-1/C-2 as consumers) over the roadmap-listed Medium/Low items
+  and over XHR timeouts first.
+- Q2. Approach A, B or C. Deciding fact I need: can two devices/staff sessions complete orders for the same
+  product concurrently in real use?
+- Q3. Sequencing: merge PR #72 first, then branch off `main`; and whether I should rebase PR #73 (docs only).
 
-## Explicitly out of scope this session (flagged to Taher, not silently dropped)
+## Resume instructions
 
-- `OrdersPage._approveAllPending()`'s "Approve all pending" banner has no busy/disabled state of
-  its own. Now safe from a DATA-correctness standpoint (shares the `_completingOrderIds`-guarded
-  engine), but still gives no visual feedback while working — same underlying UX gap, different
-  file/UI surface. Not pulled into this fix since the actual reported defect (double-deduction)
-  doesn't depend on it.
-- `ConfirmReturnSheet`'s lock-span gap (pre-existing open item, `overview.md`) — untouched.
-- `StockBatchStore`'s FIFO functions still on whole-record `recordMutation` (pre-existing open
-  item) — untouched.
-
-## Status / next steps
-
-- [x] Root cause traced and confirmed (static trace, both the primary UI bug and the lock's
-      `sameHolder` gap).
-- [x] Branch created off `main`.
-- [x] Failing test written first (TDD).
-- [x] Production fix implemented (both layers).
-- [x] Docs updated (SKILLS.md, AGENTS.md, README.md, test plan + its index).
-- [x] Previous session's stale CHECKPOINT.md archived.
-- [x] Committed and pushed (3 commits: fix, round-1 test correction, round-2 test correction) using
-      Taher's authorship convention (`Taher (via Claude session)` / `tsowner@lkdigitalworks.com`)
-      and PAT embedded directly in each one-off push command — `.git/config` verified clean of the
-      token after every push.
-- [x] **PR #70 opened** against `main` (`checks.yml` only triggers on PR/push-to-main, not raw
-      feature-branch pushes) —
-      https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/70
-- [x] CI genuinely green — **1025/1025 tests passing** (818 QML, 138 Functions, 28 Firestore
-      Rules, 41 E2E), confirmed via `commits/{sha}/check-runs` + the PR's auto-posted test-summary
-      comment, not assumed. Took 2 rounds of test-file corrections to get there (Skills 61–62) —
-      the production fix itself (`DataModel.qml`, `OrderDetailDialog.qml`) was correct from the
-      first push; only the new test file needed fixing.
-- [x] Not building/running the app this session, per standing instruction.
-- [x] Taher tested all scenarios on device — confirmed working.
-- [x] Reviewed against `/superpowers:requesting-code-review`, `qt-development-skills:qt-qml-review`,
-      and `/ponytail:ponytail-review` (done directly, no subagent-dispatch tool in this environment) —
-      zero findings in the actual diff (pre-existing whole-file style debt excluded per the QML
-      review skill's own diff-scoping rule).
-- [x] Rebased onto `main` (which had picked up PR #71 in the meantime) — resolved the two expected
-      conflicts: `CHECKPOINT.md` (kept branch version per convention) and `SKILLS.md` (renumbered
-      this branch's Skill 60/61/62 to 61/62/63 to sit after the audit's own Skill 60 — fixed every
-      cross-reference to the old numbers across README.md, AGENTS.md, the test file, the test plan,
-      and `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`).
-- [x] **Correction mid-rebase**: `git checkout --ours` during a `git rebase` means the opposite of
-      what it means during a `git merge` — `--ours` gave main's content, not the branch's, on both
-      `CHECKPOINT.md` conflicts. Caught it by checking the actual file content immediately after
-      instead of trusting the flag name, and recovered the correct branch content via
-      `git show <pre-rebase-branch-tip>:CHECKPOINT.md`. Worth remembering: **for rebase conflicts,
-      use `--theirs` to keep the branch's own content, not `--ours`.**
-- [ ] **Next: merge to `main`, push.**
-
-## Open items carried forward, unchanged (from `overview.md`, not re-verified this session)
-
-- P1 stock-movement taxonomy branch (`feature/p1-stock-movement-taxonomy`) — rebase conflict in
-  `InventoryStore.qml`, unresolved; `tst_StockMovementStore.qml` still not implemented.
-- `StockBatchStore`'s FIFO functions still whole-record `recordMutation`, not `recordDelta`.
-- `ConfirmReturnSheet`'s lock doesn't span into `OrderDetailDialog`'s confirmation handoff window.
+Fresh session: clone, read this file, re-check PR #72/#73 state live, then continue at step 7. Do not
+start implementation before the design is approved. `CHECKPOINT.md` will conflict with PR #72's copy when
+both land; resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`
+(for `git rebase`, `--theirs` keeps the branch's content).
