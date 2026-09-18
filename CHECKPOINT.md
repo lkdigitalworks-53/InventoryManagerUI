@@ -30,7 +30,17 @@ approved design), `qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman m
       above it). `ASYNC-REENTRANCY-BUGS.md` auto-merged. Diff vs `main` is exactly the same 2 files, +103/-0.
       Commit re-authored to `Taher (via Claude session)`, force-pushed with lease. CI on `88bf85b`: all 5
       checks green, `mergeable_state: clean`. Trial merge of rebased #73 with PR #72: no conflicts.
-- [ ] 9. **Scope discussion with Taher** (his call after step 8). Q1-Q3 below still open. Then brainstorming
+- [x] 9. Taher asked: should C-2 (PR #72) merge before C-3 starts, and when should C-1 start? Verified
+      before answering: PR #72 touches only ~8 lines of `DataModel.qml` (`onAddOrder` failure branch, near
+      line 73), 1 line of `Logic.qml`, and `NewOrderDialog.qml`, so there is almost no code overlap with
+      C-3 (`_tryCompleteOrder`, ~line 425) or C-1 (`_tryAdjustOrder`, ~line 763, `ConfirmReturnSheet`).
+      The real conflict cost between PRs is docs: `SKILLS.md` numbering, `AGENTS.md`, `README.md`,
+      `ASYNC-REENTRANCY-BUGS.md`, `CHECKPOINT.md`. One real code dependency: `onAddOrder`'s auto-approve
+      branch calls `_tryCompleteOrder`, so C-3 must build on #72's `onAddOrder`. C-1 confirmed still
+      unguarded on #72's branch (`ConfirmReturnSheet` still closes right after `confirmed(...)` and releases
+      the lock in `onClosed`). #72's dialog test is a plain-JS stand-in, so green CI does not prove the real
+      dialog; its test plan has an on-device section.
+- [ ] 10. **Scope discussion with Taher** (his call after step 8). Q1-Q3 below still open. Then brainstorming
       step 4/5 (approaches, design in sections, approval), design doc under `docs/superpowers/specs/`,
       then `superpowers:writing-plans`.
 
@@ -84,6 +94,19 @@ App not built or run (standing instruction). No Qt tooling installed in the sand
   and tax/discount math, deploy-order coupling with client releases. Largest blast radius.
 - Recommendation on record: B, scoped first to `_tryCompleteOrder`, C-1 as the second consumer; A only if
   Taher wants a stopgap. Not a new network layer.
+
+## Proposed sequencing (recommendation, awaiting Taher's decision)
+
+1. Merge PR #73 (docs, clean, CI green). No dependency on anything.
+2. Taher device-checks PR #72 (same bar as PR #70), then merge it. Everything after branches from `main`.
+3. Same sitting: on-device repro of C-1 (double-tap Confirm on an exchange with extra quantity). C-1 and C-2
+   were found by static trace/sweep, not reproduced; only the original #70 bug and C-3 were.
+4. C-3 *design* (docs only) proceeds now, in parallel. C-3 *implementation* branches after #72 merges.
+5. C-1 fix (same two-layer pattern as #70/#72: in-flight guard + busy wiring, lock release moved to after
+   completion) starts right after #72 merges, before C-3 implementation. Open point: a busy state with no
+   XHR timeout can stay stuck forever, so C-1's sheet needs a defined exit.
+   Trade-off on record: fixing C-1 first adds a third in-memory guard that C-3 may later restructure;
+   waiting for C-3 leaves an easy-to-trigger Critical open for a multi-session arc.
 
 ## Open decisions for Taher
 
