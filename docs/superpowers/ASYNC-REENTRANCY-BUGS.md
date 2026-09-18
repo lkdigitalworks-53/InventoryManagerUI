@@ -40,6 +40,12 @@ convention this pattern violates, and SKILLS Skill 61 for the original, fully-tr
    re-grants a request from the same `actorUid` by design (needed for renewal heartbeats), so it
    only stops a different device/user, never the same user re-entering their own still-resolving
    action. Don't let a `LockManager.acquire` call anywhere in the path read as "this is handled."
+5. (Added 2026-09-16, C-3) A "yes" to question 3 isn't the end of the check — an in-flight guard
+   that exists is only as good as its recovery story. If the guard is in-memory only, ask what
+   happens when the guarded request never comes back at all (a genuine hang, not just slow) rather
+   than assuming any guard is sufficient protection. If the only way anyone would ever recover from
+   a stuck guard is a workaround that resets in-memory state (logout/login, an app restart), check
+   whether that workaround's fresh retry can re-run a step that already durably succeeded.
 
 ---
 
@@ -134,6 +140,80 @@ entry point closes the whole gap.
 
 **Not yet fixed.** Flagged for a dedicated session — likely the next one to pick up given how easily
 this triggers in normal use.
+
+---
+
+### C-3: `DataModel._tryCompleteOrder` — a hung `deductStock`/status-update leaves an in-memory-only guard stuck, and the only recovery path re-runs `consumeFifo` from scratch
+
+**Where:** `DataModel._tryCompleteOrder` (`qml/model/DataModel.qml:425`) — specifically the gap
+*between* `StockBatchStore.consumeFifo()` succeeding and `OrdersStore.updateOrder(orderId,
+{status: "completed", ...})` actually landing.
+
+**This is a different sub-case of the pattern than C-1/C-2, worth being precise about**: PR #70's
+`_completingOrderIds` in-flight guard is present and does work exactly as designed — it correctly
+blocked every same-session retry attempt in the on-device report below. The gap isn't a missing
+guard; it's that the guard is **in-memory only**, with nothing checking question 3 of this file's own
+checklist against the specific failure mode of *"the guarded operation never comes back at all."**
+
+**Trace:** `_tryCompleteOrder` performs three separate, independently-fallible writes with no
+atomicity between them and — critically — no persisted record of which ones already succeeded:
+1. `StockBatchStore.consumeFifo()` — durably decrements `stock_batch.qtyRemaining` via its own
+   `Gateway.recordDelta` call, batch by batch.
+2. `InventoryStore.deductStock()` — a *separate*, independent `Gateway.recordDelta` call that
+   decrements `product.stock`.
+3. `OrdersStore.updateOrder(orderId, {status: "completed", ...})` — fires only after both of the
+   above resolve.
+
+Both #1 and #2 are durable (queued via Outbox, will eventually retry) — but neither is *linked* to
+the order in any way the code can check later. The order's own `status` field is the *only* signal
+`_tryCompleteOrder` uses to decide "has this already run" (`if (o.status === "completed") return`),
+and status is the **last** thing to update, not the first. Combined with the separate, already-
+tracked finding that no XHR request in this codebase has a timeout (`E2E-TESTING-ROADMAP.md`'s
+"Needs Taher's input" section, 2026-09-14) — `deductStock`'s request can hang indefinitely rather
+than failing, leaving `_completingOrderIds[orderId]` stuck `true` forever with no way for the app
+itself to recover.
+
+**On-device reproduction, confirmed (2026-09-16):** product P with one batch of 10, order for 1 unit.
+Pressed Approve, immediately airplane mode on, 5s, airplane mode off. `consumeFifo`'s delta
+eventually landed (batch → 9, durable, survived the interruption); `deductStock`'s never did (stock
+stayed at 10, order stayed "pending"). Every same-session retry correctly hit the in-flight guard —
+confirming C-1/C-2's fix works as designed, this is not a same-session gap. After waiting 3+ minutes
+with no resolution, logging out and back in and retrying is what caused the actual damage: this
+abandons the original hung request and its guard with no persisted trace that `consumeFifo` had
+already succeeded, so the fresh attempt reran `consumeFifo` from scratch (batch 9 → 8) before
+`deductStock` finally went through for real (stock 10 → 9, correctly reflecting only one sale). Net
+result: the batch ledger now shows 2 units consumed for a 1-unit order while `product.stock` shows
+only 1 — silently out of sync, in the dangerous direction (ledger under-counts what's actually
+available, which is exactly the condition `topUpOldest`'s drift-repair exists to paper over, not
+something that should be manufactured by the completion flow itself).
+
+**Impact:** Critical — confirmed real inventory/data corruption on-device, not theoretical. Same
+severity class as C-1/C-2, reached via a different mechanism (a permanently-stuck request plus a
+user workaround, rather than a same-session double-tap).
+
+**Suggested fix — Taher's explicit direction, stated 2026-09-16: he wants idempotency and atomicity
+for network calls generally, not a narrow patch for this one call site.** Options range from
+narrowest to most robust, not yet designed or chosen:
+- Persist a checkpoint immediately after `consumeFifo` succeeds (e.g., stamp the order with its
+  resulting `products`/consumption data and an intermediate marker) *before* attempting
+  `deductStock`, so a retry — from any cause, not just this one — can detect "FIFO consumption
+  already happened for this order" and resume from `deductStock` onward instead of re-deriving
+  consumption from scratch. Fits the existing client-driven architecture; the data this needs
+  (`linesWithConsumption`) is already built by the current code, just not persisted early enough.
+- The same idea, scoped more narrowly to just this call site rather than a general resume-from-
+  checkpoint mechanism.
+- True atomicity via a server-side (Cloud Function) transaction wrapping all three writes — most
+  robust, but this codebase has no precedent for server-side transactional writes anywhere
+  currently; every mutation goes through the client-driven `Gateway`/Outbox pattern. Much larger
+  architectural shift than either option above.
+
+Given the stated goal is general, not instance-specific, whoever picks this up should also look at
+whether the same checkpoint/resume shape is the right general answer for C-1 and C-2 above (both
+still "Not yet fixed" as of this entry) rather than solving each independently — that decision
+belongs to the design session that picks this up, not assumed here.
+
+**Not yet fixed.** Flagged for a dedicated session, per Taher's explicit request to keep this one
+scoped to documentation only.
 
 ---
 
