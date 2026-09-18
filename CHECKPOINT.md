@@ -1,8 +1,41 @@
-# CHECKPOINT — NewOrderDialog double-submit fix (C-2), branch pushed, CI pending
+# CHECKPOINT — NewOrderDialog double-submit fix (C-2), rebased onto latest main, CI pending
 
 **Session date:** 2026-09-16
-**Branch:** `fix/2026-09-16-new-order-double-submit`, off `main` @ `a66fb8f` (post-PR #70/#71 merge)
+**Branch:** `fix/2026-09-16-new-order-double-submit`, rebased onto `main` @ `bec7cd4` (was `a66fb8f`
+before the rebase below)
 **PR:** not yet opened — branch pushed, PR to be opened once CI reports (or by Taher directly).
+
+## Rebase (this step)
+
+Between the first push and this step, `main` moved `a66fb8f` → `bec7cd4` (PR #68: batch-id mint
+retry-on-reconnect + `topUpOldest` safety fix, plus PR #69: docs-only audit of that same fix's
+pattern). PR #68's commit touched `qml/pages/NewOrderDialog.qml` too (`_pickerProducts`/pending-mint
+filtering in `_rebuildPickerNames`/`addSelectedProduct`) and `docs/superpowers/test-plans/README.md`
+— both files this branch also touched.
+
+Rebased onto `origin/main` (`git rebase origin/main`). Resolved automatically, no manual conflict
+markers — checked both shared files by hand afterward rather than trusting a clean auto-merge at
+face value: PR #68's changes live in `_rebuildPickerNames`/`addSelectedProduct` (top of file, product
+picker filtering); this branch's changes live in `trySubmit()`/`onOpened`/the new `Connections`
+block (further down, order submission). No overlap, both sets of changes intact post-rebase — diffed
+`bec7cd4..HEAD` against `a66fb8f..bec7cd4` on both files to confirm rather than assuming. The
+`test-plans/README.md` index table also merged cleanly — both PR #68's and this branch's new rows
+present, in date order.
+
+One local-environment snag, not a content issue: the sandbox had no git identity configured, so
+`git rebase --continue` needed `git config user.name`/`user.email` set first (same
+`tsowner@lkdigitalworks.com` convention as every commit this session), then an explicit
+`GIT_EDITOR=true git commit -C <original-sha>` to reuse the original commit message before
+`rebase --continue` would proceed — plain `--continue` alone errored asking for identity, then again
+for an explicit commit, rather than auto-committing the already-staged, already-resolved change.
+
+Pushed with `--force-with-lease` pinned to the exact known prior remote SHA (`a5a272f...`), not a
+blind `--force` — per this repo's own stated discipline for rewritten-history pushes.
+
+Also noticed while fetching: a stray branch `docs/2026-09-16-order-completion-idempotency-gap-v2`
+now exists on origin, not touched or inspected by this session — out of scope per the standing rule
+not to proactively manage branches/PRs beyond the one being worked on. Flagging its existence here
+only so it isn't mistaken for something this session created.
 **Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-14-order-completion-double-submit-CHECKPOINT.md`
 (that session's PR #70 had merged, and its final CHECKPOINT.md — describing the pre-merge, PR-open
 state — was sitting unarchived at the repo root when this session's clone was made. Archived first,
