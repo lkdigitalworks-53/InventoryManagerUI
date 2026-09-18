@@ -56,6 +56,29 @@ scoping: probably a shared timeout wrapper at the `_request()`/`_send()` level r
 the per-call pattern five more times, but that's a design decision for whoever picks this up, not
 assumed here.
 
+### Order completion can double-consume the FIFO ledger — confirmed on-device, Taher wants a general idempotency/atomicity fix, not a one-off patch
+
+Found and confirmed on-device 2026-09-16. Full trace, reproduction, and fix-shape options in
+`docs/superpowers/ASYNC-REENTRANCY-BUGS.md`'s new **C-3** entry — not duplicated here, that file is
+the canonical home for this bug class. One-line summary: `DataModel._tryCompleteOrder`'s in-flight
+guard (PR #70) correctly blocks same-session retries, but has no persisted record of which of its
+three separate writes (FIFO consumption, stock deduction, order-status update) already succeeded —
+so a request that hangs indefinitely (the timeout gap above) combined with a user workaround that
+resets in-memory state (logout/login) can cause the FIFO batch ledger to be consumed twice for a
+single order while `product.stock` only reflects one deduction. Confirmed real, not theoretical:
+batch went 10 → 9 → 8 for a single 1-unit order.
+
+**Taher's explicit direction, stated when this was reported**: he wants **idempotency and atomicity
+for network calls generally** — this item should not be scoped as a narrow patch for just
+`_tryCompleteOrder`. C-3's entry notes the same checkpoint/resume shape likely applies to
+`ASYNC-REENTRANCY-BUGS.md`'s still-unfixed C-1 and C-2 as well; whoever designs the fix for this
+should treat that as the actual scope question, not assume each gets its own independent patch.
+
+Deliberately not fixed this session — flagged for a dedicated session per explicit instruction, same
+as the timeout item above. The two are related (idempotency-safety is what would make it safe to
+eventually add the timeouts/retries the item above calls for) but are being tracked as separate
+decisions, not bundled into one.
+
 ### Other instances of item 1's async-chain pattern — audited, three lower-priority findings
 
 Found 2026-09-14 while auditing the codebase for other instances of item 1's pattern (chained async
