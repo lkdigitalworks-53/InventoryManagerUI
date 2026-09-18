@@ -20,6 +20,13 @@ BottomSheet {
 
     property var selectedProducts: []
     property var productNames: []
+    // Parallel to productNames, same filtering, same order -- productCombo's
+    // currentIndex indexes into THIS, not InventoryStore.products directly,
+    // since a product with a pending batch mint (StockBatchStore.
+    // hasPendingMint) is skipped from both arrays together. Without this
+    // indirection, filtering productNames alone would misalign every index
+    // after the first skipped product.
+    property var _pickerProducts: []
 
     // Mirror of StaffStore filtered to active members. Index 0 is the
     // empty "(no staff)" row so the user can leave it unattributed.
@@ -68,18 +75,28 @@ BottomSheet {
     // (Re)build the picker labels with a live "avail N" that reflects the cart.
     // Called on open AND after every qty change / add — without this the count
     // was built once and stayed static (unlike the edit-order dialog).
+    // Skips any product with a batch-id mint still pending (StockBatchStore.
+    // hasPendingMint) -- its stock number may already be up but the FIFO
+    // ledger backing it isn't yet, and selling against it here is exactly
+    // the drift topUpOldest's Adjustment-batch fix (2026-09-14) exists to
+    // paper over safely, not something to invite deliberately when it's this
+    // easy to just wait for the retry.
     function _rebuildPickerNames() {
         var names = []
+        var pickable = []
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
+            if (StockBatchStore.hasPendingMint(p.productId)) continue
 
             var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             var productId = p.productId ? "[" + p.productId + "] " : ""
             names.push(productId + p.name + " — " + InventoryStore.formatCurrency(sp)
                        + " · " + _availableStock(p) + " left")
+            pickable.push(p)
         }
         var savedIdx = (typeof productCombo !== "undefined") ? productCombo.currentIndex : 0
         productNames = names
+        _pickerProducts = pickable
         if (typeof productCombo !== "undefined")
             productCombo.currentIndex = Math.max(0, Math.min(savedIdx, names.length - 1))
     }
@@ -537,8 +554,8 @@ BottomSheet {
 
     function addSelectedProduct() {
         var idx = productCombo.currentIndex
-        if (idx < 0 || idx >= InventoryStore.products.length) return
-        var p = InventoryStore.products[idx]
+        if (idx < 0 || idx >= _pickerProducts.length) return
+        var p = _pickerProducts[idx]
         if (p.stock <= 0) return
         var arr = []
         for (var i = 0; i < selectedProducts.length; ++i)

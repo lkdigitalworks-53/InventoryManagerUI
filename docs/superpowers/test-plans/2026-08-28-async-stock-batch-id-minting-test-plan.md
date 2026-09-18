@@ -212,12 +212,20 @@ Given limited testing time, prioritize in this order:
 - [ ] E1 (batch id reuse after delete) — not called out specifically in Taher's 2026-08-29 confirmation;
       left unchecked rather than assumed. Worth a specific look if not already covered incidentally.
 - [ ] E3 (large bulk import, 50+ rows) — same as E1, not specifically called out; left unchecked.
-- [ ] N3 explicitly confirmed one way or the other — a failed mint's fate should be a known, recorded
-      answer at some point, but per the Status note above this is **not a merge blocker**: it's a
-      narrow, low-probability window (product must succeed, then the *specific* batch mint must drop
-      mid-flight), already tracked in `docs/superpowers/E2E-TESTING-ROADMAP.md` with a clear next
-      step, structurally different from (not a regression of) the correctly-handled primary-entity
-      mint pattern used everywhere else in the app
+- [x] N3 explicitly confirmed — **2026-09-14, Taher, on-device: permanently lost, not recovered.**
+      Restocked +10 on a product with an existing 1-unit batch, dropped connectivity right after
+      Submit. Stock updated to 11; no batch was ever created for the 10 (confirmed in Firestore
+      directly, not just the app). Worse than this plan's own framing anticipated: completing a
+      3-unit order against that product didn't just expose a shortfall — the order-completion drift-
+      repair (`topUpOldest`) silently rewrote the *original* batch's `qtyReceived`/`qtyRemaining` from
+      1 to 3 to cover it, rather than creating a new, clearly-labeled adjustment entry. Full root-cause
+      trace and both fixes (retry-on-reconnect + hide-from-picker, and topUpOldest always synthesizing
+      instead of mutating) are in the roadmap's item-1 entry and
+      `docs/superpowers/test-plans/2026-09-14-batch-mint-retry-and-topup-safety-test-plan.md` — not
+      repeated here. **This finding was not a merge blocker for this branch** (the branch itself did
+      what it was designed to do; this was a pre-existing companion-write gap the branch's async
+      conversion made reachable, confirmed rather than theoretical) — it has since been fixed on its
+      own branch, separately from this one.
 - [ ] E2 (concurrent restock) — **blocked**, no staff/manager cross-tenant login yet (pending,
       tracked separately from this branch); not a merge blocker — this exercises the same
       already-accepted `mintCounterValue` CAS mechanism Products/Orders/Staff/Suppliers already rely

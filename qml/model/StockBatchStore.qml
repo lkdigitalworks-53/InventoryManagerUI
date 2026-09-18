@@ -1,5 +1,8 @@
 pragma Singleton
 import QtQuick
+import QtCore
+
+import "../helper/SettingsPath.js" as SettingsPath
 
 // FIFO inventory cost ledger. Each row in `stock_batches/{batchId}` is one
 // receipt of goods — typically created when the user restocks a product
@@ -60,6 +63,9 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        _loadPendingMints()
+        AuthService.isOnlineChanged.connect(_onIsOnlineChanged)
+        if (AuthService.isOnline) retryPendingMints()
     }
 
     // Component 3's client-side half (review finding C3, 2026-08-06) — see
@@ -203,11 +209,42 @@ QtObject {
     // covers the counter doc not existing yet (first deploy of this
     // feature, or first batch of a new year) without reissuing an id
     // that's already in local use.
+    // 2026-09-14, on-device (Taher): with no timeout anywhere in
+    // FirebaseService's underlying request path, a mint attempt that starts
+    // right as connectivity drops can hang indefinitely rather than failing
+    // -- which meant addBatch()'s failure branch (queue for retry, see
+    // above) never even ran, because nothing ever called it back. Confirmed:
+    // over a minute with the app left open, no batch, no retry -- not a
+    // slow retry cycle, a genuine hang. Root cause is app-wide (no request
+    // in this codebase has a timeout; see the roadmap's own item on this),
+    // but fixing that broadly is out of scope for this session -- this is a
+    // narrow, bounded safety net scoped to just the one call item 1's whole
+    // retry-on-reconnect promise depends on, using the exact same pattern
+    // AuthService._postJson already established for this same problem
+    // elsewhere ("20s timeout fallback so a hung request never leaves the
+    // UI silent"). Does NOT abort the underlying request (FirebaseService's
+    // _request encapsulates its own XHR, not exposed here to abort) -- if it
+    // eventually does resolve after this fires, `settled` just discards it.
     function nextBatchId(callback) {
         var year = new Date().getFullYear()
         var prefix = _batchIdPrefixForYear(year)
         var seedMax = _seedBatchMaxForPrefix(prefix)
+        var settled = false
+        var timeoutTimer = Qt.createQmlObject(
+            'import QtQuick; Timer { interval: 15000; running: true; repeat: false }',
+            root, "StockBatchStoreMintTimeoutTimer")
+        timeoutTimer.triggered.connect(function() {
+            if (settled) return
+            settled = true
+            timeoutTimer.destroy()
+            console.warn("[StockBatchStore] batch-id mint timed out after 15s -- treating as failed")
+            callback("")
+        })
         FirebaseService.mintCounterValue("counters/stockBatches-" + year, seedMax, function(ok, value) {
+            if (settled) return
+            settled = true
+            timeoutTimer.stop()
+            timeoutTimer.destroy()
             callback(ok ? (prefix + String(value).padStart(3, '0')) : "")
         })
     }
@@ -280,7 +317,16 @@ QtObject {
         if (!productId || !qty || qty <= 0) { if (callback) callback(null); return }
         nextBatchId(function(id) {
             if (!id) {
-                console.warn("[StockBatchStore] could not mint a batchId — addBatch aborted")
+                // No error/warning surfaced beyond this log -- by design (see
+                // docs/superpowers/E2E-TESTING-ROADMAP.md item 1, Decision 1).
+                // Queued for automatic retry on reconnect instead of lost:
+                // the product's own stock delta already landed by the time
+                // this mint could fail, so silently dropping the batch here
+                // would leave that stock permanently unbacked in the FIFO
+                // ledger. hasPendingMint() lets order-entry screens hide this
+                // product from the picker until the retry actually lands.
+                console.warn("[StockBatchStore] could not mint a batchId — queued for retry on reconnect")
+                _queuePendingMint(productId, supplierId, qty, unitCost, note)
                 if (callback) callback(null)
                 return
             }
@@ -309,6 +355,109 @@ QtObject {
         batches = arr
         if (!deferWrite) Gateway.recordMutation("stock_batch", doc.batchId, "create", null, doc)
         return doc
+    }
+
+    // ── Pending batch-id-mint retry queue ───────────────────────────────────
+    // Durable (Settings-backed, survives a relaunch) record of addBatch()
+    // calls whose nextBatchId() mint failed -- see addBatch() above. Design:
+    // docs/superpowers/E2E-TESTING-ROADMAP.md item 1, Decision 1 (2026-09-14):
+    // retry automatically on reconnect, no error/warning surfaced to the
+    // user, but the affected product is hidden from order-entry pickers
+    // (via hasPendingMint()) until the retry actually lands -- selling
+    // against stock with no batch backing it is exactly the drift that Decision
+    // 2's topUpOldest fix exists to make safe, but avoiding it in the first
+    // place is strictly better than relying on that safety net.
+    property var _pendingMints: []
+    property var _pendingMintsInFlight: ({})
+
+    property Settings _pendingMintSettings: Settings {
+        category: "StockBatchStorePendingMints"
+        // Same pattern as OutboxStore.qml's _settings -- see its comment for
+        // why an explicit temp-file path is used under qmltestrunner.
+        location: SettingsPath.settingsLocationOverride(
+                      Application.organization,
+                      StandardPaths.writableLocation(StandardPaths.TempLocation))
+        property string pendingJson: ""
+    }
+
+    function _loadPendingMints() {
+        if (_pendingMintSettings.pendingJson && _pendingMintSettings.pendingJson.length > 2) {
+            try {
+                var arr = JSON.parse(_pendingMintSettings.pendingJson)
+                if (Array.isArray(arr)) _pendingMints = arr
+            } catch (e) {
+                _pendingMints = []
+            }
+        }
+    }
+
+    function _savePendingMints() {
+        _pendingMintSettings.pendingJson = JSON.stringify(_pendingMints)
+    }
+
+    function _queuePendingMint(productId, supplierId, qty, unitCost, note) {
+        var arr = _pendingMints.slice()
+        arr.push({
+            id: Date.now() + "_" + Math.floor(Math.random() * 1000000),
+            productId: productId,
+            supplierId: supplierId || "",
+            qty: qty,
+            unitCost: unitCost,
+            note: note || ""
+        })
+        _pendingMints = arr
+        _savePendingMints()
+    }
+
+    // Used by order-entry pickers (NewOrderDialog, OrderDetailDialog) to hide
+    // a product until its pending batch actually lands -- see the header
+    // comment above.
+    function hasPendingMint(productId) {
+        for (var i = 0; i < _pendingMints.length; ++i)
+            if (_pendingMints[i].productId === productId) return true
+        return false
+    }
+
+    // Called on reconnect (AuthService.isOnlineChanged, see
+    // Component.onCompleted below) and defensively at startup in case the app
+    // was relaunched while already online with items left over from a prior
+    // session. Snapshots the list so an item added mid-retry (a fresh mint
+    // failure arriving while this is running) isn't double-processed in the
+    // same pass, and skips anything already in flight so overlapping
+    // triggers (isOnline flapping true/false/true) can't retry the same item
+    // twice concurrently.
+    function retryPendingMints() {
+        var snapshot = _pendingMints.slice()
+        for (var i = 0; i < snapshot.length; ++i) {
+            var item = snapshot[i]
+            if (_pendingMintsInFlight[item.id]) continue
+            _pendingMintsInFlight[item.id] = true
+            _retryOnePendingMint(item)
+        }
+    }
+
+    function _retryOnePendingMint(item) {
+        nextBatchId(function(id) {
+            delete _pendingMintsInFlight[item.id]
+            if (!id) return   // still failing -- stays queued for next reconnect
+            var doc = _buildBatchDoc(id, item.productId, item.supplierId, item.qty, item.unitCost, item.note)
+            var arr = batches.slice()
+            arr.push(doc)
+            batches = arr
+            Gateway.recordMutation("stock_batch", doc.batchId, "create", null, doc)
+            // Remove by id, not index -- _pendingMints may have changed
+            // (new failures queued, or a concurrent retry already removed a
+            // different item) since this item's snapshot was taken.
+            var next = []
+            for (var j = 0; j < _pendingMints.length; ++j)
+                if (_pendingMints[j].id !== item.id) next.push(_pendingMints[j])
+            _pendingMints = next
+            _savePendingMints()
+        })
+    }
+
+    function _onIsOnlineChanged() {
+        if (AuthService.isOnline) retryPendingMints()
     }
 
     // Companion to addBatchWithId(..., true) — fires ONE
@@ -422,55 +571,35 @@ QtObject {
     //
     // This is deliberately permissive: we never want a sale to fail because
     // the batch ledger drifted. Manual edits to product.stock, imports, or
-    // legacy data are the typical causes.
+    // legacy data are the typical causes -- now also a batch-id mint that
+    // failed and hasn't retried yet (Decision 1, same roadmap entry).
     //
     // callback is optional — fires once the top-up is confirmed (or
     // immediately, synchronously, for the create-a-synthetic-batch path,
     // which goes through addBatch's existing fire-and-forget create — a
     // create has no CAS/attribution concern the way an existing-doc delta
     // does, so it wasn't part of this round's async rewrite).
+    //
+    // 2026-09-14: ALWAYS synthesizes a new, clearly-labeled batch now --
+    // previously this only happened when zero batches existed; when at least
+    // one did, the code instead applied an additive delta directly onto the
+    // newest existing batch's qtyReceived/qtyRemaining, silently rewriting
+    // its received history. Confirmed on-device (see
+    // docs/superpowers/E2E-TESTING-ROADMAP.md item 1): the topped-up units
+    // inherited that batch's unitCost/supplierId instead of reflecting an
+    // unknown/unrecorded source honestly -- a restock at a different price
+    // or supplier would silently corrupt COGS/attribution for those units.
+    // A new synthetic batch costs nothing extra to create (addBatch is the
+    // same call either way) and never touches another batch's own history.
     function topUpOldest(productId, deficit, callback) {
         if (!productId || !deficit || deficit <= 0) { if (callback) callback(); return }
-        var ordered = forProduct(productId)
-        if (ordered.length === 0) {
-            // No batches at all — synthesize one labelled "Adjustment".
-            // addBatch is async now (mints its own id) — chain callback()
-            // off ITS callback rather than firing immediately, so a caller
-            // waiting on topUpOldest's callback doesn't get told "done"
-            // before the synthetic batch's id-mint round-trip finishes.
-            addBatch(productId, "", deficit, 0, "Adjustment (drift repair)", false, function(doc) {
-                if (callback) callback()
-            })
-            return
-        }
-        // Top up the newest batch — assumption: drift came from an unrecorded
-        // restock or import, and the most recent supplier is the best guess.
-        var newest = ordered[ordered.length - 1]
-        // review round 2: this used to also splice a "drift +N" note onto
-        // the batch via the same write as the qty change. A delta call can
-        // only touch numeric fields (see Gateway.recordDelta/applyDelta),
-        // and a SEPARATE mutation call for just the note would reintroduce
-        // the exact same two-writes-racing-on-one-doc hazard this whole
-        // round is closing. The note was cosmetic (audit-trail-readable,
-        // not correctness-critical) — dropped rather than worked around.
-        Gateway.recordDelta("stock_batch", newest.batchId,
-            { qtyReceived: deficit, qtyRemaining: deficit }, {}, {},
-            function(result) {
-                if (result && result.ok) {
-                    var updated = Object.assign({}, newest, {
-                        qtyReceived: result.after.qtyReceived,
-                        qtyRemaining: result.after.qtyRemaining,
-                        updatedAt: new Date().toISOString()
-                    })
-                    var next = []
-                    for (var i = 0; i < batches.length; ++i)
-                        next.push(batches[i].batchId === updated.batchId ? updated : batches[i])
-                    batches = next
-                    console.warn("[StockBatchStore] Topped up batch", updated.batchId, "by", deficit,
-                                 "to repair drift on product", productId)
-                }
-                if (callback) callback()
-            })
+        // addBatch is async now (mints its own id) — chain callback() off
+        // ITS callback rather than firing immediately, so a caller waiting
+        // on topUpOldest's callback doesn't get told "done" before the
+        // synthetic batch's id-mint round-trip finishes.
+        addBatch(productId, "", deficit, 0, "Adjustment (drift repair)", false, function(doc) {
+            if (callback) callback()
+        })
     }
 
     // Inverse of consumeFifo: credit `qty` back onto a specific batch (used when

@@ -167,11 +167,17 @@ BottomSheet {
         productCombo.currentIndex = savedIdx
     }
 
+    // Skips any product with a batch-id mint still pending (StockBatchStore.
+    // hasPendingMint) -- same reasoning as NewOrderDialog._rebuildPickerNames.
+    // Only affects adding a NEW line via this picker; an existing line
+    // already on the order (added before the mint failure) is untouched --
+    // it's edited via its own row, not this combo.
     function _rebuildCatalog() {
         var cat = []
         var names = []
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
+            if (StockBatchStore.hasPendingMint(p.productId)) continue
             var avail = _availableStock(p.productId)
             var sellPrice = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             cat.push({ name: p.name, price: sellPrice, productId: p.productId,
