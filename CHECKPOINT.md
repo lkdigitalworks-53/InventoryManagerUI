@@ -22,9 +22,22 @@ approved design), `qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman m
 - [x] 4. Read `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` and PR #73's diff (adds C-3).
 - [x] 5. Traced the idempotency plumbing in code (findings below) to ground the approach trade-offs.
 - [x] 6. Created this branch, archived the stale checkpoint, wrote this file.
-- [ ] 7. **Blocked on Taher's answers to Q1-Q3 below.** Next: brainstorming step 4/5 (propose approaches,
-      present design in sections, get approval), then write the design doc under
-      `docs/superpowers/specs/`, then `superpowers:writing-plans`.
+- [x] 7. Posted findings + Q1-Q3 to Taher (PR #74 opened as draft).
+- [x] 8. Taher asked: rebase PR #73 first, report if mergeable, then discuss scope. Rebased
+      `docs/2026-09-16-order-completion-idempotency-gap-v2` onto `main` @ `bec7cd4`. One conflict, in
+      `E2E-TESTING-ROADMAP.md` (both sides inserted after the XHR-timeout item). Kept both whole; C-3 entry
+      placed first (Critical before the Medium/Low audit findings, and it references the timeout item just
+      above it). `ASYNC-REENTRANCY-BUGS.md` auto-merged. Diff vs `main` is exactly the same 2 files, +103/-0.
+      Commit re-authored to `Taher (via Claude session)`, force-pushed with lease. CI on `88bf85b`: all 5
+      checks green, `mergeable_state: clean`. Trial merge of rebased #73 with PR #72: no conflicts.
+- [ ] 9. **Scope discussion with Taher** (his call after step 8). Q1-Q3 below still open. Then brainstorming
+      step 4/5 (approaches, design in sections, approval), design doc under `docs/superpowers/specs/`,
+      then `superpowers:writing-plans`.
+
+**Provenance note (Taher asked directly):** the item was NOT taken from the list on `main`'s
+`E2E-TESTING-ROADMAP.md`. The detailed C-3 entry lives in `ASYNC-REENTRANCY-BUGS.md`; the roadmap only gets a
+pointer to it via PR #73, which was unmerged and conflicted at the time. The roadmap items actually on `main`
+(XHR timeout, staff cleanup, ActivityLog, Category/Channel writes) were passed over on my own judgement.
 
 Not done, deliberately: no code, no tests, no test plan, no `SKILLS.md`/`AGENTS.md`/`README.md` edits.
 There is no change to test or document yet; the test plan is written together with the approved design.
@@ -33,7 +46,7 @@ App not built or run (standing instruction). No Qt tooling installed in the sand
 ## Live state found (2026-09-18)
 
 - `main`'s roadmap is **stale**: it does not list C-3. That entry only exists in PR #73
-  (`docs/2026-09-16-order-completion-idempotency-gap-v2`), which is `mergeable_state: dirty`.
+  (`docs/2026-09-16-order-completion-idempotency-gap-v2`), which was `mergeable_state: dirty` (fixed in step 8: now rebased, CI green, clean).
 - PR #72 (`fix/2026-09-16-new-order-double-submit`, C-2 fix): CI all green (QML, Functions, Rules, E2E,
   summary comment), `mergeable_state: clean`, awaiting Taher's merge.
 - C-1 (`ConfirmReturnSheet` -> `_tryAdjustOrder` double-deduct) is still unfixed and Critical.
