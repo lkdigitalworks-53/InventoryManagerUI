@@ -3188,3 +3188,57 @@ batch path) — `Object.assign`'s base object already preserves the field unchan
 the server actually does. Not audited elsewhere in the codebase for the same pattern (scope) —
 worth watching for wherever a `recordDelta` success handler synthesizes any field beyond the
 delta target itself.
+
+---
+
+## Skill 66: A retry loop that never gives up is right offline — the defect was that it never said anything
+
+**Files**: `qml/helper/StuckWrites.js`, `qml/model/Gateway.qml`, `qml/Main.qml`,
+`qml/components/GlassHeader.qml`, `tests/tst_StuckWrites.qml`, `tests/tst_Gateway.qml`. PR #75.
+(`main` ended at Skill 65 when this was written; renumber on a rebase conflict.)
+
+**What was wrong** (`DELETE-FEATURE-ROADMAP` item 1): `_send`, `_sendBatch` and `_sendDelta` sent every failure
+that wasn't a recognised terminal case to `OutboxStore.markFailed()`, which retries forever, while the stores
+had already applied the change locally. Nobody was ever told. Taher chose to fix the silence only (surface,
+keep retrying), not to drop, roll back or park the write.
+
+**Decisions the trace forced**
+
+1. **Count, don't classify.** `functions/index.js` turns every `applyMutation` exception into
+   `500 write-failed`, so a poison write and a deploy blip look identical to the client. The only client-side
+   signal is how many times a write has failed, so the indicator fires on the 5th server-side failure
+   (about 3 minutes with the backoff `[2s, 8s, 30s, 2m, 10m]`).
+2. **Offline and 401 must never count.** Status 0 is offline-first working as designed, 401 is the token
+   refresh path, 409 is already dropped and reported. Everything from 400 up that isn't 401 or 409 counts.
+3. **Prune from the source of truth, don't clear at every exit.** `Gateway` has six `OutboxStore.markSent`
+   sites, plus coalescing and sign-out. `_pruneStuck()` instead rebuilds the live `requestId` set from
+   `OutboxStore.items` at the top of `_reschedule()`, which every send handler already ends with. One site, and
+   a future exit path is covered without anyone remembering to touch this code.
+4. **Look for an existing surface before designing one.** I priced "one new component" for the indicator and
+   only after Taher had chosen it found that `GlassHeader` already has a caption line showing a danger-coloured
+   offline message; reusing it was about 10 lines in two files. `ActivityLog` looked like the obvious channel
+   and is a trap for this event: `record()` defaults `actorUid` to the current account and `_isOwn()` hides own
+   entries from the bell and Notifications sheet; a non-own actor would show on every other staff member's
+   device because `activity_log` is tenant-wide; and it is a direct Firestore write, not the outbox, so it can
+   fail during the very outage it reports.
+5. **Components read app-level state through `app.`** (`app.isOnline`), and no component imports `../model`.
+   New state goes through a `Main.qml` root property (`syncStuckCount`), not a new import.
+
+**Technique: run QML test bodies in Node when there is no Qt.** Strip the `.pragma library` line from the helper
+and load it with `new Function`. Take the text between `TestCase {` and the last `}` of the `.qml` test file,
+delete the `name:` line, build a function from it with `compare` / `verify` shims in scope that returns every
+`test_*` function found by regex, and run each in try/catch. Then copy the helper, apply a one-line `sed`
+mutation per behaviour, and require the harness to fail each time (this change: 21/21 green, 8/8 mutations
+caught). It proves the algorithm and the test logic only, not QML syntax, singleton wiring or `SignalSpy`, so CI
+stays the verdict for the `.qml` files. It only works for tests that touch a pure helper; anything that needs a
+QML singleton (`OutboxStore`, `Toast`) still needs the real runner.
+
+**Limits, stated so they aren't rediscovered**: the `onreadystatechange` handlers that call `_noteFailure` can't
+run under `qmltestrunner` (no mock HTTP layer, see the scope note in `tests/tst_Gateway.qml`) and `GlassHeader`
+needs Felgo `dp()` / `sp()`, so those lines are on-device coverage only. The counter is in memory: it restarts
+with the app. If the QTBUG-49896 workaround fails to recover a status, `effStatus` reads 0 and detection never
+fires; the sender logs print raw and effective status to make that visible.
+
+**Follow-ups, in the order they would pay off**: park a stuck write and offer Retry / Discard (Discard rolls
+back to the outbox item's `before`); map Firestore error codes to distinct HTTP statuses in
+`functions/index.js` so the client can classify instead of counting.

@@ -19,6 +19,11 @@ deferred-twice item on this list.
 **Why it's still not fixed**: real, separate work — rewriting shared retry/classification logic
 used by every mutation of every entity, not a delete-ticket-sized change.
 
+**Status 2026-09-19 (PR #75): surfaced, not resolved.** A stuck write now raises one toast and a persistent
+`GlassHeader` caption line (all three senders); retry, backoff and dropping are unchanged. Still open:
+Retry/Discard for a stuck write, and server-side error classification. Details in `KNOWN-ISSUES.md` and
+`docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
+
 ## 2. Staff delete has no row-level button — MEDIUM
 
 Identical gap to what products and orders had before this PR: `StaffStore.deleteStaff()` and its
