@@ -119,6 +119,7 @@ Item {
                             if (k === "product_restocked") return "restocked"
                             if (k === "staff_added") return "staff-added"
                             if (k === "staff_updated") return "staff-updated"
+                            if (k === "product_deleted" || k === "order_deleted" || k === "staff_deleted") return "delete"
                             if (k === "import") return "import"
                             if (k === "order") return ""
                             return "activity"
@@ -131,6 +132,7 @@ Item {
                             if (k === "product_restocked") return Constants.grad4
                             if (k === "staff_added") return Constants.grad3
                             if (k === "staff_updated") return Constants.grad2
+                            if (k === "product_deleted" || k === "order_deleted" || k === "staff_deleted") return Constants.gradWarm
                             if (k === "import") return Constants.grad2
                             return Constants.grad1
                         }

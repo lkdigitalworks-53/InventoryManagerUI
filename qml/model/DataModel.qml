@@ -44,6 +44,53 @@ Item {
         return false
     }
 
+    // StockBatchStore.restoreFifo/topUpOldest both fall through to
+    // synthesizing a brand-new "Adjustment (drift repair)" batch at
+    // unitCost 0 when no batch exists for the productId anymore
+    // (topUpOldest's own comment: "assumption: drift came from an
+    // unrecorded restock or import"). That's the right call for genuine
+    // drift between product.stock and the batch ledger for a PRODUCT THAT
+    // STILL EXISTS. It's the wrong call when the product was deleted --
+    // deleteProduct()'s cascade removed every batch for it on purpose (see
+    // KNOWN-ISSUES.md), and any of the 11 reversal/adjustment call sites
+    // below reaching that same empty-batches state for a deleted product
+    // would resurrect exactly the orphaned-batch problem that cascade was
+    // built to prevent, except now with the wrong (zero) cost basis. These
+    // two wrappers are the one place that decision gets made -- every call
+    // site below routes through them instead of calling StockBatchStore
+    // directly, rather than repeating the same guard 11 times.
+    function _restoreFifoSafe(batchId, productId, qty, callback) {
+        if (productId && !InventoryStore.getById(productId)) {
+            console.warn("[DataModel] skipping stock restoration for deleted product", productId)
+            // Guarded rather than a bare dispatcher.stockRestorationSkipped(...):
+            // real Logic instances always have this signal, but a handful of
+            // pre-existing tests wire `DataModel { id: dm }` with no
+            // `dispatcher` at all -- QML's Connections defaults `target` to
+            // its parent when unset, so `dispatcher` silently resolves to
+            // the DataModel instance itself, which has no such function.
+            // Found via a real CI failure (tst_OrderMetadataEditPreserves
+            // Consumption.qml), not assumed.
+            if (dispatcher && typeof dispatcher.stockRestorationSkipped === "function") {
+                dispatcher.stockRestorationSkipped(productId)
+            }
+            if (callback) callback()
+            return
+        }
+        StockBatchStore.restoreFifo(batchId, productId, qty, callback)
+    }
+
+    function _topUpOldestSafe(productId, deficit, callback) {
+        if (productId && !InventoryStore.getById(productId)) {
+            console.warn("[DataModel] skipping stock top-up for deleted product", productId)
+            if (dispatcher && typeof dispatcher.stockRestorationSkipped === "function") {
+                dispatcher.stockRestorationSkipped(productId)
+            }
+            if (callback) callback()
+            return
+        }
+        StockBatchStore.topUpOldest(productId, deficit, callback)
+    }
+
     // ── Action dispatcher ─────────────────────────────────────────────────────
 
     Connections {
@@ -486,7 +533,7 @@ Item {
                     if (!restoreLine || !Array.isArray(restoreLine.consumption)) continue
                     for (var ri = 0; ri < restoreLine.consumption.length; ++ri) {
                         var rc = restoreLine.consumption[ri]
-                        StockBatchStore.restoreFifo(rc.batchId, restoreLine.productId, rc.qtyConsumed)
+                        _restoreFifoSafe(rc.batchId, restoreLine.productId, rc.qtyConsumed)
                     }
                 }
                 // C5 above only restores the batch ledger. It doesn't touch
@@ -572,7 +619,7 @@ Item {
                             // Top up the oldest batch by the deficit and try
                             // once more — topUp guarantees enough, so a
                             // single retry suffices.
-                            StockBatchStore.topUpOldest(invP.productId, shortfall, function() {
+                            _topUpOldestSafe(invP.productId, shortfall, function() {
                                 StockBatchStore.consumeFifo(invP.productId, shortfall, function(retryResult) {
                                     for (var r = 0; r < retryResult.consumption.length; ++r)
                                         consumption.push(retryResult.consumption[r])
@@ -660,7 +707,7 @@ Item {
                         _pushLine(consumption)
                     }
                     if (fifoResult.shortfall > 0) {
-                        StockBatchStore.topUpOldest(invP.productId, fifoResult.shortfall, function() {
+                        _topUpOldestSafe(invP.productId, fifoResult.shortfall, function() {
                             StockBatchStore.consumeFifo(invP.productId, fifoResult.shortfall, function(retryResult) {
                                 for (var r = 0; r < retryResult.consumption.length; ++r)
                                     consumption.push(retryResult.consumption[r])
@@ -720,10 +767,10 @@ Item {
             // Restore sellable stock (batch ledger + product.stock).
             if (plan.length > 0) {
                 for (var pr = 0; pr < plan.length; ++pr)
-                    StockBatchStore.restoreFifo(plan[pr].batchId, line.productId, plan[pr].qty)
+                    _restoreFifoSafe(plan[pr].batchId, line.productId, plan[pr].qty)
             } else if (line.productId) {
                 // Pre-FIFO line: no lineage — repair via topUpOldest.
-                StockBatchStore.topUpOldest(line.productId, qty)
+                _topUpOldestSafe(line.productId, qty)
             }
             if (line.productId)
                 InventoryStore.creditStockNoBatch(line.productId, qty)
@@ -845,7 +892,7 @@ Item {
                     var failedEntry = pendingAdditions[pf2]
                     for (var fci = 0; fci < failedEntry.cons.length; ++fci) {
                         var fc = failedEntry.cons[fci]
-                        StockBatchStore.restoreFifo(fc.batchId, failedEntry.d.productId, fc.qtyConsumed)
+                        _restoreFifoSafe(fc.batchId, failedEntry.d.productId, fc.qtyConsumed)
                     }
                     InventoryStore.creditStockNoBatch(failedEntry.d.productId, failedEntry.d.addedQty)
                 }
@@ -1015,10 +1062,10 @@ Item {
                 if (restock) {
                     if (plan.length > 0) {
                         for (var pr = 0; pr < plan.length; ++pr)
-                            StockBatchStore.restoreFifo(plan[pr].batchId, d.productId, plan[pr].qty)
+                            _restoreFifoSafe(plan[pr].batchId, d.productId, plan[pr].qty)
                     } else if (d.productId) {
                         // Pre-FIFO line: no lineage — repair via topUpOldest.
-                        StockBatchStore.topUpOldest(d.productId, d.returnedQty)
+                        _topUpOldestSafe(d.productId, d.returnedQty)
                     }
                     InventoryStore.creditStockNoBatch(d.productId, d.returnedQty)
                 }
@@ -1068,7 +1115,7 @@ Item {
                                         // closes the matching gap on the batch ledger.
                                         for (var rci = 0; rci < cons.length; ++rci) {
                                             var rc2 = cons[rci]
-                                            StockBatchStore.restoreFifo(rc2.batchId, dCaptured.productId, rc2.qtyConsumed)
+                                            _restoreFifoSafe(rc2.batchId, dCaptured.productId, rc2.qtyConsumed)
                                         }
                                     } else {
                                         pendingAdditions.push({ d: dCaptured, invA: invACaptured, cons: cons })
@@ -1078,7 +1125,7 @@ Item {
                             }
 
                             if (fifoResult.shortfall > 0) {
-                                StockBatchStore.topUpOldest(dCaptured.productId, fifoResult.shortfall, function() {
+                                _topUpOldestSafe(dCaptured.productId, fifoResult.shortfall, function() {
                                     StockBatchStore.consumeFifo(dCaptured.productId, fifoResult.shortfall, function(retryResult) {
                                         for (var rr = 0; rr < retryResult.consumption.length; ++rr)
                                             cons.push(retryResult.consumption[rr])
@@ -1151,7 +1198,7 @@ Item {
             // decision any caller branches on.
             StockBatchStore.consumeFifo(productId, d.qty, function() {})
         } else if (d.action === "topup") {
-            StockBatchStore.topUpOldest(productId, d.qty)
+            _topUpOldestSafe(productId, d.qty)
         }
     }
 }

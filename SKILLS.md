@@ -3128,3 +3128,63 @@ progress, not pattern-matched from habit. After ANY automated or flag-based conf
 not just this one — check the actual resulting file content against what you expected before
 moving on, the same way CI results get checked via the API rather than assumed from "it should have
 worked."
+## Skill 65: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
+
+**What happened**: on-device testing of the Tier C cascade-delete feature found a precisely
+reproducible bug: create a product with stock 10, sell 1 via a completed order, delete the
+product — the product disappears, but the batch stays in Firestore with `qtyRemaining: 9`,
+confirmed directly in the Firestore console, not just the app's own UI. Traced end to end rather
+than guessed at:
+
+`deleteProduct()`'s cascade sends `Gateway.recordMutation("stock_batch", batchId, "delete", b,
+null)`, where `b` is the *locally cached* batch object. Server-side, `applyMutation` does a CAS
+check: it reads Firestore's actual current document and rejects the delete with a 409 if
+`_deepEqual(current, before)` fails — a legitimate concurrency-safety feature, not the bug. The
+bug: `StockBatchStore.consumeFifo`'s (and `restoreFifo`'s, and `topUpOldest`'s) success handler,
+after a `Gateway.recordDelta` call succeeds, rebuilt the local batch object as
+`Object.assign({}, b, { qtyRemaining: result.after.qtyRemaining, updatedAt: new
+Date().toISOString() })` — stamping a fresh, client-generated timestamp onto `updatedAt`. But
+server-side `applyDelta`'s working-doc write is `Object.assign({}, current, after)` where `after`
+contains *only* the delta fields (`qtyRemaining` here) — it never touches `updatedAt` at all. So
+after the very first FIFO consumption against any batch, the local cache's `updatedAt` diverges
+from Firestore's actual stored value *permanently* — the server's copy stays frozen at the
+batch's original creation timestamp, the local copy claims a new one on every delta success.
+Any later CAS-protected mutation against that batch — in this case, a delete — fails the
+`_deepEqual` check on that one field, gets silently dropped as a "conflict" (conflicts are never
+retried), and `StockBatchStore._onMutationConflicted` — which does exist and does fire — quietly
+puts the batch back into the local array using the server's actual (still-existing) document,
+with no toast (by design, for batch-level reconciliation). Net effect: looks like nothing went
+wrong, the batch just... stays.
+
+**This predates Tier C.** `consumeFifo`/`restoreFifo`/`topUpOldest` are pre-existing functions;
+this exact `updatedAt` drift has presumably existed since whichever commit first added that line.
+Nothing before Tier C ever attempted a CAS-protected write against a batch that had previously
+been delta-updated in a way that would expose the drift — updates and creates go through their
+own, unrelated code paths. The cascade-delete feature was simply the first thing to actually do
+"read a locally-cached, previously-delta-touched batch, then send it as a CAS `before`."
+
+**The actual lesson**: an "optimistic local update" that adds a field the server-side write path
+doesn't touch isn't optimistic, it's wrong — and it can sit completely inert for a long time,
+because most consumers of that data don't do a byte-exact comparison against server truth.
+CAS-protected deletes and updates do, by design (it's the whole point of a CAS check), which is
+exactly why this specific class of drift only becomes visible the first time something tries to
+delete or update a record that delta-mutations have touched. When adding a client-side "mirror
+what the server just did" update after any `recordDelta`/`recordMutation` success callback, the
+mirrored fields must be *exactly* the fields the server-side apply function actually writes —
+copying the delta's target field is right; adding anything else "for freshness" that the server
+doesn't also set is a guaranteed, permanent divergence waiting for the first CAS check to find it.
+
+**Not independently unit tested**: verifying this fix would need `consumeFifo`'s (or
+`restoreFifo`'s/`topUpOldest`'s) real success callback to fire, which only happens after a real
+`Gateway.recordDelta` network round-trip — same untestable-without-mock-HTTP territory as every
+other Gateway-adjacent test this session. Verified by exact code trace (reading the client
+success handler and the server's `applyDelta` side by side, confirming which fields each one
+actually touches) instead. On-device re-test of the exact reported repro is the real
+verification here, not a unit test.
+
+**Fixed**: removed the synthetic `updatedAt: new Date().toISOString()` from all three success
+handlers in `StockBatchStore.qml` (`consumeFifo`, `restoreFifo`, `topUpOldest`'s restock-newest-
+batch path) — `Object.assign`'s base object already preserves the field unchanged, matching what
+the server actually does. Not audited elsewhere in the codebase for the same pattern (scope) —
+worth watching for wherever a `recordDelta` success handler synthesizes any field beyond the
+delta target itself.

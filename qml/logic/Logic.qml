@@ -62,6 +62,14 @@ Item {
     signal productRestocked(string productId)
     signal productDeleted(string productId)
 
+    // Fired by DataModel's _restoreFifoSafe/_topUpOldestSafe when an order
+    // reopen/reversal/adjustment would need to restore stock for a product
+    // that's been deleted since the order was completed -- the restoration
+    // is skipped rather than resurrecting a phantom batch (see
+    // KNOWN-ISSUES.md), but that must be visible to whoever's processing
+    // the reversal, not silent.
+    signal stockRestorationSkipped(string productId)
+
     // ── Sales ─────────────────────────────────────────────────────────────────
     signal recordSale(var amount, int itemCount)
 

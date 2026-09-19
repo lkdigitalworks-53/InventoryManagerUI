@@ -240,6 +240,25 @@ QtObject {
         return c;
     }
 
+    // Batches whose product still exists. Every function below that
+    // reports on or totals batch data reads through this instead of
+    // StockBatchStore.batches directly. Introduced 2026-09-02 to replace
+    // four duplicated `if (!getById(b.productId)) continue` guards (added
+    // one at a time while fixing two separate bugs -- Potential profit
+    // going negative, Inventory Value not moving -- both caused by a
+    // deleted product's orphaned batches) with one place to get it right.
+    // See docs/superpowers/KNOWN-ISSUES.md and
+    // docs/superpowers/specs/2026-09-02-cleanup-batches-photo-on-product-delete.md.
+    function _activeBatches() {
+        var bs = (typeof StockBatchStore !== "undefined" && StockBatchStore)
+                ? (StockBatchStore.batches || []) : []
+        var out = []
+        for (var i = 0; i < bs.length; ++i) {
+            if (getById(bs[i].productId)) out.push(bs[i])
+        }
+        return out
+    }
+
     // FIFO inventory value. Walks open batches (qtyRemaining > 0) and
     // multiplies each by its captured unit cost — survives multi-supplier
     // restocking + price-change scenarios correctly. Falls back to the
@@ -256,16 +275,9 @@ QtObject {
             return legacy
         }
         var v = 0
-        for (var bi = 0; bi < bs.length; ++bi) {
-            var b = bs[bi]
-            // Same fix as valueByProduct/valueBySupplier/valueByCategory
-            // below and potentialProfitByDimension elsewhere in this file:
-            // a batch whose product no longer exists (deleteProduct()
-            // doesn't clean up StockBatchStore -- see KNOWN-ISSUES.md) must
-            // not keep counting toward the total, or a delete has zero
-            // visible effect on this number no matter how much stock the
-            // deleted product had.
-            if (!getById(b.productId)) continue
+        var active = _activeBatches()
+        for (var bi = 0; bi < active.length; ++bi) {
+            var b = active[bi]
             v += (b.qtyRemaining || 0) * (b.unitCost || 0)
         }
         return v
@@ -280,13 +292,11 @@ QtObject {
     // Inventory value by productId (current snapshot).
     function valueByProduct() {
         var out = {}
-        var bs = (typeof StockBatchStore !== "undefined" && StockBatchStore)
-                ? (StockBatchStore.batches || []) : []
+        var bs = _activeBatches()
         for (var i = 0; i < bs.length; ++i) {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
-            if (!getById(b.productId)) continue
             out[b.productId] = (out[b.productId] || 0) + v
         }
         return out
@@ -296,13 +306,11 @@ QtObject {
     // recorded supplier so the report still balances against totalValue().
     function valueBySupplier() {
         var out = {}
-        var bs = (typeof StockBatchStore !== "undefined" && StockBatchStore)
-                ? (StockBatchStore.batches || []) : []
+        var bs = _activeBatches()
         for (var i = 0; i < bs.length; ++i) {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
-            if (!getById(b.productId)) continue
             out[b.supplierId || ""] = (out[b.supplierId || ""] || 0) + v
         }
         return out
@@ -311,14 +319,12 @@ QtObject {
     // Inventory value by category — joins batches → product → category.
     function valueByCategory() {
         var out = {}
-        var bs = (typeof StockBatchStore !== "undefined" && StockBatchStore)
-                ? (StockBatchStore.batches || []) : []
+        var bs = _activeBatches()
         for (var i = 0; i < bs.length; ++i) {
             var b = bs[i]
             var v = (b.qtyRemaining || 0) * (b.unitCost || 0)
             if (v <= 0) continue
             var p = getById(b.productId)
-            if (!p) continue
             var cat = p.category ? p.category : "(uncategorised)"
             out[cat] = (out[cat] || 0) + v
         }
@@ -394,21 +400,13 @@ QtObject {
         var out = {}
         var filterSup = (opts && opts.supplierId) ? opts.supplierId : ""
         var filterCat = (opts && opts.category) ? opts.category : ""
-        var bs = (typeof StockBatchStore !== "undefined" && StockBatchStore)
-                ? (StockBatchStore.batches || []) : []
+        var bs = _activeBatches()
         for (var i = 0; i < bs.length; ++i) {
             var b = bs[i]
             var qty = b.qtyRemaining || 0
             if (qty <= 0) continue
             if (filterSup && (b.supplierId || "") !== filterSup) continue
             var p = getById(b.productId)
-            // A batch whose product no longer exists (deleteProduct() doesn't
-            // clean up StockBatchStore — see KNOWN-ISSUES.md) has no sellable
-            // price to value it against. Pricing it at 0 while still charging
-            // its real cogs would show it as a phantom loss and drag the
-            // aggregate total down for stock that, from the user's
-            // perspective, no longer exists. Exclude it entirely instead.
-            if (!p) continue
             if (filterCat) {
                 var pcat = (p && p.category) ? p.category : "(uncategorised)"
                 if (pcat !== filterCat) continue
@@ -1007,6 +1005,49 @@ QtObject {
         if (!found) return
 
         Gateway.recordMutation("inventory", productId, "delete", before, null)
+        ActivityLog.record("product_deleted",
+                           "Product deleted: " + before.name,
+                           (before.sku ? before.sku + " · " : "") + "stock " + (before.stock || 0),
+                           productId)
+
+        // Cascade: remove every batch for this product too, not just the
+        // ones with qtyRemaining > 0 -- an already-exhausted batch has no
+        // ongoing value once its product is gone, and leaving some behind
+        // while removing others is a more confusing half-measure than
+        // removing all of them. Same fire-and-forget audit pattern
+        // StockBatchStore already uses for its own mutations -- the
+        // working doc goes, the audit_log entry stays. See spec doc:
+        // docs/superpowers/specs/2026-09-02-cleanup-batches-photo-on-product-delete.md
+        if (typeof StockBatchStore !== "undefined" && StockBatchStore && StockBatchStore.batches) {
+            var bs = StockBatchStore.batches
+            var keep = []
+            for (var bi = 0; bi < bs.length; ++bi) {
+                var b = bs[bi]
+                if (b.productId === productId) {
+                    Gateway.recordMutation("stock_batch", b.batchId, "delete", b, null)
+                } else {
+                    keep.push(b)
+                }
+            }
+            StockBatchStore.batches = keep
+        }
+
+        // Photo cleanup — best-effort, must never block or fail the delete
+        // above. Wrapped in try/catch deliberately: StorageService.
+        // deleteProductPhoto falls through to the native ImageProcessor
+        // singleton (registered only by the real app's main.cpp) when
+        // useCloud is false, which is undefined in a headless test
+        // environment — the same class of failure as the DataModel
+        // logic/dispatcher bug (Skill 58): an unguarded call throwing mid-
+        // function must never be able to abort work that already
+        // completed above it.
+        try {
+            StorageService.deleteProductPhoto(productId, function(ok, err) {
+                if (!ok) console.warn("[InventoryStore] deleteProductPhoto failed for", productId, err)
+            })
+        } catch (e) {
+            console.warn("[InventoryStore] deleteProductPhoto threw for", productId, e)
+        }
     }
 
     // `party` may be a supplierId, an existing supplier name, or a brand-new

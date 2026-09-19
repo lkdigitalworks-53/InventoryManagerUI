@@ -1,7 +1,6 @@
 import Felgo
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls as QQC
 import QtQuick.Layouts
 import QtQuick.Window
 
@@ -19,7 +18,6 @@ App {
 
     property bool compact: width < dp(Constants.compactBreakpoint)
     property string authErrorMessage: ""
-    property string permissionErrorMessage: ""
     property string memberErrorMessage: ""
     property string successMessage: ""
 
@@ -87,7 +85,7 @@ App {
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
-                       forgotPasswordDlg, confirmDlg, stockErrorDlg, permissionErrorDlg,
+                       forgotPasswordDlg, confirmDlg, stockErrorDlg, actionBlockedDlg,
                        importDlg]
         for (var i = 0; i < dialogs.length; ++i) {
             if (dialogs[i] && dialogs[i].opened) {
@@ -208,13 +206,15 @@ App {
         }
 
         function onErrorOccurred(context, message) {
-            // Reuse the permissionErrorDlg as a generic action-blocked popup —
+            // Reuse actionBlockedDlg as a generic action-blocked popup —
             // matches the "you can't do that right now" semantics across contexts.
-            permissionErrorMessage = message ||
-                (context === "auth" ? "You do not have permission for this action"
-                                    : "Action not allowed")
-            permissionErrorDlg.title = context === "auth" ? "Permission Denied" : "Action Blocked"
-            permissionErrorDlg.open()
+            actionBlockedDlg.show({
+                title: context === "auth" ? qsTr("Permission Denied") : qsTr("Action Blocked"),
+                message: message ||
+                    (context === "auth" ? qsTr("You do not have permission for this action")
+                                        : qsTr("Action not allowed")),
+                variant: "error"
+            })
         }
 
         function onProductDeleted(productId) {
@@ -223,6 +223,10 @@ App {
 
         function onOrderDeleted(orderId) {
             Toast.show(qsTr("Order deleted"))
+        }
+
+        function onStockRestorationSkipped(productId) {
+            Toast.show(qsTr("Stock wasn't restored — a product on this order was deleted and no longer exists"))
         }
 
         function onSignInWithEmail(email, password) {
@@ -382,24 +386,13 @@ App {
         id: stockErrorDlg
     }
 
-    QQC.Dialog {
-        id: permissionErrorDlg
-        modal: true
-        title: "Permission Denied"
-        anchors.centerIn: parent
-        width: dp(420)
-        standardButtons: QQC.Dialog.Ok
-        Column {
-            width: parent.width
-            spacing: dp(8)
-            Text {
-                text: permissionErrorMessage
-                font.pixelSize: sp(12)
-                color: "#b91c1c"
-                wrapMode: Text.Wrap
-                width: parent.width
-            }
-        }
+    // Replaces a raw, unstyled QQC.Dialog (platform-default OK button,
+    // hardcoded "#b91c1c" text color) that didn't match the rest of the
+    // app's theme — the one popup that didn't, per Taher's on-device PR
+    // review (2026-09-14). Same AlertDialog component stockErrorDlg above
+    // already uses.
+    AlertDialog {
+        id: actionBlockedDlg
     }
 
     // Toast layer. Use Toast.show("...") from anywhere to drive it.
@@ -540,9 +533,20 @@ App {
                         onDeleteProductClicked: function(pid) {
                             var p = InventoryStore.getById(pid)
                             var nm = p ? p.name : pid
+                            var stockQty = (typeof StockBatchStore !== "undefined" && StockBatchStore)
+                                    ? StockBatchStore.remainingFor(pid) : 0
+                            var msg
+                            if (stockQty > 0) {
+                                var stockValue = InventoryStore.valueByProduct()[pid] || 0
+                                msg = "“" + nm + "” has " + stockQty + " units in stock worth " +
+                                      InventoryStore.formatCurrency(stockValue) +
+                                      ". Deleting will remove that stock record too. This cannot be undone."
+                            } else {
+                                msg = "“" + nm + "” will be removed from inventory. This cannot be undone."
+                            }
                             confirmDlg.ask({
                                 title: "Delete product?",
-                                message: "“" + nm + "” will be removed from inventory. This cannot be undone.",
+                                message: msg,
                                 confirmLabel: "Delete product",
                                 onConfirm: function() { logic.deleteProduct(pid) }
                             })
