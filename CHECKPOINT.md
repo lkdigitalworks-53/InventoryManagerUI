@@ -41,9 +41,12 @@ every commit this session; the name follows the repo's existing convention for C
       parking; the existing retry behavior stays exactly as it is.
 - [x] 7. Verified the candidate surfaces in code (findings below). Found two problems with the "toast +
       ActivityLog" surface that the D pitch assumed.
-- [ ] 8. **Q2 (asked):** which surface tells the user a write is stuck. Then brainstorming step 5 (design in
-      sections: signal, counting, statuses and threshold, scope), design doc under
-      `docs/superpowers/specs/`, then `superpowers:writing-plans`.
+- [x] 8. Asked Q2 (surface). Taher chose **3: toast once + local per-device banner** bound to a `Gateway`
+      stuck count (no ActivityLog entry).
+- [x] 9. Looked for an existing banner to reuse (findings below): `GlassHeader` already has a danger-colored
+      offline caption line. Drafted the design (below) and asked Q3-Q5 in one tap-card.
+- [ ] 10. **Awaiting Taher:** Q3 surface implementation, Q4 sender coverage, Q5 approval and pace. Then write the
+      design doc under `docs/superpowers/specs/`, self-review, `superpowers:writing-plans`, implement.
 
 ## Item picked and why
 
@@ -93,18 +96,53 @@ item 3 is a schema change.
 - `markFailed` is called from three senders: `_send` (~line 468), `_sendBatch` (~590) and `_sendDelta` (~672).
   A shared "stuck" hook would be one helper called from those three sites.
 
+- Reuse finding (step 9): `qml/components/GlassHeader.qml` (lines ~77-84) has a caption `Text` under the title that
+  shows "App is offline, no operation allowed." in `Constants.danger` when `!app.isOnline`. It reads the root
+  through `app.isOnline`; no component under `qml/components` imports `../model`, so a header reading `Gateway`
+  directly would be the first. `Main.qml` root already carries custom properties, so it can expose
+  `syncStuckCount` and the header can read `app.syncStuckCount` the same way it reads `app.isOnline` (verify the
+  `app` id resolves to the `Main.qml` root before relying on it).
+- `Gateway._reschedule()` runs at the end of `drainNow` and of all three sender handlers (lines ~344, 472, 595,
+  684), so pruning stuck state there covers every outbox removal path. `Gateway.clear()` (line ~786) is the
+  sign-out reset and must also reset the new state. `Toast` is a singleton in `qml/components`; model files
+  already `import "../components"` to use it (`Gateway.qml` needs that import; verify it does not create an
+  import cycle).
+
 ## Open decisions
 
 - **Q1 (answered):** D, surface only, keep retrying. Rejected: A narrow classify + drop + rollback (catches
   client bugs only); B bound + park + Retry/Discard (much larger, N is a heuristic); C server classification
   first (largest blast radius; a mis-mapped transient error becomes silent data loss).
-- **Q2 (asked):** the surface. Options: 1 toast only; 2 toast + own-actor `ActivityLog` entry (the existing
-  `import_error` convention); 3 toast + a local, per-device banner bound to a `Gateway` stuck count (new small
-  UI, clears on recovery); 4 bell notification via a non-own `actorUid` (leaks to other devices, see findings).
-- To present as defaults in the design sections for approval, not grilled separately: statuses that count as
-  stuck (400 / 403 / 404 / 5xx; never status 0, 401 or 409), threshold of 5 server-side failures (about 3
-  minutes with the current backoff), counter kept in memory in `Gateway` (not persisted, so it restarts with
-  the app), one signal per item, and whether `_sendBatch` / `_sendDelta` get the same hook.
+- **Q2 (answered):** option 3, toast once + local per-device banner. Rejected: toast only (ephemeral), own-actor
+  ActivityLog entry (dashboard only, direct write), non-own actor bell (leaks to other devices).
+- **Q3 (asked):** implement the banner by reusing the `GlassHeader` caption line (recommended) or a new dedicated
+  strip.
+- **Q4 (asked):** hook all three senders (recommended) or `_send` only.
+- **Q5 (asked):** approve the design, and pace: continue autonomously, stop after the spec for review, or changes.
+
+## Draft design (awaiting approval)
+
+1. **Detection, `Gateway`.** New `stuckCount`; in-memory `_serverFailures` and `_stuckIds` keyed by `requestId`.
+   `_isStuckStatus(status)`: `>= 400` and not 401 and not 409 (status 0 never counts). `_noteFailure(item,
+   effStatus)` beside each `markFailed`: at the 5th server-side failure (about 3 minutes with the current
+   backoff) mark the item stuck, increment `stuckCount`, and toast once when the count goes 0 to 1.
+   `_pruneStuck()` inside `_reschedule()` drops ids no longer in `OutboxStore.items` and recomputes `stuckCount`.
+   `clear()` resets. Retry, backoff and drop behavior unchanged; no rollback.
+2. **Surface.** `GlassHeader` caption: online and `stuckCount > 0` shows "N change(s) not syncing. Still
+   retrying." in `Constants.danger`. Offline message keeps precedence.
+3. **Scope.** Hook `_send`, `_sendBatch` and `_sendDelta`: same black hole in all three (a stuck delta leaves the
+   order-completion callback pending forever). One helper, three one-line calls.
+4. **Not fixed.** Local state stays diverged and there is no Retry/Discard (option B, follow-up). The server still
+   returns 500 for every write error (option C, follow-up). The counter resets with the app, so the banner returns
+   after about 3 minutes if the item still fails. If the QTBUG-49896 workaround does not restore a status,
+   status reads 0 and detection never fires.
+5. **Tests.** Unit table for `_isStuckStatus`; `_noteFailure` (below, at and past threshold, two items,
+   non-stuck statuses, toast once and again after recovery); `_pruneStuck` after `markSent` and `clear()`;
+   monkey test over random failure/success/clear sequences asserting `stuckCount` equals live items with 5 or more
+   server-side failures, never negative, toast only on 0 to 1. Functions and rules: no change, not applicable.
+   Limit: the `onreadystatechange` handlers cannot run in `qmltestrunner` (no mock HTTP layer, see the scope note
+   in `tests/tst_Gateway.qml`) and `GlassHeader` needs Felgo `dp()`/`sp()`, so the three call sites and the header
+   text are covered by the on-device section of the test plan, not CI.
 
 ## Not done, deliberately
 
