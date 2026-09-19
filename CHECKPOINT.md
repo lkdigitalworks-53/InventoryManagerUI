@@ -37,9 +37,13 @@ every commit this session; the name follows the repo's existing convention for C
       `qml/model/Gateway.qml` or `qml/model/OutboxStore.qml`. Only `pr_taher_bug_fixes` touches
       `functions/lib/gatewayLogic.js`.
 - [x] 5. Created this branch, archived the stale checkpoint, wrote this file, committed and pushed.
-- [ ] 6. **Grill Taher** on the failure policy (Q1 below), one question at a time. Then brainstorming steps 4-5
-      (approaches, design in sections, approval), design doc under `docs/superpowers/specs/`, then
-      `superpowers:writing-plans`.
+- [x] 6. Asked Q1 (failure policy). Taher chose **D: surface only, keep retrying**: no drop, no rollback, no
+      parking; the existing retry behavior stays exactly as it is.
+- [x] 7. Verified the candidate surfaces in code (findings below). Found two problems with the "toast +
+      ActivityLog" surface that the D pitch assumed.
+- [ ] 8. **Q2 (asked):** which surface tells the user a write is stuck. Then brainstorming step 5 (design in
+      sections: signal, counting, statuses and threshold, scope), design doc under
+      `docs/superpowers/specs/`, then `superpowers:writing-plans`.
 
 ## Item picked and why
 
@@ -77,13 +81,30 @@ item 3 is a schema change.
   in flight, so a failing item sitting in backoff does not block a later write to the same key. That later write
   is sent with a `before` the server never saw, gets a CAS 409, and is dropped with an "updated elsewhere" toast.
 
-## Open decisions (grilling queue)
+- Surface findings (step 7): the app has no sync-status UI at all (nothing displays `OutboxStore.hasPending`).
+  `Toast.show` is ephemeral. `ActivityLog.record` has two weaknesses for this event. (a) It defaults `actorUid`
+  to the current account and `_isOwn` suppresses own entries from the bell and the Notifications sheet, so an
+  own-actor entry only shows in the dashboard recent-activity card (the existing `import_error` entries behave
+  this way). (b) Passing a non-own `actorUid` would light the bell, but every entry is pushed to the
+  tenant-wide Firestore `activity_log`, so it would also show on other staff members' devices, and it is a
+  direct write rather than the durable outbox, so it can fail during the very outage it reports. Grepping
+  `firestore.rules` found no explicit `activity_log` rule; a wildcard rule may cover it (verify before relying
+  on any non-own actor).
+- `markFailed` is called from three senders: `_send` (~line 468), `_sendBatch` (~590) and `_sendDelta` (~672).
+  A shared "stuck" hook would be one helper called from those three sites.
 
-- **Q1 (asked):** failure policy for a non-network, non-401, non-409 failure. Options: A narrow classify and
-  drop + rollback; B bound, park, user Retry/Discard; C server-side classification first, then drop; D surface
-  only (signal + toast + activity log, keep retrying).
-- Q2: which statuses count as "stuck" (5xx only, or 403 too), and the attempt threshold.
-- Q3: whether the fix also unifies `_sendBatch` / `_sendDelta` classification, or leaves them alone.
+## Open decisions
+
+- **Q1 (answered):** D, surface only, keep retrying. Rejected: A narrow classify + drop + rollback (catches
+  client bugs only); B bound + park + Retry/Discard (much larger, N is a heuristic); C server classification
+  first (largest blast radius; a mis-mapped transient error becomes silent data loss).
+- **Q2 (asked):** the surface. Options: 1 toast only; 2 toast + own-actor `ActivityLog` entry (the existing
+  `import_error` convention); 3 toast + a local, per-device banner bound to a `Gateway` stuck count (new small
+  UI, clears on recovery); 4 bell notification via a non-own `actorUid` (leaks to other devices, see findings).
+- To present as defaults in the design sections for approval, not grilled separately: statuses that count as
+  stuck (400 / 403 / 404 / 5xx; never status 0, 401 or 409), threshold of 5 server-side failures (about 3
+  minutes with the current backoff), counter kept in memory in `Gateway` (not persisted, so it restarts with
+  the app), one signal per item, and whether `_sendBatch` / `_sendDelta` get the same hook.
 
 ## Not done, deliberately
 
