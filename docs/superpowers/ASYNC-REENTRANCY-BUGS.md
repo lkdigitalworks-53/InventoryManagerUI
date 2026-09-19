@@ -158,6 +158,12 @@ answer — asked Taher directly. If it turns out to still repro on the actual fi
 real, currently-unexplained gap and needs its own fresh investigation, not a re-application of the
 same fix.
 
+**Resolved, 2026-09-16, same day — clean retest.** Taher retested on-device and reported it now
+looks fine. Consistent with the stale-build hypothesis above (no code changed between the "still
+broken" report and this clean retest) — treating this as confirmation the earlier report was against
+a build that predated the fix, not evidence of an intermittent gap in the guard. Watching for any
+further report before considering this fully closed, but nothing left to investigate right now.
+
 ---
 
 ### C-3 (added 2026-09-16, Taher on-device): `RestockDialog` — double-pressing Confirm added stock twice
@@ -187,9 +193,15 @@ complexity. This needs either a repro with the dev console/logs open (does `Inve
 actually get called twice, or once with the underlying write itself somehow landing twice?) or
 device-level input event tracing, neither of which is reachable from static code review alone.
 
-**Not yet fixed.** Given real on-device confirmation and Critical severity (same category as C-1/C-2
-— a real duplicate stock addition, not cosmetic), this is next after C-1/C-2's open items, but
-shouldn't be picked up until there's an actual mechanism to fix, not just a guess.
+**Not yet fixed** as of the investigation above — but see the retest note directly below before
+picking this up.
+
+**Resolved (no repro), 2026-09-16, same day.** Taher retested on-device and reported it now looks
+fine — no code changed for `RestockDialog` between the original report and this retest, so this
+reads as the same stale-build/stale-state explanation offered for the `NewOrderDialog` report above,
+not confirmation of a fix (none was made). Downgrading from "needs investigation before picking up"
+to "watch for a repeat report" — the trace above stays as the record of what was checked if this
+resurfaces.
 
 ---
 

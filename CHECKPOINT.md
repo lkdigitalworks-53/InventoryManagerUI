@@ -1,8 +1,66 @@
-# CHECKPOINT — RestockDialog/NewOrderDialog on-device retest: investigated, root cause open (C-3 added), question pending for Taher
+# CHECKPOINT — final PR review done, clean retest confirmed, ready to open PR pending CI
 
 **Session date:** 2026-09-16
 **Branch:** `fix/2026-09-16-new-order-double-submit`, rebased onto `main` @ `bec7cd4`
-**PR:** still not opened — CI status still unknown as of this checkpoint, and now there's an open
+**PR:** still not opened by this session — CI status could not be confirmed from the sandbox
+(GitHub API rate-limited unauthenticated on every check this session); Taher opens it or confirms
+CI is green before it's opened, per standing workflow.
+
+## Final review + clean retest, this step
+
+Taher retested both the `RestockDialog` and `NewOrderDialog` auto-approve reports on-device and
+said everything looks fine now. Updated both open items in the tracker doc (C-2's retest note, C-3)
+to record this as a clean retest — reads as confirming the earlier reports were against a stale
+build/state, not as a fix landing (no code changed for `RestockDialog` in this session at all).
+Left the investigation trace in place in both cases rather than deleting it, in case either
+resurfaces.
+
+**Then ran a full final review sweep of the PR** (`/superpowers:requesting-code-review`,
+`/ponytail:ponytail-review`, `/qt-development-skills:qt-qml-review`), scoped to this branch's actual
+diff against `main` (`Logic.qml` +1 line, `DataModel.qml` +7/-1, `NewOrderDialog.qml`'s guard +
+`Connections` block, the new test file — small and focused, nothing else touched). No subagent
+dispatch tool available in this environment, so did the six-category deep-analysis pass directly
+rather than launching parallel subagents, and ran the skill's own deterministic linter
+(`qt_qml_lint.py`) for phase 1.
+
+**Findings:** zero issues within the actual changed lines. Full detail in the reply to Taher, not
+duplicated here — short version: `Logic.qml`/`DataModel.qml`'s changed lines have no lint hits at
+all; `NewOrderDialog.qml`'s one real hit (imperative `errorLabel.text =` assignment, BND-2) matches
+the exact pattern this same file already uses in two other places (lines 152, 613) — consistent, not
+a new inconsistency; the `Connections` block's placement after all functions matches
+`OrderDetailDialog`'s own established placement for the identical pattern, verified by checking that
+file directly rather than assuming; the test file's lint hits (`var` over `let`, no `id: root`)
+match `tst_AddStaffSyncClose.qml` — the established precedent it deliberately mirrors — exactly,
+confirmed by running the same linter against that file too. Made **no code changes** — nothing found
+that warranted one, and "fix the lint tool's generic preference against this codebase's own
+consistent, established convention" would have been the wrong call, not an autonomous fix.
+
+**Ponytail pass:** nothing to cut. Diff is already minimal — one signal, one emit-site swap, one
+guard + wait-for-signal block, comments proportionate to how easy this exact bug class is to
+reintroduce (matches this codebase's own established comment density for the same pattern). Verdict:
+lean already, ship.
+
+**CI status: still not confirmed from this sandbox** — every GitHub API call this session hit an
+unauthenticated rate limit. This is the one thing this review could NOT verify, and it's the actual
+merge gate, not this static review. Said so plainly rather than implying a false "all clear."
+
+## State right now
+
+Committed and pushed. Tracker doc + this checkpoint are the only changes this step — no production
+code touched.
+
+## Next steps
+
+1. **Taher (or a future session) confirms CI is actually green** on this branch — this review
+   covers correctness/style/architecture, not "did the test suite actually pass."
+2. Open the PR once CI is confirmed green.
+3. C-1 (reopen completed order → Exchange → increase quantity) is still the next open tracker item,
+   its own session — untouched this whole session.
+4. M-1 (`InviteMemberDialog`) and L-1 (cosmetic) — still open, lower priority.
+5. `Gateway.recordDelta`'s coalescing/callback-fan-out behavior (SKILLS Skill 66) — not established
+   as a live bug anywhere, flagged for whoever next adds/reviews a `recordDelta` caller with
+   non-idempotent callback side effects.
+
 investigation question too (see below) that should probably be resolved before opening the PR,
 not just CI going green.
 
