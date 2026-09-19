@@ -78,7 +78,7 @@ Not applicable: no rules, function or schema change.
   `THRESHOLD = 4`, `prune` keeping stale failures, `prune` keeping stale stuck ids, boundary at 399, counting
   status 0). This proves the algorithm and the test logic; it does not prove QML syntax or the singleton
   wiring.
-- **QML under `qmltestrunner`:** no Qt toolchain in the sandbox (standing instruction). Result: pending, filled in once CI has run on the branch after `main` was merged in (the PR was unmergeable, so CI did not trigger, until then).
+- **QML under `qmltestrunner`:** no Qt toolchain in the sandbox (standing instruction). Result on PR #75 at `e61117d` (after `main` was merged in; CI does not run on an unmergeable PR): **all four jobs green, 1108/1108** (QML 901/901, Functions 138/138, Rules 28/28, E2E 41/41). The last CI comment on PR #72 (the `main` content) showed QML 868; the difference is +33 = 21 + 10 new cases + the 2 implicit `initTestCase` / `cleanupTestCase` entries `qmltestrunner` reports for the new test file, which is consistent with every new case having run. Per-test names could not be read (artifact downloads are outside the sandbox's network allowlist), so this is a count cross-check, not a name-level confirmation.
 - **Not runnable anywhere automated:** the three sender call sites and `GlassHeader`'s caption expression.
 
 ---

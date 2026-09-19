@@ -45,8 +45,24 @@ every commit this session; the name follows the repo's existing convention for C
       stuck count (no ActivityLog entry).
 - [x] 9. Looked for an existing banner to reuse (findings below): `GlassHeader` already has a danger-colored
       offline caption line. Drafted the design (below) and asked Q3-Q5 in one tap-card.
-- [ ] 10. **Awaiting Taher:** Q3 surface implementation, Q4 sender coverage, Q5 approval and pace. Then write the
-      design doc under `docs/superpowers/specs/`, self-review, `superpowers:writing-plans`, implement.
+- [x] 10. Taher answered Q3 (reuse the `GlassHeader` caption), Q4 (all three senders), Q5 (approve; run spec, plan
+      and implementation autonomously; he reviews in the PR).
+- [x] 11. Wrote and committed the spec (`docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`)
+      and the plan (`docs/superpowers/plans/2026-09-19-gateway-stuck-write-indicator.md`).
+- [x] 12. Task 1: `qml/helper/StuckWrites.js` + `tests/tst_StuckWrites.qml` (21 cases). Ran the test bodies in Node:
+      21/21 green, 8/8 deliberate mutations caught.
+- [x] 13. Task 2: `Gateway.qml` (`stuckCount`, `_noteFailure`, `_pruneStuck`, hooks in all three senders, `clear()`
+      reset) + 10 new cases in `tests/tst_Gateway.qml`.
+- [x] 14. Task 3: `Main.qml` `syncStuckCount` + `GlassHeader.qml` caption.
+- [x] 15. Task 4: test plan (Skill 49 structure), test-plans index row, `SKILLS.md` Skill 67, `AGENTS.md` helper
+      entry, README update paragraph, KNOWN-ISSUES and roadmap status notes.
+- [x] 16. Found PR #75 unmergeable (main moved: PR #72 merged), so CI had not triggered. Merged `origin/main` in
+      (`e61117d`): kept this checkpoint, archived the PR #72 session's to
+      `docs/superpowers/specs/2026-09-16-new-order-double-submit-CHECKPOINT.md`, kept both README / index
+      entries, renumbered this session's skill to 67 (main already has two entries numbered 66).
+- [x] 17. CI on `e61117d`: all four jobs green, 1108/1108 (QML 901, Functions 138, Rules 28, E2E 41).
+- [ ] 18. On-device pass by Taher using the test plan's On-Device section (only coverage for the three sender call
+      sites and the header caption). PR #75 is still a draft; Taher marks it ready.
 
 ## Item picked and why
 
@@ -108,45 +124,17 @@ item 3 is a schema change.
   already `import "../components"` to use it (`Gateway.qml` needs that import; verify it does not create an
   import cycle).
 
-## Open decisions
+## Decisions (all answered)
 
-- **Q1 (answered):** D, surface only, keep retrying. Rejected: A narrow classify + drop + rollback (catches
-  client bugs only); B bound + park + Retry/Discard (much larger, N is a heuristic); C server classification
-  first (largest blast radius; a mis-mapped transient error becomes silent data loss).
-- **Q2 (answered):** option 3, toast once + local per-device banner. Rejected: toast only (ephemeral), own-actor
-  ActivityLog entry (dashboard only, direct write), non-own actor bell (leaks to other devices).
-- **Q3 (asked):** implement the banner by reusing the `GlassHeader` caption line (recommended) or a new dedicated
-  strip.
-- **Q4 (asked):** hook all three senders (recommended) or `_send` only.
-- **Q5 (asked):** approve the design, and pace: continue autonomously, stop after the spec for review, or changes.
+- Q1 D: surface only, keep retrying. Q2 3: toast once + local per-device indicator. Q3 reuse the `GlassHeader`
+  caption. Q4 all three senders. Q5 approve, autonomous. Rejected options and reasons are in the spec.
 
-## Draft design (awaiting approval)
+## Not done / follow-ups (stated in the spec, test plan, KNOWN-ISSUES and Skill 67)
 
-1. **Detection, `Gateway`.** New `stuckCount`; in-memory `_serverFailures` and `_stuckIds` keyed by `requestId`.
-   `_isStuckStatus(status)`: `>= 400` and not 401 and not 409 (status 0 never counts). `_noteFailure(item,
-   effStatus)` beside each `markFailed`: at the 5th server-side failure (about 3 minutes with the current
-   backoff) mark the item stuck, increment `stuckCount`, and toast once when the count goes 0 to 1.
-   `_pruneStuck()` inside `_reschedule()` drops ids no longer in `OutboxStore.items` and recomputes `stuckCount`.
-   `clear()` resets. Retry, backoff and drop behavior unchanged; no rollback.
-2. **Surface.** `GlassHeader` caption: online and `stuckCount > 0` shows "N change(s) not syncing. Still
-   retrying." in `Constants.danger`. Offline message keeps precedence.
-3. **Scope.** Hook `_send`, `_sendBatch` and `_sendDelta`: same black hole in all three (a stuck delta leaves the
-   order-completion callback pending forever). One helper, three one-line calls.
-4. **Not fixed.** Local state stays diverged and there is no Retry/Discard (option B, follow-up). The server still
-   returns 500 for every write error (option C, follow-up). The counter resets with the app, so the banner returns
-   after about 3 minutes if the item still fails. If the QTBUG-49896 workaround does not restore a status,
-   status reads 0 and detection never fires.
-5. **Tests.** Unit table for `_isStuckStatus`; `_noteFailure` (below, at and past threshold, two items,
-   non-stuck statuses, toast once and again after recovery); `_pruneStuck` after `markSent` and `clear()`;
-   monkey test over random failure/success/clear sequences asserting `stuckCount` equals live items with 5 or more
-   server-side failures, never negative, toast only on 0 to 1. Functions and rules: no change, not applicable.
-   Limit: the `onreadystatechange` handlers cannot run in `qmltestrunner` (no mock HTTP layer, see the scope note
-   in `tests/tst_Gateway.qml`) and `GlassHeader` needs Felgo `dp()`/`sp()`, so the three call sites and the header
-   text are covered by the on-device section of the test plan, not CI.
-
-## Not done, deliberately
-
-No code, no tests, no test plan, no `SKILLS.md` / `AGENTS.md` / `README.md` edits: there is no approved change
-to test or document yet, and the brainstorming skill forbids implementation before design approval. The test plan
-is written together with the approved design. App not built or run (standing instruction). No Qt tooling
-installed in the sandbox (standing instruction).
+- Local state still diverges while a write is stuck; no in-app Retry / Discard (option B).
+- The server still returns `500 write-failed` for every write exception (option C).
+- The counter is in memory: it restarts with the app.
+- The three sender call sites and the `GlassHeader` caption have no automated coverage (no mock HTTP layer, Felgo
+  `dp()` / `sp()`): on-device plan only. 100% line coverage of that wiring is not reachable in CI today.
+- `SKILLS.md` on `main` has two entries numbered 66 (predates this PR, left alone).
+- No sandbox build or app run (standing instruction); no Qt tooling installed.
