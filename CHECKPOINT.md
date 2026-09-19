@@ -1,11 +1,57 @@
-# CHECKPOINT — NewOrderDialog double-submit fix (C-2), rebased onto latest main, CI pending
+# CHECKPOINT — RestockDialog/NewOrderDialog on-device retest: investigated, root cause open (C-3 added), question pending for Taher
 
 **Session date:** 2026-09-16
-**Branch:** `fix/2026-09-16-new-order-double-submit`, rebased onto `main` @ `bec7cd4` (was `a66fb8f`
-before the rebase below)
-**PR:** not yet opened — branch pushed, PR to be opened once CI reports (or by Taher directly).
+**Branch:** `fix/2026-09-16-new-order-double-submit`, rebased onto `main` @ `bec7cd4`
+**PR:** still not opened — CI status still unknown as of this checkpoint, and now there's an open
+investigation question too (see below) that should probably be resolved before opening the PR,
+not just CI going green.
 
-## Rebase (this step)
+## On-device retest, this step
+
+Taher tested on-device and reported both still reproducing: `RestockDialog` double-press → stock
+added twice; `NewOrderDialog` with auto-approve on, double-press → order placed AND completed
+twice. Instructed to apply "`busy = true` immediately after the busy check, everywhere."
+
+**Did the deep investigation instead of blindly rewriting per the literal instruction.** Traced
+`RestockDialog.onPrimaryClicked` end to end — `if (busy) return`, `busy = true` before the one
+`InventoryStore.restock(...)` call, `BottomSheet`'s `enabled: primaryEnabled && !busy` binding,
+`PrimaryButton.qml`'s `loading` rendering (no secondary click surface), `_resolveSupplierId`
+(no double-callback in any branch), `Gateway.recordDelta` (has a real coalescing/callback-fan-out
+mechanism — recorded as a general finding, not established as this bug's cause). **Found no
+code-level defect** — the guard is structurally identical to the shape that fixed `NewOrderDialog`
+(C-2/F-2) and should work by the same single-threaded-event-loop reasoning.
+
+Did NOT rewrite `RestockDialog`'s guard code — doing so without an identified mechanism would be
+exactly the "shortcut, not the correct fix" this repo's own standard rules out, and could easily
+"fix" nothing if the real cause is elsewhere.
+
+**What was done instead:**
+- `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`: `RestockDialog` moved out of "checked, not affected"
+  into a new **C-3** entry (Critical, not yet fixed, root cause not identified, full trace recorded)
+  — `AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` remain correctly in "checked."
+  `NewOrderDialog`'s C-2/F-2 section got a note flagging the open question below.
+- `SKILLS.md` Skill 66 — the investigation and the `Gateway.recordDelta` fan-out finding, recorded
+  for reuse regardless of whether it turns out to matter for C-3.
+- `AGENTS.md` — two short additions: the `recordDelta` fan-out caution (Data Model & Orchestration
+  Agent section), and "trace every layer before rewriting a bug report against code that already
+  reads correctly" (Pages & Dialogs Agent section).
+- `README.md` — short dated entry in Concurrency & Conflict Resolution pointing at the doc/skill
+  for the full trace, not duplicating it.
+
+**Open question, asked Taher directly, not guessed at:** was the `NewOrderDialog` auto-approve
+retest run against `fix/2026-09-16-new-order-double-submit` *after* this session's earlier
+rebase/push, or against `main`/a build from before the fix landed? This fully resolves that half of
+the report either way — either it's stale-build confusion (nothing further to do there) or it's a
+genuine, currently-unexplained gap in a fix that looked complete, and needs its own fresh
+investigation rather than reapplying the same pattern again.
+
+**Not yet done this step:** commit and push these doc/skill updates. Doing that next, per Taher's
+explicit "change the scope of roadmap and push in same branch" instruction — that part doesn't
+depend on resolving the open question above.
+
+---
+
+## Rebase (earlier step, still accurate below)
 
 Between the first push and this step, `main` moved `a66fb8f` → `bec7cd4` (PR #68: batch-id mint
 retry-on-reconnect + `topUpOldest` safety fix, plus PR #69: docs-only audit of that same fix's

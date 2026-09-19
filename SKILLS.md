@@ -3169,3 +3169,50 @@ answer that — a shared generic error bus almost never does, even if reusing it
 pass a quick manual check. Adding the missing half of an already-existing success/failure pair is
 usually a small, low-risk change (one signal, one emit-site swap) and is the actual "correct fix,
 not a shortcut" call here, not scope creep.
+
+## Skill 66: A structurally-correct `busy` guard reported as still-broken on-device is a reason to trace deeper and ask, not to rewrite blind — and `Gateway.recordDelta` fans a coalesced write out to every registered callback
+
+**Context**: Taher on-device-tested `RestockDialog` (double-press Confirm → stock added twice) and
+`NewOrderDialog` with auto-approve on (double-press Submit → order placed and completed twice),
+right after this session's C-2/F-2 fix for the latter had already been pushed. Instructed to apply
+"mark busy true immediately after the check, then execute logic" "everywhere."
+
+**What the investigation actually found**: `RestockDialog.onPrimaryClicked` already has that exact
+shape — `if (busy) return` first, `busy = true` set synchronously right before the one call to
+`InventoryStore.restock(...)`. Traced every layer that could plausibly defeat it: `BottomSheet`'s
+primary button (`enabled: primaryEnabled && !busy`, correctly bound), `PrimaryButton.qml` (its
+`loading` state is a `BusyIndicator` inside the button's own `contentItem`, not a separate overlay
+with its own hit-testing — no secondary click surface to swallow/forward taps), `_resolveSupplierId`
+(never double-invokes its callback in any branch, sync or async), and `Gateway.recordDelta`. None of
+it showed a code-level defect. In a single-threaded QML event loop, a second `onPrimaryClicked`
+dispatch cannot interleave with the first's synchronous body — it necessarily observes
+`busy === true` and bails, the same reasoning that makes the C-2/F-2 fix work at all. Applying the
+literal suggested rewrite here would have been a no-op: `busy = true` is already positioned
+immediately before the one place that needs it, not buried after some earlier state-mutating step.
+
+**Real, reusable finding surfaced along the way** (not the bug's cause, but worth knowing):
+`Gateway.recordDelta` routes every delta through `OutboxStore.enqueueDelta`, which can *coalesce*
+concurrent deltas for the same entity+field into one surviving outbox item — and `recordDelta`
+registers each caller's callback in an array keyed by the *surviving* `requestId`
+(`_deltaCallbacks[item.requestId].push(callback)`), so when a coalesced write resolves, **every**
+caller whose delta got merged into it has its own callback invoked with the same result. A
+`DataModel`/Store handler that fires per-callback side effects with real consequences beyond
+updating local state (`ActivityLog.record`, `TransactionStore.recordPurchase`, anything that writes
+a ledger entry rather than just setting a property) needs to know this: two *independent, legitimate*
+deltas on the same field close together — not a double-tap on one dialog, but e.g. a restock and a
+sale landing around the same moment — will each get their own side-effect firing even though the
+server only applied one merged write. Not evaluated for whether it's an actual problem anywhere
+today; flagged for whoever next touches a `recordDelta` caller with non-idempotent callback side
+effects to check.
+
+**The actual lesson**: "the user reproduced it on-device, so the code must be wrong" is not a safe
+inference when the code has already been read carefully and is structurally sound. Rewriting
+already-correct guard logic based on a guess about which layer failed can "fix" nothing (if the real
+cause is elsewhere) while adding complexity — the same "correct fix, not a shortcut" standard this
+repo holds for everything else applies to *accepting* a bug report's proposed mechanism, not just to
+writing code. Two things distinguish a legitimate "investigated and genuinely can't find it, needs
+runtime data" conclusion from ducking the report: doing the full trace first (every layer between
+the tap and the write, not just the one function that "should" guard it), and asking the one
+question that actually disambiguates rather than guessing — here, whether the retest ran against the
+just-pushed fix or a build that predates it, which fully resolves the `NewOrderDialog` half of the
+report on its own.

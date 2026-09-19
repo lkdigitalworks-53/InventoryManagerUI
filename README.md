@@ -712,4 +712,17 @@ before closing — mirroring `OrderDetailDialog`'s PR #70 pattern. `orderCreatio
 correlation to which request failed and so isn't safe to gate a dialog's own `busy` reset on. See
 SKILLS Skill 65 and the tracker doc's F-2 entry.
 
+**Update 2026-09-16 (later, on-device retest):** Taher reported double-pressing still duplicated
+results in both `RestockDialog` (stock added twice) and `NewOrderDialog` with auto-approve on
+(order placed and completed twice). Investigated both guards layer by layer — button `enabled`
+binding, loading-state rendering, the underlying Store/Gateway call — and found no code-level
+defect in either; both are structurally identical to the pattern that fixed the original bug. Left
+open rather than guess-fixed: see `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` C-3 (new, `RestockDialog`)
+and the note added under C-2/F-2 (`NewOrderDialog` — needs to confirm the retest ran against the
+fixed branch, not a stale build) for the full trace and the specific open question each one needs
+resolved before further code changes. `Gateway.recordDelta`'s delta-coalescing/callback-fan-out
+behavior, found while tracing `RestockDialog`, is recorded in SKILLS Skill 66 — not confirmed as
+the cause here, but real and worth knowing for any future `recordDelta` caller with non-idempotent
+callback side effects.
+
 ---

@@ -302,6 +302,14 @@ App (Main.qml)
   completely unrelated failure elsewhere. Only skip the dedicated signal for actions that never
   need dialog-side completion feedback at all (delete flows, plain non-completing field edits).
   See SKILLS Skill 65.
+- `Gateway.recordDelta` can coalesce concurrent deltas for the same entity+field into one outbox
+  item, and fans the merged result out to **every** caller whose delta got merged in — each
+  registered callback fires independently off the one write. Fine for callbacks that just set local
+  state (idempotent), but a callback with non-idempotent side effects (`ActivityLog.record`,
+  `TransactionStore.recordPurchase`, anything that writes its own ledger entry) will fire once per
+  ORIGINAL caller even though the server applied one merged write. Not confirmed as an active bug
+  anywhere as of 2026-09-16 — flagged for whoever next adds or reviews a `recordDelta` caller with
+  that kind of side effect. See SKILLS Skill 66.
 - Keep `ordersModel` (ListModel) in sync with `OrdersStore.orders`
 - Expose public methods: `tryCompleteOrder()`, `syncOrdersModel()`, `updateOrderInModel()`
 - Handle `stockErrorMsg` for the stock error dialog in `Main.qml`
@@ -438,6 +446,12 @@ QtObject {
   callback-taking Store/Gateway function (directly or via `logic`), check
   `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`'s checklist first — it's the running, severity-ranked
   record of which dialogs in this list are already covered and which aren't yet.
+- A bug report saying "still reproduces on-device" against code whose guard already reads correctly
+  is not, by itself, proof the guard is wrong — trace every layer between the tap and the write
+  (button `enabled` binding, any loading-state overlay, the Store/Gateway call itself) before
+  rewriting anything. `RestockDialog`'s guard read correctly at every layer checked and the report
+  is still open, unresolved, flagged rather than guess-fixed — see ASYNC-REENTRANCY-BUGS.md C-3,
+  SKILLS Skill 66.
 
 **Responsive Design**:
 - `compact = true` when `width < 520` — 2-line compact card/row layouts

@@ -145,6 +145,52 @@ tracker over C-1: both are Critical, but this one needed no special setup (reope
 order, choose Exchange) — a plain fast double-tap on the primary "Place order" flow every order
 goes through, exactly as this section originally called out.
 
+**2026-09-16, later same day — Taher's on-device retest, flagged, not yet resolved:** with
+auto-approve enabled, a double-press on Submit still placed the same order twice, both completed.
+Investigated the currently-pushed fix (`trySubmit()`'s `if (busy) return` guard, `busy = true`
+before the emit, `Connections`-on-`logic` wait-for-signal) against this report and could not find a
+code-level gap — the guard is structurally sound by the same reasoning that makes it work at all
+(single-threaded QML event loop: a second `trySubmit()` call cannot interleave with the first's
+synchronous body, so it must see `busy === true` and bail). The open question this needs before any
+further code change: was this retest run against `fix/2026-09-16-new-order-double-submit` **after**
+its 2026-09-16 rebase/push, or against `main`/a build that predates the fix? Not guessing at the
+answer — asked Taher directly. If it turns out to still repro on the actual fixed branch, that's a
+real, currently-unexplained gap and needs its own fresh investigation, not a re-application of the
+same fix.
+
+---
+
+### C-3 (added 2026-09-16, Taher on-device): `RestockDialog` — double-pressing Confirm added stock twice
+
+**Confirmed on-device by Taher**, not a static-analysis finding — a real double-press on "Confirm"
+in `RestockDialog` added the restocked quantity twice.
+
+**Investigated, root cause not yet identified.** `RestockDialog.onPrimaryClicked` has the exact same
+guard shape that fixed `NewOrderDialog` (C-2/F-2) and is structurally sound by every check made:
+`if (busy) return` first, `busy = true` set synchronously before the one call to
+`InventoryStore.restock(...)`, `busy` reset inside that call's own callback on both success and
+failure. `BottomSheet`'s primary button correctly binds `enabled: primaryEnabled && !busy` and
+`PrimaryButton.qml` has no secondary click surface (its `loading` state is a plain `BusyIndicator`
+inside the button's own `contentItem`, not a separate overlay that could be swallowing/forwarding
+taps). Traced one level deeper into `InventoryStore.restock` itself: `_resolveSupplierId` never
+double-invokes its callback in any branch; `Gateway.recordDelta` does have a coalescing mechanism
+(`OutboxStore.enqueueDelta` can merge concurrent deltas for the same entity+field and fan the merged
+result out to every registered callback) — a real thing worth knowing about this codebase, but it
+requires *two separate calls into `recordDelta` for the same product* to matter at all, which is the
+same "did the dialog-level guard actually fail" question this started with, not an independent
+explanation for it.
+
+**Why this is flagged rather than fixed outright:** rewriting already-structurally-correct guard
+code based on a guess about which layer failed would be exactly the kind of shortcut this repo's own
+standard rules out — it could easily "fix" nothing (if the real cause is elsewhere) while adding
+complexity. This needs either a repro with the dev console/logs open (does `InventoryStore.restock`
+actually get called twice, or once with the underlying write itself somehow landing twice?) or
+device-level input event tracing, neither of which is reachable from static code review alone.
+
+**Not yet fixed.** Given real on-device confirmation and Critical severity (same category as C-1/C-2
+— a real duplicate stock addition, not cosmetic), this is next after C-1/C-2's open items, but
+shouldn't be picked up until there's an actual mechanism to fix, not just a guess.
+
 ---
 
 ## Medium
@@ -217,10 +263,12 @@ from "not checked."
   no callback. A repeated delete on an already-deleted record is a harmless no-op, not a
   duplicate-write risk. `ConfirmDialog.qml` itself wasn't deeply audited for its own
   double-tap-on-Confirm behavior, since the actions routed through it are idempotent regardless.
-- **`RestockDialog`, `AddProductDialog`, `AddStaffDialog`, `ImportPreviewDialog`** — all already use
-  `busy`/`busyMessage` correctly (confirmed present and wired in each file). These were the
-  examples PR #70 pointed to as the established, correct pattern; re-confirmed here, not re-derived
-  from scratch.
+- **`AddProductDialog`, `AddStaffDialog`, `ImportPreviewDialog`** — all already use `busy`/
+  `busyMessage` correctly (confirmed present and wired in each file). These were among the examples
+  PR #70 pointed to as the established, correct pattern; re-confirmed here, not re-derived from
+  scratch. (`RestockDialog` was originally grouped in this same line — moved out 2026-09-16, see
+  C-3 below: on-device testing found it's NOT actually safe, despite the guard code reading
+  correctly.)
 - **`MemberManagementDialog`** — binds `busy: AuthService.membersBusy`, a real service-level state
   rather than a manually toggled flag. Correct pattern, different implementation shape (bound
   property vs. imperative set/clear) — both are fine.
