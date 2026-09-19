@@ -288,6 +288,28 @@ App (Main.qml)
   deliberately re-grants a request from the SAME `actorUid` (needed for renewal heartbeats), so it
   answers "is someone ELSE using this," not "am I already in the middle of this myself." See SKILLS
   Skill 61.
+- Not every orchestration function needs its own `_completingOrderIds`-style guard — only ones with
+  a SECOND call path a bulk/background caller could also reach (completion has
+  `_approveAllPending`; creation, via `onAddOrder`/`OrdersStore.addOrder`, does not). Where there's
+  only one UI entry point, the `if (busy) return` + wait-for-signal guard belongs entirely in that
+  dialog — don't add a `DataModel`-layer set "just in case" if nothing else can reach the same call.
+  See ASYNC-REENTRANCY-BUGS.md C-2, SKILLS Skill 65.
+- When a dialog needs to react to whether ITS OWN async request succeeded or failed, give the
+  operation a dedicated success/failure signal PAIR (like `orderAdded`/`orderCreationFailed`,
+  `orderUpdated`/`orderCompletionFailed`) rather than routing failure through the generic
+  `dispatcher.errorOccurred(context, message)` bus — that bus carries no correlation to which
+  specific request failed, so a dialog gating its own `busy` reset on it can be reset by a
+  completely unrelated failure elsewhere. Only skip the dedicated signal for actions that never
+  need dialog-side completion feedback at all (delete flows, plain non-completing field edits).
+  See SKILLS Skill 65.
+- `Gateway.recordDelta` can coalesce concurrent deltas for the same entity+field into one outbox
+  item, and fans the merged result out to **every** caller whose delta got merged in — each
+  registered callback fires independently off the one write. Fine for callbacks that just set local
+  state (idempotent), but a callback with non-idempotent side effects (`ActivityLog.record`,
+  `TransactionStore.recordPurchase`, anything that writes its own ledger entry) will fire once per
+  ORIGINAL caller even though the server applied one merged write. Not confirmed as an active bug
+  anywhere as of 2026-09-16 — flagged for whoever next adds or reviews a `recordDelta` caller with
+  that kind of side effect. See SKILLS Skill 66.
 - Keep `ordersModel` (ListModel) in sync with `OrdersStore.orders`
 - Expose public methods: `tryCompleteOrder()`, `syncOrdersModel()`, `updateOrderInModel()`
 - Handle `stockErrorMsg` for the stock error dialog in `Main.qml`
@@ -385,7 +407,7 @@ QtObject {
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
-- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 66)
+- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67)
 - `qml/model/qmldir`
 
 **Example Prompts**:
@@ -419,6 +441,18 @@ QtObject {
   nothing to stop them from re-triggering the same action while it's still in flight. See SKILLS
   Skill 61 (`OrderDetailDialog.qml` was the one dialog in this list that didn't follow this —
   `RestockDialog`/`AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` already did).
+  `NewOrderDialog.qml`'s "Create Order" had the same gap (no genuine orchestration, but the same
+  fire-and-forget-then-close shape against a real network-mediated ID mint) — fixed 2026-09-16, see
+  SKILLS Skill 65. Before building or reviewing ANY dialog whose primary action calls a
+  callback-taking Store/Gateway function (directly or via `logic`), check
+  `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`'s checklist first — it's the running, severity-ranked
+  record of which dialogs in this list are already covered and which aren't yet.
+- A bug report saying "still reproduces on-device" against code whose guard already reads correctly
+  is not, by itself, proof the guard is wrong — trace every layer between the tap and the write
+  (button `enabled` binding, any loading-state overlay, the Store/Gateway call itself) before
+  rewriting anything. `RestockDialog`'s guard read correctly at every layer checked and the report
+  is still open, unresolved, flagged rather than guess-fixed — see ASYNC-REENTRANCY-BUGS.md C-3,
+  SKILLS Skill 66.
 
 **Responsive Design**:
 - `compact = true` when `width < 520` — 2-line compact card/row layouts

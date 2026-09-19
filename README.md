@@ -695,6 +695,36 @@ codebase that fired its update signal and closed immediately instead of waiting 
 completion ack. See SKILLS Skill 61 for the full investigation, including why this can't be tested
 by simply calling the function twice in sequence in this test suite's synchronous harness.
 
+**Update 2026-09-16 (NewOrderDialog double-submit, C-2):** after fixing the completion instance
+above, a sweep for the same bug *pattern* elsewhere in the app
+(`docs/superpowers/ASYNC-REENTRANCY-BUGS.md`) found the same shape on order **creation**:
+`NewOrderDialog.trySubmit()` had no `busy` guard at all and called `dlg.close()` immediately after
+firing the `orderCreated` signal — no wait for `OrdersStore.nextOrderId`'s real, server-coordinated
+mint to resolve. Easier to hit than the original bug: a plain fast double-tap on "Place order" (no
+need to reopen anything, no slow connection required) minted two separate orders, and — with
+auto-approve on — double-deducted stock too, since both duplicates got auto-completed. Unlike
+completion, there's no second call path into `OrdersStore.addOrder` for a `DataModel`-layer guard to
+protect (no `_approveAllPending`-equivalent for creation), so this fix is entirely UI-layer:
+`if (busy) return` + `busy = true` before the emit, and a `Connections { target: logic }` block
+waiting for a real `orderAdded` (success) or the newly added `orderCreationFailed` (failure) signal
+before closing — mirroring `OrderDetailDialog`'s PR #70 pattern. `orderCreationFailed` is new
+(`Logic.qml`): the prior failure path used the shared generic `errorOccurred` bus, which carries no
+correlation to which request failed and so isn't safe to gate a dialog's own `busy` reset on. See
+SKILLS Skill 65 and the tracker doc's F-2 entry.
+
+**Update 2026-09-16 (later, on-device retest):** Taher reported double-pressing still duplicated
+results in both `RestockDialog` (stock added twice) and `NewOrderDialog` with auto-approve on
+(order placed and completed twice). Investigated both guards layer by layer — button `enabled`
+binding, loading-state rendering, the underlying Store/Gateway call — and found no code-level
+defect in either; both are structurally identical to the pattern that fixed the original bug. Left
+open rather than guess-fixed: see `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` C-3 (new, `RestockDialog`)
+and the note added under C-2/F-2 (`NewOrderDialog` — needs to confirm the retest ran against the
+fixed branch, not a stale build) for the full trace and the specific open question each one needs
+resolved before further code changes. `Gateway.recordDelta`'s delta-coalescing/callback-fan-out
+behavior, found while tracing `RestockDialog`, is recorded in SKILLS Skill 66 — not confirmed as
+the cause here, but real and worth knowing for any future `recordDelta` caller with non-idempotent
+callback side effects.
+
 **Update 2026-09-19 (writes stuck behind a server-side failure):** `Gateway._send`, `_sendBatch` and
 `_sendDelta` retried any failure that wasn't a recognised terminal case forever, with backoff and no signal
 to anyone, while the stores had already applied the change locally (`DELETE-FEATURE-ROADMAP` item 1). The
@@ -704,7 +734,7 @@ queued write in `qml/helper/StuckWrites.js`; the 5th failure (about 3 minutes wi
 one toast and raises `Gateway.stuckCount`, which `Main.qml` republishes as `syncStuckCount` and the existing
 `GlassHeader` caption line shows as "N change(s) not syncing. Still retrying." until the write leaves the
 outbox. This only reports: retry, backoff and dropping are untouched, so local state can still diverge from
-the server and there is no in-app Retry/Discard yet. See SKILLS Skill 66 and
+the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
 ---

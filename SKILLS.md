@@ -3128,7 +3128,96 @@ progress, not pattern-matched from habit. After ANY automated or flag-based conf
 not just this one — check the actual resulting file content against what you expected before
 moving on, the same way CI results get checked via the API rather than assumed from "it should have
 worked."
-## Skill 65: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
+
+## Skill 65: Fixing a UI-only re-entrancy gap needs a dedicated feedback signal, not the shared generic error bus — even when nothing here needs an entity-ID scope the way completion did
+
+**Context**: `NewOrderDialog`'s double-submit fix (ASYNC-REENTRANCY-BUGS.md C-2) is a UI-only fix —
+unlike completion (PR #70, Skill 61), there's no second call path into `OrdersStore.addOrder` for a
+`DataModel`-layer guard to protect against, so `if (busy) return` + waiting for a real completion
+signal in `trySubmit()` closes the whole gap on its own. But "wait for a real completion signal"
+needed a signal to wait for, and `DataModel.onAddOrder`'s existing failure branch only emitted the
+generic `dispatcher.errorOccurred(context, message)` — the same bus roughly a dozen unrelated
+handlers across products/staff/orders/auth all fire onto.
+
+**Why that generic bus isn't safe to gate a dialog's own `busy` reset on**: `errorOccurred` carries
+no correlation back to which specific request failed — just a `context` string ("network", "auth",
+"order", "inventory") reused across many call sites. Wiring `NewOrderDialog`'s
+`Connections.onErrorOccurred` handler to reset `busy` on ANY `context === "network"` firing would
+have "worked" in the sense of compiling and passing a casual manual test, but it's structurally
+unsound: some OTHER handler's unrelated network failure firing while this dialog happens to be open
+and busy would incorrectly clear this dialog's guard mid-flight — reopening the exact double-submit
+window the fix exists to close, just via a different trigger than a second tap.
+
+**The fix**: added a new, dedicated `orderCreationFailed(string errorMessage)` signal
+(`Logic.qml`) and pointed `DataModel.onAddOrder`'s failure branch at it instead of the generic bus —
+completing a success/failure PAIR that already existed for completion (`orderUpdated`/
+`orderCompletionFailed`) but was only half-built for creation (`orderAdded` existed; no failure
+counterpart did, because nothing needed dialog-side failure feedback for creation before this fix).
+Deliberately did NOT add an orderId parameter the way `orderCompletionFailed(orderId, message)` has
+one — there IS no order yet when creation itself fails, so there's nothing to scope by. This is safe
+specifically because exactly one `NewOrderDialog` instance exists app-wide (declared once in
+`Main.qml`) and `BottomSheet`'s own busy-driven close guards make it impossible to close this sheet
+and start a genuinely independent second submission while the first is still in flight — the
+"which request does this answer belong to" ambiguity that scoping exists to resolve for
+`orderCompletionFailed` simply doesn't arise here. Don't copy the orderId-scoping pattern reflexively
+onto every dedicated failure signal; scope by whatever the actual overlap risk requires, not by
+habit from the nearest precedent.
+
+**General lesson**: when a fix needs a dialog to react to "this specific request I just made either
+succeeded or failed," check whether the failure path already has a signal scoped tightly enough to
+answer that — a shared generic error bus almost never does, even if reusing it would compile and
+pass a quick manual check. Adding the missing half of an already-existing success/failure pair is
+usually a small, low-risk change (one signal, one emit-site swap) and is the actual "correct fix,
+not a shortcut" call here, not scope creep.
+
+## Skill 66: A structurally-correct `busy` guard reported as still-broken on-device is a reason to trace deeper and ask, not to rewrite blind — and `Gateway.recordDelta` fans a coalesced write out to every registered callback
+
+**Context**: Taher on-device-tested `RestockDialog` (double-press Confirm → stock added twice) and
+`NewOrderDialog` with auto-approve on (double-press Submit → order placed and completed twice),
+right after this session's C-2/F-2 fix for the latter had already been pushed. Instructed to apply
+"mark busy true immediately after the check, then execute logic" "everywhere."
+
+**What the investigation actually found**: `RestockDialog.onPrimaryClicked` already has that exact
+shape — `if (busy) return` first, `busy = true` set synchronously right before the one call to
+`InventoryStore.restock(...)`. Traced every layer that could plausibly defeat it: `BottomSheet`'s
+primary button (`enabled: primaryEnabled && !busy`, correctly bound), `PrimaryButton.qml` (its
+`loading` state is a `BusyIndicator` inside the button's own `contentItem`, not a separate overlay
+with its own hit-testing — no secondary click surface to swallow/forward taps), `_resolveSupplierId`
+(never double-invokes its callback in any branch, sync or async), and `Gateway.recordDelta`. None of
+it showed a code-level defect. In a single-threaded QML event loop, a second `onPrimaryClicked`
+dispatch cannot interleave with the first's synchronous body — it necessarily observes
+`busy === true` and bails, the same reasoning that makes the C-2/F-2 fix work at all. Applying the
+literal suggested rewrite here would have been a no-op: `busy = true` is already positioned
+immediately before the one place that needs it, not buried after some earlier state-mutating step.
+
+**Real, reusable finding surfaced along the way** (not the bug's cause, but worth knowing):
+`Gateway.recordDelta` routes every delta through `OutboxStore.enqueueDelta`, which can *coalesce*
+concurrent deltas for the same entity+field into one surviving outbox item — and `recordDelta`
+registers each caller's callback in an array keyed by the *surviving* `requestId`
+(`_deltaCallbacks[item.requestId].push(callback)`), so when a coalesced write resolves, **every**
+caller whose delta got merged into it has its own callback invoked with the same result. A
+`DataModel`/Store handler that fires per-callback side effects with real consequences beyond
+updating local state (`ActivityLog.record`, `TransactionStore.recordPurchase`, anything that writes
+a ledger entry rather than just setting a property) needs to know this: two *independent, legitimate*
+deltas on the same field close together — not a double-tap on one dialog, but e.g. a restock and a
+sale landing around the same moment — will each get their own side-effect firing even though the
+server only applied one merged write. Not evaluated for whether it's an actual problem anywhere
+today; flagged for whoever next touches a `recordDelta` caller with non-idempotent callback side
+effects to check.
+
+**The actual lesson**: "the user reproduced it on-device, so the code must be wrong" is not a safe
+inference when the code has already been read carefully and is structurally sound. Rewriting
+already-correct guard logic based on a guess about which layer failed can "fix" nothing (if the real
+cause is elsewhere) while adding complexity — the same "correct fix, not a shortcut" standard this
+repo holds for everything else applies to *accepting* a bug report's proposed mechanism, not just to
+writing code. Two things distinguish a legitimate "investigated and genuinely can't find it, needs
+runtime data" conclusion from ducking the report: doing the full trace first (every layer between
+the tap and the write, not just the one function that "should" guard it), and asking the one
+question that actually disambiguates rather than guessing — here, whether the retest ran against the
+just-pushed fix or a build that predates it, which fully resolves the `NewOrderDialog` half of the
+report on its own.
+
+## Skill 66: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
 
 **What happened**: on-device testing of the Tier C cascade-delete feature found a precisely
 reproducible bug: create a product with stock 10, sell 1 via a completed order, delete the
@@ -3191,11 +3280,11 @@ delta target itself.
 
 ---
 
-## Skill 66: A retry loop that never gives up is right offline — the defect was that it never said anything
+## Skill 67: A retry loop that never gives up is right offline — the defect was that it never said anything
 
 **Files**: `qml/helper/StuckWrites.js`, `qml/model/Gateway.qml`, `qml/Main.qml`,
 `qml/components/GlassHeader.qml`, `tests/tst_StuckWrites.qml`, `tests/tst_Gateway.qml`. PR #75.
-(`main` ended at Skill 65 when this was written; renumber on a rebase conflict.)
+(Numbered 67 because `main` already had two entries numbered 66 when this was merged in; that duplicate predates this PR and was left alone.)
 
 **What was wrong** (`DELETE-FEATURE-ROADMAP` item 1): `_send`, `_sendBatch` and `_sendDelta` sent every failure
 that wasn't a recognised terminal case to `OutboxStore.markFailed()`, which retries forever, while the stores
