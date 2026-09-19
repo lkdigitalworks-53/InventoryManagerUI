@@ -1,5 +1,7 @@
 pragma Singleton
 import QtQuick
+import "../components"
+import "../helper/StuckWrites.js" as StuckWrites
 
 // Compliance gateway client (P0). Single entry point for every books-of-
 // account mutation in P0 scope (inventory + stock). Stores call
@@ -98,6 +100,13 @@ QtObject {
     signal batchMutationFailedPermanently(string entity, var items, string error)
 
     property int inFlight: 0
+
+    // Queued writes that have failed StuckWrites.THRESHOLD times with a
+    // server-side status. Main.qml republishes it as syncStuckCount and
+    // GlassHeader shows a persistent "not syncing" line while it is above 0.
+    // This only REPORTS: retry, backoff and dropping are decided elsewhere.
+    property int stuckCount: 0
+    property var _stuckState: StuckWrites.newState()
 
     // Pending recordDelta callbacks, keyed by outbox requestId — NOT
     // persisted (callbacks are JS functions, can't survive relaunch or
@@ -344,7 +353,27 @@ QtObject {
         _reschedule()
     }
 
+    // Called beside every OutboxStore.markFailed. Toasts once, when the first
+    // write becomes stuck; the header line stays up until the count drops again.
+    function _noteFailure(item, status) {
+        if (!StuckWrites.noteFailure(_stuckState, item.requestId, status)) return
+        var wasQuiet = stuckCount === 0
+        stuckCount = StuckWrites.stuckCount(_stuckState)
+        if (wasQuiet)
+            Toast.show(qsTr("Some changes aren't syncing. The app keeps retrying."))
+    }
+
+    // Forgets anything that has left the outbox, however it left (sent,
+    // conflict, permanent drop, coalesce, sign-out). Runs from _reschedule().
+    function _pruneStuck() {
+        var live = {}
+        var queued = OutboxStore.items
+        for (var i = 0; i < queued.length; ++i) live[queued[i].requestId] = true
+        stuckCount = StuckWrites.prune(_stuckState, live)
+    }
+
     function _reschedule() {
+        _pruneStuck()
         if (!_drainTimer) {
             _drainTimer = Qt.createQmlObject(
                 'import QtQuick; Timer { repeat: false }', root, "GatewayDrainTimer")
@@ -466,6 +495,7 @@ QtObject {
                     console.warn("[Gateway] recordMutation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                                  "statusText:", xhr.statusText, item.entity, item.entityId, effResponseText, "headers:", headersSeen)
                     OutboxStore.markFailed(item.requestId)
+                    _noteFailure(item, effStatus)
                 }
             }
             OutboxStore.clearInFlight(item)
@@ -588,6 +618,7 @@ QtObject {
                         console.warn("[Gateway] recordMutationsBatch failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                                      item.entity, item.items.length, effResponseText)
                         OutboxStore.markFailed(item.requestId)
+                        _noteFailure(item, effStatus)
                     }
                 }
             }
@@ -670,6 +701,7 @@ QtObject {
                 console.warn("[Gateway] recordDelta failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                              item.entity, item.entityId, effResponseText)
                 OutboxStore.markFailed(item.requestId)
+                _noteFailure(item, effStatus)
             }
             OutboxStore.clearInFlight(item)
 
@@ -786,6 +818,8 @@ QtObject {
     function clear() {
         OutboxStore.clear()
         _deltaCallbacks = ({})
+        _stuckState = StuckWrites.newState()
+        stuckCount = 0
         if (_drainTimer) _drainTimer.stop()
     }
 }

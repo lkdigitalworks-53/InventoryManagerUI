@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../qml/model"
+import "../qml/components"
 
 // Regression tests for the P0 compliance gateway's client bridge.
 //
@@ -36,6 +37,9 @@ import "../qml/model"
 TestCase {
     name: "Gateway"
 
+    // Counts Toast.show() calls (the stuck-write indicator toasts once).
+    SignalSpy { id: toastSpy; target: Toast; signalName: "showRequested" }
+
     function init() {
         // Force "direct" for every case below so these tests stay isolated
         // from whatever the real production default is (see Gateway.qml —
@@ -51,6 +55,8 @@ TestCase {
         // that inspects the deployed app, not this per-case-reset TestCase.
         Gateway.mode = "direct"
         OutboxStore.clear()
+        Gateway.clear() // also resets the stuck-write bookkeeping and stops the drain timer
+        toastSpy.clear()
         AuthStore.idToken = "" // keep the _send/_sendBatch guard closed (see header)
         // In-memory reset alone isn't enough: Gateway.drainNow() itself
         // triggers AuthService's first-ever lazy construction (only real
@@ -621,5 +627,141 @@ TestCase {
         // retrying, not silently give up on an unfamiliar rejection.
         var result = Gateway._classifyBatchMutationFailure(400, JSON.stringify({ ok: false, error: "some-future-error" }))
         compare(result.terminal, false)
+    }
+
+    // ── stuck-write indicator (StuckWrites bookkeeping, wired in Gateway) ────
+    //
+    // The three XHR handlers that CALL _noteFailure cannot run under
+    // qmltestrunner (no mock HTTP layer, see the scope note at the top of this
+    // file), so these drive _noteFailure / _pruneStuck directly with real
+    // OutboxStore items. The pure counting rules are covered exhaustively in
+    // tst_StuckWrites.qml.
+
+    function _queueWrite(entityId) {
+        Gateway.mode = "gateway"
+        var requestId = Gateway.recordMutation("order", entityId, "update", null, { status: "pending" })
+        return OutboxStore.items.filter(function(i) { return i.requestId === requestId })[0]
+    }
+
+    function _failTimes(item, status, n) {
+        for (var i = 0; i < n; ++i) Gateway._noteFailure(item, status)
+    }
+
+    function test_stuckCount_starts_at_zero() {
+        compare(Gateway.stuckCount, 0)
+    }
+
+    function test_failures_below_the_threshold_do_not_flag_a_write() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 4)
+        compare(Gateway.stuckCount, 0)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_the_fifth_server_failure_flags_the_write_and_toasts_once() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 1)
+        _failTimes(item, 500, 5)
+        compare(Gateway.stuckCount, 1, "already stuck: must not be counted twice")
+        compare(toastSpy.count, 1, "already stuck: must not toast again")
+    }
+
+    function test_a_second_stuck_write_raises_the_count_but_not_another_toast() {
+        var a = _queueWrite("o1")
+        var b = _queueWrite("o2")
+        _failTimes(a, 500, 5)
+        _failTimes(b, 503, 5)
+        compare(Gateway.stuckCount, 2)
+        compare(toastSpy.count, 1)
+    }
+
+    function test_offline_auth_and_conflict_failures_never_flag_a_write() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 0, 20)
+        _failTimes(item, 401, 20)
+        _failTimes(item, 409, 20)
+        compare(Gateway.stuckCount, 0)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_the_count_drops_when_a_stuck_write_leaves_the_outbox() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        compare(Gateway.stuckCount, 1)
+        OutboxStore.markSent(item.requestId)
+        Gateway._reschedule() // the real pruning trigger, as every sender handler ends with it
+        compare(Gateway.stuckCount, 0)
+    }
+
+    function test_only_the_writes_that_left_the_outbox_are_dropped() {
+        var a = _queueWrite("o1")
+        var b = _queueWrite("o2")
+        _failTimes(a, 500, 5)
+        _failTimes(b, 500, 5)
+        compare(Gateway.stuckCount, 2)
+        OutboxStore.markSent(a.requestId)
+        Gateway._pruneStuck()
+        compare(Gateway.stuckCount, 1)
+    }
+
+    function test_the_toast_fires_again_after_the_count_returned_to_zero() {
+        var a = _queueWrite("o1")
+        _failTimes(a, 500, 5)
+        OutboxStore.markSent(a.requestId)
+        Gateway._reschedule()
+        compare(Gateway.stuckCount, 0)
+        var b = _queueWrite("o2")
+        _failTimes(b, 500, 5)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 2)
+    }
+
+    function test_clear_resets_the_indicator_and_the_failure_counts() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        compare(Gateway.stuckCount, 1)
+        Gateway.clear()
+        compare(Gateway.stuckCount, 0)
+        var again = _queueWrite("o1")
+        _failTimes(again, 500, 4)
+        compare(Gateway.stuckCount, 0, "counting starts from zero after clear()")
+    }
+
+    // Random queue / fail / send / clear steps against the real OutboxStore,
+    // checked step by step against a reference count of live items that have
+    // had 5 or more server-side failures.
+    function test_monkey_stuckCount_always_matches_the_live_stuck_items() {
+        var statuses = [0, 200, 401, 403, 404, 409, 500, 503]
+        for (var seed = 1; seed <= 10; ++seed) {
+            Gateway.clear()
+            var s = seed
+            var rnd = function() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+            var live = {} // entityId -> { item, failures }
+            for (var step = 0; step < 150; ++step) {
+                var roll = rnd()
+                var entityId = "m" + Math.floor(rnd() * 6)
+                if (roll < 0.15) {
+                    if (!live[entityId]) live[entityId] = { item: _queueWrite(entityId), failures: 0 }
+                } else if (roll < 0.30) {
+                    if (live[entityId]) {
+                        OutboxStore.markSent(live[entityId].item.requestId)
+                        delete live[entityId]
+                        Gateway._reschedule()
+                    }
+                } else if (roll < 0.32) {
+                    Gateway.clear()
+                    live = {}
+                } else if (live[entityId]) {
+                    var st = statuses[Math.floor(rnd() * statuses.length)]
+                    Gateway._noteFailure(live[entityId].item, st)
+                    if (st >= 400 && st !== 401 && st !== 409) live[entityId].failures++
+                }
+                var expected = 0
+                for (var k in live) if (live[k].failures >= 5) expected++
+                compare(Gateway.stuckCount, expected, "seed " + seed + " step " + step)
+            }
+        }
     }
 }
