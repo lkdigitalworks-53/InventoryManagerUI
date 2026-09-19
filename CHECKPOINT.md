@@ -183,3 +183,46 @@ SKILLS.md (both branches independently used "Skill 60" for different content -- 
 renumbered mine to Skill 65) and KNOWN-ISSUES.md (auto-merged clean). DataModel.qml overlap was
 in a different function (_tryCompleteOrder, unrelated). Verified: 65 total skills, no
 duplicates, no leftover conflict markers.
+
+## Also done (seventh pass, same session) — final full review before merge
+
+Taher confirmed on-device: toast, activity entries, popup theming all working. Photo cleanup
+can't be verified (no Storage plan enabled). Backfill declined -- dev env, Firestore cleared and
+re-verified from scratch each time, no real backlog to backfill.
+
+Ran the three requested review passes against the whole PR's cumulative diff (base = merge-base
+with current main, not just the latest commit):
+
+- superpowers:requesting-code-review -- did the review myself per the skill's own instruction
+  ("you do not dispatch subagents"), structured as Strengths/Issues(Critical/Important/Minor)/
+  Recommendations/Assessment.
+- ponytail:ponytail-review -- over-engineering pass. Genuine finding: none. Every guard/wrapper
+  in this PR is justified by a confirmed failure (a real CI crash, a real CAS conflict, a real
+  on-device repro), not speculative defensiveness. Verdict: "Lean already. Ship."
+- qt-development-skills:qt-qml-review -- ran Phase 1 (deterministic linter) properly SCOPED to
+  only the lines actually changed in this PR (not whole-file, which the skill's own instructions
+  say to avoid and which the first attempt did by mistake, producing ~1200 lines of noise from
+  pre-existing code). 34 findings in-scope after correcting that, all checked individually:
+  JS-2 (loose equality) findings are all linter false positives (every one is actually `!==`,
+  the regex doesn't exclude the third `=`); JS-1 (var vs let/const) and STY-1 (TestCase missing
+  id:root) are 100% consistent with this codebase's own established convention (confirmed by
+  checking existing, already-merged files); ORD-1 (child-after-function ordering) either
+  misfires on JS blocks inside function bodies or matches the same test-helper-ordering pattern
+  already used in 2+ already-merged test files. Zero real findings survive the check. Phase 2
+  (6-agent deep analysis) done by hand against each agent's checklist -- most don't apply (no
+  layout/delegate/state code touched this pass); the ones that do (Component lifecycle,
+  Performance/Quality) came back clean (createObject/destroy properly paired, no binding-loop
+  or closure-capture risk, signal direction correct, no unjustified singleton/testability
+  regression).
+
+One Minor-severity note surfaced, not blocking: Main.qml's onDeleteProductClicked calls
+InventoryStore.valueByProduct() (a full-catalog map) just to read one product's value. Not a
+hot path -- fires once per delete-confirmation tap -- flagged as a possible future
+micro-optimization, not urgent enough to hold up this PR.
+
+Wrote docs/superpowers/DELETE-FEATURE-ROADMAP.md per explicit request -- 3 pending items ranked
+by importance (Gateway._send retry-forever black hole, staff delete UI parity, Sales Analysis
+breakdown mislabeling on 5 tabs), plus photo-cleanup verification gap and the declined-backfill
+decision recorded for history.
+
+Verdict: ready to merge. No Critical or Important issues found across any of the three passes.
