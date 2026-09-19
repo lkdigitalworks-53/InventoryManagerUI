@@ -407,6 +407,7 @@ QtObject {
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
+- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67)
 - `qml/model/qmldir`
 
 **Example Prompts**:

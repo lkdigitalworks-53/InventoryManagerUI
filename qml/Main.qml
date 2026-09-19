@@ -21,6 +21,10 @@ App {
     property string memberErrorMessage: ""
     property string successMessage: ""
 
+    // Queued writes stuck behind a server-side failure (Gateway.stuckCount).
+    // GlassHeader reads it as app.syncStuckCount, the same way it reads app.isOnline.
+    readonly property int syncStuckCount: Gateway.stuckCount
+
     // Consume the Android Back event so it does NOT propagate to the OS (which
     // would background/exit the app). "AutoAccept" = mark the event accepted;
     // true keeps the app open and lets our _handleBack router do the navigation

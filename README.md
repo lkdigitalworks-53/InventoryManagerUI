@@ -725,4 +725,16 @@ behavior, found while tracing `RestockDialog`, is recorded in SKILLS Skill 66 â€
 the cause here, but real and worth knowing for any future `recordDelta` caller with non-idempotent
 callback side effects.
 
+**Update 2026-09-19 (writes stuck behind a server-side failure):** `Gateway._send`, `_sendBatch` and
+`_sendDelta` retried any failure that wasn't a recognised terminal case forever, with backoff and no signal
+to anyone, while the stores had already applied the change locally (`DELETE-FEATURE-ROADMAP` item 1). The
+server can't help the client decide: every `applyMutation` exception comes back as `500 write-failed`. So
+`Gateway` now counts server-side failures (status 400 or above, except 401 and 409; offline never counts) per
+queued write in `qml/helper/StuckWrites.js`; the 5th failure (about 3 minutes with the current backoff) shows
+one toast and raises `Gateway.stuckCount`, which `Main.qml` republishes as `syncStuckCount` and the existing
+`GlassHeader` caption line shows as "N change(s) not syncing. Still retrying." until the write leaves the
+outbox. This only reports: retry, backoff and dropping are untouched, so local state can still diverge from
+the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
+`docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
+
 ---
