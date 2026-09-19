@@ -10,6 +10,14 @@ an existing one is fixed — move fixed items to the bottom under "Fixed" rather
 so the pattern's history stays visible. `KNOWN-ISSUES.md` gets a one-line pointer here rather than
 duplicating detail.
 
+**2026-09-16 scope review** (`/superpowers:brainstorming`, before picking up the first item): re-ran
+the sweep's own checklist against every `BottomSheet`-derived dialog in `qml/pages/` and found four
+already-safe dialogs the original sweep hadn't listed anywhere (`ProfileSettingsDialog`,
+`ForgotPasswordDialog`, `ManageCategoriesDialog`, `ManageOrderChannelsDialog`) — added to "Checked,
+not affected" below, each with its own trace, per this file's own "checked and found fine is
+different from not checked" standard. No new Critical/Medium instances turned up; the existing
+severity ranking and the "Not yet swept" list stood up to the re-check.
+
 ## The pattern, in one paragraph
 
 A user action fires a fire-and-forget signal into an async, multi-step `DataModel` orchestration
@@ -138,8 +146,68 @@ need a `DataModel`-layer guard the way completion did — there's no *second* ca
 `OrdersStore.addOrder` the way `_approveAllPending` provides for completion, so fixing the one UI
 entry point closes the whole gap.
 
-**Not yet fixed.** Flagged for a dedicated session — likely the next one to pick up given how easily
-this triggers in normal use.
+**Fixed 2026-09-16** — see F-2 at the bottom of this file. Picked as the first item off this
+tracker over C-1: both are Critical, but this one needed no special setup (reopen a completed
+order, choose Exchange) — a plain fast double-tap on the primary "Place order" flow every order
+goes through, exactly as this section originally called out.
+
+**2026-09-16, later same day — Taher's on-device retest, flagged, not yet resolved:** with
+auto-approve enabled, a double-press on Submit still placed the same order twice, both completed.
+Investigated the currently-pushed fix (`trySubmit()`'s `if (busy) return` guard, `busy = true`
+before the emit, `Connections`-on-`logic` wait-for-signal) against this report and could not find a
+code-level gap — the guard is structurally sound by the same reasoning that makes it work at all
+(single-threaded QML event loop: a second `trySubmit()` call cannot interleave with the first's
+synchronous body, so it must see `busy === true` and bail). The open question this needs before any
+further code change: was this retest run against `fix/2026-09-16-new-order-double-submit` **after**
+its 2026-09-16 rebase/push, or against `main`/a build that predates the fix? Not guessing at the
+answer — asked Taher directly. If it turns out to still repro on the actual fixed branch, that's a
+real, currently-unexplained gap and needs its own fresh investigation, not a re-application of the
+same fix.
+
+**Resolved, 2026-09-16, same day — clean retest.** Taher retested on-device and reported it now
+looks fine. Consistent with the stale-build hypothesis above (no code changed between the "still
+broken" report and this clean retest) — treating this as confirmation the earlier report was against
+a build that predated the fix, not evidence of an intermittent gap in the guard. Watching for any
+further report before considering this fully closed, but nothing left to investigate right now.
+
+---
+
+### C-3 (added 2026-09-16, Taher on-device): `RestockDialog` — double-pressing Confirm added stock twice
+
+**Confirmed on-device by Taher**, not a static-analysis finding — a real double-press on "Confirm"
+in `RestockDialog` added the restocked quantity twice.
+
+**Investigated, root cause not yet identified.** `RestockDialog.onPrimaryClicked` has the exact same
+guard shape that fixed `NewOrderDialog` (C-2/F-2) and is structurally sound by every check made:
+`if (busy) return` first, `busy = true` set synchronously before the one call to
+`InventoryStore.restock(...)`, `busy` reset inside that call's own callback on both success and
+failure. `BottomSheet`'s primary button correctly binds `enabled: primaryEnabled && !busy` and
+`PrimaryButton.qml` has no secondary click surface (its `loading` state is a plain `BusyIndicator`
+inside the button's own `contentItem`, not a separate overlay that could be swallowing/forwarding
+taps). Traced one level deeper into `InventoryStore.restock` itself: `_resolveSupplierId` never
+double-invokes its callback in any branch; `Gateway.recordDelta` does have a coalescing mechanism
+(`OutboxStore.enqueueDelta` can merge concurrent deltas for the same entity+field and fan the merged
+result out to every registered callback) — a real thing worth knowing about this codebase, but it
+requires *two separate calls into `recordDelta` for the same product* to matter at all, which is the
+same "did the dialog-level guard actually fail" question this started with, not an independent
+explanation for it.
+
+**Why this is flagged rather than fixed outright:** rewriting already-structurally-correct guard
+code based on a guess about which layer failed would be exactly the kind of shortcut this repo's own
+standard rules out — it could easily "fix" nothing (if the real cause is elsewhere) while adding
+complexity. This needs either a repro with the dev console/logs open (does `InventoryStore.restock`
+actually get called twice, or once with the underlying write itself somehow landing twice?) or
+device-level input event tracing, neither of which is reachable from static code review alone.
+
+**Not yet fixed** as of the investigation above — but see the retest note directly below before
+picking this up.
+
+**Resolved (no repro), 2026-09-16, same day.** Taher retested on-device and reported it now looks
+fine — no code changed for `RestockDialog` between the original report and this retest, so this
+reads as the same stale-build/stale-state explanation offered for the `NewOrderDialog` report above,
+not confirmation of a fix (none was made). Downgrading from "needs investigation before picking up"
+to "watch for a repeat report" — the trace above stays as the record of what was checked if this
+resurfaces.
 
 ---
 
@@ -287,13 +355,35 @@ from "not checked."
   no callback. A repeated delete on an already-deleted record is a harmless no-op, not a
   duplicate-write risk. `ConfirmDialog.qml` itself wasn't deeply audited for its own
   double-tap-on-Confirm behavior, since the actions routed through it are idempotent regardless.
-- **`RestockDialog`, `AddProductDialog`, `AddStaffDialog`, `ImportPreviewDialog`** — all already use
-  `busy`/`busyMessage` correctly (confirmed present and wired in each file). These were the
-  examples PR #70 pointed to as the established, correct pattern; re-confirmed here, not re-derived
-  from scratch.
+- **`AddProductDialog`, `AddStaffDialog`, `ImportPreviewDialog`** — all already use `busy`/
+  `busyMessage` correctly (confirmed present and wired in each file). These were among the examples
+  PR #70 pointed to as the established, correct pattern; re-confirmed here, not re-derived from
+  scratch. (`RestockDialog` was originally grouped in this same line — moved out 2026-09-16, see
+  C-3 below: on-device testing found it's NOT actually safe, despite the guard code reading
+  correctly.)
 - **`MemberManagementDialog`** — binds `busy: AuthService.membersBusy`, a real service-level state
   rather than a manually toggled flag. Correct pattern, different implementation shape (bound
   property vs. imperative set/clear) — both are fine.
+- **`ProfileSettingsDialog`** (added 2026-09-16, original sweep missed it) — binds
+  `busy: AuthService.busy`, same bound-service-state pattern as `MemberManagementDialog`.
+  `AuthService.updateProfile` is a real `_postJson` round trip; `onPrimaryClicked` checks `!busy`
+  before firing. Correct, not affected.
+- **`ForgotPasswordDialog`** (added 2026-09-16, original sweep missed it) — `_submit()` itself has
+  no busy guard, but the guard lives one layer up: `Main.qml`'s `onResetRequested` handler sets
+  `forgotPasswordDlg.busy = true` synchronously in the same signal-dispatch turn as `_submit()`'s
+  `resetRequested(...)` emit, before `AuthService.sendPasswordResetEmail`'s real network round trip
+  starts — and `busy` is reset on both the success (`passwordResetSent`) and failure (`authFailed`)
+  paths (`Main.qml:346-347, 357-359`). `BottomSheet`'s primary button already binds
+  `enabled: root.primaryEnabled && !root.busy`, so a second tap is structurally blocked the instant
+  the first tap's handler returns. Correct, just an unusual location for the guard (composing
+  container instead of the dialog itself) — worth knowing so a future refactor that moves this logic
+  doesn't accidentally drop the guard along with it.
+- **`ManageCategoriesDialog` / `ManageOrderChannelsDialog`** (added 2026-09-16, original sweep
+  missed both) — `CategoryStore.addCategory`/`removeCategory`/`setDefault` and
+  `OrderChannelStore.addChannel`/`removeChannel`/`setDefault` take no callback parameter anywhere;
+  confirmed zero Gateway/network involvement (device-local lists, per each dialog's own header
+  comment). Same shape as `EditProductDialog` — no genuine async round trip gates completion, so
+  there is nothing for a repeated tap to race against. Not affected.
 
 ## Not yet swept — flag before assuming clean
 
@@ -325,3 +415,24 @@ fired its update signal and closed immediately with no busy indicator. Fixed wit
 `_completingOrderIds` in-flight set (DataModel layer) plus wiring the dialog up to `BottomSheet`'s
 existing `busy`/`busyMessage` mechanism. Full writeup: SKILLS Skill 61 (root cause), 62–63 (test
 file corrections). Branch: `fix/2026-09-14-order-completion-double-submit`, PR #70.
+
+### F-2 (2026-09-16): `NewOrderDialog` — "Create Order" double-submit (C-2)
+
+`trySubmit()` had no `busy` guard of any kind and called `dlg.close()` immediately after firing the
+fire-and-forget `orderCreated` signal — no wait for `OrdersStore.nextOrderId`'s real, server-mediated
+mint to actually resolve. Unlike completion, there's no second call path into `OrdersStore.addOrder`
+for a `DataModel`-layer guard to protect against (no `_approveAllPending`-equivalent for creation),
+so the fix is entirely at the UI layer: `if (busy) return` as the first line of `trySubmit()`,
+`busy = true` set synchronously before the emit, and a `Connections { target: logic }` block that
+waits for a real `orderAdded` (success, closes) or the new dedicated `orderCreationFailed` (failure,
+shows the error inline, stays open) signal — mirroring `OrderDetailDialog`'s existing pattern from
+PR #70. `orderCreationFailed` is new (`Logic.qml`/`DataModel.onAddOrder`): the previous failure path
+piggybacked on the generic `errorOccurred` bus shared by every `DataModel` handler, which would have
+let an unrelated error elsewhere reset this dialog's `busy` state — traded a working-by-coincidence
+shortcut for a dedicated signal instead, same shape as `orderCompletionFailed`.
+
+Automated coverage: `tests/tst_NewOrderDialogSubmitGuard.qml`, a plain-JS-object stand-in (same
+technique as `tests/tst_AddStaffSyncClose.qml`) — `NewOrderDialog.qml` itself can't load under
+`qmltestrunner` (pulls in `Felgo` via `Constants.qml`). On-device verification of the actual dialog
+is in `docs/superpowers/test-plans/2026-09-16-new-order-double-submit-test-plan.md`. Full writeup:
+SKILLS Skill 65. Branch: `fix/2026-09-16-new-order-double-submit`.

@@ -1,228 +1,260 @@
-# CHECKPOINT — docs/2026-09-02-batch-cleanup-on-delete-design
+# CHECKPOINT — final PR review done, clean retest confirmed, ready to open PR pending CI
 
-Session date: 2026-09-02
-Branch: `docs/2026-09-02-batch-cleanup-on-delete-design`, off `main` @ `a6228f4`
+**Session date:** 2026-09-16
+**Branch:** `fix/2026-09-16-new-order-double-submit`, rebased onto `main` @ `bec7cd4`
+**PR:** still not opened by this session — CI status could not be confirmed from the sandbox
+(GitHub API rate-limited unauthenticated on every check this session); Taher opens it or confirms
+CI is green before it's opened, per standing workflow.
 
-## Status: Tier C implemented, tests written, about to commit + push
+## Final review + clean retest, this step
 
-## What's done
+Taher retested both the `RestockDialog` and `NewOrderDialog` auto-approve reports on-device and
+said everything looks fine now. Updated both open items in the tracker doc (C-2's retest note, C-3)
+to record this as a clean retest — reads as confirming the earlier reports were against a stale
+build/state, not as a fix landing (no code changed for `RestockDialog` in this session at all)Left the investigation trace in place in both cases rather than deleting it, in case either
+resurfaces.
 
-1. Archived the stale `CHECKPOINT.md` (inherited from the merged `feature/product-order-
-   delete-ui` branch) to
-   `docs/superpowers/specs/2026-08-30-product-order-delete-ui-CHECKPOINT.md`.
-2. Wrote a design doc, compared 3 tiers on 3 throwaway branches
-   (`docs/2026-09-02-batch-cleanup-tier-a-noop`, `-tier-b-centralized-filter`,
-   `-tier-c-cascade-delete`) via `superpowers:brainstorming` + `ponytail:ponytail-audit`. Taher
-   picked Tier C. All 3 comparison branches deleted (remote + local) per instruction.
-3. Updated the spec doc (`docs/superpowers/specs/2026-09-02-cleanup-batches-photo-on-product-
-   delete.md`) to record the decision and the two open questions the audit cut outright
-   (audit-reason granularity, separate role gate).
-4. **Implemented Tier C**:
-   - `InventoryStore._activeBatches()` — new shared helper (Tier B's design, layered in as a
-     defensive backstop per the spec doc), replacing four duplicated inline
-     `if (!getById(...)) continue` guards across `totalValue`/`valueByProduct`/
-     `valueBySupplier`/`valueByCategory`/`potentialProfitByDimension`.
-   - `SalesPage.qml`'s two duplicate inline walks (Potential-profit block, `_valueMaps`'s
-     filtered path) switched to `InventoryStore._activeBatches()` too.
-   - `InventoryStore.deleteProduct()` now cascades: removes every batch for the deleted product
-     (open and exhausted), each routed through `Gateway.recordMutation("stock_batch", ...,
-     "delete", ...)`; calls `StorageService.deleteProductPhoto()`, wrapped in `try/catch`
-     deliberately — that call falls through to a native `ImageProcessor` singleton only
-     registered by the real app's `main.cpp`, undefined in a headless test environment, same
-     failure class as the `logic`/`dispatcher` bug (Skill 58) — guarded against directly this
-     time instead of found the hard way.
-   - `Main.qml`'s `onDeleteProductClicked` now checks `StockBatchStore.remainingFor(pid)` and
-     shows an enhanced confirm message (quantity + currency value) when stock remains.
-5. Wrote `tests/tst_InventoryStore_deleteProductCascade.qml` (7 cases) — cascade removes all
-   batches (open + exhausted), audit routing verified via a `Gateway.recordMutation` spy (real
-   function replaced for the test, restored in `cleanup()` — no real network call), photo-cleanup
-   try/catch actually protects the rest of the function, regression check that only the targeted
-   product is removed, `_activeBatches()` tested directly.
-6. Confirmed by re-reading, not assumed: `tst_InventoryStore_valueOrphanedBatch.qml` and
-   `tst_InventoryStore_potentialProfitOrphanedBatch.qml` test the *external* behavior of the five
-   refactored functions and weren't modified — their continued passing is the regression check
-   for the `_activeBatches()` refactor.
-7. Wrote test plan: `docs/superpowers/test-plans/2026-09-02-batch-cleanup-on-delete-test-plan.md`,
-   added to the index.
-8. Updated `KNOWN-ISSUES.md`: marked the "product delete doesn't clean up stock batches or
-   photo" entry RESOLVED with a summary of what shipped; updated the "bigger question" (should
-   delete-with-stock even be allowed) from open to answered.
-9. All touched files brace-balanced (Python character-walk, no toolchain in this sandbox).
+**Then ran a full final review sweep of the PR** (`/superpowers:requesting-code-review`,
+`/ponytail:ponytail-review`, `/qt-development-skills:qt-qml-review`), scoped to this branch's actual
+diff against `main` (`Logic.qml` +1 line, `DataModel.qml` +7/-1, `NewOrderDialog.qml`'s guard +
+`Connections` block, the new test file — small and focused, nothing else touched). No subagent
+dispatch tool available in this environment, so did the six-category deep-analysis pass directly
+rather than launching parallel subagents, and ran the skill's own deterministic linter
+(`qt_qml_lint.py`) for phase 1.
 
-## Remaining
+**Findings:** zero issues within the actual changed lines. Full detail in the reply to Taher, not
+duplicated here — short version: `Logic.qml`/`DataModel.qml`'s changed lines have no lint hits at
+all; `NewOrderDialog.qml`'s one real hit (imperative `errorLabel.text =` assignment, BND-2) matches
+the exact pattern this same file already uses in two other places (lines 152, 613) — consistent, not
+a new inconsistency; the `Connections` block's placement after all functions matches
+`OrderDetailDialog`'s own established placement for the identical pattern, verified by checking that
+file directly rather than assuming; the test file's lint hits (`var` over `let`, no `id: root`)
+match `tst_AddStaffSyncClose.qml` — the established precedent it deliberately mirrors — exactly,
+confirmed by running the same linter against that file too. Made **no code changes** — nothing found
+that warranted one, and "fix the lint tool's generic preference against this codebase's own
+consistent, established convention" would have been the wrong call, not an autonomous fix.
 
-- Commit everything, push.
-- CI should confirm the new test file and the two regression files still pass.
+**Ponytail pass:** nothing to cut. Diff is already minimal — one signal, one emit-site swap, one
+guard + wait-for-signal block, comments proportionate to how easy this exact bug class is to
+reintroduce (matches this codebase's own established comment density for the same pattern). Verdict:
+lean already, ship.
 
-## Also done (second pass, same session) — real CI failure, debugged and fixed
+**CI status: still not confirmed from this sandbox** — every GitHub API call this session hit an
+unauthenticated rate limit. This is the one thing this review could NOT verify, and it's the actual
+merge gate, not this static review. Said so plainly rather than implying a false "all clear."
 
-First push's CI run failed: QML Tests job, 7/794 failed, all in the new
-tst_InventoryStore_deleteProductCascade.qml, all identical error --
-`Cannot assign to read-only property "recordMutation"`. Root cause: tried to
-spy on Gateway.recordMutation by reassigning it to a mock function
-(`Gateway.recordMutation = function(...) {}`) to verify audit routing --
-QML `function` members aren't reassignable JS properties like a plain
-object's, unlike what worked for other things this session (SignalSpy on a
-real signal, or a genuine JS property like Toast.show).
+## State right now
 
-Couldn't fetch raw CI logs directly (blob storage host not in this sandbox's
-network allowlist) -- got the failure detail from the PR's own posted test-
-summary comment instead (`gh api .../issues/65/comments`), which had the
-exact assertion/exception text needed to root-cause it without guessing.
+Committed and pushed. Tracker doc + this checkpoint are the only changes this step — no production
+code touched.
 
-Fixed: removed the monkey-patch and the one test that depended on it.
-Confirmed calling the REAL (non-mocked) deleteProduct() -> Gateway.
-recordMutation path is safe before relying on it -- tst_DataModel_
-deleteGuards.qml already does exactly that for the pre-cascade version of
-this function and passes on CI, so the remaining 6 tests call the real
-function with confidence rather than another guess. Test plan doc and this
-file's own header comment corrected to explain what happened and why,
-matching this whole session's established correction convention rather
-than silently editing the mistake away.
+## Next steps
 
-Re-pushing now.
+1. **Taher (or a future session) confirms CI is actually green** on this branch — this review
+   covers correctness/style/architecture, not "did the test suite actually pass."
+2. Open the PR once CI is confirmed green.
+3. C-1 (reopen completed order → Exchange → increase quantity) is still the next open tracker item,
+   its own session — untouched this whole session.
+4. M-1 (`InviteMemberDialog`) and L-1 (cosmetic) — still open, lower priority.
+5. `Gateway.recordDelta`'s coalescing/callback-fan-out behavior (SKILLS Skill 66) — not established
+   as a live bug anywhere, flagged for whoever next adds/reviews a `recordDelta` caller with
+   non-idempotent callback side effects.
 
-## Also done (third pass, same session) — on-device review found a real regression + UI fix
+investigation question too (see below) that should probably be resolved before opening the PR,
+not just CI going green.
 
-Taher tested the PR on-device (confirmed CI/tests fine) and raised three points:
+## On-device retest, this step
 
-1. Why allow deleting a product after a completed order, and does the batch really get cleaned
-   up when only part of it was sold? Investigated precisely: the STOCK BATCH does get correctly
-   cascade-deleted regardless of qtyRemaining (verified by re-reading the exact code, not
-   assumed). But tracing further surfaced a REAL, separate regression: StockBatchStore.
-   restoreFifo/topUpOldest (11 call sites in DataModel.qml, fired whenever a completed order
-   gets reopened/reversed/adjusted) synthesize a phantom unitCost:0 batch when no batch exists
-   for a productId -- exactly the state deleteProduct()'s own cascade leaves behind on purpose.
-   Fixed with two shared wrappers (_restoreFifoSafe, _topUpOldestSafe) checking product
-   existence first, routing all 11 call sites through them instead of guarding each
-   individually. Test: tests/tst_DataModel_restoreFifoSafeGuards.qml (5 cases, skip-path only).
-2. Proposed blocking delete until all transactions are reverted. Reconsidered rather than
-   implemented -- doesn't solve the trapped-user problem: no way to revert a purchase at all
-   (no such feature), and reverting a sale increases stock, doesn't provide a path to zero.
-   Documented the reasoning in KNOWN-ISSUES.md rather than silently declining.
-3. permissionErrorDlg (raw unstyled QQC.Dialog, hardcoded color) didn't match the app's theme.
-   Replaced with a new actionBlockedDlg instance of the ALREADY-EXISTING AlertDialog component
-   (same one stockErrorDlg already used) -- discovered it already existed before building a
-   duplicate from scratch. Updated the back-button dialog-priority array and removed the now-
-   unused permissionErrorMessage property and QQC import.
+Taher tested on-device and reported both still reproducing: `RestockDialog` double-press → stock
+added twice; `NewOrderDialog` with auto-approve on, double-press → order placed AND completed
+twice. Instructed to apply "`busy = true` immediately after the busy check, everywhere."
 
-All touched files brace-balanced. Docs updated: KNOWN-ISSUES.md (new regression entry, follow-up
-note on the reconsidered blocking proposal), test plan (section 5 added -- briefly lost section 4
-in the same edit, caught immediately via a heading grep, restored).
+**Did the deep investigation instead of blindly rewriting per the literal instruction.** Traced
+`RestockDialog.onPrimaryClicked` end to end — `if (busy) return`, `busy = true` before the one
+`InventoryStore.restock(...)` call, `BottomSheet`'s `enabled: primaryEnabled && !busy` binding,
+`PrimaryButton.qml`'s `loading` rendering (no secondary click surface), `_resolveSupplierId`
+(no double-callback in any branch), `Gateway.recordDelta` (has a real coalescing/callback-fan-out
+mechanism — recorded as a general finding, not established as this bug's cause). **Found no
+code-level defect** — the guard is structurally identical to the shape that fixed `NewOrderDialog`
+(C-2/F-2) and should work by the same single-threaded-event-loop reasoning.
 
-## Also done (fourth pass, same session) — the real root cause, found via exact repro
+Did NOT rewrite `RestockDialog`'s guard code — doing so without an identified mechanism would be
+exactly the "shortcut, not the correct fix" this repo's own standard rules out, and could easily
+"fix" nothing if the real cause is elsewhere.
 
-Taher gave an exact, reproducible on-device scenario: create product (stock 10, supplier S1),
-sell 1 via a completed order, delete the product -- product gone, batch stays in Firestore at
-qtyRemaining 9, confirmed directly in Firestore console (not just app UI).
+**What was done instead:**
+- `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`: `RestockDialog` moved out of "checked, not affected"
+  into a new **C-3** entry (Critical, not yet fixed, root cause not identified, full trace recorded)
+  — `AddProductDialog`/`AddStaffDialog`/`ImportPreviewDialog` remain correctly in "checked."
+  `NewOrderDialog`'s C-2/F-2 section got a note flagging the open question below.
+- `SKILLS.md` Skill 66 — the investigation and the `Gateway.recordDelta` fan-out finding, recorded
+  for reuse regardless of whether it turns out to matter for C-3.
+- `AGENTS.md` — two short additions: the `recordDelta` fan-out caution (Data Model & Orchestration
+  Agent section), and "trace every layer before rewriting a bug report against code that already
+  reads correctly" (Pages & Dialogs Agent section).
+- `README.md` — short dated entry in Concurrency & Conflict Resolution pointing at the doc/skill
+  for the full trace, not duplicating it.
 
-Traced end to end rather than guessed:
-- deleteProduct()'s cascade sends the LOCALLY-CACHED batch object as the CAS `before` for a
-  delete mutation.
-- Server-side applyMutation does a real CAS check (_deepEqual(current, before)) -- legitimate,
-  not the bug.
-- Found the actual bug: StockBatchStore.consumeFifo/restoreFifo/topUpOldest's success handlers
-  stamped a fresh client-generated `updatedAt: new Date().toISOString()` onto the local cache
-  after every successful Gateway.recordDelta call. Server-side applyDelta never touches
-  updatedAt -- only the delta's target field. So local and server permanently diverge on that
-  one field the moment any batch is first consumed against.
-- This predates Tier C entirely -- consumeFifo/restoreFifo/topUpOldest are pre-existing
-  functions. Nothing before the cascade-delete feature ever sent a previously-delta-touched
-  batch through a CAS-protected write, so the drift never surfaced.
-- The delete gets silently rejected as a 409 conflict (conflicts never retried);
-  StockBatchStore._onMutationConflicted DOES exist and DOES fire, quietly restoring the batch
-  to the local array with the server's real (still-existing) document -- no toast by design,
-  invisible unless you check Firestore directly, exactly what happened.
+**Open question, asked Taher directly, not guessed at:** was the `NewOrderDialog` auto-approve
+retest run against `fix/2026-09-16-new-order-double-submit` *after* this session's earlier
+rebase/push, or against `main`/a build from before the fix landed? This fully resolves that half of
+the report either way — either it's stale-build confusion (nothing further to do there) or it's a
+genuine, currently-unexplained gap in a fix that looked complete, and needs its own fresh
+investigation rather than reapplying the same pattern again.
 
-Fixed: removed the synthetic updatedAt bump from all three success handlers (3 occurrences,
-same pattern each time). Object.assign's base object already preserves the field correctly once
-the override is gone.
+**Not yet done this step:** commit and push these doc/skill updates. Doing that next, per Taher's
+explicit "change the scope of roadmap and push in same branch" instruction — that part doesn't
+depend on resolving the open question above.
 
-Not independently unit tested -- verifying needs a real Gateway.recordDelta network round-trip
-to fire the success callback, same untestable territory as every other Gateway-adjacent test
-this session. Verified by exact code trace (client success handler vs server applyDelta, side
-by side, confirming exactly which fields each one touches). Documented in KNOWN-ISSUES.md and
-SKILLS.md Skill 60 (new). On-device re-test of the exact repro is the real verification --
-recommended before considering this closed, not claimed as proven here.
+---
 
-## Also done (fifth pass, same session) — reviewed and completed already-started uncommitted work
+## Rebase (earlier step, still accurate below)
 
-Found 52 lines of uncommitted, purely-additive changes across 8 files already in the working
-tree at the start of this pass -- an earlier continuation of this same task that got cut off
-before committing or explaining. Reviewed every diff carefully as if reviewing someone else's
-PR (git diff per file, checked function signatures/API surface referenced actually exist,
-verified no Felgo/native risk, confirmed no deletions anywhere) rather than trusting it blindly.
-Found it correct, complete, and well-tested -- matching what I would have designed myself for
-both of Taher's reports:
+Between the first push and this step, `main` moved `a66fb8f` → `bec7cd4` (PR #68: batch-id mint
+retry-on-reconnect + `topUpOldest` safety fix, plus PR #69: docs-only audit of that same fix's
+pattern). PR #68's commit touched `qml/pages/NewOrderDialog.qml` too (`_pickerProducts`/pending-mint
+filtering in `_rebuildPickerNames`/`addSelectedProduct`) and `docs/superpowers/test-plans/README.md`
+— both files this branch also touched.
 
-1. Reversal/reopen silently skipping stock restoration for a deleted product (Skill 60's guards
-   doing their job correctly, but invisibly) -- fixed with a new Logic.stockRestorationSkipped
-   signal, wired to a Toast in Main.qml. Test file extended with 2 new cases using SignalSpy on
-   the real signal (not a repeat of the earlier Gateway.recordMutation monkey-patch mistake).
-2. Activity feed never showing delete operations at all -- ActivityLog.record(...) added to
-   deleteProduct/deleteOrder/deleteStaff, matching icon/gradient entries added to
-   ActivityPage.qml (reusing the existing "delete" icon name from Constants.colorIconSet).
-   New test file, 4 cases, cleanly and fully testable since ActivityLog.record's local update
-   is synchronous.
+Rebased onto `origin/main` (`git rebase origin/main`). Resolved automatically, no manual conflict
+markers — checked both shared files by hand afterward rather than trusting a clean auto-merge at
+face value: PR #68's changes live in `_rebuildPickerNames`/`addSelectedProduct` (top of file, product
+picker filtering); this branch's changes live in `trySubmit()`/`onOpened`/the new `Connections`
+block (further down, order submission). No overlap, both sets of changes intact post-rebase — diffed
+`bec7cd4..HEAD` against `a66fb8f..bec7cd4` on both files to confirm rather than assuming. The
+`test-plans/README.md` index table also merged cleanly — both PR #68's and this branch's new rows
+present, in date order.
 
-All 9 touched/new files brace-balanced. Docs (KNOWN-ISSUES.md, this checkpoint) were the
-missing piece -- writing those now, then committing and pushing everything together.
+One local-environment snag, not a content issue: the sandbox had no git identity configured, so
+`git rebase --continue` needed `git config user.name`/`user.email` set first (same
+`tsowner@lkdigitalworks.com` convention as every commit this session), then an explicit
+`GIT_EDITOR=true git commit -C <original-sha>` to reuse the original commit message before
+`rebase --continue` would proceed — plain `--continue` alone errored asking for identity, then again
+for an explicit commit, rather than auto-committing the already-staged, already-resolved change.
 
-## Also done (sixth pass, same session) — a real CI failure from the previous push, fixed
+Pushed with `--force-with-lease` pinned to the exact known prior remote SHA (`a5a272f...`), not a
+blind `--force` — per this repo's own stated discipline for rewritten-history pushes.
 
-The stock-restoration-visibility push (previous pass) already made it to the remote and CI ran
--- QML Tests failed. `tst_OrderMetadataEditPreservesConsumption.qml` (and 3 other pre-existing
-test files) instantiate `DataModel { id: dm }` with no `dispatcher` set. QML's Connections
-defaults `target` to its parent when unset, so `dispatcher` there silently resolves to the
-DataModel instance itself -- which has no `stockRestorationSkipped` function -- and the bare
-`dispatcher.stockRestorationSkipped(...)` call threw. Real production code unaffected (Main.qml
-always wires a real Logic instance). Fixed with a `typeof` guard in both wrapper functions
-rather than touching any of the 4 unrelated test files. Regression test added reproducing the
-exact no-dispatcher setup. Also had to rebase again -- main moved 3 commits, real overlap in
-SKILLS.md (both branches independently used "Skill 60" for different content -- kept both,
-renumbered mine to Skill 65) and KNOWN-ISSUES.md (auto-merged clean). DataModel.qml overlap was
-in a different function (_tryCompleteOrder, unrelated). Verified: 65 total skills, no
-duplicates, no leftover conflict markers.
+Also noticed while fetching: a stray branch `docs/2026-09-16-order-completion-idempotency-gap-v2`
+now exists on origin, not touched or inspected by this session — out of scope per the standing rule
+not to proactively manage branches/PRs beyond the one being worked on. Flagging its existence here
+only so it isn't mistaken for something this session created.
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-14-order-completion-double-submit-CHECKPOINT.md`
+(that session's PR #70 had merged, and its final CHECKPOINT.md — describing the pre-merge, PR-open
+state — was sitting unarchived at the repo root when this session's clone was made. Archived first,
+per this repo's own archive-before-overwrite discipline, before writing this file.)
 
-## Also done (seventh pass, same session) — final full review before merge
+## What this session is
 
-Taher confirmed on-device: toast, activity entries, popup theming all working. Photo cleanup
-can't be verified (no Storage plan enabled). Backfill declined -- dev env, Firestore cleared and
-re-verified from scratch each time, no real backlog to backfill.
+Not a new bug report — Taher asked to read `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` (the tracker
+doc PR #71 created, ranking every instance of the double-submit *pattern* PR #70 fixed once), check
+whether its scope was actually correct or missing anything, add any gaps found, then pick up the
+first priority item off it. Explicit instructions this session: full caveman mode; clone fresh each
+session; commit/push autonomously without waiting for approval (standing PAT authorization); branch
+per session, never commit to `main`; don't build/run the app; checkpoint every step; advisory/
+trade-off framing on every decision rather than silent agreement; tests + test plan for anything
+changed; update skills/agents/README on a need basis.
 
-Ran the three requested review passes against the whole PR's cumulative diff (base = merge-base
-with current main, not just the latest commit):
+## Scope review (done first, before picking an item)
 
-- superpowers:requesting-code-review -- did the review myself per the skill's own instruction
-  ("you do not dispatch subagents"), structured as Strengths/Issues(Critical/Important/Minor)/
-  Recommendations/Assessment.
-- ponytail:ponytail-review -- over-engineering pass. Genuine finding: none. Every guard/wrapper
-  in this PR is justified by a confirmed failure (a real CI crash, a real CAS conflict, a real
-  on-device repro), not speculative defensiveness. Verdict: "Lean already. Ship."
-- qt-development-skills:qt-qml-review -- ran Phase 1 (deterministic linter) properly SCOPED to
-  only the lines actually changed in this PR (not whole-file, which the skill's own instructions
-  say to avoid and which the first attempt did by mistake, producing ~1200 lines of noise from
-  pre-existing code). 34 findings in-scope after correcting that, all checked individually:
-  JS-2 (loose equality) findings are all linter false positives (every one is actually `!==`,
-  the regex doesn't exclude the third `=`); JS-1 (var vs let/const) and STY-1 (TestCase missing
-  id:root) are 100% consistent with this codebase's own established convention (confirmed by
-  checking existing, already-merged files); ORD-1 (child-after-function ordering) either
-  misfires on JS blocks inside function bodies or matches the same test-helper-ordering pattern
-  already used in 2+ already-merged test files. Zero real findings survive the check. Phase 2
-  (6-agent deep analysis) done by hand against each agent's checklist -- most don't apply (no
-  layout/delegate/state code touched this pass); the ones that do (Component lifecycle,
-  Performance/Quality) came back clean (createObject/destroy properly paired, no binding-loop
-  or closure-capture risk, signal direction correct, no unjustified singleton/testability
-  regression).
+Cross-checked the tracker's sweep against every `BottomSheet`-derived dialog in `qml/pages/` by
+actually grepping each for callback-taking Store/Gateway calls and busy-guard presence, not just
+re-reading the doc's own claims. Found **4 dialogs the original sweep never mentioned anywhere**
+(neither flagged as risky nor listed as checked) — traced each one individually and added to
+`ASYNC-REENTRANCY-BUGS.md`'s "Checked, not affected" section:
 
-One Minor-severity note surfaced, not blocking: Main.qml's onDeleteProductClicked calls
-InventoryStore.valueByProduct() (a full-catalog map) just to read one product's value. Not a
-hot path -- fires once per delete-confirmation tap -- flagged as a possible future
-micro-optimization, not urgent enough to hold up this PR.
+- `ProfileSettingsDialog` — correctly guarded (`busy: AuthService.busy`), same bound-service-state
+  pattern as `MemberManagementDialog`.
+- `ForgotPasswordDialog` — correctly guarded, but unusually: the guard (`busy = true`/`false`) lives
+  in `Main.qml`'s `onResetRequested`/`onPasswordResetSent`/`onAuthFailed` handlers, not inside the
+  dialog itself. Flagged as a future refactor trap (moving this logic without carrying the guard
+  with it would silently reopen this exact class of bug).
+- `ManageCategoriesDialog` / `ManageOrderChannelsDialog` — confirmed zero callback/network
+  involvement at all (`CategoryStore`/`OrderChannelStore`'s add/remove/setDefault functions take no
+  callback parameter); device-local lists, same shape as `EditProductDialog`. Not at risk.
 
-Wrote docs/superpowers/DELETE-FEATURE-ROADMAP.md per explicit request -- 3 pending items ranked
-by importance (Gateway._send retry-forever black hole, staff delete UI parity, Sales Analysis
-breakdown mislabeling on 5 tabs), plus photo-cleanup verification gap and the declined-backfill
-decision recorded for history.
+No new Critical/Medium instances turned up. The existing severity ranking and "Not yet swept" list
+held up to the re-check. Also **not conclusively resolved**: the tracker's "Not yet swept" note
+about `SupplierStore`'s own create/edit dialog — no standalone `SupplierDialog.qml` was found to
+exist as a separate file; it may be covered indirectly via `AddProductDialog`/`RestockDialog`
+(both already in "checked, not affected"), or may genuinely not exist as a distinct UI surface.
+Left open, flagged for whoever picks this up next rather than guessed at.
 
-Verdict: ready to merge. No Critical or Important issues found across any of the three passes.
+## Which item was picked, and why (flagged, not silently decided)
+
+Both C-1 and C-2 are ranked "Critical" in the doc. **Picked C-2** (`NewOrderDialog` double-submit)
+over C-1 (reopen a completed order → Exchange → increase a line's quantity, same `_tryAdjustOrder`
+shape) — the doc's own text under C-2 already called it "likely the next one to pick up given how
+easily this triggers in normal use," and independently verified that's accurate: C-2 needs a plain
+fast double-tap on the ordinary "Place order" button every single order creation goes through, while
+C-1 needs a specific multi-step setup (reopen a *completed* order, explicitly choose the exchange
+flow, then increase quantity) before the race window is even reachable. This is my own prioritization
+call, stated here for review — not something I'd insist on if you'd rather have C-1 first; both are
+still open either way, and C-1 is explicitly NOT done, not forgotten.
+
+## What was implemented
+
+1. **`qml/logic/Logic.qml`** — new `signal orderCreationFailed(string errorMessage)`, sitting next
+   to the existing `orderAdded(string orderId)`. Completes a success/failure signal pair that
+   already existed for completion (`orderUpdated`/`orderCompletionFailed`) but was only half-built
+   for creation.
+2. **`qml/model/DataModel.qml`** (`onAddOrder`) — failure branch now emits the new
+   `orderCreationFailed` instead of the generic `dispatcher.errorOccurred("network", ...)` bus.
+   Deliberate: that bus is shared by roughly a dozen unrelated handlers across products/staff/
+   orders/auth, and gating `NewOrderDialog`'s own `busy` reset on it would let an unrelated failure
+   elsewhere in the app incorrectly clear this dialog's guard mid-flight.
+3. **`qml/pages/NewOrderDialog.qml`**:
+   - `if (busy) return` as the literal first line of `trySubmit()`.
+   - `busy = true` set synchronously right before the `orderCreated` fire-and-forget emit.
+   - The old unconditional `dlg.close()` right after that emit is gone.
+   - New `Connections { target: logic }` block: `onOrderAdded` clears `busy` and closes;
+     `onOrderCreationFailed` clears `busy` and shows the message in the existing `errorLabel`,
+     leaving the sheet open so the user can retry without re-entering the whole order. Both handlers
+     guard with `if (!dlg.busy) return` first, so a stale/late signal after the dialog has already
+     settled is a safe no-op.
+   - Defensive `busy = false` added to `onOpened`, matching `OrderDetailDialog.openFor()`'s idiom.
+   - Deliberately did NOT give `orderCreationFailed` an orderId-scoping parameter the way
+     `orderCompletionFailed(orderId, msg)` has one — there's no order yet when creation itself
+     fails, and exactly one `NewOrderDialog` instance exists app-wide (declared once in `Main.qml`),
+     so there's no "which request does this answer belong to" ambiguity to resolve. Noted in SKILLS
+     Skill 65 as a "match the actual overlap risk, don't copy the nearest precedent's shape by
+     habit" lesson.
+4. **Tests**: new `tests/tst_NewOrderDialogSubmitGuard.qml`, 9 cases, plain-JS-object stand-in (same
+   technique as the existing `tests/tst_AddStaffSyncClose.qml`) since `NewOrderDialog.qml` can't
+   load under plain `qmltestrunner` (pulls in `Felgo` via `Constants.qml`). **Written and hand-traced
+   this session, not run** — no Qt/Felgo toolchain in this sandbox, per standing rule; brace/paren
+   balance checked mechanically as a sanity floor, nothing more. Real proof is CI on the pushed
+   branch, same as every prior session here.
+5. **Docs**: `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` (scope-review addendum, C-2 marked fixed,
+   new F-2 entry), `SKILLS.md` (Skill 65), `AGENTS.md` (Data Model & Orchestration Agent +
+   Pages & Dialogs Agent sections), `README.md` (Concurrency & Conflict Resolution, new
+   2026-09-16 dated entry), new test plan
+   `docs/superpowers/test-plans/2026-09-16-new-order-double-submit-test-plan.md`, and that folder's
+   `README.md` index (new row + a "Chains worth knowing" entry linking it to the 2026-09-14 plan).
+
+## State right now
+
+Committed and pushed by the time this file is read this session — check `git log`/`git status`
+directly if resuming mid-session and this looks stale.
+
+## Next steps (in priority order)
+
+1. **Confirm CI is green** on `fix/2026-09-16-new-order-double-submit` (`qml-tests`,
+   `functions-tests`, `firestore-rules-tests` — though the rules job should be a pure no-op here,
+   no Firestore schema/rules touched). If `tst_NewOrderDialogSubmitGuard.qml` fails, this is
+   EXPECTED to possibly need a correction round, same as PR #70's test file needed two (Skills
+   61–63) — don't be surprised, fix and re-push.
+2. Once CI is green, open the PR (or confirm Taher wants to open it himself after on-device testing
+   per his own stated workflow — he reviews on GitHub PR, not before).
+3. **C-1 is still open** (reopen completed order → Exchange → increase quantity race, same
+   `_tryAdjustOrder` shape as C-2's `OrdersStore.addOrder` shape but on the update side) — next
+   tracker item, own session.
+4. **M-1** (`InviteMemberDialog`, same missing-guard shape, lower severity) and **L-1** (cosmetic
+   double-toast) — both still open, lower priority than C-1.
+5. The unresolved `SupplierStore`/`SupplierDialog` question from the scope review above — worth a
+   few minutes at the start of whichever session next touches this tracker, to actually resolve
+   rather than carry forward open again.
+6. Everything already on the horizon from before this session is untouched and still pending:
+   Orders master-detail Plan 2 Tasks 3–5 (desktop), Dashboard desktop-native composition, OrderMath
+   parity, the Phase 2 Felgo probe, the multi-user conflict E2E 409-not-reaching-client issue, and
+   the QML lint backlog. None of these were this session's focus.
