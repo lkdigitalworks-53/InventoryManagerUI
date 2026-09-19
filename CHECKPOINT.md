@@ -11,8 +11,7 @@ CI is green before it's opened, per standing workflow.
 Taher retested both the `RestockDialog` and `NewOrderDialog` auto-approve reports on-device and
 said everything looks fine now. Updated both open items in the tracker doc (C-2's retest note, C-3)
 to record this as a clean retest — reads as confirming the earlier reports were against a stale
-build/state, not as a fix landing (no code changed for `RestockDialog` in this session at all).
-Left the investigation trace in place in both cases rather than deleting it, in case either
+build/state, not as a fix landing (no code changed for `RestockDialog` in this session at all)Left the investigation trace in place in both cases rather than deleting it, in case either
 resurfaces.
 
 **Then ran a full final review sweep of the PR** (`/superpowers:requesting-code-review`,

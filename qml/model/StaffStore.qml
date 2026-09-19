@@ -195,6 +195,10 @@ QtObject {
 
         // Per-doc DELETE — bulk PUT (commit/update) never removes documents.
         Gateway.recordMutation("staff", staffId, "delete", removed, null)
+        ActivityLog.record("staff_deleted",
+                           "Teammate removed: " + (removed.name || staffId),
+                           (removed.role ? removed.role : "") + (removed.department ? " · " + removed.department : ""),
+                           staffId)
 
         // Cascade cleanup if this staff had app-login credentials.
         if (removed.appUid && removed.appUid.length > 0)
