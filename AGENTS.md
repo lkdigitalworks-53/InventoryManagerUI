@@ -450,7 +450,7 @@ QtObject {
   is not, by itself, proof the guard is wrong — trace every layer between the tap and the write
   (button `enabled` binding, any loading-state overlay, the Store/Gateway call itself) before
   rewriting anything. `RestockDialog`'s guard read correctly at every layer checked and the report
-  is still open, unresolved, flagged rather than guess-fixed — see ASYNC-REENTRANCY-BUGS.md C-3,
+  was flagged rather than guess-fixed, and a later on-device retest came back clean (stale-build explanation, no code changed) — see ASYNC-REENTRANCY-BUGS.md C-4,
   SKILLS Skill 66.
 
 **Responsive Design**:

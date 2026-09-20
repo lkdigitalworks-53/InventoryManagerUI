@@ -48,7 +48,7 @@ convention this pattern violates, and SKILLS Skill 61 for the original, fully-tr
    re-grants a request from the same `actorUid` by design (needed for renewal heartbeats), so it
    only stops a different device/user, never the same user re-entering their own still-resolving
    action. Don't let a `LockManager.acquire` call anywhere in the path read as "this is handled."
-5. (Added 2026-09-16, C-3) A "yes" to question 3 isn't the end of the check — an in-flight guard
+5. (Added 2026-09-16, C-4) A "yes" to question 3 isn't the end of the check — an in-flight guard
    that exists is only as good as its recovery story. If the guard is in-memory only, ask what
    happens when the guarded request never comes back at all (a genuine hang, not just slow) rather
    than assuming any guard is sufficient protection. If the only way anyone would ever recover from
@@ -172,7 +172,9 @@ further report before considering this fully closed, but nothing left to investi
 
 ---
 
-### C-3 (added 2026-09-16, Taher on-device): `RestockDialog` — double-pressing Confirm added stock twice
+### C-4 (added 2026-09-16, Taher on-device): `RestockDialog` — double-pressing Confirm added stock twice
+
+*Renumbered from C-3 on 2026-09-20: PR #73 independently added `DataModel._tryCompleteOrder` as C-3, so two different bugs carried the same ID on `main`. C-3 now means only the `_tryCompleteOrder` entry below; this one is C-4 (resolved, no repro — see its retest note).*
 
 **Confirmed on-device by Taher**, not a static-analysis finding — a real double-press on "Confirm"
 in `RestockDialog` added the restocked quantity twice.
@@ -359,7 +361,7 @@ from "not checked."
   `busyMessage` correctly (confirmed present and wired in each file). These were among the examples
   PR #70 pointed to as the established, correct pattern; re-confirmed here, not re-derived from
   scratch. (`RestockDialog` was originally grouped in this same line — moved out 2026-09-16, see
-  C-3 below: on-device testing found it's NOT actually safe, despite the guard code reading
+  C-4 below: on-device testing found it's NOT actually safe, despite the guard code reading
   correctly.)
 - **`MemberManagementDialog`** — binds `busy: AuthService.membersBusy`, a real service-level state
   rather than a manually toggled flag. Correct pattern, different implementation shape (bound
