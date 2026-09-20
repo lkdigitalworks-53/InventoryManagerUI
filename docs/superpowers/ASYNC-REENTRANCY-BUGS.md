@@ -285,6 +285,15 @@ belongs to the design session that picks this up, not assumed here.
 **Not yet fixed.** Flagged for a dedicated session, per Taher's explicit request to keep this one
 scoped to documentation only.
 
+**Design and plan (2026-09-20, Taher approved decisions D1-D5):** one atomic, replay-safe multi-write
+operation carried by the outbox (client plans, a new generic `recordOperation` Cloud Function applies it in
+one transaction under a deterministic key), plus Gateway timeouts, retry jitter, an await-then-fall-back
+mode and timeouts counting as stuck writes. Spec: `specs/2026-09-20-atomic-operation-outbox-design.md`.
+Plan: `plans/2026-09-20-atomic-operation-outbox.md`. Test plan:
+`test-plans/2026-09-20-atomic-operation-outbox-test-plan.md`. Implementation waits for PR #75. Still
+**not fixed** until those PRs land. C-1 (`_tryAdjustOrder`) becomes the second consumer of the mechanism,
+in its own spec.
+
 ---
 
 ## Medium
