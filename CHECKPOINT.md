@@ -28,7 +28,13 @@ the repo, `.git/config`, or memory.
 - [x] 8. Rename done: PR #76 (`docs/2026-09-20-rename-restock-c3-to-c4`), docs only.
 - [x] 9. Code check before answering Q3 (see "Code facts" below) and re-pointed the recommendation to
       approach D.
-- [ ] 10. **Blocked on Taher's decisions D1-D4 below.** Next: spec + plan (docs only) under
+- [x] 10. Taher decided: D1 approve approach D; D2 pilot server-first-when-online on compound ops only, via a
+      Gateway option; D3 apply an offline-queued completion anyway with a drift-repair batch (the sale
+      happened); D4 he deploys the Cloud Functions himself, dev environment only, no prod yet.
+- [x] 11. Taher asked whether timeouts, circuit breakers, fallbacks and retry can be part of this design or
+      later sessions, and asked for the answer before designing. Answered from code (facts below); proposal
+      recorded under "Resilience scope".
+- [ ] 12. **Blocked on D5** (resilience scope split, below). Next: spec + plan (docs only) under
       `docs/superpowers/specs/`, then implementation after PR #75 merges.
 
 Not done, deliberately: no code, no tests, no test plan, no `SKILLS.md`/`AGENTS.md`/`README.md` edits: there
@@ -113,6 +119,46 @@ so it is no longer silent data loss, but the callback still carries no error.
   latency, the app has no XHR timeouts today, it needs two code paths per operation, and it does not by
   itself make multi-step operations atomic.
 
+## Resilience facts (checked on `main` @ `318dd38`)
+
+- No request timeout anywhere in `qml/`. The one precedent is `AuthService._postJson` (20s `Timer` racing the
+  XHR, then `abort()`).
+- `Gateway._send` (and `_sendBatch`/`_sendDelta`) are bare XHRs. On failure they call
+  `OutboxStore.markFailed`, which backs off 2s, 8s, 30s, 2m, 10m, then stays at 10m. No jitter.
+- Retry only starts after a request *fails*. A hung request never fails, and while it is pending the item's
+  in-flight key and `Gateway.inFlight` stay set, so that item is not retried in that session.
+- `AuthService.isOnline` is set from `Main.qml` (OS connectivity), so it means "device thinks it has a
+  network", not "the server is reachable".
+- A timeout on Gateway sends is safe today because each outbox item keeps one `requestId` and the server
+  replays it. It is NOT automatically safe for non-Gateway calls (`FirebaseService._request`: reads and
+  id mints); a retried mint could burn an id. Not verified per call site.
+
+## Resilience scope (proposed, awaiting D5)
+
+In this design (D needs them):
+- One shared XHR helper for all Gateway senders (`_send`, `_sendBatch`, `_sendDelta`, new operation sender):
+  `Timer` race + `abort()`, following the `AuthService._postJson` precedent. A timeout is treated as a network
+  failure and goes through the existing backoff. Two values: a generous one for background outbox drains and a
+  short one for the server-first await (numbers tuned on device; not measured yet).
+- Fallback = the offline path: the item is durable in the outbox before the send; when the await times out,
+  the UI moves to "saved, syncing", the same-session guard stays set until the ack, and the drain resends the
+  same `opKey`. Offline (`isOnline` false) skips the await and queues immediately.
+- Retry: keep the schedule and add small jitter (two devices reconnecting together). Retry classification stays
+  as is (PR #75's rules).
+- Decision logic (outcome classification, delay with jitter) goes in a pure JS helper like `StuckWrites.js`, so
+  it is Node-testable; the Timer/XHR wiring is covered by the on-device section, not automated tests.
+- Open point for the spec: whether repeated timeouts count toward PR #75's "stuck" indicator (today only
+  status >= 400 except 401/409 count and offline never does).
+
+Later, separate specs, in this order:
+1. Circuit breaker (closed / open / half-open) at the shared helper. Needs real timeout data to tune, a
+   definition of failure (timeouts and 5xx, not 4xx/409/floor rejections), and a UX signal (reuse #75's header
+   caption). Risk: a false open leaves the app queue-only while the server is fine; half-open probing limits it.
+2. Timeouts for `FirebaseService._request` (reads, id mints): the existing roadmap item; each caller's failure
+   handling has to be reviewed first.
+3. Read fallbacks (serve the local cache on a read timeout), per store.
+No speculative policy hook is added now: the shared helper is already the single choke point.
+
 ## Found this session, needs a decision
 
 - **Two different bugs are both labelled "C-3" on `main`.** `ASYNC-REENTRANCY-BUGS.md:175` is the
@@ -124,18 +170,15 @@ so it is no longer silent data loss, but the callback still carries no error.
   indicator. Touches `Gateway.qml` `_send`/`_sendBatch`/`_sendDelta`, the same file C-3 would touch.
   Recommend merging it before the C-3 implementation branch, same reasoning as #72.
 
-## Open decisions for Taher
+## Decisions
 
-- D1. Approve approach D as the C-3 mechanism (replaces B as the recommendation, because of Q4).
-- D2. Server-first-when-online: pilot on compound ops via a Gateway option, not an app-wide rewrite now?
-- D3. Policy when the server cannot cover an offline-queued completion (another device drained the stock):
-  apply anyway with a drift-repair batch (matches today's shortfall handling) or reject (order becomes
-  "out of stock" after the fact, as with today's reject-not-clamp)? Recommendation: apply anyway; a real sale
-  already happened.
-- D4. Who deploys Cloud Functions, and is there a non-prod Firebase project to test the new endpoint first?
+- D1 approve approach D. D2 pilot server-first on compound ops only. D3 apply anyway with drift-repair.
+  D4 Taher deploys functions, dev-only, no prod yet. (All answered by Taher on 2026-09-20.)
+- D5 (open). Confirm the resilience split above: timeout + fallback-to-queue + jitter in this design;
+  circuit breaker, `FirebaseService._request` timeouts and read fallbacks as later specs.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check open PR state live (#64, #74, #75, #76), then continue at step 10.
+Fresh session: clone, read this file, re-check open PR state live (#64, #74, #75, #76), then continue at step 12.
 Do not start implementation before the design is approved. `CHECKPOINT.md` will conflict with PR #75's copy;
 resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`.
