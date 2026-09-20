@@ -20,8 +20,16 @@ the repo, `.git/config`, or memory.
       now both merged (`main` @ `318dd38`).
 - [x] 5. Taher asked to triage PR #64. Verdict: obsolete, recommend close without merging (below).
 - [x] 6. Found a **label collision** on `main` (below) and a new open PR #75 that touches `Gateway.qml`.
-- [ ] 7. **Blocked on Taher's answers to Q1-Q4 below.** Next: brainstorming step 4/5 (approaches, design in
-      sections, approval), design doc under `docs/superpowers/specs/`, then `superpowers:writing-plans`.
+- [x] 7. Taher answered Q1-Q4. Q1: yes, rename the Restock entry to C-4. Q2: yes, merge PR #75 first; write
+      spec and plan meanwhile, implement after #75 merges. Q3: offline outbox/gateway handling must stay; he
+      wants to understand whether, when connected, network calls could go to the server first and then be
+      reflected locally (today everything is local first, then server), uniformly across all network calls.
+      Q4: yes, two devices with different or the same user ids can complete orders for the same product.
+- [x] 8. Rename done: PR #76 (`docs/2026-09-20-rename-restock-c3-to-c4`), docs only.
+- [x] 9. Code check before answering Q3 (see "Code facts" below) and re-pointed the recommendation to
+      approach D.
+- [ ] 10. **Blocked on Taher's decisions D1-D4 below.** Next: spec + plan (docs only) under
+      `docs/superpowers/specs/`, then implementation after PR #75 merges.
 
 Not done, deliberately: no code, no tests, no test plan, no `SKILLS.md`/`AGENTS.md`/`README.md` edits: there
 is no change to test or document yet; the test plan is written together with the approved design.
@@ -68,6 +76,43 @@ so it is no longer silent data loss, but the callback still carries no error.
 - Recommendation on record: B, scoped first to `_tryCompleteOrder`, C-1 as second consumer; A only as a
   stopgap. Not a new network layer.
 
+## Code facts checked after Q3/Q4
+
+- The server is already the only writer of `inventory`, `stock_batches`, `stock_movements` (header of
+  `functions/index.js`); each single mutation is one Firestore transaction with one `audit_log` entry.
+- `recordMutationsBatch` is atomic but single-entity and mutations only (`batchMutationLogic.js`, cap 200
+  items): it cannot carry deltas or span `stock_batch` + `inventory` + `order` + `transaction`. No QML caller
+  uses it outside Gateway/Outbox.
+- `applyDelta`/`applyMutation` (`gatewayLogic.js`) each wrap their own `db.runTransaction` around a short
+  read -> compute -> two-writes body, so a multi-op variant in ONE transaction is a composition, not a rewrite.
+- `_tryCompleteOrder` (post-#72) does per line: `consumeFifo` (+ `topUpOldest` on shortfall), then
+  `deductStock` with reject-not-clamp; then `OrdersStore.updateOrder`, `SalesStore.recordSale`,
+  `TransactionStore.recordSaleFromOrder`. On partial failure it compensates client-side with `restoreFifo` and
+  `creditStockNoBatch`.
+
+## Approach D (recommended after Q3/Q4): one atomic, idempotent multi-write op through the outbox
+
+- Client still plans the writes from local state (FIFO, top-up, stock delta, order update, sale doc) but sends
+  them as ONE outbox item with ONE stable `opKey` (= `requestId`): a new generic server endpoint applies all
+  ops in a single Firestore transaction, floors checked inside, all-or-nothing, replay-safe.
+- No FIFO logic is re-homed server-side (that is what makes C big). The server stays generic.
+- Fixes the C-3 mechanism (retry after a hang resends the same `opKey`: exactly-once) and the concurrency case
+  (Q4): if another device drained a batch, the whole op is rejected atomically with `current` values and the
+  client re-plans; a new `opKey` is minted only after a definitive rejection, never after an ambiguous hang.
+- Deletes the compensating rollback code in `_afterAllDeltas` (atomicity replaces it).
+- Reusable for C-1 (`_tryAdjustOrder`) and any future multi-write business operation.
+- Server code is Node-testable in the sandbox (100% line/branch measurable there); QML side stays thin.
+- Costs: refactor `gatewayLogic` into composable read/plan/write helpers; new endpoint + Outbox item type +
+  Gateway sender (touches the same senders as PR #75); audit_log needs per-op entry ids derived from the
+  request id plus a request-level replay marker; op cap (~200 ops, 2 writes each); functions must deploy before
+  the client; old clients keep the old path (no worse than today).
+- Q3 answer (server-first when online): valid, but it is not a substitute for idempotency; it needs
+  timeouts + fallback-to-outbox, and the fallback is only safe with stable keys. Recommendation: make it a
+  Gateway option used first by compound ops (await ack when online, reflect the server's `after`; offline =
+  optimistic + outbox as today), not an app-wide rewrite in this arc. Reasons: every tap would wait on network
+  latency, the app has no XHR timeouts today, it needs two code paths per operation, and it does not by
+  itself make multi-step operations atomic.
+
 ## Found this session, needs a decision
 
 - **Two different bugs are both labelled "C-3" on `main`.** `ASYNC-REENTRANCY-BUGS.md:175` is the
@@ -81,15 +126,16 @@ so it is no longer silent data loss, but the callback still carries no error.
 
 ## Open decisions for Taher
 
-- Q1. Rename the Restock "C-3" to C-4 (docs-only PR before design work), or another scheme?
-- Q2. Merge #75 before C-3 implementation branches?
-- Q3. Must order completion keep working fully offline (queued in the outbox), or is "completion needs a
-  connection" acceptable? This decides whether approach C is even on the table.
-- Q4. Can two devices/staff sessions complete orders for the same product at the same time in real use?
-  This decides how hard B's resume path gets (floor-rejection while resuming).
+- D1. Approve approach D as the C-3 mechanism (replaces B as the recommendation, because of Q4).
+- D2. Server-first-when-online: pilot on compound ops via a Gateway option, not an app-wide rewrite now?
+- D3. Policy when the server cannot cover an offline-queued completion (another device drained the stock):
+  apply anyway with a drift-repair batch (matches today's shortfall handling) or reject (order becomes
+  "out of stock" after the fact, as with today's reject-not-clamp)? Recommendation: apply anyway; a real sale
+  already happened.
+- D4. Who deploys Cloud Functions, and is there a non-prod Firebase project to test the new endpoint first?
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check open PR state live (#64, #74, #75), then continue at step 7.
+Fresh session: clone, read this file, re-check open PR state live (#64, #74, #75, #76), then continue at step 10.
 Do not start implementation before the design is approved. `CHECKPOINT.md` will conflict with PR #75's copy;
 resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`.
