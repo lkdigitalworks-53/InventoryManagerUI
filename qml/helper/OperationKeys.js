@@ -12,8 +12,8 @@
 // Number of the completion this attempt would be. Orders written before this
 // field existed count as epoch 0, so their first completion is epoch 1.
 function nextEpoch(order) {
-    var n = order && typeof order.completionEpoch === "number" ? order.completionEpoch : 0
-    return n + 1
+    var n = order ? order.completionEpoch : 0
+    return (isFinite(n) && n >= 0 && Math.floor(n) === n) ? n + 1 : 1
 }
 
 function completeOrderKey(orderId, epoch) {

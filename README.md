@@ -738,14 +738,10 @@ the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
 **Update 2026-09-21 (C-3 phase 2, pure helpers):** added `qml/helper/SendPolicy.js` (10s foreground / 30s
-background timeout starting values, not measured yet, and +-20% retry jitter), `qml/helper/OperationKeys.js`
-(deterministic `completeOrder:{orderId}:{epoch}` key, sale tx ids and drift-repair batch ids) and
-`qml/helper/CompletionPlan.js` (pure planner: FIFO batch deltas, drift-repair batch on shortfall, stock deltas,
-order update, sale docs; demand summed per product), and taught `StuckWrites` that a timeout counts while the
-device is online (it never counts offline). Nothing calls them yet; `Gateway` and `DataModel` are wired in
-the next phase, after the `recordOperation` function (PR #78) is deployed. 47 new headless test cases
-(`tst_SendPolicy`, `tst_OperationKeys`, `tst_CompletionPlan`, plus 6 in `tst_StuckWrites`); the 21 existing
-`StuckWrites` tests are unchanged. Design and plan: `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md`,
-`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`.
+background timeout starting values, not measured, and +-20% retry jitter), `OperationKeys.js`
+(deterministic operation key and ids) and `CompletionPlan.js` (the pure planner that turns an order
+completion into the write list), and taught `StuckWrites` that a timeout counts while the device is
+online. Nothing calls them yet; `Gateway` and `DataModel` are wired once `recordOperation` (PR #78) is
+deployed. 47 new headless tests. Plan: `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`.
 
 ---

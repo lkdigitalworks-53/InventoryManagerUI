@@ -19,9 +19,10 @@ TestCase {
         compare(OK.nextEpoch({ completionEpoch: 7 }), 8)
     }
 
-    function test_nextEpoch_ignores_a_non_numeric_epoch() {
-        compare(OK.nextEpoch({ completionEpoch: "2" }), 1)
-        compare(OK.nextEpoch({ completionEpoch: null }), 1)
+    function test_nextEpoch_ignores_anything_that_is_not_a_non_negative_integer() {
+        var bad = ["2", null, NaN, Infinity, -1, 1.5, true, [], {}]
+        for (var i = 0; i < bad.length; ++i)
+            compare(OK.nextEpoch({ completionEpoch: bad[i] }), 1, "epoch " + String(bad[i]))
     }
 
     function test_completeOrderKey_format_and_determinism() {

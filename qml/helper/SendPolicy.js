@@ -19,12 +19,7 @@ var TIMEOUT_AWAIT_MS = 10000
 // not retry in lockstep.
 var JITTER_FRACTION = 0.2
 
-function timeoutMs(awaiting) {
-    return awaiting ? TIMEOUT_AWAIT_MS : TIMEOUT_BACKGROUND_MS
-}
-
 // rand is Math.random() in production and a fixed value in tests, in [0, 1).
 function jittered(delayMs, rand) {
-    var r = (typeof rand === "number" && rand >= 0 && rand < 1) ? rand : 0.5
-    return Math.round(delayMs * (1 - JITTER_FRACTION + 2 * JITTER_FRACTION * r))
+    return Math.round(delayMs * (1 - JITTER_FRACTION + 2 * JITTER_FRACTION * rand))
 }

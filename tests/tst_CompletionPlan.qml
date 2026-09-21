@@ -262,6 +262,37 @@ TestCase {
         compare(p.errors[0], "Ghost: not found in inventory")
     }
 
+    function test_a_negative_quantity_line_does_not_free_up_stock_for_another_line() {
+        var p = CP.build(_input({
+            lines: [
+                { line: {}, productId: "p1", name: "Widget", qty: -5 },
+                { line: {}, productId: "p1", name: "Widget", qty: 12 }
+            ],
+            stockByProduct: { p1: 10 }
+        }), _hooks(_calls()))
+        compare(p.ok, false)
+        compare(p.errors[0], "Widget: need 12, only 10 in stock")
+    }
+
+    // Product and batch ids are data. One that happens to name an Object.prototype
+    // member must behave like any other id, not like a member that "exists".
+    function test_an_id_that_names_an_object_prototype_member_is_still_just_an_id() {
+        var unknown = CP.build(_input({
+            lines: [{ line: {}, productId: "constructor", name: "Odd", qty: 1 }]
+        }), _hooks(_calls()))
+        compare(unknown.ok, false)
+        compare(unknown.errors[0], "Odd: not found in inventory")
+
+        var p = CP.build(_input({
+            lines: [{ line: {}, productId: "toString", name: "Odd", qty: 2 }],
+            stockByProduct: { toString: 5 },
+            batchesByProduct: { toString: [_batch("valueOf", 5, 1)] }
+        }), _hooks(_calls()))
+        compare(p.ok, true)
+        compare(p.predicted.batches.valueOf, 3)
+        compare(p.predicted.stock.toString, 3)
+    }
+
     // -- edge cases -------------------------------------------------------------
 
     function test_a_zero_quantity_line_passes_through_with_empty_consumption_and_no_ops() {

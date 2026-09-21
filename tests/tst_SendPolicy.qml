@@ -16,11 +16,6 @@ TestCase {
         }
     }
 
-    function test_timeoutMs_uses_the_short_value_while_a_person_is_waiting() {
-        compare(SP.timeoutMs(true), SP.TIMEOUT_AWAIT_MS)
-        compare(SP.timeoutMs(false), SP.TIMEOUT_BACKGROUND_MS)
-    }
-
     function test_timeout_values_are_pinned_and_ordered() {
         compare(SP.TIMEOUT_AWAIT_MS, 10000)
         compare(SP.TIMEOUT_BACKGROUND_MS, 30000)
@@ -40,12 +35,6 @@ TestCase {
             verify(v >= prev, "not monotonic at " + i)
             prev = v
         }
-    }
-
-    function test_jittered_invalid_rand_falls_back_to_no_jitter() {
-        var bad = [undefined, null, NaN, -0.1, 1, 2, "0.3"]
-        for (var i = 0; i < bad.length; ++i)
-            compare(SP.jittered(2000, bad[i]), 2000, "rand " + bad[i])
     }
 
     function test_jittered_zero_delay_stays_zero() {

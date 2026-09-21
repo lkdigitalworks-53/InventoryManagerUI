@@ -28,20 +28,25 @@ var REPAIR_NOTE = "Adjustment (drift repair)"
 // }
 // Returns { ok: true, key, opType, ops, lines, orderAfter, predicted }
 //      or { ok: false, reason: "out-of-stock" | "too-many-ops", errors: [string] }
+function _has(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key)
+}
+
 function build(input, hooks) {
     var errors = []
     var demand = {}
     var i
 
     // 1. Validate against local stock. Demand is summed per product, so two lines of
-    // the same product cannot each pass on their own and then fail together.
+    // the same product cannot each pass on their own and then fail together. Only
+    // positive quantities count: a stray negative line must not free up stock for another.
     for (i = 0; i < input.lines.length; ++i) {
         var v = input.lines[i]
-        if (!v.productId || !(v.productId in input.stockByProduct)) {
+        if (!_has(input.stockByProduct, v.productId)) {
             errors.push(v.name + ": not found in inventory")
             continue
         }
-        demand[v.productId] = (demand[v.productId] || 0) + v.qty
+        demand[v.productId] = (demand[v.productId] || 0) + (v.qty > 0 ? v.qty : 0)
         if (!input.clampStock && demand[v.productId] > input.stockByProduct[v.productId])
             errors.push(v.name + ": need " + demand[v.productId] + ", only "
                         + input.stockByProduct[v.productId] + " in stock")
@@ -51,15 +56,13 @@ function build(input, hooks) {
     // 2. FIFO per line against a working copy of each batch's remaining quantity, so
     // a second line of the same product continues where the first stopped.
     var avail = {}
-    var stockLeft = {}
     var ops = []
     var lines = []
     var predicted = { batches: {}, stock: {}, created: [] }
 
     for (i = 0; i < input.lines.length; ++i) {
         var L = input.lines[i]
-        var out = {}
-        for (var k in L.line) out[k] = L.line[k]
+        var out = Object.assign({}, L.line)
         out.consumption = []
 
         if (L.qty > 0) {
@@ -67,7 +70,7 @@ function build(input, hooks) {
             var batches = input.batchesByProduct[L.productId] || []
             for (var b = 0; b < batches.length && remaining > 0; ++b) {
                 var batch = batches[b]
-                var have = (batch.batchId in avail) ? avail[batch.batchId] : (batch.qtyRemaining || 0)
+                var have = _has(avail, batch.batchId) ? avail[batch.batchId] : (batch.qtyRemaining || 0)
                 avail[batch.batchId] = have
                 if (have <= 0) continue
                 var take = Math.min(have, remaining)
@@ -99,9 +102,8 @@ function build(input, hooks) {
                        deltas: { stock: -L.qty },
                        floors: input.clampStock ? {} : { stock: 0 },
                        clamps: input.clampStock ? { stock: 0 } : {} })
-            var left = (L.productId in stockLeft ? stockLeft[L.productId] : input.stockByProduct[L.productId]) - L.qty
-            stockLeft[L.productId] = input.clampStock ? Math.max(0, left) : left
-            predicted.stock[L.productId] = stockLeft[L.productId]
+            var left = (_has(predicted.stock, L.productId) ? predicted.stock[L.productId] : input.stockByProduct[L.productId]) - L.qty
+            predicted.stock[L.productId] = input.clampStock ? Math.max(0, left) : left
         }
         lines.push(out)
     }
