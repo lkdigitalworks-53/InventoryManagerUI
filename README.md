@@ -292,8 +292,8 @@ ship. 37 new unit tests (`operationLogic.test.js` 23, `index.handlers.recordOper
 `index.js` stays at 99.89% (the one pre-existing uncovered line, unchanged). Also
 `test/e2e/recordOperation.e2e.test.js` (10 tests, run in the E2E job after the QML tests): the same
 endpoint against the Firestore emulator's real transaction semantics, including two devices completing at
-once (exactly one wins) and concurrent retries of one request id (applied exactly once). It is not counted
-in the CI summary comment; a failure fails the E2E job.
+once (exactly one wins) and concurrent retries of one request id (applied exactly once). Its results are
+written next to the QML ones (), so they are counted in the E2E check.
 
 ## Qt Skills Cheat Sheet
 

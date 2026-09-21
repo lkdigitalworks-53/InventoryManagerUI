@@ -168,21 +168,23 @@ jobs:
           QML_XHR_ALLOW_FILE_READ: 1
         run: |
           firebase emulators:exec --only firestore,auth,functions \
-            "node test/e2e/seed.js && qmltestrunner -input test/e2e -platform offscreen -o results.xml,junitxml -o -,txt && node --test test/e2e/recordOperation.e2e.test.js"
+            "node test/e2e/seed.js && qmltestrunner -input test/e2e -platform offscreen -o results.xml,junitxml -o -,txt && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=results-recordOperation.xml test/e2e/recordOperation.e2e.test.js"
 
       - name: Upload E2E test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
-          path: results.xml
+          path: |
+            results.xml
+            results-recordOperation.xml
 
       - name: Report E2E test results
         if: always()
         uses: dorny/test-reporter@v1
         with:
           name: E2E Tests
-          path: results.xml
+          path: results*.xml
           reporter: java-junit
 
   pr-comment:
