@@ -122,6 +122,15 @@ test("recordOperation: invalid op -> 400 from validateOperationRequest with the 
     assert.equal(jsonBody(res).opIndex, 1);
 });
 
+test("recordOperation: an unsafe request id -> 400 invalid-request-id, and applyOperation is never reached", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.applyOperationResult = { ok: true, results: [] };   // would 200 if the validator let it through
+    const res = mockRes();
+    await handlers.recordOperation(mockReq({ body: validOperationBody({ requestId: "completeOrder:a/b" }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "invalid-request-id");
+});
+
 test("recordOperation: empty envelope -> 400 missing-fields", async () => {
     seedHappyPathAuth(mockState);
     const res = mockRes();

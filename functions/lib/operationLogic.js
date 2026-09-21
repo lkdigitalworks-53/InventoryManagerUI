@@ -29,6 +29,23 @@ const MAX_OPS = 200;
 // Adding an operation type is a server deploy on purpose.
 const OP_TYPES = ["completeOrder"];
 
+// Every id below becomes a Firestore document id, and requestId is chosen by the
+// client. A "/" turns the id into a nested path (a request that can never
+// succeed but is retried forever: a 500 instead of a clean 400), and an id
+// that could collide with another entry in audit_log would make a retry
+// "replay" a write that never happened. So ids are validated here:
+//   - no "/", not "." or "..", at most MAX_ID_LENGTH characters (all ids)
+//   - requestId must start with "{opType}:" (a namespace no other endpoint uses:
+//     recordMutation/recordDelta ids are "req-...") and must not contain "~",
+//     the separator of the per-op audit ids "{requestId}~{index}", so a marker
+//     id can never equal a per-op id.
+const MAX_ID_LENGTH = 200;
+
+function isSafeDocId(id) {
+    return id.length > 0 && id.length <= MAX_ID_LENGTH
+        && id.indexOf("/") < 0 && id !== "." && id !== "..";
+}
+
 // Validates + normalizes a recordOperation request body. Reuses the single-item
 // validators per op (with a derived per-op request id) so entity/action/delta
 // rules stay defined in exactly one place. Returns
@@ -41,6 +58,8 @@ function validateOperationRequest(body) {
 
     if (!requestId || !opType) return { ok: false, status: 400, error: "missing-fields" };
     if (OP_TYPES.indexOf(opType) < 0) return { ok: false, status: 400, error: "unsupported-op-type" };
+    if (!isSafeDocId(requestId) || requestId.indexOf("~") >= 0 || requestId.indexOf(opType + ":") !== 0)
+        return { ok: false, status: 400, error: "invalid-request-id" };
     if (rawOps.length === 0) return { ok: false, status: 400, error: "empty-operation" };
     if (rawOps.length > MAX_OPS) return { ok: false, status: 400, error: "operation-too-large" };
 
@@ -53,13 +72,14 @@ function validateOperationRequest(body) {
         else if (raw.kind === "mutation") v = validateMutationRequest(perOp);
         else return { ok: false, status: 400, error: "unsupported-kind", opIndex: i };
         if (!v.ok) return Object.assign({}, v, { opIndex: i });
+        if (!isSafeDocId(v.entityId)) return { ok: false, status: 400, error: "invalid-entity-id", opIndex: i };
         ops.push(Object.assign({ kind: raw.kind }, v));
     }
     return { ok: true, requestId: requestId, opType: opType, ops: ops,
              clientTimestamp: (body && body.clientTimestamp) || null };
 }
 
-function opAuditId(requestId, index) { return requestId + ":" + index; }
+function opAuditId(requestId, index) { return requestId + "~" + index; }
 
 // Applies every op in one transaction. Reads first (Firestore requires all
 // reads before any write), computes the whole result in memory, and only if
@@ -76,7 +96,11 @@ async function applyOperation(db, params) {
     return db.runTransaction(async (txn) => {
         const existing = await txn.get(markerRef);
         if (existing.exists) {
-            return { ok: true, idempotentReplay: true, results: existing.data().results };
+            // Only an operation marker carries `results`. Anything else at this id is
+            // not a replay of this operation: never report success for it.
+            const stored = existing.data().results;
+            if (!Array.isArray(stored)) return { ok: false, status: 409, error: "request-id-in-use" };
+            return { ok: true, idempotentReplay: true, results: stored };
         }
 
         // One read per distinct working doc; later ops see earlier ops' effects.

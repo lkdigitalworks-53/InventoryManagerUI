@@ -66,7 +66,7 @@ test("validateOperationRequest: accepts a valid mixed operation and derives per-
     assert.equal(v.ok, true);
     assert.equal(v.ops.length, 2);
     assert.equal(v.ops[0].kind, "delta");
-    assert.equal(v.ops[0].requestId, "completeOrder:o1:1:0");
+    assert.equal(v.ops[0].requestId, "completeOrder:o1:1~0");
     assert.equal(v.ops[1].kind, "mutation");
     assert.equal(v.ops[1].collection, "orders");
     assert.equal(v.clientTimestamp, "CT");
@@ -77,14 +77,14 @@ test("validateOperationRequest: rejects bad envelopes with 400", () => {
     const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
     assert.deepEqual(V(undefined), { ok: false, status: 400, error: "missing-fields" });
     assert.deepEqual(V({ opType: "completeOrder", ops: [good] }), { ok: false, status: 400, error: "missing-fields" });
-    assert.deepEqual(V({ requestId: "r" , ops: [good] }), { ok: false, status: 400, error: "missing-fields" });
-    assert.deepEqual(V({ requestId: "r", opType: "wipeEverything", ops: [good] }),
+    assert.deepEqual(V({ requestId: "completeOrder:t" , ops: [good] }), { ok: false, status: 400, error: "missing-fields" });
+    assert.deepEqual(V({ requestId: "completeOrder:t", opType: "wipeEverything", ops: [good] }),
         { ok: false, status: 400, error: "unsupported-op-type" });
-    assert.deepEqual(V({ requestId: "r", opType: "completeOrder", ops: [] }),
+    assert.deepEqual(V({ requestId: "completeOrder:t", opType: "completeOrder", ops: [] }),
         { ok: false, status: 400, error: "empty-operation" });
-    assert.deepEqual(V({ requestId: "r", opType: "completeOrder" }),
+    assert.deepEqual(V({ requestId: "completeOrder:t", opType: "completeOrder" }),
         { ok: false, status: 400, error: "empty-operation" });
-    assert.deepEqual(V({ requestId: "r", opType: "completeOrder", ops: new Array(OperationLogic.MAX_OPS + 1).fill(good) }),
+    assert.deepEqual(V({ requestId: "completeOrder:t", opType: "completeOrder", ops: new Array(OperationLogic.MAX_OPS + 1).fill(good) }),
         { ok: false, status: 400, error: "operation-too-large" });
 });
 
@@ -92,14 +92,51 @@ test("validateOperationRequest: MAX_OPS is exactly 200 (mirrored by Gateway.maxO
     assert.equal(OperationLogic.MAX_OPS, 200);
     const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
     const v = OperationLogic.validateOperationRequest({
-        requestId: "r", opType: "completeOrder", ops: new Array(200).fill(good) });
+        requestId: "completeOrder:t", opType: "completeOrder", ops: new Array(200).fill(good) });
     assert.equal(v.ok, true);
+});
+
+test("validateOperationRequest: a request id must be a safe, namespaced document id", () => {
+    const V = OperationLogic.validateOperationRequest;
+    const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
+    const bad = (requestId) => V({ requestId, opType: "completeOrder", ops: [good] });
+    const invalid = { ok: false, status: 400, error: "invalid-request-id" };
+
+    assert.deepEqual(bad("completeOrder:a/b"), invalid);              // nested path: would never succeed
+    assert.deepEqual(bad("completeOrder:a~b"), invalid);              // "~" is the per-op separator
+    assert.deepEqual(bad("req-1700000000-abc"), invalid);             // another endpoint's id shape
+    assert.deepEqual(bad("order:1"), invalid);                        // wrong namespace
+    assert.deepEqual(bad("completeOrder"), invalid);                  // no ":" after the type
+    assert.deepEqual(bad("completeOrder:" + "a".repeat(187)), invalid);   // 201 characters
+
+    assert.equal(bad("completeOrder:" + "a".repeat(186)).ok, true);   // exactly 200 characters
+    assert.equal(bad("completeOrder:ORD-001:1").ok, true);            // the real key shape
+});
+
+test("validateOperationRequest: an entity id must be a safe document id, with the failing op index", () => {
+    const V = OperationLogic.validateOperationRequest;
+    const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
+    const withId = (entityId, kind) => V({
+        requestId: "completeOrder:t", opType: "completeOrder",
+        ops: [good, kind === "mutation"
+            ? { kind: "mutation", entity: "order", entityId, action: "create", before: null, after: {} }
+            : { kind: "delta", entity: "inventory", entityId, deltas: { stock: -1 } }]
+    });
+    const invalid = { ok: false, status: 400, error: "invalid-entity-id", opIndex: 1 };
+
+    assert.deepEqual(withId("a/b"), invalid);
+    assert.deepEqual(withId("."), invalid);
+    assert.deepEqual(withId(".."), invalid);
+    assert.deepEqual(withId("x".repeat(201)), invalid);
+    assert.deepEqual(withId("a/b", "mutation"), invalid);             // same rule for mutation ops
+    assert.equal(withId("x".repeat(200)).ok, true);
+    assert.equal(withId("BAT-2026-001").ok, true);
 });
 
 test("validateOperationRequest: reports the failing op index for per-op errors", () => {
     const V = OperationLogic.validateOperationRequest;
     const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
-    const env = (bad) => ({ requestId: "r", opType: "completeOrder", ops: [good, bad] });
+    const env = (bad) => ({ requestId: "completeOrder:t", opType: "completeOrder", ops: [good, bad] });
 
     assert.deepEqual(V(env({ kind: "teleport" })),
         { ok: false, status: 400, error: "unsupported-kind", opIndex: 1 });
@@ -155,7 +192,7 @@ test("applyOperation: applies deltas and a mutation atomically, one transaction,
     assert.equal(marker.data.opCount, 4);
     assert.equal(marker.data.entryId, "completeOrder:o1:1");
     assert.deepEqual(marker.data.results, r.results);
-    const audit1 = byPath[T + "audit_log/completeOrder:o1:1:1"].data;
+    const audit1 = byPath[T + "audit_log/completeOrder:o1:1~1"].data;
     assert.equal(audit1.action, "delta");
     assert.equal(audit1.operationId, "completeOrder:o1:1");
     assert.equal(audit1.opType, "completeOrder");
@@ -164,7 +201,7 @@ test("applyOperation: applies deltas and a mutation atomically, one transaction,
     assert.deepEqual(audit1.after, { stock: 9 });
     assert.equal(audit1.actorUid, "u1");
     assert.equal(audit1.serverTimestamp, "SERVER_TS");
-    assert.equal(byPath[T + "audit_log/completeOrder:o1:1:2"].data.action, "update");
+    assert.equal(byPath[T + "audit_log/completeOrder:o1:1~2"].data.action, "update");
 });
 
 test("applyOperation: a replayed requestId is a no-op that returns the first results", async () => {
@@ -172,6 +209,14 @@ test("applyOperation: a replayed requestId is a no-op that returns the first res
     const db = makeFakeDb({ [T + "audit_log/completeOrder:o1:1"]: { results: stored } });
     const r = await OperationLogic.applyOperation(db, params([delta("inventory", "p1", { stock: -1 })]));
     assert.deepEqual(r, { ok: true, idempotentReplay: true, results: stored });
+    assert.equal(db.writes.length, 0);
+});
+
+test("applyOperation: an audit entry at the request id that is NOT an operation marker is never reported as a replay", async () => {
+    // e.g. an id collision with some other writer: it has no `results` array.
+    const db = makeFakeDb({ [T + "audit_log/completeOrder:o1:1"]: { action: "delta", after: { stock: 9 } } });
+    const r = await OperationLogic.applyOperation(db, params([delta("inventory", "p1", { stock: -1 })]));
+    assert.deepEqual(r, { ok: false, status: 409, error: "request-id-in-use" });
     assert.equal(db.writes.length, 0);
 });
 
@@ -325,5 +370,5 @@ test("applyOperation: a full 200-op operation stays under Firestore's write ceil
 });
 
 test("opAuditId: derives stable per-op ids from the request id", () => {
-    assert.equal(OperationLogic.opAuditId("completeOrder:o1:1", 3), "completeOrder:o1:1:3");
+    assert.equal(OperationLogic.opAuditId("completeOrder:o1:1", 3), "completeOrder:o1:1~3");
 });
