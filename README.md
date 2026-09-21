@@ -281,12 +281,19 @@ See `SKILLS.md` Skill 59 (renumbered from 57 after rebasing onto main) and
 working-tier docs in ONE Firestore transaction, all-or-nothing, with floors and CAS checked inside,
 keyed by a stable `requestId`. A repeat of the same `requestId` returns the first result; a rejection
 leaves no trace (no write, no audit entry, no marker), so the same key can be re-planned and resent.
-Up to 200 ops per request (401 writes at most); `opType` is allowlisted (`completeOrder`). **No client
+Up to 200 ops per request (401 writes at most); `opType` is allowlisted (`completeOrder`). The
+`requestId` must be `{opType}:...` (no `/` or `~`, at most 200 characters) and every entity id must be a
+safe document id, so a bad id is a clean 400 rather than a write that fails and is retried forever;
+per-op audit entries are `{requestId}~{index}`, which can never equal a marker id. **No client
 calls it yet**: this is Phase 1 of the C-3 fix (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`,
 spec in `docs/superpowers/specs/`), and the function must be deployed to dev before the client phases
-ship. 33 new tests (`operationLogic.test.js` 20, `index.handlers.recordOperation.test.js` 13);
-`functions/` suite: 228 tests, all passing. `operationLogic.js` is 100% line/branch/function covered;
-`index.js` stays at 99.89% (the one pre-existing uncovered line, unchanged).
+ship. 37 new unit tests (`operationLogic.test.js` 23, `index.handlers.recordOperation.test.js` 14);
+`functions/` suite: 232 tests, all passing. `operationLogic.js` is 100% line/branch/function covered;
+`index.js` stays at 99.89% (the one pre-existing uncovered line, unchanged). Also
+`test/e2e/recordOperation.e2e.test.js` (10 tests, run in the E2E job after the QML tests): the same
+endpoint against the Firestore emulator's real transaction semantics, including two devices completing at
+once (exactly one wins) and concurrent retries of one request id (applied exactly once). It is not counted
+in the CI summary comment; a failure fails the E2E job.
 
 ## Qt Skills Cheat Sheet
 
