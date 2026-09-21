@@ -91,6 +91,17 @@ should ride together with (or immediately after) whatever session finally rewrit
 retry/terminal-classification behavior, as one piece of work rather than two partial ones. Full
 trace: `docs/superpowers/specs/2026-08-30-product-order-delete-ui.md`.
 
+**Update 2026-09-19 (PR #75) — surfaced, not resolved.** The *silent* half is fixed: `Gateway` now counts
+server-side failures per queued write in all three senders (`_send`, `_sendBatch`, `_sendDelta`) and, after
+5, shows one toast and a persistent `GlassHeader` caption line until the write leaves the outbox (spec:
+`docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`). Taher chose surface-only over
+drop + rollback, park, or server-side classification, so the *diverged* half remains: retry, backoff and
+dropping are unchanged, local state still differs from the server while a write is stuck, and there is no
+in-app Retry/Discard. Follow-ups, in the order they would pay off: (B) park a stuck write and offer
+Retry/Discard, with Discard rolling back to the outbox item's `before`; (C) have `functions/index.js` map
+Firestore error codes to distinct HTTP statuses (today every exception is `500 write-failed`) so the client
+can classify precisely instead of counting.
+
 ---
 
 ## Delete: staff delete has the identical missing-UI gap as products/orders had

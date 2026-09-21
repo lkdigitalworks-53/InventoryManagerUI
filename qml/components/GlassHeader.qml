@@ -75,10 +75,16 @@ Rectangle {
             }
 
             Text {
-                visible: !app.isOnline || (root.subtitle.length > 0 && root.greeting.length === 0)
-                text: app.isOnline ? root.subtitle : qsTr("App is offline, no operation allowed.")
+                // Online, but queued writes keep failing server-side (Gateway.stuckCount,
+                // republished by Main.qml). The offline message keeps precedence.
+                readonly property bool _stuck: app.isOnline && app.syncStuckCount > 0
+
+                visible: !app.isOnline || _stuck || (root.subtitle.length > 0 && root.greeting.length === 0)
+                text: !app.isOnline ? qsTr("App is offline, no operation allowed.")
+                    : _stuck ? qsTr("%n change(s) not syncing. Still retrying.", "", app.syncStuckCount)
+                    : root.subtitle
                 font.pixelSize: sp(Constants.fsCaption)
-                color: app.isOnline ? Constants.textSecondary : Constants.danger
+                color: (!app.isOnline || _stuck) ? Constants.danger : Constants.textSecondary
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }
