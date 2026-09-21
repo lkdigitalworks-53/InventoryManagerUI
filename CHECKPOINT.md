@@ -70,8 +70,20 @@ the repo, `.git/config`, or memory.
       `specs/2026-09-19-gateway-stuck-write-indicator-CHECKPOINT.md`; `test-plans/README.md`, both index rows
       kept, newest first). Refreshed the statements that went stale (spec status, tracker pointer).
       The embedded `StuckWrites` patch still applies to the merged file (`git apply --check`).
-- [ ] 12. Phase 2 (plan Tasks 3-5, pure helpers) on `feature/2026-09-21-operation-helpers`: in progress, see
-      the PR for its state. Phase 3 needs Phases 1-2 merged and `recordOperation` deployed to dev by Taher.
+- [x] 12. Phase 2 (plan Tasks 3-5, pure helpers) implemented as PR #79
+      (`feature/2026-09-21-operation-helpers`, cut from `main` @ `55451b3`), four commits: `StuckWrites`
+      timeouts (D5), `SendPolicy` + `OperationKeys`, `CompletionPlan`, docs notes. Tests first: the new
+      StuckWrites tests were seen failing (4 of 6; the other 2 assert unchanged behaviour), the new helper
+      tests failed on the missing modules. Before pushing: 68 test bodies (47 new) executed in Node through
+      a shim, 21/21 deliberate mutations caught against the repo files. **CI on #79: all 5 checks green, and
+      the QML job ran the new files under the real `qmltestrunner`**: 901 -> 954 tests (+53 = 47 new + an
+      `initTestCase`/`cleanupTestCase` pair for each of the 3 new files). This settles the earlier caveat
+      that QML syntax of those test files was unproven.
+- [ ] 13. **Waiting on Taher:** merge of #77, #78, #79 (all `clean`, CI green; suggested order #77, #78, #79,
+      no dependency between them); deploy of `recordOperation` to dev (curl expecting `401 missing-token`).
+      Phase 3 (plan Tasks 6-11, Outbox/Gateway/stores/DataModel/UI) needs #78 and #79 merged and the
+      function deployed. It is the largest and least certain part; Task 10's optimistic apply / revert /
+      re-plan logic should get Taher's review first.
 
 ## Open questions for Taher
 
@@ -81,6 +93,6 @@ the repo, `.git/config`, or memory.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check open PR state live (#74 closed, #75, #76, #77, #78), then
-continue at step 12. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
+Fresh session: clone, read this file, re-check open PR state live (#75 and #76 merged, #74 closed, #77, #78, #79), then
+continue at step 13. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
 copy; resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`.
