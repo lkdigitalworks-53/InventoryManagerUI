@@ -7,8 +7,7 @@
 **Supersedes:** draft PR #74 (this file replaces its checkpoint; #74 is closed).
 **Skills invoked by Taher:** `superpowers:brainstorming`, `superpowers:writing-plans` (used for the plan),
 `qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman mode: FULL.
-**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>` (repo convention; not verified
-against the claude.ai account email). PAT is supplied by Taher in chat each session and is never written to
+**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>` (confirmed by Taher). PAT is supplied by Taher in chat each session and is never written to
 the repo, `.git/config`, or memory.
 
 ## Deliverables in this PR
@@ -54,19 +53,31 @@ the repo, `.git/config`, or memory.
       - Orders can be reopened (`_reverseCompletedOrder`), so the key needs an epoch stored on the order.
       - Sale `txId` is random (`_nextId`), so a re-run would also double-book revenue; ids become deterministic.
       - Two lines of one product were validated separately against stock; the planner sums demand.
-- [ ] 8. **Waiting on Taher:** review of this PR; merge of #75 and #76. Phase 1 (server endpoint, plan Tasks 1-2)
-      does not touch #75's files; ask Taher whether it may start before #75 merges. Phase 2 needs #75 (it edits
-      #75's `StuckWrites.js`). Phase 3 needs Phases 1-2 merged and the function deployed to dev by Taher.
+- [x] 8. Taher answered: Phase 1 (server) may start now; PRs #75 and #76 are under his review and he will
+      update; the commit email `tsowner@lkdigitalworks.com` is confirmed.
+- [x] 9. Phase 1 implemented as PR #78 (`feature/2026-09-21-record-operation-endpoint`, cut from `main`):
+      tests written first and seen failing (`Cannot find module '../lib/operationLogic'`), then
+      `operationLogic.js` + the `recordOperation` handler + harness edit. Local run on the branch: `functions/`
+      suite 228/228 (195 existing + 33 new), `operationLogic.js` 100% line/branch/function, `index.js` 99.89%
+      (the same pre-existing uncovered line). CI on PR #78: all 5 checks green, `mergeable_state: clean`.
+      README update and an AGENTS bullet added; `SKILLS.md` deliberately not touched (Skill-number collision
+      with #75). `git push -u` briefly wrote the token URL into `.git/config`; removed and verified (sandbox
+      only, never in the repo). Use plain `git push <url> <branch>` without `-u`.
+- [ ] 10. **Waiting on Taher:** review of #77 (spec/plan) and #78 (server); he deploys `recordOperation` to
+      dev (`firebase deploy --only functions:recordOperation --project inventorymanager-48392`, then a curl
+      expecting `401 missing-token`); merge of #75 and #76. Next for me: Phase 2 (pure helpers, plan Tasks
+      3-5). Task 3 edits #75's `StuckWrites.js`, so it starts after #75 merges (Tasks 4-5 do not need it and
+      could start earlier if Taher wants). Phase 3 needs Phases 1-2 merged and the function deployed.
 
 ## Open questions for Taher
 
 - Review focus: spec 4.6 (rejection handling and D3), 4.2 (marker holds full `after` docs, bounded by the
   200-op cap), and the optimistic apply / revert / re-plan logic in plan Task 10 (the least certain part).
-- May Phase 1 (server only) start before #75 merges?
-- Confirm the commit email.
+- May Phase 2 Tasks 4-5 (`SendPolicy`, `OperationKeys`, `CompletionPlan`; no dependency on #75) start before
+  #75 merges, leaving Task 3 (`StuckWrites`) until it does?
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check open PR state live (#74 closed, #75, #76, this PR), then
-continue at step 8. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
+Fresh session: clone, read this file, re-check open PR state live (#74 closed, #75, #76, #77, #78), then
+continue at step 10. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
 copy; resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`.
