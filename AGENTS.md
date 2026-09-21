@@ -407,7 +407,8 @@ QtObject {
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
-- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67)
+- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan)
+- `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
 - `qml/model/qmldir`
 
 **Example Prompts**:
