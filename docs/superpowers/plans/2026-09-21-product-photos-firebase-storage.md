@@ -180,7 +180,7 @@ test('builds the thumbnail URL with the _t suffix when thumb is true', () => {
 
 test('URL-encodes slashes in the path (not literal /) so Storage treats it as one object name', () => {
   const url = buildPhotoDownloadUrl(base);
-  assert.equal((url.match(/%2F/g) || []).length, 4);
+  assert.equal((url.match(/%2F/g) || []).length, 5);
   assert.ok(!url.includes('/o/prd/tenants'));
 });
 
