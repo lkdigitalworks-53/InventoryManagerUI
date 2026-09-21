@@ -1,9 +1,9 @@
 # CHECKPOINT — 2026-09-20: C-3 spec, plan and test plan written (design only, no implementation)
 
 **Session date:** 2026-09-20
-**Branch:** `docs/2026-09-20-atomic-operation-spec-plan`, one commit on `main` @ `318dd38`
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-16-new-order-double-submit-CHECKPOINT.md`
-(byte-identical to what PR #75 archives at the same path, so the two merge cleanly).
+**Branch:** `docs/2026-09-20-atomic-operation-spec-plan`, rebased onto `main` @ `55451b3` (after #75 and #76 merged)
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-CHECKPOINT.md`
+(PR #75's arc; the older #72 arc was archived by #75 itself).
 **Supersedes:** draft PR #74 (this file replaces its checkpoint; #74 is closed).
 **Skills invoked by Taher:** `superpowers:brainstorming`, `superpowers:writing-plans` (used for the plan),
 `qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman mode: FULL.
@@ -63,21 +63,24 @@ the repo, `.git/config`, or memory.
       README update and an AGENTS bullet added; `SKILLS.md` deliberately not touched (Skill-number collision
       with #75). `git push -u` briefly wrote the token URL into `.git/config`; removed and verified (sandbox
       only, never in the repo). Use plain `git push <url> <branch>` without `-u`.
-- [ ] 10. **Waiting on Taher:** review of #77 (spec/plan) and #78 (server); he deploys `recordOperation` to
-      dev (`firebase deploy --only functions:recordOperation --project inventorymanager-48392`, then a curl
-      expecting `401 missing-token`); merge of #75 and #76. Next for me: Phase 2 (pure helpers, plan Tasks
-      3-5). Task 3 edits #75's `StuckWrites.js`, so it starts after #75 merges (Tasks 4-5 do not need it and
-      could start earlier if Taher wants). Phase 3 needs Phases 1-2 merged and the function deployed.
+- [x] 10. Taher: PR #75 merged (and #76); he will deploy `recordOperation` himself; asked whether #77 and #78
+      can merge, then "next steps".
+- [x] 11. Checked live: #78 `mergeable_state: clean`, CI green. #77 was `dirty`: rebased onto `main` @
+      `55451b3` (two conflicts: this file, kept mine and archived main's under
+      `specs/2026-09-19-gateway-stuck-write-indicator-CHECKPOINT.md`; `test-plans/README.md`, both index rows
+      kept, newest first). Refreshed the statements that went stale (spec status, tracker pointer).
+      The embedded `StuckWrites` patch still applies to the merged file (`git apply --check`).
+- [ ] 12. Phase 2 (plan Tasks 3-5, pure helpers) on `feature/2026-09-21-operation-helpers`: in progress, see
+      the PR for its state. Phase 3 needs Phases 1-2 merged and `recordOperation` deployed to dev by Taher.
 
 ## Open questions for Taher
 
 - Review focus: spec 4.6 (rejection handling and D3), 4.2 (marker holds full `after` docs, bounded by the
   200-op cap), and the optimistic apply / revert / re-plan logic in plan Task 10 (the least certain part).
-- May Phase 2 Tasks 4-5 (`SendPolicy`, `OperationKeys`, `CompletionPlan`; no dependency on #75) start before
-  #75 merges, leaving Task 3 (`StuckWrites`) until it does?
+- Deploy result of `recordOperation` on dev (expected `401 missing-token` from an unauthenticated POST).
 
 ## Resume instructions
 
 Fresh session: clone, read this file, re-check open PR state live (#74 closed, #75, #76, #77, #78), then
-continue at step 10. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
+continue at step 12. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
 copy; resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`.

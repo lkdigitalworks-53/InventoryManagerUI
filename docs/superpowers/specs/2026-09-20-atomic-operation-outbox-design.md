@@ -1,10 +1,10 @@
 # Atomic, replay-safe multi-write operations through the outbox — design (fixes C-3)
 
 **Date:** 2026-09-20
-**Status:** Design approved by Taher (decisions D1-D5 below). Implementation is blocked on PR #75 merging,
-because both change the same senders in `Gateway.qml`.
+**Status:** Design approved by Taher (decisions D1-D5 below). PR #75 (stuck-write indicator) has merged, so
+the client phases are unblocked; Phase 1 (server endpoint) is PR #78.
 **Fixes:** the `DataModel._tryCompleteOrder` entry in `docs/superpowers/ASYNC-REENTRANCY-BUGS.md`
-(labelled C-3; the `RestockDialog` entry that shared that label is renumbered C-4 in PR #76).
+(labelled C-3; the `RestockDialog` entry that shared that label was renumbered C-4 in PR #76).
 **Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`
 **Test plan:** `docs/superpowers/test-plans/2026-09-20-atomic-operation-outbox-test-plan.md`
 
