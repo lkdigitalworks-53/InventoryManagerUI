@@ -717,7 +717,7 @@ results in both `RestockDialog` (stock added twice) and `NewOrderDialog` with au
 (order placed and completed twice). Investigated both guards layer by layer — button `enabled`
 binding, loading-state rendering, the underlying Store/Gateway call — and found no code-level
 defect in either; both are structurally identical to the pattern that fixed the original bug. Left
-open rather than guess-fixed: see `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` C-3 (new, `RestockDialog`)
+open rather than guess-fixed: see `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` C-4 (`RestockDialog`; later retested clean, no repro)
 and the note added under C-2/F-2 (`NewOrderDialog` — needs to confirm the retest ran against the
 fixed branch, not a stale build) for the full trace and the specific open question each one needs
 resolved before further code changes. `Gateway.recordDelta`'s delta-coalescing/callback-fan-out
