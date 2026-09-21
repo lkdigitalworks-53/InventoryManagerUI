@@ -233,4 +233,52 @@ TestCase {
             compare(Object.keys(state.failures).length, 0, "seed " + seed + " failures")
         }
     }
+
+    // -- timeouts (D5, 2026-09-20): a hang while online is a stuck write --------
+
+    function test_isStuckStatus_timeout_counts_only_while_online() {
+        compare(SW.isStuckStatus(SW.TIMEOUT, true), true)
+        compare(SW.isStuckStatus(SW.TIMEOUT, false), false)
+        compare(SW.isStuckStatus(SW.TIMEOUT), false, "unknown connectivity is not evidence of a hang")
+        compare(SW.isStuckStatus(SW.TIMEOUT, "yes"), false, "only a real boolean true counts")
+    }
+
+    function test_isStuckStatus_numeric_statuses_ignore_the_online_flag() {
+        compare(SW.isStuckStatus(500, true), true)
+        compare(SW.isStuckStatus(500, false), true, "the server answered, so connectivity is irrelevant")
+        compare(SW.isStuckStatus(0, true), false)
+        compare(SW.isStuckStatus(409, true), false)
+    }
+
+    function test_noteFailure_timeouts_online_tip_at_the_threshold() {
+        var s = SW.newState()
+        var tipped = 0
+        for (var i = 0; i < SW.THRESHOLD; ++i)
+            if (SW.noteFailure(s, "r1", SW.TIMEOUT, true)) tipped++
+        compare(tipped, 1)
+        compare(SW.stuckCount(s), 1)
+    }
+
+    function test_noteFailure_timeouts_offline_never_tip() {
+        var s = SW.newState()
+        for (var i = 0; i < SW.THRESHOLD * 3; ++i)
+            compare(SW.noteFailure(s, "r1", SW.TIMEOUT, false), false)
+        compare(SW.stuckCount(s), 0)
+    }
+
+    function test_noteFailure_timeouts_and_server_errors_share_one_counter() {
+        var s = SW.newState()
+        compare(SW.noteFailure(s, "r1", SW.TIMEOUT, true), false)
+        compare(SW.noteFailure(s, "r1", 503, true), false)
+        compare(SW.noteFailure(s, "r1", SW.TIMEOUT, true), false)
+        compare(SW.noteFailure(s, "r1", 500, true), false)
+        compare(SW.noteFailure(s, "r1", SW.TIMEOUT, true), true, "the 5th failure of any counted kind tips it")
+    }
+
+    function test_noteFailure_a_timeout_while_offline_does_not_reset_earlier_online_failures() {
+        var s = SW.newState()
+        for (var i = 0; i < 4; ++i) SW.noteFailure(s, "r1", SW.TIMEOUT, true)
+        compare(SW.noteFailure(s, "r1", SW.TIMEOUT, false), false)
+        compare(SW.noteFailure(s, "r1", SW.TIMEOUT, true), true)
+    }
 }

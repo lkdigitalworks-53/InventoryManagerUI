@@ -756,4 +756,11 @@ outbox. This only reports: retry, backoff and dropping are untouched, so local s
 the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
+**Update 2026-09-21 (C-3 phase 2, pure helpers):** added `qml/helper/SendPolicy.js` (10s foreground / 30s
+background timeout starting values, not measured, and +-20% retry jitter), `OperationKeys.js`
+(deterministic operation key and ids) and `CompletionPlan.js` (the pure planner that turns an order
+completion into the write list), and taught `StuckWrites` that a timeout counts while the device is
+online. Nothing calls them yet; `Gateway` and `DataModel` are wired once `recordOperation` (PR #78) is
+deployed. 47 new headless tests. Plan: `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`.
+
 ---
