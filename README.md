@@ -276,6 +276,18 @@ See `SKILLS.md` Skill 59 (renumbered from 57 after rebasing onto main) and
 
 ---
 
+**Update 2026-09-21:** added the `recordOperation` endpoint (`functions/index.js`, logic in
+`functions/lib/operationLogic.js`): it applies a list of delta and mutation ops across several
+working-tier docs in ONE Firestore transaction, all-or-nothing, with floors and CAS checked inside,
+keyed by a stable `requestId`. A repeat of the same `requestId` returns the first result; a rejection
+leaves no trace (no write, no audit entry, no marker), so the same key can be re-planned and resent.
+Up to 200 ops per request (401 writes at most); `opType` is allowlisted (`completeOrder`). **No client
+calls it yet**: this is Phase 1 of the C-3 fix (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`,
+spec in `docs/superpowers/specs/`), and the function must be deployed to dev before the client phases
+ship. 33 new tests (`operationLogic.test.js` 20, `index.handlers.recordOperation.test.js` 13);
+`functions/` suite: 228 tests, all passing. `operationLogic.js` is 100% line/branch/function covered;
+`index.js` stays at 99.89% (the one pre-existing uncovered line, unchanged).
+
 ## Qt Skills Cheat Sheet
 
 This repository now includes local Copilot agents mapped from the Qt skills repo:

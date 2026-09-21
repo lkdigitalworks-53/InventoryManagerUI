@@ -24,6 +24,7 @@ const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
 const CutoverLogic = require("./lib/cutoverLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
+const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
 const { send } = require("./lib/httpResponse");
 
@@ -241,6 +242,82 @@ exports.recordDelta = functions.onRequest(
         }
 
         send(res, 200, { ok: true, entryId: validated.requestId, after: result.after });
+    });
+
+// Atomic multi-write operation (order completion today). One request carries a
+// list of delta/mutation ops for several working-tier docs; they are applied in
+// ONE Firestore transaction, all-or-nothing, keyed by a stable requestId so a
+// retry is a no-op. See lib/operationLogic.js and
+// docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md.
+exports.recordOperation = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const validated = OperationLogic.validateOperationRequest(body);
+        if (!validated.ok) {
+            send(res, validated.status, { ok: false, error: validated.error, opIndex: validated.opIndex });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        let result;
+        try {
+            result = await OperationLogic.applyOperation(db, {
+                tenantId: ctx.tenantId,
+                actorUid: actorUid,
+                actorRole: ctx.role,
+                requestId: validated.requestId,
+                opType: validated.opType,
+                ops: validated.ops,
+                clientTimestamp: validated.clientTimestamp,
+                serverTimestamp: FieldValue.serverTimestamp()
+            });
+        } catch (e) {
+            console.error("recordOperation write failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        if (result && result.ok === false) {
+            send(res, result.status || 409, {
+                ok: false, error: result.error, opIndex: result.opIndex,
+                field: result.field, current: result.current, conflict: result.conflict
+            });
+            return;
+        }
+
+        send(res, 200, {
+            ok: true, entryId: validated.requestId, results: result.results,
+            idempotentReplay: result.idempotentReplay === true
+        });
     });
 
 // Component 2 (async-write-sequencing design). Pessimistic record locking —

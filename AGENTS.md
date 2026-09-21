@@ -158,6 +158,11 @@ collections and zeroes product stock).
   `recordMutationsBatch`) was extracted into `functions/lib/{gatewayLogic,cutoverLogic,
   batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no
   emulator needed; see Skill 35).
+- `recordOperation` (2026-09-21, logic in `functions/lib/operationLogic.js`) applies delta/mutation ops
+  on several docs in one Firestore transaction under one `requestId`; a rejection writes nothing, so the
+  same key can be re-planned and resent. **No client caller yet**: Phase 1 of the C-3 fix
+  (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`). Deploy it to dev before any client
+  phase ships.
 - `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml`, and root `test/firestore.rules.test.js`
   exist but were **written, not run** — this sandbox had no Qt toolchain and no network access to
   Firebase's emulator distribution. They need a local `qmltestrunner` pass and

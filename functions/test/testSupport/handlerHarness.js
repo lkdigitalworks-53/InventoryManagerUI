@@ -63,6 +63,7 @@ function installMocks() {
     const firestorePath = resolveFromFunctionsRoot("firebase-admin/firestore");
     const gatewayLogicPath = require.resolve("../../lib/gatewayLogic");
     const batchMutationLogicPath = require.resolve("../../lib/batchMutationLogic");
+    const operationLogicPath = require.resolve("../../lib/operationLogic");
     const lockLogicPath = require.resolve("../../lib/lockLogic");
     const cutoverLogicPath = require.resolve("../../lib/cutoverLogic");
 
@@ -76,6 +77,7 @@ function installMocks() {
         applyMutationResult: null,
         applyDeltaResult: null,
         applyMutationsBatchResult: null,
+        applyOperationResult: null,
         acquireLockResult: null,
         acquireLockError: null,
         acquireLockCalls: [],
@@ -198,6 +200,13 @@ function installMocks() {
         id: batchMutationLogicPath, filename: batchMutationLogicPath, loaded: true,
         exports: Object.assign({}, realBatchMutationLogic, {
             applyMutationsBatch: async () => mockState.applyMutationsBatchResult
+        })
+    };
+    const realOperationLogic = require(operationLogicPath);
+    require.cache[operationLogicPath] = {
+        id: operationLogicPath, filename: operationLogicPath, loaded: true,
+        exports: Object.assign({}, realOperationLogic, {
+            applyOperation: async () => mockState.applyOperationResult
         })
     };
     const realLockLogic = require(lockLogicPath);
