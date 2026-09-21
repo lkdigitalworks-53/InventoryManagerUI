@@ -1,71 +1,77 @@
-# CHECKPOINT — 2026-09-24: compliance reassessment, P1 design (server-side atomic) + S1 plan (docs only, no repo code)
+# CHECKPOINT — 2026-09-21: staff delete UI (DELETE-FEATURE-ROADMAP item 2) — design gate, no code yet
 
-**Branch:** `docs/2026-09-24-compliance-reassessment`, cut from `main` @ `2c1e5f6`
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-21-atomic-operation-outbox-phase2-CHECKPOINT.md`
-(C-3 arc; its step 13 is still open: Phase 3 not started).
-**Skills invoked by Taher:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `ponytail:ponytail`. Also used: `superpowers:writing-plans`. Caveman FULL.
-**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT comes from chat, never stored in repo/config/memory.
-**Constraints this session:** no app build/run; no Qt in sandbox (CI is the QML test oracle); short scope per session
-(multi-account, token-limited); push without asking, review happens in the GitHub PR.
+**Session date:** 2026-09-21
+**Branch:** `feat/2026-09-21-staff-delete-ui`, off `main` @ `55451b3` (PR #75 and #76 merged)
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-CHECKPOINT.md`
+**Skills invoked by Taher:** `superpowers:brainstorming` (design gate before code), `qt-development-skills:qt-qml`,
+`ponytail:ponytail`. Caveman mode FULL applies to chat replies only; repo docs and commits are normal prose.
+**Commit identity:** `Taher (via Claude session) <dextran52@gmail.com>`.
 
 ## Compliance status vs master spec (`specs/2026-06-06-india-compliance-roadmap-design.md`)
 
-Grep-based on `main` @ `2c1e5f6` plus the P1 branch's own checkpoint.
+"Take staff delete first and complete it e2e. Then we will take the next item as a separate session."
 
-| Item | Status |
-|---|---|
-| P0 gateway + immutable `audit_log` | Done. `Gateway.mode = "gateway"` live since 2026-07-29. |
-| C-3 atomic `recordOperation` (order completion) | Phase 1 (endpoint, #78) + Phase 2 (pure helpers, #79) merged. **Phase 3 (Outbox/Gateway/stores/DataModel/UI, plan Tasks 6-11) not started.** Needs Taher to deploy `recordOperation` to dev. |
-| P1 stock-movement taxonomy | **Partial, unmerged, untested, stale.** Branch `feature/p1-stock-movement-taxonomy`: 10-value kind enum, write-only `StockMovementStore`, 5 wiring points, required kind picker. Zero tests. Register report (opening/closing balance) not started. |
-| P2 tax identity (HSN, GSTIN) | Not started. No `hsnCode`/`gstin` anywhere in `qml/` or `functions/`. |
-| P3 legal docs + acceptance, P4 DPDP consent, P5 erasure/retention, P6 breach, P7 warehouse | Not started (no consent/erasure/breach code; only an OAuth "consent" string in `GoogleAuthService.qml`). |
-| Deferred (56(12), 56(15), OIDAR) | Out of scope per spec. |
+## Standing instructions from Taher
 
-## P1 branch verdict: NOT usable as-is, do not rebase-and-continue
-
-- 337 commits behind `main`; merge-base `2748d1b` (2026-07-13). Predicted textual conflicts: `Main.qml`, `Logic.qml`,
-  `DataModel.qml`, `InventoryStore.qml`, `qmldir`, `EditProductDialog.qml`.
-- Trial rebase (scratch branch, aborted, remote untouched) stopped at commit 4 of 10, `94c6e51` (restock wiring). The conflict is
-  semantic, not just textual: `restock()` on main is async + callback-based, uses `Gateway.recordDelta`, and
-  `StockBatchStore.addBatch` no longer returns a batch synchronously (async batch-id minting), so the branch's
-  `batch.batchId` and `Gateway.recordMutation` wiring is wrong for main even if hunks are merged by hand.
-- Order completion (`_tryCompleteOrder`) was reworked on main (atomic completion, `recordOperation`) and Phase 3 will rewrite it again.
-  The branch's `sale` wiring is throwaway.
-- Reusable from the branch: `kind` enum + `sales_return`/`destroyed` reasoning (CGST 56(2)), `StockMovementStore` shape, kind-picker UX
-  in `EditProductDialog`, master test plan `specs/2026-07-11-p0-p1-master-test-plan.md`. Re-apply by hand on fresh `main`; leave old branch untouched.
+- Branch only, never `main`; push when the work is done without asking (Taher reviews in the GitHub PR).
+- Do not build or run the app; no Qt tooling in the sandbox; CI is the only signal for QML.
+- Every change: tests aiming at 100% coverage (unit, functional, rules, e2e, regression; happy path, negative, edge,
+  multi-scenario, monkey), a test plan from the template (Skill 49), and `SKILLS.md` / `AGENTS.md` / `README.md`
+  updated as needed.
+- Honest advisor: show trade-offs, grill before deciding, do not simply agree.
+- The GitHub PAT is used for `git push` and the PR API only; never written into the repo.
 
 ## Step log (append-only; resume from the last ticked step)
 
-- [x] 1. Cloned repo, read spec, status, P1 checkpoint, C-3 checkpoint. Read skills: brainstorming, qt-qml, ponytail.
-- [x] 2. Trial rebase of P1 onto `main`: fails semantically at commit 4/10 (above). Aborted. Old remote branch untouched.
-- [x] 3. Wrote this reassessment (docs only: no test plan needed, no code changed).
-- [x] 4. Taher chose **B** (server-side atomic) and asked to finish the docs, merge them, and implement in a new session on a new branch.
-- [x] 5. Wrote spec (D1-D10, slices S1-S4, open questions Q1-Q4, risks R1-R3), S1 plan (5 tasks, code embedded), test plan (standard format, index row).
-      Decisions D2-D10 were taken by me and are written for review; **merging this PR = approving them**. Everything in the plan was run in a scratch
-      copy of `functions/` from `main` and replayed step by step: 281/281 (232 existing + 49 new), new `lib/` files 100% line, 10/10 mutations caught.
-- [x] 6. AGENTS.md (P1 bullet + scope line) and README.md (one update paragraph) refreshed. `SKILLS.md` untouched (append-only; no new numbered lesson yet).
-- [ ] 7. PR for this branch: CI green, then merge (Taher asked me to get it merged).
-- [ ] 8. **Next session (new branch off `main`):** implement S1 by following `plans/2026-09-24-p1-server-side-stock-movements-s1.md` task by task
-      (`cd functions && npm ci` first). Then Taher deploys functions to dev and runs the on-device checklist. S2 planning only after that.
+- [x] 1. Read project notes and the invoked skills; updated `main` (@ `55451b3`), created this branch.
+- [x] 2. Read roadmap item 2 and the KNOWN-ISSUES staff entry, then traced the whole flow (findings below).
+- [x] 3. Archived the previous checkpoint, wrote this file.
+- [ ] 4. **Awaiting Taher:** Q1 scope, Q2 server-side guard, Q3 approval and pace. Then spec, plan, implement, tests,
+      test plan, docs, push, read CI.
 
-## Next-session start-up
+## Findings (all verified in code this session)
 
-Read this file, the spec section 3 and the plan header. Do not rebase or force-push `feature/p1-stock-movement-taxonomy`. Nothing to grill Taher on
-before S1 except the review of D2-D10; open questions Q1-Q4 belong to S2-S4.
+- The wiring the roadmap describes exists: `StaffPage.deleteStaffClicked`, the `confirmDlg` handler in `Main.qml`
+  (~line 1048), `Logic.deleteStaff`, `DataModel.onDeleteStaff` (owner / admin only), `StaffStore.deleteStaff`
+  (optimistic local removal, `Gateway.recordMutation("staff", id, "delete", removed, null)`, `ActivityLog`
+  `staff_deleted`, cascade if `appUid`).
+- The proven button idiom is on `OrdersPage` / `InventoryPage`: `Rectangle` + `Icon "trash"` + `MouseArea` with an
+  `objectName`, `visible:` bound to a permission property, and `mouse.accepted = true` so the tap does not also
+  open the card. `StaffPage.canManageStaff` already exists and `Main.qml` binds it to `AuthStore.canManageStaff`
+  (owner / admin). `ListCard`'s default slot is a `RowLayout`, so a second child sits next to the `StatusPill`.
+- Missing besides the button: a success toast (`Main.qml` has `onProductDeleted` / `onOrderDeleted`, nothing for
+  staff), and `StaffStore._onMutationConflicted` has no `action` parameter, so a rejected delete would say "your
+  change didn't save" (products and orders got delete-specific wording).
+- No test references `StaffStore.deleteStaff`, `DataModel.onDeleteStaff` or `StaffStore._onMutationConflicted`.
+  Existing staff tests: `tst_AddStaffSyncClose.qml`, `tst_StaffScope.qml`. Page-level button tests live in
+  `test/felgo-dependent/` and are not run by CI.
+- Removed staff are already handled by history: Sales analysis shows "(removed)", orders keep `staffId`, exports show a
+  blank name, the order picker lists active staff only. A hard delete matches the existing design.
+- Self-delete: `firestore.rules` lets a non-owner member delete their own membership (voluntary leave). Deleting
+  your own staff record (if it has `appUid`) would cascade-delete your own membership and lock you out. Reachable
+  only once provisioning is on: `Gateway.provisioningAvailable` is `false` and `AuthService.qml:820` is the only
+  `setAppUid` caller.
+- Cascade `AuthService.cleanupStaffAuthDocs` (already tracked: `E2E-TESTING-ROADMAP.md` Medium, P5 in the India
+  compliance roadmap): the `users/{uid}` remove is always denied by rules (`allow delete: if false`) and also
+  contradicts the standing "never hard-delete `users/{uid}`" constraint; the `members/{uid}` remove is a direct,
+  fire-and-forget client write with no retry and no signal. The confirm dialog promises access is revoked.
+- Server: `recordMutation` derives `actorRole` for the audit entry but does no role authorization; only
+  `provisionMember` checks owner / admin. Any active member can delete staff through the gateway; the
+  `DataModel` check is the only barrier. Not in KNOWN-ISSUES today. Systemic across entities, not staff-specific.
 
-## Q1 options (decided: B)
+## Draft design (awaiting approval)
 
-- **A. Client-side second write** (old branch's way): `StockMovementStore.recordMovement` after each stock change.
-  Cheap, QML-only. But not atomic with the stock change: crash/offline/kill between the two writes leaves stock changed with no ledger row,
-  which is the exact failure an auditor tests. Needs idempotent ids too. Contradicts spec 2 ("working-tier doc AND ledger entry in one transaction").
-- **B. Server-side atomic**: `recordDelta` (and `recordOperation` ops) accept an optional `movement {kind, reason, valueAtCost, batchRef}`;
-  the function creates the `stock_movements` row in the same transaction, deterministic id from `requestId`, `kind` validated against the enum,
-  `actorUid`/`serverTimestamp` server-stamped. Fully testable with `node --test` in this sandbox (100% coverage feasible). Costs: functions change + Taher deploys (D4).
-- **C. Hybrid**: B for `sale` (inside `completeOrder`, after C-3 Phase 3), A for the rest. Two mechanisms to maintain; A's gap stays.
+1. `StaffPage.qml`: trash button in the row, same idiom, `objectName: "deleteStaffBtn"`,
+   `visible: root.canManageStaff`, emits the existing `deleteStaffClicked`.
+2. `Main.qml`: `onStaffDeleted` toast ("Staff member removed").
+3. `StaffStore._onMutationConflicted(entity, entityId, current, action)`: delete-specific wording, same as
+   products / orders.
+4. `DataModel.onDeleteStaff`: reject deleting your own staff record with `errorOccurred("staff", ...)` (option B).
+5. Tests: headless for `StaffStore.deleteStaff`, `_onMutationConflicted`, `DataModel.onDeleteStaff`; a
+   Felgo-dependent button test mirroring `tst_OrdersPage_deleteButton.qml`.
+6. Docs: test plan, README, SKILLS, KNOWN-ISSUES (resolve the staff entry; add the server role finding), roadmap,
+   E2E roadmap note about the `users/{uid}` denial.
 
-Proposed slices if B: S1 server support + tests; S2 client wiring for restock / manual adjust / returns; S3 `sale` via `completeOrder` (after C-3 Phase 3);
-S4 opening/closing register report.
+## Not done, deliberately
 
-## Resume instructions
-
-Fresh session: clone, read this file, then follow step 8. Do not force-push or rebase `feature/p1-stock-movement-taxonomy`. No build/run.
+No code, tests or test plan yet: the brainstorming design gate is open. App not built or run; no Qt tooling installed.
