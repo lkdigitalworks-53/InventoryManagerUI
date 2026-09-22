@@ -380,4 +380,57 @@ TestCase {
         compare(OutboxStore.pendingCount, 0,
                 "clear() must wipe the persisted file too, or a cleared queue would come back after relaunch")
     }
+
+    // ── hasPendingForEntity (2026-09-21 photos feature, Trap 1) ─────────────
+    // A photo for a product created offline must wait until that product's
+    // own "create" mutation has landed, or the server's uploadProductPhoto
+    // would 404 (design spec, "Two traps found in the existing code").
+
+    function test_hasPendingForEntity_true_right_after_enqueue() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasPendingForEntity_false_once_the_item_is_sent() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        OutboxStore.markSent("r1")
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasPendingForEntity_false_for_an_unrelated_entityId() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-2"), false)
+    }
+
+    function test_hasPendingForEntity_false_for_the_same_entityId_under_a_different_entity() {
+        // "inventory"/prod-1 pending must not block a photo gate keyed on a
+        // different entity string that happens to share the same id value.
+        OutboxStore.enqueue({ requestId: "r1", entity: "stock_batch", entityId: "prod-1", action: "delete" })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasPendingForEntity_true_while_the_item_is_in_flight_not_just_when_merely_queued() {
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "update" })
+        OutboxStore.markInFlight(item)
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasPendingForEntity_true_for_an_entityId_inside_a_pending_batch_item() {
+        OutboxStore.enqueueBatch({
+            requestId: "batch-1", entity: "inventory",
+            items: [{ entityId: "prod-1", action: "update" }, { entityId: "prod-2", action: "update" }]
+        })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-2"), true)
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-3"), false)
+    }
+
+    function test_hasPendingForEntity_true_for_a_pending_delta_item() {
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "prod-1", deltas: { qty: -1 } })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasPendingForEntity_false_on_an_empty_queue() {
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
+    }
 }

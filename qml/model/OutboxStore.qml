@@ -273,6 +273,23 @@ QtObject {
 
     function hasPending() { return items.length > 0 }
 
+    // Is any queued outbox item (single, batch, or delta) still pending for
+    // this entity+entityId, in flight or not? Added for PhotoQueue.qml
+    // (2026-09-21 photos feature, Trap 1 in the design spec): a photo for a
+    // product created offline must wait until that product's own "create"
+    // mutation has actually landed server-side, or uploadProductPhoto would
+    // 404. Deliberately checks the WHOLE queue (not just dueItems()) — an
+    // item that's due-but-blocked or not-yet-due for this entity still means
+    // "not landed yet" just as much as one currently in flight.
+    function hasPendingForEntity(entity, entityId) {
+        var key = _keyFor(entity, entityId)
+        for (var i = 0; i < items.length; ++i) {
+            var keys = _keysForItem(items[i])
+            if (keys.indexOf(key) !== -1) return true
+        }
+        return false
+    }
+
     // Soonest nextAttemptAt across all items, or -1 if empty. Gateway uses
     // this to schedule its drain timer without busy-polling.
     function nextDueInMs() {
