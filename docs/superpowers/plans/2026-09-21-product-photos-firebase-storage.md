@@ -682,22 +682,32 @@ instruction). On-device verification required before merge."
 
 **Interfaces:**
 - Consumes: `PhotoQueueLogic.js` (Task 3, exact function names above), `OutboxStore.hasPendingForEntity`
-  (Task 9), `AuthService.ensureFreshToken()`, `Main.isOnline`.
+  (Task 9), `AuthService.ensureFreshToken()`, `AuthService.isOnline`.
 - Produces: `enqueue({productId, photoId, mainFilePath, thumbFilePath})`, `retry(photoId)`,
   `discard(photoId)`, `items` (list model for the UI), signals `photoUploaded(productId, photoId,
   photoIds)` and `photoUploadFailed(photoId, status)`.
 
 - [ ] Persist to `QSettings` exactly as `OutboxStore` does (same technique, same
   `SettingsPath.settingsLocationOverride` so `qmltestrunner` proves durability for real, not just in prose).
-  Drain trigger: app start, `Main.isOnline` `onIsOnlineChanged` to `true`, and a `Qt.createQmlObject` timer
-  respecting each item's `nextAttemptAt`. Use `PhotoQueueLogic.reduceQueueItem` for every state transition —
-  do not re-implement the state machine inline. Use the plain-JS-object stand-in technique for the XHR layer
-  in tests, same convention as `tst_AddStaffSyncClose.qml` (per `overview.md`'s documented test pattern) —
-  do not spin up a real network call in `qmltestrunner`.
+  Drain trigger: app start, `AuthService.isOnline` flipping true (via a property-binding watcher —
+  **not** `Connections{}`, which crashes any `pragma Singleton QtObject` root at runtime, SKILLS.md
+  Skill 20 — a real mistake caught by re-reading SKILLS.md before writing the file, not by a test),
+  and a `Qt.createQmlObject` timer respecting each item's `nextAttemptAt` (same reason `Gateway`
+  avoids a singleton-owned `Timer` — Skill 20 again). Use `PhotoQueueLogic.reduceQueueItem` for
+  every state transition — do not re-implement the state machine inline. Structure the file so the
+  gating decision (`drainCandidates()`: due time, Trap 1, Trap 2) is a separate, side-effect-free
+  function from the actual native-file-read-plus-XHR call (`_upload()`) — `NativeFile`/
+  `ImageProcessor` are root context properties (`main.cpp` `setContextProperty`), not QML
+  singletons, so they are `undefined` under `qmltestrunner` (confirmed: `StorageService.qml`, the
+  only other file that references them, has zero tests, for this exact reason). `drainCandidates()`
+  is therefore unit-testable for real by CI; `_upload()` is not, consistent with `Gateway._send`'s
+  own established precedent of being untested at this level (its real XHR call, per
+  `tst_Gateway.qml`'s own comment).
   Test at minimum: enqueue persists immediately with a spinner-eligible state; success removes the item and
   emits `photoUploaded`; a terminal failure moves to `failed` without another retry attempt; a transient
   failure schedules a retry at the correct backoff; `retry()` on a failed item resets it; `discard()` removes
-  the item and deletes both persisted files (assert via a stubbed file-delete call, not real I/O);
+  the item from the queue (its `ImageProcessor.removeLocalCopy` calls are guarded with
+  `typeof ImageProcessor !== "undefined"` so the array-removal half stays testable);
   Trap 1 — an item whose product has a pending `OutboxStore` entry is skipped by the drain loop until that
   entry clears; Trap 2 — an item is skipped if its `uid`/`tenantId` no longer matches the current session.
   Cannot run `qmltestrunner` here; commit, flag for CI.
