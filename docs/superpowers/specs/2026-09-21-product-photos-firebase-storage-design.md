@@ -88,10 +88,15 @@ Request: `{ env, productId, photoId, requestId, imageBase64, thumbBase64 }`. `re
    'image/jpeg'})`). This step is *outside* the Firestore transaction — Storage has no transactional join
    with Firestore.
 5. One Firestore transaction: read the product; `404 product-not-found` if it's gone; `409 photo-limit` if
-   `photoIds.length >= 10`; append `photoId`, write a `photo_change` ledger entry (mirrors the existing
-   `TransactionStore.recordPhotoChange` shape) and the `audit_log/{requestId}` marker, all in the one
-   transaction. If this step throws after step 4 succeeded, the objects are orphaned but unreferenced —
-   accepted risk, documented, not "corrupted" (no id points at missing bytes, only the reverse).
+   `photoIds.length >= 10`; append `photoId` and write the `audit_log/{requestId}` marker, both in the one
+   transaction. **Correction from the first draft of this spec:** this transaction does *not* also write a
+   `photo_change` ledger entry — `TransactionStore.recordPhotoChange` (confirmed by reading
+   `TransactionStore.qml`'s `_push`) already syncs through the ordinary client-side
+   `Gateway.recordMutation("transaction", …)` path, the same as every other transaction-log entry. The
+   client calls it after a successful upload, exactly as `InventoryStore.qml:622` already does today for
+   `photoUrl` changes — no new server-side duplication of that mechanism. If this step throws after step 4
+   succeeded, the objects are orphaned but unreferenced — accepted risk, documented, not "corrupted" (no id
+   points at missing bytes, only the reverse).
 6. `200 { photoId, photoIds }`.
 
 ### `deleteProductPhoto`

@@ -7,6 +7,9 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "hosting": {
     "public": "firebase-hosting/public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
@@ -21,6 +24,9 @@
     },
     "functions": {
       "port": 5001
+    },
+    "storage": {
+      "port": 9199
     }
   }
 }
