@@ -31,6 +31,11 @@ TestCase {
         // Settings-backed queue — start every case from a clean, empty,
         // persisted state (mirrors ActivityLog.clear() in tst_ActivityLog.qml).
         OutboxStore.clear()
+        // markFailed() jitters its delay by ±20% (SendPolicy.jittered). Pin the
+        // random source at its midpoint so every existing exact-delay assertion in
+        // this file keeps meaning "the base backoff value" with no jitter; the one
+        // test that exercises jitter itself overrides this and restores it after.
+        OutboxStore._rand = function() { return 0.5 }
     }
 
     // ── enqueue / enqueueBatch ───────────────────────────────────────────────
@@ -379,5 +384,83 @@ TestCase {
 
         compare(OutboxStore.pendingCount, 0,
                 "clear() must wipe the persisted file too, or a cleared queue would come back after relaunch")
+    }
+
+    // -- operation items (atomic order completion, C-3) -----------------------
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md
+
+    function _op(id, entities) {
+        var ops = []
+        for (var i = 0; i < entities.length; ++i)
+            ops.push({ kind: "delta", entity: entities[i][0], entityId: entities[i][1], deltas: { n: -1 }, floors: {}, clamps: {} })
+        return { requestId: id, opType: "completeOrder", ops: ops }
+    }
+
+    function test_enqueueOperation_appends_a_durable_item() {
+        var item = OutboxStore.enqueueOperation(_op("completeOrder:o1:1", [["inventory", "p1"], ["order", "o1"]]))
+        compare(item.requestId, "completeOrder:o1:1")
+        compare(item.opType, "completeOrder")
+        compare(item.ops.length, 2)
+        compare(item.attempts, 0)
+        compare(OutboxStore.items.length, 1)
+    }
+
+    function test_enqueueOperation_with_a_queued_key_returns_the_existing_item_and_adds_nothing() {
+        var a = OutboxStore.enqueueOperation(_op("k1", [["inventory", "p1"]]))
+        var b = OutboxStore.enqueueOperation(_op("k1", [["inventory", "p1"], ["inventory", "p2"]]))
+        compare(OutboxStore.items.length, 1)
+        compare(b.requestId, a.requestId)
+        compare(b.ops.length, 1, "the first payload wins; the same key never queues twice")
+    }
+
+    function test_keysForItem_lists_every_distinct_entity_the_operation_touches() {
+        var item = _op("k1", [["inventory", "p1"], ["inventory", "p1"], ["order", "o1"]])
+        var keys = OutboxStore._keysForItem(item)
+        compare(keys.length, 2)
+        verify(keys.indexOf("inventory/p1") >= 0)
+        verify(keys.indexOf("order/o1") >= 0)
+    }
+
+    function test_operation_is_never_a_coalescing_target_for_plain_calls_or_deltas() {
+        OutboxStore.enqueueOperation(_op("k1", [["inventory", "p1"]]))
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "p1", deltas: { stock: -1 } })
+        OutboxStore.enqueue({ requestId: "m1", entity: "inventory", entityId: "p1", action: "update", before: null, after: {} })
+        compare(OutboxStore.items.length, 3)
+        compare(OutboxStore.items[0].ops.length, 1, "the operation item itself must be untouched by either coalescer")
+    }
+
+    function test_an_in_flight_operation_blocks_every_item_touching_its_keys() {
+        var op = OutboxStore.enqueueOperation(_op("k1", [["inventory", "p1"], ["order", "o1"]]))
+        OutboxStore.enqueue({ requestId: "m1", entity: "order", entityId: "o1", action: "update", before: null, after: {} })
+        OutboxStore.enqueue({ requestId: "m2", entity: "order", entityId: "o2", action: "update", before: null, after: {} })
+        OutboxStore.markInFlight(op)
+        var due = OutboxStore.dueItems()
+        compare(due.length, 1)
+        compare(due[0].requestId, "m2", "only the item on an unrelated key may go")
+    }
+
+    function test_dueItems_never_returns_two_items_that_share_a_key_in_one_pass() {
+        OutboxStore.enqueueOperation(_op("k1", [["order", "o1"]]))
+        OutboxStore.enqueue({ requestId: "m1", entity: "order", entityId: "o1", action: "update", before: null, after: {} })
+        OutboxStore.enqueue({ requestId: "m2", entity: "order", entityId: "o9", action: "update", before: null, after: {} })
+        var due = OutboxStore.dueItems()
+        compare(due.length, 2)
+        compare(due[0].requestId, "k1", "oldest first")
+        compare(due[1].requestId, "m2", "the later item on the same key waits for the next drain")
+    }
+
+    function test_markFailed_jitters_the_backoff_within_the_band() {
+        OutboxStore.enqueueOperation(_op("k1", [["order", "o1"]]))
+        var saved = OutboxStore._rand
+        OutboxStore._rand = function() { return 0 }
+        var before = Date.now()
+        OutboxStore.markFailed("k1")
+        var low = OutboxStore.items[0].nextAttemptAt - before
+        OutboxStore._rand = function() { return 0.999999 }
+        OutboxStore.markFailed("k1")   // second attempt: 8000ms base
+        var high = OutboxStore.items[0].nextAttemptAt - Date.now()
+        OutboxStore._rand = saved
+        verify(low >= 1600 - 50 && low <= 1600 + 50, "attempt 1 at rand 0 is ~2000*0.8, got " + low)
+        verify(high >= 9600 - 50 && high <= 9600, "attempt 2 at rand ~1 is ~8000*1.2, got " + high)
     }
 }
