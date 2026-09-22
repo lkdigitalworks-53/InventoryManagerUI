@@ -41,7 +41,7 @@ TestCase {
     function test_deleteStaff_queues_a_delete_mutation() {
         StaffStore.staff = [_staffMember()]
         StaffStore.deleteStaff("S-1")
-        var queued = OutboxStore.items.filter(function(i) { return i.entity === "staff" && i.entityId === "S-1" })
+        const queued = OutboxStore.items.filter(function(i) { return i.entity === "staff" && i.entityId === "S-1" })
         compare(queued.length, 1)
         compare(queued[0].action, "delete")
     }
@@ -50,7 +50,7 @@ TestCase {
         StaffStore.staff = [_staffMember()]
         StaffStore.deleteStaff("does-not-exist")
         compare(StaffStore.staff.length, 1, "the only real record must be untouched")
-        var queued = OutboxStore.items.filter(function(i) { return i.entity === "staff" })
+        const queued = OutboxStore.items.filter(function(i) { return i.entity === "staff" })
         compare(queued.length, 0, "nothing should be queued for a record that was never found")
     }
 

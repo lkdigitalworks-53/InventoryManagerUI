@@ -44,7 +44,7 @@ TestCase {
     }
 
     function test_delete_button_is_visible_when_canManageStaff_is_true() {
-        var btn = findChild(page, "deleteStaffBtn")
+        const btn = findChild(page, "deleteStaffBtn")
         verify(btn !== null, "delete button must exist in the rendered row")
         verify(btn.visible)
     }
@@ -54,7 +54,7 @@ TestCase {
         page = createTemporaryObject(pageComponent, testCase,
             { width: 420, height: 800, canManageStaff: false })
         waitForRendering(page)
-        var btn = findChild(page, "deleteStaffBtn")
+        const btn = findChild(page, "deleteStaffBtn")
         verify(btn !== null)
         compare(btn.visible, false)
     }
@@ -69,17 +69,17 @@ TestCase {
                                status: "on leave", salary: 0, appUid: "" }]
         page = createTemporaryObject(pageComponent, testCase, { width: 420, height: 800 })
         waitForRendering(page)
-        var btn = findChild(page, "deleteStaffBtn")
+        const btn = findChild(page, "deleteStaffBtn")
         verify(btn !== null)
         verify(btn.visible, "visible regardless of status -- DataModel's guard explains any block on tap")
     }
 
     function test_tapping_delete_emits_deleteStaffClicked_with_the_right_id() {
-        var spy = Qt.createQmlObject('import QtTest 1.0; SignalSpy {}', testCase, "spy")
+        const spy = Qt.createQmlObject('import QtTest 1.0; SignalSpy {}', testCase, "spy")
         spy.target = page
         spy.signalName = "deleteStaffClicked"
 
-        var btn = findChild(page, "deleteStaffBtn")
+        const btn = findChild(page, "deleteStaffBtn")
         verify(btn !== null)
         mouseClick(btn)
 
@@ -89,11 +89,11 @@ TestCase {
     }
 
     function test_tapping_delete_does_not_also_trigger_viewStaffClicked() {
-        var viewSpy = Qt.createQmlObject('import QtTest 1.0; SignalSpy {}', testCase, "viewSpy")
+        const viewSpy = Qt.createQmlObject('import QtTest 1.0; SignalSpy {}', testCase, "viewSpy")
         viewSpy.target = page
         viewSpy.signalName = "viewStaffClicked"
 
-        var btn = findChild(page, "deleteStaffBtn")
+        const btn = findChild(page, "deleteStaffBtn")
         mouseClick(btn)
 
         compare(viewSpy.count, 0, "the tap must not bubble through to the row's own onClicked")
