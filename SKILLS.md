@@ -3331,3 +3331,54 @@ fires; the sender logs print raw and effective status to make that visible.
 **Follow-ups, in the order they would pay off**: park a stuck write and offer Retry / Discard (Discard rolls
 back to the outbox item's `before`); map Firestore error codes to distinct HTTP statuses in
 `functions/index.js` so the client can classify instead of counting.
+
+---
+
+## Skill 68: A proven UI fix pattern can hide two adjacent bugs that only surface once you re-trace the whole path — check both before shipping the third repeat of a pattern
+
+**Files**: `qml/pages/StaffPage.qml`, `qml/model/StaffStore.qml`, `qml/model/DataModel.qml`, `qml/Main.qml`,
+`functions/index.js`, `tests/tst_DataModel_deleteGuards.qml`, `tests/tst_StaffStore_delete.qml`,
+`test/felgo-dependent/tst_StaffPage_deleteButton.qml`, `functions/test/index.handlers.test.js`. Branch
+`feat/2026-09-21-staff-delete-ui`, `DELETE-FEATURE-ROADMAP` item 2.
+
+**The trap this session avoided**: staff delete was the third entity to hit "row-level delete button missing,
+plumbing already exists" (products, orders, now staff). The pattern was proven twice over, which is exactly
+the condition under which it's tempting to copy the fix and move on without re-reading the surrounding code.
+Re-tracing the whole path anyway — `StaffPage` → `Main.qml` → `Logic` → `DataModel` → `StaffStore` →
+`Gateway.recordMutation` → `functions/index.js` → `firestore.rules` — surfaced two real, unrelated bugs that a
+copy-paste fix would have shipped past:
+
+1. **A dormant self-lockout.** `firestore.rules` lets a non-owner member delete their own `members/{uid}` doc
+   (voluntary leave). `StaffStore.deleteStaff` cascades to that same doc via `AuthService.cleanupStaffAuthDocs`
+   when the deleted record has `appUid`. Chain three unremarkable facts together — an admin can have their own
+   login (`appUid`), an admin can delete any staff record, deleting a staff record with `appUid` cascades to
+   the membership doc — and an admin can delete their own access. Unreachable today only because
+   `Gateway.provisioningAvailable` is `false`; it activates on someone else's deploy day, with no code change
+   here to remind them. `AuthStore.currentStaffId` already existed for exactly this comparison — the fix was
+   three lines in `DataModel.onDeleteStaff`, once the chain was traced.
+2. **No server-side role check, on any entity or action.** `recordMutation` derives `actorRole` for the audit
+   log but never uses it to authorize the mutation — only `provisionMember` checks role. Every `DataModel.on*`
+   guard is decorative from the server's point of view: a valid ID token is enough to call the gateway
+   directly and skip all of them. Confirmed by writing a test that *documents the gap rather than closing it*
+   (`"an ORDER delete by a non-owner/admin is unaffected"`, asserting 200) — proving a negative by locking in
+   today's actual behavior, not by asserting an absence.
+
+**Decision, and why it wasn't "fix everything found"**: (1) got fixed inline — three lines, already-existing
+plumbing, no new abstraction. (2) got a *narrow* fix — staff/delete only, `functions/index.js`, one `if` — not
+a general authorization matrix, and not left completely alone either. A repo-wide authorization matrix is a
+different-sized problem than a delete-button ticket, and patching it broadly here would mean designing that
+matrix under the cover of an unrelated MEDIUM ticket, with no dedicated review of the design. But staff/delete
+specifically carries real security weight (cascades to a login), so "log it and move on" for that one specific
+case would leave a known, reachable hole shipped a second time in the same session that found it. The rest of
+the gap is now a named `KNOWN-ISSUES.md` entry with a concrete design pointer (a shared `authorize(role,
+entity, action)` sourced from the same rules `DataModel.qml` already encodes), not a vague "todo".
+
+**Testing technique worth repeating**: `functions/` dependencies installed cleanly from the sandbox's
+npm-registry allowlist (no Firebase emulator needed — `node --test` against the real exported handlers, see
+`testSupport/handlerHarness.js`), so the server-side fix got **real** red/green: revert the fix, rerun (`199
+pass, 1 fail` — the new test, and only that one), restore, rerun (`200/200`). That is stronger evidence than
+this repo's usual QML-side "written and traced, CI-pending" — worth reaching for `npm install` in `functions/`
+before assuming "no toolchain" applies to the server side too.
+
+**Follow-up**: the authorization-matrix design (`KNOWN-ISSUES.md`, "Security: `recordMutation` has no
+server-side role check…") is its own session, not a fast-follow patch.

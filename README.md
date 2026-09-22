@@ -752,6 +752,20 @@ behavior, found while tracing `RestockDialog`, is recorded in SKILLS Skill 66 �
 the cause here, but real and worth knowing for any future `recordDelta` caller with non-idempotent
 callback side effects.
 
+**Update 2026-09-21 (staff delete button, plus two adjacent gaps found while tracing it):**
+`StaffPage` had the identical missing-row-button gap products and orders had before
+`feature/product-order-delete-ui` — every piece of plumbing (`deleteStaffClicked`, the confirm dialog,
+`DataModel.onDeleteStaff`, `StaffStore.deleteStaff`) already existed, so this is the same proven fix a third
+time (`DELETE-FEATURE-ROADMAP` item 2). Along the way: `StaffStore._onMutationConflicted` gained the
+delete-specific toast wording products/orders already have (deliberately deferred earlier since it was
+unreachable without this button); a guard now blocks deleting your own staff record (dormant until login
+provisioning ships — `Gateway.provisioningAvailable` is still `false` — but a self-lockout otherwise becomes
+possible the day it does); and `functions/index.js`'s `recordMutation` now checks role for staff/delete
+specifically, since the client-side check alone was not a trust boundary. That last fix is narrow on purpose —
+every other entity/action still has no server-side role check, tracked as its own `KNOWN-ISSUES.md` entry
+rather than fixed piecemeal here. See SKILLS Skill 68 and
+`docs/superpowers/specs/2026-09-21-staff-delete-ui-design.md`.
+
 **Update 2026-09-19 (writes stuck behind a server-side failure):** `Gateway._send`, `_sendBatch` and
 `_sendDelta` retried any failure that wasn't a recognised terminal case forever, with backoff and no signal
 to anyone, while the stores had already applied the change locally (`DELETE-FEATURE-ROADMAP` item 1). The

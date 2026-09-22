@@ -104,21 +104,48 @@ can classify precisely instead of counting.
 
 ---
 
-## Delete: staff delete has the identical missing-UI gap as products/orders had
+## Delete: staff delete has the identical missing-UI gap as products/orders had — RESOLVED 2026-09-21
 
 Same root cause `feature/product-order-delete-ui` fixed for products and orders:
 `StaffPage.qml` declares `signal deleteStaffClicked(string staffId)` and `Main.qml` already has a
 confirm-dialog handler wired to it (`onDeleteStaffClicked` → `confirmDlg.ask(...)` →
-`logic.deleteStaff(...)`) — but no visible element in the row template ever emits it. Identical
-shape, identical fix (a small trash-icon button in the row, same `Rectangle`+`MouseArea` idiom now
-used in `ProductCard` and the orders row).
+`logic.deleteStaff(...)`) — but no visible element in the row template ever emitted it. Fixed
+(`feat/2026-09-21-staff-delete-ui`) with the same trash-icon `Rectangle`+`MouseArea` idiom already
+used in the orders row and `InventoryPage`.
 
-`StaffStore._onMutationConflicted` was also deliberately left with the old (pre-`action`-param)
-conflict-toast wording during the products/orders fix, for the same reason: unreachable from UI
-right now, so the wording is moot until this gap closes.
+`StaffStore._onMutationConflicted` also gained the `action` param and delete-specific toast wording
+it was deliberately left without during the products/orders fix (it was unreachable from the UI
+until this gap closed). Along the way, two adjacent findings: a client-side guard now blocks
+deleting your own staff record (dormant until login provisioning ships, see the entry below), and
+`recordMutation` gained a narrow server-side role check for staff/delete specifically (see "Delete:
+recordMutation has no server-side role check for any entity/action" below — staff/delete is now the
+one exception).
 
-**Decision:** not built — out of the original ask's scope (products and orders only). Low effort
-to close once prioritized; the pattern is fully proven in the two entities that already have it.
+Design: `docs/superpowers/specs/2026-09-21-staff-delete-ui-design.md`.
+
+---
+
+## Security: `recordMutation` has no server-side role check for any entity/action except staff/delete
+
+Found while closing the staff-delete gap above (2026-09-21). `functions/index.js`'s `recordMutation`
+derives `actorRole` from the caller's own tenant membership doc for the audit trail, but never uses
+it to authorize the mutation itself — only `provisionMember` checks role
+(`canAssignRole`/`role-not-allowed`). Every `DataModel.on*` role guard (`onDeleteOrder`,
+`onDeleteProduct`, `onAdjustOrder`, etc.) is client-side only; a signed-in tenant member with a valid
+ID token can call the gateway directly and bypass every one of them. Confirmed by a passing test:
+`functions/test/index.handlers.test.js`'s "an ORDER delete by a non-owner/admin is unaffected" case
+returns 200 for a `manager` role, by design of the current (unfixed) behavior.
+
+Staff delete got a narrow, targeted fix (2026-09-21) because it carries real security weight — it
+can cascade-revoke a teammate's Firebase Auth login via `AuthService.cleanupStaffAuthDocs`. Every
+other entity/action is unfixed.
+
+**Decision:** not built — a general authorization matrix (deriving the allowed actions per role,
+server-side, for every entity) is a bigger design than any single delete-UI ticket should absorb
+piecemeal; each narrow fix duplicates logic that belongs in one place. Needs its own session:
+probably a shared `authorize(ctx.role, entity, action)` check called once per handler, sourced from
+the same role/action rules `DataModel.qml`'s guards already encode client-side, so the two stay in
+sync by construction rather than by two people remembering to update both.
 
 ---
 

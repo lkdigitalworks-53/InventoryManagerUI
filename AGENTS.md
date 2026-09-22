@@ -156,7 +156,10 @@ collections and zeroes product stock).
 
 - **`Gateway.mode` now defaults to `"gateway"`** (flipped 2026-07-29, commit `649046d`). Cloud
   Functions and the locked Firestore rules are deployed and confirmed working (per Taher) —
-  `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry
+  `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry.
+  `recordMutation` also has one narrow, entity/action-specific server-side role check
+  (staff/delete requires owner or admin, 2026-09-21) — every other entity/action still relies on the
+  client's own role check only; see `KNOWN-ISSUES.md`
   atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
   the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
   confirmed in a session — don't assume historical ledger/stock data was reset without checking.
