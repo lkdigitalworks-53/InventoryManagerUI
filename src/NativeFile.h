@@ -23,6 +23,14 @@ public:
     // path. Returns an empty string on failure.
     Q_INVOKABLE QString toReadablePath(const QUrl &uri);
 
+    // Read `path` (a local filesystem path, as returned by toReadablePath or
+    // ImageProcessor::persistLocalCopy) and return its bytes base64-encoded.
+    // Used by PhotoQueue.qml to build the upload payload for uploadProductPhoto
+    // -- QML has no other way to get raw file bytes into an XHR body. Returns
+    // an empty string on failure (missing file, unreadable), same convention
+    // as toReadablePath.
+    Q_INVOKABLE QString readFileBase64(const QString &path);
+
 private:
     static QString cacheDir();
 };
