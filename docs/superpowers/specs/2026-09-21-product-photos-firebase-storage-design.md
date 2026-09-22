@@ -103,10 +103,16 @@ Request: `{ env, productId, photoId, requestId, imageBase64, thumbBase64 }`. `re
 
 Request: `{ env, productId, photoId, requestId }`. Same auth/context. Firestore transaction removes
 `photoId` from the array (idempotent: removing an absent id is a no-op, not an error) and writes the
-`audit_log` marker; Storage objects for that id are then best-effort deleted (`bucket.file(path).delete()`,
+`audit_log` marker, all in the one transaction. **Deliberately tolerant of a missing product doc** —
+unlike `uploadProductPhoto`'s `404`, this endpoint proceeds (skips the array update, still writes the
+audit marker) when the product is already gone, because `InventoryStore.deleteProduct`'s cascade may call
+this either before or after the product's own delete mutation has landed, and Storage cleanup should still
+happen either way. Storage objects for that id are then best-effort deleted (`bucket.file(path).delete()`,
 errors logged and swallowed — a leftover unreferenced object is a storage-cost issue, not a correctness
-one). Reused by the product-delete cascade: `InventoryStore.deleteProduct`'s existing photo-cleanup call
-site now calls this once per remaining id instead of touching local files.
+one) — but **only on a fresh call**, not on an idempotent replay (a bug caught by this feature's own tests:
+the first draft re-ran the Storage delete on every retry of the same `requestId`, unbounded). Reused by the
+product-delete cascade: `InventoryStore.deleteProduct`'s existing photo-cleanup call site now calls this
+once per remaining id instead of touching local files.
 
 ### Error classification (client-visible)
 
