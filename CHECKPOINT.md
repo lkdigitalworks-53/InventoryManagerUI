@@ -58,7 +58,25 @@ to `d6f74eb` (PR #78/#79 merged) before opening a PR.
       Both runs are 0 failures — a `node:test` Node 20 vs 22 counting/reporting difference, not a hidden bug.
       Corrected the test plan's stale local numbers to CI's authoritative 171, and added Skill 69 so a future
       session doesn't compare a local Node-22 count against a CI Node-20 count and conclude something's wrong.
-- [ ] 12. On-device pass by Taher using the test plan's On-Device section (only coverage for the rendered
+- [x] 12. Requested code review (`superpowers:requesting-code-review`, `ponytail:ponytail-review`,
+      `qt-development-skills:qt-qml-review`) before Taher's on-device pass. Ran the deterministic QML linter
+      against every touched file, scoped strictly to this PR's own added/modified lines (not full-file, not
+      full-hunk-context) via a diff-derived line map -- caught and corrected my own first attempt, which
+      over-counted by including unchanged context lines in a hunk. 22 real findings after scoping; fixed 9
+      (var -> const, zero risk). Rejected 13 with reasoning: 5 are a linter regex false-positive on strict
+      `!==` (proved with a Python repro), 8 exactly match pre-existing, already-shipped sibling patterns
+      (OrdersPage/InventoryPage delete buttons, their felgo tests, tst_InventoryStore_mutationConflicted.qml)
+      -- fixing only the staff copy would make it the odd file out among near-identical patterns for a
+      cosmetic difference with zero behavior risk. Ponytail-review: 75 production-code lines for a button + a
+      guard + a role check -- lean already, nothing to cut. Traced the `mouse.accepted = true` /
+      "doesn't bubble" comment (present identically in the two shipped siblings) to its real mechanism
+      (Qt Quick z-order hit-testing, not the accepted flag) -- code is correct, comment's causal claim is
+      imprecise; logged as a Minor/informational finding, not changed (matches 2x shipped precedent). Also
+      noticed and root-caused a discrepancy from PR #81 (an unrelated CI-counting bug, merged into `main`
+      mid-review) against this branch's own Skill 69 finding -- confirmed they're different bugs, footnoted
+      Skill 69 rather than let a coincidence look like an explanation. Pushed `1f81a62`; CI unchanged and
+      green (1210/1210, Functions still 171 -- confirms PR #81's fix doesn't touch this single-file job).
+- [ ] 13. On-device pass by Taher using the test plan's On-Device section (only coverage for the rendered
       button, self-delete guard in a real app, and the server-side role check end-to-end). PR #80 is still a
       draft; Taher marks it ready.
 
