@@ -66,7 +66,19 @@ session's trace read to find the self-delete lockout risk — are untouched.)
 
 ## What was genuinely run
 
-- **QML, `tests/`:** no Qt toolchain in the sandbox (standing instruction) — CI is the verdict. Result: pending, filled in once CI runs on the pushed branch.
+- **QML, `tests/`:** no Qt toolchain in the sandbox (standing instruction) — CI is the verdict. Result on
+  PR #80 at `4092029` (after merging `main` twice, PR #75/#76 then #78/#79): **970/970 passing.**
+- **Functions, CI vs. local count mismatch (worth recording plainly):** CI's own summary for this commit
+  reports **171/171 Functions Tests passing**, up from 167 on PR #78's CI run (the PR that added the bulk of
+  the `recordOperation` tests this branch merged in) — consistent with this branch's own +5. That is the
+  authoritative number. It does **not** match the "200/200" and "237/237" figures reported earlier in this
+  plan and in commit messages: those were genuine `npm test` runs in this session's sandbox, which has Node
+  22.22.2 installed, while `functions/package.json`'s `engines.node` pins `"20"` and CI's workflow installs
+  Node 20 exactly. Re-running `node --test --test-reporter=junit` locally reproduces 237, not 171, on the
+  identical commit and identical command — the discrepancy is Node 20 vs. 22's `node:test` module counting or
+  reporting subtests differently, not a difference in which assertions ran or a hidden failure (both runs are
+  0 failed). The pass/fail outcome and the revert-and-recheck TDD evidence below are unaffected by which count
+  is used; only the raw total differs.
 - **Functions, real execution in this session:** `npm test` in `functions/` (dependencies installed from the
   network-allowlisted npm registry — no emulator, no network mocking needed, these are real Node tests against
   the actual exported handler). **200/200 passing**, up from a 195/195 baseline confirmed before any edit.

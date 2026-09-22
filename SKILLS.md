@@ -3382,3 +3382,32 @@ before assuming "no toolchain" applies to the server side too.
 
 **Follow-up**: the authorization-matrix design (`KNOWN-ISSUES.md`, "Security: `recordMutation` has no
 server-side role check…") is its own session, not a fast-follow patch.
+
+---
+
+## Skill 69: `node --test`'s own reported total isn't stable across Node versions — pin the version before trusting a local count against CI's
+
+**Files**: none changed; a documentation-only finding from `feat/2026-09-21-staff-delete-ui` / PR #80.
+
+Ran `functions/`'s real test suite in the sandbox all session (`npm test`, no emulator needed — see Skill 67's
+functions-side cross-reference), reported 195 → 200 → 237 as the branch progressed. CI's own summary for the
+exact same final commit reported **171**. Same code, same test files, same `node --test
+--test-reporter=junit` invocation (copied verbatim from `.github/workflows/checks.yml`) — reproduced 237
+locally again just to be sure. The one real difference: `functions/package.json`'s `engines.node` pins `"20"`,
+CI's workflow installs Node 20, and this sandbox has Node 22.22.2. Both runs report 0 failures — this is not a
+hidden bug, and every individual test still ran and passed either way — but the *count* Node reports for the
+same suite is not the same across major versions, likely from a change in how `node:test` enumerates or
+reports subtests between 20 and 22.
+
+**Practical effect**: a "local N/N, all green" claim from this sandbox is solid evidence that the tests pass,
+but the N itself cannot be compared against a CI comment's N, or against an earlier PR's CI-reported N, without
+checking both were produced by the same Node major version. `docs/superpowers/test-plans/2026-09-21-staff-
+delete-ui-test-plan.md` originally stated "200/200" and a commit message said "237/237" — both true statements
+about what ran in the sandbox at the time, but superseded by CI's 171/171 once the branch was pushed and
+merged. The test plan was corrected in place rather than left with the stale number, since a reader comparing
+it against the PR's CI comment would otherwise see two different totals for what looks like the same fact and
+have no way to tell it apart from an actual missing/duplicated test.
+
+**Practical fix, if this needs to be trusted more precisely later**: pin the sandbox to Node 20 before running
+`functions/` tests locally (`nvm install 20 && nvm use 20`, if `nvm` is available in the sandbox network
+allowlist — not verified this session), rather than comparing a Node-22 count against CI's Node-20 count.
