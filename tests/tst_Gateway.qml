@@ -2,6 +2,8 @@ import QtQuick
 import QtTest
 import "../qml/model"
 import "../qml/components"
+import "../qml/helper/StuckWrites.js" as StuckWrites
+import "../qml/helper/SendPolicy.js" as SendPolicy
 
 // Regression tests for the P0 compliance gateway's client bridge.
 //
@@ -67,6 +69,12 @@ TestCase {
         // there, loadSession() silently overwrites the line above with
         // it, right before _send checks it. Clear the disk copy too.
         AuthStore._settings.sessionJson = ""
+        // D5 (docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md):
+        // a timeout only counts toward the stuck indicator while the device
+        // believes it's online. Default true, same as every real device most of
+        // the time; the one test that wants offline sets it for itself, and the
+        // NEXT test's init() restores this default (no cleanup() needed).
+        AuthService.isOnline = true
     }
 
     // ── mode + collection mapping ────────────────────────────────────────────
@@ -684,6 +692,63 @@ TestCase {
         _failTimes(item, 409, 20)
         compare(Gateway.stuckCount, 0)
         compare(toastSpy.count, 0)
+    }
+
+    // -- send timeouts (D5, 2026-09-22): properties only ------------------------
+    // The Timer/abort() mechanism these values feed lives inside _send/_sendBatch/
+    // _sendDelta and can't run under qmltestrunner (see the scope note at the top
+    // of this file) — this just guards against a typo'd SendPolicy reference.
+
+    function test_backgroundTimeoutMs_defaults_to_SendPolicys_background_value() {
+        compare(Gateway.backgroundTimeoutMs, SendPolicy.TIMEOUT_BACKGROUND_MS)
+    }
+
+    function test_awaitTimeoutMs_defaults_to_SendPolicys_await_value() {
+        compare(Gateway.awaitTimeoutMs, SendPolicy.TIMEOUT_AWAIT_MS)
+    }
+
+    // -- timeouts (D5, 2026-09-22): a hang while online is a stuck write --------
+    // Same "drive _noteFailure directly" pattern as above: the Timer/XHR/abort()
+    // interaction that actually PRODUCES StuckWrites.TIMEOUT in _send/_sendBatch/
+    // _sendDelta cannot run under qmltestrunner either (same scope note at the
+    // top of this file). This covers _noteFailure's connectivity forwarding,
+    // which is the only new logic in this file that doesn't touch an XHR.
+
+    function test_a_timeout_while_online_counts_toward_stuck_after_five() {
+        var item = _queueWrite("o1")
+        _failTimes(item, StuckWrites.TIMEOUT, 5)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 1)
+    }
+
+    function test_a_timeout_while_offline_never_counts() {
+        AuthService.isOnline = false
+        var item = _queueWrite("o1")
+        _failTimes(item, StuckWrites.TIMEOUT, 20)
+        compare(Gateway.stuckCount, 0)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_timeouts_and_server_failures_share_one_counter() {
+        var item = _queueWrite("o1")
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        Gateway._noteFailure(item, 503)
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        Gateway._noteFailure(item, 500)
+        compare(Gateway.stuckCount, 0)
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        compare(Gateway.stuckCount, 1, "the 5th failure of any counted kind tips it")
+    }
+
+    function test_going_offline_mid_run_does_not_erase_earlier_online_timeout_failures() {
+        var item = _queueWrite("o1")
+        _failTimes(item, StuckWrites.TIMEOUT, 4)
+        AuthService.isOnline = false
+        _failTimes(item, StuckWrites.TIMEOUT, 20)
+        compare(Gateway.stuckCount, 0, "still offline right now")
+        AuthService.isOnline = true
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        compare(Gateway.stuckCount, 1, "the 5 earlier online failures were never discarded")
     }
 
     function test_the_count_drops_when_a_stuck_write_leaves_the_outbox() {
