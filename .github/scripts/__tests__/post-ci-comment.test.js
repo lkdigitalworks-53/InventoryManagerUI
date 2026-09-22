@@ -59,9 +59,13 @@ afterEach(() => {
 });
 
 function writeArtifact(dir, xml) {
+  writeArtifactFile(dir, 'results.xml', xml);
+}
+
+function writeArtifactFile(dir, filename, xml) {
   const full = path.join(tmpDir, dir);
   fs.mkdirSync(full, { recursive: true });
-  fs.writeFileSync(path.join(full, 'results.xml'), xml);
+  fs.writeFileSync(path.join(full, filename), xml);
 }
 
 test('happy path: all jobs pass, no existing comment -> creates a new comment with success body', async () => {
@@ -134,6 +138,80 @@ test('upsert behavior: an existing marker comment is updated (PATCH) instead of 
   const postCall = calls.find((c) => c.method === 'POST');
   assert.ok(patchCall, 'expected a PATCH to update the existing comment');
   assert.equal(postCall, undefined, 'should not also create a duplicate comment');
+});
+
+// Regression: a job step can legitimately produce more than one JUnit file (the E2E
+// job runs both qmltestrunner and a plain `node --test` suite against the same
+// artifact directory). Every *.xml file in the directory must be counted, not just
+// the one literally named results.xml -- a silent single-file read here is exactly
+// how a whole second test suite's results went uncounted in the PR comment before
+// this fix, even though its own CI step reported success.
+test('multi-file artifact: a job with two JUnit files in one artifact dir has both counted', async () => {
+  writeArtifact('qml-test-results', PASSING_XML);
+  writeArtifact('functions-test-results', PASSING_XML);
+  writeArtifact('firestore-rules-test-results', PASSING_XML);
+  writeArtifactFile('e2e-test-results', 'results.xml', PASSING_XML);           // 2 tests
+  writeArtifactFile('e2e-test-results', 'results-recordOperation.xml', FAILING_XML); // 2 tests, 1 failing
+
+  global.fetch = mockFetch([
+    { method: 'GET', match: /\/actions\/runs\/999\/jobs/, respond: () => ({ status: 200, json: { jobs: [] } }) },
+    { method: 'GET', match: /\/issues\/42\/comments/, respond: () => ({ status: 200, json: [] }) },
+    { method: 'POST', match: /\/issues\/42\/comments$/, respond: () => ({ status: 201, json: { id: 1 } }) },
+  ]);
+  process.env.E2E_TESTS_RESULT = 'failure';
+
+  const { main } = require('../post-ci-comment');
+  await main();
+
+  const postCall = calls.find((c) => c.method === 'POST');
+  // 2 (qml) + 2 (functions) + 2 (rules) + 4 (e2e: 2 + 2 across both files) = 10, with 1 failing.
+  assert.match(postCall.body.body, /1 of 10 tests failed/);
+  assert.match(postCall.body.body, /\| E2E Tests \| .* \| 4 \| 3 \| 1 \| 0 \|/, 'E2E row must show combined counts from both files');
+  assert.match(postCall.body.body, /c › b/, 'the failing test from the SECOND e2e file must appear');
+  assert.match(postCall.body.body, /boom/);
+});
+
+test('edge case: an artifact dir that exists but holds no .xml file is treated the same as no artifact at all', async () => {
+  writeArtifact('qml-test-results', PASSING_XML);
+  writeArtifact('functions-test-results', PASSING_XML);
+  writeArtifact('firestore-rules-test-results', PASSING_XML);
+  fs.mkdirSync(path.join(tmpDir, 'e2e-test-results'), { recursive: true }); // dir exists, empty
+  process.env.E2E_TESTS_RESULT = 'failure';
+
+  global.fetch = mockFetch([
+    { method: 'GET', match: /\/actions\/runs\/999\/jobs/, respond: () => ({ status: 200, json: { jobs: [] } }) },
+    { method: 'GET', match: /\/issues\/42\/comments/, respond: () => ({ status: 200, json: [] }) },
+    { method: 'POST', match: /\/issues\/42\/comments$/, respond: () => ({ status: 201, json: { id: 1 } }) },
+  ]);
+
+  const { main } = require('../post-ci-comment');
+  await main();
+
+  const postCall = calls.find((c) => c.method === 'POST');
+  assert.match(postCall.body.body, /produced no test results/);
+  assert.match(postCall.body.body, /E2E Tests/);
+});
+
+test('edge case: a stray non-xml file in an artifact dir is ignored, not concatenated into the results', async () => {
+  writeArtifact('qml-test-results', PASSING_XML);
+  writeArtifact('functions-test-results', PASSING_XML);
+  writeArtifact('firestore-rules-test-results', PASSING_XML);
+  writeArtifactFile('e2e-test-results', 'results.xml', PASSING_XML);
+  writeArtifactFile('e2e-test-results', '.gitkeep', '');
+  writeArtifactFile('e2e-test-results', 'notes.txt', 'not xml at all, do not parse me');
+
+  global.fetch = mockFetch([
+    { method: 'GET', match: /\/actions\/runs\/999\/jobs/, respond: () => ({ status: 200, json: { jobs: [] } }) },
+    { method: 'GET', match: /\/issues\/42\/comments/, respond: () => ({ status: 200, json: [] }) },
+    { method: 'POST', match: /\/issues\/42\/comments$/, respond: () => ({ status: 201, json: { id: 1 } }) },
+  ]);
+
+  const { main } = require('../post-ci-comment');
+  await main();
+
+  const postCall = calls.find((c) => c.method === 'POST');
+  assert.match(postCall.body.body, /All CI checks passed/);
+  assert.match(postCall.body.body, /8\/8 tests passed/, 'only the 2 real tests per job, 4 jobs -- stray files must not be counted or crash the parse');
 });
 
 test('edge case: a job with no artifact file (crashed before producing results) does not throw and is reported distinctly', async () => {

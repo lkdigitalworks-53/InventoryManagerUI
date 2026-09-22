@@ -28,16 +28,27 @@ const JOB_CONFIG = [
 ];
 
 const ARTIFACTS_ROOT = process.env.ARTIFACTS_ROOT || 'artifacts';
-const RESULT_FILENAME = 'results.xml';
 
+// A job step can legitimately produce more than one JUnit file in its artifact
+// directory (the E2E job runs a QML suite and a separate `node --test` suite
+// against the same directory). Every *.xml file is read and handed to
+// parseJUnitXml as one concatenated document -- it already scans the whole
+// string for every <testsuite> (or bare <testcase>, for node's --test-reporter=junit
+// output, which has no <testsuite> wrapper) it can find, so concatenation is
+// enough: no merge-multiple-parsed-results logic is needed here.
+// Sorted for a deterministic file order in the output (only affects which
+// suite's failures are listed first when several fail).
 function readResultsFile(artifactDir) {
-  const filePath = path.join(ARTIFACTS_ROOT, artifactDir, RESULT_FILENAME);
+  const dirPath = path.join(ARTIFACTS_ROOT, artifactDir);
+  let filenames;
   try {
-    return fs.readFileSync(filePath, 'utf8');
+    filenames = fs.readdirSync(dirPath).filter((f) => f.endsWith('.xml')).sort();
   } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw err;
   }
+  if (filenames.length === 0) return null;
+  return filenames.map((f) => fs.readFileSync(path.join(dirPath, f), 'utf8')).join('\n');
 }
 
 async function githubRequest(method, url, token, body) {
