@@ -89,6 +89,17 @@ function installMocks() {
         zeroInventoryStockResult: 0,
         zeroInventoryStockError: null,
         runTransactionError: null, // provisionMember's db.runTransaction() failing
+        // admin.storage() mock for uploadProductPhoto/deleteProductPhoto (2026-09-21 photos
+        // feature). storageFiles: path -> Buffer (what was actually .save()'d), so a test can
+        // assert on real content, not just call count. storageSaveCalls/storageDeleteCalls:
+        // [{path, contentType?}] in call order. storageSaveError/storageDeleteError: when set,
+        // every bucket.file(...).save()/.delete() throws it (tests the write-failed and the
+        // best-effort-delete-swallows-errors paths without needing per-path granularity).
+        storageFiles: {},
+        storageSaveCalls: [],
+        storageDeleteCalls: [],
+        storageSaveError: null,
+        storageDeleteError: null,
         // admin.auth() extensions needed by provisionMember. Same
         // "throw until configured" default as verifyIdToken above, so a
         // test that forgets to configure one fails loudly, not silently.
@@ -156,6 +167,22 @@ function installMocks() {
                 getUserByEmail: (email) => mockState.getUserByEmail(email),
                 getUser: (uid) => mockState.getUser(uid),
                 createUser: (opts) => mockState.createUser(opts)
+            }),
+            storage: () => ({
+                bucket: () => ({
+                    file: (filePath) => ({
+                        save: async (buf, opts) => {
+                            if (mockState.storageSaveError) throw mockState.storageSaveError;
+                            mockState.storageSaveCalls.push({ path: filePath, contentType: opts && opts.contentType });
+                            mockState.storageFiles[filePath] = buf;
+                        },
+                        delete: async () => {
+                            mockState.storageDeleteCalls.push({ path: filePath });
+                            if (mockState.storageDeleteError) throw mockState.storageDeleteError;
+                            delete mockState.storageFiles[filePath];
+                        }
+                    })
+                })
             })
         }
     };
