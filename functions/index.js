@@ -26,6 +26,7 @@ const CutoverLogic = require("./lib/cutoverLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
 const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
+const PhotoValidation = require("./lib/photoValidation");
 const { send } = require("./lib/httpResponse");
 
 admin.initializeApp();
@@ -48,6 +49,27 @@ const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
     return getFirestore(admin.app(), databaseId);
+}
+
+// Product photos (2026-09-21). Storage object paths use {env}/tenants/{t}/products/{p}/{photoId}.jpg
+// -- "prd" spelled out, NOT Firestore's "(default)" database id -- so this is a second, separate
+// mapping from DATABASE_ID_FOR_ENV even though the keys are identical. The client (qml/helper/
+// PhotoUrl.js) must send/use this same "prd"/"test"/"dev1" form when it builds a download URL for
+// a photo this server wrote, or the two will disagree about where an object lives.
+// Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
+const STORAGE_ENV_PREFIX = { dev: "dev1", test: "test", prd: "prd" };
+function storageEnvPrefix(env) {
+    return STORAGE_ENV_PREFIX[env] || STORAGE_ENV_PREFIX.prd;
+}
+
+const PHOTO_BUCKET_NAME = "inventorymanager-48392.firebasestorage.app";
+const MAX_PHOTOS_PER_PRODUCT = 10;
+const MAIN_IMAGE_MAX_BYTES = 1_500_000;
+const THUMB_IMAGE_MAX_BYTES = 200_000;
+
+function photoStoragePath(envPrefix, tenantId, productId, photoId, thumb) {
+    return envPrefix + "/tenants/" + tenantId + "/products/" + productId + "/" +
+        photoId + (thumb ? "_t" : "") + ".jpg";
 }
 
 async function deriveContext(db, uid) {
@@ -926,3 +948,241 @@ exports.computeAnalysis = functions.onRequest(
         }
     });
 
+// Product photos (2026-09-21). Two handlers: uploadProductPhoto writes both Storage objects then
+// appends the id in one Firestore transaction; deleteProductPhoto removes the id and best-effort
+// deletes the objects. Neither goes through GatewayLogic.applyMutation -- that helper replaces a
+// whole working-tier doc from a client-supplied `after`, which doesn't fit an array-append/remove
+// against a doc this handler itself reads. The idempotency mechanism (audit_log/{requestId}) and
+// overall shape still mirror applyMutation deliberately.
+// Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
+
+exports.uploadProductPhoto = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const productId = String(body.productId || "");
+        const photoId = String(body.photoId || "");
+        const requestId = String(body.requestId || photoId || "");
+        if (!productId || !photoId || !requestId) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        const mainBuf = Buffer.from(String(body.imageBase64 || ""), "base64");
+        const thumbBuf = Buffer.from(String(body.thumbBase64 || ""), "base64");
+
+        const mainCheck = PhotoValidation.validateImage(mainBuf, { maxBytes: MAIN_IMAGE_MAX_BYTES });
+        if (!mainCheck.ok) {
+            send(res, mainCheck.code === "image-too-large" ? 413 : 400, { ok: false, error: mainCheck.code });
+            return;
+        }
+        const thumbCheck = PhotoValidation.validateImage(thumbBuf, { maxBytes: THUMB_IMAGE_MAX_BYTES });
+        if (!thumbCheck.ok) {
+            send(res, thumbCheck.code === "image-too-large" ? 413 : 400, { ok: false, error: thumbCheck.code });
+            return;
+        }
+
+        const tenantRoot = "tenants/" + ctx.tenantId;
+        const auditRef = db.doc(tenantRoot + "/audit_log/" + requestId);
+        const productRef = db.doc(tenantRoot + "/inventory/" + productId);
+
+        // Idempotency check up front, before touching Storage at all -- a retried call with the
+        // same requestId must not re-upload.
+        const existingAudit = await auditRef.get();
+        if (existingAudit.exists) {
+            const productSnap = await productRef.get();
+            const photoIds = productSnap.exists ? (productSnap.data().photoIds || []) : [];
+            send(res, 200, { ok: true, already: true, photoId: photoId, photoIds: photoIds });
+            return;
+        }
+
+        const envPrefix = storageEnvPrefix(body.env);
+        const mainPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, false);
+        const thumbPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, true);
+        const bucket = admin.storage().bucket(PHOTO_BUCKET_NAME);
+
+        try {
+            await bucket.file(mainPath).save(mainBuf, { contentType: "image/jpeg" });
+            await bucket.file(thumbPath).save(thumbBuf, { contentType: "image/jpeg" });
+        } catch (e) {
+            console.error("uploadProductPhoto: Storage write failed", e);
+            send(res, 500, { ok: false, error: "storage-write-failed" });
+            return;
+        }
+
+        // Storage writes above are outside this transaction -- Storage has no transactional join
+        // with Firestore. If this transaction throws after the writes above succeeded, the objects
+        // are orphaned but unreferenced (no id points at missing bytes, only the reverse) --
+        // accepted risk, see the design spec.
+        let txnResult;
+        try {
+            txnResult = await db.runTransaction(async (txn) => {
+                const existing = await txn.get(auditRef);
+                if (existing.exists) {
+                    const productSnap = await txn.get(productRef);
+                    const photoIds = productSnap.exists ? (productSnap.data().photoIds || []) : [];
+                    return { ok: true, already: true, photoIds: photoIds };
+                }
+
+                const productSnap = await txn.get(productRef);
+                if (!productSnap.exists) return { ok: false, status: 404, error: "product-not-found" };
+                const product = productSnap.data() || {};
+                const photoIds = Array.isArray(product.photoIds) ? product.photoIds.slice() : [];
+                if (photoIds.indexOf(photoId) === -1) {
+                    if (photoIds.length >= MAX_PHOTOS_PER_PRODUCT) {
+                        return { ok: false, status: 409, error: "photo-limit" };
+                    }
+                    photoIds.push(photoId);
+                }
+
+                txn.set(productRef, Object.assign({}, product, { photoIds: photoIds }), { merge: true });
+                txn.set(auditRef, {
+                    entryId: requestId, tenantId: ctx.tenantId, actorUid: actorUid, actorRole: ctx.role,
+                    action: "photo-upload", entity: "product-photo", entityId: productId,
+                    before: null, after: { photoId: photoId },
+                    serverTimestamp: FieldValue.serverTimestamp(),
+                    clientTimestamp: body.clientTimestamp || null, requestId: requestId
+                });
+                return { ok: true, photoIds: photoIds };
+            });
+        } catch (e) {
+            console.error("uploadProductPhoto write failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        if (txnResult && txnResult.ok === false) {
+            send(res, txnResult.status || 500, { ok: false, error: txnResult.error });
+            return;
+        }
+
+        send(res, 200, {
+            ok: true, already: !!txnResult.already, photoId: photoId, photoIds: txnResult.photoIds
+        });
+    });
+
+exports.deleteProductPhoto = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const productId = String(body.productId || "");
+        const photoId = String(body.photoId || "");
+        const requestId = String(body.requestId || (photoId ? "del-" + photoId : ""));
+        if (!productId || !photoId || !requestId) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+
+        const tenantRoot = "tenants/" + ctx.tenantId;
+        const auditRef = db.doc(tenantRoot + "/audit_log/" + requestId);
+        const productRef = db.doc(tenantRoot + "/inventory/" + productId);
+
+        // Deliberately tolerant of a missing product doc, unlike uploadProductPhoto's 404 --
+        // the product-delete cascade (InventoryStore.deleteProduct) may call this either before
+        // or after the product's own delete mutation has landed, and Storage cleanup should
+        // proceed either way. Removing an id that's already absent from the array is a no-op,
+        // not an error, for the same "best-effort" reason.
+        let txnResult;
+        try {
+            txnResult = await db.runTransaction(async (txn) => {
+                const existing = await txn.get(auditRef);
+                if (existing.exists) return { ok: true, already: true };
+
+                const productSnap = await txn.get(productRef);
+                let photoIds = null;
+                if (productSnap.exists) {
+                    const product = productSnap.data() || {};
+                    photoIds = (Array.isArray(product.photoIds) ? product.photoIds : [])
+                        .filter((id) => id !== photoId);
+                    txn.set(productRef, Object.assign({}, product, { photoIds: photoIds }), { merge: true });
+                }
+                txn.set(auditRef, {
+                    entryId: requestId, tenantId: ctx.tenantId, actorUid: actorUid, actorRole: ctx.role,
+                    action: "photo-delete", entity: "product-photo", entityId: productId,
+                    before: { photoId: photoId }, after: null,
+                    serverTimestamp: FieldValue.serverTimestamp(),
+                    clientTimestamp: body.clientTimestamp || null, requestId: requestId
+                });
+                return { ok: true, photoIds: photoIds };
+            });
+        } catch (e) {
+            console.error("deleteProductPhoto write failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        // Best-effort Storage cleanup -- errors are logged and swallowed. A leftover unreferenced
+        // object is a storage-cost issue, not a correctness one (design spec). Skipped entirely on
+        // an idempotent replay (txnResult.already) -- the first call already deleted these objects;
+        // deleting again is harmless to Storage itself but pointless work, and more importantly
+        // was firing on EVERY replay call with no bound, which a retried outbox item could do
+        // indefinitely (caught by the "idempotent retry ... no re-delete on replay" test below).
+        if (!txnResult.already) {
+            const envPrefix = storageEnvPrefix(body.env);
+            const mainPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, false);
+            const thumbPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, true);
+            const bucket = admin.storage().bucket(PHOTO_BUCKET_NAME);
+            try { await bucket.file(mainPath).delete(); } catch (e) { console.error("deleteProductPhoto: main object delete failed", e); }
+            try { await bucket.file(thumbPath).delete(); } catch (e) { console.error("deleteProductPhoto: thumb object delete failed", e); }
+        }
+
+        send(res, 200, { ok: true, already: !!txnResult.already, photoIds: txnResult.photoIds });
+    });
