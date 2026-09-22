@@ -279,7 +279,7 @@ QtObject {
     // stores fetched records raw (no per-item normalize step — see
     // _resetAndFetch's `staff.concat(result.items)` above), so `current`
     // is spliced in as-is, matching that same convention.
-    function _onMutationConflicted(entity, entityId, current) {
+    function _onMutationConflicted(entity, entityId, current, action) {
         if (entity !== "staff") return
         var arr = staff.slice()
         var idx = -1
@@ -293,7 +293,15 @@ QtObject {
             arr.splice(idx, 1)
         }
         staff = arr
-        Toast.show(qsTr("This staff record was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        // Same reasoning as InventoryStore._onMutationConflicted: a
+        // rejected delete-conflict means the record still legitimately
+        // exists, and was just restored above — "your change didn't save"
+        // would be confusing for what was actually a delete attempt.
+        if (action === "delete") {
+            Toast.show(qsTr("Couldn't delete — this staff record was updated elsewhere. It's been restored with the latest version."))
+        } else {
+            Toast.show(qsTr("This staff record was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        }
     }
 
     function _load() {

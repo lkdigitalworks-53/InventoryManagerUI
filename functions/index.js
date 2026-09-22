@@ -118,6 +118,19 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
+        // Staff delete has real security weight (it can cascade-revoke a
+        // teammate's login, see AuthService.cleanupStaffAuthDocs) and the
+        // client-side DataModel.onDeleteStaff check is not a trust boundary —
+        // anyone with a valid ID token can call this endpoint directly. This
+        // is scoped to staff/delete only; recordMutation has no general
+        // per-entity/action authorization matrix yet (tracked separately,
+        // KNOWN-ISSUES.md).
+        if (validated.entity === "staff" && validated.action === "delete"
+                && ctx.role !== "owner" && ctx.role !== "admin") {
+            send(res, 403, { ok: false, error: "role-not-allowed" });
+            return;
+        }
+
         let result;
         try {
             result = await GatewayLogic.applyMutation(db, {

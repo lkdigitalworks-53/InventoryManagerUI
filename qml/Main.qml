@@ -229,6 +229,10 @@ App {
             Toast.show(qsTr("Order deleted"))
         }
 
+        function onStaffDeleted(staffId) {
+            Toast.show(qsTr("Staff member removed"))
+        }
+
         function onStockRestorationSkipped(productId) {
             Toast.show(qsTr("Stock wasn't restored — a product on this order was deleted and no longer exists"))
         }

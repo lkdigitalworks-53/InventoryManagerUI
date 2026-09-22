@@ -363,6 +363,17 @@ Item {
                 dispatcher.errorOccurred("auth", "Only owner/admin can delete staff")
                 return
             }
+            // Dormant until Gateway.provisioningAvailable is true (no staff
+            // record has appUid yet), but once login provisioning is live an
+            // admin with their own login could otherwise delete their own
+            // staff record and cascade-remove their own tenant membership —
+            // see AuthService.cleanupStaffAuthDocs. AuthStore.currentStaffId
+            // is "" for a caller with no linked staff record, so this never
+            // fires for an owner/admin who isn't also staff.
+            if (AuthStore.currentStaffId && staffId === AuthStore.currentStaffId) {
+                dispatcher.errorOccurred("staff", "You can't delete your own staff record — ask another owner or admin")
+                return
+            }
             StaffStore.deleteStaff(staffId)
             dispatcher.staffDeleted(staffId)
         }
