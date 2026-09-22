@@ -3411,3 +3411,14 @@ have no way to tell it apart from an actual missing/duplicated test.
 **Practical fix, if this needs to be trusted more precisely later**: pin the sandbox to Node 20 before running
 `functions/` tests locally (`nvm install 20 && nvm use 20`, if `nvm` is available in the sandbox network
 allowlist — not verified this session), rather than comparing a Node-22 count against CI's Node-20 count.
+
+**Footnote, added during the code-review pass on this same branch**: PR #81 (merged into `main` while this
+review was in progress) fixed a real, separate CI-counting bug: `post-ci-comment.js`'s `readResultsFile()` read
+only one hardcoded `results.xml`, so a job producing two JUnit files (the new multi-file E2E job) silently
+dropped the second file's tests from the PR comment, while the check itself still reported green. That bug is
+specific to multi-file jobs; the Functions Tests job here writes exactly one `results.xml`, so it isn't the
+same bug and doesn't retroactively explain the 171-vs-237 gap this skill documents. The reason to mention it at
+all: it's now a confirmed fact, not a hypothesis, that this repo's CI-comment counts have had real undercounting
+bugs. Treat "CI says N" as the best available number, not an unquestionable one — which is exactly the
+hedged phrasing this skill and the corresponding test plan/checkpoint entries already used, rather than a
+flat "CI is right, the sandbox is wrong."
