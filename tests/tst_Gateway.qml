@@ -829,4 +829,187 @@ TestCase {
             }
         }
     }
+
+    // -- recordOperation (C-3, 2026-09-22) ---------------------------------------
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md
+    //
+    // Same scope note as the top of this file applies here too: _sendOperation's
+    // actual XHR/response handling can't run in this sandbox. What CAN run
+    // headlessly, and is covered below: recordOperation's validation (before
+    // anything touches the outbox), its enqueue shape, the two callback paths
+    // that never touch the network (immediate "queued", and an await that times
+    // out), and _finishOperation (reachable directly, exactly like _noteFailure
+    // above) -- which is ALL of the new decision logic; only the bytes on the
+    // wire and their parsing are untested here.
+
+    function _opBody(entities) {
+        var ops = []
+        for (var i = 0; i < entities.length; ++i)
+            ops.push({ kind: "delta", entity: entities[i][0], entityId: entities[i][1], deltas: { n: -1 }, floors: {}, clamps: {} })
+        return ops
+    }
+
+    function test_maxOperationOps_mirrors_the_server_and_planner_limit() {
+        compare(Gateway.maxOperationOps, 200)
+    }
+
+    function test_recordOperation_requires_gateway_mode() {
+        Gateway.mode = "direct"
+        var got = null
+        var id = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", {}, function(r) { got = r })
+        compare(id, "")
+        compare(got.ok, false)
+        compare(got.error, "operation-requires-gateway-mode")
+        compare(OutboxStore.items.length, 0)
+    }
+
+    function test_recordOperation_rejects_bad_requests_without_touching_the_outbox() {
+        Gateway.mode = "gateway"
+        var got = []
+        Gateway.recordOperation("completeOrder", [], "k1", {}, function(r) { got.push(r) })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "", {}, function(r) { got.push(r) })
+        Gateway.recordOperation("completeOrder", "not-an-array", "k2", {}, function(r) { got.push(r) })
+        var tooMany = []
+        for (var i = 0; i < Gateway.maxOperationOps + 1; ++i) tooMany.push(["inventory", "p" + i])
+        Gateway.recordOperation("completeOrder", _opBody(tooMany), "k3", {}, function(r) { got.push(r) })
+        compare(got.length, 4)
+        for (var j = 0; j < got.length; ++j) { compare(got[j].ok, false); compare(got[j].error, "bad-request") }
+        compare(OutboxStore.items.length, 0)
+    }
+
+    function test_recordOperation_accepts_exactly_maxOperationOps() {
+        Gateway.mode = "gateway"
+        var ops = []
+        for (var i = 0; i < Gateway.maxOperationOps; ++i) ops.push(["inventory", "p" + i])
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody(ops), "k1", {}, function(r) { got = r })
+        compare(got.ok, true)
+        compare(OutboxStore.items.length, 1)
+    }
+
+    function test_recordOperation_not_awaiting_enqueues_and_returns_queued_immediately() {
+        Gateway.mode = "gateway"
+        var got = null
+        var id = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["order", "o1"]]), "k1", {}, function(r) { got = r })
+        compare(id, "k1")
+        compare(got.ok, true)
+        compare(got.queued, true)
+        compare(got.requestId, "k1")
+        compare(OutboxStore.items.length, 1)
+        compare(OutboxStore.items[0].requestId, "k1")
+        compare(OutboxStore.items[0].opType, "completeOrder")
+        compare(OutboxStore.items[0].ops.length, 2)
+    }
+
+    function test_recordOperation_offline_never_waits_even_when_asked_to() {
+        Gateway.mode = "gateway"
+        AuthService.isOnline = false
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        compare(got.ok, true)
+        compare(got.queued, true)
+        AuthService.isOnline = true
+    }
+
+    function test_recordOperation_the_same_key_twice_enqueues_once_and_both_callers_are_told_queued() {
+        Gateway.mode = "gateway"
+        var a = null, b = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", {}, function(r) { a = r })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["inventory", "p2"]]), "k1", {}, function(r) { b = r })
+        compare(OutboxStore.items.length, 1)
+        compare(OutboxStore.items[0].ops.length, 1, "the first payload wins")
+        compare(a.queued, true)
+        compare(b.queued, true)
+    }
+
+    function test_recordOperation_awaiting_online_registers_a_waiter_instead_of_answering_immediately() {
+        Gateway.mode = "gateway"
+        AuthService.isOnline = true
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        compare(got, null, "nothing yet -- only _finishOperation or the await timeout resolves this")
+        compare(OutboxStore.items.length, 1, "still durably queued while awaiting")
+    }
+
+    function test_finishOperation_delivers_to_a_waiter_and_fires_operationApplied() {
+        Gateway.mode = "gateway"
+        var got = null
+        var applied = []
+        var onApplied = function(id, opType, results, replay) {
+            applied.push({ id: id, opType: opType, results: results, replay: replay })
+        }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        var results = [{ entity: "inventory", entityId: "p1", kind: "delta", after: { stock: 4 } }]
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: results, idempotentReplay: false })
+        Gateway.operationApplied.disconnect(onApplied)
+
+        compare(got.ok, true)
+        compare(got.results, results)
+        compare(applied.length, 1)
+        compare(applied[0].id, "k1")
+        compare(applied[0].replay, false)
+    }
+
+    function test_finishOperation_reports_a_replay() {
+        Gateway.mode = "gateway"
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [], idempotentReplay: true })
+        compare(got.idempotentReplay, true)
+    }
+
+    function test_finishOperation_delivers_a_rejection_and_fires_operationRejected() {
+        Gateway.mode = "gateway"
+        var got = null
+        var rejected = []
+        var onRejected = function(id, opType, rejection) {
+            rejected.push({ id: id, opType: opType, rejection: rejection })
+        }
+        Gateway.operationRejected.connect(onRejected)
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        var rejection = { ok: false, error: "insufficient-quantity", opIndex: 0, field: "stock", current: 0 }
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, rejection)
+        Gateway.operationRejected.disconnect(onRejected)
+
+        compare(got.ok, false)
+        compare(got.error, "insufficient-quantity")
+        compare(got.opIndex, 0, "0 must survive, not be treated as falsy")
+        compare(rejected.length, 1)
+        compare(rejected[0].rejection, rejection)
+    }
+
+    function test_finishOperation_with_no_registered_waiter_still_fires_the_signal() {
+        // Exactly the relaunch case: the callback died with the process, but the
+        // eventual server answer must still be observable via the signal.
+        Gateway.mode = "gateway"
+        var applied = []
+        var onApplied = function(id) { applied.push(id) }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway._finishOperation({ requestId: "never-awaited", opType: "completeOrder" }, { ok: true, results: [] })
+        Gateway.operationApplied.disconnect(onApplied)
+        compare(applied.length, 1)
+        compare(applied[0], "never-awaited")
+    }
+
+    function test_finishOperation_delivers_to_every_waiter_when_more_than_one_is_registered() {
+        Gateway.mode = "gateway"
+        var a = null, b = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { a = r })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { b = r })
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        compare(a.ok, true)
+        compare(b.ok, true)
+    }
+
+    function test_clear_stops_pending_await_timers_and_drops_their_callbacks() {
+        Gateway.mode = "gateway"
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        Gateway.clear()
+        // A stale answer to the pre-clear() key must not reach a dropped
+        // callback, and must not throw for a timer that no longer exists.
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        compare(got, null, "a callback registered before clear() must never fire after it")
+    }
 }
