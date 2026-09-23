@@ -131,6 +131,7 @@ QtObject {
             if (!p.size) p.size = "";
             if (!p.photoUrl) p.photoUrl = "";
             if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
+            if (!Array.isArray(p.photoIds)) p.photoIds = [];
             if (!p.supplierId) p.supplierId = "";
         }
         return arr;
@@ -195,6 +196,7 @@ QtObject {
                       unit: p.unit, description: p.description,
                       photoUrl: p.photoUrl || "",
                       photoUpdatedAt: p.photoUpdatedAt || "",
+                      photoIds: Array.isArray(p.photoIds) ? p.photoIds.slice() : [],
                       supplierId: p.supplierId || ""});
         }
         return a;
@@ -220,7 +222,7 @@ QtObject {
                  taxable: taxable, taxPercent: taxPercent,
                  size: size,
                  unit: unit, description: description || "",
-                 photoUrl: "", photoUpdatedAt: "",
+                 photoUrl: "", photoUpdatedAt: "", photoIds: [],
                  supplierId: supplierId };
     }
 
@@ -608,6 +610,14 @@ QtObject {
 
     // Persist a photo URL on a product. Per-doc PATCH bypasses the bulk-PUT
     // path so the write is always atomic.
+    // KEPT for the legacy single-photo field only -- the multi-photo path below
+    // (applyPhotoIds) is what the new gallery uses. Nothing in this codebase
+    // calls setPhoto() anymore as of the 2026-09-21 photos feature (the only
+    // caller, EditProductDialog's old applyPhotoSource/clearPhotoSource, is
+    // replaced in this same feature), but it's left in place rather than
+    // deleted -- it's still a valid, correct way to write the legacy field,
+    // and removing working code that nothing currently exercises isn't this
+    // task's job.
     function setPhoto(productId, photoUrl) {
         var idx = findIndexById(productId);
         if (idx < 0) return;
@@ -620,6 +630,48 @@ QtObject {
         products = arr;
         if (prevUrl !== newUrl)
             TransactionStore.recordPhotoChange(productId, arr[idx].name, prevUrl, newUrl);
+        Gateway.recordMutation("inventory", productId, "update", before, arr[idx]);
+    }
+
+    // Update a product's photoIds LOCALLY after the server has already confirmed an upload or
+    // removal. uploadProductPhoto/deleteProductPhoto (functions/index.js) write photoIds
+    // server-side directly, NOT through Gateway.recordMutation/applyMutation -- neither fits an
+    // array-append/remove against a doc the handler itself reads (design spec, "Server" section) --
+    // so this function does NOT call Gateway.recordMutation either; it only keeps the local cache
+    // in sync so the UI doesn't wait for the next Firestore snapshot. Call on PhotoQueue.photoUploaded
+    // (changeKind "add") and on a successful StorageService.removeProductPhoto callback for a
+    // server-known photo (changeKind "remove"). Logs the same photo_change ledger entry setPhoto
+    // used to -- one entry per photo now, rather than one per whole-array change, since a product
+    // can have many photos (EditProductDialog.qml's "photo_change" case only checks
+    // before/after non-emptiness to pick "added"/"removed" wording, so a photoId standing in for
+    // the old URL string renders correctly unchanged).
+    function applyPhotoIds(productId, photoIds, changedPhotoId, changeKind) {
+        var idx = findIndexById(productId);
+        if (idx < 0) return;
+        var arr = _clone();
+        arr[idx].photoIds = Array.isArray(photoIds) ? photoIds.slice() : [];
+        products = arr;
+        if (!changedPhotoId) return;
+        if (changeKind === "add")
+            TransactionStore.recordPhotoChange(productId, arr[idx].name, "", changedPhotoId);
+        else if (changeKind === "remove")
+            TransactionStore.recordPhotoChange(productId, arr[idx].name, changedPhotoId, "");
+    }
+
+    // One-tap "migrate this photo" (design spec, Data model): called right after
+    // StorageService.addProductPhoto() queues the legacy photoUrl's file as a real upload. Clears
+    // the legacy field at QUEUE time, not upload-confirmed time -- safe because the gallery shows
+    // PhotoQueue's own persisted local copy (the same image) for the pending item in the meantime,
+    // so nothing visually disappears, and it avoids a second write once the upload actually lands.
+    function clearLegacyPhotoUrl(productId) {
+        var idx = findIndexById(productId);
+        if (idx < 0) return;
+        var arr = _clone();
+        var before = Object.assign({}, arr[idx]);
+        if (!arr[idx].photoUrl) return;
+        arr[idx].photoUrl = "";
+        arr[idx].photoUpdatedAt = "";
+        products = arr;
         Gateway.recordMutation("inventory", productId, "update", before, arr[idx]);
     }
 
@@ -1034,19 +1086,30 @@ QtObject {
 
         // Photo cleanup — best-effort, must never block or fail the delete
         // above. Wrapped in try/catch deliberately: StorageService.
-        // deleteProductPhoto falls through to the native ImageProcessor
+        // removeProductPhoto falls through to the native ImageProcessor
         // singleton (registered only by the real app's main.cpp) when
-        // useCloud is false, which is undefined in a headless test
-        // environment — the same class of failure as the DataModel
-        // logic/dispatcher bug (Skill 58): an unguarded call throwing mid-
-        // function must never be able to abort work that already
-        // completed above it.
+        // called for a server-confirmed photo, which is undefined in a
+        // headless test environment — the same class of failure as the
+        // DataModel logic/dispatcher bug (Skill 58): an unguarded call
+        // throwing mid-function must never be able to abort work that
+        // already completed above it.
         try {
-            StorageService.deleteProductPhoto(productId, function(ok, err) {
-                if (!ok) console.warn("[InventoryStore] deleteProductPhoto failed for", productId, err)
-            })
+            var photoIdsToDelete = Array.isArray(before.photoIds) ? before.photoIds : []
+            for (var pdi = 0; pdi < photoIdsToDelete.length; ++pdi) {
+                (function(photoId) {
+                    StorageService.removeProductPhoto(productId, photoId, function(ok, err) {
+                        if (!ok) console.warn("[InventoryStore] removeProductPhoto failed for", productId, photoId, err)
+                    })
+                })(photoIdsToDelete[pdi])
+            }
+            // Legacy, never-migrated product: its only photo is a local file keyed by the
+            // product's own id (the old single-photo StorageService's scheme), not by a photoId --
+            // photoIds is empty so the loop above never reaches it.
+            if (photoIdsToDelete.length === 0 && before.photoUrl && typeof ImageProcessor !== "undefined") {
+                ImageProcessor.removeLocalCopy(productId)
+            }
         } catch (e) {
-            console.warn("[InventoryStore] deleteProductPhoto threw for", productId, e)
+            console.warn("[InventoryStore] photo cleanup threw for", productId, e)
         }
     }
 
