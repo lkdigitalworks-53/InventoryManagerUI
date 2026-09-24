@@ -1,98 +1,71 @@
-# CHECKPOINT — 2026-09-20: C-3 spec, plan and test plan written (design only, no implementation)
+# CHECKPOINT — 2026-09-24: compliance reassessment, P1 design (server-side atomic) + S1 plan (docs only, no repo code)
 
-**Session date:** 2026-09-20
-**Branch:** `docs/2026-09-20-atomic-operation-spec-plan`, rebased onto `main` @ `55451b3` (after #75 and #76 merged)
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-CHECKPOINT.md`
-(PR #75's arc; the older #72 arc was archived by #75 itself).
-**Supersedes:** draft PR #74 (this file replaces its checkpoint; #74 is closed).
-**Skills invoked by Taher:** `superpowers:brainstorming`, `superpowers:writing-plans` (used for the plan),
-`qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman mode: FULL.
-**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>` (confirmed by Taher). PAT is supplied by Taher in chat each session and is never written to
-the repo, `.git/config`, or memory.
+**Branch:** `docs/2026-09-24-compliance-reassessment`, cut from `main` @ `2c1e5f6`
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-21-atomic-operation-outbox-phase2-CHECKPOINT.md`
+(C-3 arc; its step 13 is still open: Phase 3 not started).
+**Skills invoked by Taher:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `ponytail:ponytail`. Also used: `superpowers:writing-plans`. Caveman FULL.
+**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT comes from chat, never stored in repo/config/memory.
+**Constraints this session:** no app build/run; no Qt in sandbox (CI is the QML test oracle); short scope per session
+(multi-account, token-limited); push without asking, review happens in the GitHub PR.
 
-## Deliverables in this PR
+## Compliance status vs master spec (`specs/2026-06-06-india-compliance-roadmap-design.md`)
 
-- `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md`: the approved design (D1-D5).
-- `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`: 13 tasks in 3 phases. The code in Tasks 1-5
-  is embedded byte for byte from files that were actually run (below).
-- `docs/superpowers/test-plans/2026-09-20-atomic-operation-outbox-test-plan.md` (+ index row): standard
-  format, each row marked "verified" or "planned".
-- Tracker pointer on the `_tryCompleteOrder` entry in `ASYNC-REENTRANCY-BUGS.md` (still marked not fixed).
-- Not touched on purpose: `SKILLS.md`, `AGENTS.md`, `README.md`. PR #75 adds a Skill at the same time, so a
-  second one here would collide on the number; they are updated in the implementation PRs (plan Task 12).
+Grep-based on `main` @ `2c1e5f6` plus the P1 branch's own checkpoint.
+
+| Item | Status |
+|---|---|
+| P0 gateway + immutable `audit_log` | Done. `Gateway.mode = "gateway"` live since 2026-07-29. |
+| C-3 atomic `recordOperation` (order completion) | Phase 1 (endpoint, #78) + Phase 2 (pure helpers, #79) merged. **Phase 3 (Outbox/Gateway/stores/DataModel/UI, plan Tasks 6-11) not started.** Needs Taher to deploy `recordOperation` to dev. |
+| P1 stock-movement taxonomy | **Partial, unmerged, untested, stale.** Branch `feature/p1-stock-movement-taxonomy`: 10-value kind enum, write-only `StockMovementStore`, 5 wiring points, required kind picker. Zero tests. Register report (opening/closing balance) not started. |
+| P2 tax identity (HSN, GSTIN) | Not started. No `hsnCode`/`gstin` anywhere in `qml/` or `functions/`. |
+| P3 legal docs + acceptance, P4 DPDP consent, P5 erasure/retention, P6 breach, P7 warehouse | Not started (no consent/erasure/breach code; only an OAuth "consent" string in `GoogleAuthService.qml`). |
+| Deferred (56(12), 56(15), OIDAR) | Out of scope per spec. |
+
+## P1 branch verdict: NOT usable as-is, do not rebase-and-continue
+
+- 337 commits behind `main`; merge-base `2748d1b` (2026-07-13). Predicted textual conflicts: `Main.qml`, `Logic.qml`,
+  `DataModel.qml`, `InventoryStore.qml`, `qmldir`, `EditProductDialog.qml`.
+- Trial rebase (scratch branch, aborted, remote untouched) stopped at commit 4 of 10, `94c6e51` (restock wiring). The conflict is
+  semantic, not just textual: `restock()` on main is async + callback-based, uses `Gateway.recordDelta`, and
+  `StockBatchStore.addBatch` no longer returns a batch synchronously (async batch-id minting), so the branch's
+  `batch.batchId` and `Gateway.recordMutation` wiring is wrong for main even if hunks are merged by hand.
+- Order completion (`_tryCompleteOrder`) was reworked on main (atomic completion, `recordOperation`) and Phase 3 will rewrite it again.
+  The branch's `sale` wiring is throwaway.
+- Reusable from the branch: `kind` enum + `sales_return`/`destroyed` reasoning (CGST 56(2)), `StockMovementStore` shape, kind-picker UX
+  in `EditProductDialog`, master test plan `specs/2026-07-11-p0-p1-master-test-plan.md`. Re-apply by hand on fresh `main`; leave old branch untouched.
 
 ## Step log (append-only; resume from the last ticked step)
 
-- [x] 1. Cloned repo, read roadmap, tracker, live PR state. The item came from the tracker's C-3 entry, not
-      from `main`'s roadmap list (Taher was told; he moved on).
-- [x] 2. Rebased PR #73 (one roadmap conflict, both sides kept); Taher merged #72 and #73. PR #64 triaged as
-      obsolete; it is now closed, unmerged.
-- [x] 3. Found the duplicate "C-3" label; Taher chose to rename the Restock one to C-4: PR #76 (docs only,
-      CI green, open).
-- [x] 4. Taher's answers: offline outbox must stay; two devices can complete the same product concurrently;
-      merge #75 before implementation. Decisions D1 approve approach D, D2 server-first pilot on compound ops
-      only, D3 apply an offline-queued completion anyway (drift repair, clamp), D4 Taher deploys functions
-      (dev only), D5 timeouts count as stuck writes.
-- [x] 5. Wrote the spec, plan and test plan (this PR).
-- [x] 6. Verified what can run in the sandbox (no Qt toolchain):
-      - Server: `operationLogic.js` + `recordOperation` handler + harness edit applied to a scratch copy of
-        `functions/`: whole suite 228/228 pass (195 existing + 33 new), `operationLogic.js` 100% line, branch,
-        function; 14/14 deliberate mutations caught. The embedded `index.js` and harness patches were checked
-        with `git apply --check` against `main`.
-      - Client pure helpers (`CompletionPlan`, `OperationKeys`, `SendPolicy`, `StuckWrites` change): 68 test
-        bodies (47 new, 21 being #75's existing StuckWrites tests) executed in Node through a shim: all pass;
-        21/21 deliberate mutations caught after two tests were added for the two that survived. NOT run under
-        `qmltestrunner`, so QML syntax of those test files is unproven until CI.
-      - Tasks 6-11 (Outbox, Gateway, stores, DataModel, UI) are unexecuted drafts.
-- [x] 7. Corrections and findings made while writing (all recorded in the spec):
-      - "No timeouts anywhere in `qml/`" was too broad: `AuthService._postJson` (20s) and
-        `StockBatchStore.nextBatchId` (15s) race a Timer against the XHR. Gateway senders and
-        `FirebaseService._request` have none.
-      - `OutboxStore.dueItems()` checks in-flight keys only once per pass, so two due items sharing a key can
-        be dispatched together; needed a fix because an operation touches many keys (plan Task 6).
-      - Orders can be reopened (`_reverseCompletedOrder`), so the key needs an epoch stored on the order.
-      - Sale `txId` is random (`_nextId`), so a re-run would also double-book revenue; ids become deterministic.
-      - Two lines of one product were validated separately against stock; the planner sums demand.
-- [x] 8. Taher answered: Phase 1 (server) may start now; PRs #75 and #76 are under his review and he will
-      update; the commit email `tsowner@lkdigitalworks.com` is confirmed.
-- [x] 9. Phase 1 implemented as PR #78 (`feature/2026-09-21-record-operation-endpoint`, cut from `main`):
-      tests written first and seen failing (`Cannot find module '../lib/operationLogic'`), then
-      `operationLogic.js` + the `recordOperation` handler + harness edit. Local run on the branch: `functions/`
-      suite 228/228 (195 existing + 33 new), `operationLogic.js` 100% line/branch/function, `index.js` 99.89%
-      (the same pre-existing uncovered line). CI on PR #78: all 5 checks green, `mergeable_state: clean`.
-      README update and an AGENTS bullet added; `SKILLS.md` deliberately not touched (Skill-number collision
-      with #75). `git push -u` briefly wrote the token URL into `.git/config`; removed and verified (sandbox
-      only, never in the repo). Use plain `git push <url> <branch>` without `-u`.
-- [x] 10. Taher: PR #75 merged (and #76); he will deploy `recordOperation` himself; asked whether #77 and #78
-      can merge, then "next steps".
-- [x] 11. Checked live: #78 `mergeable_state: clean`, CI green. #77 was `dirty`: rebased onto `main` @
-      `55451b3` (two conflicts: this file, kept mine and archived main's under
-      `specs/2026-09-19-gateway-stuck-write-indicator-CHECKPOINT.md`; `test-plans/README.md`, both index rows
-      kept, newest first). Refreshed the statements that went stale (spec status, tracker pointer).
-      The embedded `StuckWrites` patch still applies to the merged file (`git apply --check`).
-- [x] 12. Phase 2 (plan Tasks 3-5, pure helpers) implemented as PR #79
-      (`feature/2026-09-21-operation-helpers`, cut from `main` @ `55451b3`), four commits: `StuckWrites`
-      timeouts (D5), `SendPolicy` + `OperationKeys`, `CompletionPlan`, docs notes. Tests first: the new
-      StuckWrites tests were seen failing (4 of 6; the other 2 assert unchanged behaviour), the new helper
-      tests failed on the missing modules. Before pushing: 68 test bodies (47 new) executed in Node through
-      a shim, 21/21 deliberate mutations caught against the repo files. **CI on #79: all 5 checks green, and
-      the QML job ran the new files under the real `qmltestrunner`**: 901 -> 954 tests (+53 = 47 new + an
-      `initTestCase`/`cleanupTestCase` pair for each of the 3 new files). This settles the earlier caveat
-      that QML syntax of those test files was unproven.
-- [ ] 13. **Waiting on Taher:** merge of #77, #78, #79 (all `clean`, CI green; suggested order #77, #78, #79,
-      no dependency between them); deploy of `recordOperation` to dev (curl expecting `401 missing-token`).
-      Phase 3 (plan Tasks 6-11, Outbox/Gateway/stores/DataModel/UI) needs #78 and #79 merged and the
-      function deployed. It is the largest and least certain part; Task 10's optimistic apply / revert /
-      re-plan logic should get Taher's review first.
+- [x] 1. Cloned repo, read spec, status, P1 checkpoint, C-3 checkpoint. Read skills: brainstorming, qt-qml, ponytail.
+- [x] 2. Trial rebase of P1 onto `main`: fails semantically at commit 4/10 (above). Aborted. Old remote branch untouched.
+- [x] 3. Wrote this reassessment (docs only: no test plan needed, no code changed).
+- [x] 4. Taher chose **B** (server-side atomic) and asked to finish the docs, merge them, and implement in a new session on a new branch.
+- [x] 5. Wrote spec (D1-D10, slices S1-S4, open questions Q1-Q4, risks R1-R3), S1 plan (5 tasks, code embedded), test plan (standard format, index row).
+      Decisions D2-D10 were taken by me and are written for review; **merging this PR = approving them**. Everything in the plan was run in a scratch
+      copy of `functions/` from `main` and replayed step by step: 281/281 (232 existing + 49 new), new `lib/` files 100% line, 10/10 mutations caught.
+- [x] 6. AGENTS.md (P1 bullet + scope line) and README.md (one update paragraph) refreshed. `SKILLS.md` untouched (append-only; no new numbered lesson yet).
+- [ ] 7. PR for this branch: CI green, then merge (Taher asked me to get it merged).
+- [ ] 8. **Next session (new branch off `main`):** implement S1 by following `plans/2026-09-24-p1-server-side-stock-movements-s1.md` task by task
+      (`cd functions && npm ci` first). Then Taher deploys functions to dev and runs the on-device checklist. S2 planning only after that.
 
-## Open questions for Taher
+## Next-session start-up
 
-- Review focus: spec 4.6 (rejection handling and D3), 4.2 (marker holds full `after` docs, bounded by the
-  200-op cap), and the optimistic apply / revert / re-plan logic in plan Task 10 (the least certain part).
-- Deploy result of `recordOperation` on dev (expected `401 missing-token` from an unauthenticated POST).
+Read this file, the spec section 3 and the plan header. Do not rebase or force-push `feature/p1-stock-movement-taxonomy`. Nothing to grill Taher on
+before S1 except the review of D2-D10; open questions Q1-Q4 belong to S2-S4.
+
+## Q1 options (decided: B)
+
+- **A. Client-side second write** (old branch's way): `StockMovementStore.recordMovement` after each stock change.
+  Cheap, QML-only. But not atomic with the stock change: crash/offline/kill between the two writes leaves stock changed with no ledger row,
+  which is the exact failure an auditor tests. Needs idempotent ids too. Contradicts spec 2 ("working-tier doc AND ledger entry in one transaction").
+- **B. Server-side atomic**: `recordDelta` (and `recordOperation` ops) accept an optional `movement {kind, reason, valueAtCost, batchRef}`;
+  the function creates the `stock_movements` row in the same transaction, deterministic id from `requestId`, `kind` validated against the enum,
+  `actorUid`/`serverTimestamp` server-stamped. Fully testable with `node --test` in this sandbox (100% coverage feasible). Costs: functions change + Taher deploys (D4).
+- **C. Hybrid**: B for `sale` (inside `completeOrder`, after C-3 Phase 3), A for the rest. Two mechanisms to maintain; A's gap stays.
+
+Proposed slices if B: S1 server support + tests; S2 client wiring for restock / manual adjust / returns; S3 `sale` via `completeOrder` (after C-3 Phase 3);
+S4 opening/closing register report.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check open PR state live (#75 and #76 merged, #74 closed, #77, #78, #79), then
-continue at step 13. Do not build or run the app until Taher asks. `CHECKPOINT.md` will conflict with PR #75's
-copy; resolve by keeping the branch version and archiving `main`'s under `docs/superpowers/specs/`.
+Fresh session: clone, read this file, then follow step 8. Do not force-push or rebase `feature/p1-stock-movement-taxonomy`. No build/run.
