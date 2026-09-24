@@ -66,6 +66,20 @@ TestCase {
         compare(PhotoQueue.pendingCount, 2)
     }
 
+    function test_relaunch_resumes_draining_a_previously_queued_item() {
+        // Regression test for a real bug found in review: _load() (Component.onCompleted on a
+        // real app launch) loaded persisted items but never called _reschedule(), so a photo
+        // queued in a previous session just sat frozen until something else happened to trigger
+        // a drain -- silently breaking "survive app close" (design spec). Can't observe the
+        // Timer firing under qmltestrunner (NativeFile is undefined here, see the file's
+        // TESTABILITY NOTE), but drainCandidates() being non-empty immediately after _load()
+        // proves the reschedule happened rather than leaving the item dormant.
+        PhotoQueue.enqueue(_call())
+        PhotoQueue.items = []
+        PhotoQueue._load()
+        compare(PhotoQueue.drainCandidates(Date.now()).length, 1)
+    }
+
     // ── discard ──────────────────────────────────────────────────────────────
 
     function test_discard_removes_the_item() {
@@ -179,6 +193,23 @@ TestCase {
         OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-OTHER", action: "create" })
         PhotoQueue.enqueue(_call({ productId: "prod-1" }))
         compare(PhotoQueue.drainCandidates(Date.now()).length, 1)
+    }
+
+    // ── drainNow (the one case reachable without touching NativeFile/XHR: unauthenticated) ──
+
+    function test_drainNow_when_unauthenticated_leaves_the_item_queued_not_failed() {
+        // Regression test for a real gap found in review: drainNow() must call
+        // AuthService.ensureFreshToken() once per pass (matching Gateway.drainNow()'s exact
+        // placement) so a stuck "token not ready" item eventually gets unstuck by something
+        // actually requesting a refresh, rather than waiting on some other unrelated caller to
+        // do it first. ensureFreshToken() itself no-ops safely when AuthStore.isAuthenticated is
+        // false (the default here), so this is callable under qmltestrunner without reaching
+        // NativeFile/XHR -- the item should simply come back unchanged, not consumed or failed.
+        PhotoQueue.enqueue(_call())
+        PhotoQueue.drainNow()
+        compare(PhotoQueue.pendingCount, 1, "must not drop the item")
+        compare(PhotoQueue.items[0].state, "enqueued", "must not mark it failed for a missing token")
+        compare(PhotoQueue.items[0].attempts, 0, "must not count this against the attempt cap")
     }
 
     // ── multiple items, mixed eligibility ───────────────────────────────────

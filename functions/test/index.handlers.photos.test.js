@@ -177,6 +177,23 @@ test("uploadProductPhoto: 500 write-failed when the Storage save itself throws",
     assert.deepEqual(productDoc.photoIds, [], "no id recorded when the upload itself failed");
 });
 
+test("uploadProductPhoto: 400 invalid-request when productId contains a path-traversal slash", async () => {
+    resetState();
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ productId: "../other-tenant/inventory/x" }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "invalid-request");
+    assert.equal(mockState.storageSaveCalls.length, 0, "must reject before ever touching Storage");
+});
+
+test("uploadProductPhoto: 400 invalid-request when photoId contains a slash", async () => {
+    resetState();
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ photoId: "a/b" }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "invalid-request");
+});
+
 test("monkey: repeated uploads never produce a photoIds array longer than 10 or with a duplicate id", () => {
     // Pure invariant check driven by the same list-mutation logic the handler uses -- fast,
     // deterministic, no async handler roundtrip needed to stress this specific property widely.
@@ -252,6 +269,15 @@ test("deleteProductPhoto: missing Authorization header -> 401 missing-token", as
     await handlers.deleteProductPhoto(mockReq({ headers: { origin: "http://localhost" }, body: deleteBody() }), res);
     assert.equal(res.statusCode, 401);
     assert.equal(jsonBody(res).error, "missing-token");
+});
+
+test("deleteProductPhoto: 400 invalid-request when photoId contains a path-traversal slash", async () => {
+    resetState({ product: { photoIds: ["photo-1"] } });
+    const res = mockRes();
+    await handlers.deleteProductPhoto(mockReq({ body: deleteBody({ photoId: "../x" }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "invalid-request");
+    assert.equal(mockState.storageDeleteCalls.length, 0);
 });
 
 test("deleteProductPhoto: authenticated but no tenant context -> 403 no-tenant-context", async () => {
