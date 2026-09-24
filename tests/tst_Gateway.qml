@@ -931,6 +931,38 @@ TestCase {
         compare(OutboxStore.items.length, 1, "still durably queued while awaiting")
     }
 
+    // The one place in this section where a real QML Timer is let run for real
+    // (proven safe/available in this codebase's test suite --
+    // tst_OrderMetadataEditPreservesConsumption.qml already uses tryCompare the
+    // same way). Everything else here drives _finishOperation directly instead;
+    // this test is what actually proves the Timer/_addOperationWaiter wiring
+    // that those direct calls bypass.
+    function test_recordOperation_awaiting_that_actually_times_out_delivers_pending_once() {
+        Gateway.mode = "gateway"
+        AuthService.isOnline = true
+        Gateway.awaitTimeoutMs = 30
+        var results = []
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { results.push(r) })
+        tryCompare(results, "length", 1, 2000)
+        compare(results[0].ok, false)
+        compare(results[0].pending, true)
+        compare(results[0].error, "timeout")
+        compare(results[0].requestId, "k1")
+        compare(OutboxStore.items.length, 1, "still queued -- the item itself was never cancelled")
+
+        // The eventual real answer must not re-invoke the (already-fired) callback
+        // a second time; only the signal fires for it now.
+        var applied = []
+        var onApplied = function(id) { applied.push(id) }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        Gateway.operationApplied.disconnect(onApplied)
+        compare(results.length, 1, "the callback must not fire twice")
+        compare(applied.length, 1, "but the signal still reaches a listener")
+
+        Gateway.awaitTimeoutMs = SendPolicy.TIMEOUT_AWAIT_MS
+    }
+
     function test_finishOperation_delivers_to_a_waiter_and_fires_operationApplied() {
         Gateway.mode = "gateway"
         var got = null

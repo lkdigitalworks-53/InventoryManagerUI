@@ -576,6 +576,54 @@ QtObject {
         }
     }
 
+    // Arms a one-shot Timer that, if `xhr` never completes within
+    // backgroundTimeoutMs, aborts it and runs the shared timeout failure path
+    // exactly once. Without this, a hung request never fires onreadystatechange
+    // at all, so nothing ever resolves it -- that's exactly how the C-3 hang
+    // left an outbox item stuck in flight for the rest of the session (D5:
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md).
+    // Shared by all four senders below; NOT shared is each sender's own
+    // response classification once its XHR actually completes (recordMutation's
+    // conflict parsing, the batch terminal-error logic, recordDelta/recordOperation's
+    // _classifyDeltaResponse) -- those differ enough between senders that
+    // folding them into one function was rejected as too risky; only this
+    // identical setup/teardown is common.
+    //
+    // Returns { claim: function() -> bool }. The caller's onreadystatechange
+    // handler MUST call claim() before touching inFlight or the outbox: true
+    // means "you own this outcome, the timer is stopped, proceed normally";
+    // false means the timer already claimed it (timed out, and possibly
+    // already aborted this very xhr, which is what triggered this very call) --
+    // return immediately without doing anything further.
+    function _armSendTimeout(item, xhr, timerName, describe) {
+        var state = { settled: false }
+        var timer = Qt.createQmlObject(
+            'import QtQuick; Timer { repeat: false }', root, timerName)
+        timer.interval = backgroundTimeoutMs
+        timer.triggered.connect(function() {
+            if (state.settled) return
+            state.settled = true
+            timer.destroy()
+            try { xhr.abort() } catch (e) {}
+            inFlight--
+            console.warn("[Gateway]", describe(), "timed out")
+            OutboxStore.markFailed(item.requestId)
+            _noteFailure(item, StuckWrites.TIMEOUT)
+            OutboxStore.clearInFlight(item)
+            _reschedule()
+        })
+        timer.start()
+        return {
+            claim: function() {
+                if (state.settled) return false
+                state.settled = true
+                timer.stop()
+                timer.destroy()
+                return true
+            }
+        }
+    }
+
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
@@ -585,39 +633,13 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
-        var settled = false
-
-        // Timeout (D5 / C-3): a hung request never fires onreadystatechange at
-        // all, so nothing here ever resolves it without one -- that's exactly
-        // how the C-3 hang left an item stuck in flight for the rest of the
-        // session. Same settled-flag pattern as AuthService._postJson, already
-        // proven in this codebase: the timer does the FULL failure path
-        // itself, rather than relying on abort() to trigger onreadystatechange
-        // (not guaranteed here); a later onreadystatechange becomes a no-op.
-        var timer = Qt.createQmlObject(
-            'import QtQuick; Timer { repeat: false }', root, "GatewaySendTimeoutTimer")
-        timer.interval = backgroundTimeoutMs
-        timer.triggered.connect(function() {
-            if (settled) return
-            settled = true
-            timer.destroy()
-            try { xhr.abort() } catch (e) {}
-            inFlight--
-            console.warn("[Gateway] recordMutation timed out", item.entity, item.entityId)
-            OutboxStore.markFailed(item.requestId)
-            _noteFailure(item, StuckWrites.TIMEOUT)
-            OutboxStore.clearInFlight(item)
-            _reschedule()
-        })
-        timer.start()
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendTimeoutTimer",
+            function() { return "recordMutation " + item.entity + " " + item.entityId })
 
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
-            if (settled) return
-            settled = true
-            timer.stop()
-            timer.destroy()
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
@@ -746,32 +768,13 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
-        var settled = false
-
-        var timer = Qt.createQmlObject(
-            'import QtQuick; Timer { repeat: false }', root, "GatewaySendBatchTimeoutTimer")
-        timer.interval = backgroundTimeoutMs
-        timer.triggered.connect(function() {
-            if (settled) return
-            settled = true
-            timer.destroy()
-            try { xhr.abort() } catch (e) {}
-            inFlight--
-            console.warn("[Gateway] recordMutationsBatch timed out", item.entity, item.items.length, "item(s)")
-            OutboxStore.markFailed(item.requestId)
-            _noteFailure(item, StuckWrites.TIMEOUT)
-            OutboxStore.clearInFlight(item)
-            _reschedule()
-        })
-        timer.start()
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendBatchTimeoutTimer",
+            function() { return "recordMutationsBatch " + item.entity + " " + item.items.length + " item(s)" })
 
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
-            if (settled) return
-            settled = true
-            timer.stop()
-            timer.destroy()
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
@@ -865,34 +868,15 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
-        var settled = false
-
         // A timeout is non-terminal, same as any other transient failure below:
         // callbacks stay pending for whichever attempt eventually resolves.
-        var timer = Qt.createQmlObject(
-            'import QtQuick; Timer { repeat: false }', root, "GatewaySendDeltaTimeoutTimer")
-        timer.interval = backgroundTimeoutMs
-        timer.triggered.connect(function() {
-            if (settled) return
-            settled = true
-            timer.destroy()
-            try { xhr.abort() } catch (e) {}
-            inFlight--
-            console.warn("[Gateway] recordDelta timed out", item.entity, item.entityId)
-            OutboxStore.markFailed(item.requestId)
-            _noteFailure(item, StuckWrites.TIMEOUT)
-            OutboxStore.clearInFlight(item)
-            _reschedule()
-        })
-        timer.start()
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendDeltaTimeoutTimer",
+            function() { return "recordDelta " + item.entity + " " + item.entityId })
 
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
-            if (settled) return
-            settled = true
-            timer.stop()
-            timer.destroy()
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
@@ -951,32 +935,13 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
-        var settled = false
-
-        var timer = Qt.createQmlObject(
-            'import QtQuick; Timer { repeat: false }', root, "GatewaySendOperationTimeoutTimer")
-        timer.interval = backgroundTimeoutMs
-        timer.triggered.connect(function() {
-            if (settled) return
-            settled = true
-            timer.destroy()
-            try { xhr.abort() } catch (e) {}
-            inFlight--
-            console.warn("[Gateway] recordOperation timed out", item.requestId, item.opType)
-            OutboxStore.markFailed(item.requestId)
-            _noteFailure(item, StuckWrites.TIMEOUT)
-            OutboxStore.clearInFlight(item)
-            _reschedule()
-        })
-        timer.start()
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendOperationTimeoutTimer",
+            function() { return "recordOperation " + item.requestId + " " + item.opType })
 
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
-            if (settled) return
-            settled = true
-            timer.stop()
-            timer.destroy()
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
