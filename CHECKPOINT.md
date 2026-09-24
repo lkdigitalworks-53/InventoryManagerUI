@@ -85,5 +85,13 @@ Skills: `superpowers:brainstorming`, `ponytail:ponytail-audit`, `qt-development-
   `InventoryStore.qml` sends `stock` inside whole-record `recordMutation` on create (~520), `updateProduct` (~623), bulk import (~908), edit (~1283); and
   `firestore.rules` still lets any member write `inventory` directly (generic working-tier fallback; only ledger collections are locked, the comment in the rules file is stale).
   So S1 alone gives rows for restock/sale/return deltas but leaves create/edit/import/direct writes with no row.
-- [ ] 11. **Waiting on Taher: Q0** (options in chat: C staged = server rejects stock changes on `recordMutation` for `inventory` after S2 + lock `inventory` in rules + variance tripwire in S4).
+- [x] 11. (superseded by 13) Q0 asked with options A/B/C.
+- [ ] 11b. (old text) **Waiting on Taher: Q0** (options in chat: C staged = server rejects stock changes on `recordMutation` for `inventory` after S2 + lock `inventory` in rules + variance tripwire in S4).
 - [ ] 12. Then Q1-Q4 (spec section 7) one at a time; then update spec/plan, PR, merge; then implement S1 in a new branch.
+- [x] 13. **New fact from Taher: everything is DEV only, no prod code published; tests = new tenant + user + new products/orders.** Consequences:
+  earlier "production" framing was wrong (D10 backward compat, "would break prod", "live since 07-29" as prod); no backfill or migration needed;
+  Q2 (opening balance) collapses (new tenants start at 0, opening = sum of movements before the period); staged option C is no longer needed for safety.
+  Deleting `direct` mode and `runCutover` is cheap now.
+- [x] 14. New option D for Q0: server derives a movement for ANY stock change on `inventory` in all four write paths (`recordDelta`, `recordMutation`,
+  `recordMutationsBatch`, `recordOperation`): client may supply `movements` (kind picker), else the server derives a default (create => `receipt`,
+  whole-record edit / delete => `adjustment`, `completeOrder` => `sale`). No client path can forget a row. Waiting on Taher's pick (see chat list P1-P8).
