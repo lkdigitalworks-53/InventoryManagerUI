@@ -116,7 +116,13 @@ edit/delete; client forges identity & time). The fix:
 
 - **P0** Gateway + immutable `audit_log` (MCA 11(g), CGST 56(8)) — foundation, builds the gateway.
 - **P1** Stock-movement taxonomy: loss/theft/destroyed/write_off/free_sample/gift + opening/closing
-  balance register (CGST 56(2)).
+  balance register (CGST 56(2)). **Design decided 2026-09-24: server-side atomic** (`recordDelta` /
+  `recordOperation` write server-built `stock_movements` rows in the same transaction; `stock_movement`
+  is closed to every client endpoint). Slices S1 server, S2 client wiring, S3 `sale` via `completeOrder`
+  (after C-3 Phase 3), S4 register report. Only S1 is planned. The old client-side branch
+  `feature/p1-stock-movement-taxonomy` is obsolete (stale, non-atomic): never rebase it, re-apply by hand.
+  Spec `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plan
+  `plans/2026-09-24-p1-server-side-stock-movements-s1.md`.
 - **P2** Tax-identity fields: HSN (4/6/8-digit) on products; GSTIN on supplier/customer/tenant
   (client-only, run parallel to P0).
 - **P3** Legal docs & acceptance: ToS, Privacy Policy, DPA + versioned accept-record.
@@ -578,7 +584,7 @@ identifier is unset (never true for a real launch); `tst_OutboxStore.qml`
 gained the actual regression test that proves it (fails without the fix, not just documents intent).
 **Scope**: Cloud Functions (`functions/` — exists, see Key Files below), `FIRESTORE_RULES.md` +
 `firestore.rules`, ledger stores (`TransactionStore`, `StockBatchStore`; `AuditLogStore` /
-`StockMovementStore` are still future P1 work, not yet created), all five working-tier stores
+`StockMovementStore` are still future P1 work, not yet created; P1's ledger rows are written server-side, see the P1 roadmap bullet above), all five working-tier stores
 (`InventoryStore`, `StockBatchStore`, `OrdersStore`, `StaffStore`, `SupplierStore` — all migrated
 to the gateway as of 2026-07-11), and the compliance design spec.
 

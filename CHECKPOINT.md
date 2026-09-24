@@ -1,9 +1,9 @@
-# CHECKPOINT — 2026-09-24: compliance reassessment + P1 branch triage (docs only, no code)
+# CHECKPOINT — 2026-09-24: compliance reassessment, P1 design (server-side atomic) + S1 plan (docs only, no repo code)
 
 **Branch:** `docs/2026-09-24-compliance-reassessment`, cut from `main` @ `2c1e5f6`
 **Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-21-atomic-operation-outbox-phase2-CHECKPOINT.md`
 (C-3 arc; its step 13 is still open: Phase 3 not started).
-**Skills invoked by Taher:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `ponytail:ponytail`. Caveman FULL.
+**Skills invoked by Taher:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `ponytail:ponytail`. Also used: `superpowers:writing-plans`. Caveman FULL.
 **Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT comes from chat, never stored in repo/config/memory.
 **Constraints this session:** no app build/run; no Qt in sandbox (CI is the QML test oracle); short scope per session
 (multi-account, token-limited); push without asking, review happens in the GitHub PR.
@@ -39,10 +39,21 @@ Grep-based on `main` @ `2c1e5f6` plus the P1 branch's own checkpoint.
 - [x] 1. Cloned repo, read spec, status, P1 checkpoint, C-3 checkpoint. Read skills: brainstorming, qt-qml, ponytail.
 - [x] 2. Trial rebase of P1 onto `main`: fails semantically at commit 4/10 (above). Aborted. Old remote branch untouched.
 - [x] 3. Wrote this reassessment (docs only: no test plan needed, no code changed).
-- [ ] 4. **Waiting on Taher: decision Q1** (how movements get written; options below).
-- [ ] 5. After Q1: brainstorm remaining design questions one at a time, write spec `docs/superpowers/specs/2026-09-24-p1-stock-movement-atomic-design.md`, get approval, then plan (`superpowers:writing-plans`).
+- [x] 4. Taher chose **B** (server-side atomic) and asked to finish the docs, merge them, and implement in a new session on a new branch.
+- [x] 5. Wrote spec (D1-D10, slices S1-S4, open questions Q1-Q4, risks R1-R3), S1 plan (5 tasks, code embedded), test plan (standard format, index row).
+      Decisions D2-D10 were taken by me and are written for review; **merging this PR = approving them**. Everything in the plan was run in a scratch
+      copy of `functions/` from `main` and replayed step by step: 281/281 (232 existing + 49 new), new `lib/` files 100% line, 10/10 mutations caught.
+- [x] 6. AGENTS.md (P1 bullet + scope line) and README.md (one update paragraph) refreshed. `SKILLS.md` untouched (append-only; no new numbered lesson yet).
+- [ ] 7. PR for this branch: CI green, then merge (Taher asked me to get it merged).
+- [ ] 8. **Next session (new branch off `main`):** implement S1 by following `plans/2026-09-24-p1-server-side-stock-movements-s1.md` task by task
+      (`cd functions && npm ci` first). Then Taher deploys functions to dev and runs the on-device checklist. S2 planning only after that.
 
-## Q1 options (recommendation: B, sliced)
+## Next-session start-up
+
+Read this file, the spec section 3 and the plan header. Do not rebase or force-push `feature/p1-stock-movement-taxonomy`. Nothing to grill Taher on
+before S1 except the review of D2-D10; open questions Q1-Q4 belong to S2-S4.
+
+## Q1 options (decided: B)
 
 - **A. Client-side second write** (old branch's way): `StockMovementStore.recordMovement` after each stock change.
   Cheap, QML-only. But not atomic with the stock change: crash/offline/kill between the two writes leaves stock changed with no ledger row,
@@ -57,4 +68,4 @@ S4 opening/closing register report.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, ask Taher for Q1 if unanswered. Do not force-push or rebase `feature/p1-stock-movement-taxonomy`. No build/run.
+Fresh session: clone, read this file, then follow step 8. Do not force-push or rebase `feature/p1-stock-movement-taxonomy`. No build/run.
