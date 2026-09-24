@@ -342,6 +342,11 @@ App {
             // never replay under the next account.
             Gateway.clear()
             LockManager.clear()
+            // Same reasoning as Gateway.clear() above, for pending photo uploads
+            // specifically (2026-09-21 photos feature) -- a real gap found during
+            // review: PhotoQueue.clear() existed but was never wired into sign-out,
+            // so a queued photo would have replayed under the next signed-in account.
+            PhotoQueue.clear()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }

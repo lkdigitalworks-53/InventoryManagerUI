@@ -77,6 +77,14 @@ QtObject {
             }
         }
         _refresh()
+        // Real bug found in review: without this, any item persisted from a previous session
+        // just sits loaded-but-frozen forever unless something ELSE happens to call
+        // _reschedule() first (a fresh enqueue, or AuthService.isOnline transitioning
+        // false->true -- which never fires if the app opens already online). This is exactly
+        // the "survive app close" requirement (design spec) silently not holding. enqueue()
+        // itself already calls _reschedule() for the item it just added -- app start needs the
+        // same call for whatever was already there.
+        _reschedule()
     }
 
     function _save() {
@@ -161,6 +169,14 @@ QtObject {
 
     function drainNow() {
         if (PQL.isBreakerOpen(_breaker, Date.now())) { _reschedule(); return }
+        // Kick off a token refresh if one's needed, once per drain pass (not per item) -- same
+        // placement as Gateway.drainNow(). Without this, an item stuck on a stale/missing idToken
+        // (the "not signed in / token not ready yet" branch in _upload() below) would only ever
+        // get unstuck by something ELSE happening to refresh AuthStore.idToken first; this is a
+        // real gap the design said would exist ("mirrors Gateway._send's ... idToken-not-ready
+        // guard") but the first draft of this function never actually called it.
+        if (typeof AuthService !== "undefined" && AuthService)
+            AuthService.ensureFreshToken()
         var candidates = drainCandidates(Date.now())
         for (var i = 0; i < candidates.length; ++i) _upload(candidates[i])
     }

@@ -29,7 +29,6 @@ Item {
     property int tileSize: 72
 
     signal addPhotoRequested()
-    signal photoRemoved(string photoId)
     signal removeFailed(string photoId, string error)
 
     implicitHeight: strip.implicitHeight
@@ -68,7 +67,6 @@ Item {
                 for (var i = 0; i < root.photoIds.length; ++i)
                     if (root.photoIds[i] !== photoId) remaining.push(root.photoIds[i])
                 InventoryStore.applyPhotoIds(root.productId, remaining, photoId, "remove")
-                root.photoRemoved(photoId)
             } else {
                 root.removeFailed(photoId, err)
             }
@@ -97,6 +95,8 @@ Item {
                     anchors.fill: parent
                     anchors.margins: dp(2)
                     source: root._thumbUrl(modelData)
+                    sourceSize.width: root.tileSize
+                    sourceSize.height: root.tileSize
                     fillMode: Image.PreserveAspectCrop
                     cache: true
                     asynchronous: true
@@ -153,6 +153,8 @@ Item {
                     anchors.fill: parent
                     anchors.margins: dp(2)
                     source: "file://" + modelData.mainFilePath
+                    sourceSize.width: root.tileSize
+                    sourceSize.height: root.tileSize
                     fillMode: Image.PreserveAspectCrop
                     cache: false
                     asynchronous: true

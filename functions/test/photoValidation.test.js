@@ -37,3 +37,33 @@ test('rejects a PNG magic-byte buffer (wrong format, not just "not JPEG garbage"
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   assert.deepEqual(validateImage(png, { maxBytes: 1_500_000 }), { ok: false, code: 'invalid-image' });
 });
+
+const { isSafePathSegment } = require('../lib/photoValidation');
+
+test('isSafePathSegment: accepts a normal minted photoId', () => {
+  assert.equal(isSafePathSegment('photo-1758499200000-482913'), true);
+});
+
+test('isSafePathSegment: accepts a normal numeric productId', () => {
+  assert.equal(isSafePathSegment('1042'), true);
+});
+
+test('isSafePathSegment: rejects a value containing a slash (path-segment injection)', () => {
+  assert.equal(isSafePathSegment('other-tenant/inventory/real-id'), false);
+  assert.equal(isSafePathSegment('/absolute'), false);
+  assert.equal(isSafePathSegment('trailing/'), false);
+});
+
+test('isSafePathSegment: rejects a value containing ".." (traversal)', () => {
+  assert.equal(isSafePathSegment('..'), false);
+  assert.equal(isSafePathSegment('foo..bar'), false);
+});
+
+test('isSafePathSegment: rejects empty, non-string, and oversized values', () => {
+  assert.equal(isSafePathSegment(''), false);
+  assert.equal(isSafePathSegment(null), false);
+  assert.equal(isSafePathSegment(undefined), false);
+  assert.equal(isSafePathSegment(42), false);
+  assert.equal(isSafePathSegment('x'.repeat(201)), false);
+  assert.equal(isSafePathSegment('x'.repeat(200)), true);
+});

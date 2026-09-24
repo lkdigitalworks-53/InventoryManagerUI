@@ -990,6 +990,10 @@ exports.uploadProductPhoto = functions.onRequest(
             send(res, 400, { ok: false, error: "invalid-request" });
             return;
         }
+        if (!PhotoValidation.isSafePathSegment(productId) || !PhotoValidation.isSafePathSegment(photoId)) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
 
         const ctx = await deriveContext(db, actorUid);
         if (!ctx) {
@@ -1121,6 +1125,10 @@ exports.deleteProductPhoto = functions.onRequest(
         const photoId = String(body.photoId || "");
         const requestId = String(body.requestId || (photoId ? "del-" + photoId : ""));
         if (!productId || !photoId || !requestId) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+        if (!PhotoValidation.isSafePathSegment(productId) || !PhotoValidation.isSafePathSegment(photoId)) {
             send(res, 400, { ok: false, error: "invalid-request" });
             return;
         }
