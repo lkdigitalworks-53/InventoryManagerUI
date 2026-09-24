@@ -125,7 +125,12 @@ exports.recordMutation = functions.onRequest(
         // is scoped to staff/delete only; recordMutation has no general
         // per-entity/action authorization matrix yet (tracked separately,
         // KNOWN-ISSUES.md).
-        if (validated.entity === "staff" && validated.action === "delete"
+        // The removed_staff tombstone is only ever written as part of a staff
+        // delete (StaffStore.deleteStaff), so it carries the same restriction:
+        // otherwise a low-privilege token could burn staff ids or plant names.
+        const isStaffDelete = validated.entity === "staff" && validated.action === "delete";
+        const isStaffTombstone = validated.entity === "removed_staff";
+        if ((isStaffDelete || isStaffTombstone)
                 && ctx.role !== "owner" && ctx.role !== "admin") {
             send(res, 403, { ok: false, error: "role-not-allowed" });
             return;

@@ -123,6 +123,25 @@ one exception).
 
 Design: `docs/superpowers/specs/2026-09-21-staff-delete-ui-design.md`.
 
+### Follow-up found on-device, fixed on the same branch (2026-09-25): a deleted staff member's name vanished from history
+
+Taher's on-device pass of PR #80 found what the "resolved" note above missed: orders and sale events keep only
+a `staffId`, and every display path re-looked it up in the live roster. After a delete, the order detail
+showed "Sold by (none)", the exported Orders sheet had a blank Staff column, and Sales Analysis showed a bare
+"(removed)". Worse, `OrderDetailDialog`'s picker only offered *active* staff, so opening and saving such an
+order **silently cleared `staffId`** (same for staff on leave / suspended), and re-adding a staff member with
+the same name made the old order read as the new person's. The test plan's original case 8 had asserted the
+blank/"(removed)" outcome was fine — an assumption from reading code, never exercised; corrected.
+
+Fix: a `removed_staff` tombstone `{staffId, name, removedAt}` written through the Gateway when a staff
+record is deleted, one resolver (`StaffStore.displayName` → `Name (removed)`) for the picker, export and
+analysis, `nextStaffId` refuses a tombstoned id, and the picker keeps the order's current attribution
+selectable. See test plan section 5 and Skill 70. **Still open:** orders attributed to a member deleted
+*before* this fix have no tombstone (test data only — there was no delete UI before PR #80); a tombstone
+freezes the name at deletion time; a low-priority follow-up would be to also stamp `staffName` on
+orders/events at write time (the same schema-level change DELETE-FEATURE-ROADMAP item 3 describes for
+products) if history must survive without the tombstone collection.
+
 ---
 
 ## Security: `recordMutation` has no server-side role check for any entity/action except staff/delete

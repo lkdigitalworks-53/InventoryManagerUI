@@ -908,8 +908,9 @@ App {
         var out = []
         for (var i = 0; i < src.length; ++i) {
             var o = JSON.parse(JSON.stringify(src[i]))
-            var st = o.staffId ? StaffStore.getById(o.staffId) : null
-            o.staffName = st ? st.name : ""
+            // Live name, or the deleted member's tombstoned name suffixed
+            // "(removed)" — never blank for a real attribution.
+            o.staffName = StaffStore.displayName(o.staffId)
             var lines = o.products || []
             for (var j = 0; j < lines.length; ++j) {
                 var inv = lines[j].productId ? InventoryStore.getById(lines[j].productId) : null

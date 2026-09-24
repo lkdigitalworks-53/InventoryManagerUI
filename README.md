@@ -766,6 +766,18 @@ every other entity/action still has no server-side role check, tracked as its ow
 rather than fixed piecemeal here. See SKILLS Skill 68 and
 `docs/superpowers/specs/2026-09-21-staff-delete-ui-design.md`.
 
+**Update 2026-09-25 (deleted staff keep their name in history):** on-device testing of the staff delete button
+showed that deleting a staff member blanked their name from their orders (order detail, exported sheet, Sales
+Analysis) and that opening + saving such an order silently cleared its attribution. Deleting a staff member now
+writes a small `removed_staff` tombstone (`{staffId, name, removedAt}`) through the Gateway; the order picker,
+the orders export and the Sales Analysis "By staff" breakdown show `Name (removed)` for deleted members (so a
+removed "Ravi" and a newly-added "Ravi" never look or merge alike), and a deleted staff id is never re-issued.
+The `removed_staff` entity is owner/admin-only on the server. Test plan: section 5 of
+`docs/superpowers/test-plans/2026-09-21-staff-delete-ui-test-plan.md`; lesson: Skill 70 in `SKILLS.md`.
+**Deploy note:** this needs the Cloud Functions redeployed (`ENTITY_COLLECTIONS` + role check); until then the
+tombstone write is rejected (it retries with backoff and shows the stuck-write indicator; it does not block other
+writes) while the staff delete itself still works.
+
 **Update 2026-09-19 (writes stuck behind a server-side failure):** `Gateway._send`, `_sendBatch` and
 `_sendDelta` retried any failure that wasn't a recognised terminal case forever, with backoff and no signal
 to anyone, while the stores had already applied the change locally (`DELETE-FEATURE-ROADMAP` item 1). The

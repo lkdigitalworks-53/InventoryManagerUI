@@ -111,6 +111,39 @@ to `d6f74eb` (PR #78/#79 merged) before opening a PR.
   `DataModel`'s check was the only barrier. Systemic across every entity/action, not staff-specific — logged as
   its own KNOWN-ISSUES entry, fixed narrowly for staff/delete only.
 
+- [x] 12. **2026-09-25 — on-device finding from Taher on PR #80** (branch reused, same PR): deleting a staff
+      member blanked their name in the order detail and exported sheet; re-adding a same-name member made the
+      old order read as the new person's. Instruction: fix now, push to the same PR. Re-cloned, checked out
+      `feat/2026-09-21-staff-delete-ui`, commit identity `Taher (via Claude session) <dextran52@gmail.com>`.
+- [x] 13. Traced every reader of an order's `staffId`: `OrderDetailDialog._refreshStaff` (active-only picker ->
+      falls back to none -> **Save wipes `staffId`**), `Main._exportOrders` (`getById` -> blank),
+      `SalesPage._namedStaffMap` ("(removed)"). Orders/events store only the id; no name is kept anywhere.
+      Could NOT statically explain the same-id reuse Taher describes (counters/staff should be monotonic) —
+      so the fix guards it at the source instead of assuming a cause. Test plan case 8 (mine, PR #80) had
+      wrongly asserted blank/"(removed)" was fine; corrected.
+- [x] 14. Design decision (Taher said "just fix it", so decided here and recorded, not grilled): tombstone
+      `removed_staff/{staffId} = {staffId,name,removedAt}` via Gateway, one resolver `StaffStore.displayName`,
+      `Name (removed)` suffix, burned-id guard in `nextStaffId`, `StaffPicker.js`. Rejected: stamping
+      `staffName` on every order/event (only protects new records, 8+ write sites), soft-delete of the staff
+      doc (roster filtering everywhere + keeps PII after a delete).
+- [x] 15. Server: `removed_staff` in `ENTITY_COLLECTIONS` + owner/admin role check (same as staff delete);
+      `Gateway._collections` mirrored. Functions tests +6, run for real (243 local Node-22 count, 0 fail);
+      reverting the role check fails exactly the 2 refusal tests.
+- [x] 16. Client: `StaffStore` (tombstones, `nameOf`/`displayName`/`isRemoved`, `_seedMax`, `_isBurned`,
+      `_mergeRemoved`, sync, `clear()`, conflict handling), `StaffPicker.js`, `OrderDetailDialog`, `Main`
+      export, `SalesPage._namedStaffMap`.
+- [x] 17. QML tests written blind (no Qt in sandbox, standing rule): `tst_StaffStore_removedNames.qml` (29),
+      `tst_StaffPicker.qml` (16), inits of two existing files reset `removedNames`. Bracket balance checked;
+      `StaffPicker.build` exercised in Node. CI is the verdict.
+- [x] 18. Docs: test plan section 5 + on-device cases 16-24 + affected-areas rows, KNOWN-ISSUES follow-up,
+      roadmap item 2 note, Skill 70, AGENTS (rule: never raw-roster-lookup a staff name), README + deploy note.
+- [ ] 19. Commit + push to the PR branch; read CI; report to Taher.
+
+**Deploy order matters:** redeploy Cloud Functions with this change; before that the tombstone write gets a
+400 (retries with backoff, stuck-write indicator, does not block other writes) while the staff delete works.
+**Retest note for Taher:** the order/staff already deleted in his earlier test run has no tombstone — use a
+fresh staff member + order.
+
 ## Decisions (all answered)
 
 Q1 add the self-delete guard now. Q2 fix the server-side role check now too, scoped narrowly to staff/delete

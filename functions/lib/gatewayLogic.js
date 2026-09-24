@@ -16,7 +16,11 @@ const ENTITY_COLLECTIONS = {
     transaction: "transactions",
     order: "orders",
     staff: "staff",
-    supplier: "suppliers"
+    supplier: "suppliers",
+    // Tombstone of a hard-deleted staff record ({staffId, name, removedAt}) so
+    // orders/analysis that still point at the deleted staffId keep a name and
+    // the id is never re-minted. See StaffStore.deleteStaff.
+    removed_staff: "removed_staff"
 };
 
 const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];

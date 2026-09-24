@@ -3422,3 +3422,47 @@ all: it's now a confirmed fact, not a hypothesis, that this repo's CI-comment co
 bugs. Treat "CI says N" as the best available number, not an unquestionable one — which is exactly the
 hedged phrasing this skill and the corresponding test plan/checkpoint entries already used, rather than a
 flat "CI is right, the sandbox is wrong."
+
+---
+
+## Skill 70: Hard-deleting a record that history points at needs a name-keeping plan *and* an id-reuse guard — and "the test plan says it's fine" is not evidence
+
+**Symptom (found on-device, PR #80):** delete a staff member → their orders show no name in the order detail and
+the exported sheet; re-add a staff member with the same name → the old order looks like the new person's.
+
+**Root cause:** orders and sale events store only `staffId`. Every display path did a live roster lookup, which
+returns nothing the moment the record is hard-deleted. Two second-order bugs rode along: (1) the order picker
+listed only *active* staff, so an order whose staff was deleted / on leave / suspended opened on "none" and
+**saving silently wrote `staffId: ""`**; (2) nothing prevented a deleted id from ever being handed to a new
+hire, which would attribute the old member's whole history to them.
+
+**What went wrong in the process:** PR #80's first test plan (case 8) asserted "Sales Analysis and exports show
+'(removed)' / blank" as acceptable. That was inferred from reading `SalesPage._namedStaffMap` and never run;
+the order detail and export paths were not traced at all. A DELETE ticket must trace *every* reader of the id
+being deleted, not just the one already known to have a fallback.
+
+**Fix shape (chosen over stamping the name on every order/event):** a tombstone `{staffId, name, removedAt}` in
+its own `removed_staff` collection, written by `StaffStore.deleteStaff` through `Gateway.recordMutation`
+(offline-safe, queued *before* the delete so an interrupted sync can't strand the delete without it), merged
+(not replaced) into memory on sync, wiped on `clear()`. One resolver — `StaffStore.displayName(id)` — is used
+by every reader; deleted members render as `Name (removed)` so a removed and a new same-name member never
+merge in a by-name breakdown. `nextStaffId` treats a tombstoned id as burned and re-mints (bounded).
+`StaffPicker.build` always keeps the order's *current* attribution selectable. Why not snapshot the name on
+each order/event instead: it only protects records written after the fix, so every pre-existing order would
+still go blank on delete — exactly what a retest would hit; it also needs changes in 8+ write sites.
+Trade-off accepted: the name is frozen at deletion, and a tombstone written by a client is not authoritative
+history (server-side role check restricts it to owner/admin, same as staff delete).
+
+**Rules of thumb:**
+- Before shipping any delete of an entity other than a leaf, `grep` every reader of its id and test each one
+  with the record gone. A fallback in one reader says nothing about the others.
+- A picker that filters its options (active only) must still include the record's *current* value, or "open,
+  Save" becomes a silent data-wipe.
+- A monotonic counter is a policy, not a guarantee (a missing/reseeded counter doc goes backwards); guard the
+  invariant ("never reuse an id history points at") where the id is consumed.
+- A ledger-style collection written through the Gateway needs three edits kept in sync: `ENTITY_COLLECTIONS`
+  (`functions/lib/gatewayLogic.js`), `Gateway._collections`, and — if the entity carries privilege — the
+  role check in `functions/index.js`.
+- Async singleton paths with no mock layer (`FirebaseService.mintCounterValue`): extract the decision into
+  pure functions (`_seedMax`, `_isBurned`, `_mergeRemoved`) and test those.
+

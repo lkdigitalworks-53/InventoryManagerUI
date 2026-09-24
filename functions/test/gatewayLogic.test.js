@@ -93,6 +93,16 @@ test("validateMutationRequest resolves staff to the staff collection", () => {
     assert.equal(result.collection, "staff");
 });
 
+test("validateMutationRequest resolves removed_staff to the removed_staff collection", () => {
+    const result = GatewayLogic.validateMutationRequest(validBody({ entity: "removed_staff", action: "create" }));
+    assert.equal(result.ok, true);
+    assert.equal(result.collection, "removed_staff");
+});
+
+test("ENTITY_COLLECTIONS keeps removed_staff distinct from staff (a tombstone must never overwrite a live record)", () => {
+    assert.notEqual(GatewayLogic.ENTITY_COLLECTIONS.removed_staff, GatewayLogic.ENTITY_COLLECTIONS.staff);
+});
+
 test("validateMutationRequest resolves supplier to the suppliers collection", () => {
     const result = GatewayLogic.validateMutationRequest(validBody({ entity: "supplier" }));
     assert.equal(result.ok, true);

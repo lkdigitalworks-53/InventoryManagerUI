@@ -19,6 +19,7 @@ TestCase {
 
     function init() {
         StaffStore.staff = []
+        StaffStore.removedNames = ({})
         Gateway.mode = "gateway" // queues into OutboxStore rather than a live send/direct write
         OutboxStore.clear()
         toastSpy.clear()

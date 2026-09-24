@@ -64,6 +64,52 @@ Tests that exist because of the defect or its adjacent findings, so a wrong fix 
 Not applicable: no rules change. (`firestore.rules`'s existing `members/{uid}` delete rules — the ones this
 session's trace read to find the self-delete lockout risk — are untouched.)
 
+## 5. Addendum (2026-09-25) — deleted staff lose their name in orders / exports / analysis
+
+**Found on-device by Taher while testing PR #80.** Deleting a staff member left their orders with no name in
+the order detail and in the exported sheet; re-adding a staff member with the same name made the old order
+look like it belonged to the new person in the order detail while the export said "unassigned". The original
+case 8 below claimed "(removed) / blank, confirm no crash" — that was an unverified assumption from reading
+`SalesPage`, not a tested behaviour, and it was wrong for the order detail and the export.
+
+**Root cause:** orders and sale events store only a `staffId`; every display path re-looked the id up in the
+live roster, which fails the instant the record is hard-deleted. `OrderDetailDialog`'s picker also listed only
+*active* staff, so it fell back to "none" and **saving the order silently wiped `staffId`** (same for staff on
+leave / suspended).
+
+**Fix:** a `removed_staff` tombstone `{staffId, name, removedAt}` written through the Gateway by
+`StaffStore.deleteStaff` (offline-safe, queued *before* the staff delete), merged back in on sync. One
+resolver (`StaffStore.displayName`) feeds the order picker, the orders export and the Sales Analysis by-staff
+breakdown; deleted members render as `Name (removed)` so a removed "Ravi" and a new "Ravi" are never
+confusable or merged. `nextStaffId` refuses to hand out a tombstoned id. Server: `removed_staff` added to
+`ENTITY_COLLECTIONS` and restricted to owner/admin like staff delete. `StaffPicker.js` keeps the order's
+current attribution selectable.
+
+**Automated coverage added**
+- `tests/tst_StaffStore_removedNames.qml` (new, 29 cases): name resolution (live / removed / empty-name /
+  unknown / live-beats-stray-tombstone / same-name new hire), `deleteStaff` tombstone + queue order + no-op on
+  unknown id + double delete, conflict handling (rejected delete drops the tombstone, no-`current` keeps it,
+  update conflict and `removed_staff` conflict ignored), `_seedMax` / `_isBurned` (incl. prototype-name
+  keys), `_mergeRemoved` (local wins, junk/null tolerated), `clear()`, and a seeded monkey test (60 random
+  deletes over 30 members incl. same-name members).
+- `tests/tst_StaffPicker.qml` (new, 16 cases): active-only, current attribution preserved for deleted / on
+  leave / suspended / unknown ids, null/empty/no-opts inputs, legacy `id` field, 200-round seeded monkey.
+- `functions/test/gatewayLogic.test.js` (+2) and `index.handlers.test.js` (+4): `removed_staff` resolves to its
+  own collection; refused for manager and staff, allowed for admin and owner; re-create of an existing
+  tombstone is a 409 (first name wins).
+- Existing `tst_StaffStore_delete.qml` / `tst_DataModel_deleteGuards.qml` inits now reset `removedNames`.
+- Functions run for real in the sandbox (243 local Node-22 count, 0 fail); reverting the server role check
+  makes exactly the 2 refusal tests fail (TDD-confirmed). QML: CI only.
+
+**Not covered by automation (Felgo `App` root / async network):** `Main._exportOrders`, `SalesPage.
+_namedStaffMap`, `OrderDetailDialog` wiring, and the async mint-skip loop in `nextStaffId` (no mock layer for
+`FirebaseService.mintCounterValue`; its two pure halves are covered). On-device cases 16-24 below.
+
+**Known limits (deliberate):** orders/events *already* attributed to a staff member deleted **before** this
+fix have no tombstone and stay unnamed ("(removed)" in analysis, "Sold by (removed)" in the picker) — there
+was no delete UI before PR #80, so this should be test data only. A tombstone keeps the *name at deletion*;
+it does not follow later renames because the member no longer exists.
+
 ## What was genuinely run
 
 - **QML, `tests/`:** no Qt toolchain in the sandbox (standing instruction) — CI is the verdict. Result on
@@ -116,9 +162,10 @@ is the only coverage for the actual button render, tap behaviour, and the toasts
 
 ### Edge Cases
 
-8. Delete a staff record that has open orders referencing it (`staffId` on an order): the order keeps showing
-   the staff member's name in history (already handled elsewhere — Sales Analysis and exports show "(removed)"
-   / blank, confirm no crash or blank row here specifically).
+8. Delete a staff record that has orders referencing it (`staffId` on an order): the order detail, the
+   exported Orders sheet and Sales Analysis "By staff" all keep the name, shown as `Name (removed)`. **(Corrected
+   2026-09-25 — this case previously asserted blank/"(removed)" was acceptable; see section 5.)** See cases
+   16-24.
 9. Delete a staff member with `status: "on leave"` or `"inactive"`: the button is visible and works regardless
    of status (deliberate, matches orders/products — no per-row status gating).
 10. Tap the delete button on a row and confirm it does not also open the staff detail dialog (`viewStaffClicked`
@@ -135,6 +182,30 @@ is the only coverage for the actual button render, tap behaviour, and the toasts
 | `qml/model/StaffStore.qml` `deleteStaff`, `_onMutationConflicted` | `tst_StaffStore_delete.qml` | cases 2, 7 |
 | `qml/Main.qml` `onStaffDeleted` toast | none (Felgo `App` root) | case 2 |
 | `functions/index.js` role check | `index.handlers.test.js` (run for real, 200/200) | case 6 |
+| `qml/model/StaffStore.qml` tombstones, `nextStaffId` guard | `tst_StaffStore_removedNames.qml` | cases 16, 20, 21, 23, 24 |
+| `qml/helper/StaffPicker.js` + `OrderDetailDialog.qml` | `tst_StaffPicker.qml` (wiring: none, Felgo-free but dialog-hosted) | cases 16, 17, 22 |
+| `qml/Main.qml` `_exportOrders` | none (Felgo `App` root) | case 18 |
+| `qml/pages/SalesPage.qml` `_namedStaffMap` | none (Felgo) | cases 19, 20 |
+| `functions/lib/gatewayLogic.js` + `functions/index.js` (`removed_staff`) | `gatewayLogic.test.js`, `index.handlers.test.js` | case 23 |
+
+### Deleted-staff history (section 5) — cases 16-24
+
+16. Create an order sold by staff "Ravi" (create it *after* installing this build, and also test with an
+    order created before). Delete Ravi. Open the order: the "Sold by" combo shows **Ravi (removed)**, not
+    "Sold by (none)".
+17. Without touching anything else, tap Save on that order: reopen it — still **Ravi (removed)**
+    (regression for the silent attribution wipe).
+18. Export Orders: the Staff column reads `Ravi (removed)`, not blank / "unassigned".
+19. Sales Analysis → Sold/Revenue/Profit "By staff": a `Ravi (removed)` row with the right totals.
+20. Add a **new** staff member also named "Ravi". The old order still shows `Ravi (removed)`; the new
+    member shows plain `Ravi`; the export and analysis list them as two different rows.
+21. Assign a new order to the new Ravi: it must appear under `Ravi`, never under `Ravi (removed)`.
+22. Put a staff member on leave (or suspend) and open one of their orders: their name stays selected in the
+    picker and saving keeps the attribution.
+23. Offline: turn the network off, delete a staff member, restart the app, go online: the tombstone syncs
+    and the name is still there.
+24. Two devices: delete on device A, pull to refresh on device B: B shows `Name (removed)` too. Sign out and
+    in as a different tenant: no names from the previous tenant.
 
 ### Regression Tests (manual counterpart)
 

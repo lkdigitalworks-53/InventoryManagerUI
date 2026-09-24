@@ -128,7 +128,8 @@ QtObject {
         "transaction": "transactions",
         "order": "orders",
         "staff": "staff",
-        "supplier": "suppliers"
+        "supplier": "suppliers",
+        "removed_staff": "removed_staff"
     })
 
     property var _drainTimer: null

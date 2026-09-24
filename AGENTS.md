@@ -158,7 +158,7 @@ collections and zeroes product stock).
   Functions and the locked Firestore rules are deployed and confirmed working (per Taher) —
   `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry.
   `recordMutation` also has one narrow, entity/action-specific server-side role check
-  (staff/delete requires owner or admin, 2026-09-21) — every other entity/action still relies on the
+  (staff/delete and the `removed_staff` tombstone entity require owner or admin, 2026-09-21 / 2026-09-25) — every other entity/action still relies on the
   client's own role check only; see `KNOWN-ISSUES.md`
   atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
   the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
@@ -414,7 +414,7 @@ QtObject {
 - `qml/model/OrdersStore.qml`
 - `qml/model/InventoryStore.qml`
 - `qml/model/SalesStore.qml` — KPIs are **derived** from OrdersStore (net revenue, completed-only); no persisted tally (see SKILLS Skill 28)
-- `qml/model/StaffStore.qml`
+- `qml/model/StaffStore.qml` — also owns the `removed_staff` tombstones (`removedNames`, `nameOf` / `displayName` / `isRemoved`): **any reader that shows a staff name from an order/event `staffId` must go through `StaffStore.displayName`, never a raw roster lookup** (deleted members would go blank — Skill 70); `qml/helper/StaffPicker.js` builds the order "Sold by" picker
 - `qml/model/SupplierStore.qml`, `qml/model/StockBatchStore.qml`, `qml/model/TransactionStore.qml`
 - `qml/model/OrderChannelStore.qml`, `qml/model/CategoryStore.qml` — Firestore-backed `config/*` singleton documents (not paginated collections — a single doc has no List-Documents truncation risk)
 - `qml/model/ActivityLog.qml` — Firestore-backed (`activity_log`), re-synced on login

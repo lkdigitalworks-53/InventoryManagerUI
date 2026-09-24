@@ -177,6 +177,43 @@ test("recordMutation: the staff role check is scoped to staff/delete -- an ORDER
     assert.equal(res.statusCode, 200);
 });
 
+test("recordMutation: removed_staff tombstone create refused for a non-owner/admin role -> 403 role-not-allowed", async () => {
+    // The tombstone is written only as part of a staff delete, so it carries
+    // the same owner/admin restriction (see functions/index.js).
+    seedHappyPathAuth(mockState, { role: "manager" });
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: validMutationBody({ entity: "removed_staff", entityId: "S-1", action: "create", before: null, after: { staffId: "S-1", name: "Ravi" } }) }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(jsonBody(res).error, "role-not-allowed");
+});
+
+test("recordMutation: removed_staff tombstone create refused for the staff role", async () => {
+    seedHappyPathAuth(mockState, { role: "staff" });
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: validMutationBody({ entity: "removed_staff", entityId: "S-1", action: "create", before: null, after: { staffId: "S-1", name: "Ravi" } }) }), res);
+    assert.equal(res.statusCode, 403);
+});
+
+test("recordMutation: removed_staff tombstone create succeeds for admin and owner", async () => {
+    for (const role of ["admin", "owner"]) {
+        seedHappyPathAuth(mockState, { role: role });
+        mockState.applyMutationResult = { ok: true };
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: validMutationBody({ entity: "removed_staff", entityId: "S-1", action: "create", before: null, after: { staffId: "S-1", name: "Ravi" } }) }), res);
+        assert.equal(res.statusCode, 200, role);
+        assert.equal(jsonBody(res).ok, true, role);
+    }
+});
+
+test("recordMutation: a tombstone re-create for an id that already has one surfaces as a 409 conflict (first name wins, never overwritten)", async () => {
+    seedHappyPathAuth(mockState, { role: "admin" });
+    mockState.applyMutationResult = { ok: false, status: 409, conflict: true, current: { staffId: "S-1", name: "Ravi" } };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: validMutationBody({ entity: "removed_staff", entityId: "S-1", action: "create", before: null, after: { staffId: "S-1", name: "Someone Else" } }) }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(jsonBody(res).conflict, true);
+});
+
 test("recordMutation: invalid entity -> 400 from validateMutationRequest, unmodified", async () => {
     seedHappyPathAuth(mockState);
     const res = mockRes();

@@ -41,6 +41,7 @@ TestCase {
         InventoryStore.products = []
         OrdersStore.orders = []
         StaffStore.staff = []
+        StaffStore.removedNames = ({})
         AuthStore.role = ""
         AuthStore.uid = ""
         errorSpy.clear()
