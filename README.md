@@ -295,13 +295,14 @@ endpoint against the Firestore emulator's real transaction semantics, including 
 once (exactly one wins) and concurrent retries of one request id (applied exactly once). Its results are
 written next to the QML ones (`results-recordOperation.xml`), so they are counted in the E2E check.
 
-**Update 2026-09-24 (design only, no code):** P1 stock movements (CGST 56(2)) will be written **server-side** inside
-`recordDelta` / `recordOperation` as `stock_movements` rows in the same transaction as the stock change (optional
-`movements` array; server stamps identity and time; signed quantities must sum to the applied stock delta), and the
-`stock_movement` entity will be closed to every client endpoint. Spec:
-`docs/superpowers/specs/2026-09-24-p1-server-side-stock-movements-design.md`; S1 (server) plan:
-`docs/superpowers/plans/2026-09-24-p1-server-side-stock-movements-s1.md`; test plan:
-`docs/superpowers/test-plans/2026-09-24-p1-stock-movements-test-plan.md`. Status of the compliance roadmap is in `CHECKPOINT.md`.
+**Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
+same transaction as every stock change on `inventory`: explicit `movements` on `recordDelta` (signed quantities must sum to the
+applied delta) or a server-derived default row (`adjustment`; `sale` inside `completeOrder`; `receipt` on create), so product create,
+edit, bulk import and delete cannot bypass the ledger. The `stock_movement` entity will be closed to every client endpoint and
+`MAX_BATCH_SIZE` / `Gateway.maxBatchSize` drop 200 -> 150. Everything is dev-only today. Spec:
+`docs/superpowers/specs/2026-09-24-p1-server-side-stock-movements-design.md`; plans (S1a, S1b):
+`docs/superpowers/plans/2026-09-24-p1-server-side-stock-movements-s1a.md` and `...-s1b.md`; test plan:
+`docs/superpowers/test-plans/2026-09-24-p1-stock-movements-test-plan.md`. Roadmap status is in `CHECKPOINT.md`.
 
 ## Qt Skills Cheat Sheet
 

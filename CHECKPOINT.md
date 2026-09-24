@@ -86,7 +86,7 @@ Skills: `superpowers:brainstorming`, `ponytail:ponytail-audit`, `qt-development-
   `firestore.rules` still lets any member write `inventory` directly (generic working-tier fallback; only ledger collections are locked, the comment in the rules file is stale).
   So S1 alone gives rows for restock/sale/return deltas but leaves create/edit/import/direct writes with no row.
 - [x] 11. (superseded by 13) Q0 asked with options A/B/C.
-- [ ] 11b. (old text) **Waiting on Taher: Q0** (options in chat: C staged = server rejects stock changes on `recordMutation` for `inventory` after S2 + lock `inventory` in rules + variance tripwire in S4).
+- [x] 11b. Q0 answered (see 15). (options in chat: C staged = server rejects stock changes on `recordMutation` for `inventory` after S2 + lock `inventory` in rules + variance tripwire in S4).
 - [ ] 12. Then Q1-Q4 (spec section 7) one at a time; then update spec/plan, PR, merge; then implement S1 in a new branch.
 - [x] 13. **New fact from Taher: everything is DEV only, no prod code published; tests = new tenant + user + new products/orders.** Consequences:
   earlier "production" framing was wrong (D10 backward compat, "would break prod", "live since 07-29" as prod); no backfill or migration needed;
@@ -95,3 +95,16 @@ Skills: `superpowers:brainstorming`, `ponytail:ponytail-audit`, `qt-development-
 - [x] 14. New option D for Q0: server derives a movement for ANY stock change on `inventory` in all four write paths (`recordDelta`, `recordMutation`,
   `recordMutationsBatch`, `recordOperation`): client may supply `movements` (kind picker), else the server derives a default (create => `receipt`,
   whole-record edit / delete => `adjustment`, `completeOrder` => `sale`). No client path can forget a row. Waiting on Taher's pick (see chat list P1-P8).
+- [x] 15. **Taher's decisions:** P1 = D (server derives movements on every inventory write path) and split S1a/S1b; P2 keep `valueAtCost`, cut `batchRef`; P3 no role gating;
+  P4 no `opening_balance` kind (initial stock/import = `receipt`); P5 clamp solved by derived rows; P6 index in S4; P7 keep ops movements in S1a; P8 delete `direct` mode + `runCutover` (in S2).
+- [x] 16. Planning completed and verified in a scratch copy of `functions/` (main @ `6da373d`), replayed step by step: S1a 291/291 (232 existing, 3 re-expected on purpose, + 59 new);
+  S1a+S1b 313/313 (+22 new); new/changed lib files 100% line; 12 deliberate mutations caught; the replay caught one real bug (batch derive read the doc after writing it in the fake; fixed to use `item.before`).
+  NOT verified: QML/e2e edits in S1b Task 5 (CI only).
+- [x] 17. Docs rewritten: spec rev 2 (D1-D13), `plans/...-s1a.md` (renamed from `...-s1.md`), `plans/...-s1b.md`, test plan (S1a+S1b), README index row, AGENTS.md P1 bullet, README paragraph.
+- [ ] 18. PR for `docs/2026-09-24-p1-open-questions`: CI green, merge (Taher: "complete the planning").
+- [ ] 19. **Next session: implement S1a** on a new branch off `main` by following `plans/2026-09-24-p1-server-side-stock-movements-s1a.md` task by task (`cd functions && npm ci`; run tests with `node --test`).
+  Then Taher deploys functions to dev and runs the S1a on-device checklist. Then S1b (its own session). S2 planning only after S1b's checklist passes.
+
+## Resume instructions (rev 2)
+
+Read this file, then spec sections 3-4 and the S1a plan header. Do not rebase or force-push `feature/p1-stock-movement-taxonomy`. Nothing left to grill Taher on before S1a. No build/run.
