@@ -143,3 +143,51 @@ Force-pushed.
 - Confirm the bucket name/region assumptions (`inventorymanager-48392.firebasestorage.app`,
   `asia-south1`) still match the Firebase console.
 - Review PR #84 on GitHub; CI is the first real test run for everything QML/native/rules-emulator.
+
+## Review sweep (2026-09-25): requesting-code-review + ponytail-review + qt-qml-review
+
+No subagent-dispatch tool available in this environment, so the review was done directly rather
+than via the skills' own dispatched-subagent flow -- same checklists, applied by hand.
+
+- **qt-qml-review's linter**, run against only the lines this PR actually added (diff-filtered, not
+  whole files -- these are large pre-existing files). 205 raw findings, all but one were false
+  positives *for this codebase specifically*, verified against real precedent rather than assumed
+  (var-everywhere, no `id: root` in any of 73 existing test files, dot-notation anchors, `property
+  var` for list-shaped state, `Qt.createQmlObject` as the Skill-20 timer workaround Gateway.qml
+  itself already uses, and a linter regex bug on `!==`/`===` mistaken for loose equality). One real
+  fix applied: `sourceSize` added to both `Image` elements in `ProductPhotoGallery.qml` (decoding
+  full-resolution photos into 72px tiles wastes memory on mobile).
+- **ponytail-review**: one real dead-code item -- `ProductPhotoGallery`'s `photoRemoved` signal was
+  emitted with zero listeners anywhere. Removed rather than inventing new Toast wiring nobody asked
+  for.
+- **Manual correctness pass** (requesting-code-review's lens) found **four real, independent bugs**,
+  none caught by this feature's own tests:
+  1. `PhotoQueue.clear()` existed but was never wired into sign-out -- a pending photo would have
+     replayed under the next signed-in account on a shared device. Wired into `Main.qml`'s sign-out
+     handler alongside `Gateway.clear()`/`LockManager.clear()`.
+  2. **Path-traversal gap**: `productId`/`photoId` from the request body went straight into a
+     Firestore path and a new Storage object path, unvalidated. Added
+     `PhotoValidation.isSafePathSegment()` (rejects `/`, `..`, empty, non-string, >200 chars),
+     wired into both `uploadProductPhoto` and `deleteProductPhoto` before either id touches
+     anything. 8 new tests.
+  3. `PhotoQueue` never actually called `AuthService.ensureFreshToken()`, despite the design saying
+     it would -- an item stuck on a stale token could stall indefinitely. Added to `drainNow()`,
+     matching `Gateway.drainNow()`'s exact placement.
+  4. **The most serious one**: `PhotoQueue._load()` (`Component.onCompleted` on every real app
+     launch) loaded persisted items but never called `_reschedule()` -- a photo queued in a
+     *previous* session just sat frozen forever unless something else happened to trigger a drain.
+     This silently broke "survive app close", which Taher stated explicitly as a requirement. Fixed.
+- `functions/` suite after all review fixes: **296/296, stable across 3 runs** (was 288 before this
+  pass). Two regression tests added for findings 3+4 in `tests/tst_PhotoQueue.qml` (not runnable
+  here, CI is the proof).
+
+## Second rebase (2026-09-25)
+
+`main` moved 3 more commits (a merged docs PR, #85) between the first rebase and pushing the review
+fixes, making PR #84 `dirty` again -- not something this session broke, ordinary drift. Rebased a
+second time onto the new tip. This time, to avoid repeating the earlier `--ours`/`--theirs` mistake,
+`CHECKPOINT.md`'s one conflict was resolved by capturing the file's known-good content *before*
+starting the rebase and forcing that exact content back at the conflict, rather than trusting
+git's merge-side semantics again. Verified byte-identical after. `functions/` suite re-run clean,
+296/296. Force-pushed. **PR #84: `mergeable: true`, `mergeable_state: unstable`** (GitHub's term
+for "mergeable, CI hasn't reported back yet" -- not a conflict) as of this push.
