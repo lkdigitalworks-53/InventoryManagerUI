@@ -1,187 +1,86 @@
-# CHECKPOINT — 2026-09-26: C-3 Phase 3 PR 2 (store hooks, Task 9) ready for review, Task 10 needs a design check-in
+# CHECKPOINT — 2026-09-26: Sales Analysis deleted-product breakdown labels (DELETE-FEATURE-ROADMAP item 3) — INVESTIGATION, awaiting decisions
 
-**Session date:** 2026-09-26 (continues the 2026-09-18/20/22 arc)
-**Branch:** `feat/2026-09-26-completion-store-hooks`, off `main` @ `277f246` (PR #83's merge commit — verified
-via `git merge-base`, not assumed)
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-22-atomic-operation-outbox-CHECKPOINT.md`
-**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>` (confirmed by Taher). PAT is
-supplied by Taher in chat each session and is never written to the repo, `.git/config`, or memory.
-**Spec:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md` (D1-D5 approved, on `main`).
-**Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md` (13 tasks, 3 phases, on `main`).
-**Test plan:** `docs/superpowers/test-plans/2026-09-20-atomic-operation-outbox-test-plan.md` (updated this
-session for Task 9 — see its own "Updated 2026-09-26" note).
+**Session date:** 2026-09-26
+**Branch:** `fix/2026-09-26-sales-analysis-deleted-product-labels`, off `main` @ `9be6303` (PR #80 merged, item 2 done).
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-21-staff-delete-ui-CHECKPOINT.md`
+**Skills invoked by Taher:** `superpowers:brainstorming` (design gate before code), `qt-development-skills:qt-qml`.
+Caveman mode FULL applies to chat replies only; repo docs and commits are normal prose.
+**Commit identity:** `Taher (via Claude session) <dextran52@gmail.com>`.
 
-## Where things actually stand (all live-checked, not assumed)
+## Standing instructions from Taher
 
-**Merged to `main`:** everything through #83 (Phase 3 PR 1 — Tasks 6-8: `OutboxStore`/`Gateway` transport).
-See the archived 2026-09-22 checkpoint for that history.
-
-**This session (not yet a PR at session start — opened partway through, see step log):** Task 9, the four
-store hooks the plan calls for, implemented against `main` re-read fresh (not the plan document's draft
-code, which was stale in two ways — see below):
-
-- `InventoryStore.applyRemoteStock(productId, stock)` — replaces stock, returns previous or `undefined`.
-- `StockBatchStore.applyRemoteQty(batchId, qty)` / `addLocalBatch(doc)` / `removeLocalBatch(batchId)`.
-- `OrdersStore.buildOrderUpdate(orderId, fields)` (pure half of `updateOrder`, no Gateway/local-state side
-  effects) / `applyRemoteOrder(doc)`.
-- `TransactionStore.buildSaleDocs(order, epoch, legacyIds)` (pure half of `recordSaleFromOrder`) /
-  `addLocalEntries(docs)` / `removeLocalEntries(txIds)`.
-
-56 new tests across 4 new files (`tst_InventoryStore_applyRemote.qml` 9, `tst_StockBatchStore_applyRemote.qml`
-12, `tst_OrdersStore_buildOrderUpdate.qml` 15, `tst_TransactionStore_buildSaleDocs.qml` 20). **Verified in CI,
-1356/1356 green** (PR #87) — one genuine test bug caught and fixed along the way (see step 20c/20d below), so
-the hand-tracing-before-push discipline this arc uses is not a substitute for CI, just a way to keep the
-false-positive rate low before it runs.
-
-**Two real findings from re-reading live code instead of trusting the plan draft:**
-
-1. `OrdersStore._normalizeOrder` returns a fixed-field object literal — it does NOT carry unknown fields
-   through. The plan's Task 9 draft set `o.completionEpoch` and assumed it would just persist; it would have
-   been silently dropped by the very next `_clone()`/normalize pass (every `updateOrder` call, every sync),
-   which would have broken the deterministic-key mechanism Task 10 depends on in a way that's easy to miss in
-   review (works once, then quietly stops). Fixed `_normalizeOrder` (and `_normalizeOrders`, the
-   Firestore-sync path, for consistency) to carry `completionEpoch` through. Added
-   `test_completionEpoch_survives_an_unrelated_updateOrder_call` specifically to pin this — same lesson as
-   Task 7 finding the `signal.connect()` disconnect-handle bug, and the CAS shape-mismatch lesson already in
-   `docs`/memory: a field-list mismatch between construction paths is the recurring failure mode in this
-   codebase.
-2. `TransactionStore.recordSaleFromOrder`'s `allocByProduct` lookup is keyed by `productId`, so two lines of
-   the *same* product in one order silently collide — the second line's `OrderMath.allocate` result
-   overwrites the first's in the map, and both lines then read the second line's tax/discount allocation.
-   Pre-existing, not introduced by extracting `buildSaleDocs` out of it, not previously covered by any test.
-   **Not fixed here** — fixing it is a GST-relevant behaviour change and deserves its own decision, not a
-   drive-by inside a refactor PR. Flagged in a code comment and to Taher directly.
-
-**Nothing calls these hooks yet.** `DataModel._tryCompleteOrder` still uses the old per-line delta chain.
-App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — that's Task 10.
+- Branch only, never `main`; push when a meaningful step is done without asking (Taher reviews in the GitHub PR).
+- Do not build or run the app; no Qt tooling in the sandbox; CI is the only signal for QML.
+- Every change: tests aiming at 100% coverage (unit, functional, rules, e2e, regression; happy path, negative, edge,
+  multi-scenario, monkey), a test plan from the template, and `SKILLS.md` / `AGENTS.md` / `README.md` updated as needed.
+- Honest advisor: show trade-offs, grill before deciding, do not simply agree. Ask before deciding anything on this
+  ticket specifically — do not assume scope.
+- The GitHub PAT is used for `git push` and the PR API only; never written into the repo.
+- Session-token-budget model: Taher runs sessions from multiple claude.ai accounts; keep each session's scope small
+  enough to land a reviewable, resumable state in the remote branch before tokens run out.
 
 ## Step log (append-only; resume from the last ticked step)
 
-- [x] 1-18 (2026-09-18 through 2026-09-25): see the archived 2026-09-22 checkpoint for full detail — spec,
-      plan, test plan, Phases 1-2, and Phase 3 PR 1 (#83) through merge.
-- [x] 19. Taher's decision on Phase 3 PR 2 arrived as "start with next phase … pick up tasks immediately" —
-      read as: proceed with Task 9 (store hooks), the lower-risk, more mechanical half of PR 2, and hold
-      Task 10 for the design check-in already flagged in step 20 below rather than bundle both into one PR.
-- [x] 20a. Re-read all four target store files fresh on current `main` (not the plan draft) before writing
-      anything, per this file's own resume instructions. Found the two issues above.
-- [x] 20b. Implemented and tested all four Task 9 hooks (56 tests, see above). Updated the test plan's
-      "Store hooks" row and header note.
-- [x] 20c. Committed, pushed, opened as **PR #87** against `main`. CI ran: 1355/1356 passed first try —
-      `Functions Tests`, `Firestore Rules Tests`, `E2E Tests` all green; `QML Tests` failed exactly 1 of 1111,
-      per the `pr-comment` job's summary: `OrdersStore_buildOrderUpdate::test_completionEpoch_defaults_to_zero_when_absent`.
-      Real cause (test bug, not a store bug): `getById()` returns the raw stored object with no
-      normalization, and the test's raw fixture never set `completionEpoch`, so it read `undefined`, not the
-      store's `0` default (which only applies inside `_normalizeOrder`, i.e. after a `_clone()`). Fixed by
-      routing the fixture through `buildOrderUpdate` first, same as this file's other normalize-path tests.
-      This is the first PR in this arc where the "hand-traced, unproven until CI" caveat on every store-hook
-      test actually caught something — worth remembering next time that caveat is written off as boilerplate.
-- [x] 20d. Pushed the fix. **CI green: 1356/1356** (QML 1111, Functions 176, Firestore Rules 28, E2E 41).
-      PR #87 is genuinely CI-verified now, not just hand-traced. Task 9 is done and ready for Taher's review;
-      the PR has not been merged by this session (merging `main` is Taher's call per the standing rule of
-      never pushing to `main` without explicit instruction — that extends to merging a PR into it).
-- [ ] 21. **Before Task 10 (`DataModel._tryCompleteOrder` rewrite):** flagged again, more specifically now —
-      this is the optimistic apply/revert/re-plan logic, "has never run" per the plan's own self-review, and
-      is where a mistake would actually reach users (unlike Task 9's hooks, which nothing calls yet). Worth a
-      short design check-in with Taher first, specifically on: the re-plan bound (`maxReplans=3` in the plan
-      draft — still right?), whether "queued while offline" should show as `completed` to the user before the
-      server confirms, and how the guard interacts with `_reverseCompletedOrder`. Do not start Task 10 code
-      without that check-in. When it does start: re-read `DataModel.qml`'s current `_tryCompleteOrder` fully
-      first — same lesson as Task 7 and this session's Task 9 findings, the plan document's draft code for
-      Task 10 is written against an older, smaller version of that function.
-- [ ] 22. After PR 2: Phase 3 PR 3 (plan Task 11, the "saved, syncing" UI hint) and Task 12 (docs/tracker/
-      `SKILLS.md` sweep for the whole Phase 3 arc — check the current highest `SKILLS.md` number before
-      picking one; as of this session it's 70). Task 13 (deploy + on-device plan) is Taher's, throughout.
+- [x] 1. Read project notes (index, overview, ways-of-working, engineering-lessons, item-1 and item-2 area files)
+      and confirmed item 2 (`PR #80`) is merged into `main` — roadmap item 3 is next, per Taher's standing note
+      that each roadmap item is its own session.
+- [x] 2. Cloned repo fresh, created this branch, archived the previous checkpoint.
+- [x] 3. Read roadmap item 3 (`docs/superpowers/DELETE-FEATURE-ROADMAP.md`) and its origin write-up in
+      `KNOWN-ISSUES.md` ("Delete: Sales Analysis... Five other tabs' breakdown labels audited, not fixed").
+- [x] 4. Traced the actual code paths (findings below) — the roadmap/KNOWN-ISSUES text says the real fix needs a
+      "schema-level change across every write path," which is only half true once traced to source.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check live PR/CI state for whatever PR step 20c opens (or opens it,
-if this checkpoint was committed before that happened — check first, don't assume). Do not build or run the
-app until Taher asks. **Do not start Task 10** without the design check-in in step 21 having actually
-happened in the conversation. Before touching `DataModel.qml` for Task 10, re-read it fresh on current
-`main` — do not assume the plan document's draft code still matches reality (this session found two similar
-staleness issues in Task 9's supposedly-simpler files). `CHECKPOINT.md` conflicts are resolved by keeping the
-branch's version and archiving `main`'s copy under `docs/superpowers/specs/`.
+- **Affected surface**: `SalesPage.qml`'s `_breakdownByDimension()` (Purchased, Sold tabs; Revenue's `field` branch)
+  and `InventoryStore.realisedProfitByDimension()` → `RealisedMath.byDimension()` (Revenue tab's money aggregation,
+  Profit's Realised sub-mode) — five tabs total, matching the roadmap's list.
+- **`productId` → name breakdown ("(uncategorised)"-style bug, but for name)**: **not actually a missing-data
+  problem.** Every `TransactionStore` doc-creation function (`recordPurchase`, `recordSaleFromOrder`,
+  `recordCreated`, `recordCreatedMany`, `recordReturn`, `recordPriceAdjust`) already stamps `productName` onto the
+  entry at creation time — confirmed by reading each function body. The bug is purely on the **read side**:
+  `SalesPage._breakdownByDimension()` builds a fresh `productName` map from **live** `InventoryStore.products`
+  and passes that into `BreakdownMath.breakdown()`, ignoring the `productName` already sitting on each entry. A
+  deleted product's historical entries still carry their real name; the read path just doesn't use it.
+  → **This half is a small, contained, read-side fix. No schema change, no backend change, no backward-compat
+  question** — the data needed has existed on every entry since it was created.
+- **`productId` → category breakdown ("(uncategorised)" bug)**: **is** a real missing-data problem. Grepped every
+  `TransactionStore` doc shape — none of them has a `category` field. `RealisedMath.byDimension()` and
+  `SalesPage._breakdownByDimension()` both resolve category exclusively via live `categoryOf(pid)` →
+  `InventoryStore.getById(pid).category`, which returns nothing once the product is deleted. Fixing this for real
+  does mean adding a `category` field to every entry-creation call site — a genuine write-path change, exactly as
+  the roadmap says, but scoped to one field, not a rewrite.
+- **Write-path fan-out for the category stamp**, if done: `recordPurchase`, `recordSaleFromOrder`, `recordCreated`,
+  `recordCreatedMany`, `recordReturn`, `recordPriceAdjust` are the candidates — still need to confirm which of
+  these actually feed the five affected tabs' bucket walks (`recordFieldChange`/`recordStockAdjustment`/
+  `recordPhotoChange` look like pure audit-trail entries, not counted in Purchased/Sold/Revenue; not yet confirmed
+  either way).
+- **Historical entries**: any entry written before a category-stamping fix ships has no `category` field regardless
+  of the fix — old entries for an already-deleted product would still show "(uncategorised)" unless separately
+  backfilled. `KNOWN-ISSUES.md` has an existing, separate precedent of *declining* a backfill for a related delete
+  gap ("dev environment only; Firestore gets cleared and re-verified from scratch each time") — worth Taher's
+  explicit call here rather than assumed to carry over.
+- **Compliance-ledger angle**: `TransactionStore._push()` routes every entry through the "compliance gateway" for
+  an "immutable audit_log entry" (comment, `TransactionStore.qml`) — this codebase already treats transaction
+  records as point-in-time, append-only history (which is exactly why `productName` is stamped rather than
+  live-looked-up). Stamping `category` the same way — value at time of transaction, not "current/last-known" — is
+  consistent with that existing design and with how a product's category could legitimately change between a sale
+  and a later deletion. Flagging this as my recommendation, not assuming it.
 
----
+## Open questions for Taher (not yet decided — see chat)
 
-# CHECKPOINT (separate thread, different branch) — 2026-09-27: silent staff-credential-provisioning-failure — fixed, awaiting CI + on-device verification
+1. Scope this session: fix the **name** bug alone (read-side only, low risk, no write-path change) now, and take
+   the **category** bug (write-path change across several `TransactionStore` functions + a historical-gap
+   question) as its own separate session — or attempt both here.
+2. If category is stamped: at time-of-transaction (my recommendation, matches the existing immutable-ledger
+   design and how `productName` already works) or something else?
+3. Historical entries that predate the fix: leave as a documented, known gap (no backfill — precedent exists for
+   a related issue) or backfill?
 
-**This section is independent of the C-3 Phase 3 / Task 9-10 checkpoint above.** Different branch, no
-shared files (`AuthService.qml`/`Main.qml` here vs. `InventoryStore`/`StockBatchStore`/`OrdersStore`/
-`TransactionStore` there), does not touch Task 10 or its design-check-in gate. Appended rather than
-replacing the section above, per the "keep the branch version" conflict rule in ways-of-working — this way
-neither thread's history is lost regardless of merge order.
+## Not done yet
 
-**Session date:** 2026-09-27
-**Branch:** `fix/2026-09-27-silent-staff-provisioning-failure`, off `main` @ `66ffa4fbee3454a53901540a059354e767b85100`
-**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT supplied by Taher in
-chat this session; never written to the repo, `.git/config`, or memory.
-**Bug report (Taher, verbatim):** "in the team members page after adding new member as staff or any
-roles, if we press the team members view button, newly added member is not visible. Only owner is
-visible. Even after refresh nothing shows up."
-**Test plan:** `docs/superpowers/test-plans/2026-09-27-silent-staff-provisioning-failure-test-plan.md`
-
-## Where things stand
-
-Root cause found by tracing, not guessing (see the test plan's "Traced and ruled out" list for everything
-checked and cleared): `AuthService.provisionStaffCredentials` always runs asynchronously from `Main.qml`'s
-`onStaffAdded`, well after `AddStaffDialog` has already closed. Every failure branch inside it called
-`authFailed`, a signal `Main.qml` only ever surfaces into `inviteMemberDlg`/`forgotPasswordDlg` — neither
-of which is ever open during this flow. Every failure was therefore completely silent: the staff roster
-entry (`StaffStore.addStaff`) had already saved, so the add looked successful, but the person never got a
-`tenants/{tenantId}/members/{uid}` doc — what the Team Members dialog actually reads — and refreshing
-correctly found nothing, because there was nothing to find.
-
-**Fixed:** `qml/model/AuthService.qml` (all 6 failure branches in `provisionStaffCredentials` now emit
-`memberOperationFailed`) + `qml/Main.qml` (`onMemberOperationFailed` falls back to the existing
-`successMessage`→`Toast` bridge when neither relevant dialog is open). No Firestore rules change, no Cloud
-Function change — client-side signal-routing only.
-
-**Not yet known:** the actual underlying reason `provisionMember` was failing for Taher's specific repro
-(bad/duplicate email, password policy mismatch, something else). This fix makes that reason visible via a
-toast for the first time — the on-device retest (step 13 below) is what will surface it, if it's still an
-issue at all.
-
-**Docs updated this session:** `SKILLS.md` Skill 72 (new pattern: background async continuations whose
-failure signal is only conditionally surfaced need an unconditional fallback), `AGENTS.md` staff-row note
-(without overclaiming the unrelated delete-button gap is resolved), `docs/superpowers/test-plans/README.md`
-index. **`README.md` deliberately left untouched** — no user-facing feature, build step, or architecture
-changed; nothing there needed updating.
-
-## Step log
-
-- [x] 1. Cloned repo fresh; read `ways-of-working.md`/`overview.md`/`learnings.md` (project memory) and
-      `AGENTS.md`/`SKILLS.md`/`CHECKPOINT.md` per session-start convention.
-- [x] 2. Traced the bug (`/superpowers:systematic-debugging`, `/qt-development-skills:qt-qml`): ruled out
-      `FirebaseService.get`'s collection pagination/decoding, `MemberManagementDialog`'s role filter
-      (defaults to "all"), `firestore.rules`' `members` `allow read` rule (not per-document filtering),
-      server-side `canAssignRole` (owner can assign all three roles from the bug report), and `deriveContext`'s
-      env/tenant scoping. Confirmed `ProfilePage` → `StaffPage` (not `MemberManagementDialog` directly) is
-      intentional per `AGENTS.md`, not a bug.
-- [x] 3. Found the actual root cause: `provisionStaffCredentials`'s `authFailed` calls have no live UI
-      target in the add-staff-with-login flow.
-- [x] 4. Created branch `fix/2026-09-27-silent-staff-provisioning-failure` off `main`.
-- [x] 5. `AuthService.qml`: all 6 failure branches in `provisionStaffCredentials` → `memberOperationFailed`.
-- [x] 6. `Main.qml`: `onMemberOperationFailed` falls back to `successMessage`/`Toast` when neither
-      `inviteMemberDlg` nor `memberMgmtDlg` is visible.
-- [x] 7. `tests/tst_ProvisionStaffCredentialsFailureRouting.qml` — 9 real `SignalSpy` cases against the
-      live `AuthService`/`AuthStore`/`Gateway` singletons (no network — uses `Gateway.provisionMember`'s own
-      synchronous no-XHR guards).
-- [x] 8. `tests/tst_MemberOperationFailedFallback.qml` — 6 pure-logic model cases for `Main.qml`'s handler
-      (can't load `Main.qml` itself under `qmltestrunner` — same reason as `tst_AddStaffSyncClose.qml`).
-- [x] 9. Wrote the test plan; added it to `docs/superpowers/test-plans/README.md`'s index (newest first).
-- [x] 10. `SKILLS.md` Skill 72 appended; `AGENTS.md` staff row annotated; `README.md` deliberately left
-      alone (see "Docs updated" above).
-- [ ] 11. Commit + push to `origin/fix/2026-09-27-silent-staff-provisioning-failure` (this step).
-- [ ] 12. Open a PR against `main`; wait for CI's `qml-tests` job — not run in this sandbox (standing rule,
-      no Qt toolchain installed here).
-- [ ] 13. **Taher's on-device retest**, per the test plan's Negative Case 4 — reproduce the original repro
-      exactly and read whatever the toast now says. That message is the real remaining diagnostic lead, if
-      any; no further code change is anticipated here unless it points to something new.
-
-## Resume instructions
-
-Fresh session picking up THIS thread specifically: read this section (not the C-3/Task 9-10 one above,
-which is a different, unrelated arc), check PR/CI status for `fix/2026-09-27-silent-staff-provisioning-failure`.
-If CI (`qml-tests`) is green, this branch needs only step 13 (Taher's on-device confirmation) — don't start
-new code changes here unless the on-device retest surfaces a genuinely new, distinct failure reason.
+- No design spec written (waiting on the above).
+- No code changed.
+- No tests written.
+- Which `TransactionStore` doc kinds actually feed the Purchased/Sold/Revenue bucket walks — not fully confirmed,
+  next step once scope is agreed.

@@ -58,6 +58,14 @@ consumption record at creation time — a schema-level change across every write
 one. Genuinely bigger and different in kind from the read-side guard fixes this PR shipped, not
 a one-line addition.
 
+**Status 2026-09-26: investigation started, branch `fix/2026-09-26-sales-analysis-deleted-product-labels`.**
+Traced to source — the two halves are not the same size. `productName` is already stamped on every
+`TransactionStore` entry at creation time, so the by-name bug is a small, contained **read-side** fix
+(`SalesPage._breakdownByDimension()` / `RealisedMath.byDimension()` re-derive the name live instead of using
+what's already on the entry). `category` is genuinely never stamped anywhere, so that half is a real
+**write-path** change, as originally scoped, plus an open question about entries written before the fix
+ships. Scope split and historical-gap handling awaiting Taher's decision — see `CHECKPOINT.md`.
+
 ## 4. Photo cleanup on delete — unverified, not blocking
 
 `InventoryStore.deleteProduct()` calls `StorageService.deleteProductPhoto()`, guarded in a
