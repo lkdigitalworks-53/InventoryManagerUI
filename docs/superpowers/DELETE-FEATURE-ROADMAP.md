@@ -33,6 +33,16 @@ over in this PR (`ProductCard`, orders row) — this is the lowest-effort item o
 
 **Why it's still not fixed**: out of the original ask's scope (products and orders only).
 
+**Status 2026-09-21: RESOLVED** (`feat/2026-09-21-staff-delete-ui`). Row-level button shipped with the same
+idiom. Two adjacent gaps closed alongside it: `StaffStore._onMutationConflicted`'s delete-specific toast
+wording, and a client-side self-delete guard. One new gap found and given a narrow fix: `recordMutation` had
+no server-side role check for staff/delete (or any entity/action) — fixed for staff/delete only; the general
+gap is tracked as its own KNOWN-ISSUE. Details: `docs/superpowers/specs/2026-09-21-staff-delete-ui-design.md`.
+
+**Follow-up 2026-09-25 (same branch, found on-device):** deleting a staff member blanked their name from their
+orders (detail, export, analysis) and could wipe the order's attribution on save; fixed with a `removed_staff`
+tombstone + one shared resolver. Details: `KNOWN-ISSUES.md`, test plan section 5, Skill 70.
+
 ## 3. Five Sales Analysis tabs mislabel a deleted product's historical rows — MEDIUM
 
 Value, Purchased, Revenue, Sold, and Profit's Realised sub-mode all keep **correct totals** after

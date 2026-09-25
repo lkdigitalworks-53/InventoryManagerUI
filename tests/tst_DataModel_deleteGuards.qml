@@ -3,12 +3,14 @@ import QtTest
 import "../qml/model"
 import "../qml/logic"
 
-// Coverage for DataModel.onDeleteProduct / onDeleteOrder — NOT new logic
-// (this branch didn't touch DataModel.qml at all), but it had zero test
-// coverage before this file and is exactly the "does a blocked delete
-// notify the user" question this branch was asked to check. Traced by
-// reading qml/model/DataModel.qml:257-276 (onDeleteProduct) and
-// qml/model/DataModel.qml:172-191 (onDeleteOrder).
+// Coverage for DataModel.onDeleteProduct / onDeleteOrder / onDeleteStaff —
+// onDeleteProduct/onDeleteOrder had zero test coverage before this file and
+// are exactly the "does a blocked delete notify the user" question this
+// branch was asked to check. Traced by reading qml/model/DataModel.qml:
+// 257-276 (onDeleteProduct) and qml/model/DataModel.qml:172-191
+// (onDeleteOrder). onDeleteStaff cases (DELETE-FEATURE-ROADMAP item 2,
+// 2026-09-21) cover the pre-existing owner/admin guard plus the
+// self-delete guard added this branch (AuthStore.currentStaffId).
 //
 // DataModel takes its dispatcher as an injected property (see
 // qml/Main.qml: `Logic { id: logic }` then `DataModel { dispatcher: logic }`)
@@ -30,23 +32,34 @@ TestCase {
     Logic { id: testLogic }
     DataModel { id: dm; dispatcher: testLogic }
 
-    SignalSpy { id: errorSpy;   target: testLogic; signalName: "errorOccurred" }
-    SignalSpy { id: prodDelSpy; target: testLogic; signalName: "productDeleted" }
-    SignalSpy { id: ordDelSpy;  target: testLogic; signalName: "orderDeleted" }
+    SignalSpy { id: errorSpy;    target: testLogic; signalName: "errorOccurred" }
+    SignalSpy { id: prodDelSpy;  target: testLogic; signalName: "productDeleted" }
+    SignalSpy { id: ordDelSpy;   target: testLogic; signalName: "orderDeleted" }
+    SignalSpy { id: staffDelSpy; target: testLogic; signalName: "staffDeleted" }
 
     function init() {
         InventoryStore.products = []
         OrdersStore.orders = []
+        StaffStore.staff = []
+        StaffStore.removedNames = ({})
         AuthStore.role = ""
+        AuthStore.uid = ""
         errorSpy.clear()
         prodDelSpy.clear()
         ordDelSpy.clear()
+        staffDelSpy.clear()
     }
 
     function _product() {
         return { productId: "SKU-1", name: "Widget", sku: "W1", category: "",
                  description: "", unit: "pc", price: 100, sellingPrice: 100,
                  taxable: false, taxPercent: 0, size: "", stock: 10, minStock: 0 }
+    }
+
+    function _staffMember(overrides) {
+        return Object.assign({ staffId: "S-1", name: "Alex", email: "alex@example.com",
+                 phone: "", role: "staff", department: "Sales", joinDate: "2026-01-01",
+                 status: "active", salary: 0, appUid: "" }, overrides || {})
     }
 
     function _order(status) {
@@ -184,5 +197,82 @@ TestCase {
 
         compare(OrdersStore.orders.length, 0)
         compare(ordDelSpy.count, 1)
+    }
+
+    // ── staff delete: permission guard ──────────────────────────────────────
+
+    function test_deleteStaff_refused_for_role_without_permission() {
+        AuthStore.role = "manager"
+        StaffStore.staff = [_staffMember()]
+
+        testLogic.deleteStaff("S-1")
+
+        compare(StaffStore.staff.length, 1, "staff record must still be present — delete refused")
+        compare(errorSpy.count, 1)
+        compare(errorSpy.signalArguments[0][0], "auth")
+        compare(errorSpy.signalArguments[0][1], "Only owner/admin can delete staff")
+        compare(staffDelSpy.count, 0, "staffDeleted must not fire on a refused delete")
+    }
+
+    function test_deleteStaff_succeeds_for_admin_role() {
+        AuthStore.role = "admin"
+        StaffStore.staff = [_staffMember()]
+
+        testLogic.deleteStaff("S-1")
+
+        compare(StaffStore.staff.length, 0)
+        compare(errorSpy.count, 0)
+        compare(staffDelSpy.count, 1)
+        compare(staffDelSpy.signalArguments[0][0], "S-1")
+    }
+
+    // ── staff delete: self-delete guard ─────────────────────────────────────
+    //
+    // AuthStore.currentStaffId resolves via StaffStore.findByAppUid(uid), so
+    // these set both AuthStore.uid and a matching appUid on the roster entry
+    // rather than a currentStaffId directly — currentStaffId has no setter
+    // (it's a computed readonly property).
+
+    function test_deleteStaff_refused_for_own_staff_record() {
+        AuthStore.role = "admin"
+        AuthStore.uid = "uid-self"
+        StaffStore.staff = [_staffMember({ appUid: "uid-self" })]
+
+        testLogic.deleteStaff("S-1")
+
+        compare(StaffStore.staff.length, 1, "staff record must still be present — delete refused")
+        compare(errorSpy.count, 1)
+        compare(errorSpy.signalArguments[0][0], "staff")
+        compare(errorSpy.signalArguments[0][1], "You can't delete your own staff record — ask another owner or admin")
+        compare(staffDelSpy.count, 0)
+    }
+
+    function test_deleteStaff_succeeds_for_a_different_staff_record_than_the_callers_own() {
+        AuthStore.role = "owner"
+        AuthStore.uid = "uid-self"
+        StaffStore.staff = [_staffMember({ appUid: "uid-self" }), _staffMember({ staffId: "S-2", appUid: "" })]
+
+        testLogic.deleteStaff("S-2")
+
+        compare(StaffStore.staff.length, 1)
+        compare(StaffStore.staff[0].staffId, "S-1", "the caller's own record must be untouched")
+        compare(errorSpy.count, 0)
+        compare(staffDelSpy.count, 1)
+    }
+
+    function test_deleteStaff_self_guard_does_not_fire_for_a_caller_with_no_linked_staff_record() {
+        // AuthStore.currentStaffId is "" when the caller isn't linked to any
+        // staff row (findByAppUid returns "" — see StaffScope.js). The guard
+        // must not treat that "" as matching a staff record whose appUid is
+        // also unset/"".
+        AuthStore.role = "owner"
+        AuthStore.uid = "uid-self"
+        StaffStore.staff = [_staffMember({ appUid: "" })]
+
+        testLogic.deleteStaff("S-1")
+
+        compare(StaffStore.staff.length, 0)
+        compare(errorSpy.count, 0)
+        compare(staffDelSpy.count, 1)
     }
 }

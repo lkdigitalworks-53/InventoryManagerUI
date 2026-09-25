@@ -157,6 +157,43 @@ Item {
                                  : modelData.status === "on leave" ? "On leave"
                                  : "Inactive"
                         }
+
+                        // Delete button — same idiom as InventoryPage/OrdersPage: a
+                        // fixed hit target with its own MouseArea that accepts the
+                        // tap so it doesn't bubble to the card's own onClicked
+                        // (viewStaffClicked). deleteStaffClicked(...) was already
+                        // wired end-to-end (DataModel role + self-delete guard,
+                        // confirm dialog in Main.qml) — this was the only missing
+                        // piece (DELETE-FEATURE-ROADMAP item 2).
+                        Rectangle {
+                            id: deleteStaffBtn
+                            objectName: "deleteStaffBtn"
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.preferredWidth: dp(28)
+                            Layout.preferredHeight: dp(28)
+                            visible: root.canManageStaff
+                            radius: dp(Constants.radiusPill)
+                            color: deleteStaffArea.pressed
+                                    ? Qt.rgba(0.94, 0.27, 0.27, 0.18)
+                                    : "transparent"
+                            Behavior on color { ColorAnimation { duration: Constants.durFast } }
+
+                            Icon {
+                                anchors.centerIn: parent
+                                name: "trash"
+                                size: sp(16)
+                                color: Constants.danger
+                            }
+                            MouseArea {
+                                id: deleteStaffArea
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: function(mouse) {
+                                    mouse.accepted = true
+                                    root.deleteStaffClicked(modelData.staffId)
+                                }
+                            }
+                        }
                     }
                 }
             }

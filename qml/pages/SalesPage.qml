@@ -1764,13 +1764,13 @@ Item {
     }
 
     // { staffId → row } → { staffName → row }. Empty keys roll up under
-    // "(unassigned)" so a removed/blank staffId still renders.
+    // "(unassigned)". A deleted staff member keeps their name (suffixed
+    // "(removed)" by StaffStore.displayName, which also stops a removed
+    // "Ravi" merging into a newly-added "Ravi"); "(removed)" alone is only
+    // the last resort for an id with no live record and no tombstone.
     function _namedStaffMap(rows) {
-        var roster = StaffStore.staff || []
-        var lookup = {}
-        for (var ri = 0; ri < roster.length; ++ri) lookup[roster[ri].staffId || ""] = roster[ri].name
         return RealisedMath.nameMerge(rows,
-                function(k) { return lookup[k] || qsTr("(removed)") },
+                function(k) { return StaffStore.displayName(k) || qsTr("(removed)") },
                 qsTr("(unassigned)"))
     }
 

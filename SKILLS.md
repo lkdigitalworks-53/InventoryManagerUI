@@ -3331,3 +3331,138 @@ fires; the sender logs print raw and effective status to make that visible.
 **Follow-ups, in the order they would pay off**: park a stuck write and offer Retry / Discard (Discard rolls
 back to the outbox item's `before`); map Firestore error codes to distinct HTTP statuses in
 `functions/index.js` so the client can classify instead of counting.
+
+---
+
+## Skill 68: A proven UI fix pattern can hide two adjacent bugs that only surface once you re-trace the whole path — check both before shipping the third repeat of a pattern
+
+**Files**: `qml/pages/StaffPage.qml`, `qml/model/StaffStore.qml`, `qml/model/DataModel.qml`, `qml/Main.qml`,
+`functions/index.js`, `tests/tst_DataModel_deleteGuards.qml`, `tests/tst_StaffStore_delete.qml`,
+`test/felgo-dependent/tst_StaffPage_deleteButton.qml`, `functions/test/index.handlers.test.js`. Branch
+`feat/2026-09-21-staff-delete-ui`, `DELETE-FEATURE-ROADMAP` item 2.
+
+**The trap this session avoided**: staff delete was the third entity to hit "row-level delete button missing,
+plumbing already exists" (products, orders, now staff). The pattern was proven twice over, which is exactly
+the condition under which it's tempting to copy the fix and move on without re-reading the surrounding code.
+Re-tracing the whole path anyway — `StaffPage` → `Main.qml` → `Logic` → `DataModel` → `StaffStore` →
+`Gateway.recordMutation` → `functions/index.js` → `firestore.rules` — surfaced two real, unrelated bugs that a
+copy-paste fix would have shipped past:
+
+1. **A dormant self-lockout.** `firestore.rules` lets a non-owner member delete their own `members/{uid}` doc
+   (voluntary leave). `StaffStore.deleteStaff` cascades to that same doc via `AuthService.cleanupStaffAuthDocs`
+   when the deleted record has `appUid`. Chain three unremarkable facts together — an admin can have their own
+   login (`appUid`), an admin can delete any staff record, deleting a staff record with `appUid` cascades to
+   the membership doc — and an admin can delete their own access. Unreachable today only because
+   `Gateway.provisioningAvailable` is `false`; it activates on someone else's deploy day, with no code change
+   here to remind them. `AuthStore.currentStaffId` already existed for exactly this comparison — the fix was
+   three lines in `DataModel.onDeleteStaff`, once the chain was traced.
+2. **No server-side role check, on any entity or action.** `recordMutation` derives `actorRole` for the audit
+   log but never uses it to authorize the mutation — only `provisionMember` checks role. Every `DataModel.on*`
+   guard is decorative from the server's point of view: a valid ID token is enough to call the gateway
+   directly and skip all of them. Confirmed by writing a test that *documents the gap rather than closing it*
+   (`"an ORDER delete by a non-owner/admin is unaffected"`, asserting 200) — proving a negative by locking in
+   today's actual behavior, not by asserting an absence.
+
+**Decision, and why it wasn't "fix everything found"**: (1) got fixed inline — three lines, already-existing
+plumbing, no new abstraction. (2) got a *narrow* fix — staff/delete only, `functions/index.js`, one `if` — not
+a general authorization matrix, and not left completely alone either. A repo-wide authorization matrix is a
+different-sized problem than a delete-button ticket, and patching it broadly here would mean designing that
+matrix under the cover of an unrelated MEDIUM ticket, with no dedicated review of the design. But staff/delete
+specifically carries real security weight (cascades to a login), so "log it and move on" for that one specific
+case would leave a known, reachable hole shipped a second time in the same session that found it. The rest of
+the gap is now a named `KNOWN-ISSUES.md` entry with a concrete design pointer (a shared `authorize(role,
+entity, action)` sourced from the same rules `DataModel.qml` already encodes), not a vague "todo".
+
+**Testing technique worth repeating**: `functions/` dependencies installed cleanly from the sandbox's
+npm-registry allowlist (no Firebase emulator needed — `node --test` against the real exported handlers, see
+`testSupport/handlerHarness.js`), so the server-side fix got **real** red/green: revert the fix, rerun (`199
+pass, 1 fail` — the new test, and only that one), restore, rerun (`200/200`). That is stronger evidence than
+this repo's usual QML-side "written and traced, CI-pending" — worth reaching for `npm install` in `functions/`
+before assuming "no toolchain" applies to the server side too.
+
+**Follow-up**: the authorization-matrix design (`KNOWN-ISSUES.md`, "Security: `recordMutation` has no
+server-side role check…") is its own session, not a fast-follow patch.
+
+---
+
+## Skill 69: `node --test`'s own reported total isn't stable across Node versions — pin the version before trusting a local count against CI's
+
+**Files**: none changed; a documentation-only finding from `feat/2026-09-21-staff-delete-ui` / PR #80.
+
+Ran `functions/`'s real test suite in the sandbox all session (`npm test`, no emulator needed — see Skill 67's
+functions-side cross-reference), reported 195 → 200 → 237 as the branch progressed. CI's own summary for the
+exact same final commit reported **171**. Same code, same test files, same `node --test
+--test-reporter=junit` invocation (copied verbatim from `.github/workflows/checks.yml`) — reproduced 237
+locally again just to be sure. The one real difference: `functions/package.json`'s `engines.node` pins `"20"`,
+CI's workflow installs Node 20, and this sandbox has Node 22.22.2. Both runs report 0 failures — this is not a
+hidden bug, and every individual test still ran and passed either way — but the *count* Node reports for the
+same suite is not the same across major versions, likely from a change in how `node:test` enumerates or
+reports subtests between 20 and 22.
+
+**Practical effect**: a "local N/N, all green" claim from this sandbox is solid evidence that the tests pass,
+but the N itself cannot be compared against a CI comment's N, or against an earlier PR's CI-reported N, without
+checking both were produced by the same Node major version. `docs/superpowers/test-plans/2026-09-21-staff-
+delete-ui-test-plan.md` originally stated "200/200" and a commit message said "237/237" — both true statements
+about what ran in the sandbox at the time, but superseded by CI's 171/171 once the branch was pushed and
+merged. The test plan was corrected in place rather than left with the stale number, since a reader comparing
+it against the PR's CI comment would otherwise see two different totals for what looks like the same fact and
+have no way to tell it apart from an actual missing/duplicated test.
+
+**Practical fix, if this needs to be trusted more precisely later**: pin the sandbox to Node 20 before running
+`functions/` tests locally (`nvm install 20 && nvm use 20`, if `nvm` is available in the sandbox network
+allowlist — not verified this session), rather than comparing a Node-22 count against CI's Node-20 count.
+
+**Footnote, added during the code-review pass on this same branch**: PR #81 (merged into `main` while this
+review was in progress) fixed a real, separate CI-counting bug: `post-ci-comment.js`'s `readResultsFile()` read
+only one hardcoded `results.xml`, so a job producing two JUnit files (the new multi-file E2E job) silently
+dropped the second file's tests from the PR comment, while the check itself still reported green. That bug is
+specific to multi-file jobs; the Functions Tests job here writes exactly one `results.xml`, so it isn't the
+same bug and doesn't retroactively explain the 171-vs-237 gap this skill documents. The reason to mention it at
+all: it's now a confirmed fact, not a hypothesis, that this repo's CI-comment counts have had real undercounting
+bugs. Treat "CI says N" as the best available number, not an unquestionable one — which is exactly the
+hedged phrasing this skill and the corresponding test plan/checkpoint entries already used, rather than a
+flat "CI is right, the sandbox is wrong."
+
+---
+
+## Skill 70: Hard-deleting a record that history points at needs a name-keeping plan *and* an id-reuse guard — and "the test plan says it's fine" is not evidence
+
+**Symptom (found on-device, PR #80):** delete a staff member → their orders show no name in the order detail and
+the exported sheet; re-add a staff member with the same name → the old order looks like the new person's.
+
+**Root cause:** orders and sale events store only `staffId`. Every display path did a live roster lookup, which
+returns nothing the moment the record is hard-deleted. Two second-order bugs rode along: (1) the order picker
+listed only *active* staff, so an order whose staff was deleted / on leave / suspended opened on "none" and
+**saving silently wrote `staffId: ""`**; (2) nothing prevented a deleted id from ever being handed to a new
+hire, which would attribute the old member's whole history to them.
+
+**What went wrong in the process:** PR #80's first test plan (case 8) asserted "Sales Analysis and exports show
+'(removed)' / blank" as acceptable. That was inferred from reading `SalesPage._namedStaffMap` and never run;
+the order detail and export paths were not traced at all. A DELETE ticket must trace *every* reader of the id
+being deleted, not just the one already known to have a fallback.
+
+**Fix shape (chosen over stamping the name on every order/event):** a tombstone `{staffId, name, removedAt}` in
+its own `removed_staff` collection, written by `StaffStore.deleteStaff` through `Gateway.recordMutation`
+(offline-safe, queued *before* the delete so an interrupted sync can't strand the delete without it), merged
+(not replaced) into memory on sync, wiped on `clear()`. One resolver — `StaffStore.displayName(id)` — is used
+by every reader; deleted members render as `Name (removed)` so a removed and a new same-name member never
+merge in a by-name breakdown. `nextStaffId` treats a tombstoned id as burned and re-mints (bounded).
+`StaffPicker.build` always keeps the order's *current* attribution selectable. Why not snapshot the name on
+each order/event instead: it only protects records written after the fix, so every pre-existing order would
+still go blank on delete — exactly what a retest would hit; it also needs changes in 8+ write sites.
+Trade-off accepted: the name is frozen at deletion, and a tombstone written by a client is not authoritative
+history (server-side role check restricts it to owner/admin, same as staff delete).
+
+**Rules of thumb:**
+- Before shipping any delete of an entity other than a leaf, `grep` every reader of its id and test each one
+  with the record gone. A fallback in one reader says nothing about the others.
+- A picker that filters its options (active only) must still include the record's *current* value, or "open,
+  Save" becomes a silent data-wipe.
+- A monotonic counter is a policy, not a guarantee (a missing/reseeded counter doc goes backwards); guard the
+  invariant ("never reuse an id history points at") where the id is consumed.
+- A ledger-style collection written through the Gateway needs three edits kept in sync: `ENTITY_COLLECTIONS`
+  (`functions/lib/gatewayLogic.js`), `Gateway._collections`, and — if the entity carries privilege — the
+  role check in `functions/index.js`.
+- Async singleton paths with no mock layer (`FirebaseService.mintCounterValue`): extract the decision into
+  pure functions (`_seedMax`, `_isBurned`, `_mergeRemoved`) and test those.
+

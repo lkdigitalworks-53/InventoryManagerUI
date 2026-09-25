@@ -14,6 +14,60 @@ QtObject {
     // array is ever reordered or synced async between add and read.
     property string lastAddedId: ""
 
+    // Tombstones of hard-deleted staff: { staffId: name }. Orders, sale events
+    // and the Sales Analysis keep pointing at a staffId after the staff record
+    // is deleted; without this the name is unrecoverable (blank in the order
+    // detail and the exported sheet, "(removed)" in analysis). deleteStaff()
+    // records the name here immediately and persists it to the `removed_staff`
+    // collection through the Gateway (offline-safe, rides the outbox); sync
+    // merges the persisted set back in. Also makes a deleted staffId
+    // un-mintable (see nextStaffId) so a new hire can never inherit an old
+    // staff member's order history. Cleared on sign-out via clear().
+    property var removedNames: ({})
+    property bool removedHasMore: true
+    property var _removedCursor: null
+    property bool _removedLoading: false
+
+    function _rememberRemoved(staffId, name) {
+        var m = Object.assign({}, removedNames)
+        m[staffId] = name || ""
+        removedNames = m
+    }
+
+    function _forgetRemoved(staffId) {
+        if (!Object.prototype.hasOwnProperty.call(removedNames, staffId)) return
+        var m = Object.assign({}, removedNames)
+        delete m[staffId]
+        removedNames = m
+    }
+
+    // True only for an id that has a tombstone AND no live record (a live
+    // record always wins — a restored delete-conflict leaves a stray tombstone).
+    function isRemoved(staffId) {
+        if (!staffId) return false
+        if (findIndexById(staffId) >= 0) return false
+        return Object.prototype.hasOwnProperty.call(removedNames, staffId)
+    }
+
+    // Live name if the record exists, else the tombstoned name, else "".
+    function nameOf(staffId) {
+        if (!staffId) return ""
+        var s = getById(staffId)
+        if (s) return s.name || ""
+        return removedNames[staffId] || ""
+    }
+
+    // What order rows, exports and analysis should show for a staffId: the
+    // name, suffixed "(removed)" for deleted staff so a removed "Ravi" and a
+    // newly-added "Ravi" never look (or merge) like the same person. "" when
+    // the id is empty or genuinely unknown.
+    function displayName(staffId) {
+        var n = nameOf(staffId)
+        if (isRemoved(staffId))
+            return n.length > 0 ? qsTr("%1 (removed)").arg(n) : qsTr("(removed)")
+        return n
+    }
+
     // Bounded collection (capped by realistic business size) — the UI needs
     // the full set (department lists, dropdowns), so we page to exhaustion
     // rather than exposing a partial list. Same pattern as InventoryStore.
@@ -148,14 +202,51 @@ QtObject {
 
     // Async — see FirebaseService.mintCounterValue for why max(existing)+1
     // isn't safe (id reuse after delete, concurrent-add collisions).
-    function nextStaffId(callback) {
+    // A minted id that has a tombstone (a deleted staff member's id) is
+    // skipped and re-minted: the counter normally never goes backwards, but
+    // if it ever does (counter doc missing/reseeded), handing a deleted
+    // member's id to a new hire would silently attribute all of the old
+    // member's orders to the new person. Bounded so a corrupt counter can't
+    // loop forever.
+    readonly property int _maxMintSkips: 20
+
+    // Highest numeric suffix across live AND tombstoned ids — the seed used
+    // only the first time the counter doc is created (later mints ignore it).
+    function _seedMax() {
         var seedMax = 0
-        for (var i = 0; i < staff.length; ++i) {
-            var num = parseInt(String(staff[i].staffId).split('-')[1])
+        var i, num
+        for (i = 0; i < staff.length; ++i) {
+            num = parseInt(String(staff[i].staffId).split('-')[1])
             if (!isNaN(num) && num > seedMax) seedMax = num
         }
-        FirebaseService.mintCounterValue("counters/staff", seedMax, function(ok, value) {
-            callback(ok ? ('STF-' + String(value).padStart(3, '0')) : "")
+        var removedIds = Object.keys(removedNames)
+        for (i = 0; i < removedIds.length; ++i) {
+            num = parseInt(String(removedIds[i]).split('-')[1])
+            if (!isNaN(num) && num > seedMax) seedMax = num
+        }
+        return seedMax
+    }
+
+    // A deleted member's id must never be handed to a new hire.
+    function _isBurned(staffId) {
+        return Object.prototype.hasOwnProperty.call(removedNames, staffId)
+    }
+
+    function nextStaffId(callback, _skips) {
+        var skips = _skips || 0
+        FirebaseService.mintCounterValue("counters/staff", _seedMax(), function(ok, value) {
+            if (!ok) { callback(""); return }
+            var id = 'STF-' + String(value).padStart(3, '0')
+            if (_isBurned(id)) {
+                if (skips >= root._maxMintSkips) {
+                    console.warn("[StaffStore] could not mint an unused staffId — add aborted")
+                    callback("")
+                    return
+                }
+                nextStaffId(callback, skips + 1)
+                return
+            }
+            callback(id)
         })
     }
 
@@ -192,6 +283,15 @@ QtObject {
         staff = arr;
         _rebuildActivities();
         if (!removed) return
+
+        // Keep the name for history/analysis BEFORE the record disappears:
+        // tombstone locally (instant) and persist through the Gateway
+        // (offline-safe). Queued ahead of the delete so an interrupted sync
+        // can never leave the delete on the server without its tombstone.
+        _rememberRemoved(staffId, removed.name)
+        Gateway.recordMutation("removed_staff", staffId, "create", null,
+                               { staffId: staffId, name: removed.name || "",
+                                 removedAt: new Date().toISOString() })
 
         // Per-doc DELETE — bulk PUT (commit/update) never removes documents.
         Gateway.recordMutation("staff", staffId, "delete", removed, null)
@@ -259,6 +359,9 @@ QtObject {
     function clear() {
         staff = []
         activities = []
+        removedNames = ({})
+        removedHasMore = true
+        _removedCursor = null
     }
 
     // ── Firebase sync ──
@@ -279,7 +382,7 @@ QtObject {
     // stores fetched records raw (no per-item normalize step — see
     // _resetAndFetch's `staff.concat(result.items)` above), so `current`
     // is spliced in as-is, matching that same convention.
-    function _onMutationConflicted(entity, entityId, current) {
+    function _onMutationConflicted(entity, entityId, current, action) {
         if (entity !== "staff") return
         var arr = staff.slice()
         var idx = -1
@@ -293,7 +396,19 @@ QtObject {
             arr.splice(idx, 1)
         }
         staff = arr
-        Toast.show(qsTr("This staff record was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        // A rejected delete restored the live record: the local tombstone
+        // no longer describes reality (isRemoved() would already ignore it,
+        // but drop it so nextStaffId doesn't treat a live id as burned).
+        if (action === "delete" && current) _forgetRemoved(entityId)
+        // Same reasoning as InventoryStore._onMutationConflicted: a
+        // rejected delete-conflict means the record still legitimately
+        // exists, and was just restored above — "your change didn't save"
+        // would be confusing for what was actually a delete attempt.
+        if (action === "delete") {
+            Toast.show(qsTr("Couldn't delete — this staff record was updated elsewhere. It's been restored with the latest version."))
+        } else {
+            Toast.show(qsTr("This staff record was updated elsewhere — your change didn't save. Refreshed to the latest version."))
+        }
     }
 
     function _load() {
@@ -307,6 +422,42 @@ QtObject {
         hasMore = true
         _cursor = null
         _fetchFromFirebase()
+        _fetchRemovedFromFirebase(true)
+    }
+
+    // Fold fetched tombstone docs ({staffId, name, ...}) into removedNames.
+    // Local entries win (they are at least as fresh as the server's); docs
+    // without a staffId are ignored.
+    function _mergeRemoved(items) {
+        var m = Object.assign({}, removedNames)
+        var list = items || []
+        for (var i = 0; i < list.length; ++i) {
+            var it = list[i]
+            if (it && it.staffId && !Object.prototype.hasOwnProperty.call(m, it.staffId))
+                m[it.staffId] = it.name || ""
+        }
+        removedNames = m
+    }
+
+    // Tombstones are tiny and bounded by how many staff were ever deleted;
+    // page to exhaustion like the roster, and MERGE into what's in memory
+    // (never replace) so a tombstone recorded moments ago that hasn't reached
+    // the server yet is not lost by a sync landing in between.
+    function _fetchRemovedFromFirebase(reset) {
+        if (reset) { _removedCursor = null; removedHasMore = true }
+        if (_removedLoading) return
+        _removedLoading = true
+        FirebaseService.query("removed_staff", { limit: _pageSize, startAfter: _removedCursor }, function(ok, result) {
+            _removedLoading = false
+            if (!ok || !result) {
+                console.warn("[StaffStore] removed_staff sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                return
+            }
+            _mergeRemoved(result.items)
+            removedHasMore = !!result.hasMore
+            _removedCursor = result.nextCursor
+            if (removedHasMore) _fetchRemovedFromFirebase(false)
+        })
     }
 
     function _fetchFromFirebase() {

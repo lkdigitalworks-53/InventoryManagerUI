@@ -6,6 +6,7 @@ import "../components"
 import "../helper"
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/OrderAdjust.js" as OrderAdjust
+import "../helper/StaffPicker.js" as StaffPicker
 import "../model"
 
 // Order detail / edit — bottom sheet. Live product table with qty editing,
@@ -62,20 +63,20 @@ BottomSheet {
     property var _staffIds: [""]
     property var _staffLabels: [qsTr("Sold by (none)")]
     function _refreshStaff(preferredId) {
-        var ids = [""]
-        var labels = [qsTr("Sold by (none)")]
-        var src = StaffStore.staff || []
-        for (var i = 0; i < src.length; ++i) {
-            var s = src[i]
-            if (s.status && s.status !== "active") continue
-            ids.push(s.staffId || s.id || "")
-            labels.push(s.name || qsTr("(unnamed)"))
-        }
-        _staffIds = ids
-        _staffLabels = labels
+        // The order's current attribution stays selectable even when that
+        // staff member was deleted (label from the tombstone) or is not
+        // active — see StaffPicker.build.
+        var built = StaffPicker.build(StaffStore.staff, preferredId, {
+            noneLabel: qsTr("Sold by (none)"),
+            unnamedLabel: qsTr("(unnamed)"),
+            removedLabel: qsTr("(removed)"),
+            labelFor: function(id) { return StaffStore.displayName(id) }
+        })
+        _staffIds = built.ids
+        _staffLabels = built.labels
         if (typeof staffCombo !== "undefined") {
-            staffCombo.model = labels
-            staffCombo.currentIndex = preferredId ? Math.max(0, ids.indexOf(preferredId)) : 0
+            staffCombo.model = built.labels
+            staffCombo.currentIndex = built.index
         }
     }
 
