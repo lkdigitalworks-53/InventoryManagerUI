@@ -26,6 +26,12 @@ Every file and patch below was applied to a scratch copy of `functions/` from `m
 291/291 (232 existing, 3 of them re-expected on purpose, + 59 new). New/changed `lib/` files: 100% line coverage (`movementLogic.js` 100% branch). Mutation checks (deliberate bugs) all caught.
 Red/green counts below are from that replay. NOT verified: nothing in QML (none touched); the Firebase emulator (no e2e in this slice).
 
+**Base has since moved (2026-09-26 rebase note):** PR #80 (staff delete UI, unrelated to P1) merged to `main` after this plan was verified and
+added `removed_staff` to `ENTITY_COLLECTIONS` in `functions/lib/gatewayLogic.js` — the same object Task 2's patch edits. The Task 2 diff below
+**no longer applies with `git apply`** (`error: patch failed: functions/lib/gatewayLogic.js:9`); the other four patches (Tasks 1, 3, 4) are unaffected
+and still apply cleanly to `main` as of `9be6303`. Before Task 2, re-check with `git apply --check`, and if it still fails, make the same edit by
+hand against the current file (remove the `stock_movement` line, add the doc comment and the `MovementLogic` require) rather than trusting the diff verbatim.
+
 ## File map
 
 | File | Change | Responsibility |

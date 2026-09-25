@@ -101,7 +101,12 @@ Skills: `superpowers:brainstorming`, `ponytail:ponytail-audit`, `qt-development-
   S1a+S1b 313/313 (+22 new); new/changed lib files 100% line; 12 deliberate mutations caught; the replay caught one real bug (batch derive read the doc after writing it in the fake; fixed to use `item.before`).
   NOT verified: QML/e2e edits in S1b Task 5 (CI only).
 - [x] 17. Docs rewritten: spec rev 2 (D1-D13), `plans/...-s1a.md` (renamed from `...-s1.md`), `plans/...-s1b.md`, test plan (S1a+S1b), README index row, AGENTS.md P1 bullet, README paragraph.
-- [ ] 18. PR for `docs/2026-09-24-p1-open-questions`: CI green, merge (Taher: "complete the planning").
+- [x] 18. Rebased `docs/2026-09-24-p1-open-questions` onto `main` after PR #80 (staff delete UI, unrelated) merged. CHECKPOINT.md conflicted
+  (both branches rewrite it per session): archived PR #80's live checkpoint to `docs/superpowers/specs/2026-09-21-staff-delete-ui-CHECKPOINT.md`
+  (it hadn't been archived yet, being a parallel branch) and kept this file's P1 content, with the archive-chain pointer updated. No other file conflicted.
+  **Found in the process:** PR #80 also touched `functions/lib/gatewayLogic.js` (`ENTITY_COLLECTIONS`, added `removed_staff`), the same object the
+  S1a plan's Task 2 patch edits — that patch no longer applies with `git apply` (checked; the other 4 S1a patches and all S1b/QML patches still do).
+  Noted in the S1a plan itself; the implementer should re-diff or hand-edit Task 2 rather than trust the stored patch verbatim.
 - [ ] 19. **Next session: implement S1a** on a new branch off `main` by following `plans/2026-09-24-p1-server-side-stock-movements-s1a.md` task by task (`cd functions && npm ci`; run tests with `node --test`).
   Then Taher deploys functions to dev and runs the S1a on-device checklist. Then S1b (its own session). S2 planning only after S1b's checklist passes.
 
