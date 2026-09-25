@@ -18,7 +18,9 @@ QtObject {
     id: root
 
     readonly property string bucket: "inventorymanager-48392.firebasestorage.app"
-    readonly property string _deleteUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/deleteProductPhoto"
+    // Overridable, matching Gateway.functionUrl's exact convention (see PhotoQueue.qml's
+    // uploadUrl for the same fix and reasoning).
+    property string deleteUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/deleteProductPhoto"
 
     function _nextPhotoId() {
         // Same scheme as Gateway._nextRequestId (req-<ms>-<rand>) -- photoId doubles as the
@@ -100,7 +102,7 @@ QtObject {
             var ok = xhr.status >= 200 && xhr.status < 300
             if (callback) callback(ok, ok ? "" : ("Delete failed (status " + xhr.status + ")"))
         }
-        xhr.open("POST", _deleteUrl)
+        xhr.open("POST", deleteUrl)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
         xhr.send(JSON.stringify({
