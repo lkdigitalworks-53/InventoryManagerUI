@@ -342,6 +342,11 @@ App {
             // never replay under the next account.
             Gateway.clear()
             LockManager.clear()
+            // Same reasoning as Gateway.clear() above, for pending photo uploads
+            // specifically (2026-09-21 photos feature) -- a real gap found during
+            // review: PhotoQueue.clear() existed but was never wired into sign-out,
+            // so a queued photo would have replayed under the next signed-in account.
+            PhotoQueue.clear()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }
@@ -787,6 +792,23 @@ App {
         }
         onRemoveRequested: {
             if (_requester) _requester.clearPhotoSource()
+        }
+    }
+
+    // PhotoQueue reports upload/removal outcomes globally, not scoped to whichever dialog happens
+    // to be open (a queued photo can finish uploading after the user has already navigated away).
+    // Connections{} is safe HERE -- Main.qml's root is a regular Item/App-derived type, not a
+    // pragma Singleton QtObject (see PhotoQueue.qml and Skill 20 for why it can't live there
+    // instead). InventoryStore.applyPhotoIds is local-cache-only (the server already wrote
+    // photoIds directly -- design spec); this keeps the UI in sync without waiting for the next
+    // Firestore snapshot.
+    Connections {
+        target: PhotoQueue
+        function onPhotoUploaded(productId, photoId, photoIds) {
+            InventoryStore.applyPhotoIds(productId, photoIds, photoId, "add")
+        }
+        function onPhotoUploadFailed(productId, photoId, status) {
+            console.warn("[PhotoQueue] upload failed", productId, photoId, status)
         }
     }
     ImportPreviewDialog {

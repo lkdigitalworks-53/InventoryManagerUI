@@ -7,10 +7,13 @@ import "../qml/model"
 // deleteProduct() now cascades to remove every batch for the deleted product
 // (all of them, not just open ones), routes each through the same
 // Gateway.recordMutation("stock_batch", ..., "delete", ...) audit pattern
-// StockBatchStore already uses, and calls StorageService.deleteProductPhoto
-// -- guarded in a try/catch since that call falls through to a native
-// ImageProcessor singleton this test environment doesn't have registered
-// (same failure class as the DataModel logic/dispatcher bug, Skill 58).
+// StockBatchStore already uses, and (as of the 2026-09-21 photos feature)
+// calls StorageService.removeProductPhoto once per remaining photoId, or
+// falls back to a direct native cleanup for a never-migrated product's
+// legacy photoUrl -- guarded in a try/catch since a native-context-property
+// call (ImageProcessor) is reachable from this path and this test
+// environment doesn't have it registered (same failure class as the
+// DataModel logic/dispatcher bug, Skill 58).
 //
 // Also covers _activeBatches(), the shared filter introduced in the same
 // change to replace four duplicated inline guards (one per bug fix) with
@@ -87,11 +90,15 @@ TestCase {
     }
 
     function test_deleteProduct_completes_despite_photo_cleanup_throwing() {
-        // ImageProcessor isn't registered in this test environment (it's a
-        // context property main.cpp only sets up for the real app) --
-        // StorageService.deleteProductPhoto will throw a ReferenceError
-        // reaching it. The try/catch in deleteProduct() must swallow that
-        // and let the product + batch cascade above it stand.
+        // As of the 2026-09-21 photos feature this specific fixture (no photoIds, no photoUrl)
+        // no longer actually throws anywhere in the cascade -- every native-context-property call
+        // reachable from it (PhotoQueue.discard's ImageProcessor calls, and this function's own
+        // legacy-photoUrl ImageProcessor.removeLocalCopy call) is now guarded with
+        // `typeof ImageProcessor !== "undefined"`, and StorageService.removeProductPhoto's XHR
+        // branch returns via callback rather than throwing when AuthStore.idToken is unset (the
+        // default in this test environment). The try/catch stays in deleteProduct() as cheap
+        // insurance against a future edit reintroducing an unguarded native call -- this test's
+        // job now is the same as the others below: prove delete still completes either way.
         InventoryStore.products = [_product("SKU-1")]
         StockBatchStore.batches = [_batch("B-1", "SKU-1", 10, 20)]
 
@@ -99,6 +106,36 @@ TestCase {
 
         compare(InventoryStore.products.length, 0, "product delete must complete")
         compare(StockBatchStore.batches.length, 0, "batch cascade must complete")
+    }
+
+    function test_deleteProduct_with_multiple_photoIds_still_completes() {
+        // Exercises the actual 2026-09-21 multi-photo cascade loop (one removeProductPhoto call
+        // per id) rather than the no-photos fixture above. Can't spy on
+        // StorageService.removeProductPhoto to assert it was called per id -- QML `function`
+        // members aren't reassignable (see this file's 2026-09-14 correction note above, same
+        // constraint, same reason) -- so this proves the same thing the Gateway.recordMutation
+        // cases already do: the real call completes and doesn't block the delete.
+        var p = _product("SKU-1")
+        p.photoIds = ["photo-1", "photo-2"]
+        InventoryStore.products = [p]
+        StockBatchStore.batches = []
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(InventoryStore.products.length, 0)
+    }
+
+    function test_deleteProduct_with_a_legacy_photoUrl_and_no_photoIds_still_completes() {
+        // A never-migrated product: photoIds is empty, photoUrl is set -- the cascade's other
+        // branch (direct ImageProcessor.removeLocalCopy(productId) for the legacy local file).
+        var p = _product("SKU-1")
+        p.photoUrl = "file:///tmp/SKU-1.jpg"
+        InventoryStore.products = [p]
+        StockBatchStore.batches = []
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(InventoryStore.products.length, 0)
     }
 
     function test_deleteProduct_still_removes_the_product_itself_unchanged_regression() {

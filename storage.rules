@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Product photos. All writes are server-only (the Admin SDK bypasses these rules entirely, which
+// is how uploadProductPhoto/deleteProductPhoto -- functions/index.js -- write and delete objects).
+// Reads are public-by-unguessable-path: a photoId is a random id and there is no path listing, so
+// this is the "public catalogue" access model Taher chose (design spec, decision Q2), not a
+// generally browsable bucket. The default-deny fallback at the bottom keeps any future path
+// addition from being accidentally public.
+// Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{env}/tenants/{tenantId}/products/{productId}/{photoFile} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}

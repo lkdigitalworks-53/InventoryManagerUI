@@ -23,11 +23,14 @@ public:
                                           int qualityJpeg = 75);
 
     // Persist a source file (already compressed or remote URL) into the app's
-    // local data folder under products/{productId}.jpg and return its file URL.
-    // Used while Firebase Storage isn't available — local-first storage path.
+    // local data folder under products/{key}.jpg and return its file URL.
+    // `key` was originally always a real productId (one photo per product);
+    // as of the 2026-09-21 multi-photo feature, StorageService.addProductPhoto
+    // also calls this with a photoId (and photoId+"_t" for the thumbnail) as
+    // the key -- it's really just a filename stem, not validated as either.
     Q_INVOKABLE QString persistLocalCopy(const QString &productId, const QUrl &source);
 
-    // Remove a previously persisted local file.
+    // Remove a previously persisted local file (see persistLocalCopy's note on `productId`).
     Q_INVOKABLE bool removeLocalCopy(const QString &productId);
 
 Q_SIGNALS:

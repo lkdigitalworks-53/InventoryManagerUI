@@ -1,71 +1,193 @@
-# CHECKPOINT — 2026-09-24: compliance reassessment, P1 design (server-side atomic) + S1 plan (docs only, no repo code)
+# CHECKPOINT — Product photos in Firebase Storage
 
-**Branch:** `docs/2026-09-24-compliance-reassessment`, cut from `main` @ `2c1e5f6`
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-21-atomic-operation-outbox-phase2-CHECKPOINT.md`
-(C-3 arc; its step 13 is still open: Phase 3 not started).
-**Skills invoked by Taher:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `ponytail:ponytail`. Also used: `superpowers:writing-plans`. Caveman FULL.
-**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT comes from chat, never stored in repo/config/memory.
-**Constraints this session:** no app build/run; no Qt in sandbox (CI is the QML test oracle); short scope per session
-(multi-account, token-limited); push without asking, review happens in the GitHub PR.
+**Branch:** `feature/2026-09-21-product-photos-firebase-storage`, PR #84, rebased onto `main` @
+`2c1e5f6` (2026-09-22). **Commit identity:** `Taher (via Claude session) <lkdwtaher@gmail.com>`.
 
-## Compliance status vs master spec (`specs/2026-06-06-india-compliance-roadmap-design.md`)
+**A note on this file's own history:** an earlier version of this checkpoint, tracking progress
+commit-by-commit, was lost during the `git rebase onto main` step -- `git rebase`'s `--ours`/
+`--theirs` are inverted from a normal merge (`--ours` means "the branch being rebased onto", i.e.
+main's unrelated checkpoint content, not this branch's own history), and that was used by mistake
+to resolve every CHECKPOINT.md conflict during the rebase. The real code, tests, and docs commits
+were unaffected (verified: `git log --oneline origin/main..HEAD` shows all 15 feature commits
+intact with correct diffs; `functions/` test suite re-run clean, 288/288, after the rebase) -- only
+this file's narrative was silently overwritten repeatedly. This is a rewritten, accurate version,
+not a historical replay. If resuming and something here seems to skip detail, `git log` on this
+branch is the ground truth for what actually happened, in far more detail than fits here.
 
-Grep-based on `main` @ `2c1e5f6` plus the P1 branch's own checkpoint.
+## Original ask (2026-09-21, Taher)
 
-| Item | Status |
-|---|---|
-| P0 gateway + immutable `audit_log` | Done. `Gateway.mode = "gateway"` live since 2026-07-29. |
-| C-3 atomic `recordOperation` (order completion) | Phase 1 (endpoint, #78) + Phase 2 (pure helpers, #79) merged. **Phase 3 (Outbox/Gateway/stores/DataModel/UI, plan Tasks 6-11) not started.** Needs Taher to deploy `recordOperation` to dev. |
-| P1 stock-movement taxonomy | **Partial, unmerged, untested, stale.** Branch `feature/p1-stock-movement-taxonomy`: 10-value kind enum, write-only `StockMovementStore`, 5 wiring points, required kind picker. Zero tests. Register report (opening/closing balance) not started. |
-| P2 tax identity (HSN, GSTIN) | Not started. No `hsnCode`/`gstin` anywhere in `qml/` or `functions/`. |
-| P3 legal docs + acceptance, P4 DPDP consent, P5 erasure/retention, P6 breach, P7 warehouse | Not started (no consent/erasure/breach code; only an OAuth "consent" string in `GoogleAuthService.qml`). |
-| Deferred (56(12), 56(15), OIDAR) | Out of scope per spec. |
+Clone the repo, store product photos in Firebase Storage instead of a URL string on the product,
+sync photos across every device (not limited to the uploading device), support multiple photos per
+product for a future catalogue. Then: atomic upload+id-creation where possible, idempotency, retry,
+circuit breaker, timeout, background upload with a spinner, survive app close and network glitches,
+offline uploads queue and resume when online. Standing instructions: branch, never touch `main`
+directly; push after every commit without asking; don't build/run the app; advise honestly and grill
+before deciding, don't just agree; commit author email `lkdwtaher@gmail.com`; update skills/agents/
+docs as needed; write tests aiming at full coverage plus a test plan; rely on CI, not local Qt/
+emulator tooling, for anything this sandbox can't run.
 
-## P1 branch verdict: NOT usable as-is, do not rebase-and-continue
+## Decisions (approved by Taher, 2026-09-21)
 
-- 337 commits behind `main`; merge-base `2748d1b` (2026-07-13). Predicted textual conflicts: `Main.qml`, `Logic.qml`,
-  `DataModel.qml`, `InventoryStore.qml`, `qmldir`, `EditProductDialog.qml`.
-- Trial rebase (scratch branch, aborted, remote untouched) stopped at commit 4 of 10, `94c6e51` (restock wiring). The conflict is
-  semantic, not just textual: `restock()` on main is async + callback-based, uses `Gateway.recordDelta`, and
-  `StockBatchStore.addBatch` no longer returns a batch synchronously (async batch-id minting), so the branch's
-  `batch.batchId` and `Gateway.recordMutation` wiring is wrong for main even if hunks are merged by hand.
-- Order completion (`_tryCompleteOrder`) was reworked on main (atomic completion, `recordOperation`) and Phase 3 will rewrite it again.
-  The branch's `sale` wiring is throwaway.
-- Reusable from the branch: `kind` enum + `sales_return`/`destroyed` reasoning (CGST 56(2)), `StockMovementStore` shape, kind-picker UX
-  in `EditProductDialog`, master test plan `specs/2026-07-11-p0-p1-master-test-plan.md`. Re-apply by hand on fresh `main`; leave old branch untouched.
+- **Data model:** `photoIds: string[]` on the product doc (max 10, first = cover), not a URL. No
+  stored download URL anywhere -- computed at display time from bucket/env/tenant/product/photoId.
+- **Q2 -- access:** public-by-unguessable-path reads (random photoId, no path listing). Chosen over
+  private/signed-URL access, which would need either a server round trip per photo or a new C++ HTTP
+  cache -- not worth it for product photos with no stated privacy need.
+- **Q3 -- background model:** uploads while the app process is alive, resuming on next launch if
+  killed. True OS-level background upload (WorkManager/iOS background sessions) explicitly rejected
+  -- unbuildable and untestable in this sandbox.
+- **Atomicity:** not literally possible across Storage + Firestore (two systems, no shared
+  transaction). Closest achievable: write bytes first, then one Firestore transaction that both
+  records the id and its idempotency marker -- an id is never visible without its bytes; worst case
+  on crash is an orphaned, unreferenced Storage object, not a corrupted product.
+- Defaults not vetoed: max 10 photos/product; any tenant member may upload/remove; no bulk migration
+  of existing legacy `photoUrl` values (a one-tap "sync old photo" affordance instead); delete
+  cascade cleans up Storage; work split into 3 PRs (server+rules+CI / client queue+UI / docs+e2e).
 
-## Step log (append-only; resume from the last ticked step)
+Full design: `docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`
+Full plan: `docs/superpowers/plans/2026-09-21-product-photos-firebase-storage.md` (16 tasks, 3 PRs)
 
-- [x] 1. Cloned repo, read spec, status, P1 checkpoint, C-3 checkpoint. Read skills: brainstorming, qt-qml, ponytail.
-- [x] 2. Trial rebase of P1 onto `main`: fails semantically at commit 4/10 (above). Aborted. Old remote branch untouched.
-- [x] 3. Wrote this reassessment (docs only: no test plan needed, no code changed).
-- [x] 4. Taher chose **B** (server-side atomic) and asked to finish the docs, merge them, and implement in a new session on a new branch.
-- [x] 5. Wrote spec (D1-D10, slices S1-S4, open questions Q1-Q4, risks R1-R3), S1 plan (5 tasks, code embedded), test plan (standard format, index row).
-      Decisions D2-D10 were taken by me and are written for review; **merging this PR = approving them**. Everything in the plan was run in a scratch
-      copy of `functions/` from `main` and replayed step by step: 281/281 (232 existing + 49 new), new `lib/` files 100% line, 10/10 mutations caught.
-- [x] 6. AGENTS.md (P1 bullet + scope line) and README.md (one update paragraph) refreshed. `SKILLS.md` untouched (append-only; no new numbered lesson yet).
-- [ ] 7. PR for this branch: CI green, then merge (Taher asked me to get it merged).
-- [ ] 8. **Next session (new branch off `main`):** implement S1 by following `plans/2026-09-24-p1-server-side-stock-movements-s1.md` task by task
-      (`cd functions && npm ci` first). Then Taher deploys functions to dev and runs the on-device checklist. S2 planning only after that.
+## Status: PR 1 and PR 2 complete and pushed. PR 3 (docs + e2e test) not started.
 
-## Next-session start-up
+### PR 1 -- server, rules, CI (complete)
 
-Read this file, the spec section 3 and the plan header. Do not rebase or force-push `feature/p1-stock-movement-taxonomy`. Nothing to grill Taher on
-before S1 except the review of D2-D10; open questions Q1-Q4 belong to S2-S4.
+- `functions/lib/photoValidation.js` -- pure JPEG validation. 7/7 real tests.
+- `qml/helper/PhotoUrl.js` (+ Node parity mirror) -- pure download-URL builder. 5/5 real tests. (A
+  real off-by-one was caught and fixed in my *own test*, not the implementation.)
+- `qml/helper/PhotoQueueLogic.js` (+ Node parity mirror) -- classification/backoff/breaker/reducer.
+  23/23 real tests incl. 2 monkey tests, stable x5. Caught and fixed a **real bug**: a stale
+  `'failed'` event against an already-`failed` item kept incrementing `attempts` past the cap.
+- `storage.rules` + `test/storage.rules.test.js` -- public read, no client writes. API verified
+  against the actually-installed `@firebase/rules-unit-testing@5.0.1` package's own `.d.ts` files.
+- `functions/index.js`: `uploadProductPhoto`, `deleteProductPhoto` -- idempotent on `requestId`
+  (same `audit_log` mechanism as every other mutation). 19/19 real tests via the existing
+  `handlerHarness.js` (extended with a Storage mock). Two real bugs caught and fixed: (1)
+  `deleteProductPhoto`'s Storage cleanup ran on *every* idempotent replay, unbounded; (2) it
+  originally 404'd on a missing product doc, which would've broken the delete cascade depending on
+  call order -- now tolerant of that case (design spec corrected to match).
+- CI (`.github/workflows/checks.yml`): Storage emulator wired into the rules-tests job and the e2e
+  job.
+- **Full `functions/` suite: 288/288, run for real, stable, as of the post-rebase merge with
+  upstream's `recordOperation` work.**
 
-## Q1 options (decided: B)
+### PR 2 -- client queue + UI (complete)
 
-- **A. Client-side second write** (old branch's way): `StockMovementStore.recordMovement` after each stock change.
-  Cheap, QML-only. But not atomic with the stock change: crash/offline/kill between the two writes leaves stock changed with no ledger row,
-  which is the exact failure an auditor tests. Needs idempotent ids too. Contradicts spec 2 ("working-tier doc AND ledger entry in one transaction").
-- **B. Server-side atomic**: `recordDelta` (and `recordOperation` ops) accept an optional `movement {kind, reason, valueAtCost, batchRef}`;
-  the function creates the `stock_movements` row in the same transaction, deterministic id from `requestId`, `kind` validated against the enum,
-  `actorUid`/`serverTimestamp` server-stamped. Fully testable with `node --test` in this sandbox (100% coverage feasible). Costs: functions change + Taher deploys (D4).
-- **C. Hybrid**: B for `sale` (inside `completeOrder`, after C-3 Phase 3), A for the rest. Two mechanisms to maintain; A's gap stays.
+- `src/NativeFile::readFileBase64` -- native, **not buildable/testable in this sandbox** (no Qt
+  toolchain). Flagged plainly; on-device/CI build is the only proof.
+- `OutboxStore.hasPendingForEntity` -- gates PhotoQueue's Trap 1 (a photo for a product created
+  offline waits for that product's own create mutation to land). 8 new tests (not runnable here).
+- `PhotoQueue.qml` -- durable, resumable upload queue, sibling to Gateway/OutboxStore, registered in
+  `qml/model/qmldir`. **Caught a real crash-class bug before it ever ran**, by reading SKILLS.md
+  Skill 20 rather than by a test: a `Connections{}` block watching online status would have crashed
+  the entire singleton chain (any `pragma Singleton QtObject` root can't host `Connections{}`) --
+  would have broken every screen in the app, not just photos. Fixed with the property-binding-
+  watcher pattern Skill 20 prescribes. Also discovered `NativeFile`/`ImageProcessor` are root
+  context properties, not QML singletons -- undefined under `qmltestrunner` -- so `drainCandidates()`
+  (the gating decision) is a separate, genuinely-testable function from `_upload()` (native+XHR,
+  untested at this level, same precedent as `Gateway._send`). 20 tests (not runnable here).
+- `StorageService.qml` -- rewritten entirely (not extended) for the new model: `addProductPhoto`,
+  `removeProductPhoto`, `photoDownloadUrl`. The old single-device `useCloud`/local-URL model is
+  gone.
+- `EnvConfig.storagePrefixForEnv` -- new, mirrors `databaseIdForEnv`'s pattern (Storage paths spell
+  `prd` literally where Firestore's database id is `(default)`). 3 tests.
+- `InventoryStore.qml` -- `photoIds` added to `_normalizeProducts`/`_clone()`/`_newProductDoc()`
+  (kept in exact sync per this file's own documented CAS-conflict-prevention invariant);
+  `applyPhotoIds`/`clearLegacyPhotoUrl` (new); `deleteProduct`'s cascade now loops
+  `removeProductPhoto` per remaining photoId plus a legacy-file fallback. Updated
+  `tst_InventoryStore_deleteProductCascade.qml` (fixed a comment that would have gone stale, added
+  2 new cases for the actual multi-photo/legacy-fallback paths).
+- `qml/components/ProductPhotoGallery.qml` -- new: cover + thumbnail strip, per-tile spinner/Retry/
+  Discard/remove. Caught two more real bugs before they could break loading: `Icon` lives in
+  `qml/components/` not `qml/helper/` (missing import); and a `Repeater` model bound through a
+  function call (`_queuedForProduct()`) can't be trusted to re-evaluate reactively without a way to
+  test it here -- matched this codebase's own established pattern (`DataModel.qml`'s explicit
+  `revision`-driven refresh) instead of assuming.
+- `EditProductDialog.qml`, `AddProductDialog.qml`, `Main.qml` -- wired to the gallery/queue. The
+  shared `PhotoSourceSheet` contract (`applyPhotoSource`/`clearPhotoSource`/`photoPickRequested`,
+  hoisted to `Main.qml`, shared with `AddProductDialog`) is preserved; removal moved from the sheet
+  into the gallery's own per-photo buttons. `PhotoQueue.photoUploaded -> InventoryStore.applyPhotoIds`
+  wiring lives in `Main.qml` (can't live inside `InventoryStore` itself -- Skill 20 again).
+- `InventoryPage.qml` -- card cover photo prefers `photoIds[0]`'s thumbnail, falls back to legacy
+  `photoUrl`.
+- **Everything QML/native in PR 2 is written and, where genuinely separable from native/network
+  calls, unit-tested -- but none of it has run under `qmltestrunner` or on a device. CI is the first
+  real proof.**
 
-Proposed slices if B: S1 server support + tests; S2 client wiring for restock / manual adjust / returns; S3 `sale` via `completeOrder` (after C-3 Phase 3);
-S4 opening/closing register report.
+### Rebase (this session, after PR 2)
 
-## Resume instructions
+PR #84 was `mergeable_state: dirty` against `main` (19 commits of drift, including CI-workflow and
+`functions/index.js` changes from upstream's `recordOperation` work). Rebased successfully. One real
+conflict, in `.github/workflows/checks.yml` (upstream added `recordOperation` e2e reporting; this
+branch added the Storage emulator) -- merged both by hand, not by picking a side. Verified: 288/288
+`functions/` tests pass post-rebase; 15 feature commits intact with correct diffs. CHECKPOINT.md
+itself was the casualty of a `--ours`/`--theirs` mistake during the CHECKPOINT-only conflicts (see
+the note at the top of this file) -- fixed by rewriting this file, not by redoing the rebase.
+Force-pushed.
 
-Fresh session: clone, read this file, then follow step 8. Do not force-push or rebase `feature/p1-stock-movement-taxonomy`. No build/run.
+## Not started: PR 3 -- docs + e2e (plan Tasks 13-16)
+
+- Task 13: `test/e2e/tst_ProductPhotosE2E.qml` -- real emulator, service-level, proves the delete
+  cascade end to end. Not runnable here; written for CI.
+- Task 14: `SKILLS.md` (one new numbered entry -- the atomicity/traps/parity-test findings),
+  `AGENTS.md` (Store & Firebase Agent, Testing & QA Agent sections), `README.md` (features,
+  `storage.rules`, emulator port).
+- Task 15: `docs/superpowers/test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md`,
+  following the repo's template, honest about what ran for real (288 functions tests, stable) vs.
+  what's written-but-unverified (everything QML/native/rules-emulator/e2e).
+- Task 16: final push.
+
+## What Taher needs to do (not automatable from here)
+
+- **Deploy `storage.rules` and the two new functions before any of this does anything in
+  production** -- PR 1/2 merging doesn't deploy by itself.
+- Confirm the bucket name/region assumptions (`inventorymanager-48392.firebasestorage.app`,
+  `asia-south1`) still match the Firebase console.
+- Review PR #84 on GitHub; CI is the first real test run for everything QML/native/rules-emulator.
+
+## Review sweep (2026-09-25): requesting-code-review + ponytail-review + qt-qml-review
+
+No subagent-dispatch tool available in this environment, so the review was done directly rather
+than via the skills' own dispatched-subagent flow -- same checklists, applied by hand.
+
+- **qt-qml-review's linter**, run against only the lines this PR actually added (diff-filtered, not
+  whole files -- these are large pre-existing files). 205 raw findings, all but one were false
+  positives *for this codebase specifically*, verified against real precedent rather than assumed
+  (var-everywhere, no `id: root` in any of 73 existing test files, dot-notation anchors, `property
+  var` for list-shaped state, `Qt.createQmlObject` as the Skill-20 timer workaround Gateway.qml
+  itself already uses, and a linter regex bug on `!==`/`===` mistaken for loose equality). One real
+  fix applied: `sourceSize` added to both `Image` elements in `ProductPhotoGallery.qml` (decoding
+  full-resolution photos into 72px tiles wastes memory on mobile).
+- **ponytail-review**: one real dead-code item -- `ProductPhotoGallery`'s `photoRemoved` signal was
+  emitted with zero listeners anywhere. Removed rather than inventing new Toast wiring nobody asked
+  for.
+- **Manual correctness pass** (requesting-code-review's lens) found **four real, independent bugs**,
+  none caught by this feature's own tests:
+  1. `PhotoQueue.clear()` existed but was never wired into sign-out -- a pending photo would have
+     replayed under the next signed-in account on a shared device. Wired into `Main.qml`'s sign-out
+     handler alongside `Gateway.clear()`/`LockManager.clear()`.
+  2. **Path-traversal gap**: `productId`/`photoId` from the request body went straight into a
+     Firestore path and a new Storage object path, unvalidated. Added
+     `PhotoValidation.isSafePathSegment()` (rejects `/`, `..`, empty, non-string, >200 chars),
+     wired into both `uploadProductPhoto` and `deleteProductPhoto` before either id touches
+     anything. 8 new tests.
+  3. `PhotoQueue` never actually called `AuthService.ensureFreshToken()`, despite the design saying
+     it would -- an item stuck on a stale token could stall indefinitely. Added to `drainNow()`,
+     matching `Gateway.drainNow()`'s exact placement.
+  4. **The most serious one**: `PhotoQueue._load()` (`Component.onCompleted` on every real app
+     launch) loaded persisted items but never called `_reschedule()` -- a photo queued in a
+     *previous* session just sat frozen forever unless something else happened to trigger a drain.
+     This silently broke "survive app close", which Taher stated explicitly as a requirement. Fixed.
+- `functions/` suite after all review fixes: **296/296, stable across 3 runs** (was 288 before this
+  pass). Two regression tests added for findings 3+4 in `tests/tst_PhotoQueue.qml` (not runnable
+  here, CI is the proof).
+
+## Second rebase (2026-09-25)
+
+`main` moved 3 more commits (a merged docs PR, #85) between the first rebase and pushing the review
+fixes, making PR #84 `dirty` again -- not something this session broke, ordinary drift. Rebased a
+second time onto the new tip. This time, to avoid repeating the earlier `--ours`/`--theirs` mistake,
+`CHECKPOINT.md`'s one conflict was resolved by capturing the file's known-good content *before*
+starting the rebase and forcing that exact content back at the conflict, rather than trusting
+git's merge-side semantics again. Verified byte-identical after. `functions/` suite re-run clean,
+296/296. Force-pushed. **PR #84: `mergeable: true`, `mergeable_state: unstable`** (GitHub's term
+for "mergeable, CI hasn't reported back yet" -- not a conflict) as of this push.

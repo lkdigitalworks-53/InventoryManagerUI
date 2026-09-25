@@ -28,6 +28,18 @@ function databaseIdForEnv(env) {
     return env
 }
 
+// Product-photo Storage object paths use {env}/tenants/... with the env spelled "prd" literally
+// -- NOT Firestore's "(default)" database id -- so this is a second, deliberately separate mapping
+// from databaseIdForEnv even though it shares the same "dev"->"dev1" quirk (added 2026-09-21,
+// design spec: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md). The
+// server (functions/index.js's storageEnvPrefix) maintains the identical mapping independently --
+// two tiny functions in two different runtimes, kept in sync by hand rather than shared code, same
+// as PhotoUrl.js/PhotoQueueLogic.js's Node parity-test convention elsewhere in this feature.
+function storagePrefixForEnv(env) {
+    if (env === "dev") return "dev1"
+    return env
+}
+
 function databaseIdForStage(stage) {
     return databaseIdForEnv(envForStage(stage))
 }
