@@ -51,7 +51,11 @@ QtObject {
     signal photoUploaded(string productId, string photoId, var photoIds)
     signal photoUploadFailed(string productId, string photoId, int status)
 
-    readonly property string _uploadUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/uploadProductPhoto"
+    // Overridable, matching Gateway.functionUrl's exact convention (plain property, no leading
+    // underscore -- signals "external callers, e2e tests included, may point this at the
+    // emulator or another environment"). Found missing this during the e2e test write-up: as
+    // readonly with a leading underscore, no e2e test could ever have redirected it.
+    property string uploadUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/uploadProductPhoto"
 
     property Settings _settings: Settings {
         category: "PhotoQueue"
@@ -274,7 +278,7 @@ QtObject {
             if (next && next.state === "failed") photoUploadFailed(item.productId, item.photoId, 0)
             _reschedule()
         }
-        xhr.open("POST", _uploadUrl)
+        xhr.open("POST", uploadUrl)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
         xhr.timeout = 45000
