@@ -1,42 +1,47 @@
-# P1 Stock Movements, Slice S1 (server) Implementation Plan
+# P1 Stock Movements, Slice S1a (server: recordDelta + recordOperation) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `recordDelta` and `recordOperation` write server-built `stock_movements` rows in the same transaction as the stock change, and no client-facing endpoint can write that collection directly.
+**Goal:** `recordDelta` and `recordOperation` write server-built `stock_movements` rows in the same transaction as every inventory stock change (client-supplied kinds when sent, a server-derived default otherwise), and no client-facing endpoint can write that collection directly.
 
-**Architecture:** One new pure module `functions/lib/movementLogic.js` (validate, sum-check, row-build). `gatewayLogic.validateDeltaRequest` validates optional `movements`; `applyDelta` and `operationLogic.applyOperation` verify the sum against the APPLIED delta and write the rows inside their existing transaction. `stock_movement` leaves `ENTITY_COLLECTIONS`. Design: `docs/superpowers/specs/2026-09-24-p1-server-side-stock-movements-design.md` (D1-D10).
+**Architecture:** One new pure module `functions/lib/movementLogic.js` (validate, derive, sum-check, row-build). `gatewayLogic.validateDeltaRequest` validates optional `movements`; `applyDelta` and `operationLogic.applyOperation` verify the sum against the APPLIED delta, derive a default row when none was sent, and write rows inside their existing transaction. `stock_movement` leaves `ENTITY_COLLECTIONS`. `validateMutationRequest` rejects `movements` (S1b derives for whole-record mutations). Design: `docs/superpowers/specs/2026-09-24-p1-server-side-stock-movements-design.md` (D1-D13).
 
 **Tech Stack:** Node 20 (CI) / `node --test`, `firebase-functions`, Firestore transactions. No Qt, no QML in this slice.
 
 ## Global Constraints
 
-- Branch off latest `main`; never touch `feature/p1-stock-movement-taxonomy`. Commit as `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT from chat only; push with `git push <url> <branch>` (no `-u`), then `grep -c ghp_ .git/config` must print 0.
-- Do not build or run the app. Do not install Qt. Only `functions/` is touched, plus docs.
-- `movements` is optional on every request; a request without it must behave exactly as before.
-- Kind enum (10): `receipt, sale, loss, theft, destroyed, write_off, free_sample, gift, adjustment, sales_return`. `qty` is signed; direction per kind in the spec (D4).
-- Caps: 50 movements per `recordDelta`, 90 per `recordOperation` (spec D8).
+- Branch off latest `main` (e.g. `feature/2026-09-25-p1-s1a-server-movements`); never touch `feature/p1-stock-movement-taxonomy`. Commit as `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT from chat only; push with `git push <url> <branch>` (no `-u`), then `grep -c ghp_ .git/config` must print 0.
+- Do not build or run the app. Do not install Qt. Only `functions/` is touched, plus docs. Environment is DEV only (no prod data, no backward-compat constraint on old clients).
+- Kind enum (10): `receipt, sale, loss, theft, destroyed, write_off, free_sample, gift, adjustment, sales_return`. `qty` is signed; direction per kind in the spec (D4). Row fields: `id, productId, kind, qty, reason, valueAtCost, derived, actorUid, actorRole, serverTimestamp, clientTimestamp, requestId` (+ `operationId, opType, opIndex` inside an operation). There is NO `batchRef` (cut until S3, spec D9).
+- Derived defaults (spec D11): `recordDelta` on inventory `stock` with no `movements` -> one `adjustment`; `recordOperation` delta op -> `sale` for `completeOrder` (falls back to `adjustment` if the change is an increase). Zero applied change derives nothing.
+- Write budget (spec D8): per operation `2 x ops + 1 + rows <= 500`, where every op on entity `inventory` counts at least 1 row. Over budget = `400 operation-too-large`. `recordDelta` allows 50 explicit movements.
 - Error strings are part of the contract (spec section 5); do not rename.
 - Never write an `undefined` field to Firestore (Admin SDK rejects it): `buildRows` adds `operationId`/`opType`/`opIndex` only when given.
 - Test counts: always count with `node --test` output, not from memory (LEARNINGS).
-- Setup once: `cd functions && npm ci` (needed for `index.handlers` tests; the `lib/` tests need nothing installed).
+- Setup once: `cd functions && npm ci` (needed for `index.handlers` tests; the `lib/` tests need nothing installed). Run the whole suite with `node --test` (NOT `node --test test/`, which fails).
 
 ## How this plan was verified (2026-09-24 design session)
 
-Every file and patch below was applied to a scratch copy of `functions/` from `main` @ `2c1e5f6` and run: `lib/` + new tests
-153/153, full `functions/` suite 281/281 (232 existing + 49 new). New/changed `lib/` files: 100% line coverage
-(`movementLogic.js` 100% branch). 10 deliberate mutations, all caught after one added test. Each patch also passes
-`git apply --check` against `main`. The whole plan was then replayed step by step on a fresh copy of `main` (red counts and green counts below are from that replay).
-NOT verified: nothing in QML (none touched); the real Firebase emulator (no e2e in this slice).
+Every file and patch below was applied to a scratch copy of `functions/` from `main` @ `6da373d` and replayed step by step. Full `functions/` suite after S1a:
+291/291 (232 existing, 3 of them re-expected on purpose, + 59 new). New/changed `lib/` files: 100% line coverage (`movementLogic.js` 100% branch). Mutation checks (deliberate bugs) all caught.
+Red/green counts below are from that replay. NOT verified: nothing in QML (none touched); the Firebase emulator (no e2e in this slice).
+
+**Base has since moved (2026-09-26 rebase note):** PR #80 (staff delete UI, unrelated to P1) merged to `main` after this plan was verified and
+added `removed_staff` to `ENTITY_COLLECTIONS` in `functions/lib/gatewayLogic.js` — the same object Task 2's patch edits. The Task 2 diff below
+**no longer applies with `git apply`** (`error: patch failed: functions/lib/gatewayLogic.js:9`); the other four patches (Tasks 1, 3, 4) are unaffected
+and still apply cleanly to `main` as of `9be6303`. Before Task 2, re-check with `git apply --check`, and if it still fails, make the same edit by
+hand against the current file (remove the `stock_movement` line, add the doc comment and the `MovementLogic` require) rather than trusting the diff verbatim.
 
 ## File map
 
 | File | Change | Responsibility |
 |---|---|---|
-| `functions/lib/movementLogic.js` | create | kinds, direction rules, validation, sum check, row builder |
-| `functions/lib/gatewayLogic.js` | modify | validate `movements` on delta requests; `applyDelta` writes rows; close `stock_movement` entity |
-| `functions/lib/operationLogic.js` | modify | delta ops carry `movements`; cap; sum check; rows in the operation transaction |
+| `functions/lib/movementLogic.js` | create | kinds, direction rules, validation, derive, sum check, row builder, write ceiling constant |
+| `functions/lib/gatewayLogic.js` | modify | validate `movements` on delta requests; reject them on mutations; `applyDelta` derives/writes rows; close `stock_movement` entity |
+| `functions/lib/operationLogic.js` | modify | delta ops carry/derive movements; write budget; rows in the operation transaction |
 | `functions/index.js` | modify (1 line) | pass `validated.movements` to `applyDelta` |
 | `functions/test/testSupport/handlerHarness.js` | modify | capture `applyDelta` params for assertions |
+| `functions/test/operationLogic.test.js` | modify (3 existing tests) | new write budget and the derived row change 3 old expectations |
 | `functions/test/movementLogic.test.js` | create | pure unit tests |
 | `functions/test/movementWiring.test.js` | create | `applyDelta` / operation integration tests over an in-memory transaction fake |
 | `functions/test/index.handlers.test.js` | append | handler pass-through and contract |
@@ -51,10 +56,9 @@ NOT verified: nothing in QML (none touched); the real Firebase emulator (no e2e 
 - Test: `functions/test/movementLogic.test.js`
 
 **Interfaces:**
-- Produces: `validateMovements(raw) -> {ok:true, movements} | {ok:false,status:400,error}`; `totalsMatch(movements, appliedDelta) -> boolean`;
-  `buildRows(movements, ctx) -> [{id, data}]`; constants `KIND_DIRECTION`, `MOVEMENT_KINDS`, `MAX_MOVEMENTS` (50), `MAX_OP_MOVEMENTS` (90).
+- Produces: `validateMovements(raw)`, `totalsMatch(movements, appliedDelta)`, `deriveMovement(appliedDelta, defaultKind)`, `buildRows(movements, ctx)`; constants `KIND_DIRECTION`, `MOVEMENT_KINDS`, `DEFAULT_KIND_BY_OPTYPE`, `MAX_MOVEMENTS` (50), `MAX_TXN_WRITES` (500).
 
-- [ ] **Step 1: Write the failing test** — create `functions/test/movementLogic.test.js`:
+- [ ] **Step 1: Write the failing test** - create `functions/test/movementLogic.test.js`:
 
 ```js
 "use strict";
@@ -64,7 +68,7 @@ const assert = require("node:assert/strict");
 const M = require("../lib/movementLogic");
 
 function mv(overrides) {
-    return Object.assign({ kind: "loss", qty: -2, reason: "water damage", valueAtCost: 40, batchRef: "BAT-1" }, overrides || {});
+    return Object.assign({ kind: "loss", qty: -2, reason: "water damage", valueAtCost: 40 }, overrides || {});
 }
 function fail(raw, error) {
     const r = M.validateMovements(raw);
@@ -81,12 +85,12 @@ test("validateMovements: absent movements is ok and empty", () => {
 
 test("validateMovements: normalizes a full movement", () => {
     const r = M.validateMovements([mv({ reason: "  water damage  " })]);
-    assert.deepEqual(r, { ok: true, movements: [{ kind: "loss", qty: -2, reason: "water damage", valueAtCost: 40, batchRef: "BAT-1" }] });
+    assert.deepEqual(r, { ok: true, movements: [{ kind: "loss", qty: -2, reason: "water damage", valueAtCost: 40, derived: false }] });
 });
 
-test("validateMovements: defaults reason '', valueAtCost 0, batchRef null", () => {
+test("validateMovements: defaults reason '' and valueAtCost 0", () => {
     const r = M.validateMovements([{ kind: "receipt", qty: 5 }]);
-    assert.deepEqual(r.movements[0], { kind: "receipt", qty: 5, reason: "", valueAtCost: 0, batchRef: null });
+    assert.deepEqual(r.movements[0], { kind: "receipt", qty: 5, reason: "", valueAtCost: 0, derived: false });
 });
 
 test("validateMovements: every kind accepts its own direction", () => {
@@ -148,15 +152,10 @@ test("validateMovements: rejects bad reason (non-string, over 500 chars)", () =>
     assert.equal(M.validateMovements([mv({ reason: "x".repeat(500) })]).ok, true);
 });
 
-test("validateMovements: rejects bad batchRef", () => {
-    fail([mv({ batchRef: "" })], "invalid-movement-batch-ref");
-    fail([mv({ batchRef: 7 })], "invalid-movement-batch-ref");
-    fail([mv({ batchRef: "b".repeat(201) })], "invalid-movement-batch-ref");
-});
-
 test("validateMovements: does not trust client-supplied identity fields", () => {
-    const r = M.validateMovements([mv({ id: "forged", productId: "other", actorUid: "boss", serverTimestamp: 1 })]);
-    assert.deepEqual(Object.keys(r.movements[0]).sort(), ["batchRef", "kind", "qty", "reason", "valueAtCost"]);
+    const r = M.validateMovements([mv({ id: "forged", productId: "other", actorUid: "boss", serverTimestamp: 1, derived: true, batchRef: "x" })]);
+    assert.deepEqual(Object.keys(r.movements[0]).sort(), ["derived", "kind", "qty", "reason", "valueAtCost"]);
+    assert.equal(r.movements[0].derived, false);
 });
 
 // ── totalsMatch ─────────────────────────────────────────────────────────────
@@ -176,8 +175,8 @@ const CTX = { baseId: "req-9", productId: "p1", actorUid: "u1", actorRole: "owne
               serverTimestamp: "TS", clientTimestamp: 123, requestId: "req-9" };
 
 test("buildRows: stamps identity server-side and derives deterministic ids", () => {
-    const rows = M.buildRows([{ kind: "loss", qty: -1, reason: "r", valueAtCost: 5, batchRef: null },
-                              { kind: "loss", qty: -2, reason: "", valueAtCost: 0, batchRef: "B" }], CTX);
+    const rows = M.buildRows([{ kind: "loss", qty: -1, reason: "r", valueAtCost: 5, derived: false },
+                              { kind: "loss", qty: -2, reason: "", valueAtCost: 0, derived: true }], CTX);
     assert.deepEqual(rows.map((r) => r.id), ["req-9~m0", "req-9~m1"]);
     assert.equal(rows[0].data.id, "req-9~m0");
     assert.equal(rows[0].data.productId, "p1");
@@ -186,10 +185,12 @@ test("buildRows: stamps identity server-side and derives deterministic ids", () 
     assert.equal(rows[0].data.serverTimestamp, "TS");
     assert.equal(rows[0].data.requestId, "req-9");
     assert.equal("operationId" in rows[0].data, false);
+    assert.equal(rows[0].data.derived, false);
+    assert.equal(rows[1].data.derived, true);
 });
 
 test("buildRows: operation context adds operationId/opType/opIndex; never an undefined field", () => {
-    const rows = M.buildRows([{ kind: "sale", qty: -1, reason: "", valueAtCost: 1, batchRef: null }],
+    const rows = M.buildRows([{ kind: "sale", qty: -1, reason: "", valueAtCost: 1, derived: true }],
         Object.assign({}, CTX, { baseId: "op:1~2", operationId: "op:1", opType: "completeOrder", opIndex: 2 }));
     assert.equal(rows[0].id, "op:1~2~m0");
     assert.equal(rows[0].data.operationId, "op:1");
@@ -202,10 +203,36 @@ test("buildRows: empty movements builds no rows", () => {
     assert.deepEqual(M.buildRows([], CTX), []);
 });
 
+// ── deriveMovement ──────────────────────────────────────────────────────────
+test("deriveMovement: one derived row carrying the applied delta", () => {
+    assert.deepEqual(M.deriveMovement(-3, "sale"), [{ kind: "sale", qty: -3, reason: "", valueAtCost: 0, derived: true }]);
+    assert.deepEqual(M.deriveMovement(4, "adjustment"), [{ kind: "adjustment", qty: 4, reason: "", valueAtCost: 0, derived: true }]);
+    assert.deepEqual(M.deriveMovement(0.5, "receipt")[0].qty, 0.5);
+});
+
+test("deriveMovement: zero, float noise and non-finite changes derive nothing", () => {
+    assert.deepEqual(M.deriveMovement(0, "sale"), []);
+    assert.deepEqual(M.deriveMovement(1e-12, "sale"), []);
+    assert.deepEqual(M.deriveMovement(NaN, "sale"), []);
+    assert.deepEqual(M.deriveMovement(Infinity, "sale"), []);
+});
+
+test("deriveMovement: a default kind that contradicts the direction (or is unknown) falls back to adjustment", () => {
+    assert.equal(M.deriveMovement(3, "sale")[0].kind, "adjustment");
+    assert.equal(M.deriveMovement(-3, "receipt")[0].kind, "adjustment");
+    assert.equal(M.deriveMovement(-3, "nonsense")[0].kind, "adjustment");
+    assert.equal(M.deriveMovement(-3, undefined)[0].kind, "adjustment");
+});
+
+test("constants: default kind by op type and the write ceiling", () => {
+    assert.deepEqual(M.DEFAULT_KIND_BY_OPTYPE, { completeOrder: "sale" });
+    assert.equal(M.MAX_TXN_WRITES, 500);
+});
+
 // ── monkey: random garbage never throws, never returns ok with junk ─────────
 test("validateMovements monkey: random junk never throws", () => {
     const junk = [undefined, null, 0, 1, "s", [], {}, [[]], [{}], [{ kind: {} }], [{ kind: "loss", qty: {} }],
-                  [{ kind: "loss", qty: -1, reason: {} }], [{ kind: "loss", qty: -1, batchRef: {} }],
+                  [{ kind: "loss", qty: -1, reason: {} }],
                   [{ kind: "loss", qty: -1, valueAtCost: [] }], true, false, () => 1];
     for (const j of junk) {
         const r = M.validateMovements(j);
@@ -218,18 +245,19 @@ test("validateMovements monkey: random junk never throws", () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd functions && node --test test/movementLogic.test.js`
-Expected: FAIL, `Cannot find module '../lib/movementLogic'` (1 failed file).
+Expected: FAIL, `Cannot find module '../lib/movementLogic'`.
 
-- [ ] **Step 3: Write the implementation** — create `functions/lib/movementLogic.js`:
+- [ ] **Step 3: Write the implementation** - create `functions/lib/movementLogic.js`:
 
 ```js
 "use strict";
 
 // P1 (CGST Rule 56(2)) stock-movement ledger rows. Rows are built HERE, on the
-// server, inside the same transaction as the stock change. The client only says
-// WHAT happened (kind, signed qty, reason, valueAtCost, batchRef); the row id,
-// productId, actor, role and times are stamped by the server, so the ledger
-// cannot be forged by a client. Pure module: no Firebase dependency.
+// server, inside the same transaction as the stock change. The client may say
+// WHAT happened (kind, signed qty, reason, valueAtCost); when it says nothing,
+// the server derives a default row, so no stock change can leave the ledger.
+// Row id, productId, actor, role and times are always stamped by the server, so
+// the ledger cannot be forged by a client. Pure module: no Firebase dependency.
 
 // Direction of the stock change each kind may carry: +1 increases stock,
 // -1 decreases it, 0 either way. `sales_return` is the one kind beyond the
@@ -248,14 +276,16 @@ const KIND_DIRECTION = {
 };
 const MOVEMENT_KINDS = Object.keys(KIND_DIRECTION);
 
-// Per recordDelta request.
+// Default kind for a stock change the client did not describe, by operation.
+// Anything else defaults to "adjustment".
+const DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" };
+
+// Explicit movements per recordDelta request.
 const MAX_MOVEMENTS = 50;
-// Per recordOperation, all ops together. operationLogic budgets 401 writes for
-// 200 ops (200 docs + 200 audits + 1 marker); 401 + 90 = 491 stays under
-// Firestore's 500-writes-per-transaction ceiling.
-const MAX_OP_MOVEMENTS = 90;
+// Firestore's per-transaction write ceiling. Every write path must keep
+// (working docs + audit entries + movement rows [+ marker]) under it.
+const MAX_TXN_WRITES = 500;
 const MAX_REASON = 500;
-const MAX_BATCH_REF = 200;
 // Quantities may be fractional; tolerate float noise, nothing more.
 const EPSILON = 1e-9;
 
@@ -264,7 +294,7 @@ function _fail(error) {
 }
 
 // raw: undefined/null (no movements) or a non-empty array of
-// { kind, qty, reason?, valueAtCost?, batchRef? }. Returns
+// { kind, qty, reason?, valueAtCost? }. Returns
 // { ok: true, movements: [normalized...] } or { ok: false, status, error }.
 function validateMovements(raw) {
     if (raw === undefined || raw === null) return { ok: true, movements: [] };
@@ -286,11 +316,7 @@ function validateMovements(raw) {
         const reason = (m.reason === undefined || m.reason === null) ? "" : m.reason;
         if (typeof reason !== "string" || reason.length > MAX_REASON) return _fail("invalid-movement-reason");
 
-        const batchRef = (m.batchRef === undefined || m.batchRef === null) ? null : m.batchRef;
-        if (batchRef !== null && (typeof batchRef !== "string" || batchRef.length === 0 || batchRef.length > MAX_BATCH_REF))
-            return _fail("invalid-movement-batch-ref");
-
-        movements.push({ kind: m.kind, qty: m.qty, reason: reason.trim(), valueAtCost: value, batchRef: batchRef });
+        movements.push({ kind: m.kind, qty: m.qty, reason: reason.trim(), valueAtCost: value, derived: false });
     }
     return { ok: true, movements: movements };
 }
@@ -302,6 +328,17 @@ function totalsMatch(movements, appliedDelta) {
     let sum = 0;
     for (const m of movements) sum += m.qty;
     return Math.abs(sum - appliedDelta) <= EPSILON;
+}
+
+// Server-derived row for a stock change the client did not describe. Zero
+// change derives nothing. If defaultKind contradicts the direction of the
+// change (e.g. "sale" on an increase) the row falls back to "adjustment".
+function deriveMovement(appliedDelta, defaultKind) {
+    if (!isFinite(appliedDelta) || Math.abs(appliedDelta) <= EPSILON) return [];
+    const direction = KIND_DIRECTION[defaultKind];
+    const kind = (direction === undefined || (direction !== 0 && Math.sign(appliedDelta) !== direction))
+        ? "adjustment" : defaultKind;
+    return [{ kind: kind, qty: appliedDelta, reason: "", valueAtCost: 0, derived: true }];
 }
 
 // One { id, data } per movement. ctx: { baseId, productId, actorUid, actorRole,
@@ -318,7 +355,7 @@ function buildRows(movements, ctx) {
             qty: m.qty,
             reason: m.reason,
             valueAtCost: m.valueAtCost,
-            batchRef: m.batchRef,
+            derived: m.derived === true,
             actorUid: ctx.actorUid,
             actorRole: ctx.actorRole,
             serverTimestamp: ctx.serverTimestamp,
@@ -335,21 +372,21 @@ function buildRows(movements, ctx) {
 }
 
 module.exports = {
-    KIND_DIRECTION, MOVEMENT_KINDS, MAX_MOVEMENTS, MAX_OP_MOVEMENTS,
-    validateMovements, totalsMatch, buildRows
+    KIND_DIRECTION, MOVEMENT_KINDS, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_TXN_WRITES,
+    validateMovements, totalsMatch, deriveMovement, buildRows
 };
 ```
 
 - [ ] **Step 4: Run it to verify it passes**
 
 Run: `cd functions && node --test test/movementLogic.test.js`
-Expected: `# tests 21`, `# pass 21`, `# fail 0`.
+Expected: `# tests 24`, `# pass 24`, `# fail 0`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add functions/lib/movementLogic.js functions/test/movementLogic.test.js
-git commit -m "feat(p1): movementLogic - kinds, validation, sum check, server-built rows"
+git commit -m "feat(p1): movementLogic - kinds, validation, derive, sum check, server-built rows"
 ```
 
 ---
@@ -361,11 +398,11 @@ git commit -m "feat(p1): movementLogic - kinds, validation, sum check, server-bu
 - Create: `functions/test/movementWiring.test.js` (first half; Task 4 appends the second)
 
 **Interfaces:**
-- Consumes: Task 1's `MovementLogic.validateMovements`, `totalsMatch`, `buildRows`.
-- Produces: `validateDeltaRequest(body)` result gains `movements` (always an array); `applyDelta(db, params)` accepts `params.movements` and returns
-  `{ok:false,status:409,error:"movement-qty-mismatch",field:"stock",current}` on a sum mismatch; `ENTITY_COLLECTIONS.stock_movement` no longer exists.
+- Consumes: Task 1.
+- Produces: `validateDeltaRequest(body)` result gains `movements` (always an array); `validateMutationRequest` rejects `movements` with `400 movements-not-supported`;
+  `applyDelta(db, params)` accepts `params.movements`, derives an `adjustment` row when none, returns `{ok:false,status:409,error:"movement-qty-mismatch",field:"stock",current}` on a sum mismatch; `ENTITY_COLLECTIONS.stock_movement` no longer exists.
 
-- [ ] **Step 1: Write the failing tests** — create `functions/test/movementWiring.test.js`:
+- [ ] **Step 1: Write the failing tests** - create `functions/test/movementWiring.test.js`:
 
 ```js
 "use strict";
@@ -466,16 +503,46 @@ test("applyDelta: writes stock, audit entry and server-stamped movement row in O
     assert.equal(row.kind, "loss");
 });
 
-test("applyDelta: no movements writes no movement rows (old behaviour)", async () => {
+test("applyDelta: no movements on an inventory stock delta derives ONE adjustment row from the applied delta", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
-    await G.applyDelta(db, dParams({ movements: [] }));
+    const r = await G.applyDelta(db, dParams({ movements: [] }));
+    assert.equal(r.ok, true);
+    const rows = rowsOf(db);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].data.kind, "adjustment");
+    assert.equal(rows[0].data.qty, -3);
+    assert.equal(rows[0].data.derived, true);
+    assert.equal(rows[0].data.productId, "p1");
+    assert.equal(rows[0].data.actorUid, "u1");
+});
+
+test("applyDelta: derived row records the APPLIED delta after a clamp, not the requested one", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 1 } });
+    const r = await G.applyDelta(db, dParams({ movements: [], clamps: { stock: 0 } }));   // asks -3, applies -1
+    assert.equal(r.ok, true);
+    assert.equal(rowsOf(db)[0].data.qty, -1);
+});
+
+test("applyDelta: a zero applied change derives no row; a non-inventory entity derives none", async () => {
+    let db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
+    await G.applyDelta(db, dParams({ movements: [], deltas: { stock: 0 } }));
+    assert.equal(rowsOf(db).length, 0);
+    db = makeDb({ [T + "stock_batches/b1"]: { qtyRemaining: 10 } });
+    await G.applyDelta(db, dParams({ movements: [], entity: "stock_batch", entityId: "b1", collection: "stock_batches",
+        deltas: { qtyRemaining: -1 } }));
+    assert.equal(rowsOf(db).length, 0);
+});
+
+test("applyDelta: an inventory delta on a field other than stock derives no row", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, minStock: 2 } });
+    await G.applyDelta(db, dParams({ movements: [], deltas: { minStock: 1 } }));
     assert.equal(rowsOf(db).length, 0);
 });
 
 test("applyDelta: several movements, one per FIFO portion, must sum to the applied delta", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
-    const movements = [{ kind: "sale", qty: -1, reason: "", valueAtCost: 1, batchRef: "A" },
-                       { kind: "sale", qty: -2, reason: "", valueAtCost: 4, batchRef: "B" }];
+    const movements = [{ kind: "sale", qty: -1, reason: "", valueAtCost: 1 },
+                       { kind: "sale", qty: -2, reason: "", valueAtCost: 4 }];
     const r = await G.applyDelta(db, dParams({ movements: movements }));
     assert.equal(r.ok, true);
     assert.deepEqual(rowsOf(db).map((w) => w.path), [T + "stock_movements/req-1~m0", T + "stock_movements/req-1~m1"]);
@@ -483,7 +550,7 @@ test("applyDelta: several movements, one per FIFO portion, must sum to the appli
 
 test("applyDelta: a sum that disagrees with the applied delta writes NOTHING and returns 409", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
-    const r = await G.applyDelta(db, dParams({ movements: [{ kind: "loss", qty: -1, reason: "", valueAtCost: 0, batchRef: null }] }));
+    const r = await G.applyDelta(db, dParams({ movements: [{ kind: "loss", qty: -1, reason: "", valueAtCost: 0 }] }));
     assert.equal(r.ok, false);
     assert.equal(r.status, 409);
     assert.equal(r.error, "movement-qty-mismatch");
@@ -523,7 +590,7 @@ test("applyDelta: missing product is 404 and writes nothing", async () => {
 
 test("applyDelta: increasing kinds work (receipt +5)", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 1 } });
-    const r = await G.applyDelta(db, dParams({ deltas: { stock: 5 }, movements: [{ kind: "receipt", qty: 5, reason: "", valueAtCost: 50, batchRef: "B1" }] }));
+    const r = await G.applyDelta(db, dParams({ deltas: { stock: 5 }, movements: [{ kind: "receipt", qty: 5, reason: "", valueAtCost: 50 }] }));
     assert.equal(r.ok, true);
     assert.equal(db.store[T + "inventory/p1"].stock, 6);
 });
@@ -532,9 +599,9 @@ test("applyDelta: increasing kinds work (receipt +5)", async () => {
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `cd functions && node --test test/movementWiring.test.js`
-Expected: `# tests 14`, `# pass 5`, `# fail 9` (measured by replaying this plan on a fresh copy of `main`).
+Expected: `# tests 17`, `# pass 6`, `# fail 11` (measured by replaying this plan on a fresh copy of `main`).
 
-- [ ] **Step 3: Apply the implementation** — save as `/tmp/gateway.patch` and run `git apply /tmp/gateway.patch` from the repo root
+- [ ] **Step 3: Apply the implementation** - save as `/tmp/gateway.patch` and run `git apply /tmp/gateway.patch` from the repo root
 (or make the same edits by hand; the patch is the exact diff that was run):
 
 ```diff
@@ -561,7 +628,19 @@ Expected: `# tests 14`, `# pass 5`, `# fail 9` (measured by replaying this plan 
  const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];
  
  // Extracts the token from an "Authorization: Bearer <token>" header.
-@@ -94,6 +97,14 @@
+@@ -52,6 +55,11 @@
+     if (!entityId || !requestId) {
+         return { ok: false, status: 400, error: "missing-fields" };
+     }
++    // Whole-record mutations never carry client movements: the server derives
++    // the row from the before/after stock (P1 spec D11). Movements come via recordDelta.
++    if (body.movements !== undefined) {
++        return { ok: false, status: 400, error: "movements-not-supported" };
++    }
+ 
+     return {
+         ok: true,
+@@ -94,6 +102,14 @@
          }
      }
  
@@ -576,7 +655,7 @@ Expected: `# tests 14`, `# pass 5`, `# fail 9` (measured by replaying this plan 
      return {
          ok: true,
          entity: entity,
-@@ -102,6 +113,7 @@
+@@ -102,6 +118,7 @@
          deltas: deltas,
          floors: floors,
          clamps: clamps,
@@ -584,11 +663,15 @@ Expected: `# tests 14`, `# pass 5`, `# fail 9` (measured by replaying this plan 
          clientTimestamp: clientTimestamp,
          collection: collection
      };
-@@ -214,7 +226,22 @@
+@@ -214,7 +231,26 @@
              after[field] = nextVal;
          }
  
-+        const movements = params.movements || [];
++        // Every stock change on inventory leaves a ledger row: the client's
++        // movements if it sent any, else one server-derived "adjustment".
++        let movements = params.movements || [];
++        if (movements.length === 0 && params.entity === "inventory" && Object.prototype.hasOwnProperty.call(after, "stock"))
++            movements = MovementLogic.deriveMovement(after.stock - before.stock, "adjustment");
 +        if (movements.length > 0 && !MovementLogic.totalsMatch(movements, after.stock - before.stock)) {
 +            return { ok: false, status: 409, error: "movement-qty-mismatch", field: "stock", current: before.stock };
 +        }
@@ -612,7 +695,7 @@ Expected: `# tests 14`, `# pass 5`, `# fail 9` (measured by replaying this plan 
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd functions && node --test test/movementWiring.test.js test/gatewayLogic.test.js test/lockLogic.test.js test/batchMutationLogic.test.js`
-Expected: all pass, `# fail 0` (the existing gateway/lock/batch tests must be untouched and green).
+Expected: all pass, `# fail 0` (the existing gateway/lock/batch tests are untouched and green).
 
 - [ ] **Step 5: Commit**
 
@@ -634,7 +717,7 @@ git commit -m "feat(p1): recordDelta writes server-built stock_movements rows at
 - Consumes: Task 2's `validated.movements`.
 - Produces: `applyDelta` is called with `params.movements`; harness exposes `mockState.lastApplyDeltaParams`.
 
-- [ ] **Step 1: Write the failing tests** — append to the end of `functions/test/index.handlers.test.js`:
+- [ ] **Step 1: Write the failing tests** - append to the end of `functions/test/index.handlers.test.js`:
 
 ```js
 // ── recordDelta: P1 stock movements ─────────────────────────────────────
@@ -649,7 +732,7 @@ test("recordDelta: forwards validated movements to applyDelta", async () => {
     }) }), res);
     assert.equal(res.statusCode, 200);
     assert.deepEqual(mockState.lastApplyDeltaParams.movements,
-        [{ kind: "loss", qty: -3, reason: "spoiled", valueAtCost: 9, batchRef: null }]);
+        [{ kind: "loss", qty: -3, reason: "spoiled", valueAtCost: 9, derived: false }]);
 });
 
 test("recordDelta: without movements forwards an empty list (old clients unaffected)", async () => {
@@ -695,9 +778,9 @@ test("recordDelta: the closed stock_movement entity -> 400 unsupported-entity", 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `cd functions && npm ci && node --test test/index.handlers.test.js`
-Expected: `# tests 30`, `# pass 28`, `# fail 2` (measured after Tasks 1-2: the harness cannot capture params yet, and `index.js` does not forward `movements`; the other 3 new tests already pass on Task 2's validation).
+Expected: `# tests 30`, `# pass 28`, `# fail 2` (harness cannot capture params yet, `index.js` does not forward `movements`).
 
-- [ ] **Step 3: Apply the implementation** — harness first, then `index.js`:
+- [ ] **Step 3: Apply the implementation** - harness first, then `index.js`:
 
 ```diff
 --- a/functions/test/testSupport/handlerHarness.js
@@ -752,14 +835,14 @@ git commit -m "feat(p1): recordDelta handler forwards movements; harness capture
 
 **Files:**
 - Modify: `functions/lib/operationLogic.js`
+- Modify: `functions/test/operationLogic.test.js` (3 existing tests, see Step 3)
 - Test: append to `functions/test/movementWiring.test.js`
 
 **Interfaces:**
-- Consumes: Task 1 (`MAX_OP_MOVEMENTS`, `totalsMatch`, `buildRows`); Task 2's `validateDeltaRequest` already returns `movements` per delta op.
-- Produces: `validateOperationRequest` errors `movements-require-delta-op` and `too-many-movements` (both with `opIndex`);
-  `applyOperation` writes `stock_movements/{requestId}~{opIndex}~m{j}` and rejects the WHOLE operation with `409 movement-qty-mismatch` + `opIndex`.
+- Consumes: Task 1 (`MAX_TXN_WRITES`, `DEFAULT_KIND_BY_OPTYPE`, `deriveMovement`, `totalsMatch`, `buildRows`); Task 2's `validateDeltaRequest` returns `movements` per delta op.
+- Produces: `400 operation-too-large` when `2 x ops + 1 + rows > 500`; `applyOperation` writes `stock_movements/{requestId}~{opIndex}~m{j}` and rejects the WHOLE operation with `409 movement-qty-mismatch` + `opIndex`.
 
-- [ ] **Step 1: Write the failing tests** — append to `functions/test/movementWiring.test.js` (the file already imports `O` and `M`):
+- [ ] **Step 1: Write the failing tests** - append to `functions/test/movementWiring.test.js` (the file already imports `O` and `M`):
 
 ```js
 // ── operations ──────────────────────────────────────────────────────────────
@@ -773,21 +856,34 @@ function oParams(v) {
              clientTimestamp: v.clientTimestamp, serverTimestamp: "TS" };
 }
 
-test("validateOperationRequest: a mutation op may not carry movements", () => {
+test("validateMutationRequest and a mutation op may not carry movements (server derives them)", () => {
+    const m = G.validateMutationRequest({ entity: "inventory", entityId: "p1", action: "update", requestId: "r", before: {}, after: {}, movements: [] });
+    assert.equal(m.error, "movements-not-supported");
     const v = O.validateOperationRequest(opBody([{ kind: "mutation", entity: "order", entityId: "o1", action: "update",
         before: {}, after: {}, movements: [] }]));
-    assert.equal(v.error, "movements-require-delta-op");
+    assert.equal(v.error, "movements-not-supported");
     assert.equal(v.opIndex, 0);
 });
 
-test("validateOperationRequest: total movements are capped so the transaction stays under 500 writes", () => {
-    const fifty = Array.from({ length: 50 }, () => ({ kind: "sale", qty: -1 }));
-    const ok = O.validateOperationRequest(opBody([deltaOp("p1", -50, fifty), deltaOp("p2", -40, fifty.slice(0, 40))]));
-    assert.equal(ok.ok, true);
-    const over = O.validateOperationRequest(opBody([deltaOp("p1", -50, fifty), deltaOp("p2", -41, fifty.slice(0, 41))]));
-    assert.equal(over.error, "too-many-movements");
-    assert.equal(over.opIndex, 1);
-    assert.equal(M.MAX_OP_MOVEMENTS, 90);
+test("validateOperationRequest: write budget = 2 per op + 1 marker + one movement row per inventory op", () => {
+    const inv = (n) => Array.from({ length: n }, (_, i) => deltaOp("p" + i, -1, undefined));
+    assert.equal(O.validateOperationRequest(opBody(inv(166))).ok, true);            // 332 + 1 + 166 = 499
+    const over = O.validateOperationRequest(opBody(inv(167)));                       // 334 + 1 + 167 = 502
+    assert.equal(over.ok, false);
+    assert.equal(over.error, "operation-too-large");
+});
+
+test("validateOperationRequest: explicit movements count toward the write budget", () => {
+    const two = [{ kind: "sale", qty: -1 }, { kind: "sale", qty: -1 }];
+    const ops = (n) => Array.from({ length: n }, (_, i) => deltaOp("p" + i, -2, two));
+    assert.equal(O.validateOperationRequest(opBody(ops(124))).ok, true);             // 4*124 + 1 = 497
+    const over = O.validateOperationRequest(opBody(ops(125)));                       // 4*125 + 1 = 501
+    assert.equal(over.error, "operation-too-large");
+});
+
+test("validateOperationRequest: a non-inventory op costs no movement row (200 stock_batch ops = 401 writes, ok)", () => {
+    const ops = Array.from({ length: 200 }, (_, i) => ({ kind: "delta", entity: "stock_batch", entityId: "b" + i, deltas: { qtyRemaining: -1 } }));
+    assert.equal(O.validateOperationRequest(opBody(ops)).ok, true);
 });
 
 test("validateOperationRequest: a bad movement reports the op index", () => {
@@ -799,12 +895,15 @@ test("validateOperationRequest: a bad movement reports the op index", () => {
 test("applyOperation: writes a movement row per op movement, carrying the operation context", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 10 }, [T + "inventory/p2"]: { stock: 5 } });
     const v = O.validateOperationRequest(opBody([
-        deltaOp("p1", -3, [{ kind: "sale", qty: -1, valueAtCost: 2, batchRef: "A" }, { kind: "sale", qty: -2, valueAtCost: 6, batchRef: "B" }]),
+        deltaOp("p1", -3, [{ kind: "sale", qty: -1, valueAtCost: 2 }, { kind: "sale", qty: -2, valueAtCost: 6 }]),
         deltaOp("p2", -1, undefined)]));
     const r = await O.applyOperation(db, oParams(v));
     assert.equal(r.ok, true);
+    // op 0: two explicit rows; op 1: no movements sent, so one server-derived row.
     assert.deepEqual(rowsOf(db).map((w) => w.path),
-        [T + "stock_movements/completeOrder:o1:1~0~m0", T + "stock_movements/completeOrder:o1:1~0~m1"]);
+        [T + "stock_movements/completeOrder:o1:1~0~m0", T + "stock_movements/completeOrder:o1:1~0~m1", T + "stock_movements/completeOrder:o1:1~1~m0"]);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~0~m0"].derived, false);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~1~m0"].derived, true);
     const row = db.store[T + "stock_movements/completeOrder:o1:1~0~m1"];
     assert.equal(row.productId, "p1");
     assert.equal(row.operationId, RID);
@@ -836,23 +935,47 @@ test("applyOperation: replay of the same requestId writes no second set of rows"
     assert.equal(db.writes.length, n);
 });
 
-test("applyOperation: ops without movements behave exactly as before (no rows)", async () => {
+test("applyOperation: an inventory delta op with no movements derives a \"sale\" row for completeOrder", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
     const v = O.validateOperationRequest(opBody([deltaOp("p1", -3, undefined)]));
+    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
+    const rows = rowsOf(db);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].data.kind, "sale");
+    assert.equal(rows[0].data.qty, -3);
+    assert.equal(rows[0].data.derived, true);
+    assert.equal(rows[0].data.opType, "completeOrder");
+});
+
+test("applyOperation: a derived default that contradicts the direction falls back to adjustment", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
+    const v = O.validateOperationRequest(opBody([{ kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: 4 } }]));
+    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
+    assert.equal(rowsOf(db)[0].data.kind, "adjustment");
+});
+
+test("applyOperation: non-inventory delta ops and mutation ops write no movement rows", async () => {
+    const db = makeDb({ [T + "stock_batches/b1"]: { qtyRemaining: 5 }, [T + "orders/o1"]: { status: "pending" } });
+    const v = O.validateOperationRequest(opBody([
+        { kind: "delta", entity: "stock_batch", entityId: "b1", deltas: { qtyRemaining: -1 } },
+        { kind: "mutation", entity: "order", entityId: "o1", action: "update", before: { status: "pending" }, after: { status: "done" } }]));
     assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
     assert.equal(rowsOf(db).length, 0);
 });
 
-test("applyOperation: max-size operation stays within the Firestore write ceiling", async () => {
-    const docs = {};
-    const ops = [];
-    for (let i = 0; i < 90; i++) { docs[T + "inventory/p" + i] = { stock: 5 }; ops.push(deltaOp("p" + i, -1, [{ kind: "sale", qty: -1 }])); }
-    for (let i = 90; i < 200; i++) { docs[T + "inventory/p" + i] = { stock: 5 }; ops.push(deltaOp("p" + i, -1, undefined)); }
-    const v = O.validateOperationRequest(opBody(ops));
-    assert.equal(v.ok, true);
-    const db = makeDb(docs);
-    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
-    assert.ok(db.writes.length <= 500, "writes: " + db.writes.length);
+test("applyOperation: the largest accepted operations stay within the Firestore write ceiling", async () => {
+    // 166 inventory ops (each derives a row): 166 docs + 166 audits + 166 rows + 1 marker = 499.
+    let docs = {}; let ops = [];
+    for (let i = 0; i < 166; i++) { docs[T + "inventory/p" + i] = { stock: 5 }; ops.push(deltaOp("p" + i, -1, undefined)); }
+    let db = makeDb(docs);
+    assert.equal((await O.applyOperation(db, oParams(O.validateOperationRequest(opBody(ops))))).ok, true);
+    assert.equal(db.writes.length, 499);
+    // 200 stock_batch ops: 401 writes, no rows.
+    docs = {}; ops = [];
+    for (let i = 0; i < 200; i++) { docs[T + "stock_batches/b" + i] = { qtyRemaining: 5 }; ops.push({ kind: "delta", entity: "stock_batch", entityId: "b" + i, deltas: { qtyRemaining: -1 } }); }
+    db = makeDb(docs);
+    assert.equal((await O.applyOperation(db, oParams(O.validateOperationRequest(opBody(ops))))).ok, true);
+    assert.equal(db.writes.length, 401);
 });
 
 test("applyOperation: movement on a later op carries THAT op's index in id and row", async () => {
@@ -869,9 +992,9 @@ test("applyOperation: movement on a later op carries THAT op's index in id and r
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `cd functions && node --test test/movementWiring.test.js`
-Expected: `# tests 23`, `# pass 18`, `# fail 5` (measured: rows are not written, caps and errors do not exist yet; Task 2's tests still pass).
+Expected: `# tests 30`, `# pass 22`, `# fail 8` (rows are not written, budget does not exist yet; Task 2's tests still pass).
 
-- [ ] **Step 3: Apply the implementation** — exact diff that was run:
+- [ ] **Step 3: Apply the implementation** - the exact diff that was run:
 
 ```diff
 --- a/functions/lib/operationLogic.js
@@ -884,76 +1007,123 @@ Expected: `# tests 23`, `# pass 18`, `# fail 5` (measured: rows are not written,
  
  // 200 ops = up to 200 working-doc writes + 200 per-op audit entries + 1 marker
  // = 401 writes, under Firestore's ~500-writes-per-transaction ceiling. Mirrored
-@@ -64,15 +65,21 @@
-     if (rawOps.length > MAX_OPS) return { ok: false, status: 400, error: "operation-too-large" };
- 
-     const ops = [];
-+    let movementCount = 0;
-     for (let i = 0; i < rawOps.length; i++) {
-         const raw = rawOps[i] || {};
-         const perOp = Object.assign({}, raw, { requestId: opAuditId(requestId, i) });
-         let v;
-         if (raw.kind === "delta") v = validateDeltaRequest(perOp);
--        else if (raw.kind === "mutation") v = validateMutationRequest(perOp);
-+        else if (raw.kind === "mutation") {
-+            if (raw.movements !== undefined) return { ok: false, status: 400, error: "movements-require-delta-op", opIndex: i };
-+            v = validateMutationRequest(perOp);
-+        }
-         else return { ok: false, status: 400, error: "unsupported-kind", opIndex: i };
-         if (!v.ok) return Object.assign({}, v, { opIndex: i });
+@@ -75,6 +76,16 @@
          if (!isSafeDocId(v.entityId)) return { ok: false, status: 400, error: "invalid-entity-id", opIndex: i };
-+        movementCount += v.movements ? v.movements.length : 0;
-+        if (movementCount > MovementLogic.MAX_OP_MOVEMENTS) return { ok: false, status: 400, error: "too-many-movements", opIndex: i };
          ops.push(Object.assign({ kind: raw.kind }, v));
      }
++
++    // Write budget: one working doc + one audit entry per op, one marker, and
++    // (conservatively) at least one movement row per op on inventory.
++    let rowBudget = 0;
++    for (const op of ops) {
++        if (op.entity === "inventory") rowBudget += Math.max(1, op.movements ? op.movements.length : 0);
++    }
++    if (2 * ops.length + 1 + rowBudget > MovementLogic.MAX_TXN_WRITES)
++        return { ok: false, status: 400, error: "operation-too-large" };
++
      return { ok: true, requestId: requestId, opType: opType, ops: ops,
-@@ -137,6 +144,11 @@
+              clientTimestamp: (body && body.clientTimestamp) || null };
+ }
+@@ -137,8 +148,16 @@
                      before[field] = curVal;
                      after[field] = nextVal;
                  }
-+                if (op.movements && op.movements.length > 0
-+                        && !MovementLogic.totalsMatch(op.movements, after.stock - before.stock)) {
++                let movements = op.movements || [];
++                if (movements.length === 0 && op.entity === "inventory" && Object.prototype.hasOwnProperty.call(after, "stock"))
++                    movements = MovementLogic.deriveMovement(after.stock - before.stock,
++                        MovementLogic.DEFAULT_KIND_BY_OPTYPE[params.opType] || "adjustment");
++                if (movements.length > 0 && !MovementLogic.totalsMatch(movements, after.stock - before.stock)) {
 +                    return { ok: false, status: 409, error: "movement-qty-mismatch",
 +                             opIndex: i, field: "stock", current: before.stock };
 +                }
                  entry.data = Object.assign({}, entry.data, after);
-                 audits.push({ i: i, op: op, action: "delta", before: before, after: after });
+-                audits.push({ i: i, op: op, action: "delta", before: before, after: after });
++                audits.push({ i: i, op: op, action: "delta", before: before, after: after, movements: movements });
                  results.push({ entity: op.entity, entityId: op.entityId, kind: "delta", after: after });
-@@ -182,6 +194,21 @@
+             } else {
+                 if (!_deepEqual(entry.data, op.before)) {
+@@ -152,7 +171,7 @@
+                     entry.exists = true;
+                     entry.data = op.after || {};
+                 }
+-                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after });
++                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: [] });
+                 results.push({ entity: op.entity, entityId: op.entityId, kind: "mutation",
+                                after: op.action === "delete" ? null : (op.after || {}) });
+             }
+@@ -182,6 +201,19 @@
                  opType: params.opType,
                  opIndex: a.i
              });
-+            if (a.op.movements && a.op.movements.length > 0) {
-+                const rows = MovementLogic.buildRows(a.op.movements, {
-+                    baseId: opAuditId(params.requestId, a.i),
-+                    productId: a.op.entityId,
-+                    actorUid: params.actorUid,
-+                    actorRole: params.actorRole,
-+                    serverTimestamp: params.serverTimestamp,
-+                    clientTimestamp: params.clientTimestamp,
-+                    requestId: opAuditId(params.requestId, a.i),
-+                    operationId: params.requestId,
-+                    opType: params.opType,
-+                    opIndex: a.i
-+                });
-+                for (const row of rows) txn.set(db.doc(tenantRoot + "/stock_movements/" + row.id), row.data);
-+            }
++            const rows = MovementLogic.buildRows(a.movements, {
++                baseId: opAuditId(params.requestId, a.i),
++                productId: a.op.entityId,
++                actorUid: params.actorUid,
++                actorRole: params.actorRole,
++                serverTimestamp: params.serverTimestamp,
++                clientTimestamp: params.clientTimestamp,
++                requestId: opAuditId(params.requestId, a.i),
++                operationId: params.requestId,
++                opType: params.opType,
++                opIndex: a.i
++            });
++            for (const row of rows) txn.set(db.doc(tenantRoot + "/stock_movements/" + row.id), row.data);
          }
          // The marker is what makes a retry a no-op. Its id IS the requestId,
          // like every other audit_log entry.
 ```
 
+Then the 3 existing `operationLogic.test.js` tests whose expectations change for a stated reason (a derived `sale` row adds one write; 200 inventory
+ops no longer fit the write budget, so the two 200-op tests use `stock_batch` ops, which cost no movement row):
+
+```diff
+--- a/functions/test/operationLogic.test.js
++++ b/functions/test/operationLogic.test.js
+@@ -90,7 +90,8 @@
+ 
+ test("validateOperationRequest: MAX_OPS is exactly 200 (mirrored by Gateway.maxOperationOps)", () => {
+     assert.equal(OperationLogic.MAX_OPS, 200);
+-    const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
++    // stock_batch ops write no movement row, so 200 of them fit the write budget (P1 spec D8).
++    const good = { kind: "delta", entity: "stock_batch", entityId: "b1", deltas: { qtyRemaining: -1 } };
+     const v = OperationLogic.validateOperationRequest({
+         requestId: "completeOrder:t", opType: "completeOrder", ops: new Array(200).fill(good) });
+     assert.equal(v.ok, true);
+@@ -185,8 +186,8 @@
+     assert.deepEqual(byPath[T + "transactions/tx1"].data, { kind: "sale" });
+     assert.deepEqual(byPath[T + "stock_batches/b1"].options, { merge: false });
+ 
+-    // 4 working docs + 4 per-op audit entries + 1 marker.
+-    assert.equal(db.writes.length, 9);
++    // 4 working docs + 4 per-op audit entries + 1 marker + 1 server-derived "sale" movement row (P1).
++    assert.equal(db.writes.length, 10);
+     const marker = byPath[T + "audit_log/completeOrder:o1:1"];
+     assert.equal(marker.data.action, "operation");
+     assert.equal(marker.data.opCount, 4);
+@@ -359,8 +360,8 @@
+     const docs = {};
+     const ops = [];
+     for (let i = 0; i < OperationLogic.MAX_OPS; i++) {
+-        docs[T + "inventory/p" + i] = { stock: 5 };
+-        ops.push(delta("inventory", "p" + i, { stock: -1 }, { stock: 0 }));
++        docs[T + "stock_batches/b" + i] = { qtyRemaining: 5 };
++        ops.push(delta("stock_batch", "b" + i, { qtyRemaining: -1 }, { qtyRemaining: 0 }));
+     }
+     const db = makeFakeDb(docs);
+     const r = await OperationLogic.applyOperation(db, params(ops));
+```
+
 - [ ] **Step 4: Run to verify everything passes**
 
-Run: `cd functions && npm test`
-Expected: `# fail 0`; on `main` @ `2c1e5f6` that is 232 existing + 49 new = 281 tests.
-Coverage check (optional): `node --test --experimental-test-coverage test/movementWiring.test.js test/movementLogic.test.js test/gatewayLogic.test.js test/operationLogic.test.js` shows 100% line for the three `lib/` files.
+Run: `cd functions && node --test`
+Expected: `# fail 0`; on `main` @ `6da373d` that is 232 existing + 59 new = 291 tests.
+Coverage check (optional): `node --test --experimental-test-coverage` shows 100% line for the three `lib/` files.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add functions/lib/operationLogic.js functions/test/movementWiring.test.js
-git commit -m "feat(p1): recordOperation writes stock_movements rows in the operation transaction; cap total movements"
+git add functions/lib/operationLogic.js functions/test/operationLogic.test.js functions/test/movementWiring.test.js
+git commit -m "feat(p1): recordOperation writes/derives stock_movements rows in the operation transaction; write budget"
 ```
 
 ---
@@ -961,24 +1131,24 @@ git commit -m "feat(p1): recordOperation writes stock_movements rows in the oper
 ### Task 5: docs, test plan status, PR
 
 **Files:**
-- Modify: `AGENTS.md` (P1 bullet in the roadmap list, Compliance & Audit Agent scope line), `README.md` (functions section: `movements` on `recordDelta`/`recordOperation`, `stock_movement` closed), `docs/superpowers/test-plans/2026-09-24-p1-stock-movements-test-plan.md` (flip S1 rows from "planned" to "verified" with the real counts), `CHECKPOINT.md`.
+- Modify: `AGENTS.md` (P1 bullet: mark S1a done), `README.md` (functions section: `movements` on `recordDelta`, derived rows on `recordOperation`, `stock_movement` closed), `docs/superpowers/test-plans/2026-09-24-p1-stock-movements-test-plan.md` (flip S1a rows to actual CI numbers), `CHECKPOINT.md`.
 - Do NOT touch `SKILLS.md` unless a genuinely new lesson was learned (append-only, next free number).
 
-- [ ] **Step 1: Mutation spot-check** (recommended): re-run the 10 mutations listed in the test plan against the real files; each must make a test fail.
-- [ ] **Step 2: Update the docs above** with actual counts from `npm test` (count, do not copy).
-- [ ] **Step 3: Confirm rules tests are untouched:** `git diff --stat main -- test/ firestore.rules` prints nothing (ledger writes were already denied).
-- [ ] **Step 4: Push and open the PR** (`feature/2026-09-25-p1-s1-server-movements` or similar), wait for the 5 CI checks, then hand to Taher. Taher deploys functions to dev
-      (`firebase deploy --only functions`) and confirms with an unauthenticated POST to `recordDelta` returning `401 missing-token`. S2 must not start before that.
-- [ ] **Step 5: Update `CHECKPOINT.md` step log** and end the session: S2 planning is the next session's job.
+- [ ] **Step 1: Mutation spot-check** (recommended): re-run the mutations listed in the test plan against the real files; each must make a test fail. Never leave a mutated file behind (`git diff` must show only the intended change).
+- [ ] **Step 2: Update the docs above** with actual counts from `node --test` (count, do not copy).
+- [ ] **Step 3: Confirm rules tests are untouched:** `git diff --stat main -- test/ firestore.rules` prints nothing.
+- [ ] **Step 4: Push, open the PR, wait for the 5 CI checks, hand to Taher.** Taher deploys functions to dev (`firebase deploy --only functions`) and confirms with an unauthenticated POST to `recordDelta` returning `401 missing-token`, then runs the on-device checklist. S1b starts after that.
+- [ ] **Step 5: Update `CHECKPOINT.md` step log** and end the session.
 
 ## Self-review (against the spec)
 
-- D2 server-built row: Task 1 `buildRows`, Task 1 test "does not trust client-supplied identity fields", Task 3 forged `id` test.
-- D3 sum invariant against the applied delta: Task 2 mismatch and clamp tests; Task 4 whole-operation rollback test.
-- D4 kinds and direction: Task 1 tests (every kind, every wrong sign).
-- D5 closed path: Task 2 `stock_movement is no longer a client-writable entity` (all three validators), Task 3 handler test.
-- D6 inventory + stock delta + delta ops only: Task 2 and Task 4 validation tests.
+- D2 server-built row: Task 1 `buildRows` + "does not trust client-supplied identity fields"; Task 3 forged `id` test.
+- D3 sum against the applied delta: Task 2 mismatch/clamp tests; Task 4 whole-operation rollback test.
+- D4 kinds and direction: Task 1 (every kind, every wrong sign).
+- D5 closed path: Task 2 (all three validators), Task 3 handler test.
+- D6 movements only on inventory `stock` deltas via `recordDelta`; mutations reject them: Task 2 tests.
 - D7 deterministic ids and replay: Task 2 and Task 4 replay tests.
-- D8 write budget: Task 4 cap test and max-size operation test.
-- D9 `valueAtCost`: Task 1 value validation tests. D10 backward compatible: Task 2 "no movements", Task 3 "empty list", Task 4 "without movements".
-- Placeholder scan: none. Names consistent across tasks (`validateMovements`, `totalsMatch`, `buildRows`, `MAX_OP_MOVEMENTS`, `movement-qty-mismatch`).
+- D8 write budget: Task 4 budget tests (166 ok / 167 rejected, explicit rows count, 200 stock_batch ops ok, largest operations at 499 and 401 writes).
+- D9 fields: `valueAtCost` validation in Task 1; no `batchRef` anywhere.
+- D11 derived defaults: Task 1 `deriveMovement` tests; Task 2 derived-adjustment, clamp and zero-change tests; Task 4 `sale` default and direction fallback.
+- Placeholder scan: none. Names consistent across tasks.

@@ -116,13 +116,15 @@ edit/delete; client forges identity & time). The fix:
 
 - **P0** Gateway + immutable `audit_log` (MCA 11(g), CGST 56(8)) — foundation, builds the gateway.
 - **P1** Stock-movement taxonomy: loss/theft/destroyed/write_off/free_sample/gift + opening/closing
-  balance register (CGST 56(2)). **Design decided 2026-09-24: server-side atomic** (`recordDelta` /
-  `recordOperation` write server-built `stock_movements` rows in the same transaction; `stock_movement`
-  is closed to every client endpoint). Slices S1 server, S2 client wiring, S3 `sale` via `completeOrder`
-  (after C-3 Phase 3), S4 register report. Only S1 is planned. The old client-side branch
-  `feature/p1-stock-movement-taxonomy` is obsolete (stale, non-atomic): never rebase it, re-apply by hand.
-  Spec `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plan
-  `plans/2026-09-24-p1-server-side-stock-movements-s1.md`.
+  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction.** Every stock change on `inventory`
+  writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
+  delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
+  closed to every client endpoint; batch cap 200 -> 150. Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
+  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 kind pickers + delete `direct` mode and
+  `runCutover` + lock `inventory` in rules, S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
+  `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec
+  `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plans `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`
+  and `...-s1b.md`.
 - **P2** Tax-identity fields: HSN (4/6/8-digit) on products; GSTIN on supplier/customer/tenant
   (client-only, run parallel to P0).
 - **P3** Legal docs & acceptance: ToS, Privacy Policy, DPA + versioned accept-record.
