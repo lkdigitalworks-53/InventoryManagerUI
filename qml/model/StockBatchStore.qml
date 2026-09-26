@@ -279,6 +279,50 @@ QtObject {
         return sum
     }
 
+    // Replace a batch's qtyRemaining with a server-confirmed value, WITHOUT
+    // sending anything (used to reflect a recordOperation result or a CAS
+    // conflict's `current` into local state — atomic order-completion
+    // operation, C-3, 2026-09-20 plan Task 9). Returns the previous
+    // qtyRemaining, or undefined if the batch isn't known locally.
+    function applyRemoteQty(batchId, qtyRemaining) {
+        for (var i = 0; i < batches.length; ++i) {
+            if (batches[i].batchId !== batchId) continue;
+            var previous = batches[i].qtyRemaining;
+            var arr = batches.slice();
+            arr[i] = Object.assign({}, batches[i], { qtyRemaining: qtyRemaining });
+            batches = arr;
+            return previous;
+        }
+        return undefined;
+    }
+
+    // Add a batch doc the server already created (e.g. a drift-repair batch
+    // from a completed operation) into local state, WITHOUT sending
+    // anything. A no-op if the id is already present — the outcome of a
+    // replayed operation must not duplicate it. Returns true if added.
+    function addLocalBatch(doc) {
+        for (var i = 0; i < batches.length; ++i)
+            if (batches[i].batchId === doc.batchId) return false;
+        var arr = batches.slice();
+        arr.push(doc);
+        batches = arr;
+        return true;
+    }
+
+    // Inverse of addLocalBatch: drop a locally-added batch that turned out
+    // not to be needed (an optimistic drift-repair batch reverted after a
+    // rejection). Returns true if a batch was actually removed.
+    function removeLocalBatch(batchId) {
+        var arr = [];
+        var removed = false;
+        for (var i = 0; i < batches.length; ++i) {
+            if (batches[i].batchId === batchId) removed = true;
+            else arr.push(batches[i]);
+        }
+        if (removed) batches = arr;
+        return removed;
+    }
+
     // ── Mutations ──────────────────────────────────────────────────────────
 
     // Shared doc shape for addBatch/addBatchWithId — `id` is always

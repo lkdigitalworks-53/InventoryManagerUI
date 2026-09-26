@@ -160,6 +160,7 @@ QtObject {
             if (!o.orderChannel) o.orderChannel = "";
             if (!o.staffId) o.staffId = "";
             if (!Array.isArray(o.adjustments)) o.adjustments = [];
+            if (typeof o.completionEpoch !== "number") o.completionEpoch = 0;
         }
         return arr;
     }
@@ -451,6 +452,15 @@ QtObject {
             orderChannel: r.orderChannel || "",
             staffId: r.staffId || "",
             adjustments: Array.isArray(r.adjustments) ? r.adjustments.slice() : [],
+            // Bumped once per successful completion of THIS order (atomic
+            // operation outbox, C-3). Not present on orders written before
+            // this field existed, so they default to 0 — their first
+            // completion is epoch 1 (see OperationKeys.nextEpoch). Every
+            // path that returns an order doc (this function, _clone(),
+            // applyRemoteOrder) MUST carry it through, or a re-plan after a
+            // rejection would silently reuse epoch 1 forever and never mint
+            // a fresh operation key for a reopened order.
+            completionEpoch: typeof r.completionEpoch === "number" ? r.completionEpoch : 0,
             products: prods
         };
     }
@@ -618,22 +628,33 @@ QtObject {
         return refs
     }
 
-    function updateOrder(orderId, fields) {
+    // Pure half of updateOrder: computes the before/after pair and the whole
+    // updated array without touching `orders` or the Gateway. Extracted for
+    // the atomic order-completion operation (C-3, 2026-09-20 plan Task 9):
+    // DataModel's CompletionPlan needs the order's before/after shape to
+    // plan the operation BEFORE anything is sent, and must not have this
+    // function's side effects (local commit, a recordMutation call) fire
+    // ahead of the server's answer. Returns null for an unknown order, or
+    // { before, after, arr, idx } — `arr`/`idx` are for updateOrder's own
+    // use (_commit needs the whole array); callers outside this file should
+    // only read `before`/`after`.
+    function buildOrderUpdate(orderId, fields) {
         var idx = findIndexById(orderId);
-        if (idx < 0) return;
+        if (idx < 0) return null;
         var arr = _clone();
         var o = arr[idx];
         var before = Object.assign({}, o);
-        if (fields.status        !== undefined) o.status        = fields.status;
-        if (fields.customer      !== undefined) o.customer      = fields.customer;
-        if (fields.email         !== undefined) o.email         = fields.email;
-        if (fields.phone         !== undefined) o.phone         = fields.phone;
-        if (fields.date          !== undefined) o.date          = fields.date;
-        if (fields.items         !== undefined) o.items         = fields.items;
-        if (fields.notes         !== undefined) o.notes         = fields.notes;
-        if (fields.products      !== undefined) o.products      = fields.products;
-        if (fields.orderChannel  !== undefined) o.orderChannel  = fields.orderChannel;
-        if (fields.staffId       !== undefined) o.staffId       = fields.staffId;
+        if (fields.status          !== undefined) o.status          = fields.status;
+        if (fields.customer        !== undefined) o.customer        = fields.customer;
+        if (fields.email           !== undefined) o.email           = fields.email;
+        if (fields.phone           !== undefined) o.phone           = fields.phone;
+        if (fields.date            !== undefined) o.date            = fields.date;
+        if (fields.items           !== undefined) o.items           = fields.items;
+        if (fields.notes           !== undefined) o.notes           = fields.notes;
+        if (fields.products        !== undefined) o.products        = fields.products;
+        if (fields.orderChannel    !== undefined) o.orderChannel    = fields.orderChannel;
+        if (fields.staffId         !== undefined) o.staffId         = fields.staffId;
+        if (fields.completionEpoch !== undefined) o.completionEpoch = fields.completionEpoch;
 
         if (fields.products !== undefined) {
             var t = computeOrderTotals(o.products || []);
@@ -646,7 +667,30 @@ QtObject {
         }
         if (fields.total !== undefined) o.total = parseCurrency(fields.total);
         o.updatedAt = new Date().toISOString();
-        _commit(arr, _normalizeOrder(o), "update", before);
+        return { before: before, after: _normalizeOrder(o), arr: arr, idx: idx };
+    }
+
+    function updateOrder(orderId, fields) {
+        var r = buildOrderUpdate(orderId, fields);
+        if (!r) return;
+        _commit(r.arr, r.after, "update", r.before);
+    }
+
+    // Replace the local copy of an order with `doc` (the server's version —
+    // typically a recordOperation result's `after`, or a synced Firestore
+    // doc), WITHOUT sending anything. Used to reflect a server-confirmed
+    // outcome (or reconcile a CAS conflict's `current`) into local state.
+    // Returns the previous local order, or null if it isn't known locally.
+    function applyRemoteOrder(doc) {
+        var idx = findIndexById(doc.orderId);
+        if (idx < 0) return null;
+        var arr = _clone();
+        var previous = arr[idx];
+        arr[idx] = _normalizeOrder(Object.assign({}, doc));
+        orders = arr;
+        revision++;
+        _refreshCounts();
+        return previous;
     }
 
     // Apply a return/exchange/modify adjustment: set the order's lines to the

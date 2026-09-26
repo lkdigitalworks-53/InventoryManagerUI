@@ -1,6 +1,6 @@
 # Test plan — order completion as one atomic, replay-safe operation (C-3)
 
-**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, open as #83 for Tasks 6-8; Tasks 9-11 not started).
+**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, Tasks 6-8, merged #83), `feat/2026-09-26-completion-store-hooks` (store hooks, Task 9, this PR; Task 10-11 not started).
 **Spec:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md` · **Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`
 
 **What it does:** completing an order sends one operation (batch deltas, stock deltas, order update, sale docs)
@@ -21,6 +21,17 @@ directly rather than mocking HTTP (there is no mock HTTP layer anywhere in this 
 hooks, `DataModel`, UI) are still genuinely "planned" -- not started. QML coverage is not measured in this
 repo, so for QML the claim is "CI passes plus documented unreachable branches", never a percentage.
 
+**Updated 2026-09-26 for Phase 3 PR 2 (Task 9, store hooks).** Implemented as planned, with two things
+worth calling out: (1) `OrdersStore._normalizeOrder` builds a fixed-field object literal and does not carry
+unknown fields through, so simply setting `completionEpoch` (as the plan's draft code assumed) would have
+been silently dropped by the very next `_clone()`/normalize pass -- fixed `_normalizeOrder` (and
+`_normalizeOrders`, the Firestore-sync path) to carry it through, and added a regression test pinning this
+specifically. (2) `recordSaleFromOrder`'s `allocByProduct` lookup keys allocations by `productId`, so two
+lines of the same product in one order silently collide (the second overwrites the first's tax/discount
+allocation) -- this is pre-existing, unchanged by this task's extraction into `buildSaleDocs`, and was not
+previously covered by any test; flagged in code and to Taher, not fixed here (fixing it is a GST-relevant
+behaviour change outside this task's scope).
+
 ## 1. Unit test coverage
 
 | Unit | Test file | Cases | Status |
@@ -34,7 +45,7 @@ repo, so for QML the claim is "CI passes plus documented unreachable branches", 
 | `OutboxStore` op items | `tests/tst_OutboxStore.qml` (+7) | append durable item; same key returns existing; keys for all entities (deduped); never a coalescing target; in-flight op blocks its keys; `dueItems` never returns two items sharing a key; jitter band | **Verified in CI** (real `qmltestrunner`, PR #83): 7/7. Hand-traced against the real implementation before pushing (no Qt toolchain in the sandbox) |
 | `Gateway` send timeout (`_armSendTimeout`) | `tests/tst_Gateway.qml` (+6, appended to the existing file) | timeouts count toward the stuck indicator only while online (D5); numeric statuses ignore the online flag; 5 online timeouts tip it; offline never; timeouts and 5xx share one counter; an offline timeout doesn't erase earlier online failures | **Verified in CI**: 6/6. The actual Timer/XHR/`abort()` interaction genuinely cannot be tested here (no mock HTTP layer anywhere in this codebase, documented in this file's own scope note) -- proven only by CI's `qmltestrunner` run and, for real timing, the on-device plan below |
 | `Gateway.recordOperation` | `tests/tst_Gateway.qml` (+15, appended) | validation (empty/no-key/201-ops/non-array, all before touching the outbox), exactly-200-ops accepted, gateway-mode required, queued immediately when not awaiting, offline never waits, same key twice both told "queued", awaiting registers a waiter without answering, **a real await timer actually let to fire** delivers `{pending:true}` once and the later real answer doesn't re-invoke the callback, `_finishOperation` delivers to a waiter / to every waiter / with none registered (relaunch case) and fires `operationApplied`/`operationRejected`, `clear()` drops pending callbacks | **Verified in CI**: 15/15. Same scope split as above: validation/enqueue/`_finishOperation` decision logic and the await-timer's real firing are genuinely exercised (no XHR involved); the server round trip itself is not |
-| Store hooks | `tests/tst_{Inventory,StockBatch,Orders,Transaction}Store_*.qml` (new) | unknown id, returns previous value, idempotent adds, `revision` bumps, `buildOrderUpdate` pure (no Gateway call, no local change), `buildSaleDocs` deterministic and shape-identical to the old function | Planned |
+| Store hooks | `tests/tst_InventoryStore_applyRemote.qml` (9), `tst_StockBatchStore_applyRemote.qml` (12), `tst_OrdersStore_buildOrderUpdate.qml` (15), `tst_TransactionStore_buildSaleDocs.qml` (20) -- 56 total | unknown id returns undefined/null/false and changes nothing; happy path returns the previous value; idempotent re-apply; `revision` bumps only on a real change; other fields preserved; `addLocalBatch`/`addLocalEntries` skip an id already present (incl. within the same batch); `buildOrderUpdate` pure (before = untouched stored copy, after has recomputed totals and carries `completionEpoch`, no Gateway call, no local/revision change); `applyRemoteOrder` replaces + returns previous + bumps revision + refreshes counts; `completionEpoch` survives an unrelated `updateOrder` call (pins the `_normalizeOrder` fix above); `buildSaleDocs` deterministic id per order+epoch+line, legacy random id path unchanged, zero-qty line skipped, consumption copied not aliased, same input reproduces identical output (excl. timestamp); `recordSaleFromOrder`/`updateOrder` thin regression checks that the extraction still delegates correctly | Hand-traced against the live store files (re-read fresh on current `main`, not just this plan's draft code -- see the two findings above) before pushing, same as `tst_OutboxStore.qml` in PR #83. **Not run under `qmltestrunner`**: no Qt toolchain in this sandbox; unproven until CI |
 
 ## 2. Functional / end-to-end test coverage
 
