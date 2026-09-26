@@ -889,7 +889,7 @@ exports.computeAnalysis = functions.onRequest(
 
             const productCategoryMap = buildProductCategoryMap(products);
             const supplierNameMap = buildSupplierNameMap(suppliers);
-            const categoryOf = function(pid) { return productCategoryMap[pid] || ""; };
+            const categoryOf = function(pid) { return productCategoryMap.hasOwnProperty(pid) ? productCategoryMap[pid] : null; };
             const orderLookup = buildOrderLookup(orders);
 
             const now = new Date();
