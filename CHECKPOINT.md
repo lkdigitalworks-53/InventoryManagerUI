@@ -50,19 +50,40 @@ chain. App behaviour is unchanged by everything merged or open so far. The C-3 b
 - [x] 13. Found and fixed the CI multi-file counting bug (PR #81, merged by Taher before this session could
       open it itself).
 - [x] 14. Phase 3 PR 1 opened as #83 (Tasks 6-8, this branch). CI in progress at session end.
-- [ ] 15. **Waiting on:** #83's CI result, Taher's review, and confirmation `recordOperation` is deployed to
-      dev (no confirmation received yet either way — Phase 3 PR 2 does not itself need the deployment to be
-      written, since nothing in the sandbox calls the live function, but the mechanism is unverified
-      end-to-end until it is).
-- [ ] 16. Next: Phase 3 PR 2 (plan Tasks 9-10: store hooks on Inventory/StockBatch/Orders/TransactionStore,
+- [x] 15. Taher reviewed and pushed back with four questions: no test-plan file in #83 (correct — found and
+      fixed, see step 18), what's actually shipped, can he device-test now (no — `DataModel`/stores untouched,
+      nothing new is reachable from the app, verified by diffing this branch's changed files), can Phase 3 be
+      picked up in a fresh session (see step 18), and #83 needed rebasing again.
+- [x] 16. Requested review with `superpowers:requesting-code-review`/`ponytail:ponytail-review`/
+      `qt-development-skills:qt-qml-review`. Found and fixed: a test-count error in the PR body/commit message
+      (said 32, actually 28 — miscounted Task 7's tests as 11 when it added 6; verified against the CI delta,
+      which matched exactly); the 4 Gateway senders' timer-setup code was byte-for-byte duplicated, extracted
+      to `_armSendTimeout` (net -35 lines); the await-timer's actual firing was never exercised even though it
+      could be (it's a plain `Timer`, not an XHR — this repo already proves `tryCompare` works on one), added
+      a test that lets it fire for real. CI green after (982 QML tests, +28 over pre-PR baseline).
+- [x] 17. Rebased #83 onto `main` twice more as it kept moving (PR #80 staff-delete-ui, 11 commits, entirely
+      unrelated — only `CHECKPOINT.md` conflicted both times; resolved each time by reconstructing from the
+      two clean sides via `git show` rather than fighting an interleaved 3-way diff, and archiving whichever
+      side wasn't kept). #83 is `clean`/mergeable as of this step.
+- [x] 18. Found the test-plan/plan-doc staleness Taher's first question implied: the design-time test plan
+      (written 2026-09-20, before any code existed) still said "Planned" for Tasks 6-8 and, worse, named test
+      files that don't exist (`tst_Gateway_send.qml`, `tst_Gateway_operation.qml`) and described a design
+      (`xhrFactory`) #83 deliberately didn't build. Fixed both the test plan and the plan document's status
+      legend to say what's real. **This is the honest answer to "can a new session take over": yes, now** —
+      before this step the docs would have actively misled a fresh session about Tasks 6-8's real shape.
+- [ ] 19. **Waiting on:** Taher's decision on Phase 3 PR 2 (Tasks 9-10) and confirmation `recordOperation` is
+      deployed to dev (still not directly confirmed either way in this conversation, though a later cross-arc
+      checkpoint below implies work is proceeding on the assumption it will be).
+- [ ] 20. Next: Phase 3 PR 2 (plan Tasks 9-10: store hooks on Inventory/StockBatch/Orders/TransactionStore,
       then `DataModel._tryCompleteOrder` itself). Flagged to Taher as the riskiest, least-certain part of the
       whole arc — worth a design nod before starting, not just a code review after. Task 10 in the plan
       document also predates the real current `_tryCompleteOrder` (which has grown since the plan was
       written, same lesson as Task 7) — re-read the live function fully before writing anything, the way
       Task 7 did, rather than trusting the plan doc's draft code verbatim.
-- [ ] 17. After PR 2: Phase 3 PR 3 (plan Task 11, the "saved, syncing" UI hint) and Task 12 (docs/tracker/
+- [ ] 21. After PR 2: Phase 3 PR 3 (plan Task 11, the "saved, syncing" UI hint) and Task 12 (docs/tracker/
       `SKILLS.md` sweep — still not touched anywhere in this arc, to avoid a Skill-number collision with #75;
-      this is the point to add one). Task 13 (deploy + on-device plan) is Taher's, throughout.
+      this is the point to add one — check the latest number first, staff-delete-ui already claimed 68/69).
+      Task 13 (deploy + on-device plan) is Taher's, throughout.
 
 ## Cross-arc note (found resolving a CHECKPOINT.md conflict with `main`, 2026-09-24)
 
@@ -72,6 +93,19 @@ explicitly depends on **this** C-3 Phase 3 landing first. That session's complia
 Phase 3 as "not started" as of 2026-09-24 — PR #83 existed and was open at the time, so that's a miss on its
 part (didn't check open PRs), not a signal that anything here regressed. Worth flagging to Taher once Phase 3
 lands, since S3 will need to build on `_tryCompleteOrder`'s new shape.
+
+## Second cross-arc note (found resolving a THIRD CHECKPOINT.md conflict, 2026-09-25)
+
+A third, also unrelated session shipped `feat/2026-09-21-staff-delete-ui` (PR #80, 11 commits): a row-level
+staff-delete button, self-delete guard, server-side role check. Nothing overlaps this C-3 arc's files. Its
+checkpoint is archived below. Its work claimed Skill numbers 68 and 69 in `SKILLS.md` — Task 12 here must
+check the current highest number before picking one, not assume 68 is free.
+
+**Recurring friction worth naming plainly:** this is the third time in this session that landing a docs-only
+commit on this branch has meant reconstructing `CHECKPOINT.md` around an unrelated, concurrently-merged
+session's checkpoint. Each time cost real turns. Not something to fix unilaterally (the one-root-checkpoint
+convention is Taher's), but worth him knowing the cost is compounding as more parallel sessions run against
+this repo.
 
 ## Resume instructions
 
