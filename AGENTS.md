@@ -172,13 +172,22 @@ collections and zeroes product stock).
 - `recordOperation` (2026-09-21, logic in `functions/lib/operationLogic.js`) applies delta/mutation ops
   on several docs in one Firestore transaction under one `requestId`; a rejection writes nothing, so the
   same key can be re-planned and resent; request ids must be `{opType}:...` without `/` or `~`. Emulator
-  test: `test/e2e/recordOperation.e2e.test.js`. **No client caller yet**: Phase 1 of the C-3 fix
-  (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`). Deploy it to dev before any client
-  phase ships.
-- `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml`, and root `test/firestore.rules.test.js`
-  exist but were **written, not run** — this sandbox had no Qt toolchain and no network access to
-  Firebase's emulator distribution. They need a local `qmltestrunner` pass and
-  `firebase emulators:exec --only firestore "node --test test/"` respectively before being trusted.
+  test: `test/e2e/recordOperation.e2e.test.js`. Client transport (`Gateway.recordOperation`, `OutboxStore`
+  outbox items) shipped 2026-09-25 (PR #83, C-3 Phase 3 Tasks 6-8). Store-side hooks
+  (`InventoryStore.applyRemoteStock`, `StockBatchStore.applyRemoteQty`/`addLocalBatch`/`removeLocalBatch`,
+  `OrdersStore.buildOrderUpdate`/`applyRemoteOrder`, `TransactionStore.buildSaleDocs`/`addLocalEntries`/
+  `removeLocalEntries`) shipped 2026-09-26 (Task 9). **`DataModel._tryCompleteOrder` still does not call any
+  of this** — it still uses the old per-line delta chain; that's Task 10
+  (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`), not started, flagged for a design
+  check-in first (see `CHECKPOINT.md`). Confirm `recordOperation` is deployed to dev before Task 10 ships.
+- `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — **verified in real CI** (`qmltestrunner`, PR #83),
+  not just hand-traced. Root `test/firestore.rules.test.js` needs a local
+  `firebase emulators:exec --only firestore "node --test test/"` pass before being trusted the same way (the
+  Firestore Rules CI job covers it, but it hasn't been independently re-run in a session since 2026-09-21).
+  The four new Task 9 store-hook test files (`tests/tst_{Inventory,StockBatch}Store_applyRemote.qml`,
+  `tst_OrdersStore_buildOrderUpdate.qml`, `tst_TransactionStore_buildSaleDocs.qml`) are, like #83's tests
+  before CI, but **verified in CI now** (PR #87, 1356/1356 green) — including catching one genuine test
+  bug (`test_completionEpoch_defaults_to_zero_when_absent`, fixed same PR, see `CHECKPOINT.md`).
 - Full trail: `docs/superpowers/specs/2026-07-11-p0-gateway-orders-staff-suppliers-CHECKPOINT.md`
   and `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md`.
 

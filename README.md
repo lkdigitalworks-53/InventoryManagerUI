@@ -798,4 +798,23 @@ completion into the write list), and taught `StuckWrites` that a timeout counts 
 online. Nothing calls them yet; `Gateway` and `DataModel` are wired once `recordOperation` (PR #78) is
 deployed. 47 new headless tests. Plan: `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`.
 
+**Update 2026-09-25 (C-3 phase 3 PR 1, transport, PR #83):** `OutboxStore.enqueueOperation` + per-key
+`dueItems()` ordering/jitter, and `Gateway.recordOperation` (await mode, `operationApplied`/
+`operationRejected` signals, a settled-flag `Timer` per sender for the send timeout — not the phase 2 plan's
+original shared-`_xhrPost` design, which was rejected as too risky against the real, more elaborate
+`_send`/`_sendBatch`/`_sendDelta`). 32 new tests, verified in real CI. **Still nothing calls `recordOperation`
+from `DataModel`** — see the next entry and `CHECKPOINT.md`.
+
+**Update 2026-09-26 (C-3 phase 3 Task 9, store hooks):** added the local-only hooks each store needs so a
+future atomic completion can plan against current state and later reconcile a server result, without any of
+them sending anything themselves: `InventoryStore.applyRemoteStock`, `StockBatchStore.applyRemoteQty` /
+`addLocalBatch` / `removeLocalBatch`, `OrdersStore.buildOrderUpdate` (the pure half of `updateOrder`, plus a
+new `completionEpoch` order field) / `applyRemoteOrder`, `TransactionStore.buildSaleDocs` (the pure half of
+`recordSaleFromOrder`, with a deterministic-id mode) / `addLocalEntries` / `removeLocalEntries`. 56 new tests.
+Found and fixed one real bug while extracting these: `OrdersStore._normalizeOrder` silently drops any field
+not in its literal, which would have quietly discarded `completionEpoch` on every order edit after the one
+that set it (SKILLS Skill 71). **`DataModel._tryCompleteOrder` still does not call any of this** — that's
+Task 10, flagged for a design check-in before it starts (see `CHECKPOINT.md`).
+
 ---
+

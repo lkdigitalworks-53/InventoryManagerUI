@@ -3466,3 +3466,51 @@ history (server-side role check restricts it to owner/admin, same as staff delet
 - Async singleton paths with no mock layer (`FirebaseService.mintCounterValue`): extract the decision into
   pure functions (`_seedMax`, `_isBurned`, `_mergeRemoved`) and test those.
 
+
+---
+
+## Skill 71: A normalize/clone function that returns a fixed-field object literal silently drops any new field you add — check it before adding one, not after
+
+**Files**: `qml/model/OrdersStore.qml` (`_normalizeOrder`, `_normalizeOrders`) — found and fixed on
+`feat/2026-09-26-completion-store-hooks` (C-3 Phase 3, plan Task 9), before it caused a problem, not after.
+
+Task 9 needed a new `completionEpoch` field on orders (the atomic-operation-outbox plan, D-series design).
+The plan document's draft code for the hook that sets it (`buildOrderUpdate`) just did
+`o.completionEpoch = fields.completionEpoch` and assumed that was the whole job. It would not have been: this
+codebase already has a documented instance of the general shape of this bug (`_clone()`'s field whitelist vs.
+a `create` payload, see the CAS-shape-mismatch lesson from OrdersStore's async-write-sequencing work), and
+`_normalizeOrder` is the exact same failure mode wearing different clothes — it builds and returns a fixed
+`{ orderId: ..., status: ..., ... }` object literal, so any field not in that literal is silently dropped, not
+passed through. `_clone()` runs every order through `_normalizeOrder`, and `_clone()` runs on every mutation
+(`updateOrder`, `deleteOrder`, everything that reads the array to change it). So `completionEpoch` would have
+survived exactly one round — the write that set it — and then vanished on the very next unrelated
+`updateOrder` call on that same order, resetting it to the "absent" default. The bug would not show up in a
+test that only exercises the write and immediate read; it needs a *second*, unrelated mutation afterward to
+surface, which is precisely the kind of thing a plan-doc-driven implementation skips writing a test for
+(the plan's own test spec for this hook didn't call for one either — added anyway, see below).
+
+**The generalizable check, before adding any field to code that has both a "build the record" function and a
+separate "normalize/clone the record" function**: grep the normalize/clone function for the field name before
+assuming setting it upstream is sufficient. If the function returns a `return { a: ..., b: ..., ... }` object
+literal (rather than starting from `Object.assign({}, input)` or a spread), it is a whitelist, and a whitelist
+silently drops anything not listed — there is no error, no warning, just quietly-wrong data one hop later. Two
+places needed the same fix here: `_normalizeOrder` (whitelist function, used by `_clone()`) and
+`_normalizeOrders` (the Firestore-sync path, which mutates the raw doc in place rather than building a new
+literal — not actually broken, but given a matching default for consistency since it's the only other place
+order shape gets normalized).
+
+**Test added specifically to pin this**: not "does `buildOrderUpdate` set the field" (that would have passed
+before the fix, since the bug only manifests one call later) but "does the field survive an *unrelated*
+`updateOrder` call afterward" (`test_completionEpoch_survives_an_unrelated_updateOrder_call` in
+`tst_OrdersStore_buildOrderUpdate.qml`). Worth naming as a pattern for any future field addition to a
+normalized record: the test that actually catches a whitelist-drop bug is a *second*, unrelated mutation, not
+the mutation that sets the field.
+
+**Separately flagged, not fixed (out of scope for this task)**: while re-reading `TransactionStore
+.recordSaleFromOrder` to extract `buildSaleDocs`, found that its `allocByProduct` lookup is keyed by
+`productId`, so two order lines for the same product silently collide — the second's `OrderMath.allocate`
+result overwrites the first's, and both lines end up reporting the second line's tax/discount allocation.
+Pre-existing (predates this task), not previously covered by any test, not touched by this refactor (fixing
+GST-relevant tax allocation math deserves its own reviewed decision, not a drive-by inside an unrelated
+extraction PR). Flagged in a code comment at the site and in `CHECKPOINT.md` for Taher to decide on
+separately.

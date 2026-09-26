@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick
 import "../helper/OrderMath.js" as OrderMath
+import "../helper/OperationKeys.js" as OperationKeys
 
 // Persistent transaction log. One entry per product-affecting event:
 //   kind="created"          — product first added to inventory (initial stock)
@@ -438,22 +439,41 @@ QtObject {
     // sales become un-attributable. Lines created before FIFO existed simply
     // omit `consumption`, and the analytics layer handles them as
     // "Pre-FIFO" data so the totals still match.
-    function recordSaleFromOrder(order) {
-        if (!order || !order.products) return
+    // Pure half of recordSaleFromOrder: builds one sale doc per non-zero-qty
+    // line, WITHOUT pushing anything into `entries` or the Gateway. Extracted
+    // for the atomic order-completion operation (C-3, 2026-09-20 plan
+    // Task 9), whose CompletionPlan needs the doc list up front to include
+    // in the operation it sends.
+    //   epoch: the order's completion attempt number (OperationKeys.nextEpoch).
+    //   legacyIds: true keeps today's random _nextId("s") ids — used ONLY by
+    //     recordSaleFromOrder below, so its existing callers (e.g.
+    //     _completeImportedOrder) see byte-identical doc ids to before this
+    //     refactor. false (the atomic-completion path) mints deterministic
+    //     ids instead (OperationKeys.saleTxId), so the SAME order+epoch
+    //     always produces the SAME sale doc ids — required for a replay to
+    //     be a true no-op rather than a second set of sale rows.
+    // NOTE (pre-existing behaviour, unchanged by this refactor): allocByProduct
+    // is keyed by productId, so two lines of the SAME product in one order
+    // both read the LAST such line's OrderMath allocation. Not introduced or
+    // fixed here — flagged for Taher, since it wasn't previously covered by
+    // any test either.
+    function buildSaleDocs(order, epoch, legacyIds) {
+        if (!order || !order.products) return []
         var iso = new Date().toISOString()
         var alloc = OrderMath.allocate(order)
         // productId → allocated perLine (line-level net/tax/discount).
         var allocByProduct = {}
         for (var ai = 0; ai < alloc.perLine.length; ++ai)
             allocByProduct[alloc.perLine[ai].productId] = alloc.perLine[ai]
+        var docs = []
         for (var i = 0; i < order.products.length; ++i) {
             var p = order.products[i]
             var qty = p.quantity || p.qty || 0
             if (!qty) continue
             var inv = p.productId ? InventoryStore.getById(p.productId) : null
             var al = allocByProduct[p.productId || ""] || { net: qty * (p.price || 0), tax: 0, discountShare: 0 }
-            var doc = {
-                txId: _nextId("s"),
+            docs.push({
+                txId: legacyIds ? _nextId("s") : OperationKeys.saleTxId(order.orderId, epoch, i),
                 kind: "sale",
                 timestamp: iso,
                 date: order.date || Qt.formatDate(new Date(), "yyyy-MM-dd"),
@@ -469,9 +489,46 @@ QtObject {
                 orderChannel: order.orderChannel || "",
                 staffId: order.staffId || "",
                 consumption: Array.isArray(p.consumption) ? p.consumption.slice() : []
-            }
-            _push(doc)
+            })
         }
+        return docs
+    }
+
+    function recordSaleFromOrder(order) {
+        var docs = buildSaleDocs(order, 0, true)
+        for (var i = 0; i < docs.length; ++i) _push(docs[i])
+    }
+
+    // Merge server-confirmed sale docs into local state, WITHOUT sending
+    // anything (used after a recordOperation result — atomic order-completion
+    // operation, C-3, Task 9). Skips any txId already present, so replaying
+    // the same operation never duplicates a ledger row. Returns how many
+    // were actually added.
+    function addLocalEntries(docs) {
+        var have = {}
+        for (var i = 0; i < entries.length; ++i) have[entries[i].txId] = true
+        var arr = (entries || []).slice()
+        var added = 0
+        for (var j = 0; j < docs.length; ++j) {
+            if (have[docs[j].txId]) continue
+            arr.unshift(docs[j])
+            have[docs[j].txId] = true
+            added++
+        }
+        if (added > 0) { entries = arr; revision++ }
+        return added
+    }
+
+    // Inverse of addLocalEntries: drop locally-added sale docs that turned
+    // out not to be needed (an optimistic completion reverted after a
+    // rejection).
+    function removeLocalEntries(txIds) {
+        var drop = {}
+        for (var i = 0; i < txIds.length; ++i) drop[txIds[i]] = true
+        var arr = []
+        for (var j = 0; j < entries.length; ++j)
+            if (!drop[entries[j].txId]) arr.push(entries[j])
+        if (arr.length !== entries.length) { entries = arr; revision++ }
     }
 
     // Append an immutable return event for one returned line. Negative quantity

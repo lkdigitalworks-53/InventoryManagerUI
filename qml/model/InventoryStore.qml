@@ -1218,6 +1218,23 @@ QtObject {
         })
     }
 
+    // Replace product.stock with a server-confirmed value, WITHOUT sending
+    // anything (used to reflect a recordOperation result or a CAS conflict's
+    // `current` into local state — atomic order-completion operation, C-3,
+    // 2026-09-20 plan Task 9). Returns the previous stock, or undefined if
+    // the product isn't known locally.
+    function applyRemoteStock(productId, stock) {
+        var arr = _clone();
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].productId !== productId) continue;
+            var previous = arr[i].stock;
+            arr[i].stock = stock;
+            products = arr;
+            return previous;
+        }
+        return undefined;
+    }
+
     function findIndexById(productId) {
         for (var i = 0; i < products.length; ++i)
             if (products[i].productId === productId) return i

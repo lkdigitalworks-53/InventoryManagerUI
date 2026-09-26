@@ -1,117 +1,103 @@
-# CHECKPOINT — 2026-09-22: C-3 Phase 3 PR 1 (Outbox + Gateway transport) open, Tasks 9-11 next
+# CHECKPOINT — 2026-09-26: C-3 Phase 3 PR 2 (store hooks, Task 9) ready for review, Task 10 needs a design check-in
 
-**Session date:** 2026-09-22 (continues the 2026-09-18/20 arc)
-**Branch:** `fix/2026-09-22-atomic-order-completion`, off `main` @ `2c1e5f6` (after #75, #76, #77, #78, #79, #81
-merged — verified via `git merge-base`, not assumed)
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-CHECKPOINT.md`
+**Session date:** 2026-09-26 (continues the 2026-09-18/20/22 arc)
+**Branch:** `feat/2026-09-26-completion-store-hooks`, off `main` @ `277f246` (PR #83's merge commit — verified
+via `git merge-base`, not assumed)
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-22-atomic-operation-outbox-CHECKPOINT.md`
 **Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>` (confirmed by Taher). PAT is
 supplied by Taher in chat each session and is never written to the repo, `.git/config`, or memory.
 **Spec:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md` (D1-D5 approved, on `main`).
 **Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md` (13 tasks, 3 phases, on `main`).
-**Test plan:** `docs/superpowers/test-plans/2026-09-20-atomic-operation-outbox-test-plan.md` (on `main`; needs a
-pass converting "planned" rows to "verified"/CI-run once each PR lands — not done yet).
+**Test plan:** `docs/superpowers/test-plans/2026-09-20-atomic-operation-outbox-test-plan.md` (updated this
+session for Task 9 — see its own "Updated 2026-09-26" note).
 
 ## Where things actually stand (all live-checked, not assumed)
 
-**Merged to `main`:** #75 (stuck-write indicator), #76 (C-4 rename), #77 (spec/plan/test-plan), #78
-(`recordOperation` endpoint, Phase 1 — includes review fixes: `isSafeDocId`/`invalid-request-id`,
-`{requestId}~{index}` per-op audit ids, replay guard, an emulator test), #79 (pure helpers, Phase 2 — includes
-review fixes: `_has()` own-property checks in `CompletionPlan`, negative-quantity guard, `nextEpoch`
-non-negative-integer guard, ponytail cuts to `SendPolicy`), #81 (CI fix: `post-ci-comment.js`'s
-`readResultsFile` only ever read one `results.xml` per job, so the E2E job's second JUnit file — the
-`recordOperation` emulator test — was silently uncounted even though the job was green; now reads every
-`*.xml` in the artifact dir).
+**Merged to `main`:** everything through #83 (Phase 3 PR 1 — Tasks 6-8: `OutboxStore`/`Gateway` transport).
+See the archived 2026-09-22 checkpoint for that history.
 
-**Open, CI in progress:** **#83**, this branch. Phase 3 PR 1 (plan Tasks 6-8): `OutboxStore.enqueueOperation`
-+ per-key `dueItems()` ordering + retry jitter; `Gateway` send timeout (settled-flag Timer alongside each
-existing XHR, NOT the plan doc's original shared-`_xhrPost`-with-injectable-factory design — the real
-`_send`/`_sendBatch`/`_sendDelta` had grown far more elaborate than the plan assumed, so a full reroute was
-rejected as too risky in favour of the `AuthService._postJson`-proven pattern, leaving every existing
-conflict/QTBUG-49896/callback line untouched); `Gateway.recordOperation` with await mode,
-`operationApplied`/`operationRejected` signals. 32 new tests, all hand-traced (no Qt toolchain in the
-sandbox) — Tasks 6 and 8's decision logic is pure and fully exercised that way (including driving
-`_finishOperation` directly, the same pattern this file already uses for `_noteFailure`); Task 7's actual
-Timer/XHR/`abort()` interaction cannot be tested anywhere but on a device or in CI's real `qmltestrunner` run
-(no mock HTTP layer anywhere in this codebase — documented in `tst_Gateway.qml`'s own long-standing scope
-note). One real bug caught and fixed before committing: `signal.connect(fn)` doesn't return a usable
-disconnect handle in QML the way Qt's C++ API does; fixed to disconnect the same function reference.
+**This session (not yet a PR at session start — opened partway through, see step log):** Task 9, the four
+store hooks the plan calls for, implemented against `main` re-read fresh (not the plan document's draft
+code, which was stale in two ways — see below):
 
-**Nothing calls `recordOperation` yet.** `DataModel._tryCompleteOrder` still uses the old per-line delta
-chain. App behaviour is unchanged by everything merged or open so far. The C-3 bug is **still not fixed**.
+- `InventoryStore.applyRemoteStock(productId, stock)` — replaces stock, returns previous or `undefined`.
+- `StockBatchStore.applyRemoteQty(batchId, qty)` / `addLocalBatch(doc)` / `removeLocalBatch(batchId)`.
+- `OrdersStore.buildOrderUpdate(orderId, fields)` (pure half of `updateOrder`, no Gateway/local-state side
+  effects) / `applyRemoteOrder(doc)`.
+- `TransactionStore.buildSaleDocs(order, epoch, legacyIds)` (pure half of `recordSaleFromOrder`) /
+  `addLocalEntries(docs)` / `removeLocalEntries(txIds)`.
+
+56 new tests across 4 new files (`tst_InventoryStore_applyRemote.qml` 9, `tst_StockBatchStore_applyRemote.qml`
+12, `tst_OrdersStore_buildOrderUpdate.qml` 15, `tst_TransactionStore_buildSaleDocs.qml` 20). **Verified in CI,
+1356/1356 green** (PR #87) — one genuine test bug caught and fixed along the way (see step 20c/20d below), so
+the hand-tracing-before-push discipline this arc uses is not a substitute for CI, just a way to keep the
+false-positive rate low before it runs.
+
+**Two real findings from re-reading live code instead of trusting the plan draft:**
+
+1. `OrdersStore._normalizeOrder` returns a fixed-field object literal — it does NOT carry unknown fields
+   through. The plan's Task 9 draft set `o.completionEpoch` and assumed it would just persist; it would have
+   been silently dropped by the very next `_clone()`/normalize pass (every `updateOrder` call, every sync),
+   which would have broken the deterministic-key mechanism Task 10 depends on in a way that's easy to miss in
+   review (works once, then quietly stops). Fixed `_normalizeOrder` (and `_normalizeOrders`, the
+   Firestore-sync path, for consistency) to carry `completionEpoch` through. Added
+   `test_completionEpoch_survives_an_unrelated_updateOrder_call` specifically to pin this — same lesson as
+   Task 7 finding the `signal.connect()` disconnect-handle bug, and the CAS shape-mismatch lesson already in
+   `docs`/memory: a field-list mismatch between construction paths is the recurring failure mode in this
+   codebase.
+2. `TransactionStore.recordSaleFromOrder`'s `allocByProduct` lookup is keyed by `productId`, so two lines of
+   the *same* product in one order silently collide — the second line's `OrderMath.allocate` result
+   overwrites the first's in the map, and both lines then read the second line's tax/discount allocation.
+   Pre-existing, not introduced by extracting `buildSaleDocs` out of it, not previously covered by any test.
+   **Not fixed here** — fixing it is a GST-relevant behaviour change and deserves its own decision, not a
+   drive-by inside a refactor PR. Flagged in a code comment and to Taher directly.
+
+**Nothing calls these hooks yet.** `DataModel._tryCompleteOrder` still uses the old per-line delta chain.
+App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — that's Task 10.
 
 ## Step log (append-only; resume from the last ticked step)
 
-- [x] 1-11 (2026-09-18 through 2026-09-21): scoping, C-1/C-2/C-4 sequencing, D1-D5 design decisions, spec +
-      plan + test plan written, Phases 1-2 implemented and merged, the CI multi-file counting bug found and
-      fixed. Full detail in the archived checkpoint above and in PR bodies #74/#76/#77/#78/#79/#81/#83.
-- [x] 12. Taher: PR #75 merged; he deploys `recordOperation` himself; asked whether #77/#78 could merge —
-      both had already merged by the time this was answered (his own call, reasonable given green CI at the
-      time); asked to "continue".
-- [x] 13. Found and fixed the CI multi-file counting bug (PR #81, merged by Taher before this session could
-      open it itself).
-- [x] 14. Phase 3 PR 1 opened as #83 (Tasks 6-8, this branch). CI in progress at session end.
-- [x] 15. Taher reviewed and pushed back with four questions: no test-plan file in #83 (correct — found and
-      fixed, see step 18), what's actually shipped, can he device-test now (no — `DataModel`/stores untouched,
-      nothing new is reachable from the app, verified by diffing this branch's changed files), can Phase 3 be
-      picked up in a fresh session (see step 18), and #83 needed rebasing again.
-- [x] 16. Requested review with `superpowers:requesting-code-review`/`ponytail:ponytail-review`/
-      `qt-development-skills:qt-qml-review`. Found and fixed: a test-count error in the PR body/commit message
-      (said 32, actually 28 — miscounted Task 7's tests as 11 when it added 6; verified against the CI delta,
-      which matched exactly); the 4 Gateway senders' timer-setup code was byte-for-byte duplicated, extracted
-      to `_armSendTimeout` (net -35 lines); the await-timer's actual firing was never exercised even though it
-      could be (it's a plain `Timer`, not an XHR — this repo already proves `tryCompare` works on one), added
-      a test that lets it fire for real. CI green after (982 QML tests, +28 over pre-PR baseline).
-- [x] 17. Rebased #83 onto `main` twice more as it kept moving (PR #80 staff-delete-ui, 11 commits, entirely
-      unrelated — only `CHECKPOINT.md` conflicted both times; resolved each time by reconstructing from the
-      two clean sides via `git show` rather than fighting an interleaved 3-way diff, and archiving whichever
-      side wasn't kept). #83 is `clean`/mergeable as of this step.
-- [x] 18. Found the test-plan/plan-doc staleness Taher's first question implied: the design-time test plan
-      (written 2026-09-20, before any code existed) still said "Planned" for Tasks 6-8 and, worse, named test
-      files that don't exist (`tst_Gateway_send.qml`, `tst_Gateway_operation.qml`) and described a design
-      (`xhrFactory`) #83 deliberately didn't build. Fixed both the test plan and the plan document's status
-      legend to say what's real. **This is the honest answer to "can a new session take over": yes, now** —
-      before this step the docs would have actively misled a fresh session about Tasks 6-8's real shape.
-- [ ] 19. **Waiting on:** Taher's decision on Phase 3 PR 2 (Tasks 9-10) and confirmation `recordOperation` is
-      deployed to dev (still not directly confirmed either way in this conversation, though a later cross-arc
-      checkpoint below implies work is proceeding on the assumption it will be).
-- [ ] 20. Next: Phase 3 PR 2 (plan Tasks 9-10: store hooks on Inventory/StockBatch/Orders/TransactionStore,
-      then `DataModel._tryCompleteOrder` itself). Flagged to Taher as the riskiest, least-certain part of the
-      whole arc — worth a design nod before starting, not just a code review after. Task 10 in the plan
-      document also predates the real current `_tryCompleteOrder` (which has grown since the plan was
-      written, same lesson as Task 7) — re-read the live function fully before writing anything, the way
-      Task 7 did, rather than trusting the plan doc's draft code verbatim.
-- [ ] 21. After PR 2: Phase 3 PR 3 (plan Task 11, the "saved, syncing" UI hint) and Task 12 (docs/tracker/
-      `SKILLS.md` sweep — still not touched anywhere in this arc, to avoid a Skill-number collision with #75;
-      this is the point to add one — check the latest number first, staff-delete-ui already claimed 68/69).
-      Task 13 (deploy + on-device plan) is Taher's, throughout.
-
-## Cross-arc note (found resolving a CHECKPOINT.md conflict with `main`, 2026-09-24)
-
-A separate, unrelated session has been working `docs/2026-09-24-compliance-reassessment` (P1 stock-movement
-taxonomy / compliance): its checkpoint, archived below, plans an "S3: `sale` via `completeOrder`" slice that
-explicitly depends on **this** C-3 Phase 3 landing first. That session's compliance-status table also listed
-Phase 3 as "not started" as of 2026-09-24 — PR #83 existed and was open at the time, so that's a miss on its
-part (didn't check open PRs), not a signal that anything here regressed. Worth flagging to Taher once Phase 3
-lands, since S3 will need to build on `_tryCompleteOrder`'s new shape.
-
-## Second cross-arc note (found resolving a THIRD CHECKPOINT.md conflict, 2026-09-25)
-
-A third, also unrelated session shipped `feat/2026-09-21-staff-delete-ui` (PR #80, 11 commits): a row-level
-staff-delete button, self-delete guard, server-side role check. Nothing overlaps this C-3 arc's files. Its
-checkpoint is archived below. Its work claimed Skill numbers 68 and 69 in `SKILLS.md` — Task 12 here must
-check the current highest number before picking one, not assume 68 is free.
-
-**Recurring friction worth naming plainly:** this is the third time in this session that landing a docs-only
-commit on this branch has meant reconstructing `CHECKPOINT.md` around an unrelated, concurrently-merged
-session's checkpoint. Each time cost real turns. Not something to fix unilaterally (the one-root-checkpoint
-convention is Taher's), but worth him knowing the cost is compounding as more parallel sessions run against
-this repo.
+- [x] 1-18 (2026-09-18 through 2026-09-25): see the archived 2026-09-22 checkpoint for full detail — spec,
+      plan, test plan, Phases 1-2, and Phase 3 PR 1 (#83) through merge.
+- [x] 19. Taher's decision on Phase 3 PR 2 arrived as "start with next phase … pick up tasks immediately" —
+      read as: proceed with Task 9 (store hooks), the lower-risk, more mechanical half of PR 2, and hold
+      Task 10 for the design check-in already flagged in step 20 below rather than bundle both into one PR.
+- [x] 20a. Re-read all four target store files fresh on current `main` (not the plan draft) before writing
+      anything, per this file's own resume instructions. Found the two issues above.
+- [x] 20b. Implemented and tested all four Task 9 hooks (56 tests, see above). Updated the test plan's
+      "Store hooks" row and header note.
+- [x] 20c. Committed, pushed, opened as **PR #87** against `main`. CI ran: 1355/1356 passed first try —
+      `Functions Tests`, `Firestore Rules Tests`, `E2E Tests` all green; `QML Tests` failed exactly 1 of 1111,
+      per the `pr-comment` job's summary: `OrdersStore_buildOrderUpdate::test_completionEpoch_defaults_to_zero_when_absent`.
+      Real cause (test bug, not a store bug): `getById()` returns the raw stored object with no
+      normalization, and the test's raw fixture never set `completionEpoch`, so it read `undefined`, not the
+      store's `0` default (which only applies inside `_normalizeOrder`, i.e. after a `_clone()`). Fixed by
+      routing the fixture through `buildOrderUpdate` first, same as this file's other normalize-path tests.
+      This is the first PR in this arc where the "hand-traced, unproven until CI" caveat on every store-hook
+      test actually caught something — worth remembering next time that caveat is written off as boilerplate.
+- [x] 20d. Pushed the fix. **CI green: 1356/1356** (QML 1111, Functions 176, Firestore Rules 28, E2E 41).
+      PR #87 is genuinely CI-verified now, not just hand-traced. Task 9 is done and ready for Taher's review;
+      the PR has not been merged by this session (merging `main` is Taher's call per the standing rule of
+      never pushing to `main` without explicit instruction — that extends to merging a PR into it).
+- [ ] 21. **Before Task 10 (`DataModel._tryCompleteOrder` rewrite):** flagged again, more specifically now —
+      this is the optimistic apply/revert/re-plan logic, "has never run" per the plan's own self-review, and
+      is where a mistake would actually reach users (unlike Task 9's hooks, which nothing calls yet). Worth a
+      short design check-in with Taher first, specifically on: the re-plan bound (`maxReplans=3` in the plan
+      draft — still right?), whether "queued while offline" should show as `completed` to the user before the
+      server confirms, and how the guard interacts with `_reverseCompletedOrder`. Do not start Task 10 code
+      without that check-in. When it does start: re-read `DataModel.qml`'s current `_tryCompleteOrder` fully
+      first — same lesson as Task 7 and this session's Task 9 findings, the plan document's draft code for
+      Task 10 is written against an older, smaller version of that function.
+- [ ] 22. After PR 2: Phase 3 PR 3 (plan Task 11, the "saved, syncing" UI hint) and Task 12 (docs/tracker/
+      `SKILLS.md` sweep for the whole Phase 3 arc — check the current highest `SKILLS.md` number before
+      picking one; as of this session it's 70). Task 13 (deploy + on-device plan) is Taher's, throughout.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check live PR/CI state (#83 and anything opened after it), then
-continue at step 15. Do not build or run the app until Taher asks. Before touching `DataModel.qml`,
-`OrdersStore.qml`, `TransactionStore.qml`, `InventoryStore.qml`, or `StockBatchStore.qml` for Tasks 9-10,
-re-read each one fresh on current `main` — do not assume the plan document's draft code for those tasks still
-matches reality. `CHECKPOINT.md` conflicts are resolved by keeping the branch's version and archiving
-`main`'s copy under `docs/superpowers/specs/`.
+Fresh session: clone, read this file, re-check live PR/CI state for whatever PR step 20c opens (or opens it,
+if this checkpoint was committed before that happened — check first, don't assume). Do not build or run the
+app until Taher asks. **Do not start Task 10** without the design check-in in step 21 having actually
+happened in the conversation. Before touching `DataModel.qml` for Task 10, re-read it fresh on current
+`main` — do not assume the plan document's draft code still matches reality (this session found two similar
+staleness issues in Task 9's supposedly-simpler files). `CHECKPOINT.md` conflicts are resolved by keeping the
+branch's version and archiving `main`'s copy under `docs/superpowers/specs/`.
