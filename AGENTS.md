@@ -186,7 +186,8 @@ collections and zeroes product stock).
   Firestore Rules CI job covers it, but it hasn't been independently re-run in a session since 2026-09-21).
   The four new Task 9 store-hook test files (`tests/tst_{Inventory,StockBatch}Store_applyRemote.qml`,
   `tst_OrdersStore_buildOrderUpdate.qml`, `tst_TransactionStore_buildSaleDocs.qml`) are, like #83's tests
-  before it went to CI, hand-traced only — no Qt toolchain in this sandbox — until CI runs on their PR.
+  before CI, but **verified in CI now** (PR #87, 1356/1356 green) — including catching one genuine test
+  bug (`test_completionEpoch_defaults_to_zero_when_absent`, fixed same PR, see `CHECKPOINT.md`).
 - Full trail: `docs/superpowers/specs/2026-07-11-p0-gateway-orders-staff-suppliers-CHECKPOINT.md`
   and `docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md`.
 

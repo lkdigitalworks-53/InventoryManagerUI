@@ -28,9 +28,10 @@ code, which was stale in two ways — see below):
   `addLocalEntries(docs)` / `removeLocalEntries(txIds)`.
 
 56 new tests across 4 new files (`tst_InventoryStore_applyRemote.qml` 9, `tst_StockBatchStore_applyRemote.qml`
-12, `tst_OrdersStore_buildOrderUpdate.qml` 15, `tst_TransactionStore_buildSaleDocs.qml` 20), hand-traced
-against the live store files (no Qt toolchain in the sandbox) — same caveat as `tst_OutboxStore.qml` in #83:
-unproven until CI's real `qmltestrunner` run.
+12, `tst_OrdersStore_buildOrderUpdate.qml` 15, `tst_TransactionStore_buildSaleDocs.qml` 20). **Verified in CI,
+1356/1356 green** (PR #87) — one genuine test bug caught and fixed along the way (see step 20c/20d below), so
+the hand-tracing-before-push discipline this arc uses is not a substitute for CI, just a way to keep the
+false-positive rate low before it runs.
 
 **Two real findings from re-reading live code instead of trusting the plan draft:**
 
@@ -74,6 +75,10 @@ App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — tha
       routing the fixture through `buildOrderUpdate` first, same as this file's other normalize-path tests.
       This is the first PR in this arc where the "hand-traced, unproven until CI" caveat on every store-hook
       test actually caught something — worth remembering next time that caveat is written off as boilerplate.
+- [x] 20d. Pushed the fix. **CI green: 1356/1356** (QML 1111, Functions 176, Firestore Rules 28, E2E 41).
+      PR #87 is genuinely CI-verified now, not just hand-traced. Task 9 is done and ready for Taher's review;
+      the PR has not been merged by this session (merging `main` is Taher's call per the standing rule of
+      never pushing to `main` without explicit instruction — that extends to merging a PR into it).
 - [ ] 21. **Before Task 10 (`DataModel._tryCompleteOrder` rewrite):** flagged again, more specifically now —
       this is the optimistic apply/revert/re-plan logic, "has never run" per the plan's own self-review, and
       is where a mistake would actually reach users (unlike Task 9's hooks, which nothing calls yet). Worth a
