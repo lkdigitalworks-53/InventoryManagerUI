@@ -1,6 +1,6 @@
 # Test plan — order completion as one atomic, replay-safe operation (C-3)
 
-**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, Tasks 6-8, merged #83), `feat/2026-09-26-completion-store-hooks` (store hooks, Task 9, this PR; Task 10-11 not started).
+**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, Tasks 6-8, merged #83), `feat/2026-09-26-completion-store-hooks` (store hooks, Task 9, open as #87; Task 10-11 not started).
 **Spec:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md` · **Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`
 
 **What it does:** completing an order sends one operation (batch deltas, stock deltas, order update, sale docs)

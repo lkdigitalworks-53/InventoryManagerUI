@@ -52,7 +52,7 @@ unproven until CI's real `qmltestrunner` run.
    drive-by inside a refactor PR. Flagged in a code comment and to Taher directly.
 
 **Nothing calls these hooks yet.** `DataModel._tryCompleteOrder` still uses the old per-line delta chain.
-App behaviour is unchanged by this PR. The C-3 bug is **still not fixed** — that's Task 10.
+App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — that's Task 10.
 
 ## Step log (append-only; resume from the last ticked step)
 
@@ -65,10 +65,8 @@ App behaviour is unchanged by this PR. The C-3 bug is **still not fixed** — th
       anything, per this file's own resume instructions. Found the two issues above.
 - [x] 20b. Implemented and tested all four Task 9 hooks (56 tests, see above). Updated the test plan's
       "Store hooks" row and header note.
-- [ ] 20c. **Next action, mechanical:** commit, push, open PR 2 against `main`, request CI. (This is the very
-      next step after this checkpoint is written — if this session ends before it happens, the branch above
-      has the finished work uncommitted; a fresh session should commit/push/open the PR, not redo the
-      implementation.)
+- [x] 20c. Committed, pushed, opened as **PR #87** against `main`. CI requested; not yet observed to
+      completion in this session — a fresh session should check its status first, not assume green or red.
 - [ ] 21. **Before Task 10 (`DataModel._tryCompleteOrder` rewrite):** flagged again, more specifically now —
       this is the optimistic apply/revert/re-plan logic, "has never run" per the plan's own self-review, and
       is where a mistake would actually reach users (unlike Task 9's hooks, which nothing calls yet). Worth a
