@@ -65,8 +65,15 @@ App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — tha
       anything, per this file's own resume instructions. Found the two issues above.
 - [x] 20b. Implemented and tested all four Task 9 hooks (56 tests, see above). Updated the test plan's
       "Store hooks" row and header note.
-- [x] 20c. Committed, pushed, opened as **PR #87** against `main`. CI requested; not yet observed to
-      completion in this session — a fresh session should check its status first, not assume green or red.
+- [x] 20c. Committed, pushed, opened as **PR #87** against `main`. CI ran: 1355/1356 passed first try —
+      `Functions Tests`, `Firestore Rules Tests`, `E2E Tests` all green; `QML Tests` failed exactly 1 of 1111,
+      per the `pr-comment` job's summary: `OrdersStore_buildOrderUpdate::test_completionEpoch_defaults_to_zero_when_absent`.
+      Real cause (test bug, not a store bug): `getById()` returns the raw stored object with no
+      normalization, and the test's raw fixture never set `completionEpoch`, so it read `undefined`, not the
+      store's `0` default (which only applies inside `_normalizeOrder`, i.e. after a `_clone()`). Fixed by
+      routing the fixture through `buildOrderUpdate` first, same as this file's other normalize-path tests.
+      This is the first PR in this arc where the "hand-traced, unproven until CI" caveat on every store-hook
+      test actually caught something — worth remembering next time that caveat is written off as boilerplate.
 - [ ] 21. **Before Task 10 (`DataModel._tryCompleteOrder` rewrite):** flagged again, more specifically now —
       this is the optimistic apply/revert/re-plan logic, "has never run" per the plan's own self-review, and
       is where a mistake would actually reach users (unlike Task 9's hooks, which nothing calls yet). Worth a

@@ -121,8 +121,15 @@ TestCase {
     // -- completionEpoch round-trips through _normalizeOrder -------------------
 
     function test_completionEpoch_defaults_to_zero_when_absent() {
+        // getById() returns the raw stored object (no normalization on a
+        // plain property read) — route this fixture through the real
+        // normalize path (buildOrderUpdate -> _clone() -> _normalizeOrder)
+        // instead of asserting on the untouched raw fixture, or this test
+        // would just be checking JS's `undefined`, not the store's default.
+        // (Caught by CI: this exact mistake failed here first — see PR #87.)
         OrdersStore.orders = [_order({ orderId: "ORD-001" })]
-        compare(OrdersStore.getById("ORD-001").completionEpoch, 0)
+        var r = OrdersStore.buildOrderUpdate("ORD-001", { notes: "touch" })
+        compare(r.after.completionEpoch, 0)
     }
 
     function test_completionEpoch_survives_an_unrelated_updateOrder_call() {
