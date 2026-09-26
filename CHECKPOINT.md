@@ -1,8 +1,9 @@
-# CHECKPOINT — 2026-09-26: C-3 Phase 3 PR 2 (store hooks, Task 9) ready for review, Task 10 needs a design check-in
+# CHECKPOINT — 2026-09-26: C-3 PR #87 (Task 9) merged; Task 10 design check-in opened, awaiting Taher's decisions
 
-**Session date:** 2026-09-26 (continues the 2026-09-18/20/22 arc)
-**Branch:** `feat/2026-09-26-completion-store-hooks`, off `main` @ `277f246` (PR #83's merge commit — verified
-via `git merge-base`, not assumed)
+**Session date:** 2026-09-26, continued session (continues the 2026-09-18/20/22/26 arc)
+**Branch (this update):** `docs/2026-09-26-c3-task10-design-checkin`, off `main` @ `66ffa4f` (PR #87's merge
+commit — live-verified via GitHub API `state=closed, merged=true`, not assumed)
+**Previous branch:** `feat/2026-09-26-completion-store-hooks` (PR #87, merged)
 **Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-22-atomic-operation-outbox-CHECKPOINT.md`
 **Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>` (confirmed by Taher). PAT is
 supplied by Taher in chat each session and is never written to the repo, `.git/config`, or memory.
@@ -55,6 +56,23 @@ false-positive rate low before it runs.
 **Nothing calls these hooks yet.** `DataModel._tryCompleteOrder` still uses the old per-line delta chain.
 App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — that's Task 10.
 
+**Since this checkpoint was last written, Taher merged PR #87 into `main` himself** (live-verified: GitHub
+API reports `state: closed, merged: true`, tip `66ffa4f`) — Task 9 is fully landed, not just CI-green and
+awaiting review.
+
+**A third finding, from re-reading `_reverseCompletedOrder` and its only call site (`onUpdateOrder`'s
+completed→non-completed edge) against the Task 10 plan draft, not yet fixed or decided:** nothing in the
+draft's `_openCompletions` bookkeeping is touched by reopen. If a completion is showing as `completed`
+optimistically (queued offline, or the await window ran out) and the order is reopened before the server
+actually answers, `_reverseCompletedOrder` reverses stock/batches/ledger off the *predicted* state and clears
+`consumption[]`, but the original `_openCompletions[key]` entry survives untouched. When the deferred
+`operationApplied`/`operationRejected` for that key eventually arrives, `_settleApplied`/`_reconcileFromRejection`
+will still run and re-apply the original sale's stock delta and `applyRemoteOrder` onto an order the user has
+since reopened (and possibly already re-completed under a new epoch) — a second, differently-shaped double-
+consume, on the very PR meant to close the first one. `_completingOrderIds[orderId]` also stays untouched by
+reopen for the same reason. Not in the plan draft; raised to Taher as part of the Task 10 design check-in
+(see step 21 below) rather than decided unilaterally.
+
 ## Step log (append-only; resume from the last ticked step)
 
 - [x] 1-18 (2026-09-18 through 2026-09-25): see the archived 2026-09-22 checkpoint for full detail — spec,
@@ -79,25 +97,31 @@ App behaviour is unchanged by PR #87. The C-3 bug is **still not fixed** — tha
       PR #87 is genuinely CI-verified now, not just hand-traced. Task 9 is done and ready for Taher's review;
       the PR has not been merged by this session (merging `main` is Taher's call per the standing rule of
       never pushing to `main` without explicit instruction — that extends to merging a PR into it).
-- [ ] 21. **Before Task 10 (`DataModel._tryCompleteOrder` rewrite):** flagged again, more specifically now —
-      this is the optimistic apply/revert/re-plan logic, "has never run" per the plan's own self-review, and
-      is where a mistake would actually reach users (unlike Task 9's hooks, which nothing calls yet). Worth a
-      short design check-in with Taher first, specifically on: the re-plan bound (`maxReplans=3` in the plan
-      draft — still right?), whether "queued while offline" should show as `completed` to the user before the
-      server confirms, and how the guard interacts with `_reverseCompletedOrder`. Do not start Task 10 code
-      without that check-in. When it does start: re-read `DataModel.qml`'s current `_tryCompleteOrder` fully
-      first — same lesson as Task 7 and this session's Task 9 findings, the plan document's draft code for
-      Task 10 is written against an older, smaller version of that function.
+- [x] 21a. Re-verified live state at the start of this continued session (not trusting this file's own prior
+      content per the resume instructions): PR #87 merged to `main` (GitHub API), no other open PR touches
+      C-3, `main` tip is `66ffa4f`.
+- [x] 21b. Re-read `DataModel.qml`'s current `_tryCompleteOrder` (lines ~489-659) and `_reverseCompletedOrder`
+      (lines ~771-800) fresh, plus `CompletionPlan.build` in `qml/helper/CompletionPlan.js`, against the plan
+      draft's Task 10 code — confirms `consumption[]` IS carried through the new plan (`CompletionPlan.build`
+      populates it per line, threaded into `orderUpdate(lines)`), so `_reverseCompletedOrder`'s read of
+      `line.consumption` keeps working for the settled-outcome case. Found the reopen-vs-in-flight-completion
+      gap logged above, which the plan draft does not address.
+- [ ] 21c. **Design check-in posed to Taher, not yet answered.** Before Task 10 code starts, need his call on:
+      (i) the re-plan bound (`maxReplans=3` in the plan draft — still right?), (ii) whether "queued while
+      offline" should keep showing as `completed` to the user before the server confirms, or something else,
+      (iii) how reopen should interact with an in-flight completion (block reopen while one is open / cancel-
+      supersede the open completion on reopen / accept the gap for now and fix later — see the finding above).
+      **Do not start Task 10 code without his answers landing in this file first.**
 - [ ] 22. After PR 2: Phase 3 PR 3 (plan Task 11, the "saved, syncing" UI hint) and Task 12 (docs/tracker/
       `SKILLS.md` sweep for the whole Phase 3 arc — check the current highest `SKILLS.md` number before
       picking one; as of this session it's 70). Task 13 (deploy + on-device plan) is Taher's, throughout.
 
 ## Resume instructions
 
-Fresh session: clone, read this file, re-check live PR/CI state for whatever PR step 20c opens (or opens it,
-if this checkpoint was committed before that happened — check first, don't assume). Do not build or run the
-app until Taher asks. **Do not start Task 10** without the design check-in in step 21 having actually
-happened in the conversation. Before touching `DataModel.qml` for Task 10, re-read it fresh on current
-`main` — do not assume the plan document's draft code still matches reality (this session found two similar
-staleness issues in Task 9's supposedly-simpler files). `CHECKPOINT.md` conflicts are resolved by keeping the
-branch's version and archiving `main`'s copy under `docs/superpowers/specs/`.
+Fresh session: clone, read this file, re-check live PR/CI state (don't assume — this session found PR #87 had
+been merged since the file was last written). Do not build or run the app until Taher asks. **Do not start
+Task 10** until step 21c's three questions have Taher's answers recorded in this file. When it does start:
+`_tryCompleteOrder`/`_reverseCompletedOrder` and `CompletionPlan.build` were re-read fresh this session (see
+21b) and the plan draft's shape still holds except for the reopen-race gap — re-check anyway rather than
+trusting this note, same lesson as every prior arc session. `CHECKPOINT.md` conflicts are resolved by keeping
+the branch's version and archiving `main`'s copy under `docs/superpowers/specs/`.
