@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import "../components"
 import "../helper/StuckWrites.js" as StuckWrites
+import "../helper/SendPolicy.js" as SendPolicy
 
 // Compliance gateway client (P0). Single entry point for every books-of-
 // account mutation in P0 scope (inventory + stock). Stores call
@@ -59,6 +60,14 @@ QtObject {
     // below is safe to call before then; it'll just retry with backoff like
     // any other outbox item until the endpoint exists.
     property string deltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
+
+    property string operationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
+
+    // Mirrors MAX_OPS in functions/lib/operationLogic.js and
+    // CompletionPlan.MAX_OPS -- all three are pinned by a test on their own
+    // side, since there is no shared build-time constant between this QML
+    // client and that Node runtime.
+    readonly property int maxOperationOps: 200
     // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
     property string cutoverUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover"
     // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
@@ -99,7 +108,23 @@ QtObject {
     // as mutationConflicted above.
     signal batchMutationFailedPermanently(string entity, var items, string error)
 
+    // Terminal outcome of a recordOperation call (C-3:
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md).
+    // Fired for EVERY operation that reaches a terminal state, whether or not
+    // a caller is still waiting on it -- callbacks are in-memory and don't
+    // survive a relaunch, these signals are how a caller recovers after one.
+    signal operationApplied(string requestId, string opType, var results, bool replay)
+    signal operationRejected(string requestId, string opType, var rejection)
+
     property int inFlight: 0
+
+    // Send timeouts (SendPolicy: starting values, not measured; tune on a device).
+    // backgroundTimeoutMs covers every outbox send below (nobody is waiting on
+    // them); awaitTimeoutMs is for a caller of recordOperation(awaitServer) who
+    // IS waiting. Both are plain properties, not readonly, so tests can shorten
+    // them.
+    property int backgroundTimeoutMs: SendPolicy.TIMEOUT_BACKGROUND_MS
+    property int awaitTimeoutMs: SendPolicy.TIMEOUT_AWAIT_MS
 
     // Queued writes that have failed StuckWrites.THRESHOLD times with a
     // server-side status. Main.qml republishes it as syncStuckCount and
@@ -118,6 +143,10 @@ QtObject {
     // about that (order completion) hold their own busy/timeout state, this
     // is not a durability mechanism the way the outbox itself is.
     property var _deltaCallbacks: ({})
+
+    // requestId -> [ { fn, timer } ]: callers of recordOperation(awaitServer)
+    // still waiting on the server's answer.
+    property var _operationWaiters: ({})
 
     // entity → working-tier collection. Mirrors ENTITY_COLLECTIONS in
     // functions/index.js; the two MUST stay in sync.
@@ -223,6 +252,99 @@ QtObject {
         }
         drainNow()
         return item.requestId
+    }
+
+    // Send one atomic multi-write operation (C-3:
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md).
+    // `opKey` is the requestId: the SAME key always means the SAME operation, so
+    // a re-run after a hang, a relaunch or a sign-out/in is exactly-once on the
+    // server -- callers are responsible for deriving it deterministically
+    // (OperationKeys.completeOrderKey and friends).
+    //   options.awaitServer: wait for the server's answer while online, instead
+    //     of returning "queued" immediately. Offline always returns "queued"
+    //     regardless of this option -- there is nothing to await.
+    // callback(result) fires exactly once, with one of:
+    //   { ok: true, results, idempotentReplay }        -- the server answered
+    //   { ok: true, queued: true, requestId }           -- not awaiting, or offline
+    //   { ok: false, pending: true, error: "timeout", requestId } -- the await
+    //     window ended; the item is still queued and will resolve in the
+    //     background (operationApplied/operationRejected fires later)
+    //   { ok: false, error, opIndex, field, current, conflict } -- rejected
+    //   { ok: false, error: "bad-request" | "operation-requires-gateway-mode" }
+    function recordOperation(opType, ops, opKey, options, callback) {
+        if (mode !== "gateway") {
+            console.warn("[Gateway] recordOperation: requires gateway mode, got", mode)
+            if (callback) callback({ ok: false, error: "operation-requires-gateway-mode" })
+            return ""
+        }
+        if (!opKey || !Array.isArray(ops) || ops.length === 0 || ops.length > maxOperationOps) {
+            console.warn("[Gateway] recordOperation: bad request", opKey, ops && ops.length)
+            if (callback) callback({ ok: false, error: "bad-request" })
+            return ""
+        }
+
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        var awaiting = !!(options && options.awaitServer) && online
+
+        var item = OutboxStore.enqueueOperation({
+            requestId: opKey,
+            opType: opType,
+            ops: ops,
+            clientTimestamp: new Date().toISOString()
+        })
+        // item.requestId === opKey always (enqueueOperation never coalesces an
+        // operation into a different key the way enqueueDelta can) -- unlike
+        // recordDelta above, there is no "surviving requestId may differ" case.
+
+        if (callback) {
+            if (awaiting) _addOperationWaiter(item.requestId, callback)
+            else callback({ ok: true, queued: true, requestId: item.requestId })
+        }
+        drainNow()
+        return item.requestId
+    }
+
+    function _addOperationWaiter(requestId, fn) {
+        var timer = Qt.createQmlObject(
+            'import QtQuick; Timer { repeat: false }', root, "GatewayAwaitOperationTimer")
+        var waiter = { fn: fn, timer: timer }
+        timer.interval = awaitTimeoutMs
+        timer.triggered.connect(function() {
+            // The CALLER stops waiting here; the request itself is not cancelled
+            // (its own, longer, backgroundTimeoutMs governs that) -- the eventual
+            // outcome still arrives via operationApplied/operationRejected.
+            var list = (_operationWaiters[requestId] || []).filter(function(w) { return w !== waiter })
+            var map = Object.assign({}, _operationWaiters)
+            if (list.length > 0) map[requestId] = list
+            else delete map[requestId]
+            _operationWaiters = map
+            timer.destroy()
+            fn({ ok: false, pending: true, error: "timeout", requestId: requestId })
+        })
+        var all = Object.assign({}, _operationWaiters)
+        all[requestId] = (all[requestId] || []).concat([waiter])
+        _operationWaiters = all
+        timer.start()
+    }
+
+    // Delivers a terminal outcome to every current waiter (if any -- there may
+    // be none, if nobody awaited or the await window already elapsed) and
+    // ALWAYS fires the matching signal, so a caller who lost its callback to a
+    // relaunch (or never awaited in the first place) can still reconcile.
+    function _finishOperation(item, result) {
+        var waiters = _operationWaiters[item.requestId] || []
+        if (waiters.length > 0) {
+            var map = Object.assign({}, _operationWaiters)
+            delete map[item.requestId]
+            _operationWaiters = map
+            for (var i = 0; i < waiters.length; ++i) {
+                waiters[i].timer.stop()
+                waiters[i].timer.destroy()
+                waiters[i].fn(result)
+            }
+        }
+        if (result.ok) operationApplied(item.requestId, item.opType, result.results || [], result.idempotentReplay === true)
+        else operationRejected(item.requestId, item.opType, result)
     }
 
 
@@ -347,6 +469,7 @@ QtObject {
         for (var i = 0; i < due.length; ++i) {
             OutboxStore.markInFlight(due[i])
             if (Array.isArray(due[i].items)) _sendBatch(due[i])
+            else if (due[i].ops) _sendOperation(due[i])
             else if (due[i].deltas) _sendDelta(due[i])
             else _send(due[i])
         }
@@ -356,8 +479,11 @@ QtObject {
 
     // Called beside every OutboxStore.markFailed. Toasts once, when the first
     // write becomes stuck; the header line stays up until the count drops again.
+    // `status` may be a real HTTP status or StuckWrites.TIMEOUT (D5): a timeout
+    // only counts while the device believes it's online -- see StuckWrites.js.
     function _noteFailure(item, status) {
-        if (!StuckWrites.noteFailure(_stuckState, item.requestId, status)) return
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        if (!StuckWrites.noteFailure(_stuckState, item.requestId, status, online)) return
         var wasQuiet = stuckCount === 0
         stuckCount = StuckWrites.stuckCount(_stuckState)
         if (wasQuiet)
@@ -450,6 +576,54 @@ QtObject {
         }
     }
 
+    // Arms a one-shot Timer that, if `xhr` never completes within
+    // backgroundTimeoutMs, aborts it and runs the shared timeout failure path
+    // exactly once. Without this, a hung request never fires onreadystatechange
+    // at all, so nothing ever resolves it -- that's exactly how the C-3 hang
+    // left an outbox item stuck in flight for the rest of the session (D5:
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md).
+    // Shared by all four senders below; NOT shared is each sender's own
+    // response classification once its XHR actually completes (recordMutation's
+    // conflict parsing, the batch terminal-error logic, recordDelta/recordOperation's
+    // _classifyDeltaResponse) -- those differ enough between senders that
+    // folding them into one function was rejected as too risky; only this
+    // identical setup/teardown is common.
+    //
+    // Returns { claim: function() -> bool }. The caller's onreadystatechange
+    // handler MUST call claim() before touching inFlight or the outbox: true
+    // means "you own this outcome, the timer is stopped, proceed normally";
+    // false means the timer already claimed it (timed out, and possibly
+    // already aborted this very xhr, which is what triggered this very call) --
+    // return immediately without doing anything further.
+    function _armSendTimeout(item, xhr, timerName, describe) {
+        var state = { settled: false }
+        var timer = Qt.createQmlObject(
+            'import QtQuick; Timer { repeat: false }', root, timerName)
+        timer.interval = backgroundTimeoutMs
+        timer.triggered.connect(function() {
+            if (state.settled) return
+            state.settled = true
+            timer.destroy()
+            try { xhr.abort() } catch (e) {}
+            inFlight--
+            console.warn("[Gateway]", describe(), "timed out")
+            OutboxStore.markFailed(item.requestId)
+            _noteFailure(item, StuckWrites.TIMEOUT)
+            OutboxStore.clearInFlight(item)
+            _reschedule()
+        })
+        timer.start()
+        return {
+            claim: function() {
+                if (state.settled) return false
+                state.settled = true
+                timer.stop()
+                timer.destroy()
+                return true
+            }
+        }
+    }
+
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
@@ -459,9 +633,13 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendTimeoutTimer",
+            function() { return "recordMutation " + item.entity + " " + item.entityId })
+
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
@@ -590,9 +768,13 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendBatchTimeoutTimer",
+            function() { return "recordMutationsBatch " + item.entity + " " + item.items.length + " item(s)" })
+
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
@@ -686,9 +868,15 @@ QtObject {
         inFlight++
         var xhr = new XMLHttpRequest()
         var _snap = { status: 0, responseText: "", headers: "" }
+        // A timeout is non-terminal, same as any other transient failure below:
+        // callbacks stay pending for whichever attempt eventually resolves.
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendDeltaTimeoutTimer",
+            function() { return "recordDelta " + item.entity + " " + item.entityId })
+
         xhr.onreadystatechange = function() {
             _captureBeforeStatusIsLost(xhr, _snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (!timeout.claim()) return
             inFlight--
             var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
@@ -727,6 +915,61 @@ QtObject {
             floors: item.floors,
             clamps: item.clamps,
             requestId: item.requestId,
+            clientTimestamp: item.clientTimestamp
+        }))
+    }
+
+    // Counterpart of _sendDelta for one atomic multi-write operation (C-3).
+    // The server's response envelope is identical in shape to recordDelta's
+    // ({ok: boolean, ...}), so _classifyDeltaResponse's terminal-vs-transient
+    // rule applies unchanged: a 4xx from our own code is a definitive
+    // rejection (floor, CAS conflict, bad request), a 5xx or a malformed body
+    // is an infrastructure failure worth retrying. A timeout is non-terminal,
+    // exactly like _sendDelta's -- any caller waiting on it hears "pending",
+    // not a rejection, and the retry that follows carries the SAME requestId.
+    function _sendOperation(item) {
+        if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
+            OutboxStore.clearInFlight(item)
+            return
+        }
+        inFlight++
+        var xhr = new XMLHttpRequest()
+        var _snap = { status: 0, responseText: "", headers: "" }
+        var timeout = _armSendTimeout(item, xhr, "GatewaySendOperationTimeoutTimer",
+            function() { return "recordOperation " + item.requestId + " " + item.opType })
+
+        xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, _snap)
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (!timeout.claim()) return
+            inFlight--
+            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
+            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
+            var body = null
+            try { body = JSON.parse(effResponseText) } catch (e) { body = null }
+            var classified = _classifyDeltaResponse(effStatus, body)
+
+            if (classified.terminal) {
+                OutboxStore.markSent(item.requestId)
+            } else {
+                console.warn("[Gateway] recordOperation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
+                             item.requestId, item.opType, effResponseText)
+                OutboxStore.markFailed(item.requestId)
+                _noteFailure(item, effStatus)
+            }
+            OutboxStore.clearInFlight(item)
+
+            if (classified.terminal) _finishOperation(item, classified.result)
+            _reschedule()
+        }
+        xhr.open("POST", operationFunctionUrl)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+        xhr.send(JSON.stringify({
+            env: FirebaseService.environment,
+            requestId: item.requestId,
+            opType: item.opType,
+            ops: item.ops,
             clientTimestamp: item.clientTimestamp
         }))
     }
@@ -819,6 +1062,18 @@ QtObject {
     function clear() {
         OutboxStore.clear()
         _deltaCallbacks = ({})
+        // A callback registered before sign-out must never fire after it (it
+        // would apply a stale plan's result under the next account). Stop and
+        // destroy every pending await timer before dropping the map.
+        var keys = Object.keys(_operationWaiters)
+        for (var k = 0; k < keys.length; ++k) {
+            var waiters = _operationWaiters[keys[k]]
+            for (var w = 0; w < waiters.length; ++w) {
+                waiters[w].timer.stop()
+                waiters[w].timer.destroy()
+            }
+        }
+        _operationWaiters = ({})
         _stuckState = StuckWrites.newState()
         stuckCount = 0
         if (_drainTimer) _drainTimer.stop()

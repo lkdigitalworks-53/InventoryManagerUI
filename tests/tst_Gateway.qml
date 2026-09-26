@@ -2,6 +2,8 @@ import QtQuick
 import QtTest
 import "../qml/model"
 import "../qml/components"
+import "../qml/helper/StuckWrites.js" as StuckWrites
+import "../qml/helper/SendPolicy.js" as SendPolicy
 
 // Regression tests for the P0 compliance gateway's client bridge.
 //
@@ -67,6 +69,12 @@ TestCase {
         // there, loadSession() silently overwrites the line above with
         // it, right before _send checks it. Clear the disk copy too.
         AuthStore._settings.sessionJson = ""
+        // D5 (docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md):
+        // a timeout only counts toward the stuck indicator while the device
+        // believes it's online. Default true, same as every real device most of
+        // the time; the one test that wants offline sets it for itself, and the
+        // NEXT test's init() restores this default (no cleanup() needed).
+        AuthService.isOnline = true
     }
 
     // ── mode + collection mapping ────────────────────────────────────────────
@@ -686,6 +694,63 @@ TestCase {
         compare(toastSpy.count, 0)
     }
 
+    // -- send timeouts (D5, 2026-09-22): properties only ------------------------
+    // The Timer/abort() mechanism these values feed lives inside _send/_sendBatch/
+    // _sendDelta and can't run under qmltestrunner (see the scope note at the top
+    // of this file) — this just guards against a typo'd SendPolicy reference.
+
+    function test_backgroundTimeoutMs_defaults_to_SendPolicys_background_value() {
+        compare(Gateway.backgroundTimeoutMs, SendPolicy.TIMEOUT_BACKGROUND_MS)
+    }
+
+    function test_awaitTimeoutMs_defaults_to_SendPolicys_await_value() {
+        compare(Gateway.awaitTimeoutMs, SendPolicy.TIMEOUT_AWAIT_MS)
+    }
+
+    // -- timeouts (D5, 2026-09-22): a hang while online is a stuck write --------
+    // Same "drive _noteFailure directly" pattern as above: the Timer/XHR/abort()
+    // interaction that actually PRODUCES StuckWrites.TIMEOUT in _send/_sendBatch/
+    // _sendDelta cannot run under qmltestrunner either (same scope note at the
+    // top of this file). This covers _noteFailure's connectivity forwarding,
+    // which is the only new logic in this file that doesn't touch an XHR.
+
+    function test_a_timeout_while_online_counts_toward_stuck_after_five() {
+        var item = _queueWrite("o1")
+        _failTimes(item, StuckWrites.TIMEOUT, 5)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 1)
+    }
+
+    function test_a_timeout_while_offline_never_counts() {
+        AuthService.isOnline = false
+        var item = _queueWrite("o1")
+        _failTimes(item, StuckWrites.TIMEOUT, 20)
+        compare(Gateway.stuckCount, 0)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_timeouts_and_server_failures_share_one_counter() {
+        var item = _queueWrite("o1")
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        Gateway._noteFailure(item, 503)
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        Gateway._noteFailure(item, 500)
+        compare(Gateway.stuckCount, 0)
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        compare(Gateway.stuckCount, 1, "the 5th failure of any counted kind tips it")
+    }
+
+    function test_going_offline_mid_run_does_not_erase_earlier_online_timeout_failures() {
+        var item = _queueWrite("o1")
+        _failTimes(item, StuckWrites.TIMEOUT, 4)
+        AuthService.isOnline = false
+        _failTimes(item, StuckWrites.TIMEOUT, 20)
+        compare(Gateway.stuckCount, 0, "still offline right now")
+        AuthService.isOnline = true
+        Gateway._noteFailure(item, StuckWrites.TIMEOUT)
+        compare(Gateway.stuckCount, 1, "the 5 earlier online failures were never discarded")
+    }
+
     function test_the_count_drops_when_a_stuck_write_leaves_the_outbox() {
         var item = _queueWrite("o1")
         _failTimes(item, 500, 5)
@@ -763,5 +828,220 @@ TestCase {
                 compare(Gateway.stuckCount, expected, "seed " + seed + " step " + step)
             }
         }
+    }
+
+    // -- recordOperation (C-3, 2026-09-22) ---------------------------------------
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md
+    //
+    // Same scope note as the top of this file applies here too: _sendOperation's
+    // actual XHR/response handling can't run in this sandbox. What CAN run
+    // headlessly, and is covered below: recordOperation's validation (before
+    // anything touches the outbox), its enqueue shape, the two callback paths
+    // that never touch the network (immediate "queued", and an await that times
+    // out), and _finishOperation (reachable directly, exactly like _noteFailure
+    // above) -- which is ALL of the new decision logic; only the bytes on the
+    // wire and their parsing are untested here.
+
+    function _opBody(entities) {
+        var ops = []
+        for (var i = 0; i < entities.length; ++i)
+            ops.push({ kind: "delta", entity: entities[i][0], entityId: entities[i][1], deltas: { n: -1 }, floors: {}, clamps: {} })
+        return ops
+    }
+
+    function test_maxOperationOps_mirrors_the_server_and_planner_limit() {
+        compare(Gateway.maxOperationOps, 200)
+    }
+
+    function test_recordOperation_requires_gateway_mode() {
+        Gateway.mode = "direct"
+        var got = null
+        var id = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", {}, function(r) { got = r })
+        compare(id, "")
+        compare(got.ok, false)
+        compare(got.error, "operation-requires-gateway-mode")
+        compare(OutboxStore.items.length, 0)
+    }
+
+    function test_recordOperation_rejects_bad_requests_without_touching_the_outbox() {
+        Gateway.mode = "gateway"
+        var got = []
+        Gateway.recordOperation("completeOrder", [], "k1", {}, function(r) { got.push(r) })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "", {}, function(r) { got.push(r) })
+        Gateway.recordOperation("completeOrder", "not-an-array", "k2", {}, function(r) { got.push(r) })
+        var tooMany = []
+        for (var i = 0; i < Gateway.maxOperationOps + 1; ++i) tooMany.push(["inventory", "p" + i])
+        Gateway.recordOperation("completeOrder", _opBody(tooMany), "k3", {}, function(r) { got.push(r) })
+        compare(got.length, 4)
+        for (var j = 0; j < got.length; ++j) { compare(got[j].ok, false); compare(got[j].error, "bad-request") }
+        compare(OutboxStore.items.length, 0)
+    }
+
+    function test_recordOperation_accepts_exactly_maxOperationOps() {
+        Gateway.mode = "gateway"
+        var ops = []
+        for (var i = 0; i < Gateway.maxOperationOps; ++i) ops.push(["inventory", "p" + i])
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody(ops), "k1", {}, function(r) { got = r })
+        compare(got.ok, true)
+        compare(OutboxStore.items.length, 1)
+    }
+
+    function test_recordOperation_not_awaiting_enqueues_and_returns_queued_immediately() {
+        Gateway.mode = "gateway"
+        var got = null
+        var id = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["order", "o1"]]), "k1", {}, function(r) { got = r })
+        compare(id, "k1")
+        compare(got.ok, true)
+        compare(got.queued, true)
+        compare(got.requestId, "k1")
+        compare(OutboxStore.items.length, 1)
+        compare(OutboxStore.items[0].requestId, "k1")
+        compare(OutboxStore.items[0].opType, "completeOrder")
+        compare(OutboxStore.items[0].ops.length, 2)
+    }
+
+    function test_recordOperation_offline_never_waits_even_when_asked_to() {
+        Gateway.mode = "gateway"
+        AuthService.isOnline = false
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        compare(got.ok, true)
+        compare(got.queued, true)
+        AuthService.isOnline = true
+    }
+
+    function test_recordOperation_the_same_key_twice_enqueues_once_and_both_callers_are_told_queued() {
+        Gateway.mode = "gateway"
+        var a = null, b = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", {}, function(r) { a = r })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["inventory", "p2"]]), "k1", {}, function(r) { b = r })
+        compare(OutboxStore.items.length, 1)
+        compare(OutboxStore.items[0].ops.length, 1, "the first payload wins")
+        compare(a.queued, true)
+        compare(b.queued, true)
+    }
+
+    function test_recordOperation_awaiting_online_registers_a_waiter_instead_of_answering_immediately() {
+        Gateway.mode = "gateway"
+        AuthService.isOnline = true
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        compare(got, null, "nothing yet -- only _finishOperation or the await timeout resolves this")
+        compare(OutboxStore.items.length, 1, "still durably queued while awaiting")
+    }
+
+    // The one place in this section where a real QML Timer is let run for real
+    // (proven safe/available in this codebase's test suite --
+    // tst_OrderMetadataEditPreservesConsumption.qml already uses tryCompare the
+    // same way). Everything else here drives _finishOperation directly instead;
+    // this test is what actually proves the Timer/_addOperationWaiter wiring
+    // that those direct calls bypass.
+    function test_recordOperation_awaiting_that_actually_times_out_delivers_pending_once() {
+        Gateway.mode = "gateway"
+        AuthService.isOnline = true
+        Gateway.awaitTimeoutMs = 30
+        var results = []
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { results.push(r) })
+        tryCompare(results, "length", 1, 2000)
+        compare(results[0].ok, false)
+        compare(results[0].pending, true)
+        compare(results[0].error, "timeout")
+        compare(results[0].requestId, "k1")
+        compare(OutboxStore.items.length, 1, "still queued -- the item itself was never cancelled")
+
+        // The eventual real answer must not re-invoke the (already-fired) callback
+        // a second time; only the signal fires for it now.
+        var applied = []
+        var onApplied = function(id) { applied.push(id) }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        Gateway.operationApplied.disconnect(onApplied)
+        compare(results.length, 1, "the callback must not fire twice")
+        compare(applied.length, 1, "but the signal still reaches a listener")
+
+        Gateway.awaitTimeoutMs = SendPolicy.TIMEOUT_AWAIT_MS
+    }
+
+    function test_finishOperation_delivers_to_a_waiter_and_fires_operationApplied() {
+        Gateway.mode = "gateway"
+        var got = null
+        var applied = []
+        var onApplied = function(id, opType, results, replay) {
+            applied.push({ id: id, opType: opType, results: results, replay: replay })
+        }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        var results = [{ entity: "inventory", entityId: "p1", kind: "delta", after: { stock: 4 } }]
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: results, idempotentReplay: false })
+        Gateway.operationApplied.disconnect(onApplied)
+
+        compare(got.ok, true)
+        compare(got.results, results)
+        compare(applied.length, 1)
+        compare(applied[0].id, "k1")
+        compare(applied[0].replay, false)
+    }
+
+    function test_finishOperation_reports_a_replay() {
+        Gateway.mode = "gateway"
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [], idempotentReplay: true })
+        compare(got.idempotentReplay, true)
+    }
+
+    function test_finishOperation_delivers_a_rejection_and_fires_operationRejected() {
+        Gateway.mode = "gateway"
+        var got = null
+        var rejected = []
+        var onRejected = function(id, opType, rejection) {
+            rejected.push({ id: id, opType: opType, rejection: rejection })
+        }
+        Gateway.operationRejected.connect(onRejected)
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        var rejection = { ok: false, error: "insufficient-quantity", opIndex: 0, field: "stock", current: 0 }
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, rejection)
+        Gateway.operationRejected.disconnect(onRejected)
+
+        compare(got.ok, false)
+        compare(got.error, "insufficient-quantity")
+        compare(got.opIndex, 0, "0 must survive, not be treated as falsy")
+        compare(rejected.length, 1)
+        compare(rejected[0].rejection, rejection)
+    }
+
+    function test_finishOperation_with_no_registered_waiter_still_fires_the_signal() {
+        // Exactly the relaunch case: the callback died with the process, but the
+        // eventual server answer must still be observable via the signal.
+        Gateway.mode = "gateway"
+        var applied = []
+        var onApplied = function(id) { applied.push(id) }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway._finishOperation({ requestId: "never-awaited", opType: "completeOrder" }, { ok: true, results: [] })
+        Gateway.operationApplied.disconnect(onApplied)
+        compare(applied.length, 1)
+        compare(applied[0], "never-awaited")
+    }
+
+    function test_finishOperation_delivers_to_every_waiter_when_more_than_one_is_registered() {
+        Gateway.mode = "gateway"
+        var a = null, b = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { a = r })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { b = r })
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        compare(a.ok, true)
+        compare(b.ok, true)
+    }
+
+    function test_clear_stops_pending_await_timers_and_drops_their_callbacks() {
+        Gateway.mode = "gateway"
+        var got = null
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        Gateway.clear()
+        // A stale answer to the pre-clear() key must not reach a dropped
+        // callback, and must not throw for a timer that no longer exists.
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        compare(got, null, "a callback registered before clear() must never fire after it")
     }
 }

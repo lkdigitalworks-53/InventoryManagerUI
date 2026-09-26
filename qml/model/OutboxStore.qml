@@ -3,6 +3,7 @@ import QtQuick
 import QtCore
 
 import "../helper/SettingsPath.js" as SettingsPath
+import "../helper/SendPolicy.js" as SendPolicy
 
 // Durable outbox for compliance-gateway calls (P0). Every mutation routed
 // through Gateway is enqueued here FIRST (persisted to QSettings), then sent.
@@ -53,6 +54,10 @@ QtObject {
     // Backoff schedule (ms): 2s, 8s, 30s, 2m, 10m, then capped.
     readonly property var _backoffMs: [2000, 8000, 30000, 120000, 600000]
 
+    // Random source for retry jitter (SendPolicy.jittered); tests swap it for a
+    // fixed value so a jittered delay is still assertable.
+    property var _rand: Math.random
+
     property Settings _settings: Settings {
         category: "OutboxStore"
         // See qml/helper/SettingsPath.js -- "" under a real app build
@@ -99,6 +104,15 @@ QtObject {
     // entityId for a batch. Delta items ("deltas" present) key the same way
     // a single call does, since they're always single-entity.
     function _keysForItem(item) {
+        if (item.ops) {
+            var seen = {}
+            var opKeys = []
+            for (var o = 0; o < item.ops.length; ++o) {
+                var k = _keyFor(item.ops[o].entity, item.ops[o].entityId)
+                if (!seen[k]) { seen[k] = true; opKeys.push(k) }
+            }
+            return opKeys
+        }
         if (item.items) {
             var out = []
             for (var i = 0; i < item.items.length; ++i)
@@ -157,7 +171,7 @@ QtObject {
 
         for (var i = 0; i < arr.length; ++i) {
             var candidate = arr[i]
-            if (candidate.items || candidate.deltas) continue // batches/deltas aren't merge targets for a plain call
+            if (candidate.items || candidate.deltas || candidate.ops) continue // batches/deltas/operations aren't merge targets for a plain call
             if (candidate.entity !== call.entity || candidate.entityId !== call.entityId) continue
             var key = _keyFor(call.entity, call.entityId)
             if (_inFlightKeys[key] === candidate.requestId) continue // this IS the dispatched one — don't touch it
@@ -258,14 +272,51 @@ QtObject {
         return item
     }
 
+    // Append one atomic multi-write operation (Gateway.recordOperation, C-3:
+    // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md). Never
+    // coalesced. `call.requestId` IS the operation key: the whole point is that the
+    // SAME key always means the SAME operation, so if it's already queued that item
+    // is returned unchanged and nothing new is added.
+    function enqueueOperation(call) {
+        for (var i = 0; i < items.length; ++i)
+            if (items[i].requestId === call.requestId) return items[i]
+
+        var nowMs = Date.now()
+        var item = {
+            requestId: call.requestId,
+            opType: call.opType,
+            ops: call.ops || [],
+            clientTimestamp: call.clientTimestamp || new Date().toISOString(),
+            enqueuedAt: nowMs,
+            attempts: 0,
+            nextAttemptAt: nowMs
+        }
+        var arr = items.slice()
+        arr.push(item)
+        items = arr
+        _save()
+        return item
+    }
+
     // Items whose nextAttemptAt is due, oldest first, and whose key isn't
     // currently blocked by something already in flight. Gateway sends these.
     function dueItems() {
         var nowMs = Date.now()
         var out = []
+        // Keys already claimed by an item picked earlier IN THIS PASS. _isItemBlocked
+        // only sees keys already in flight from a PREVIOUS drain -- it can't stop two
+        // due items from this same call sharing a key, which matters once one item
+        // (an operation) can touch many keys at once: two due items that overlap must
+        // not both go out in the same drain, or they'd race each other.
+        var claimed = {}
         for (var i = 0; i < items.length; ++i) {
             if ((items[i].nextAttemptAt || 0) > nowMs) continue
             if (_isItemBlocked(items[i])) continue
+            var keys = _keysForItem(items[i])
+            var clash = false
+            for (var k = 0; k < keys.length; ++k) if (claimed[keys[k]]) { clash = true; break }
+            if (clash) continue
+            for (var k2 = 0; k2 < keys.length; ++k2) claimed[keys[k2]] = true
             out.push(items[i])
         }
         return out
@@ -301,7 +352,7 @@ QtObject {
             if (arr[i].requestId !== requestId) continue
             var attempts = (arr[i].attempts || 0) + 1
             var idx = Math.min(attempts - 1, _backoffMs.length - 1)
-            var delay = _backoffMs[idx]
+            var delay = SendPolicy.jittered(_backoffMs[idx], _rand())
             arr[i] = Object.assign({}, arr[i], {
                 attempts: attempts,
                 nextAttemptAt: Date.now() + delay
