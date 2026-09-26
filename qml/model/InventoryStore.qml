@@ -350,7 +350,7 @@ QtObject {
         var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
                 ? (TransactionStore.entries || []) : []
         var lookups = {
-            categoryOf: function(pid) { var p = getById(pid); return (p && p.category) ? p.category : "" },
+            categoryOf: function(pid) { var p = getById(pid); return p ? (p.category || "") : null },
             orderLookup: function(oid) {
                 return (typeof OrdersStore !== "undefined" && oid) ? OrdersStore.getById(oid) : null
             }
@@ -366,7 +366,7 @@ QtObject {
         var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
                 ? (TransactionStore.entries || []) : []
         var lookups = {
-            categoryOf: function(pid) { var p = getById(pid); return (p && p.category) ? p.category : "" },
+            categoryOf: function(pid) { var p = getById(pid); return p ? (p.category || "") : null },
             orderLookup: function(oid) {
                 return (typeof OrdersStore !== "undefined" && oid) ? OrdersStore.getById(oid) : null
             }
@@ -382,7 +382,7 @@ QtObject {
         var entries = (typeof TransactionStore !== "undefined" && TransactionStore)
                 ? (TransactionStore.entries || []) : []
         var lookups = {
-            categoryOf: function(pid) { var p = getById(pid); return (p && p.category) ? p.category : "" }
+            categoryOf: function(pid) { var p = getById(pid); return p ? (p.category || "") : null }
         }
         return RealisedMath.bucketWalk(metric, periodIdx, entries, opts || null, new Date(), lookups)
     }
@@ -1122,7 +1122,7 @@ QtObject {
                                        + (supplierName ? " · from " + supplierName : "")
                                        + (reasonText ? " · " + reasonText : ""),
                                    productId);
-                TransactionStore.recordPurchase(productId, addedQty, batchCost, current.name, supplierId, reasonText);
+                TransactionStore.recordPurchase(productId, addedQty, batchCost, current.name, supplierId, reasonText, current.category);
 
                 if (callback) callback(true, supplierFailed)
             })

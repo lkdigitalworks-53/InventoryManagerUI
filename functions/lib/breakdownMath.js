@@ -47,9 +47,19 @@ function _inWindow(win, dateObj) {
     return t >= win.from.getTime() && t < win.to.getTime();
 }
 
-function _categoryKey(productCategory, productId) {
-    var c = productCategory[productId];
-    return (c && c.length) ? c : "(uncategorised)";
+// `entry` (optional) is the ledger row being grouped. When productId is a
+// live product, its live category always wins (unchanged behavior). Only
+// when productId is no longer in the live map (the product was deleted) do
+// we fall back to the category stamped on this entry at write time. Mirrors
+// qml/helper/BreakdownMath.js -- see that file for the full reasoning
+// (DELETE-FEATURE-ROADMAP item 3, 2026-09-26).
+function _categoryKey(productCategory, productId, entry) {
+    if (productCategory.hasOwnProperty(productId)) {
+        var c = productCategory[productId];
+        return (c && c.length) ? c : "(uncategorised)";
+    }
+    var stamped = entry && entry.category;
+    return (stamped && stamped.length) ? stamped : "(uncategorised)";
 }
 
 function _supplierKey(supplierName, supplierId) {
@@ -57,9 +67,14 @@ function _supplierKey(supplierName, supplierId) {
     return supplierName[supplierId] || "(removed)";
 }
 
-function _productNameKey(productName, productId) {
-    var n = productName[productId];
-    return (n && n.length) ? n : "(unnamed)";
+// Mirror of _categoryKey for the name dimension.
+function _productNameKey(productName, productId, entry) {
+    if (productName.hasOwnProperty(productId)) {
+        var n = productName[productId];
+        return (n && n.length) ? n : "(unnamed)";
+    }
+    var stamped = entry && entry.productName;
+    return (stamped && stamped.length) ? stamped : "(unnamed)";
 }
 
 function _add(out, key, value) {
@@ -154,7 +169,7 @@ function _sold(o) {
         if (!_inWindow(o.window, d)) continue;
         if (o.channel && (e.orderChannel || "") !== o.channel) continue;
         if (o.staffId && (e.staffId || "") !== o.staffId) continue;
-        var cat = _categoryKey(o.productCategory, e.productId);
+        var cat = _categoryKey(o.productCategory, e.productId, e);
         if (o.category && cat !== o.category) continue;
         var cons = e.consumption || [];
         if (o.dim === "supplier") {
@@ -164,7 +179,7 @@ function _sold(o) {
                 _add(out, _supplierKey(o.supplierName, c.supplierId), c.qtyConsumed || 0);
             }
         } else if (o.dim === "name") {
-            var nameKey = _productNameKey(o.productName, e.productId);
+            var nameKey = _productNameKey(o.productName, e.productId, e);
             if (o.supplierId) {
                 var matchedName = 0;
                 for (var cn = 0; cn < cons.length; ++cn)
@@ -197,11 +212,11 @@ function _purchased(o) {
         if (!_inWindow(o.window, d)) continue;
         var pid = e.party || (e.snapshot ? (e.snapshot.supplierId || e.snapshot.party || "") : "");
         if (o.supplierId && pid !== o.supplierId) continue;
-        var cat = _categoryKey(o.productCategory, e.productId);
+        var cat = _categoryKey(o.productCategory, e.productId, e);
         if (o.category && cat !== o.category) continue;
         var qty = e.quantity || 0;
         if (o.dim === "supplier")      _add(out, _supplierKey(o.supplierName, pid), qty);
-        else if (o.dim === "name")     _add(out, _productNameKey(o.productName, e.productId), qty);
+        else if (o.dim === "name")     _add(out, _productNameKey(o.productName, e.productId, e), qty);
         else                           _add(out, cat, qty);
     }
     return out;

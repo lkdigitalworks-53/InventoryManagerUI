@@ -188,7 +188,7 @@ QtObject {
         return doc
     }
 
-    function recordPurchase(productId, quantity, unitCost, productName, party, reason) {
+    function recordPurchase(productId, quantity, unitCost, productName, party, reason, category) {
         if (!productId || !quantity || quantity <= 0) return
         var doc = {
             txId: _nextId("p"),
@@ -197,6 +197,7 @@ QtObject {
             date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
             productId: productId,
             productName: productName || (InventoryStore.getById(productId) || {}).name || "",
+            category: category || (InventoryStore.getById(productId) || {}).category || "",
             party: party || "",
             quantity: quantity,
             unitCost: typeof unitCost === "number" ? unitCost : 0,
@@ -227,6 +228,7 @@ QtObject {
             date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
             productId: productId,
             productName: productName || "",
+            category: (snap && snap.category) || "",
             party: party || "",
             quantity: qty,
             unitCost: cost,
@@ -459,6 +461,7 @@ QtObject {
                 date: order.date || Qt.formatDate(new Date(), "yyyy-MM-dd"),
                 productId: p.productId || "",
                 productName: p.name || (inv ? inv.name : ""),
+                category: inv ? (inv.category || "") : "",
                 quantity: qty,
                 unitPrice: typeof p.price === "number" ? p.price : 0,
                 net: al.net,
@@ -479,6 +482,25 @@ QtObject {
     // REVERSED consumption[] (negative qtyConsumed at the original unitCost) so
     // per-supplier/profit queries unwind the exact margin originally booked.
     //   reversedConsumption: [{ batchId, supplierId, qtyConsumed (negative), unitCost }]
+    // Best-effort category for a return/price-adjust event on an already-sold
+    // line. Prefers the category STAMPED on the ORIGINAL sale event for the
+    // same order + product — so a return/adjustment of a since-deleted
+    // product still carries its real category instead of a live re-lookup
+    // that would fail exactly in that case. Falls back to the live product
+    // record (covers a sale recorded before this fix shipped, with no
+    // stamped category of its own yet); "" when neither resolves (read side
+    // then shows "(uncategorised)", same as any other unresolvable case).
+    function _stampedCategoryFor(productId, orderId) {
+        if (!productId) return ""
+        for (var i = 0; i < entries.length; ++i) {
+            var e = entries[i]
+            if (e.kind === "sale" && e.productId === productId && e.orderId === orderId && e.category)
+                return e.category
+        }
+        var p = (typeof InventoryStore !== "undefined" && InventoryStore) ? InventoryStore.getById(productId) : null
+        return (p && p.category) ? p.category : ""
+    }
+
     function recordReturn(order, line, returnedQty, reversedConsumption, reason, condition, note) {
         if (!returnedQty || returnedQty <= 0) return
         var unitPrice = typeof line.price === "number" ? line.price : 0
@@ -506,6 +528,7 @@ QtObject {
             date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
             productId: line.productId || "",
             productName: line.name || "",
+            category: _stampedCategoryFor(line.productId || "", order.orderId || ""),
             quantity: -returnedQty,
             unitCost: 0,
             unitPrice: unitPrice,
@@ -575,6 +598,7 @@ QtObject {
             date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
             productId: line.productId || "",
             productName: line.name || "",
+            category: line.productId ? _stampedCategoryFor(line.productId, order.orderId || "") : "",
             quantity: 0,
             unitCost: 0,
             unitPrice: -perUnitDelta,

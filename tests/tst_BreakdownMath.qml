@@ -188,6 +188,103 @@ TestCase {
         compare(byName["(unnamed)"], 4) // P9 isn't in the productName map
     }
 
+    // ── DELETED-PRODUCT FALLBACK (DELETE-FEATURE-ROADMAP item 3, 2026-09-26) ──
+    // The "unresolved" test above covers a productId with NO stamped data at
+    // all (the pre-existing behavior, unchanged). These cover the NEW case a
+    // deleted product actually has: the entry itself carries the
+    // category/name stamped on it at creation time, and the fix must use
+    // that instead of falling all the way to "(uncategorised)"/"(unnamed)".
+    function test_purchased_by_category_deleted_product_uses_stamped_value() {
+        var entries = [
+            { kind:"purchase", timestamp:"2026-06-15T10:00:00", productId:"P9", party:"S1",
+              quantity:4, category:"Beverages" }
+        ]
+        var byCat = BM.breakdown({
+            metric:"purchased", dim:"category", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(), productName:_productName()
+        })
+        compare(byCat["Beverages"], 4, "deleted product's stamped category is used, not (uncategorised)")
+        compare(byCat["(uncategorised)"], undefined)
+    }
+
+    function test_purchased_by_name_deleted_product_uses_stamped_value() {
+        var entries = [
+            { kind:"purchase", timestamp:"2026-06-15T10:00:00", productId:"P9", party:"S1",
+              quantity:4, productName:"Discontinued Widget" }
+        ]
+        var byName = BM.breakdown({
+            metric:"purchased", dim:"name", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(), productName:_productName()
+        })
+        compare(byName["Discontinued Widget"], 4, "deleted product's stamped name is used, not (unnamed)/the raw id")
+        compare(byName["(unnamed)"], undefined)
+        compare(byName["P9"], undefined)
+    }
+
+    function test_sold_by_category_deleted_product_uses_stamped_value() {
+        var entries = [
+            { kind:"sale", timestamp:"2026-06-15T10:00:00", productId:"P9", quantity:6,
+              orderChannel:"", staffId:"", category:"Beverages",
+              consumption:[ {supplierId:"S1", qtyConsumed:6} ] }
+        ]
+        var byCat = BM.breakdown({
+            metric:"sold", dim:"category", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(), productName:_productName()
+        })
+        compare(byCat["Beverages"], 6)
+    }
+
+    function test_sold_by_name_deleted_product_uses_stamped_value() {
+        var entries = [
+            { kind:"sale", timestamp:"2026-06-15T10:00:00", productId:"P9", quantity:6,
+              orderChannel:"", staffId:"", productName:"Discontinued Widget",
+              consumption:[ {supplierId:"S1", qtyConsumed:6} ] }
+        ]
+        var byName = BM.breakdown({
+            metric:"sold", dim:"name", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(), productName:_productName()
+        })
+        compare(byName["Discontinued Widget"], 6)
+    }
+
+    // Edge: the entry's own stamped value is an EMPTY string (product had no
+    // category set / an empty name at the time it was sold, before being
+    // deleted) — must still fall to the placeholder, not an empty-string key.
+    function test_deleted_product_empty_stamped_values_still_use_placeholder() {
+        var entries = [
+            { kind:"purchase", timestamp:"2026-06-15T10:00:00", productId:"P9", party:"S1",
+              quantity:4, category:"", productName:"" }
+        ]
+        var opts = {
+            metric:"purchased", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(), productName:_productName()
+        }
+        compare(BM.breakdown(Object.assign({}, opts, { dim:"category" }))["(uncategorised)"], 4)
+        compare(BM.breakdown(Object.assign({}, opts, { dim:"name" }))["(unnamed)"], 4)
+    }
+
+    // Regression guard: a LIVE product's CURRENT category/name always wins
+    // over whatever happens to be stamped on an old entry (e.g. recategorized
+    // after the sale) — this fix must never change that pre-existing behavior.
+    function test_live_product_current_category_wins_over_stale_stamped_value() {
+        var entries = [
+            { kind:"purchase", timestamp:"2026-06-15T10:00:00", productId:"P1", party:"S1",
+              quantity:4, category:"OldCategoryAtSaleTime" }
+        ]
+        var byCat = BM.breakdown({
+            metric:"purchased", dim:"category", entries:entries, orders:[],
+            window:null, channel:"", staffId:"", category:"", supplierId:"",
+            productCategory:_productCategory(), supplierName:_supplierName(), productName:_productName()
+        })
+        compare(byCat["Drinks"], 4, "P1 still exists -> its CURRENT live category wins, not the stale stamp")
+        compare(byCat["OldCategoryAtSaleTime"], undefined)
+    }
+
     // ── REVENUE ─────────────────────────────────────────────────────
     function test_revenue_category_total_equals_lines() {
         var orders = [

@@ -16,10 +16,28 @@
 //   { window: {from,to}|null, channel: "", staffId: "", category: "",
 //     supplierId: "" }
 // lookups (functions, injected so the lib stays singleton-free):
-//   { categoryOf(productId) -> categoryString,        // "" when unknown
+//   { categoryOf(productId) -> categoryString|null,   // null when the product
+//                                                      // no longer exists;
+//                                                      // "" when it exists but
+//                                                      // has no category set
 //     orderLookup(orderId)  -> order|null }           // for legacy price_adjust spread
 
 function _round2(x) { return Math.round(x * 100) / 100 }
+
+// Category label for a row: the LIVE category always wins when the product
+// still exists (even if that's ""  →  "(uncategorised)", unchanged from
+// before this helper existed) — a recategorized product's whole history
+// keeps reflecting its CURRENT category. Only when categoryOf reports the
+// product doesn't exist at all (null/undefined) do we fall back to the
+// category STAMPED on this specific entry at write time (DELETE-FEATURE-
+// ROADMAP item 3, 2026-09-26) — never the other way around, or a still-live
+// product's genuinely-cleared category would wrongly resurrect a stale one.
+function _resolvedCategory(categoryOf, productId, stamped) {
+    var live = categoryOf ? categoryOf(productId) : null
+    if (live === null || live === undefined)
+        return (stamped && stamped.length) ? stamped : "(uncategorised)"
+    return (live && live.length) ? live : "(uncategorised)"
+}
 
 function _emptyRow() {
     return { revenue: 0, cogs: 0, profit: 0, tax: 0, discount: 0, margin: 0 }
@@ -38,6 +56,12 @@ function _passesScope(e, scope, categoryOf) {
     if (scope.channel && (e.orderChannel || "") !== scope.channel) return false
     if (scope.staffId && (e.staffId || "") !== scope.staffId) return false
     if (scope.category) {
+        // Deliberately live-only: this is the FILTER (does this row match the
+        // selected category?), not a display label. A deleted product's
+        // history can no longer be selected via the category filter dropdown
+        // in the first place, so this doesn't reproduce the mislabeling bug —
+        // flagged as a related-but-separate gap in KNOWN-ISSUES rather than
+        // folded into this fix (Iron Law: one fix at a time).
         var cat = categoryOf ? (categoryOf(e.productId) || "") : ""
         if (cat !== scope.category) return false
     }
@@ -69,7 +93,7 @@ function byDimension(field, entries, scope, lookups) {
                 var paAmt = _priceAdjustSupplierAmount(e, scope.supplierId)
                 if (paAmt !== 0) {
                     var paKeyF = (field === "supplierId") ? scope.supplierId
-                            : (field === "category")   ? (categoryOf(e.productId) || "(uncategorised)")
+                            : (field === "category")   ? _resolvedCategory(categoryOf, e.productId, e.category)
                             : (field === "channel")    ? (e.orderChannel || "")
                             : (field === "staffId")    ? (e.staffId || "")
                             :                            (e.productId || "")
@@ -88,7 +112,7 @@ function byDimension(field, entries, scope, lookups) {
         // sale / return — distribute stamped net/tax/discount per consumption row.
         var c = e.consumption || []
         var rowCategory = null
-        if (field === "category") rowCategory = (categoryOf(e.productId) || "(uncategorised)")
+        if (field === "category") rowCategory = _resolvedCategory(categoryOf, e.productId, e.category)
         var lineQty = 0
         for (var q = 0; q < c.length; ++q) lineQty += (c[q].qtyConsumed || 0)
         // Stamped fields only. Missing net → fail closed to 0 (SITE 4): never
@@ -249,7 +273,7 @@ function _accumulatePriceAdjust(out, e, field, scope, categoryOf, orderLookup) {
     if (field === "productId")      paKey = e.productId || ""
     else if (field === "channel")    paKey = e.orderChannel || ""
     else if (field === "staffId")    paKey = e.staffId || ""
-    else if (field === "category")   paKey = (categoryOf(e.productId) || "(uncategorised)")
+    else if (field === "category")   paKey = _resolvedCategory(categoryOf, e.productId, e.category)
     else                              paKey = ""
     if (!out[paKey]) out[paKey] = _emptyRow()
     out[paKey].revenue += (e.total || 0)

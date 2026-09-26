@@ -43,7 +43,7 @@ gap is tracked as its own KNOWN-ISSUE. Details: `docs/superpowers/specs/2026-09-
 orders (detail, export, analysis) and could wipe the order's attribution on save; fixed with a `removed_staff`
 tombstone + one shared resolver. Details: `KNOWN-ISSUES.md`, test plan section 5, Skill 70.
 
-## 3. Five Sales Analysis tabs mislabel a deleted product's historical rows — MEDIUM
+## 3. Five Sales Analysis tabs mislabel a deleted product's historical rows — MEDIUM — RESOLVED 2026-09-26
 
 Value, Purchased, Revenue, Sold, and Profit's Realised sub-mode all keep **correct totals** after
 a delete (they walk the immutable event/batch ledger directly), but a deleted product's row in
@@ -58,13 +58,15 @@ consumption record at creation time — a schema-level change across every write
 one. Genuinely bigger and different in kind from the read-side guard fixes this PR shipped, not
 a one-line addition.
 
-**Status 2026-09-26: investigation started, branch `fix/2026-09-26-sales-analysis-deleted-product-labels`.**
-Traced to source — the two halves are not the same size. `productName` is already stamped on every
-`TransactionStore` entry at creation time, so the by-name bug is a small, contained **read-side** fix
-(`SalesPage._breakdownByDimension()` / `RealisedMath.byDimension()` re-derive the name live instead of using
-what's already on the entry). `category` is genuinely never stamped anywhere, so that half is a real
-**write-path** change, as originally scoped, plus an open question about entries written before the fix
-ships. Scope split and historical-gap handling awaiting Taher's decision — see `CHECKPOINT.md`.
+**Status 2026-09-26: RESOLVED, branch `fix/2026-09-26-sales-analysis-deleted-product-labels`.**
+Traced to source — the two halves were not the same size. `productName` was already stamped on
+every `TransactionStore` entry at creation time, so the by-name half was a small, contained
+**read-side** fix. `category` was genuinely never stamped anywhere, so that half got the
+**write-path** change originally scoped here, plus reusing the original sale's stamped category for
+returns/adjustments on an already-deleted product. Also fixed in the server-side parity port
+(`functions/lib/`), which had the identical bug. Full detail, a real precedence bug the Node test
+suite caught pre-merge, and two adjacent-but-out-of-scope findings: `KNOWN-ISSUES.md` and
+`docs/superpowers/specs/2026-09-26-sales-analysis-deleted-product-labels-design.md`.
 
 ## 4. Photo cleanup on delete — unverified, not blocking
 

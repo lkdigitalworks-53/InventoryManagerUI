@@ -3466,3 +3466,30 @@ history (server-side role check restricts it to owner/admin, same as staff delet
 - Async singleton paths with no mock layer (`FirebaseService.mintCounterValue`): extract the decision into
   pure functions (`_seedMax`, `_isBurned`, `_mergeRemoved`) and test those.
 
+## Skill 71: A falsy-value lookup function can't distinguish "doesn't exist" from "exists but empty" — and a stamped-fallback fix silently inverts if you don't fix that first
+
+**Symptom (caught by the Node parity test suite before merge, `fix/2026-09-26-sales-analysis-deleted-product-labels`):**
+adding a "prefer the value stamped on this entry when the live product is deleted" fallback to `RealisedMath.js`'s
+category resolution (`e.category || categoryOf(e.productId) || "(uncategorised)"`) actually let a STALE stamped
+value silently override a still-live product's CURRENT category — the opposite of the intended behavior, and a
+real regression for any recategorized product.
+
+**Root cause:** `categoryOf(productId)` returned `""` for BOTH "product no longer exists" and "product exists but
+has no category set" — an inherently ambiguous single falsy value. `stamped || live || placeholder` can't tell
+those two cases apart, so it always preferred the stamped value whenever one existed, regardless of whether the
+live product was actually gone. `BreakdownMath.js`'s equivalent fix was fine because its lookup is a **map**
+(`productCategory.hasOwnProperty(productId)` cleanly separates "has a key" from "value is empty"); `RealisedMath.js`'s
+lookup is a **function**, which has no equivalent free existence-check unless the function itself exposes one.
+
+**Fix:** changed `categoryOf`'s contract to return `null` for "doesn't exist" and `""` (or the real value) for
+"exists" — `getById(pid)` already distinguishes this for free, the three QML definitions and the one Node
+definition just weren't surfacing it. Added a small `_resolvedCategory(categoryOf, productId, stamped)` helper
+(ported to both the QML and Node files) that checks `live === null || live === undefined` explicitly, live wins
+whenever the product exists (even with an empty category), stamped is only ever a fallback for a genuinely
+deleted product.
+
+**Generalize:** before adding a "fall back to X when the live thing is gone" fix around any lookup, check what a
+"gone" result actually returns. If it's the same falsy value as a legitimate "exists but empty" result, the
+lookup's contract needs an explicit existence signal (`null`/`undefined` vs. `""`) before the fallback logic can
+be written correctly — a map's `hasOwnProperty` gives this for free; a function usually doesn't, and needs its
+callers checked/updated everywhere it's constructed.

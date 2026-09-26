@@ -136,3 +136,46 @@ test("invariant: sum(byDimension) == totals for every field, with a taxable pric
         assert.equal(_round2(sumTax), _round2(t.tax), "field=" + field + " tax");
     }
 });
+
+// ── DELETED-PRODUCT CATEGORY FALLBACK (DELETE-FEATURE-ROADMAP item 3,
+// 2026-09-26). Mirrors qml/tests/tst_RealisedMath.qml's matching cases.
+test("bydimension_category_deleted_product_uses_stamped_value", () => {
+    const ev = [
+        { kind: "sale", timestamp: "2026-09-26T10:00:00Z", productId: "P9", quantity: 1,
+          unitPrice: 60, net: 60, tax: 0, discountShare: 0, category: "Beverages",
+          consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 40 }] }
+    ];
+    const m = RealisedMath.byDimension("category", ev, null, { categoryOf: () => null });
+    assert.equal(_round2(m["Beverages"].revenue), 60);
+    assert.equal(m["(uncategorised)"], undefined);
+});
+
+test("bydimension_category_live_product_wins_over_stale_stamp", () => {
+    const ev = [
+        { kind: "sale", timestamp: "2026-09-26T10:00:00Z", productId: "P1", quantity: 1,
+          unitPrice: 60, net: 60, tax: 0, discountShare: 0, category: "OldCategoryAtSaleTime",
+          consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 40 }] }
+    ];
+    const m = RealisedMath.byDimension("category", ev, null, { categoryOf: () => "NewCategory" });
+    assert.equal(_round2(m["NewCategory"].revenue), 60);
+    assert.equal(m["OldCategoryAtSaleTime"], undefined);
+});
+
+test("price_adjust_category_uses_stamped_value_when_product_deleted", () => {
+    const ev = [
+        { kind: "price_adjust", timestamp: "2026-09-26T11:00:00Z", productId: "P9",
+          total: -10, reason: "discount", category: "Beverages" }
+    ];
+    const m = RealisedMath.byDimension("category", ev, null, { categoryOf: () => null });
+    assert.equal(_round2(m["Beverages"].revenue), -10);
+});
+
+test("price_adjust_category_supplier_filtered_uses_stamped_value", () => {
+    const ev = [
+        { kind: "price_adjust", timestamp: "2026-09-26T11:00:00Z", productId: "P9",
+          total: -10, reason: "discount", category: "Beverages",
+          supplierSlices: [{ key: "S1", amount: -10 }] }
+    ];
+    const m = RealisedMath.byDimension("category", ev, { supplierId: "S1" }, { categoryOf: () => null });
+    assert.equal(_round2(m["Beverages"].revenue), -10);
+});

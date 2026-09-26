@@ -778,6 +778,22 @@ The `removed_staff` entity is owner/admin-only on the server. Test plan: section
 tombstone write is rejected (it retries with backoff and shows the stuck-write indicator; it does not block other
 writes) while the staff delete itself still works.
 
+**Update 2026-09-26 (Sales Analysis stops mislabeling a deleted product's history):** Purchased, Sold, Revenue
+and Profit's Realised sub-mode used to dump a deleted product's historical rows into "(uncategorised)" and a raw
+product id instead of its real category/name (`DELETE-FEATURE-ROADMAP` item 3, first documented 2026-09-02).
+Traced to two different-sized bugs: `productName` was already stamped on every `TransactionStore` entry at
+creation time, so the by-name half was a small read-side fix; `category` was genuinely never stamped anywhere,
+so that half got the write-path change originally scoped — `recordPurchase`/`recordCreated`/`recordSaleFromOrder`
+now stamp it, and `recordReturn`/`recordPriceAdjust` reuse the *original sale's* stamped category, since the
+product a return references may already be deleted by return time. Read side (`BreakdownMath.js`/
+`RealisedMath.js`) prefers the stamp only once the live product is confirmed gone — a still-existing,
+recategorized product's history keeps showing its current category, unchanged. Applied identically to the
+server-side parity port (`functions/lib/`), which had the same bug and is a live Cloud Function
+(`computeAnalysis`) reading the same Firestore collections. A real precedence bug in the first pass of this fix
+was caught by the Node test suite actually failing, not by tracing — see SKILLS Skill 71. Design:
+`docs/superpowers/specs/2026-09-26-sales-analysis-deleted-product-labels-design.md`; test plan:
+`docs/superpowers/test-plans/2026-09-26-sales-analysis-deleted-product-labels-test-plan.md`.
+
 **Update 2026-09-19 (writes stuck behind a server-side failure):** `Gateway._send`, `_sendBatch` and
 `_sendDelta` retried any failure that wasn't a recognised terminal case forever, with backoff and no signal
 to anyone, while the stores had already applied the change locally (`DELETE-FEATURE-ROADMAP` item 1). The
