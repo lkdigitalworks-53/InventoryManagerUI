@@ -3576,3 +3576,149 @@ deleted product.
 lookup's contract needs an explicit existence signal (`null`/`undefined` vs. `""`) before the fallback logic can
 be written correctly — a map's `hasOwnProperty` gives this for free; a function usually doesn't, and needs its
 callers checked/updated everywhere it's constructed.
+
+---
+
+## Skill 74: Cross-system "atomicity" is a lie you tell precisely, not a property you achieve — and a `pragma Singleton QtObject` can't host `Connections{}` even when nothing else about it looks singleton-specific
+
+**Found while building the product-photos-in-Firebase-Storage feature, 2026-09-21/25** (design:
+`docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`): Taher asked for
+"atomic upload and id creation." Firebase Storage and Firestore have no shared transaction — nothing
+makes this literally true. What's actually achievable: write the bytes first, then one Firestore
+transaction that both records the id and its idempotency marker, so an id is never visible without
+its bytes. The only failure mode left is an orphaned, unreferenced Storage object — a cost issue,
+not a correctness one. Stating this precisely in the design spec (not softening "atomic" into a
+vague promise, and not refusing the word either) mattered more than any specific implementation
+choice: it's the difference between a documented, bounded risk and a claim that turns out false the
+first time a Cloud Function crashes mid-request.
+
+**Two traps found by reading the existing code, not by writing new code and hoping**: (1) a photo
+for a product created offline can arrive at the server before that product's own create mutation
+has landed, since both go through the same outbox but independently — gated by a new
+`OutboxStore.hasPendingForEntity(entity, entityId)`, reusing the existing `_keysForItem`/`_keyFor`
+helpers rather than re-deriving the plain/batch/delta item-shape branching. (2) product ids are
+counter-minted per tenant, so the same id can exist in two tenants — a queued upload is bound to the
+`uid`/`tenantId` active when it was enqueued and only drains under that exact identity; the server
+independently rejects a mismatch. Neither trap is hypothetical hardening — both are direct
+consequences of structures (the outbox, the counter-minted id scheme) that already existed in this
+codebase before this feature, found by reading `OutboxStore.qml` and the tenant-provisioning code
+before writing `PhotoQueue.qml`, not discovered afterward by a bug report.
+
+**A `pragma Singleton QtObject` cannot host a `Connections{}` block, at all, regardless of how
+ordinary the code inside it looks** (Skill 20 already establishes this for `Timer{}`; this feature
+found the identical constraint applies to `Connections{}` too, and it is easy to miss because
+nothing about a `Connections{}` block *looks* like it should collide with singleton semantics the
+way an app-lifetime `Timer{}` obviously might). `PhotoQueue.qml`'s first draft used
+`Connections { target: AuthService; function onIsOnlineChanged() { ... } }` to watch online status —
+syntactically ordinary, and it would have crashed the entire singleton chain at runtime the moment
+`PhotoQueue.qml` loaded, breaking every screen in the app, not just photos. Caught by re-reading
+Skill 20 before writing the file, not by a test (nothing in this environment can run `qmltestrunner`
+to catch it empirically). Fixed with the property-binding-watcher pattern Skill 20 already
+prescribes for the `Timer{}` case: `property bool _onlineWatcher: AuthService.isOnline` +
+`on_OnlineWatcherChanged: { ... }`. **The generalizable check, not just the specific fix**: before
+adding ANY declarative child object (not just `Timer{}`) to a `pragma Singleton QtObject` root, ask
+whether it's a plain `QtObject`-derived non-visual type (safe) or anything else (not safe) — the
+unsafe category is broader than "things that obviously look like Timer."
+
+**Parity-test convention, extended**: `StuckWrites.js`'s technique (strip `.pragma library`, run the
+underlying logic through plain Node for a real pass) already existed for QML helper modules. This
+feature applied it three more times — `PhotoUrl.js`, `PhotoQueueLogic.js`, and (implicitly, via the
+existing `handlerHarness.js` mock extended with a Storage backend) the server handlers themselves —
+and in every case the *first* real test run against the parity copy caught something a purely
+"written, reviewed by eye" pass would have missed: a test's own off-by-one in `PhotoUrl.js`'s
+separator-count assertion; a reducer bug in `PhotoQueueLogic.js` where a stale `'failed'` event
+against an already-`failed` item kept incrementing `attempts` past the cap (found by a monkey test,
+not a hand-written case); and, via the extended `handlerHarness.js`, a Storage-cleanup call that ran
+on every idempotent replay of `deleteProductPhoto`, unbounded. **The pattern generalizes past QML**:
+wherever a piece of pure logic exists that a live network/native call would otherwise make
+untestable in this sandbox, strip it down to the smallest form that runs in plain Node and actually
+run it — "I traced through this by hand and it looks right" is not the same claim as "296/296,
+stable across 3 runs."
+
+**Review-sweep addendum (2026-09-25)**: running `qt-development-skills:qt-qml-review`'s deterministic
+linter against a large existing file's WHOLE content, rather than filtering to only the lines a
+given PR actually added, produces mostly noise on a codebase with an established style the generic
+linter doesn't know about (this project uses `var` everywhere, `property var` for list-shaped state,
+anchors dot-notation, and `Qt.createQmlObject` as the Skill-20 timer workaround — all correct real-
+existing-code precedent, none of them things a fresh PR should "fix" in isolation). Diff-filter
+first; a linter run against whole files will bury the one or two real findings (in this feature's
+case, missing `Image.sourceSize` on new thumbnail tiles) under 200+ true-for-generic-QML-but-false-
+for-this-codebase hits. Separately, that same review pass — done by hand, no subagent-dispatch tool
+available in this environment — found four real, independent bugs purely by grepping for whether a
+function this session had just written was actually CALLED anywhere: `PhotoQueue.clear()` existed
+for sign-out hygiene but was never wired into the sign-out handler; `AuthService.ensureFreshToken()`
+was documented as being called from `PhotoQueue.drainNow()` but never actually was; and
+`PhotoQueue._load()` (`Component.onCompleted` on every real app launch) never called
+`_reschedule()`, meaning a photo queued in a previous session would sit frozen forever unless
+something else happened to trigger a drain — silently breaking "survive app close," a requirement
+stated explicitly at the start of the session. **None of these were caught by the unit tests written
+alongside the original code, because the tests exercised the functions in isolation and never asked
+"is this actually wired to anything."** A grep for a new function's own call sites, done once near
+the end of a feature rather than assumed complete because it compiles and its own unit test passes,
+is cheap and catches a class of bug that no amount of testing the function in isolation will ever
+surface.
+
+---
+
+## Skill 75: A new E2E test file that calls Gateway only *indirectly* (through a store helper) can silently skip the emulator-URL override every sibling file has
+
+**Found:** `test/e2e/tst_ProductPhotosE2E.qml`'s first real CI run (2026-09-27, on the merge commit
+that also brought in PR #83/#87) -- 6 of 7 tests failed with "product doc never appeared" polling
+the Firestore emulator, all 6 being exactly the tests that call `_createProduct()`. The 7th test
+(no `_createProduct()` call) passed.
+
+**Root cause:** `_createProduct()` calls `InventoryStore.addProduct()`, which calls
+`Gateway.recordMutation()`. Every other E2E file that touches `Gateway` sets
+`Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"` in `init()` (and restores
+`realFunctionUrl` in `cleanup()`) — `tst_InventoryE2E.qml`, `tst_StaffStoreE2E.qml`,
+`tst_SupplierStoreE2E.qml`, `tst_StockBatchStoreE2E.qml`, `tst_OrdersE2E.qml`,
+`tst_OrdersStoreE2E.qml`, `tst_ReturnAfterMetadataEditE2E.qml`, `tst_BulkImportChunkingE2E.qml` (for
+its own batch URL). This file's `init()` only set `FirebaseService.emulatorHost` (for direct
+Firestore/Storage REST polling) and posted its own `uploadProductPhoto`/`deleteProductPhoto` calls
+straight at `emulatorFunctionsBase` — neither of which touches `Gateway` at all. The one Gateway
+call in the whole file was buried inside a store helper, easy to miss precisely because it isn't a
+literal `_postDirect(...)` line you can see and pattern-match against the file's own convention.
+Without the override, `Gateway.recordMutation` posted to the real production URL; nothing ever
+landed in the local Firestore emulator the test was polling, so the poll always timed out.
+
+**The generalizable check**: before writing a new E2E test file, grep the *store functions* it calls
+(not just its own direct `_postDirect` lines) for any `Gateway.record*` call, and set every
+`Gateway.*Url` property that path touches in `init()`/`cleanup()`, exactly matching whichever
+sibling file exercises the same store function already. A file can look complete — it warms up its
+own functions, sets the Firestore emulator host, follows every other convention correctly — and
+still silently talk to production because one call is one indirection away from the file's own
+visible network calls. The same class of bug bit this branch once already, one layer down:
+`PhotoQueue.uploadUrl`/`StorageService.deleteUrl` had to be made overridable in the first place
+(commit `80874f7`, this branch) before any test could point them at the emulator at all —
+overridable is necessary but not sufficient if a new test then forgets to actually override one.
+
+---
+
+## Skill 76: A new raw-XHR test helper needs the QTBUG-49896 snapshot too — and check the repo's own trail for a status-code symptom *before* theorizing
+
+**Found:** `test_upload_rejects_an_eleventh_photo` failed on three consecutive CI runs
+(2026-09-27). The third run's diagnostic `verify()` finally showed `got 0 -- response: ` — status 0,
+empty body — for the one call that should return **409**.
+
+**Root cause:** QTBUG-49896 (Skill 45): QML's `XMLHttpRequest` resets `xhr.status` to 0 at the
+readyState 3->4 transition for some responses; a 409 is the original bug report's own repro.
+`Gateway` (`_captureBeforeStatusIsLost`) and `PhotoQueue` already snapshot status/body at
+HEADERS_RECEIVED/LOADING and fall back to it. `test/e2e/E2EHelpers.js`'s `postDirect` — written for
+the photos e2e test's direct function calls — read `xhr.status` once at DONE, so it silently
+reported 0 for exactly the 409 the test was asserting on. **Production was never affected**
+(`PhotoQueue` had the workaround from the start); only the test helper was.
+
+**The mistake worth recording:** the first reading of "status 0" was "transient connection flake
+under a 11-call burst," and a retry-on-0 was written and pushed on that theory before checking
+whether this repo had ever seen `status 0` before. It had, at length (Skills 43-45, a 13-round
+investigation with this exact signature). The retry failed identically — deterministic, not
+transient — which is what finally sent the search into SKILLS.md. Skill 44's own lesson applied
+verbatim: an exact, mechanical symptom (status 0 on a specific status code) is cheap to grep the
+repo's own history for, and disproportionately likely to already have an answer. The retry was
+removed since its premise was wrong.
+
+**The check:** any new raw `XMLHttpRequest` in this codebase (test helper or production) that
+inspects `xhr.status` needs the HEADERS_RECEIVED/LOADING snapshot fallback. Grep for
+`new XMLHttpRequest` and confirm each site has it; `StorageService.deleteUrl`'s delete XHR still
+doesn't, harmlessly (any non-2xx already maps to `ok=false`, and only the error-message text says
+"status 0"), noted rather than changed.
