@@ -421,6 +421,22 @@ QtObject {
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
 - `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan)
 - `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
+- `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
+  sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
+  identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
+  (native file read + XHR, untested at this level — see Testing & QA Agent). Uses the
+  property-binding-watcher pattern for `AuthService.isOnline`, NOT `Connections{}` (Skill 20/68 —
+  `Connections{}` inside a `pragma Singleton QtObject` crashes the whole singleton chain).
+- `qml/model/StorageService.qml` — product-photo abstraction (`addProductPhoto`,
+  `removeProductPhoto`, `photoDownloadUrl`). Rewritten, not extended, for the 2026-09-21 feature —
+  the old single-device `useCloud`/local-file-URL model is gone entirely.
+- `qml/helper/PhotoUrl.js`, `qml/helper/PhotoQueueLogic.js` — pure helpers for the photos feature
+  (URL building; classification/backoff/breaker/reducer), same `.pragma library` +
+  `functions/test/testSupport/*Parity.js` Node-mirror convention as `StuckWrites.js` (Skill 67) —
+  see `tests/tst_PhotoUrl.qml`/`tests/tst_PhotoQueueLogic.qml` for the QML side.
+- `qml/helper/EnvConfig.js` — `storagePrefixForEnv(env)` added 2026-09-21, deliberately separate
+  from `databaseIdForEnv` (Storage paths spell `prd` literally where Firestore's database id is
+  `(default)`) even though both share the same `dev`→`dev1` mapping.peration-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
 - `qml/model/qmldir`
 
 **Example Prompts**:
@@ -823,8 +839,43 @@ env.
     UI/dialog-level — that last one is Phase 2, gated on an unresolved Felgo headless-rendering
     question (do `dp()`/`sp()`/`Constants` resolve outside an `App{}` root), tracked separately
     from this test surface.
+  - `tst_ProductPhotosE2E.qml` (2026-09-21/25, product photos): a third scenario, added to the
+    same directory. Deliberately does NOT drive the real client upload path
+    (`StorageService.addProductPhoto`/`PhotoQueue`) — that needs `NativeFile.readFileBase64`/
+    `ImageProcessor.compressForUpload`, both root context properties undefined under
+    `qmltestrunner`, so no automated test anywhere in this repo can exercise it (on-device is the
+    only proof). Instead, raw-POSTs directly to the emulated `uploadProductPhoto`/
+    `deleteProductPhoto` functions (same bypass-the-client pattern `tst_InventoryE2E.qml`'s own
+    `recordMutation` diagnostic already uses), and verifies against BOTH the Firestore emulator
+    (`photoIds` on the product doc) and the Storage emulator (the actual object) independently —
+    two new `E2EHelpers.js` functions, `pollEmulatorStorageObject`/`pollEmulatorStorageObjectAbsent`,
+    mirror `pollEmulatorDoc`'s exact polling structure against the Storage emulator's REST API
+    instead of Firestore's. `uploadProductPhoto`/`deleteProductPhoto` are separate Cloud Functions
+    from `recordMutation` and get their own cold-start warm-up in `initTestCase()` — warming up one
+    function does not warm up another.
 
-**Example Prompts**:
+- `tests/tst_PhotoUrl.qml`, `tests/tst_PhotoQueueLogic.qml` (2026-09-21, product photos) — QML side
+  of the `.pragma library` + Node-parity-mirror pair for the two new pure helpers (Skill 67's
+  `StuckWrites.js` convention, extended). The Node mirrors
+  (`functions/test/photoUrl.parity.test.js`, `functions/test/photoQueueLogic.parity.test.js`) run
+  for real in this repo's Node tooling; these two QML files prove the actual QML copies load and
+  agree, but only CI can run them.
+- `tests/tst_PhotoQueue.qml` (2026-09-21/25) — `PhotoQueue.qml`'s queue-management logic:
+  persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix. Does
+  NOT cover `_upload()` (native + XHR) — see that file's own TESTABILITY NOTE. Two regression
+  tests added during this feature's own review sweep for bugs the original tests didn't catch:
+  `_load()` never having called `_reschedule()` (a photo queued last session would sit frozen
+  forever — broke "survive app close" silently) and `drainNow()` never having called
+  `AuthService.ensureFreshToken()`.
+- `tests/tst_OutboxStore.qml` gained `hasPendingForEntity` coverage (2026-09-21, product photos) —
+  the gate for `PhotoQueue`'s Trap 1 (a photo for a product created offline must wait for that
+  product's own create mutation to land).
+- `qml/components/ProductPhotoGallery.qml` (2026-09-21) has NO `qmltestrunner` test, deliberately —
+  it `import`s `Felgo` (for `dp()`/`sp()`), which per this section's own note above about
+  `GlassHeader` means it cannot load under the "QML Tests" CI job at all. Same reasoning as
+  `StorageService.qml` having zero tests (it reaches `NativeFile`/`ImageProcessor`, also
+  undefined under `qmltestrunner`) — check this note before assuming a missing test file for
+  either is an oversight.
 - "Add tests for the new breakdown metric"
 - "Write a TestCase covering the week/month period windows"
 - "Add a parity fixture pair for a new RealisedMath scenario, in both functions/test/fixtures/ and

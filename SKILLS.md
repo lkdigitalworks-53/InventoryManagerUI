@@ -3129,6 +3129,17 @@ not just this one — check the actual resulting file content against what you e
 moving on, the same way CI results get checked via the API rather than assumed from "it should have
 worked."
 
+**Recurred, 2026-09-25 — same mistake, same file, a different session**: rebasing
+`feature/2026-09-21-product-photos-firebase-storage` onto `main`, the identical `git checkout
+--ours CHECKPOINT.md` slip happened again, across roughly 15 conflicting commits this time, with
+the identical silent-no-warning failure mode this entry already describes. This skill entry
+existed in this file the whole time and was not consulted before the rebase — the mistake was
+repeated in full, not partially. **The actual gap wasn't missing knowledge, it was not searching
+SKILLS.md for "rebase" or "checkpoint conflict" before running a risky git operation the codebase
+had already been burned by once.** A lesson only earns its keep if it's checked against, not just
+written down — for any git operation more involved than a plain fast-forward push, grep this file
+for relevant terms first, the same way a spec gets read before a plan and a plan before code.
+
 ## Skill 65: Fixing a UI-only re-entrancy gap needs a dedicated feedback signal, not the shared generic error bus — even when nothing here needs an entity-ID scope the way completion did
 
 **Context**: `NewOrderDialog`'s double-submit fix (ASYNC-REENTRANCY-BUGS.md C-2) is a UI-only fix —
@@ -3331,3 +3342,82 @@ fires; the sender logs print raw and effective status to make that visible.
 **Follow-ups, in the order they would pay off**: park a stuck write and offer Retry / Discard (Discard rolls
 back to the outbox item's `before`); map Firestore error codes to distinct HTTP statuses in
 `functions/index.js` so the client can classify instead of counting.
+
+## Skill 68: Cross-system "atomicity" is a lie you tell precisely, not a property you achieve — and a `pragma Singleton QtObject` can't host `Connections{}` even when nothing else about it looks singleton-specific
+
+**Found while building the product-photos-in-Firebase-Storage feature, 2026-09-21/25** (design:
+`docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`): Taher asked for
+"atomic upload and id creation." Firebase Storage and Firestore have no shared transaction — nothing
+makes this literally true. What's actually achievable: write the bytes first, then one Firestore
+transaction that both records the id and its idempotency marker, so an id is never visible without
+its bytes. The only failure mode left is an orphaned, unreferenced Storage object — a cost issue,
+not a correctness one. Stating this precisely in the design spec (not softening "atomic" into a
+vague promise, and not refusing the word either) mattered more than any specific implementation
+choice: it's the difference between a documented, bounded risk and a claim that turns out false the
+first time a Cloud Function crashes mid-request.
+
+**Two traps found by reading the existing code, not by writing new code and hoping**: (1) a photo
+for a product created offline can arrive at the server before that product's own create mutation
+has landed, since both go through the same outbox but independently — gated by a new
+`OutboxStore.hasPendingForEntity(entity, entityId)`, reusing the existing `_keysForItem`/`_keyFor`
+helpers rather than re-deriving the plain/batch/delta item-shape branching. (2) product ids are
+counter-minted per tenant, so the same id can exist in two tenants — a queued upload is bound to the
+`uid`/`tenantId` active when it was enqueued and only drains under that exact identity; the server
+independently rejects a mismatch. Neither trap is hypothetical hardening — both are direct
+consequences of structures (the outbox, the counter-minted id scheme) that already existed in this
+codebase before this feature, found by reading `OutboxStore.qml` and the tenant-provisioning code
+before writing `PhotoQueue.qml`, not discovered afterward by a bug report.
+
+**A `pragma Singleton QtObject` cannot host a `Connections{}` block, at all, regardless of how
+ordinary the code inside it looks** (Skill 20 already establishes this for `Timer{}`; this feature
+found the identical constraint applies to `Connections{}` too, and it is easy to miss because
+nothing about a `Connections{}` block *looks* like it should collide with singleton semantics the
+way an app-lifetime `Timer{}` obviously might). `PhotoQueue.qml`'s first draft used
+`Connections { target: AuthService; function onIsOnlineChanged() { ... } }` to watch online status —
+syntactically ordinary, and it would have crashed the entire singleton chain at runtime the moment
+`PhotoQueue.qml` loaded, breaking every screen in the app, not just photos. Caught by re-reading
+Skill 20 before writing the file, not by a test (nothing in this environment can run `qmltestrunner`
+to catch it empirically). Fixed with the property-binding-watcher pattern Skill 20 already
+prescribes for the `Timer{}` case: `property bool _onlineWatcher: AuthService.isOnline` +
+`on_OnlineWatcherChanged: { ... }`. **The generalizable check, not just the specific fix**: before
+adding ANY declarative child object (not just `Timer{}`) to a `pragma Singleton QtObject` root, ask
+whether it's a plain `QtObject`-derived non-visual type (safe) or anything else (not safe) — the
+unsafe category is broader than "things that obviously look like Timer."
+
+**Parity-test convention, extended**: `StuckWrites.js`'s technique (strip `.pragma library`, run the
+underlying logic through plain Node for a real pass) already existed for QML helper modules. This
+feature applied it three more times — `PhotoUrl.js`, `PhotoQueueLogic.js`, and (implicitly, via the
+existing `handlerHarness.js` mock extended with a Storage backend) the server handlers themselves —
+and in every case the *first* real test run against the parity copy caught something a purely
+"written, reviewed by eye" pass would have missed: a test's own off-by-one in `PhotoUrl.js`'s
+separator-count assertion; a reducer bug in `PhotoQueueLogic.js` where a stale `'failed'` event
+against an already-`failed` item kept incrementing `attempts` past the cap (found by a monkey test,
+not a hand-written case); and, via the extended `handlerHarness.js`, a Storage-cleanup call that ran
+on every idempotent replay of `deleteProductPhoto`, unbounded. **The pattern generalizes past QML**:
+wherever a piece of pure logic exists that a live network/native call would otherwise make
+untestable in this sandbox, strip it down to the smallest form that runs in plain Node and actually
+run it — "I traced through this by hand and it looks right" is not the same claim as "296/296,
+stable across 3 runs."
+
+**Review-sweep addendum (2026-09-25)**: running `qt-development-skills:qt-qml-review`'s deterministic
+linter against a large existing file's WHOLE content, rather than filtering to only the lines a
+given PR actually added, produces mostly noise on a codebase with an established style the generic
+linter doesn't know about (this project uses `var` everywhere, `property var` for list-shaped state,
+anchors dot-notation, and `Qt.createQmlObject` as the Skill-20 timer workaround — all correct real-
+existing-code precedent, none of them things a fresh PR should "fix" in isolation). Diff-filter
+first; a linter run against whole files will bury the one or two real findings (in this feature's
+case, missing `Image.sourceSize` on new thumbnail tiles) under 200+ true-for-generic-QML-but-false-
+for-this-codebase hits. Separately, that same review pass — done by hand, no subagent-dispatch tool
+available in this environment — found four real, independent bugs purely by grepping for whether a
+function this session had just written was actually CALLED anywhere: `PhotoQueue.clear()` existed
+for sign-out hygiene but was never wired into the sign-out handler; `AuthService.ensureFreshToken()`
+was documented as being called from `PhotoQueue.drainNow()` but never actually was; and
+`PhotoQueue._load()` (`Component.onCompleted` on every real app launch) never called
+`_reschedule()`, meaning a photo queued in a previous session would sit frozen forever unless
+something else happened to trigger a drain — silently breaking "survive app close," a requirement
+stated explicitly at the start of the session. **None of these were caught by the unit tests written
+alongside the original code, because the tests exercised the functions in isolation and never asked
+"is this actually wired to anything."** A grep for a new function's own call sites, done once near
+the end of a feature rather than assumed complete because it compiles and its own unit test passes,
+is cheap and catches a class of bug that no amount of testing the function in isolation will ever
+surface.
