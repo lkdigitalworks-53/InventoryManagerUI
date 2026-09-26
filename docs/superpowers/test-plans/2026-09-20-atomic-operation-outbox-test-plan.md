@@ -1,6 +1,6 @@
 # Test plan — order completion as one atomic, replay-safe operation (C-3)
 
-**Branches (planned):** `feature/2026-09-21-record-operation-endpoint` (server), `feature/2026-09-21-operation-helpers` (pure helpers), `fix/2026-09-22-atomic-order-completion` (wiring).
+**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, open as #83 for Tasks 6-8; Tasks 9-11 not started).
 **Spec:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md` · **Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`
 
 **What it does:** completing an order sends one operation (batch deltas, stock deltas, order update, sale docs)
@@ -8,11 +8,18 @@ under a deterministic key; the server applies it in one transaction or not at al
 key returns the first result. Requests now time out, retry with jitter, fall back to the outbox, and count
 toward the stuck-write indicator.
 
-**Written before implementation.** Nothing below has run in CI yet. Each row says whether it was already
-executed in the design session's sandbox ("verified") or is still to be written and run ("planned"). Update
-this file when the implementation PRs land, replacing every "planned" with the file, the count and what CI showed.
-QML coverage is not measured in this repo, so for QML the claim is "CI passes plus documented unreachable
-branches", never a percentage.
+**Originally written before implementation** (2026-09-20); **updated 2026-09-25 for Phase 3 PR 1 (#83,
+plan Tasks 6-8)** to replace "planned" rows with what actually shipped, since the approach changed from the
+original draft in two ways worth calling out: (1) Gateway's timeout was NOT built as a shared `_xhrPost` helper
+with an injectable `xhrFactory` -- the real `_send`/`_sendBatch`/`_sendDelta` had grown far more elaborate than
+this plan assumed (a QTBUG-49896 workaround, CAS-conflict parsing, terminal-batch-error handling), so a full
+reroute was rejected as too risky; each sender instead got a settled-flag `Timer` (the proven
+`AuthService._postJson` pattern), later deduplicated into a shared `_armSendTimeout` helper. (2) No new test
+files (`tst_Gateway_send.qml`, `tst_Gateway_operation.qml`) were created; the new cases were appended to the
+existing `tst_Gateway.qml`, matching that file's own established pattern of driving `Gateway`'s internals
+directly rather than mocking HTTP (there is no mock HTTP layer anywhere in this codebase). Tasks 9-11 (store
+hooks, `DataModel`, UI) are still genuinely "planned" -- not started. QML coverage is not measured in this
+repo, so for QML the claim is "CI passes plus documented unreachable branches", never a percentage.
 
 ## 1. Unit test coverage
 
@@ -24,9 +31,9 @@ branches", never a percentage.
 | `qml/helper/OperationKeys.js` | `tests/tst_OperationKeys.qml` | 7: epoch from null/`{}`/0/stored/non-numeric, key format and determinism, key differs per order and epoch, sale id prefix and uniqueness, repair id | Logic verified in Node (7/7); CI pending |
 | `qml/helper/SendPolicy.js` | `tests/tst_SendPolicy.qml` | 7: timeout selection, pinned values (10s < 30s), jitter bounds and midpoint, monotonic, invalid `rand` falls back, zero delay, seeded monkey over the whole backoff schedule | Logic verified in Node (7/7); CI pending |
 | `qml/helper/StuckWrites.js` (D5) | `tests/tst_StuckWrites.qml` (+6) | timeout counts only when `online === true`; unknown/`"yes"` connectivity does not; numeric statuses ignore the flag; 5 online timeouts tip; offline never; timeouts and 5xx share one counter; an offline timeout does not reset earlier online failures | Logic verified in Node (27/27 incl. #75's 21 existing); CI pending |
-| `OutboxStore` op items | `tests/tst_OutboxStore.qml` (+7) | append durable item; same key returns existing; keys for all entities (deduped); never a coalescing target; in-flight op blocks its keys; `dueItems` never returns two items sharing a key; jitter band | Planned |
-| `Gateway` send helper | `tests/tst_Gateway_send.qml` (new, fake XHR via `xhrFactory`) | `_xhrPost` once-only outcome; hung request aborted and reported as timeout (not status 0); late response ignored; timed-out delta re-queued and its key freed; normal delta unchanged; online timeouts reach stuck after 5; offline never | Planned |
-| `Gateway.recordOperation` | `tests/tst_Gateway_operation.qml` (new) | validation (empty, no key, 201, non-array), 200 accepted, gateway-mode required, queued vs offline vs awaiting, answer in time, replay, await window ends (pending, callback not called twice), floor rejection terminal, 5xx and non-JSON retried, same key twice, `clear()` drops callbacks, seeded monkey of random outcomes | Planned |
+| `OutboxStore` op items | `tests/tst_OutboxStore.qml` (+7) | append durable item; same key returns existing; keys for all entities (deduped); never a coalescing target; in-flight op blocks its keys; `dueItems` never returns two items sharing a key; jitter band | **Verified in CI** (real `qmltestrunner`, PR #83): 7/7. Hand-traced against the real implementation before pushing (no Qt toolchain in the sandbox) |
+| `Gateway` send timeout (`_armSendTimeout`) | `tests/tst_Gateway.qml` (+6, appended to the existing file) | timeouts count toward the stuck indicator only while online (D5); numeric statuses ignore the online flag; 5 online timeouts tip it; offline never; timeouts and 5xx share one counter; an offline timeout doesn't erase earlier online failures | **Verified in CI**: 6/6. The actual Timer/XHR/`abort()` interaction genuinely cannot be tested here (no mock HTTP layer anywhere in this codebase, documented in this file's own scope note) -- proven only by CI's `qmltestrunner` run and, for real timing, the on-device plan below |
+| `Gateway.recordOperation` | `tests/tst_Gateway.qml` (+15, appended) | validation (empty/no-key/201-ops/non-array, all before touching the outbox), exactly-200-ops accepted, gateway-mode required, queued immediately when not awaiting, offline never waits, same key twice both told "queued", awaiting registers a waiter without answering, **a real await timer actually let to fire** delivers `{pending:true}` once and the later real answer doesn't re-invoke the callback, `_finishOperation` delivers to a waiter / to every waiter / with none registered (relaunch case) and fires `operationApplied`/`operationRejected`, `clear()` drops pending callbacks | **Verified in CI**: 15/15. Same scope split as above: validation/enqueue/`_finishOperation` decision logic and the await-timer's real firing are genuinely exercised (no XHR involved); the server round trip itself is not |
 | Store hooks | `tests/tst_{Inventory,StockBatch,Orders,Transaction}Store_*.qml` (new) | unknown id, returns previous value, idempotent adds, `revision` bumps, `buildOrderUpdate` pure (no Gateway call, no local change), `buildSaleDocs` deterministic and shape-identical to the old function | Planned |
 
 ## 2. Functional / end-to-end test coverage
