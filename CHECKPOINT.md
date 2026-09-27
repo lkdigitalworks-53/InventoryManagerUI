@@ -1,4 +1,4 @@
-# CHECKPOINT — 2026-09-26: C-3 Task 10 (`_tryCompleteOrder` atomic rewrite) implemented, pushed for CI
+# CHECKPOINT — 2026-09-26: C-3 Task 10 (`_tryCompleteOrder` atomic rewrite) implemented, PR #90 open, CI pending
 
 **Session date:** 2026-09-26, continued session (continues the 2026-09-18/20/22/26 arc)
 **Branch (this update):** `feat/2026-09-26-complete-order-atomic`, off `main` @ `66ffa4f` (PR #87's merge
@@ -107,8 +107,9 @@ via PR per his own standing instruction.
       `tst_DataModel_completeOrderReentrancy.qml`'s harness (see the two findings above). Hand-traced against
       the actual current source of every store/Gateway/OutboxStore function involved, not the plan draft.
 - [x] 22c. Updated the plan doc, test plan doc, `SKILLS.md` (Skill 72), `AGENTS.md`, `README.md`.
-- [ ] 22d. Committed and pushed this branch; **CI result not yet seen by this session** — that's the next
-      thing a resumed session (or Taher) should check first, before assuming Task 10 is actually green.
+- [x] 22d. Committed and pushed this branch, opened as **PR #90** against `main`. **CI result not yet seen
+      by this session** — that's the next thing a resumed session (or Taher) should check first, before
+      assuming Task 10 is actually green.
 - [ ] 23. After Task 10's CI comes back: if red, fix and re-push before anything else. If green: Phase 3 PR 3
       (plan Task 11, the "Saved, syncing" UI hint) and Task 12 (docs/tracker/`SKILLS.md` sweep for the whole
       Phase 3 arc — check the current highest `SKILLS.md` number before picking one; as of this session it's
