@@ -229,8 +229,16 @@ TestCase {
             compare(r.status, 200, "photo " + i + " of 10 was rejected -- response: " + r.text)
         }
         var eleventh = _uploadPhoto(productId, "e2e-limit-11th-" + Date.now())
-        compare(eleventh.status, 409)
-        compare(JSON.parse(eleventh.text).error, "photo-limit")
+        // Diagnostic messages on both compares below -- if this test fails again, the CI comment
+        // should show which value was wrong instead of QtTest's bare "Compared values are not the
+        // same", which carried no detail on the 2026-09-27 failure this replaces.
+        verify(eleventh.status === 409,
+               "expected 409 (photo-limit) for the 11th photo, got " + eleventh.status
+               + " -- response: " + eleventh.text)
+        var parsedEleventh = JSON.parse(eleventh.text)
+        compare(parsedEleventh.error, "photo-limit",
+                "11th photo was rejected (status " + eleventh.status + ") but for the wrong reason -- "
+                + "full response: " + eleventh.text)
     }
 
     // ── deleteProductPhoto: the real server path, end to end ───────────────
