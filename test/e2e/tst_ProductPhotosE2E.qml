@@ -37,6 +37,7 @@ TestCase {
     readonly property string bucket: "inventorymanager-48392.firebasestorage.app"
     readonly property string realUploadUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/uploadProductPhoto"
     readonly property string realDeleteUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/deleteProductPhoto"
+    readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
 
     // 1x1 white-pixel JPEG, base64 -- small, real, and passes photoValidation's JPEG-magic-byte
     // check without needing an actual asset file on disk (this directory's XHR file:// reads need
@@ -111,6 +112,17 @@ TestCase {
     function init() {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
+        // _createProduct() below goes through InventoryStore.addProduct() ->
+        // Gateway.recordMutation(), same as every sibling E2E file
+        // (tst_InventoryE2E.qml, tst_StaffStoreE2E.qml, etc.) -- without this
+        // override Gateway posts to the real production recordMutation
+        // Cloud Function instead of the local emulator, so the product doc
+        // this file polls for on the EMULATOR never actually appears there.
+        // Missed originally because this file's own direct
+        // uploadProductPhoto/deleteProductPhoto POSTs go straight to
+        // emulatorFunctionsBase already and don't go through Gateway at all
+        // -- only the setup helper does.
+        Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
         AuthStore.idToken = fixture.idToken
         AuthStore.uid = fixture.uid
         AuthStore.tenantId = fixture.tenantId
@@ -119,6 +131,7 @@ TestCase {
 
     function cleanup() {
         FirebaseService.emulatorHost = ""
+        Gateway.functionUrl = realFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
