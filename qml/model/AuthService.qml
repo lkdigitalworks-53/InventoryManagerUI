@@ -762,25 +762,34 @@ QtObject {
         })
     }
 
+    // NOTE: every failure branch below uses memberOperationFailed, NOT
+    // authFailed, even though some of these guards read like auth checks.
+    // This function is always invoked asynchronously from onStaffAdded
+    // (Main.qml), by which point AddStaffDialog has already closed --
+    // authFailed is only ever surfaced by inviteMemberDlg/forgotPasswordDlg
+    // (see Main.qml's AuthService Connections block), so every failure here
+    // was previously silent: the staff roster entry still saved, but the
+    // person never got workspace access and nothing told the user why. See
+    // docs/superpowers/KNOWN-ISSUES.md and CHECKPOINT.md for the writeup.
     function provisionStaffCredentials(displayName, email, password, phone, department, appRole, staffId) {
         if (!AuthStore.isAuthenticated || !AuthStore.uid) {
-            authFailed("Not authenticated")
+            memberOperationFailed("Not authenticated")
             return
         }
         if (!AuthStore.canInviteMembers) {
-            authFailed("Only owner/admin can create staff login credentials")
+            memberOperationFailed("Only owner/admin can create staff login credentials")
             return
         }
         if (!AuthStore.tenantId) {
-            authFailed("Tenant context missing")
+            memberOperationFailed("Tenant context missing")
             return
         }
         if (!email || email.indexOf("@") < 0) {
-            authFailed("Valid staff email is required")
+            memberOperationFailed("Valid staff email is required")
             return
         }
         if (!password || password.length < 6) {
-            authFailed("Staff password must be at least 6 characters")
+            memberOperationFailed("Staff password must be at least 6 characters")
             return
         }
 
@@ -811,7 +820,7 @@ QtObject {
                     memberOperationSucceeded("Staff added. " + _provisionErrorMessage(reason))
                     return
                 }
-                authFailed("Failed to create staff credentials: " + _provisionErrorMessage(reason))
+                memberOperationFailed("Failed to create staff credentials: " + _provisionErrorMessage(reason))
                 return
             }
             // Stamp the auth uid back on the staff record so a later delete can

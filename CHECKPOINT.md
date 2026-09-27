@@ -101,3 +101,87 @@ happened in the conversation. Before touching `DataModel.qml` for Task 10, re-re
 `main` — do not assume the plan document's draft code still matches reality (this session found two similar
 staleness issues in Task 9's supposedly-simpler files). `CHECKPOINT.md` conflicts are resolved by keeping the
 branch's version and archiving `main`'s copy under `docs/superpowers/specs/`.
+
+---
+
+# CHECKPOINT (separate thread, different branch) — 2026-09-27: silent staff-credential-provisioning-failure — fixed, awaiting CI + on-device verification
+
+**This section is independent of the C-3 Phase 3 / Task 9-10 checkpoint above.** Different branch, no
+shared files (`AuthService.qml`/`Main.qml` here vs. `InventoryStore`/`StockBatchStore`/`OrdersStore`/
+`TransactionStore` there), does not touch Task 10 or its design-check-in gate. Appended rather than
+replacing the section above, per the "keep the branch version" conflict rule in ways-of-working — this way
+neither thread's history is lost regardless of merge order.
+
+**Session date:** 2026-09-27
+**Branch:** `fix/2026-09-27-silent-staff-provisioning-failure`, off `main` @ `66ffa4fbee3454a53901540a059354e767b85100`
+**Commit identity:** `Taher (via Claude session) <tsowner@lkdigitalworks.com>`. PAT supplied by Taher in
+chat this session; never written to the repo, `.git/config`, or memory.
+**Bug report (Taher, verbatim):** "in the team members page after adding new member as staff or any
+roles, if we press the team members view button, newly added member is not visible. Only owner is
+visible. Even after refresh nothing shows up."
+**Test plan:** `docs/superpowers/test-plans/2026-09-27-silent-staff-provisioning-failure-test-plan.md`
+
+## Where things stand
+
+Root cause found by tracing, not guessing (see the test plan's "Traced and ruled out" list for everything
+checked and cleared): `AuthService.provisionStaffCredentials` always runs asynchronously from `Main.qml`'s
+`onStaffAdded`, well after `AddStaffDialog` has already closed. Every failure branch inside it called
+`authFailed`, a signal `Main.qml` only ever surfaces into `inviteMemberDlg`/`forgotPasswordDlg` — neither
+of which is ever open during this flow. Every failure was therefore completely silent: the staff roster
+entry (`StaffStore.addStaff`) had already saved, so the add looked successful, but the person never got a
+`tenants/{tenantId}/members/{uid}` doc — what the Team Members dialog actually reads — and refreshing
+correctly found nothing, because there was nothing to find.
+
+**Fixed:** `qml/model/AuthService.qml` (all 6 failure branches in `provisionStaffCredentials` now emit
+`memberOperationFailed`) + `qml/Main.qml` (`onMemberOperationFailed` falls back to the existing
+`successMessage`→`Toast` bridge when neither relevant dialog is open). No Firestore rules change, no Cloud
+Function change — client-side signal-routing only.
+
+**Not yet known:** the actual underlying reason `provisionMember` was failing for Taher's specific repro
+(bad/duplicate email, password policy mismatch, something else). This fix makes that reason visible via a
+toast for the first time — the on-device retest (step 13 below) is what will surface it, if it's still an
+issue at all.
+
+**Docs updated this session:** `SKILLS.md` Skill 72 (new pattern: background async continuations whose
+failure signal is only conditionally surfaced need an unconditional fallback), `AGENTS.md` staff-row note
+(without overclaiming the unrelated delete-button gap is resolved), `docs/superpowers/test-plans/README.md`
+index. **`README.md` deliberately left untouched** — no user-facing feature, build step, or architecture
+changed; nothing there needed updating.
+
+## Step log
+
+- [x] 1. Cloned repo fresh; read `ways-of-working.md`/`overview.md`/`learnings.md` (project memory) and
+      `AGENTS.md`/`SKILLS.md`/`CHECKPOINT.md` per session-start convention.
+- [x] 2. Traced the bug (`/superpowers:systematic-debugging`, `/qt-development-skills:qt-qml`): ruled out
+      `FirebaseService.get`'s collection pagination/decoding, `MemberManagementDialog`'s role filter
+      (defaults to "all"), `firestore.rules`' `members` `allow read` rule (not per-document filtering),
+      server-side `canAssignRole` (owner can assign all three roles from the bug report), and `deriveContext`'s
+      env/tenant scoping. Confirmed `ProfilePage` → `StaffPage` (not `MemberManagementDialog` directly) is
+      intentional per `AGENTS.md`, not a bug.
+- [x] 3. Found the actual root cause: `provisionStaffCredentials`'s `authFailed` calls have no live UI
+      target in the add-staff-with-login flow.
+- [x] 4. Created branch `fix/2026-09-27-silent-staff-provisioning-failure` off `main`.
+- [x] 5. `AuthService.qml`: all 6 failure branches in `provisionStaffCredentials` → `memberOperationFailed`.
+- [x] 6. `Main.qml`: `onMemberOperationFailed` falls back to `successMessage`/`Toast` when neither
+      `inviteMemberDlg` nor `memberMgmtDlg` is visible.
+- [x] 7. `tests/tst_ProvisionStaffCredentialsFailureRouting.qml` — 9 real `SignalSpy` cases against the
+      live `AuthService`/`AuthStore`/`Gateway` singletons (no network — uses `Gateway.provisionMember`'s own
+      synchronous no-XHR guards).
+- [x] 8. `tests/tst_MemberOperationFailedFallback.qml` — 6 pure-logic model cases for `Main.qml`'s handler
+      (can't load `Main.qml` itself under `qmltestrunner` — same reason as `tst_AddStaffSyncClose.qml`).
+- [x] 9. Wrote the test plan; added it to `docs/superpowers/test-plans/README.md`'s index (newest first).
+- [x] 10. `SKILLS.md` Skill 72 appended; `AGENTS.md` staff row annotated; `README.md` deliberately left
+      alone (see "Docs updated" above).
+- [ ] 11. Commit + push to `origin/fix/2026-09-27-silent-staff-provisioning-failure` (this step).
+- [ ] 12. Open a PR against `main`; wait for CI's `qml-tests` job — not run in this sandbox (standing rule,
+      no Qt toolchain installed here).
+- [ ] 13. **Taher's on-device retest**, per the test plan's Negative Case 4 — reproduce the original repro
+      exactly and read whatever the toast now says. That message is the real remaining diagnostic lead, if
+      any; no further code change is anticipated here unless it points to something new.
+
+## Resume instructions
+
+Fresh session picking up THIS thread specifically: read this section (not the C-3/Task 9-10 one above,
+which is a different, unrelated arc), check PR/CI status for `fix/2026-09-27-silent-staff-provisioning-failure`.
+If CI (`qml-tests`) is green, this branch needs only step 13 (Taher's on-device confirmation) — don't start
+new code changes here unless the on-device retest surfaces a genuinely new, distinct failure reason.

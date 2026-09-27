@@ -384,9 +384,26 @@ App {
         }
 
         function onMemberOperationFailed(reason) {
-            memberErrorMessage = reason || "Operation failed"
-            if (inviteMemberDlg.visible)
-                inviteMemberDlg.errorMessage = reason || "Operation failed"
+            var msg = reason || "Operation failed"
+            memberErrorMessage = msg
+            if (inviteMemberDlg.visible) {
+                inviteMemberDlg.errorMessage = msg
+            } else if (!memberMgmtDlg.visible) {
+                // Neither dialog that normally shows this inline is open --
+                // e.g. staff credential/role provisioning failing in the
+                // background after AddStaffDialog already closed (see
+                // docs/superpowers/KNOWN-ISSUES.md). Without this fallback
+                // the failure was completely silent: the staff roster entry
+                // still saved, but the person never got workspace access
+                // and nothing told the user why. Reuses the same
+                // successMessage -> Toast bridge already used for other
+                // background notices (e.g. "Export failed" below) --
+                // memberMgmtDlg.visible already receives it inline via
+                // memberErrorMessage above, so it's excluded here to avoid
+                // a duplicate toast on top of that dialog's own error text.
+                successMessage = msg
+                successToastTimer.restart()
+            }
         }
     }
 

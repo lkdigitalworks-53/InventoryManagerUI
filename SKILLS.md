@@ -3514,3 +3514,37 @@ Pre-existing (predates this task), not previously covered by any test, not touch
 GST-relevant tax allocation math deserves its own reviewed decision, not a drive-by inside an unrelated
 extraction PR). Flagged in a code comment at the site and in `CHECKPOINT.md` for Taher to decide on
 separately.
+
+## Skill 72: A background async continuation's failure signal must be checked against WHICH UI element is actually still open when it fires — not assumed to still be the one that started it
+
+Bug: "add a new staff member with a role + app login → Team Members still only shows Owner, even after
+refresh." `AuthService.provisionStaffCredentials` is invoked from `Main.qml`'s `onStaffAdded`, itself fired
+asynchronously once `StaffStore.addStaff`'s Firestore counter-mint completes — by which point
+`AddStaffDialog`, the dialog that *started* this whole chain, has already closed. Every failure branch
+inside `provisionStaffCredentials` called `authFailed(...)`, a signal `Main.qml` only ever surfaces into
+`inviteMemberDlg.errorMessage` or `forgotPasswordDlg`'s equivalent (`if (dlg.visible) dlg.errorMessage =
+...`). Neither dialog is ever open during this flow. Result: total silence on every failure — no toast, no
+popup, nothing — while the staff roster entry itself had already saved, making the whole operation look
+successful.
+
+**The generalizable check**: when a function is called from inside an `on<Something>Async...Completed`-style
+handler rather than directly from the UI action that triggered the surrounding flow, don't assume its error
+signal reaches whatever dialog the user thinks they're still looking at. Trace forward to the ACTUAL signal
+consumer(s) and ask "is this ever visible/connected at the moment this specific function's callback fires,
+given everything that could have happened in between (dialog closed, user navigated away, another dialog
+opened)?" A signal with only `if (specificDialog.visible)` gating and no `else` branch is the tell — it means
+failures occurring while that one specific dialog isn't open go nowhere. Grep every signal a background/async
+function emits and check each one has an unconditional fallback (a toast, a persistent notice), not just a
+conditional inline one.
+
+This is a sibling pattern to the async re-entrancy bug class in `ASYNC-REENTRANCY-BUGS.md` (same root
+cause shape — an async continuation firing after its originating UI context has moved on — but a silent
+*failure-routing* gap rather than a double-submit). Worth checking other `_pending*`-style deferred
+continuations in this codebase (`Main.qml`) for the same gap: anything that stashes a payload to act on
+later, off of a signal fired well after its originating dialog would normally have closed.
+
+**Fix applied**: routed every failure branch in `provisionStaffCredentials` through the already-existing,
+purpose-built `memberOperationFailed` signal instead, and gave `Main.qml`'s `onMemberOperationFailed` an
+unconditional fallback — reusing the existing `successMessage` → `Toast` bridge (already used for other
+background notices like "Export failed") for the case where neither `inviteMemberDlg` nor `memberMgmtDlg`
+is open. See `docs/superpowers/test-plans/2026-09-27-silent-staff-provisioning-failure-test-plan.md`.
