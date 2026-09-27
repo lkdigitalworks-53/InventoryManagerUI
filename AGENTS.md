@@ -176,10 +176,14 @@ collections and zeroes product stock).
   outbox items) shipped 2026-09-25 (PR #83, C-3 Phase 3 Tasks 6-8). Store-side hooks
   (`InventoryStore.applyRemoteStock`, `StockBatchStore.applyRemoteQty`/`addLocalBatch`/`removeLocalBatch`,
   `OrdersStore.buildOrderUpdate`/`applyRemoteOrder`, `TransactionStore.buildSaleDocs`/`addLocalEntries`/
-  `removeLocalEntries`) shipped 2026-09-26 (Task 9). **`DataModel._tryCompleteOrder` still does not call any
-  of this** — it still uses the old per-line delta chain; that's Task 10
-  (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`), not started, flagged for a design
-  check-in first (see `CHECKPOINT.md`). Confirm `recordOperation` is deployed to dev before Task 10 ships.
+  `removeLocalEntries`) shipped 2026-09-26 (Task 9). `DataModel._tryCompleteOrder` now calls all of this
+  (Task 10, 2026-09-26, design check-in with Taher completed first — see `CHECKPOINT.md`): one atomic
+  `completeOrder` operation replaces the old per-line delta chain; `_reverseCompletedOrder` also gained a
+  small addition (design check-in decision 3, not in the original plan draft) clearing `_openCompletions`/
+  `_completingOrderIds` on reopen, so a completion still open when the order is reopened can't have its late
+  answer re-apply the original sale. Written and pushed; not yet confirmed green in real CI by this session
+  (no `qmltestrunner` in the sandbox — see the Session & Sandbox Conventions above). Confirm `recordOperation`
+  is deployed to dev before relying on Task 10 on-device.
 - `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — **verified in real CI** (`qmltestrunner`, PR #83),
   not just hand-traced. Root `test/firestore.rules.test.js` needs a local
   `firebase emulators:exec --only firestore "node --test test/"` pass before being trusted the same way (the
@@ -434,7 +438,7 @@ QtObject {
 - `qml/model/FirebaseService.qml`
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
 - `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan)
-- `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
+- `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. Called from `DataModel._tryCompleteOrder` as of Task 10 (2026-09-26)
 - `qml/model/qmldir`
 
 **Example Prompts**:

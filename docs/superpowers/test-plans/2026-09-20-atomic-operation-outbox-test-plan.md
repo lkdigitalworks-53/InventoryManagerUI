@@ -1,6 +1,6 @@
 # Test plan — order completion as one atomic, replay-safe operation (C-3)
 
-**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, Tasks 6-8, merged #83), `feat/2026-09-26-completion-store-hooks` (store hooks, Task 9, open as #87; Task 10-11 not started).
+**Branches:** `feature/2026-09-21-record-operation-endpoint` (server, merged #78), `feature/2026-09-21-operation-helpers` (pure helpers, merged #79), `fix/2026-09-22-atomic-order-completion` (transport + wiring, Tasks 6-8, merged #83), `feat/2026-09-26-completion-store-hooks` (store hooks, Task 9, merged #87), Task 10 (`DataModel._tryCompleteOrder` rewrite) written this session, not yet pushed as its own PR; Task 11 not started.
 **Spec:** `docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md` · **Plan:** `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`
 
 **What it does:** completing an order sends one operation (batch deltas, stock deltas, order update, sale docs)
@@ -32,6 +32,33 @@ allocation) -- this is pre-existing, unchanged by this task's extraction into `b
 previously covered by any test; flagged in code and to Taher, not fixed here (fixing it is a GST-relevant
 behaviour change outside this task's scope).
 
+**Updated 2026-09-26 for Task 10 (`DataModel._tryCompleteOrder` rewrite), after a design check-in with
+Taher.** Implemented per the plan's draft almost verbatim (`maxReplans` stays 3, a queued/offline completion
+still shows as `completed` immediately), plus one addition beyond the plan: reopening an order while its
+completion is still open in `_openCompletions` (queued offline, or the await window elapsed) is now handled —
+`_reverseCompletedOrder` clears the open completion and the `_completingOrderIds` guard for that order, so a
+deferred `operationApplied`/`operationRejected` for the superseded key becomes a safe no-op instead of
+re-applying the original sale onto a since-reopened order. This wasn't in the plan draft; found by re-reading
+`_reverseCompletedOrder` and its one call site fresh against the new bookkeeping, not by design, and posed to
+Taher (not fixed unilaterally) before implementing — see `CHECKPOINT.md`. Test case 16 below covers it. Two
+things worth flagging for whoever runs this under real `qmltestrunner` first: (1) simulating a server answer
+for `Gateway.recordOperation` in tests requires calling `OutboxStore.markSent(key)` immediately before
+`Gateway._finishOperation(...)` — `_finishOperation` alone does not remove the outbox item (only production's
+real `_sendOperation` XHR-completion path does that), so skipping it makes a re-plan's second
+`recordOperation` call for the same key silently coalesce into the first, already-rejected payload instead of
+sending the corrected one; test_DataModel_completeOrderAtomic.qml's `_answer()` helper does both, in
+production's order. (2) `tst_DataModel_completeOrderReentrancy.qml`'s existing "still in flight" tests had to
+change their offline convention: before this rewrite, `AuthStore.idToken = ""` alone produced a genuine
+"never resolves" window because the old code's deductStock callback was wired straight to a real XHR that
+silently no-ops when signed out; after this rewrite, `Gateway.recordOperation`'s callback fires synchronously
+whenever `AuthService.isOnline` is false OR `awaitServer` isn't requested — so that same setup now resolves
+the first call before a second could ever race it. The genuine in-flight window now only exists with
+`AuthService.isOnline = true` (an awaited operation nothing answers) — that file's `init()`/`cleanup()` were
+updated accordingly; every original assertion is unchanged. Not run under real `qmltestrunner` this session
+(no Qt toolchain in the sandbox, per standing convention) — written, hand-traced against the actual current
+`DataModel.qml`/`Gateway.qml`/`OutboxStore.qml` source (not the plan's draft, which predates Task 9), and
+pushed for CI to verify.
+
 ## 1. Unit test coverage
 
 | Unit | Test file | Cases | Status |
@@ -51,31 +78,34 @@ behaviour change outside this task's scope).
 
 | Scenario | Where | Status |
 |---|---|---|
-| Online completion applied by the server; caches equal the response | `tests/tst_DataModel_completeOrderAtomic.qml` case 1 (fake XHR through the real Gateway) | Planned |
-| Local stock validation fails: no request, `out of stock`, message | case 2 | Planned |
-| Server rejects the stock op: "stock ran out…", no local change | case 3 | Planned |
-| Another device drained a batch: reconcile from `current`, re-plan, same key, succeeds | case 4 | Planned |
-| Re-plan bounded (4 requests max) | case 5 | Planned |
-| Await window ends, then the server answers: predicted state overwritten, guard released | case 6 | Planned |
-| Offline: optimistic apply, no wait | case 7 | Planned |
-| Queued then rejected at sync: revert, re-plan with clamp, repair batch, stock clamped at 0 (D3) | case 8 | Planned |
-| Replay with different local state: caches equal the response, not the plan | case 9 | Planned |
-| Reopen then re-complete gets epoch 2 | case 11 | Planned |
-| `too-many-ops` message, status not changed | case 12 | Planned |
-| Already completed / in-flight guard unchanged | case 13 | Planned |
-| Seeded monkey (200 runs): guard never stuck after a terminal outcome, stock never negative, one key per order and epoch | case 15 | Planned |
+| Online completion applied by the server; caches equal the response | `tests/tst_DataModel_completeOrderAtomic.qml` case 1 (`Gateway._finishOperation` through the real Gateway/OutboxStore, same technique as `tst_Gateway.qml`'s own `recordOperation` tests) | Written; CI pending |
+| Local stock validation fails: no request, `out of stock`, message | case 2 | Written; CI pending |
+| Server rejects the stock op: "stock ran out…", no local change | case 3 | Written; CI pending |
+| Another device drained a batch: reconcile from `current`, re-plan, same key, succeeds | case 4 | Written; CI pending |
+| Re-plan bounded (4 requests max) | case 5 | Written; CI pending |
+| Await window ends, then the server answers: predicted state overwritten, guard released | case 6 | Written; CI pending |
+| Offline: optimistic apply, no wait | case 7 | Written; CI pending |
+| Queued then rejected at sync: revert, re-plan with clamp, repair batch, stock clamped at 0 (D3) | case 8 | Written; CI pending |
+| Replay with different local state: caches equal the response, not the plan | case 9 | Written; CI pending |
+| Reopen then re-complete gets epoch 2 | case 11 | Written; CI pending |
+| `too-many-ops` message, status not changed | case 12 | Written; CI pending |
+| Already completed / in-flight guard unchanged | case 13 | Written; CI pending |
+| Sale doc ids follow the epoch scheme and a duplicate delivery does not add a second row | case 14 | Written; CI pending |
+| Seeded monkey (200 runs): guard never stuck after a terminal outcome, stock never negative, one key per order and epoch | case 15 | Written; CI pending |
+| **New, not in the original plan (design check-in decision 3, 2026-09-26):** reopening an order while its completion is still open clears `_openCompletions`/`_completingOrderIds`, so the late `operationApplied` answer for the superseded key is a no-op | case 16 | Written; CI pending |
 | Server transaction end to end against the Firestore emulator | not available in the sandbox; covered by the on-device plan against dev | On-device |
 
 ## 3. Regression test coverage
 
 | Bug it pins | Test | Status |
 |---|---|---|
-| **C-3:** hang, sign-out, sign-in, re-run sent NEW request ids and consumed FIFO twice | `tst_DataModel_completeOrderAtomic.qml` case 10: the re-run's `requestId` equals the first; answered as a replay, stock and batches change once | Planned |
-| Re-run also double-booked revenue (random `txId`) | case 14: sale doc ids are deterministic and not duplicated by a replay | Planned |
+| **C-3:** hang, sign-out, sign-in, re-run sent NEW request ids and consumed FIFO twice | `tst_DataModel_completeOrderAtomic.qml` case 10: the re-run's `requestId` equals the first; answered as a replay, stock and batches change once | Written; CI pending |
+| Re-run also double-booked revenue (random `txId`) | case 14: sale doc ids are deterministic and not duplicated by a replay | Written; CI pending |
 | A rejection must leave no trace so the same key can be retried | `operationLogic.test.js` "a rejected requestId can be retried later with a re-planned payload" | **Verified** |
 | A timeout must be a retryable failure, not a dropped write and not "offline" | `tst_Gateway_send.qml` | Planned |
 | Two due outbox items on one key no longer race in one drain | `tst_OutboxStore.qml` `dueItems` case | Planned |
-| Existing completion behaviour: guard, out-of-stock message, drift repair end state | `tst_DataModel_completeOrderReentrancy.qml` (must stay green) plus the planner's repair-batch cases | Planned |
+| Existing completion behaviour: guard, out-of-stock message, drift repair end state | `tst_DataModel_completeOrderReentrancy.qml` (kept green — its "still in flight" setup was updated to the online+awaiting convention this rewrite requires; see the note above) plus the planner's repair-batch cases | Written; CI pending |
+| **New (design check-in decision 3):** reopening a still-open completion must not let its late answer re-apply the original sale | case 16 above | Written; CI pending |
 
 ## 4. Firestore rules test coverage
 
@@ -113,6 +143,7 @@ quantities. Build only when Taher asks.
 - [ ] Order with a repair batch on one line, then reopen: reversal behaves as before.
 - [ ] An order with an unusually large number of lines (find the limit) shows the "too large" message instead of hanging.
 - [ ] Double-tap Complete quickly: one completion.
+- [ ] **New (design check-in decision 3):** offline, complete an order (shows "Saved, syncing…"); before turning the network back on, reopen it. Then turn the network on. The order must stay reopened — it must not silently flip back to `completed` or deduct stock a second time once the original (now-superseded) request finally reaches the server.
 
 ### Affected Areas
 
@@ -120,11 +151,11 @@ quantities. Build only when Taher asks.
 |---|---|---|
 | `functions/lib/operationLogic.js`, `functions/index.js` | Node, 100% for the new module | Firebase console: `audit_log` has a marker (`action: "operation"`) plus one entry per op; a replay adds nothing |
 | `qml/helper/CompletionPlan.js`, `OperationKeys.js`, `SendPolicy.js`, `StuckWrites.js` | headless QML tests (logic verified in Node) | indirectly, via every scenario above |
-| `qml/model/OutboxStore.qml` | planned QML tests | queued completions survive relaunch; nothing sends out of order on the same order |
-| `qml/model/Gateway.qml` | planned, via fake XHR | timeouts, "not syncing" line, await behaviour: on-device only for real network timing |
-| `qml/model/DataModel.qml` (`_tryCompleteOrder`) | planned QML tests | all scenarios above |
-| Inventory/StockBatch/Orders/Transaction stores | planned QML tests | stock, batches, order list, history stay consistent after each scenario |
-| `_completeImportedOrder`, `_reverseCompletedOrder`, `_tryAdjustOrder` | unchanged, existing tests | smoke test import, reopen and a return after completion: they must behave as before |
+| `qml/model/OutboxStore.qml` | verified in CI (existing suite) | queued completions survive relaunch; nothing sends out of order on the same order |
+| `qml/model/Gateway.qml` | verified in CI (existing suite) | timeouts, "not syncing" line, await behaviour: on-device only for real network timing |
+| `qml/model/DataModel.qml` (`_tryCompleteOrder`, `_reverseCompletedOrder`) | `tests/tst_DataModel_completeOrderAtomic.qml` (16 cases) + updated `tst_DataModel_completeOrderReentrancy.qml`, written this session, CI pending | all scenarios above, plus: reopen an order during the "Saved, syncing…" window (airplane mode) and confirm it doesn't later flip back to completed/re-deduct stock when connectivity returns |
+| Inventory/StockBatch/Orders/Transaction stores | verified in CI (Task 9, PR #87) | stock, batches, order list, history stay consistent after each scenario |
+| `_completeImportedOrder`, `_tryAdjustOrder` | unchanged, existing tests | smoke test import and a return after completion: they must behave as before |
 
 ### Regression Tests (manual counterpart)
 

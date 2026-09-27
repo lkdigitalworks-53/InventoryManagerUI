@@ -3576,3 +3576,33 @@ deleted product.
 lookup's contract needs an explicit existence signal (`null`/`undefined` vs. `""`) before the fallback logic can
 be written correctly — a map's `hasOwnProperty` gives this for free; a function usually doesn't, and needs its
 callers checked/updated everywhere it's constructed.
+
+## Skill 74: Simulating a Gateway.recordOperation server answer in a test needs `OutboxStore.markSent()` too, not just `Gateway._finishOperation()` — or a re-plan under the same key silently coalesces into the first, already-rejected payload
+
+**Files**: `tests/tst_DataModel_completeOrderAtomic.qml` (new, C-3 Phase 3 Task 10) — found while writing the
+re-plan test cases (4, 5, 8, 10), before they had a chance to be flaky in CI, by re-reading `Gateway.qml`'s
+real `_sendOperation` rather than assuming `tst_Gateway.qml`'s own `_finishOperation({requestId, opType},
+result)` pattern was the complete story for a *sequence* of answers under one key.
+
+`tst_Gateway.qml`'s own `recordOperation` tests call `Gateway._finishOperation({requestId, opType}, result)`
+directly to simulate a server answer, since a real XHR round trip can't run headlessly here. That's the right
+technique for a *single* answer. Task 10's re-plan logic needed something those tests never exercise: a
+*second* `recordOperation` call for the SAME key, after the first was rejected — and `OutboxStore`'s own
+"same key twice" behaviour (`tst_OutboxStore.qml`, `enqueueOperation`) is first-payload-wins: if an item with
+that `requestId` is still sitting in `OutboxStore.items`, a second `enqueueOperation` call keeps the ORIGINAL
+ops, silently dropping the corrected re-plan. In production this never bites, because `_sendOperation`'s real
+XHR completion handler calls `OutboxStore.markSent(item.requestId)` *before* calling `_finishOperation` —
+win or lose, the item is gone from the outbox by the time anything could re-enqueue under that key.
+`_finishOperation` called directly, on its own, does not do this — it only fires the callback/signal, so a
+test that calls just `_finishOperation` leaves the stale item sitting in `OutboxStore.items`, and the next
+`recordOperation` call for the same key coalesces into it instead of sending the new plan.
+
+**The fix, and the generalizable pattern**: any test that simulates a *terminal* Gateway answer (applied or a
+permanent rejection — not a "queued" callback, which isn't an answer at all) for an operation that might be
+re-sent under the same key must reproduce BOTH of `_sendOperation`'s side effects, in the same order:
+`OutboxStore.markSent(key)` then `Gateway._finishOperation({requestId: key, opType}, result)`. Wrap this in
+one helper (`_answer()` in the new test file) rather than inlining both calls at every call site — a single
+`_finishOperation()` call without the `markSent()` companion will pass for a test that only checks the FIRST
+answer's effects and only reveal itself on a re-plan's *second* request, which is exactly the kind of
+one-call-later bug this SKILLS.md file already has a name for (Skill 71, same shape, different layer: a
+convenience helper that looks complete for the single-shot case quietly isn't for the sequential one).
