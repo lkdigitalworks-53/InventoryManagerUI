@@ -826,6 +826,7 @@ App {
     Connections {
         target: PhotoQueue
         function onPhotoUploaded(productId, photoId, photoIds) {
+            console.log("[PhotoQueue] upload confirmed", productId, photoId, "photoIds:", photoIds.length)
             InventoryStore.applyPhotoIds(productId, photoIds, photoId, "add")
         }
         function onPhotoUploadFailed(productId, photoId, status) {

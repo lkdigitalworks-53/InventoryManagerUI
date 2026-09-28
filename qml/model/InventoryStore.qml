@@ -161,7 +161,8 @@ QtObject {
                 // request.
                 _fetchFromFirebase();
             } else {
-                console.log("[InventoryStore] Synced", products.length, "products from Firestore (all pages)");
+                console.log("[InventoryStore] Synced", products.length, "products from Firestore (all pages),",
+                            products.filter(function(p) { return p.photoIds.length > 0 }).length, "with photoIds");
             }
         });
     }

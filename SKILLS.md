@@ -3767,3 +3767,19 @@ theorising about why an image doesn't render — it turns "no cover" into a URL 
 **The check:** for every `delegate:` with a `required property`, confirm every `index`/`modelData` read in its body is
 declared; for every `RowLayout` fed by a `Repeater` over user data, name the maximum count and the overflow story;
 for every `property var x` assigned once in an `openFor()`, name the signal that refreshes it.
+
+
+## Skill 77: A test that asserts "nothing was enqueued" must name WHAT must not be enqueued — a ledger row is a legitimate second write
+
+**Found in CI, PR #84, 2026-09-28.** `test_applyPhotoIds_never_enqueues_a_gateway_mutation` asserted
+`OutboxStore.pendingCount === 0`, but `applyPhotoIds(..., "add")` also records a `photo_change` ledger row
+(`TransactionStore.recordPhotoChange` -> `Gateway.recordMutation("transaction", ...)`), so pendingCount is 1. The
+production code was right; the test's claim was too broad. It also cost a CI round because the test was written
+without tracing what the function calls.
+
+**Lesson.** Assert the specific entity (`OutboxStore.hasPendingForEntity("inventory", id)` false) plus the exact
+expected count of the intended side effect (1 ledger row; 0 when no `changedPhotoId`). Before writing a "never
+writes" test, grep the function body for every `Gateway.`/`TransactionStore.`/`ActivityLog.` call it reaches.
+
+**The check:** for each "nothing enqueued" assertion, list the side-effect calls of the function under test and
+confirm the asserted count equals the sum of the intended ones.

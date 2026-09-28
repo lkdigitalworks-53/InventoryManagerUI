@@ -166,10 +166,19 @@ TestCase {
         compare(JSON.stringify(InventoryStore.photoIdsFor("P1")), '["a"]', "list still applied")
     }
 
-    function test_applyPhotoIds_never_enqueues_a_gateway_mutation() {
-        // Server already wrote photoIds; a client mutation would CAS-conflict against it.
+    function test_applyPhotoIds_never_enqueues_an_inventory_mutation() {
+        // Server already wrote photoIds; an inventory mutation would CAS-conflict against it.
+        // The only thing an "add" may enqueue is the photo_change LEDGER row (entity "transaction",
+        // TransactionStore.recordPhotoChange -> Gateway.recordMutation) -- so pendingCount is 1, not 0.
         InventoryStore.products = [_p("P1", [])]
         InventoryStore.applyPhotoIds("P1", ["a"], "a", "add")
+        verify(!OutboxStore.hasPendingForEntity("inventory", "P1"), "no inventory mutation queued")
+        compare(OutboxStore.pendingCount, 1, "exactly one ledger row")
+    }
+
+    function test_applyPhotoIds_without_changed_id_enqueues_nothing() {
+        InventoryStore.products = [_p("P1", [])]
+        InventoryStore.applyPhotoIds("P1", ["a"], "", "")
         compare(OutboxStore.pendingCount, 0)
     }
 

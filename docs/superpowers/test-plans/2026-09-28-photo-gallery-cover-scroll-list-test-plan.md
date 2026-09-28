@@ -63,3 +63,8 @@ No rules, function or e2e change. Regression: existing `tst_PhotoQueue`, `tst_Ph
 - [ ] Launch, open Inventory, capture the log. Send any `[AvatarBadge] image failed to load: <url>` line. Open that
       URL in a browser: 404 -> object/path/env mismatch; 403 -> Storage rules not deployed; loads fine -> not E1.
 - [ ] No such line and still no cover -> E2; send a `console.log(JSON.stringify(product.photoIds))` result.
+- [ ] Round 3 (owner saw NO `photoDownloadUrl` log at all => the list's products have empty `photoIds`). Send:
+      `[InventoryStore] Synced N products ..., M with photoIds` (M=0 => Firestore docs have no photoIds => no upload
+      ever confirmed) and, after adding a photo, `[PhotoQueue] upload confirmed ...` (absent => `uploadProductPhoto`
+      not deployed/failing; look for `[PhotoQueue] upload failed ... <status>`). In the Firebase console check
+      `tenants/{t}/inventory/{p}.photoIds` and Storage `{env}/tenants/{t}/products/{p}/`.

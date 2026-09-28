@@ -1,3 +1,35 @@
+# CHECKPOINT — 2026-09-28 (round 3) PR #84: CI red test + list-cover (no thumbnail) investigation
+
+**Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes in the SAME PR per owner).
+**Commit identity:** `Taher (via Claude session) <taher.lkdw@gmail.com>` (owner instruction this session).
+**Skills invoked:** superpowers:systematic-debugging, qt-development-skills:qt-qml, qt-development-skills:qt-ui-design, ponytail:ponytail (+ caveman chat style).
+**Rules:** no build/run, no Qt tooling in sandbox, CI is the signal; push without asking; PAT only in push URL — **owner: rotate it, it sits in plaintext in chat.**
+
+## Findings
+
+| # | Symptom | Root cause | Status |
+|---|---|---|---|
+| C1 | CI `QML Tests` red: `InventoryStore_photoIds::test_applyPhotoIds_never_enqueues_a_gateway_mutation` | PROVEN from code: `applyPhotoIds(...,"add")` -> `TransactionStore.recordPhotoChange` -> `_push` -> `Gateway.recordMutation("transaction",...)` => pendingCount 1. Test asserted 0. Prod code right, test wrong | FIXED (test), CI decides |
+| R3 | Inventory list shows no cover thumbnail; owner's log inside the photo-URL function never prints | Function is only reached when `card.product.photoIds` is a non-empty array. Traced read path (Firestore decode -> `_normalizeProducts` -> `products` -> `_filteredProducts` -> Repeater -> `card.product`) and every `_clone()` write path: NONE drops photoIds. So list products have empty photoIds => most likely no upload was ever CONFIRMED (functions `uploadProductPhoto` not deployed / failing; gallery was showing PhotoQueue local copies). NOT PROVEN | OPEN — diagnostics added, needs owner's log lines (test plan §4 "Bug 3 diagnosis", Round 3) |
+
+Diagnostics added: `[InventoryStore] Synced N products ..., M with photoIds` and `[PhotoQueue] upload confirmed <pid> <photoId> photoIds: n`.
+
+## Suspected, UNVERIFIED (separate from this PR's bugs)
+`InventoryStore._normalizeRecord` and `_mergeRecord` (bulk import) have no `photoIds` key; an import that overwrites an existing product may send a whole-record CAS `after` without photoIds and wipe them. Verify before touching.
+
+## Steps
+1. Read memory, 4 skills; cloned; checked out PR #84 head `c56801f`.
+2. CI via API: only `QML Tests` red, 1 test (PR comment).
+3. Fixed test; added 1 extra test (no changedPhotoId => 0 enqueued).
+4. Added 2 diagnostic logs; test plan Round 3 checklist; Skill 77.
+
+## Next steps (resume here)
+1. Wait for CI on the new push.
+2. Owner: run app, send the two log lines above + Firebase console check (`photoIds` on the inventory doc, Storage folder). If M=0 / no "upload confirmed": check functions deployment + `[PhotoQueue] upload failed` status, NOT the list UI.
+3. If M>0 but no cover: then it IS the list binding; next hypothesis is `Array.isArray` on modelData arrays in Repeater — add log in `ProductCard`.
+
+---
+
 # CHECKPOINT — 2026-09-28 (round 2) PR #84 device-test bugs: Cover label, dialog refresh, strip overflow, list cover
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes go in the SAME PR).
