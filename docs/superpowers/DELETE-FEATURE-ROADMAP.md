@@ -27,7 +27,13 @@ Retry/Discard for a stuck write, and server-side error classification. Details i
 **Status 2026-09-28: decided, next up.** Remaining scope is (C) server-side error classification, then (B) park +
 Retry/Discard. Taher chose **C first** (client still never drops), Discard = **re-pull from Firestore**, parked flag
 **persisted**, UI = **tappable header caption -> dialog**. Trace, trade-offs and decisions:
-`docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`. No code yet.
+`docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`.
+
+**Status 2026-09-28 (later): part C implemented, PR pending review.** Taher chose option B for the signal: status stays
+500, body `error` = `write-rejected` / `write-unavailable` / `write-failed` (distinct 4xx would make the delta/operation
+senders drop the write, Skill 74). Client labels rejected stuck writes in the header caption; nothing dropped.
+Design: `docs/superpowers/specs/2026-09-28-gateway-write-error-classification-design.md`. **Next: (B) park +
+Retry/Discard.**
 
 ## 2. Staff delete has no row-level button — MEDIUM
 

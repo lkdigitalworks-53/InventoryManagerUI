@@ -24,6 +24,8 @@ App {
     // Queued writes stuck behind a server-side failure (Gateway.stuckCount).
     // GlassHeader reads it as app.syncStuckCount, the same way it reads app.isOnline.
     readonly property int syncStuckCount: Gateway.stuckCount
+    // Of those, the ones the server rejected outright (Gateway.stuckTerminalCount).
+    readonly property int syncStuckTerminalCount: Gateway.stuckTerminalCount
 
     // Consume the Android Back event so it does NOT propagate to the OS (which
     // would background/exit the app). "AutoAccept" = mark the event accepted;

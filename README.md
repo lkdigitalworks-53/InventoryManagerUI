@@ -834,6 +834,16 @@ outbox. This only reports: retry, backoff and dropping are untouched, so local s
 the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
+**Update 2026-09-28 (server write-error classification, roadmap item 1 part C):** every failed Firestore write is
+now classified by `functions/lib/writeError.js` (`classifyWriteError`) into `write-rejected` (invalid-argument,
+not-found, already-exists, permission-denied, failed-precondition: retrying can never succeed), `write-unavailable`
+(deadline-exceeded, resource-exhausted, aborted, internal, unavailable) or `write-failed` (anything else). The HTTP
+status stays 500 on purpose: the delta and operation senders drop a write on any 4xx (SKILLS Skill 74). `Gateway`
+reads `body.error` only to label: `StuckWrites` tracks the server's latest answer per write, `Gateway.stuckTerminalCount`
+feeds `syncStuckTerminalCount` in `Main.qml`, and `GlassHeader` shows "N change(s) rejected by the server. Still
+retrying." Retry, backoff and dropping are unchanged. Test plan:
+`docs/superpowers/test-plans/2026-09-28-gateway-write-error-classification-test-plan.md`.
+
 **Update 2026-09-21 (C-3 phase 2, pure helpers):** added `qml/helper/SendPolicy.js` (10s foreground / 30s
 background timeout starting values, not measured, and +-20% retry jitter), `OperationKeys.js`
 (deterministic operation key and ids) and `CompletionPlan.js` (the pure planner that turns an order
