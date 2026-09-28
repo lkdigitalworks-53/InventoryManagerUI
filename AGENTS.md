@@ -58,7 +58,7 @@ machine, not this chat.
 | Tenant workspace creation & member invitation | ✅ Done |
 | Orders CRUD + delete + auto-approve | ✅ Done — delete row-UI landed via `feature/product-order-delete-ui` (the backend logic pre-dated it; the button didn't exist until this branch — see Skill 58) |
 | Inventory CRUD + delete | ✅ Done — same as above, row-level delete button added via `feature/product-order-delete-ui` |
-| Staff CRUD + delete + credential provisioning | ⚠️ Delete logic + confirm-dialog wiring exist; row-level button still missing (identical gap to what Inventory/Orders had before `feature/product-order-delete-ui` — same fix, not yet done, see `docs/superpowers/KNOWN-ISSUES.md`) |
+| Staff CRUD + delete + credential provisioning | ⚠️ Delete logic + confirm-dialog wiring exist; row-level button still missing (identical gap to what Inventory/Orders had before `feature/product-order-delete-ui` — same fix, not yet done, see `docs/superpowers/KNOWN-ISSUES.md`). Credential-provisioning failures were completely silent (staff roster saved, but Team Members never got the person and nothing said why) — fixed 2026-09-27, see SKILLS.md Skill 72; underlying reason provisioning was failing for Taher's specific repro is still unconfirmed pending on-device retest. |
 | Sales analytics from live completed orders | ✅ Done |
 | Analysis page — 6 view modes (Value/Purchased/Current/Revenue/Sold/Profit) | ✅ Done |
 | Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
