@@ -1,3 +1,53 @@
+# CHECKPOINT — 2026-09-28 device-test bug-fix round on PR #84 (product photos) — IN PROGRESS
+
+**Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes go in the SAME PR per owner).
+**Commit identity:** `tsadmin <tsadmin@gmail.com>`. Push after every step; PAT is supplied per session by the
+owner in chat and is NEVER written to the repo (owner was told to rotate it, it sits in plaintext in chat).
+**Standing rules this session:** no build/run, no Qt tooling in sandbox (CI is the signal), tests + test plan +
+docs per change, be an honest advisor, caveman-terse chat replies.
+
+## Bugs reported on device (owner, PR #84)
+
+| # | Symptom | Status |
+|---|---|---|
+| B1 | Add product w/ photo, reopen: spinner forever; log `Cannot open: file://file///C:/...photo-....jpg` | root cause found |
+| B2 | Nothing in Firebase Storage | same root cause as B1/B3 (XHR never sent) |
+| B3 | Photo on another product fails instantly, Retry/Discard | same root cause |
+| B4 | Retry/Discard inside the 72px tile, too cramped | UI fix planned |
+| B5 | Log: `[PhotoQueue] upload failed ... 400` | same root cause (local read failure reported as terminal 400) |
+| B6 | After discard + re-add: huge gap between tile and + | root cause NOT proven yet |
+
+## Root causes (systematic-debugging Phase 1, from code — nothing was run)
+
+1. `ImageProcessor::persistLocalCopy` returns `QUrl::fromLocalFile(...).toString()` = `file:///C:/...`. That URL is
+   stored verbatim as `mainFilePath`/`thumbFilePath` in `PhotoQueue`. Consumers assume a bare path:
+   - `ProductPhotoGallery`: `"file://" + mainFilePath` -> `file://file:///C:/..` (B1 log line).
+   - `PhotoQueue._upload`: `NativeFile.readFileBase64(url)` -> `QFile("file:///..")` does not exist -> `""` ->
+     "persisted file is gone" branch -> terminal status 400, XHR never sent (B2, B3, B5).
+   Persisted queue items on the owner's device already hold the URL form -> fix must tolerate both forms.
+2. `PhotoQueue` never re-drains when the product's own OutboxStore create lands. `_reschedule()` arms a one-shot
+   timer; `drainNow()` finds the item gated (Trap 1) and does nothing; nothing re-arms. Item sits `enqueued`
+   (spinner) until app restart / online flip (B1 spinner).
+
+## Steps (in order)
+
+1. Cloned repo, checked out PR #84 branch (up to date with `main` @ `e83cc6b`), read skills + code.
+2. Root-caused 1 and 2 above. B6 (gap) not provable by reading code.
+3. (this commit) checkpoint written.
+
+## Next steps (resume here)
+
+- S-A `PhotoUrl.js`: `toLocalPath` / `toFileUrl` (+ Node parity mirror + QML + Node tests).
+- S-B `PhotoQueue._upload` reads via `toLocalPath`; gallery source via `toFileUrl`.
+- S-C `PhotoQueue`: re-arm drain on `OutboxStore.revision` change (property watcher, NOT Connections — Skill 74).
+- S-D Gallery: failed tile actions moved OUTSIDE the tile, real touch targets, top-aligned deterministic layout.
+- S-E Test plan `docs/superpowers/test-plans/2026-09-28-photo-device-bugfix-test-plan.md` + README index row,
+  SKILLS.md new Skill, README changelog. Push, then wait for CI.
+
+---
+
+# (previous checkpoint below — original PR #84 feature work)
+
 # CHECKPOINT — Product photos in Firebase Storage
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage`, PR #84, rebased onto `main` @
