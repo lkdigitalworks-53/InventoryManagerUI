@@ -107,7 +107,7 @@ TestCase {
             { productId: "P1", name: "Widget", price: 60 },
             1, [{ batchId: "B1", supplierId: "S1", qtyConsumed: -1, unitCost: 40 }],
             "damaged", "opened", "")
-        var ret = TransactionStore.entries[TransactionStore.entries.length - 1]
+        var ret = TransactionStore.entries[0]  // _push unshifts: newest row is index 0
         compare(ret.kind, "return")
         compare(ret.category, "Hardware", "reuses the ORIGINAL sale's stamped category, not a live re-lookup")
     }
@@ -142,7 +142,7 @@ TestCase {
             { orderId: "ORD-1", orderChannel: "online", staffId: "ST1" },
             { productId: "P1", name: "Widget", price: 60 },
             1, 5, "discount", "price cut")
-        var adj = TransactionStore.entries[TransactionStore.entries.length - 1]
+        var adj = TransactionStore.entries[0]  // _push unshifts: newest row is index 0
         compare(adj.kind, "price_adjust")
         compare(adj.category, "Hardware")
     }

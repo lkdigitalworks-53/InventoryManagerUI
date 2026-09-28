@@ -97,3 +97,9 @@
   intentionally NOT fixed — documented in `KNOWN-ISSUES.md`, flagged for Taher's awareness, not a
   silent gap.
 - Rotate the GitHub PAT pasted into this chat (flagged, not resolved by me — Taher's action).
+20. CI on the rebased branch (PR #88): 1155/1157 QML, everything else green. Both failures were in this
+    branch's own new tests (`test_recordReturn_...` / `test_recordPriceAdjust_stamps_category_from_original_sale_...`).
+    Root cause: **test bug, not a store bug** — the tests read `entries[entries.length - 1]` for the new row, but
+    `TransactionStore._push` does `arr.unshift(doc)` (newest first), so they were reading the *seeded sale* row and
+    the `kind`/`category` compares failed. Fixed to `entries[0]`. CI log blob is not reachable from the sandbox
+    (403), so the cause was found by reading `_push` and the two tests, and needs CI to confirm.
