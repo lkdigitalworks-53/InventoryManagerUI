@@ -26,7 +26,7 @@
 4. Traced code (read-only): `Gateway._send/_sendBatch/_sendDelta/_sendOperation`, `OutboxStore.markFailed`, `qml/helper/StuckWrites.js`, `functions/index.js` `recordMutation` catch, store rollback hooks.
 5. Wrote options + questions doc: `docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`.
 6. Roadmap item 1 got a dated status line pointing at the options doc.
-7. Committed and pushed; opened draft PR (docs only).
+7. Committed, pushed, opened draft PR #92 (docs only). Awaiting Taher answers Q1-Q5.
 
 ## Findings that shape the decision
 
