@@ -1,4 +1,4 @@
-# CHECKPOINT — 2026-09-28: DELETE-FEATURE-ROADMAP next-item pick — item 1 remainder (stuck-write Retry/Discard + server error classification) — DECISIONS NEEDED, no code yet
+# CHECKPOINT — 2026-09-28: DELETE-FEATURE-ROADMAP next-item pick — item 1 remainder (stuck-write Retry/Discard + server error classification) — DECISIONS MADE, docs phase complete, no code yet
 
 **Session date:** 2026-09-28
 **Branch:** `docs/2026-09-28-gateway-stuck-write-retry-discard-options`, off `main` @ `e83cc6b` (PR #88 merged).
@@ -26,7 +26,8 @@
 4. Traced code (read-only): `Gateway._send/_sendBatch/_sendDelta/_sendOperation`, `OutboxStore.markFailed`, `qml/helper/StuckWrites.js`, `functions/index.js` `recordMutation` catch, store rollback hooks.
 5. Wrote options + questions doc: `docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`.
 6. Roadmap item 1 got a dated status line pointing at the options doc.
-7. Committed, pushed, opened draft PR #92 (docs only). Awaiting Taher answers Q1-Q5.
+7. Committed, pushed, opened draft PR #92 (docs only).
+8. Taher answered Q1-Q5. Recorded decisions in options doc, this file, roadmap, memory. Marked PR #92 ready and merged it (Taher asked).
 
 ## Findings that shape the decision
 
@@ -35,15 +36,23 @@
 - Discard needs a rollback story per store. Hooks that exist today: `mutationConflicted` handled in 5 stores (Supplier, Orders, StockBatch, Staff, Inventory); `batchMutationFailedPermanently` handled in 3 (Supplier, Orders, Inventory). Party / Category / OrderChannel and the operation sender have **no** rollback hook.
 - Consequence: counter-only "stuck" (heuristic) is unsafe to hang a Discard button on — a 3-minute outage would offer to destroy valid writes. That is the argument for classifying on the server first.
 
-## Open decisions for Taher (see options doc for trade-offs and my recommendation)
+## Decisions (Taher, 2026-09-28) — also in the options doc
 
-| # | Question |
-|---|---|
-| Q1 | Sequence: C (server classification, client still never drops) first, then B (Retry/Discard) in a later session? Or B only? Or both in one PR? |
-| Q2 | Discard semantics: roll back local state to the item's `before`, or drop + re-pull from Firestore? |
-| Q3 | Persist the "parked" flag in the outbox (survives relaunch) or keep it in memory? |
-| Q4 | Where does Retry/Discard live: tap on the existing header caption -> simple dialog, or a new Sync Issues page? |
-| Q5 | Item 4: is a Storage plan active now, and what is the state of the photos branch? |
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Sequence | C first (server classification, client never drops); B later |
+| Q2 | Discard | Re-pull from Firestore |
+| Q3 | Parked flag | Persisted, survives relaunch |
+| Q4 | UI | Tappable header caption -> dialog |
+| Q5 | Item 4 | Storage plan active; photos branch works, merges in a couple of days; queue item 4 as next priority (on-device check) |
+
+## NEXT SESSION — start here
+
+1. Fresh clone, new branch off `main`, e.g. `fix/2026-09-29-gateway-write-error-classification`.
+2. Scope = "If Option 1 is chosen" sketch in the options doc: pure `classifyWriteError(e)` in `functions/lib/`, wire the five `write-failed` catch sites in `functions/index.js`, Node tests (real `npm test` works in sandbox: `cd functions && npm ci && npm test`, baseline 251 passing), client reads new statuses in `Gateway.qml` / `StuckWrites.js` with a `terminal` flag, `GlassHeader` caption text by flag.
+3. Client must still never drop a write in this PR.
+4. Needs `superpowers:writing-plans` first (brainstorming terminal state), then implement, test plan (Skill 49 template), `SKILLS.md`, `KNOWN-ISSUES.md`, roadmap status.
+5. Then B. Then item 4 when the photos branch has merged.
 
 ## Not done
 

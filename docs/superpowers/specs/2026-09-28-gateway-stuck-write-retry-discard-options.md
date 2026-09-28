@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-28
 **Branch / PR:** `docs/2026-09-28-gateway-stuck-write-retry-discard-options` (docs only, draft)
-**Status:** NOT approved. Needs Taher's answers to Q1-Q5 before any code.
+**Status:** DECIDED 2026-09-28 (Taher answered Q1-Q5, see Decisions). Design approved at option level; per-PR detail still needs a plan before code.
 **Source:** `docs/superpowers/DELETE-FEATURE-ROADMAP.md` item 1 remainder; follow-ups B and C in
 `docs/superpowers/KNOWN-ISSUES.md` ("Gateway._send terminal-failure black hole").
 **Builds on:** `2026-09-19-gateway-stuck-write-indicator-design.md` (PR #75, merged).
@@ -87,6 +87,23 @@ work. Cost: a dialog is cramped if 20 writes are stuck. Do you expect that?
 **Q5. Item 4 (photo cleanup on delete).** Is a Storage plan active now? What is the state of
 `feature/2026-09-21-product-photos-firebase-storage`? This session cannot verify either. If Storage is live,
 item 4 becomes a pure on-device check for you, not code.
+
+## Decisions (Taher, 2026-09-28)
+
+| # | Question | Chosen | Consequence |
+|---|---|---|---|
+| Q1 | Sequence | **C first** (server classification, client never drops), B in a later session | Next PR = Option 1 sketch below. No `parked` field, no Discard yet. |
+| Q2 | Discard semantics | **Re-pull from Firestore** | B needs a per-store refresh path + online device. A create that never reached the server has nothing to pull: needs its own handling (plain removal). Party / Category / OrderChannel need the refresh path built. |
+| Q3 | Persist "parked" | **Yes, survives relaunch** | B adds a persisted outbox field. Old queued items must load without it. |
+| Q4 | UI entry | **Tappable header caption -> dialog** | No new page. Watch the many-stuck-writes case in B. |
+| Q5 | Item 4 | **Storage plan is active. Photos branch (`feature/2026-09-21-product-photos-firebase-storage`) works, merges in a couple of days.** | Item 4 is now an on-device check for Taher, gated on that merge. Not code for this session. |
+
+Order of work: (1) C now, (2) B next, (3) item 4 verification once the photos branch merges. Taher said
+"include it for next priority item": read as item 4 joining the queue behind C and B, and pulled forward the
+moment the photos branch lands, since it is a check, not a build. Flag if that reading is wrong.
+
+Open detail for B, not blocking C: Q2's re-pull plus an in-memory-only refresh path on a device that is
+offline at Discard time. Proposed: Discard is disabled offline. Decide in the B session.
 
 ## Out of scope here
 
