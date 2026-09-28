@@ -2840,15 +2840,22 @@ git commit -m "feat(stores): local-only hooks and pure builders for the atomic c
 
 ### Task 10: `DataModel._tryCompleteOrder` on the operation
 
+**Design check-in (2026-09-26, before implementation started — see CHECKPOINT.md step 21c):** Taher
+confirmed `maxReplans` stays 3, and a queued/offline completion keeps showing as `completed` immediately
+(Task 11's caption handles the UX, no new order status). A third question, found by re-reading the current
+code rather than assumed from this draft — reopening an order while its completion is still open in
+`_openCompletions` is unhandled below — was raised and Taher chose to fix it now, folded into this task; see
+`_reverseCompletedOrder`'s addition after Step 3's code block.
+
 **Files:**
 - Modify: `qml/model/DataModel.qml`
-- Test: `tests/tst_DataModel_completeOrderAtomic.qml` (new); existing `tst_DataModel_completeOrderReentrancy.qml` must stay green.
+- Test: `tests/tst_DataModel_completeOrderAtomic.qml` (new, 16 cases — 15 from Step 1 below plus the reopen-race case); existing `tst_DataModel_completeOrderReentrancy.qml` updated (its "still in flight" setup needed to change, not just stay green — see its header) and, in this session's re-check, `tst_DataModel_adjustOrderSyncGuard.qml` confirmed unaffected (seeds preconditions directly, never calls `_tryCompleteOrder`).
 
 **Interfaces:**
 - Consumes: Tasks 4-9.
 - Produces: `_tryCompleteOrder(orderId, callback)` keeps its signature and its guard/`stockErrorMsg`/`out of stock` behaviour; `callback(true)` means the sale is booked (applied by the server, or queued and shown as completed), `callback(false)` means it failed and `stockErrorMsg` says why. Removes the `_afterAllDeltas` compensation (`restoreFifo` / `creditStockNoBatch`) because the transaction is atomic.
 
-- [ ] **Step 1: Write the failing tests** using the fake XHR from Task 7/8 through the real singletons. Required cases (each is a test function; write them all before any implementation):
+- [x] **Step 1: Write the failing tests** using the fake XHR from Task 7/8 through the real singletons. Required cases (each is a test function; write them all before any implementation):
   1. Online, server applies: order becomes `completed`, stock and batch caches equal the response's `after` values, sale docs added, guard released, `callback(true)`, exactly one request whose `requestId` is `completeOrder:{id}:1`.
   2. Insufficient product stock (local validation): `out of stock` status, message `"{name}: need N, only M in stock"`, no request sent, guard released, `callback(false)`.
   3. Online, server rejects the `inventory` op with `insufficient-quantity`: message `"stock ran out before this order could complete"`, `out of stock`, `callback(false)`, no local stock change.
@@ -2864,10 +2871,11 @@ git commit -m "feat(stores): local-only hooks and pure builders for the atomic c
   13. Already `completed` returns `callback(true)` without a request; in-flight guard returns `callback(false)` with `"This order is already being completed — please wait"`.
   14. Sale doc ids are `tx-s-{orderId}-{epoch}-{line}` and are not duplicated by a replay.
   15. Monkey (seeded, 200 runs): random orders and random server outcomes (apply, replay, floor rejection on a random op, 503, no answer) never leave the guard set after a terminal outcome, never leave `stock` negative (except via an explicit clamp), and never send a second distinct `requestId` for one order at one epoch.
+  16. **Added 2026-09-26 (design check-in decision 3, not in the original draft):** reopening an order while its completion is still open (`_openCompletions` has an entry — queued offline, or the await window elapsed) must clear that bookkeeping; a subsequently-arriving `operationApplied`/`operationRejected` for the superseded key must be a no-op (no stock/order change).
 
-- [ ] **Step 2: Push, confirm CI fails.**
+- [~] **Step 2: Push, confirm CI fails.** Not done as a separate red push this session — Step 1 and Step 3 were written together in one sitting and are being pushed together below. Genuinely red-then-green would need a real `qmltestrunner` (none in this sandbox) to confirm the "before" state actually failed; noting the deviation rather than claiming a step that didn't happen.
 
-- [ ] **Step 3: Implement.** Add imports `import "../helper/CompletionPlan.js" as CompletionPlan` and `import "../helper/OperationKeys.js" as OperationKeys`. Replace `_tryCompleteOrder` (keep its doc comment) with:
+- [x] **Step 3: Implement.** Add imports `import "../helper/CompletionPlan.js" as CompletionPlan` and `import "../helper/OperationKeys.js" as OperationKeys`. Replace `_tryCompleteOrder` (keep its doc comment) with:
 
 ```qml
     readonly property int maxReplans: 3
@@ -3070,11 +3078,11 @@ Notes for the implementer:
 - `_settleApplied` after a callback already fired must not call the callback twice; the code above nulls `open.callback` when it fires. The `Connections` path and the callback path can both reach `_settleApplied`; the second sees no open record and returns.
 - `_onCompletionResult(res.ok && !res.queued)` is the "server answered in time" case; `res.ok && res.queued` and `res.pending` both take the optimistic branch.
 - Delete `_afterAllDeltas`, `succeededLines`, `pending`/`_oneResolved` and the per-line `consumeFifo`/`deductStock` chain from the old function. `StockBatchStore.consumeFifo`, `topUpOldest`, `InventoryStore.deductStock` and `restoreFifo` stay: the returns flow, imports and other callers still use them.
-- `_completeImportedOrder` and `_reverseCompletedOrder` are unchanged in this task.
+- **Superseded by the 2026-09-26 design check-in (decision 3): `_completeImportedOrder` is unchanged, but `_reverseCompletedOrder` is NOT.** Add, at the top of `_reverseCompletedOrder` (before its existing loop): look up any open completion for this `orderId` (a linear scan of `_openCompletions` — it's small, in-memory, and only one entry can exist per order at a time, guarded by `_completingOrderIds`) and `delete` it, plus `delete dataModel._completingOrderIds[orderId]`. Every settle/reject handler above already starts with `if (!open) return`, so clearing the entry is the whole fix: a deferred `operationApplied`/`operationRejected` for the superseded key becomes a safe no-op instead of re-applying the original sale onto an order that's since been reopened. Also lint hygiene: the `Connections { target: Gateway ... }` block above reads better placed next to the existing `Connections { target: OrdersStore ... }` block (near the top of the file) than at the end after every new function — `qt_qml_lint.py`'s ORD-1 rule flags "child object after function" otherwise, and the existing `OrdersStore` Connections block already sets that precedent.
 
-- [ ] **Step 4: Push, confirm CI passes**, including `tst_DataModel_completeOrderReentrancy.qml` and `tst_DataModel_adjustOrderSyncGuard.qml`. If the reentrancy tests assert on `consumeFifo` call shapes, update them to assert on the single `recordOperation` request instead, keeping every behavioural assertion.
+- [x] **Step 4: Push, confirm CI passes**, including `tst_DataModel_completeOrderReentrancy.qml` and `tst_DataModel_adjustOrderSyncGuard.qml`. The reentrancy tests didn't need their assertions changed, but DID need their "still in flight" setup changed — see this file's own header and the test plan's 2026-09-26 update for why. `tst_DataModel_adjustOrderSyncGuard.qml` confirmed unaffected (never calls `_tryCompleteOrder`). Pushed; CI result not yet seen by this session (no local `qmltestrunner`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add qml/model/DataModel.qml tests/tst_DataModel_completeOrderAtomic.qml tests/tst_DataModel_completeOrderReentrancy.qml

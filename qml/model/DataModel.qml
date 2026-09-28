@@ -2,6 +2,8 @@ import QtQuick
 import "../helper/StockReconcile.js" as StockReconcile
 import "../helper/OrderAdjust.js" as OrderAdjust
 import "../helper/OrderMath.js" as OrderMath
+import "../helper/CompletionPlan.js" as CompletionPlan
+import "../helper/OperationKeys.js" as OperationKeys
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataModel.qml  –  Orchestrator / single source of truth
@@ -386,6 +388,25 @@ Item {
         function onRevisionChanged() { _syncOrdersModel() }
     }
 
+    // C-3 (2026-09-26, Task 10): the deferred half of order completion —
+    // reconciles a completion that was shown as done optimistically (queued
+    // offline, or the await window ran out) once the server actually
+    // answers. Only acts when an open completion has `undo` set (i.e. it was
+    // shown as done already); a caller still waiting on recordOperation's
+    // own callback gets its answer that way instead, and a re-plan reuses
+    // the same key, so handling it here too would run the outcome twice.
+    Connections {
+        target: Gateway
+        function onOperationApplied(requestId, opType, results, replay) {
+            var open = dataModel._openCompletions[requestId]
+            if (opType === "completeOrder" && open && open.undo) dataModel._settleApplied(requestId, results)
+        }
+        function onOperationRejected(requestId, opType, rejection) {
+            var open = dataModel._openCompletions[requestId]
+            if (opType === "completeOrder" && open && open.undo) dataModel._onCompletionRejected(requestId, rejection)
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     function _syncOrdersModel() {
@@ -486,6 +507,27 @@ Item {
     // loop, and onAddOrder's auto-approve branch alike.
     property var _completingOrderIds: ({})
 
+    // C-3 fix (2026-09-26): order completion is now ONE atomic, replay-safe
+    // operation sent through Gateway.recordOperation, replacing the per-line
+    // FIFO-consume + deductStock chain (and its _afterAllDeltas compensation)
+    // this function used before — the server transaction is atomic, so there
+    // is nothing left to compensate. See docs/superpowers/specs/2026-09-20-
+    // atomic-operation-outbox-design.md (D1-D5) and the 2026-09-20 plan's
+    // Task 10. Design check-in decisions (2026-09-26, Taher): maxReplans
+    // stays 3; a queued/offline completion keeps showing as `completed`
+    // immediately (Task 11 layers a "Saved, syncing…" caption on top, it
+    // does not gate this); reopening an order with an open completion is
+    // fixed here too (see _reverseCompletedOrder below), not deferred.
+    readonly property int maxReplans: 3
+
+    // key -> { orderId, attempt, clampStock, plan, undo, callback }: operations
+    // whose outcome is still open (queued, awaiting, or shown-completed-but-
+    // unconfirmed). In-memory on purpose — the outbox is what is durable; this
+    // is just bookkeeping for reconciling THIS client's local state when the
+    // server eventually answers. Cleared on settle, permanent failure, or the
+    // order being reopened before either happens (_reverseCompletedOrder).
+    property var _openCompletions: ({})
+
     function _tryCompleteOrder(orderId, callback) {
         var o = OrdersStore.getById(orderId)
         if (!o) { if (callback) callback(false); return }
@@ -496,166 +538,206 @@ Item {
             return
         }
         dataModel._completingOrderIds[orderId] = true
+        _completeAttempt(orderId, false, 0, callback)
+    }
 
-        // ── 1. Stock validation (against product.stock) ──────────────────
-        var errs = []
-        if (o.products && o.products.length > 0) {
-            for (var i = 0; i < o.products.length; ++i) {
-                var p = o.products[i]
-                var qty = _lineQty(p)
-                var inv = _resolveInventory(p)
-                if (!inv) { errs.push(p.name + ": not found in inventory"); continue }
-                if (qty > inv.stock) errs.push(p.name + ": need " + qty + ", only " + inv.stock + " in stock")
-            }
+    // Gathers exactly what CompletionPlan.build needs from the order + the
+    // current local stock/batch state, and nothing else — kept separate from
+    // _completeAttempt so the "what goes into a plan" concern stays readable
+    // on its own.
+    function _completionInput(o, epoch, clampStock) {
+        var lines = []
+        var stockByProduct = {}
+        var batchesByProduct = {}
+        var products = o.products || []
+        for (var i = 0; i < products.length; ++i) {
+            var p = products[i]
+            var inv = _resolveInventory(p)
+            lines.push({ line: p, productId: inv ? inv.productId : "", name: p.name, qty: _lineQty(p) })
+            if (!inv) continue
+            stockByProduct[inv.productId] = inv.stock
+            if (!(inv.productId in batchesByProduct))
+                batchesByProduct[inv.productId] = StockBatchStore.forProduct(inv.productId)
         }
-        if (errs.length > 0) {
-            delete dataModel._completingOrderIds[orderId]
-            OrdersStore.updateOrder(orderId, { status: "out of stock" })
-            dataModel.stockErrorMsg = errs.join("\n")
-            _updateOrderInModel(orderId)
-            if (callback) callback(false)
+        return { orderId: o.orderId, epoch: epoch, now: new Date().toISOString(), clampStock: clampStock,
+                 lines: lines, stockByProduct: stockByProduct, batchesByProduct: batchesByProduct }
+    }
+
+    // The two things CompletionPlan.build needs from the store layer but must
+    // not read itself (it's pure) — building the order's post-completion doc
+    // and the sale docs that follow from it, via Task 9's pure builders.
+    function _completionHooks(orderId, epoch) {
+        return {
+            orderUpdate: function(lines) {
+                var r = OrdersStore.buildOrderUpdate(orderId, { status: "completed", products: lines, completionEpoch: epoch })
+                return { before: r.before, after: r.after }
+            },
+            saleDocs: function(orderAfter) { return TransactionStore.buildSaleDocs(orderAfter, epoch) }
+        }
+    }
+
+    // One attempt at completing `orderId`: plan, send, wire the result back to
+    // _onCompletionResult. `attempt` counts prior re-plans (0 for the first
+    // try); `clampStock` is true once a rejection has told us the sale must be
+    // applied anyway (D3) rather than re-validated against a stock floor.
+    function _completeAttempt(orderId, clampStock, attempt, callback) {
+        var o = OrdersStore.getById(orderId)
+        var epoch = OperationKeys.nextEpoch(o)
+        var plan = CompletionPlan.build(_completionInput(o, epoch, clampStock), _completionHooks(orderId, epoch))
+        if (!plan.ok) {
+            _failCompletion(orderId, plan.errors.join("\n"), plan.reason === "out-of-stock", callback)
             return
         }
+        var open = { orderId: orderId, attempt: attempt, clampStock: clampStock, plan: plan, undo: null, callback: callback }
+        _openCompletions[plan.key] = open
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        Gateway.recordOperation("completeOrder", plan.ops, plan.key, { awaitServer: online }, function(res) {
+            _onCompletionResult(plan.key, res)
+        })
+    }
 
-        // ── 2. FIFO consumption + deduct stock ───────────────────────────
-        // Build a parallel `linesWithConsumption` array so the post-deduct
-        // updateOrder call can stamp the per-batch lineage onto each line
-        // item — that's what lets per-supplier sold/revenue/margin queries
-        // work later. Every line's deductStock is fired up front (they're
-        // independent products — no reason to serialize them against each
-        // other) and this function waits for ALL of them before proceeding,
-        // failing the whole order if ANY of them comes back rejected.
-        var lines = o.products || []
-        var linesWithConsumption = new Array(lines.length)
-        var deltaFailed = false
-        var deltaFailMsg = ""
-        // New (review round 2, partial-multi-line-completion gap): tracks
-        // which lines' deductStock actually succeeded, so a sibling line's
-        // failure can credit them back — see _afterAllDeltas below.
-        var succeededLines = []
+    // Terminal, local-validation-or-permanent failure: release the guard,
+    // optionally flag the order `out of stock`, and tell the caller.
+    function _failCompletion(orderId, message, markOutOfStock, callback) {
+        delete dataModel._completingOrderIds[orderId]
+        if (markOutOfStock) OrdersStore.updateOrder(orderId, { status: "out of stock" })
+        dataModel.stockErrorMsg = message
+        _updateOrderInModel(orderId)
+        if (callback) callback(false)
+    }
 
-        function _afterAllDeltas() {
-            if (deltaFailed) {
-                // FIFO consumption for every line already ran (synchronously,
-                // up front, before any deductStock callback could resolve —
-                // see the loop below) regardless of whether THIS order ends
-                // up completing. Undo it here so a rejected order doesn't
-                // leave stock_batches permanently decremented for units no
-                // sale actually accounts for (review finding C5, 2026-08-06).
-                // Uses the same restoreFifo the returns flow already relies
-                // on for exactly this purpose (see _tryAdjustOrder's return
-                // path above).
-                for (var li = 0; li < linesWithConsumption.length; ++li) {
-                    var restoreLine = linesWithConsumption[li]
-                    if (!restoreLine || !Array.isArray(restoreLine.consumption)) continue
-                    for (var ri = 0; ri < restoreLine.consumption.length; ++ri) {
-                        var rc = restoreLine.consumption[ri]
-                        _restoreFifoSafe(rc.batchId, restoreLine.productId, rc.qtyConsumed)
-                    }
-                }
-                // C5 above only restores the batch ledger. It doesn't touch
-                // product.stock itself for lines whose deductStock already
-                // succeeded before a SIBLING line's deductStock failed — that
-                // stock stays decremented for an order that never completed.
-                // Credit it back with the same primitive the returns flow
-                // already uses for exactly this "credit stock, batches already
-                // handled separately" shape (creditStockNoBatch, recordDelta-
-                // based since C4).
-                for (var si = 0; si < succeededLines.length; ++si) {
-                    InventoryStore.creditStockNoBatch(succeededLines[si].productId, succeededLines[si].qty)
-                }
-                OrdersStore.updateOrder(orderId, { status: "out of stock" })
-                dataModel.stockErrorMsg = deltaFailMsg
-                _updateOrderInModel(orderId)
-                delete dataModel._completingOrderIds[orderId]
-                if (callback) callback(false)
-                return
+    // recordOperation's callback fires exactly once per _completeAttempt call
+    // with one of: the server answered in time (res.ok && !res.queued); it's
+    // queued (offline, or not awaiting) or the await window ran out
+    // (res.pending) — both shown to the user as done, optimistically; or a
+    // rejection, handled by _onCompletionRejected.
+    function _onCompletionResult(key, res) {
+        var open = _openCompletions[key]
+        if (!open) return // reopened (or otherwise superseded) before this answer arrived
+        if (res.ok && !res.queued) { _settleApplied(key, res.results); return }
+        if (res.ok || res.pending) {            // queued, offline, or the wait ran out: show it as done
+            if (!open.undo) open.undo = _applyPredicted(open.plan)
+            _updateOrderInModel(open.orderId)
+            if (open.callback) { var cb = open.callback; open.callback = null; cb(true) }
+            return
+        }
+        _onCompletionRejected(key, res)
+    }
+
+    // The server's answer is the truth: overwrite whatever was predicted (or
+    // apply directly, if nothing was predicted because the server answered
+    // before the await window elapsed).
+    function _settleApplied(key, results) {
+        var open = _openCompletions[key]
+        if (!open) return
+        _reflectResults(results)
+        delete _openCompletions[key]
+        delete dataModel._completingOrderIds[open.orderId]
+        _updateOrderInModel(open.orderId)
+        if (open.callback) { var cb = open.callback; open.callback = null; cb(true) }
+    }
+
+    function _onCompletionRejected(key, rejection) {
+        var open = _openCompletions[key]
+        if (!open) return
+        var op = open.plan.ops[rejection.opIndex]
+        if (open.undo) { _revertPredicted(open.undo); open.undo = null }
+        // Someone else already completed it: the operation's job is done.
+        if (rejection.conflict && op && op.entity === "order" && rejection.current && rejection.current.status === "completed") {
+            OrdersStore.applyRemoteOrder(rejection.current)
+            _settleApplied(key, [])
+            return
+        }
+        var wasQueued = open.callback === null      // the caller was already told "done"
+        var onStockOp = op && op.entity === "inventory"
+        if (onStockOp && !wasQueued && rejection.error === "insufficient-quantity") {
+            delete _openCompletions[key]
+            _failCompletion(open.orderId, (_nameForProduct(op.entityId) + ": stock ran out before this order could complete"), true, open.callback)
+            return
+        }
+        if (open.attempt >= maxReplans) {
+            delete _openCompletions[key]
+            _failCompletion(open.orderId, "Could not complete this order — please try again", true, open.callback)
+            return
+        }
+        _reconcileFromRejection(op, rejection)
+        delete _openCompletions[key]
+        // D3: a sale that already happened is applied anyway (clamp + repair batch).
+        _completeAttempt(open.orderId, open.clampStock || wasQueued, open.attempt + 1, open.callback)
+    }
+
+    function _reconcileFromRejection(op, rejection) {
+        if (!op || rejection.current === undefined || rejection.current === null) return
+        if (op.entity === "stock_batch") StockBatchStore.applyRemoteQty(op.entityId, rejection.current)
+        else if (op.entity === "inventory") InventoryStore.applyRemoteStock(op.entityId, rejection.current)
+        else if (op.entity === "order") OrdersStore.applyRemoteOrder(rejection.current)
+    }
+
+    function _nameForProduct(productId) {
+        var inv = InventoryStore.getById(productId)
+        return inv ? inv.name : productId
+    }
+
+    // Apply the plan's predicted post-state locally and remember how to undo
+    // it (used for the optimistic "shown as completed" case only — a
+    // server-confirmed result is reflected via _reflectResults instead).
+    function _applyPredicted(plan) {
+        var undo = { batches: {}, stock: {}, createdBatches: [], order: null, txIds: [] }
+        for (var b in plan.predicted.batches) undo.batches[b] = StockBatchStore.applyRemoteQty(b, plan.predicted.batches[b])
+        for (var p in plan.predicted.stock) undo.stock[p] = InventoryStore.applyRemoteStock(p, plan.predicted.stock[p])
+        for (var c = 0; c < plan.predicted.created.length; ++c) {
+            if (StockBatchStore.addLocalBatch(plan.predicted.created[c])) undo.createdBatches.push(plan.predicted.created[c].batchId)
+        }
+        undo.order = OrdersStore.applyRemoteOrder(plan.orderAfter)
+        var docs = []
+        for (var o = 0; o < plan.ops.length; ++o)
+            if (plan.ops[o].entity === "transaction") docs.push(plan.ops[o].after)
+        TransactionStore.addLocalEntries(docs)
+        for (var d = 0; d < docs.length; ++d) undo.txIds.push(docs[d].txId)
+        return undo
+    }
+
+    function _revertPredicted(undo) {
+        for (var b in undo.batches) if (undo.batches[b] !== undefined) StockBatchStore.applyRemoteQty(b, undo.batches[b])
+        for (var p in undo.stock) if (undo.stock[p] !== undefined) InventoryStore.applyRemoteStock(p, undo.stock[p])
+        for (var c = 0; c < undo.createdBatches.length; ++c) StockBatchStore.removeLocalBatch(undo.createdBatches[c])
+        if (undo.order) OrdersStore.applyRemoteOrder(undo.order)
+        TransactionStore.removeLocalEntries(undo.txIds)
+    }
+
+    // results: the server's [{ entity, entityId, kind, after }]. Note:
+    // SalesStore.recordSale() is deliberately not called from this path —
+    // per its own doc comment it's a no-op wrapper kept for the Logic signal,
+    // superseded by OrdersStore.revision's own recompute (applyRemoteOrder /
+    // buildOrderUpdate's commit both bump it already).
+    function _reflectResults(results) {
+        var docs = []
+        for (var i = 0; i < results.length; ++i) {
+            var r = results[i]
+            if (r.entity === "stock_batch") {
+                if (r.kind === "delta") StockBatchStore.applyRemoteQty(r.entityId, r.after.qtyRemaining)
+                else StockBatchStore.addLocalBatch(r.after)
+            } else if (r.entity === "inventory") {
+                InventoryStore.applyRemoteStock(r.entityId, r.after.stock)
+            } else if (r.entity === "order") {
+                OrdersStore.applyRemoteOrder(r.after)
+            } else if (r.entity === "transaction") {
+                docs.push(r.after)
             }
-            // ── 3. Persist the order with consumption + record sale events ──
-            OrdersStore.updateOrder(orderId, {
-                status: "completed",
-                products: linesWithConsumption.length > 0 ? linesWithConsumption : undefined
-            })
-            SalesStore.recordSale(o.total, o.items)
-            // The persisted order now carries `consumption[]` per line — read it
-            // back so TransactionStore writes the same lineage to every sale doc.
-            TransactionStore.recordSaleFromOrder(OrdersStore.getById(orderId))
-            _updateOrderInModel(orderId)
-            delete dataModel._completingOrderIds[orderId]
-            if (callback) callback(true)
         }
+        if (docs.length > 0) TransactionStore.addLocalEntries(docs)
+    }
 
-        // Extra "loop not finished yet" token (released after the loop
-        // below, not inside it) — without this, a deductStock callback
-        // that happens to fire SYNCHRONOUSLY (e.g. InventoryStore's
-        // no-such-product guard) for an early line could bring the count to
-        // zero and trigger _afterAllDeltas() before later lines in the same
-        // loop have even been dispatched.
-        var pending = 1
-        function _oneResolved() {
-            pending--
-            if (pending === 0) _afterAllDeltas()
+    // Find the open completion (if any) for `orderId` — _openCompletions is
+    // keyed by operation key (order+epoch), not orderId, and only one can be
+    // open per order at a time (guarded by _completingOrderIds), so a linear
+    // scan of this small, in-memory, per-session map is the whole cost of not
+    // keeping a second index nobody else needs.
+    function _openCompletionKeyFor(orderId) {
+        for (var k in dataModel._openCompletions) {
+            if (dataModel._openCompletions[k].orderId === orderId) return k
         }
-
-        for (var j = 0; j < lines.length; ++j) {
-            (function(j) {
-                var pp = lines[j]
-                var qqty = _lineQty(pp)
-                var invP = _resolveInventory(pp)
-                var line = {}
-                for (var k in pp) line[k] = pp[k]
-
-                if (invP && qqty > 0) {
-                    pending++
-                    StockBatchStore.consumeFifo(invP.productId, qqty, function(fifoResult) {
-                        var consumption = fifoResult.consumption
-                        var shortfall = fifoResult.shortfall
-
-                        function _afterConsumption() {
-                            InventoryStore.deductStock(invP.productId, qqty, function(result) {
-                                if (!result || !result.ok) {
-                                    deltaFailed = true
-                                    deltaFailMsg = (deltaFailMsg ? deltaFailMsg + "\n" : "") +
-                                        (invP.name + ": " + (result && result.error === "insufficient-quantity"
-                                            ? "stock ran out before this order could complete"
-                                            : "could not update stock — try again"))
-                                } else {
-                                    succeededLines.push({ productId: invP.productId, qty: qqty })
-                                }
-                                line.consumption = consumption
-                                linesWithConsumption[j] = line
-                                _oneResolved()
-                            }, false /* reject, don't clamp — round-4 decision for order completion */)
-                            console.log("[DataModel] FIFO consumed", qqty, "for", invP.productId,
-                                        "across", consumption.length, "batch(es)")
-                        }
-
-                        if (shortfall > 0) {
-                            // Drift guard: batches couldn't satisfy the qty
-                            // even though product.stock said they should.
-                            // Top up the oldest batch by the deficit and try
-                            // once more — topUp guarantees enough, so a
-                            // single retry suffices.
-                            _topUpOldestSafe(invP.productId, shortfall, function() {
-                                StockBatchStore.consumeFifo(invP.productId, shortfall, function(retryResult) {
-                                    for (var r = 0; r < retryResult.consumption.length; ++r)
-                                        consumption.push(retryResult.consumption[r])
-                                    _afterConsumption()
-                                })
-                            })
-                        } else {
-                            _afterConsumption()
-                        }
-                    })
-                } else {
-                    if (!invP) console.warn("[DataModel] Could not resolve line item to inventory:", JSON.stringify(pp))
-                    line.consumption = []
-                    linesWithConsumption[j] = line
-                }
-            })(j)
-        }
-
-        _oneResolved() // release the loop-not-finished token
+        return null
     }
 
     // Complete an imported order that arrived with status "completed".
@@ -770,6 +852,20 @@ Item {
     // edge, and clears consumption[] afterwards so a re-revert is a no-op.
     function _reverseCompletedOrder(o) {
         if (!o || !o.products) return
+        // C-3 follow-up (2026-09-26, Task 10 design check-in decision 3): if
+        // this order's completion is still open (queued offline, or shown as
+        // completed while the await window ran out — see _openCompletions),
+        // reopening it here must not leave that bookkeeping behind. Every
+        // settle/reject handler above already treats a missing
+        // _openCompletions[key] entry as "nothing to do" (its very first
+        // line is `if (!open) return`), so clearing it is the whole fix: the
+        // deferred operationApplied/operationRejected for the superseded
+        // completion becomes a safe no-op instead of re-applying the
+        // original sale's stock delta onto an order that's since been
+        // reopened (and possibly already re-completed under a new epoch).
+        var openKey = _openCompletionKeyFor(o.orderId)
+        if (openKey) delete dataModel._openCompletions[openKey]
+        delete dataModel._completingOrderIds[o.orderId]
         for (var i = 0; i < o.products.length; ++i) {
             var line = o.products[i]
             var qty = _lineQty(line)

@@ -11,10 +11,10 @@ import "E2EHelpers.js" as E2EHelpers
 // Real code path this exercises that Phase 1 never touched:
 //   OrdersStore.addOrder/updateOrder -> Gateway.recordMutation (same
 //   emulator wiring Phase 1 already proved out) but ALSO
-//   DataModel._tryCompleteOrder -> StockBatchStore.consumeFifo +
-//   InventoryStore.deductStock -> Gateway.recordDelta, a SEPARATE Cloud
-//   Function/URL (Gateway.deltaFunctionUrl) Phase 1 never wired to the
-//   emulator. DataModel.qml is not a pragma Singleton, so it's instantiated
+//   DataModel._tryCompleteOrder -> Gateway.recordOperation, a SEPARATE Cloud
+//   Function/URL (Gateway.operationFunctionUrl; before C-3 Task 10 this was
+//   consumeFifo + deductStock -> Gateway.recordDelta / deltaFunctionUrl) that
+//   must be pointed at the emulator too. DataModel.qml is not a pragma Singleton, so it's instantiated
 //   directly below as a child item — same pattern
 //   tests/tst_DataModel_adjustOrderSyncGuard.qml already established for
 //   reaching this orchestration layer.
@@ -47,6 +47,7 @@ TestCase {
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     readonly property string realDeltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
+    readonly property string realOperationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
     readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
     property var fixture: null
@@ -117,6 +118,13 @@ TestCase {
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
         Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
+        // C-3 Task 10: DataModel._tryCompleteOrder now completes an order through
+        // Gateway.recordOperation (operationFunctionUrl), not recordDelta. Left at its
+        // default this hits the REAL endpoint with an emulator token and the order never
+        // reaches "completed" in the emulator. AuthService.isOnline stays false (as before),
+        // so completion is queued + shown as done, and the outbox drain delivers it to the
+        // emulator; the polls below wait for the emulator's own doc.
+        Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
         Gateway.mode = "gateway" // the real production default — see Gateway.qml
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
@@ -143,6 +151,7 @@ TestCase {
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
         Gateway.deltaFunctionUrl = realDeltaFunctionUrl
+        Gateway.operationFunctionUrl = realOperationFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
