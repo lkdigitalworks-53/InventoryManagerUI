@@ -3722,3 +3722,25 @@ inspects `xhr.status` needs the HEADERS_RECEIVED/LOADING snapshot fallback. Grep
 `new XMLHttpRequest` and confirm each site has it; `StorageService.deleteUrl`'s delete XHR still
 doesn't, harmlessly (any non-2xx already maps to `ok=false`, and only the error-message text says
 "status 0"), noted rather than changed.
+
+
+## Skill 75: A value crossing the C++/QML boundary needs ONE representation, and a "file gone" branch mapped to HTTP 400 disguises a local bug as a server bug
+
+**Found on-device, PR #84 (product photos), 2026-09-28.** Four symptoms (spinner forever, nothing in
+Storage, instant "failed", `Cannot open: file://file///C:/...`), two root causes. (1)
+`ImageProcessor.persistLocalCopy` returns `QUrl::fromLocalFile().toString()` (a `file:///` URL) but one
+consumer read it as a bare path (`NativeFile.readFileBase64` -> `QFile("file:///..")` never exists ->
+"file gone" -> terminal 400, XHR never sent) and another blindly prepended `"file://"`. (2)
+`PhotoQueue`'s one-shot drain timer fired while the item was still gated on its product's OutboxStore
+create, found nothing to do, and never re-armed.
+
+**Lessons.** (a) Tolerate both forms in every consumer through one tested, idempotent helper
+(`PhotoUrl.toLocalPath` / `toFileUrl`); items persisted by older builds keep the old form forever. (b)
+Report local failures as local (log line), not as an HTTP status that sends you to server logs. (c)
+Every gate in a drain function needs a wake-up on the thing it waits for (`OutboxStore.revision`); a
+timer that only fires "when due" cannot know a gate opened. (d) `RowLayout` vertically CENTERS children
+by default: once one tile can be taller (failed tile + button row), give every child
+`Layout.alignment: Qt.AlignTop`.
+
+**The check:** grep stored paths for `"file://" +`, and any `readFileBase64(` / `QFile(` fed from a
+stored value; for each gate in a drain function, name the event that re-runs it.

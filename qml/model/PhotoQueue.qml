@@ -4,6 +4,7 @@ import QtCore
 
 import "../helper/SettingsPath.js" as SettingsPath
 import "../helper/PhotoQueueLogic.js" as PQL
+import "../helper/PhotoUrl.js" as PhotoUrl
 
 // Durable queue for product-photo uploads (2026-09-21 photos feature). Deliberately a SIBLING to
 // Gateway/OutboxStore, not an addition to either -- Gateway retries forever with no request
@@ -233,12 +234,15 @@ QtObject {
             return
         }
 
-        var mainB64 = (typeof NativeFile !== "undefined") ? NativeFile.readFileBase64(item.mainFilePath) : ""
-        var thumbB64 = (typeof NativeFile !== "undefined") ? NativeFile.readFileBase64(item.thumbFilePath) : ""
+        // mainFilePath/thumbFilePath may be a file:// URL (what ImageProcessor.persistLocalCopy returns,
+        // and what items persisted before 2026-09-28 hold) -- readFileBase64 needs a bare path.
+        var mainB64 = (typeof NativeFile !== "undefined") ? NativeFile.readFileBase64(PhotoUrl.toLocalPath(item.mainFilePath)) : ""
+        var thumbB64 = (typeof NativeFile !== "undefined") ? NativeFile.readFileBase64(PhotoUrl.toLocalPath(item.thumbFilePath)) : ""
         if (!mainB64 || !thumbB64) {
             // The persisted file is gone. Only discard() removes it (and it also removes the
             // queue item), so this should never happen in practice -- terminal, since retrying
             // into a missing file can never succeed.
+            console.warn("[PhotoQueue] local file unreadable, giving up:", item.photoId, item.mainFilePath)
             var missing = PQL.reduceQueueItem(uploading, { type: "failed", status: 400 })
             _replaceItem(item.photoId, missing)
             _breaker = PQL.breakerReducer(_breaker, { type: "failure" })
@@ -295,6 +299,13 @@ QtObject {
     // QtObject root crashes the entire singleton chain at runtime (SKILLS.md Skill 20).
     property bool _onlineWatcher: AuthService.isOnline
     on_OnlineWatcherChanged: { if (_onlineWatcher) drainNow() }
+
+    // Re-arm the drain when the outbox changes. drainCandidates() gates an item on its product's
+    // own pending create mutation (Trap 1); the one-shot _reschedule() timer fires once, finds the
+    // item gated, and never re-arms -- so a photo enqueued right after "Add product" sat at
+    // "enqueued" (spinner forever) until an app restart. Same property-watcher form as above.
+    property int _outboxWatcher: OutboxStore.revision
+    on_OutboxWatcherChanged: { if (items.length > 0) _reschedule() }
 
     // Drop the whole queue and its files. Used on sign-out, same reasoning as
     // OutboxStore.clear() -- a pending photo must never replay under the next account.

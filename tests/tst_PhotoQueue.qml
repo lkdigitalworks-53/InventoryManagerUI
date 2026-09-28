@@ -189,6 +189,33 @@ TestCase {
         compare(PhotoQueue.drainCandidates(Date.now()).length, 1)
     }
 
+    // Regression (PR #84 device test, 2026-09-28): the one-shot drain timer fired while the item was
+    // still gated and never re-armed, so the photo sat "enqueued" (spinner) forever.
+    function test_outbox_mutation_landing_rearms_the_drain_timer() {
+        var mutation = OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        PhotoQueue.enqueue(_call({ productId: "prod-1" }))
+        PhotoQueue._drainTimer.stop()
+        verify(!PhotoQueue._drainTimer.running, "precondition: timer idle, as after the gated one-shot fired")
+        OutboxStore.markSent(mutation.requestId)
+        verify(PhotoQueue._drainTimer.running, "outbox change must re-arm the drain")
+    }
+
+    function test_outbox_change_with_an_empty_queue_does_not_arm_the_timer() {
+        PhotoQueue.enqueue(_call())
+        PhotoQueue.discard("photo-1")
+        if (PhotoQueue._drainTimer) PhotoQueue._drainTimer.stop()
+        OutboxStore.enqueue({ requestId: "r9", entity: "inventory", entityId: "prod-9", action: "create" })
+        verify(!PhotoQueue._drainTimer || !PhotoQueue._drainTimer.running)
+    }
+
+    function test_outbox_change_does_not_rearm_for_a_terminally_failed_item() {
+        PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [Object.assign({}, PhotoQueue.items[0], { state: "failed" })]
+        PhotoQueue._drainTimer.stop()
+        OutboxStore.enqueue({ requestId: "r9", entity: "inventory", entityId: "prod-9", action: "create" })
+        verify(!PhotoQueue._drainTimer.running, "failed items wait for the user's Retry, not the outbox")
+    }
+
     function test_drainCandidates_is_unaffected_by_a_pending_outbox_mutation_for_a_different_product() {
         OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-OTHER", action: "create" })
         PhotoQueue.enqueue(_call({ productId: "prod-1" }))

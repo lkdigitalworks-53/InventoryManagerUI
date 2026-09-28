@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Felgo
 
 import "../helper"
+import "../helper/PhotoUrl.js" as PhotoUrl
 import "../model"
 
 // ProductPhotoGallery — cover photo + thumbnail strip for a product's photos (2026-09-21 photos
@@ -83,6 +84,7 @@ Item {
             model: root.photoIds
             delegate: Rectangle {
                 required property string modelData
+                Layout.alignment: Qt.AlignTop
                 Layout.preferredWidth: root.tileSize
                 Layout.preferredHeight: root.tileSize
                 radius: dp(Constants.radius)
@@ -139,62 +141,96 @@ Item {
 
         Repeater {
             model: root._queued
-            delegate: Rectangle {
+            // Column = image tile on top, Retry/Discard row BELOW it (outside the tile, so the
+            // buttons get real touch targets instead of 9px text inside a 72px square).
+            delegate: ColumnLayout {
+                id: queuedTile
                 required property var modelData
-                Layout.preferredWidth: root.tileSize
-                Layout.preferredHeight: root.tileSize
-                radius: dp(Constants.radius)
-                color: Constants.subtleBg
-                border.color: Constants.borderColor
-                border.width: 1
-                clip: true
+                readonly property bool failed: modelData.state === "failed"
+                Layout.alignment: Qt.AlignTop
+                Layout.preferredWidth: failed ? Math.max(root.tileSize, dp(160)) : root.tileSize
+                spacing: dp(Constants.space2)
 
-                Image {
-                    anchors.fill: parent
-                    anchors.margins: dp(2)
-                    source: "file://" + modelData.mainFilePath
-                    sourceSize.width: root.tileSize
-                    sourceSize.height: root.tileSize
-                    fillMode: Image.PreserveAspectCrop
-                    cache: false
-                    asynchronous: true
-                }
+                Rectangle {
+                    Layout.preferredWidth: root.tileSize
+                    Layout.preferredHeight: root.tileSize
+                    radius: dp(Constants.radius)
+                    color: Constants.subtleBg
+                    border.color: queuedTile.failed ? "#dc2626" : Constants.borderColor
+                    border.width: 1
+                    clip: true
 
-                QQC.BusyIndicator {
-                    anchors.centerIn: parent
-                    running: modelData.state !== "failed"
-                    visible: modelData.state !== "failed"
-                }
+                    Image {
+                        anchors.fill: parent
+                        anchors.margins: dp(2)
+                        // mainFilePath is a file:// URL (or a bare path for older items) -- toFileUrl
+                        // accepts both; a blind "file://" + path double-prefixed it (device log).
+                        source: PhotoUrl.toFileUrl(queuedTile.modelData.mainFilePath)
+                        sourceSize.width: root.tileSize
+                        sourceSize.height: root.tileSize
+                        fillMode: Image.PreserveAspectCrop
+                        cache: false
+                        asynchronous: true
+                    }
 
-                ColumnLayout {
-                    visible: modelData.state === "failed"
-                    anchors.fill: parent
-                    anchors.margins: dp(2)
-                    spacing: dp(2)
+                    QQC.BusyIndicator {
+                        anchors.centerIn: parent
+                        running: !queuedTile.failed
+                        visible: !queuedTile.failed
+                    }
 
-                    Item { Layout.fillHeight: true }
                     Icon {
-                        Layout.alignment: Qt.AlignHCenter
+                        visible: queuedTile.failed
+                        anchors.centerIn: parent
                         name: "warn"
-                        size: sp(16)
+                        size: sp(22)
                         color: "#dc2626"
                     }
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: dp(4)
+                }
+
+                RowLayout {
+                    visible: queuedTile.failed
+                    Layout.fillWidth: true
+                    spacing: dp(Constants.space2)
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: dp(40)
+                        radius: dp(Constants.radius)
+                        color: Constants.subtleBg
+                        border.color: "#2563eb"
+                        border.width: 1
                         Text {
+                            anchors.centerIn: parent
                             text: qsTr("Retry")
                             color: "#2563eb"
-                            font.pixelSize: sp(9)
+                            font.pixelSize: sp(Constants.fsSmall)
                             font.bold: true
-                            MouseArea { anchors.fill: parent; onClicked: PhotoQueue.retry(modelData.photoId) }
                         }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: PhotoQueue.retry(queuedTile.modelData.photoId)
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: dp(40)
+                        radius: dp(Constants.radius)
+                        color: Constants.subtleBg
+                        border.color: "#dc2626"
+                        border.width: 1
                         Text {
+                            anchors.centerIn: parent
                             text: qsTr("Discard")
                             color: "#dc2626"
-                            font.pixelSize: sp(9)
+                            font.pixelSize: sp(Constants.fsSmall)
                             font.bold: true
-                            MouseArea { anchors.fill: parent; onClicked: PhotoQueue.discard(modelData.photoId) }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: PhotoQueue.discard(queuedTile.modelData.photoId)
                         }
                     }
                 }
@@ -203,6 +239,7 @@ Item {
 
         Rectangle {
             visible: root.editable && (root.photoIds.length + root._queued.length) < 10
+            Layout.alignment: Qt.AlignTop
             Layout.preferredWidth: root.tileSize
             Layout.preferredHeight: root.tileSize
             radius: dp(Constants.radius)

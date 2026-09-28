@@ -193,6 +193,9 @@ and denies every client write — uploads and deletes go through two Cloud Funct
 `recordMutation`. Deploy `storage.rules` and both functions before this does anything in
 production; neither is automatic on merge. Full design:
 `docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`.
+Local photo paths (2026-09-28): `ImageProcessor.persistLocalCopy` returns a `file://` URL, not a bare
+path. `PhotoUrl.toLocalPath` (for `NativeFile.readFileBase64`) and `PhotoUrl.toFileUrl` (for QML
+`Image.source`) accept either form; never concatenate `"file://" +` onto a stored path.
 
 ---
 

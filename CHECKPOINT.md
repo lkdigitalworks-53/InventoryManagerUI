@@ -33,9 +33,24 @@ docs per change, be an honest advisor, caveman-terse chat replies.
 
 1. Cloned repo, checked out PR #84 branch (up to date with `main` @ `e83cc6b`), read skills + code.
 2. Root-caused 1 and 2 above. B6 (gap) not provable by reading code.
-3. (this commit) checkpoint written.
+3. Checkpoint written + pushed (8cb810b).
+4. S-A/S-B/S-C/S-D/S-E implemented in one batch (see files below). Node `functions/` suite 329/329 RUN.
+   QML tests written, NOT run (CI is the signal).
+
+## Files changed this round
+`qml/helper/PhotoUrl.js` (+Node mirror `functions/test/testSupport/photoUrlParity.js`), `qml/model/PhotoQueue.qml`
+(toLocalPath reads, unreadable-file log, `_outboxWatcher` re-arm), `qml/components/ProductPhotoGallery.qml`
+(toFileUrl source, buttons below tile, AlignTop), `tests/tst_PhotoUrl.qml`, `tests/tst_PhotoQueue.qml`,
+`functions/test/photoUrl.parity.test.js`, `SKILLS.md` Skill 75, `README.md`, test plan + index row.
 
 ## Next steps (resume here)
+- WAIT for CI on PR #84; fix any QML test/lint failures it reports.
+- Owner re-tests on device per `docs/superpowers/test-plans/2026-09-28-photo-device-bugfix-test-plan.md`.
+- B6 (gap) still unproven: if it persists, need a screenshot / the dialog's layout tree.
+- Open decision for owner: fix path form at C++ source (`persistLocalCopy` return bare path) vs. QML-tolerant
+  helpers (chosen: helpers, because old queued items already hold URL form and QML is CI-testable).
+
+## Original next-step list (superseded, kept for trace)
 
 - S-A `PhotoUrl.js`: `toLocalPath` / `toFileUrl` (+ Node parity mirror + QML + Node tests).
 - S-B `PhotoQueue._upload` reads via `toLocalPath`; gallery source via `toFileUrl`.

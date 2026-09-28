@@ -71,4 +71,62 @@ TestCase {
         verify(main !== thumb)
         compare(main.replace(".jpg", "_t.jpg"), thumb)
     }
+
+    // ── toLocalPath / toFileUrl (PR #84 device-test fix) ────────────────────
+
+    function test_toLocalPath_windows_file_url_becomes_drive_path() {
+        compare(PU.toLocalPath("file:///C:/Users/Dell/AppData/Local/Karobar/photos/photo-1.jpg"),
+                "C:/Users/Dell/AppData/Local/Karobar/photos/photo-1.jpg")
+    }
+    function test_toLocalPath_unix_file_url_keeps_leading_slash() {
+        compare(PU.toLocalPath("file:///data/user/0/app/photos/p.jpg"), "/data/user/0/app/photos/p.jpg")
+    }
+    function test_toLocalPath_bare_paths_pass_through() {
+        compare(PU.toLocalPath("C:/x/p.jpg"), "C:/x/p.jpg")
+        compare(PU.toLocalPath("/data/p.jpg"), "/data/p.jpg")
+    }
+    function test_toLocalPath_decodes_percent_escapes() {
+        compare(PU.toLocalPath("file:///D:/My%20Photos/p.jpg"), "D:/My Photos/p.jpg")
+    }
+    function test_toLocalPath_malformed_escape_does_not_throw() {
+        compare(PU.toLocalPath("file:///D:/100%/p.jpg"), "D:/100%/p.jpg")
+    }
+    function test_toLocalPath_empty_like_inputs_give_empty_string_data() {
+        return [ { tag: "empty", v: "" }, { tag: "null", v: null }, { tag: "undefined", v: undefined },
+                 { tag: "number", v: 42 }, { tag: "object", v: {} } ]
+    }
+    function test_toLocalPath_empty_like_inputs_give_empty_string(data) {
+        compare(PU.toLocalPath(data.v), "")
+    }
+    function test_toLocalPath_is_idempotent() {
+        var once = PU.toLocalPath("file:///C:/a/b.jpg")
+        compare(PU.toLocalPath(once), once)
+    }
+    function test_toFileUrl_bare_windows_path() { compare(PU.toFileUrl("C:/a/b.jpg"), "file:///C:/a/b.jpg") }
+    function test_toFileUrl_bare_unix_path() { compare(PU.toFileUrl("/data/b.jpg"), "file:///data/b.jpg") }
+    function test_toFileUrl_does_not_double_prefix_an_existing_file_url() {
+        compare(PU.toFileUrl("file:///C:/a/b.jpg"), "file:///C:/a/b.jpg")
+        verify(PU.toFileUrl("file:///C:/a/b.jpg").indexOf("file://file") === -1)
+    }
+    function test_toFileUrl_escapes_spaces() { compare(PU.toFileUrl("D:/My Photos/b.jpg"), "file:///D:/My%20Photos/b.jpg") }
+    function test_toFileUrl_empty_like_input_gives_empty_string() {
+        compare(PU.toFileUrl(""), "")
+        compare(PU.toFileUrl(null), "")
+        compare(PU.toFileUrl(undefined), "")
+    }
+    function test_toFileUrl_is_idempotent() {
+        var once = PU.toFileUrl("C:/a b/c.jpg")
+        compare(PU.toFileUrl(once), once)
+    }
+    function test_monkey_random_path_like_strings_never_throw() {
+        var alphabet = "ab /\\%:.C~#?"
+        var seed = 7
+        for (var i = 0; i < 300; ++i) {
+            var s = (i % 2 === 0) ? "file://" : ""
+            for (var j = 0; j < (i % 20); ++j) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; s += alphabet.charAt(seed % alphabet.length) }
+            PU.toLocalPath(s)
+            PU.toFileUrl(s)
+        }
+        verify(true)
+    }
 }
