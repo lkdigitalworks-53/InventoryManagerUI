@@ -110,7 +110,21 @@ via PR per his own standing instruction.
 - [x] 22d. Committed and pushed this branch, opened as **PR #90** against `main`. **CI result not yet seen
       by this session** — that's the next thing a resumed session (or Taher) should check first, before
       assuming Task 10 is actually green.
-- [ ] 23. After Task 10's CI comes back: if red, fix and re-push before anything else. If green: Phase 3 PR 3
+- [x] 22e. **CI on PR #90 came back RED (8 of 1375): my mistake, fixed in a follow-up commit.** (a) E2E, 2
+      failures, a real regression: `test/e2e/tst_OrdersE2E.qml` and `tst_ReturnAfterMetadataEditE2E.qml` drive
+      `_tryCompleteOrder` against the emulator but only repointed `functionUrl`/`deltaFunctionUrl`, so completion
+      (now `recordOperation`) hit the REAL URL. I had only grepped `tests/` for callers, never `test/e2e/` — the
+      earlier "no other test drives completion" claim was wrong. Fix: repoint `Gateway.operationFunctionUrl` at the
+      emulator in both files' `init()`, restore in `cleanup()`; `AuthService.isOnline` left false (drain isn't
+      gated on it; both tests already poll the emulator's own doc). (b) QML, 6 failures, all wrong assumptions in
+      MY new tests: `_failCompletion`'s `out of stock` write and a reopen both enqueue recordMutation items, so
+      "outbox empty" was never true (now `_ops()` filters to `completeOrder:` keys); `creditStockNoBatch` patches
+      local stock only after the server confirms, so `_reverseCompletedOrder` doesn't credit it synchronously;
+      an offline re-plan immediately re-applies its own prediction, so "reverted to 5" isn't observable. None of
+      the six was a DataModel.qml bug. **Not confirmed by this session: whether the E2E fix is sufficient** — the
+      real emulator run may surface a CAS/normalisation mismatch between the client's `before` docs and what the
+      emulator holds; that is exactly what that job is for.
+- [ ] 23. After Task 10's CI comes back (re-check PR #90's CI first): if red, fix and re-push before anything else. If green: Phase 3 PR 3
       (plan Task 11, the "Saved, syncing" UI hint) and Task 12 (docs/tracker/`SKILLS.md` sweep for the whole
       Phase 3 arc — check the current highest `SKILLS.md` number before picking one; as of this session it's
       72). Task 13 (deploy + on-device plan, including the two new on-device cases this session added for
