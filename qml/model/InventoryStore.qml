@@ -1368,4 +1368,12 @@ QtObject {
             if (products[i].productId === productId) return products[i];
         return null;
     }
+
+    // Confirmed photo ids for a product, as a fresh array ([] for an unknown product or a doc with
+    // no/invalid photoIds). EditProductDialog re-reads this on every revision so a photo that
+    // finishes uploading while the dialog is open shows up without closing and reopening it.
+    function photoIdsFor(productId) {
+        var p = getById(productId);
+        return (p && Array.isArray(p.photoIds)) ? p.photoIds.slice() : [];
+    }
 }

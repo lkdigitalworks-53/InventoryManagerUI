@@ -31,6 +31,16 @@ BottomSheet {
     property string photoUrl: ""
     property var photoIds: []
 
+    // photoIds above is a snapshot taken when the dialog opens (openFor); a photo confirmed by
+    // PhotoQueue afterwards lands in InventoryStore only, so the gallery lost the queued tile and
+    // never gained the confirmed one until reopen (PR #84 device test, 2026-09-28).
+    Connections {
+        target: InventoryStore
+        function onRevisionChanged() {
+            if (root.productId.length > 0) root.photoIds = InventoryStore.photoIdsFor(root.productId)
+        }
+    }
+
     // Component 2 (async-write-sequencing design §4/§7.1). Acquired when
     // entering edit mode (either via the in-dialog "Edit" button or opening
     // directly into edit mode via openFor(id, true)) — never on a plain

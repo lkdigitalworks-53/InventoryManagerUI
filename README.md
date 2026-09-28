@@ -196,6 +196,9 @@ production; neither is automatic on merge. Full design:
 Local photo paths (2026-09-28): `ImageProcessor.persistLocalCopy` returns a `file://` URL, not a bare
 path. `PhotoUrl.toLocalPath` (for `NativeFile.readFileBase64`) and `PhotoUrl.toFileUrl` (for QML
 `Image.source`) accept either form; never concatenate `"file://" +` onto a stored path.
+Gallery behaviour (2026-09-28): tiles live in a `Flow` (wraps to rows, so the + tile is never pushed off-screen);
+only the first confirmed tile shows "Cover"; the Edit dialog re-reads `InventoryStore.photoIdsFor()` on every
+`InventoryStore.revision` change so a photo that finishes uploading appears without reopening the dialog.
 
 ---
 

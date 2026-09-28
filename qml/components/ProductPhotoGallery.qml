@@ -74,7 +74,9 @@ Item {
         })
     }
 
-    RowLayout {
+    // Flow, not RowLayout: a RowLayout never wraps or scrolls, so 5+ tiles ran off-screen and took
+    // the + tile with them (PR #84 device test, 2026-09-28). Max 10 photos -> at most a few rows.
+    Flow {
         id: strip
         anchors.left: parent.left
         anchors.right: parent.right
@@ -84,9 +86,12 @@ Item {
             model: root.photoIds
             delegate: Rectangle {
                 required property string modelData
-                Layout.alignment: Qt.AlignTop
-                Layout.preferredWidth: root.tileSize
-                Layout.preferredHeight: root.tileSize
+                // Must be declared: with any `required property` on a delegate Qt stops injecting
+                // the implicit `index`, so `index === 0` below threw a ReferenceError, the binding
+                // never ran, and `visible` stayed at its default (true) -> "Cover" on every tile.
+                required property int index
+                width: root.tileSize
+                height: root.tileSize
                 radius: dp(Constants.radius)
                 color: Constants.subtleBg
                 border.color: Constants.borderColor
@@ -102,6 +107,7 @@ Item {
                     fillMode: Image.PreserveAspectCrop
                     cache: true
                     asynchronous: true
+                    onStatusChanged: if (status === Image.Error) console.warn("[ProductPhotoGallery] thumb failed to load:", source)
                 }
 
                 Rectangle {
@@ -147,8 +153,7 @@ Item {
                 id: queuedTile
                 required property var modelData
                 readonly property bool failed: modelData.state === "failed"
-                Layout.alignment: Qt.AlignTop
-                Layout.preferredWidth: failed ? Math.max(root.tileSize, dp(160)) : root.tileSize
+                width: failed ? Math.max(root.tileSize, dp(160)) : root.tileSize
                 spacing: dp(Constants.space2)
 
                 Rectangle {
@@ -239,9 +244,8 @@ Item {
 
         Rectangle {
             visible: root.editable && (root.photoIds.length + root._queued.length) < 10
-            Layout.alignment: Qt.AlignTop
-            Layout.preferredWidth: root.tileSize
-            Layout.preferredHeight: root.tileSize
+            width: root.tileSize
+            height: root.tileSize
             radius: dp(Constants.radius)
             color: Constants.subtleBg
             border.color: Constants.borderColor

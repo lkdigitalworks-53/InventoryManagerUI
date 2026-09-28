@@ -1,3 +1,37 @@
+# CHECKPOINT — 2026-09-28 (round 2) PR #84 device-test bugs: Cover label, dialog refresh, strip overflow, list cover
+
+**Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes go in the SAME PR).
+**Commit identity:** `tsadmin <tsadmin@gmail.com>` (matches the PR's latest commit). Push after each step; PAT only in the push URL, never in the repo — **owner: rotate it, it sits in plaintext in chat.**
+**Skills invoked:** qt-development-skills:qt-qml, qt-development-skills:qt-ui-design, ponytail:ponytail, superpowers:systematic-debugging (+ caveman chat style).
+**Rules:** no build/run, no Qt tooling in sandbox, CI is the signal; tests + test plan + docs per change.
+
+## Round-2 bugs (owner, on device)
+
+| # | Symptom | Root cause | Status |
+|---|---|---|---|
+| R1 | "Cover" on every photo | delegate has `required property modelData` but no `required property int index` -> `index` unresolved -> binding dead -> `visible` default true | FIXED (gallery) |
+| R2 | New photo not shown in open Edit dialog | `photoIds` snapshot copied in `openFor()`, never refreshed | FIXED (`Connections` + `InventoryStore.photoIdsFor`) |
+| R3 | No cover photo in Inventory list | NOT PROVEN from code (same URL helper as gallery; list reads store live). Candidates E1 thumb URL fails on device, E2 list products lack photoIds | OPEN — `Image.Error` logging added to `AvatarBadge` + gallery; needs the log line (test plan §4 "Bug 3 diagnosis") |
+| R4 | 5+ photos run off-screen, + hidden | `RowLayout` cannot wrap/scroll | FIXED (`Flow`) |
+
+## Steps (in order)
+
+1. Read project notes + 4 skills; cloned repo; checked out PR #84 branch `feature/2026-09-21-product-photos-firebase-storage` @ `09ac9e2`.
+2. Phase 1 traced gallery, dialog, InventoryPage, InventoryStore, PhotoQueue, StorageService, server upload, storage.rules, gatewayLogic.
+3. Fixed R1/R4 in `ProductPhotoGallery.qml`; R2 in `EditProductDialog.qml` + `InventoryStore.photoIdsFor`; R3 diagnostics in `AvatarBadge.qml`.
+4. Tests: `tests/tst_InventoryStore_photoIds.qml`, `tests/tst_PhotoGalleryLayout.qml` (both unrun locally; CI decides).
+5. Docs: test plan `2026-09-28-photo-gallery-cover-scroll-list-test-plan.md` (+ index row), Skill 76 in SKILLS.md, README gallery note. AGENTS.md: no change needed.
+6. Committed and pushed (see git log).
+
+## Next steps (resume here)
+
+1. Wait for CI on the new push; fix any round the two new QML tests need (unrun-test corrections are normal, see learnings).
+2. Owner: on-device pass of the test plan; for R3 send the `[AvatarBadge] image failed to load:` log line (or say there is none).
+3. If R3 is E1: check `storage.rules` deployed, object exists at `{env}/tenants/{t}/products/{p}/{photoId}_t.jpg`.
+4. Pending from before: functions `uploadProductPhoto`/`deleteProductPhoto` deployment not confirmed.
+
+---
+
 # CHECKPOINT — 2026-09-28 device-test bug-fix round on PR #84 (product photos) — IN PROGRESS
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes go in the SAME PR per owner).

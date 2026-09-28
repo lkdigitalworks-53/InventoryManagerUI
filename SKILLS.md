@@ -3744,3 +3744,26 @@ by default: once one tile can be taller (failed tile + button row), give every c
 
 **The check:** grep stored paths for `"file://" +`, and any `readFileBase64(` / `QFile(` fed from a
 stored value; for each gate in a drain function, name the event that re-runs it.
+
+
+## Skill 76: A delegate with `required property` loses the implicit `index`; a fixed-count RowLayout of user data must wrap; a dialog that copies store data goes stale; and when two surfaces share a helper, log the failure before theorising
+
+**Found on-device, PR #84 (product photos), 2026-09-28, second round.** (1) "Cover" showed on every photo tile:
+the delegate declared `required property string modelData` but read `index`. Once a delegate has any required
+property Qt no longer injects `index`/`modelData`, so `visible: index === 0` threw a ReferenceError, the binding
+never ran, and `visible` stayed at its default `true`. A failed binding does not fail loudly on screen — it just
+leaves the default. (2) The strip was a `RowLayout`: more than ~4 tiles ran off-screen, and the + tile with them.
+(3) `EditProductDialog.photoIds` was copied once in `openFor()`, so a photo confirmed while the dialog was open
+never appeared. (4) The Inventory list cover is still unproven (see the test plan) — the same URL helper feeds the
+gallery and the list, so the fix was diagnostics, not a guess.
+
+**Lessons.** (a) Declare `required property int index` (and `modelData`) together, always; grep every delegate that
+has one `required property` for a bare `index`/`modelData` read. (b) Any row whose length is user data needs `Flow`
+(or a `Flickable` with the trailing action pinned) — never `RowLayout`. Inside a `Flow`, size with `width`/`height`,
+not `Layout.*`. (c) A dialog that copies a store field on open must re-read on the store's `revision` signal, through
+a tested store function (`InventoryStore.photoIdsFor`). (d) Add `Image.onStatusChanged` Error logging before
+theorising about why an image doesn't render — it turns "no cover" into a URL you can open in a browser.
+
+**The check:** for every `delegate:` with a `required property`, confirm every `index`/`modelData` read in its body is
+declared; for every `RowLayout` fed by a `Repeater` over user data, name the maximum count and the overflow story;
+for every `property var x` assigned once in an `openFor()`, name the signal that refreshes it.
