@@ -151,30 +151,11 @@ TestCase {
         return createdId
     }
 
-    // A connection-level failure (xhr.status === 0 -- refused/reset, not a real HTTP response;
-    // very different from postDirect's own "never responded" timeout, which is a genuine hang)
-    // gets one retry. Safe to retry blindly because requestId is the idempotency key server-side
-    // (see uploadProductPhoto's audit_log check) -- if the first attempt's request actually landed
-    // before the connection dropped, the retry just gets back {already:true} with the same
-    // photoIds, not a duplicate. Added 2026-09-27: test_upload_rejects_an_eleventh_photo's 11th
-    // back-to-back call to the emulator (10 uploads already done, no pacing) hit exactly this on
-    // its first real CI run -- status 0, empty body -- not a logic bug in the function itself
-    // (whose limit-enforcement transaction this session read and matches its own passing unit
-    // tests), and not reproduced by any other test in this file, which never fires more than 2-3
-    // calls in a row.
     function _uploadPhoto(productId, photoId) {
-        var result = _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
+        return _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
             env: "prd", productId: productId, photoId: photoId, requestId: photoId,
             imageBase64: tinyJpegBase64, thumbBase64: tinyJpegBase64
         }, 10000, "uploadProductPhoto never responded")
-        if (result.status === 0) {
-            wait(300)
-            result = _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
-                env: "prd", productId: productId, photoId: photoId, requestId: photoId,
-                imageBase64: tinyJpegBase64, thumbBase64: tinyJpegBase64
-            }, 10000, "uploadProductPhoto never responded (retry after a connection-level failure)")
-        }
-        return result
     }
 
     // ── uploadProductPhoto: the real server path, end to end ───────────────

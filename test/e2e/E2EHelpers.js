@@ -121,11 +121,22 @@ function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicate
 // interchangeable.
 function postDirect(tc, url, payload, timeoutMs, timeoutMessage) {
     var status = -1, text = "", done = false
+    // QTBUG-49896 workaround (same as Gateway._captureBeforeStatusIsLost / PhotoQueue -- see
+    // SKILLS.md Skill 45): QML's XMLHttpRequest can reset xhr.status to 0 at the readyState 3->4
+    // transition for some responses (a 409 is the original reporter's repro), so snapshot
+    // status/body at HEADERS_RECEIVED/LOADING and fall back to it at DONE. A genuine network
+    // failure never reaches HEADERS_RECEIVED, so it still reports 0 -- only the lost-status case
+    // is recovered. Added 2026-09-27 after test_upload_rejects_an_eleventh_photo's expected 409
+    // arrived here as status 0 on every CI run.
+    var snap = { status: 0, text: "" }
     var xhr = new XMLHttpRequest()
     xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {
+            if (xhr.status !== 0) { snap.status = xhr.status; snap.text = xhr.responseText }
+        }
         if (xhr.readyState === XMLHttpRequest.DONE) {
-            status = xhr.status
-            text = xhr.responseText
+            status = (xhr.status !== 0) ? xhr.status : snap.status
+            text = (xhr.status !== 0) ? xhr.responseText : snap.text
             done = true
         }
     }
