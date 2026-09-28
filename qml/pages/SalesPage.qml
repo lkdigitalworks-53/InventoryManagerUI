@@ -1774,11 +1774,25 @@ Item {
                 qsTr("(unassigned)"))
     }
 
-    // { productId → row } → { productName → row }. Unknown product falls back to
-    // the raw key (the productId), preserving the original behaviour.
+    // { productId → row } → { productName → row }. A deleted product resolves
+    // via the name stamped on its own ledger history (_stampedProductName);
+    // only a productId with no history at all (shouldn't happen for a real
+    // id) falls back to the raw key.
+    // Best-effort display name for a productId that's no longer in the live
+    // catalog — the most recent ledger entry for it still carries the name
+    // stamped at write time (see TransactionStore.record*). "" when the
+    // product has no ledger history either (shouldn't happen for a real id).
+    function _stampedProductName(productId) {
+        var hist = TransactionStore.forProduct(productId) || []
+        return (hist.length && hist[0].productName) ? hist[0].productName : ""
+    }
     function _namedProductMap(rows) {
         return RealisedMath.nameMerge(rows,
-                function(k) { var p = InventoryStore.getById(k); return p ? (p.name || k) : k },
+                function(k) {
+                    var p = InventoryStore.getById(k)
+                    if (p) return p.name || k
+                    return root._stampedProductName(k) || k
+                },
                 qsTr("Unknown"))
     }
 

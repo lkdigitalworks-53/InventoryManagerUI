@@ -207,8 +207,63 @@ TestCase {
         compare(_round2(merged["Unknown"].revenue), 30)
     }
 
-    // Under a supplier filter, a price_adjust IS attributed via its stamped
-    // supplierSlices matching that supplier (the adjustment has lineage), and is
+    // ── DELETED-PRODUCT CATEGORY FALLBACK (DELETE-FEATURE-ROADMAP item 3,
+    // 2026-09-26): category is now stamped on sale/return/price_adjust events
+    // at write time (TransactionStore). byDimension/_accumulatePriceAdjust
+    // must prefer that stamp only once the live categoryOf(productId) lookup
+    // comes back empty (product deleted) — a still-existing product's CURRENT
+    // category must keep winning, unchanged from before this fix. ──────────
+
+    function test_bydimension_category_deleted_product_uses_stamped_value() {
+        var ev = [
+            { kind: "sale", timestamp: "2026-09-26T10:00:00Z", productId: "P9", quantity: 1,
+              unitPrice: 60, net: 60, tax: 0, discountShare: 0, category: "Beverages",
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 40 }] }
+        ]
+        // categoryOf returns null for P9 -- as it would once the product is deleted.
+        var m = RM.byDimension("category", ev, null, { categoryOf: function() { return null } })
+        compare(_round2(m["Beverages"].revenue), 60, "stamped category used instead of (uncategorised)")
+        verify(m["(uncategorised)"] === undefined)
+    }
+
+    function test_bydimension_category_live_product_wins_over_stale_stamp() {
+        var ev = [
+            { kind: "sale", timestamp: "2026-09-26T10:00:00Z", productId: "P1", quantity: 1,
+              unitPrice: 60, net: 60, tax: 0, discountShare: 0, category: "OldCategoryAtSaleTime",
+              consumption: [{ batchId: "B1", supplierId: "S1", qtyConsumed: 1, unitCost: 40 }] }
+        ]
+        // P1 still exists and was since recategorized to "NewCategory".
+        var m = RM.byDimension("category", ev, null, { categoryOf: function() { return "NewCategory" } })
+        compare(_round2(m["NewCategory"].revenue), 60, "live category wins over the stale stamp")
+        verify(m["OldCategoryAtSaleTime"] === undefined)
+    }
+
+    // Per-line price_adjust (_accumulatePriceAdjust's own paKey resolution,
+    // field==="category" path -- reached whenever there's a real productId,
+    // lineage or not).
+    function test_price_adjust_category_uses_stamped_value_when_product_deleted() {
+        var ev = [
+            { kind: "price_adjust", timestamp: "2026-09-26T11:00:00Z", productId: "P9",
+              total: -10, reason: "discount", category: "Beverages" }
+        ]
+        var m = RM.byDimension("category", ev, null, { categoryOf: function() { return null } })
+        compare(_round2(m["Beverages"].revenue), -10)
+    }
+
+    // Same fallback, via byDimension's OWN scope-filtered price_adjust branch
+    // (paKeyF, exercised only under a matching supplier filter -- a DIFFERENT
+    // code path from _accumulatePriceAdjust above).
+    function test_price_adjust_category_supplier_filtered_uses_stamped_value() {
+        var ev = [
+            { kind: "price_adjust", timestamp: "2026-09-26T11:00:00Z", productId: "P9",
+              total: -10, reason: "discount", category: "Beverages",
+              supplierSlices: [{ key: "S1", amount: -10 }] }
+        ]
+        var m = RM.byDimension("category", ev, { supplierId: "S1" }, { categoryOf: function() { return null } })
+        compare(_round2(m["Beverages"].revenue), -10)
+    }
+
+
     // included in BOTH totals and bucketWalk so totals == Σ bucketWalk stays exact.
     function test_supplier_filter_includes_stamped_price_adjust() {
         var ev = [

@@ -251,7 +251,7 @@ an active branch. It isn't on `origin` — the closest match by name and apparen
 unrelated to `feature/product-order-delete-ui`, not investigated further here.
 
 
-## Delete: Sales Analysis "Potential profit" went negative, "Inventory Value" didn't move at all — both fixed. Five other tabs' breakdown labels audited, not fixed
+## Delete: Sales Analysis "Potential profit" went negative, "Inventory Value" didn't move at all — both fixed. Five other tabs' breakdown labels — RESOLVED 2026-09-26
 
 Bug report (2026-09-02): after deleting a product, a value in Sales Analysis wasn't updating
 correctly. Followed `superpowers:systematic-debugging` — traced all 6 `SalesPage.qml` view
@@ -333,6 +333,43 @@ second, much larger fix into the same change (Iron Law: one fix at a time).
 
 **Decision**: fixed the total-corrupting bug (Potential profit). Documented, not fixed, the
 breakdown-mislabeling issue across the other five tabs — worth its own dedicated design pass.
+
+**Follow-up, RESOLVED 2026-09-26 (`fix/2026-09-26-sales-analysis-deleted-product-labels`)**: the
+"schema-level change" framing above turned out to only be half true once traced to source.
+`productName` was already stamped on every `TransactionStore` entry at creation time — the by-name
+half was a small, contained **read-side** fix (`BreakdownMath._productNameKey` /
+`SalesPage._namedProductMap` re-derived the name live instead of using what was already on the
+entry). `category` genuinely was never stamped anywhere — that half needed the write-path change
+as originally scoped: `recordPurchase` / `recordCreated` / `recordSaleFromOrder` now stamp
+`category` at time-of-transaction; `recordReturn` / `recordPriceAdjust` reuse the *original sale's*
+stamped category via a new `_stampedCategoryFor()` lookup, since the product referenced by a return
+may already be deleted by return time. Read side (`BreakdownMath`/`RealisedMath`) now prefers the
+stamped value **only** when the live product no longer exists — a still-existing, recategorized
+product's history keeps showing its current category, unchanged. A real, pre-merge bug in this fix
+itself is worth recording: the first pass got the precedence backwards for `RealisedMath` (used
+`e.category || categoryOf(...)`, which let a stale stamp override a still-live product's *current*
+category) — caught by the Node parity suite's `bydimension_category_live_product_wins_over_stale_stamp`
+test actually failing (real `node --test` run, not a trace), fixed with a `_resolvedCategory()`
+helper that checks live-product-existence first. See
+`docs/superpowers/specs/2026-09-26-sales-analysis-deleted-product-labels-design.md` for full detail.
+Also applied to the server-side parity port (`functions/lib/breakdownMath.js` / `realisedMath.js`),
+which had the identical bug and is a live Cloud Function (`computeAnalysis`) reading the same
+Firestore collections — would otherwise have kept mislabeling server-generated reports/exports
+after the client-side fix shipped.
+
+**Two adjacent, related findings — audited, deliberately not fixed here (Iron Law: one fix at a
+time)**:
+1. The category **filter** dropdown (`RealisedMath._passesScope`'s `scope.category` matching) is a
+   separate mechanism from the breakdown **label** fixed above and stays live-only. A deleted
+   product can no longer be chosen in the filter dropdown in the first place, so this doesn't
+   reproduce the mislabeling bug — but if a *still-live* product is filtered by category while a
+   *different, now-deleted* product's history should logically also match, that history is silently
+   excluded from the filtered total. Low severity, no user report against it.
+2. An order-wide price adjustment (no single `line.productId`) spreads its delta across every
+   product in the order via `OrderMath.spreadOrderDelta(..., categoryOf)`, which is inherently
+   per-split-product and doesn't have a single value to stamp — genuinely deleted-product entries
+   from that path still resolve category live and can still show "(uncategorised)". Narrow: only
+   affects an order-wide (not per-line) adjustment touching an already-deleted product.
 
 ## Delete: cascade-deleting stock batches created a NEW dangling-reference path — found on-device review, fixed
 
