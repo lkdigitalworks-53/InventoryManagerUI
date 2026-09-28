@@ -1,9 +1,10 @@
-# CHECKPOINT — 2026-09-29: PR #84 final-sweep review + docs trim (no app code changed)
+# CHECKPOINT — 2026-09-28: DELETE-FEATURE-ROADMAP item 1 part C (server write-error classification) — DESIGN PHASE, awaiting Taher's answer to Q-C1, no code yet
 
-**Branch:** `docs/2026-09-29-pr84-final-sweep-docs-trim`, off PR #84 head `6e18011`. Target PR base: `feature/2026-09-21-product-photos-firebase-storage`.
-**Commit identity:** `tsadmin@gmail.com`. **Skills used:** requesting-code-review, qt-qml-review (lint filtered to PR-added lines), ponytail-review.
-**Standing rules:** branch only, push without asking (owner reviews in PR); PAT only for `git push`/API, never written to the repo; no build/run, no Qt tooling (CI is the only QML signal); small scope per session; be an honest advisor, trade-offs before decisions.
-**History:** the per-round PR #84 checkpoints that used to fill this file (824 lines) are in git history at `6e18011:CHECKPOINT.md`.
+**Session date:** 2026-09-28
+**Branch:** `fix/2026-09-28-gateway-write-error-classification`, off `main` @ `96c07bd` (PR #92 merged).
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options-CHECKPOINT.md`
+**Skills invoked by Taher:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `ponytail:ponytail`, caveman FULL (chat replies only).
+**Commit identity:** `Taher (via Claude session) <dextran52@gmail.com>`.
 
 ## Steps done
 1. Cloned repo, fetched `refs/pull/84/head`. 59 files, +7096/-248, 44 commits. CI on head SHA all green (the 1643-test bot comment is from 09-24 and stale).
@@ -11,28 +12,38 @@
 3. Read all new QML, PhotoQueue logic, functions handlers, rules, C++ additions, store diffs.
 4. Docs trim: 4 addendum test plans folded into `test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md` (now: root-cause table, gaps F1-F5, one current on-device checklist); README index updated; executed 779-line implementation plan deleted and its 4 references repointed; this file compacted.
 
-## Verdict: do NOT merge yet — fix F1 and F2 first (small, both need tests)
-| # | Sev | Finding |
-|---|---|---|
-| F1 | Must | `PhotoQueue._upload` persists `state:"uploading"`; `_load()` does not reset it and `drainCandidates`/`_reschedule` only take `enqueued`/`retrying`. App killed or OS-suspended mid-upload => spinner forever, no Retry/Discard, counts toward the 10 limit. |
-| F2 | Must | `InventoryStore.deleteProduct` never purges that product's queued/failed photos. They upload after the delete lands, get 404 (terminal), sit in the queue forever with no UI to discard; local files never removed. |
-| F3 | Should | `uploadProductPhoto` saves both Storage objects before the product-exists / 10-photo checks; 404/409 leave orphaned objects. Pre-read the product, or delete on those outcomes. |
-| F4 | Should | `_upload` idToken-empty branch returns without re-arming the drain. |
-| F5 | Should | Full-doc inventory `update` mutations carry `before.photoIds`; a photo confirmed between edit and drain makes the edit 409. Server should ignore/preserve `photoIds` in the `before` comparison. |
-| N1 | Note | `photoId` is `Date.now()` + 6 digits, but `storage.rules` comment calls it "random" and reads are public. Use `Qt.uuid()` (strip braces). Also `abc_t` vs thumb of `abc` can collide; a uuid removes it. |
-| N2 | Note | No role check on photo endpoints (same known gap as `recordMutation`, KNOWN-ISSUES.md). Legacy sync clears `photoUrl` at queue time; Discard after terminal failure then loses the photo. |
-| N3 | Note | Touch targets: cover-remove x is 20dp, Retry 36dp, Discard 28dp. `SKILLS.md` has two "Skill 75" and two "Skill 76" headings. |
-| P1 | Ponytail | `FailedTileGeometry.js` (78) + test (209) + spec (65): contrast calculators exist only for tests; scaling for tile sizes that never occur (tile is fixed 72dp). Anchors in `FailedTileOverlay` replace it: about -300 lines. |
-| P2 | Ponytail | `InventoryStore.setPhoto`: zero callers in `qml/` and `tests/` (comment says kept on purpose) — delete. Client `EnvConfig.storagePrefixForEnv` and server `storageEnvPrefix` are the same 2-line map kept in sync by hand; acceptable, but note the drift risk. |
+- Branch only, never `main`; push without asking (Taher reviews in the PR). PAT only for `git push` / PR API, never written to the repo.
+- No build/run of the app, no Qt tooling in the sandbox; CI is the only QML signal. Node tests do run for real in the sandbox (`cd functions && npm ci && npm test`, baseline 251 passing).
+- Every code change: tests toward 100% + test plan from template (Skill 49) + `SKILLS.md`/`AGENTS.md`/`README.md` as needed.
+- Honest advisor: trade-offs, grill before deciding, do not just agree.
+- Small scope per session (token budget); leave a resumable remote branch.
 
-## NEXT SESSION — start here
-1. Fresh clone, branch off `feature/2026-09-21-product-photos-firebase-storage` (or off this branch once merged into it).
-2. Fix F1 (reset `uploading` -> `enqueued` in `_load()` before `_reschedule()`), F2 (discard queued items in `deleteProduct`), with the tests named in the test plan's F1-F5 table. F3-F5 only if the owner agrees (grill the trade-offs first).
-3. Update test plan + SKILLS.md; wait for CI (do not run Qt locally).
+## Step log
 
-## Other open work (main's own handoff was overwritten by PR #84's checkpoint)
-- Gateway write-error classification (roadmap item 1): decisions Q1-Q5 in `docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`; branch `fix/2026-09-28-gateway-write-error-classification` already exists remotely.
-- Roadmap item 4 (photo cleanup on product delete) depends on this PR merging.
+1. Read project notes (decisions Q1-Q5 from PR #92). Cloned repo. `main` head = PR #92 merge.
+2. Created branch (renamed from the handoff's `2026-09-29` name to today's date). Archived previous CHECKPOINT.
+3. Read options doc "If Option 1 is chosen" sketch: map Firestore codes to 4xx (terminal) / 503 (transient) via pure `classifyWriteError` in `functions/lib/`, five catch sites, client reads status.
+4. Traced client handling of 4xx before touching anything. **Finding that contradicts the sketch:**
+   - `Gateway._classifyDeltaResponse` (`qml/model/Gateway.qml` ~L840): any 4xx with a well-formed `ok:false` body is treated as a definitive server decision, so the write is removed from the outbox and its callback fires. `_sendOperation` (~L925) applies the same rule.
+   - So mapping a terminal Firestore error to 4xx on the delta or operation endpoints would make the client DROP the write. That breaks the "client never drops in this PR" decision (Q1).
+   - Precedent already in the codebase: `_classifyBatchMutationFailure` (~L730) does NOT trust status alone; it allowlists `body.error` strings (`_terminalBatchErrors`) and deliberately keeps 401/403 retrying.
+   - `StuckWrites.isStuckStatus` counts any status >= 400 except 401/409, so 4xx vs 5xx does not change stuck counting either way.
+5. Design question Q-C1 raised to Taher: signal channel (HTTP status vs body `error` string). Recommendation: keep status 500 everywhere, add distinct `error` strings, client reads `body.error` (batch precedent). Awaiting answer.
+
+## Open question (blocks design approval)
+
+**Q-C1. How does the server tell the client "terminal" vs "transient"?**
+- A. New 4xx/503 statuses (the sketch). Needs client guards in `_classifyDeltaResponse` and `_sendOperation` to stop them dropping; touches two more QML senders; CI-only signal.
+- B. (recommended) Status stays 500; new `error` strings (`write-rejected` terminal, `write-unavailable` transient, `write-failed` stays for unknown). Old clients behave identically. Client reads `body.error`. No drop risk. Cost: HTTP status alone no longer separates them in Cloud Logs (the `console.error` still logs the Firestore code).
+- C. Add a `terminal: true|false` boolean to the body, status unchanged. Same safety as B but a second field to keep in sync with `error`.
+
+## NEXT (after Q-C1)
+
+1. Finish brainstorming: remaining design sections (mapping table, client label text, tests), spec to `docs/superpowers/specs/2026-09-28-gateway-write-error-classification-design.md`.
+2. `superpowers:writing-plans` -> `docs/superpowers/plans/2026-09-28-gateway-write-error-classification.md`.
+3. Implement (Node tests real, QML tests CI-only), test plan, `SKILLS.md`, `KNOWN-ISSUES.md`, roadmap status, PR.
+4. Then B (park + Retry/Discard). Then item 4 once the photos branch merges.
 
 ## Not done
-No app code, no rules/functions change, no build or run.
+
+- No code, tests, test plan, or `SKILLS.md`/`AGENTS.md`/`README.md` change yet (design not approved; brainstorming hard gate). Nothing built or run.
