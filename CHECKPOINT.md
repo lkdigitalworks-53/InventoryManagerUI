@@ -260,7 +260,7 @@ Resolved the remaining 4:
   merged feature's scratchpad (C-3 completion-store-hooks), not complementary content.
 - `SKILLS.md` -- both sides had claimed "Skill 68". Kept main's Skills 68-71 (staff-delete,
   CI-counting, hard-delete tombstone, normalize-whitelist findings) as the authoritative sequence,
-  renumbered this branch's atomicity/traps/Connections finding to **Skill 72**, appended after.
+  renumbered this branch's atomicity/traps/Connections finding to **Skill 72** at merge time (later renumbered again, see the Rebase section at the end: now Skill 74).
 - `docs/superpowers/test-plans/README.md` -- one index row (the P1 stock-movements test plan) had a
   stale summary carried on this branch vs. main's current one for the same file; kept main's (that
   work isn't this branch's own), kept this branch's own photos-test-plan row untouched.
@@ -318,7 +318,7 @@ in the local Firestore emulator being polled, so every poll timed out at 5000ms.
 
 **Fix:** added `readonly property string realFunctionUrl` and the same `Gateway.functionUrl`
 override/restore in `init()`/`cleanup()` that every sibling file already has. One file changed,
-no production code touched. Documented as **Skill 73** in `SKILLS.md` (generalizable check: grep the
+no production code touched. Documented as **Skill 75** in `SKILLS.md` (generalizable check: grep the
 *store functions* a new E2E test calls, not just its own direct POST lines, for any `Gateway.record*`
 call).
 
@@ -399,7 +399,7 @@ real photo-limit 409 reaches the app as a 409. Only the test helper was wrong.
 **Fix:** `postDirect` now takes the same snapshot and falls back to it when DONE reports 0 (a genuine
 network failure never reaches HEADERS_RECEIVED, so it still reports 0). Shared helper, but strictly a
 fallback for the lost-status case; grepped every E2E file and none asserts on `status === 0`. The
-speculative retry in `_uploadPhoto` was removed. Recorded as **Skill 74**, including the process
+speculative retry in `_uploadPhoto` was removed. Recorded as **Skill 76**, including the process
 mistake: I formed a theory from the symptom's shape without grepping the repo's own trail for it
 first, which is exactly what Skill 44 warns about.
 
@@ -419,3 +419,29 @@ the merged-in `main` work. Correction above is confirmed by execution, not just 
    `NativeFile.toReadablePath` / `readFileBase64` / image resize-and-thumbnail path on a real
    Android/iOS build, `PhotoQueue._upload()`'s real file read + XHR, the camera/gallery picker, and
    cross-device sync (needs two devices on one tenant).
+
+## Rebase onto main (2026-09-27, same session) -- real rebase this time, as originally asked
+
+Earlier I substituted a merge for the requested rebase and offered to redo it as a real one if linear
+history was wanted; it was asked for again, so: `git rebase origin/main`, then `git push
+--force-with-lease` (a rebase rewrites the 28 own commits, so a force-push is unavoidable; `--force-with-lease`
+so it can't clobber anything unexpected). The old tip is kept locally as `backup/pre-rebase-2026-09-27`.
+
+- Main had moved again since the merge: PR #88 (sales-analysis deleted-product labels) and PR #91
+  (silent staff-provisioning failure). The earlier merge commit `3a94bea` is gone from history -- rebase
+  drops merge commits and replays the 28 own commits linearly on top of `origin/main`.
+- **CHECKPOINT.md**: conflicted at 8 replayed commits; at every stop forced this branch's final copy
+  (saved before starting), per the instruction to keep my changes and to avoid the ours/theirs inversion that
+  bit this file twice before (during a rebase `--ours` = upstream, `--theirs` = the commit being replayed).
+  Verified byte-identical to the saved copy afterward (apart from the skill-number fixes in this commit).
+- **SKILLS.md**: main added its own Skills 72 and 73, so this branch's three entries were renumbered
+  again: atomicity 72 -> **74**, E2E Gateway-override 73 -> **75**, QTBUG-49896 74 -> **76**. Final file =
+  `origin/main`'s SKILLS.md + those three; the one reference to the atomicity skill outside this file
+  (photos test plan) was updated to match.
+- **docs/superpowers/test-plans/README.md**: kept main's two new rows, kept this branch's photos row,
+  dropped this branch's stale copy of the P1 row.
+- **tests/tst_OutboxStore.qml**: both sides append at the same spot; kept both blocks (main's first now).
+  Verified 43 test functions before and after, identical line content, braces balanced.
+- Everything else replayed cleanly. Verified the resulting tree differs from the pre-rebase tip only by
+  main's 6 new commits (plus the reorder above) -- nothing of this feature lost.
+- Not run here: QML/E2E (no Qt toolchain, per standing instruction). CI on the pushed head is the check.

@@ -94,7 +94,7 @@ actually calling `AuthService.ensureFreshToken()` despite the design saying it w
 serious of the four. All four are now fixed and covered (see sections 1–2 above for exactly which
 new test proves which fix). The lesson generalizes past this feature: a function's own unit test
 proves it behaves correctly in isolation, not that anything actually calls it — see `SKILLS.md`
-Skill 68's review-sweep addendum.
+Skill 74's review-sweep addendum.
 
 ## On-Device Test Plan
 
