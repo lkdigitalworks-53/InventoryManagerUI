@@ -24,6 +24,10 @@ used by every mutation of every entity, not a delete-ticket-sized change.
 Retry/Discard for a stuck write, and server-side error classification. Details in `KNOWN-ISSUES.md` and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
+**Status 2026-09-28: next up, awaiting decisions.** Remaining scope is (B) park + Retry/Discard and (C) server-side
+error classification. Code trace, trade-offs, recommended sequencing and 5 open questions:
+`docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`. No code yet.
+
 ## 2. Staff delete has no row-level button — MEDIUM
 
 Identical gap to what products and orders had before this PR: `StaffStore.deleteStaff()` and its
