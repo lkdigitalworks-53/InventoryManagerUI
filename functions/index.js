@@ -28,6 +28,7 @@ const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
 const PhotoValidation = require("./lib/photoValidation");
 const { send } = require("./lib/httpResponse");
+const { classifyWriteError } = require("./lib/writeError");
 
 admin.initializeApp();
 
@@ -176,7 +177,7 @@ exports.recordMutation = functions.onRequest(
             });
         } catch (e) {
             console.error("recordMutation write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -270,7 +271,7 @@ exports.recordDelta = functions.onRequest(
             });
         } catch (e) {
             console.error("recordDelta write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -342,7 +343,7 @@ exports.recordOperation = functions.onRequest(
             });
         } catch (e) {
             console.error("recordOperation write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -547,7 +548,7 @@ exports.recordMutationsBatch = functions.onRequest(
             });
         } catch (e) {
             console.error("recordMutationsBatch write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -739,7 +740,7 @@ exports.provisionMember = functions.onRequest(
             });
         } catch (e) {
             console.error("provisionMember write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 

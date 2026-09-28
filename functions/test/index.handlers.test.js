@@ -414,3 +414,93 @@ test("recordMutationsBatch: GET request -> 405 method-not-allowed", async () => 
     assert.equal(res.statusCode, 405);
     assert.equal(jsonBody(res).error, "method-not-allowed");
 });
+
+test("recordMutation: terminal (permission-denied) Firestore error -> still 500, error write-rejected", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/gatewayLogic")].exports;
+    const original = cached.applyMutation;
+    cached.applyMutation = async () => { throw Object.assign(new Error("simulated"), { code: 7 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: validMutationBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-rejected");
+    } finally {
+        cached.applyMutation = original;
+    }
+});
+
+test("recordMutation: transient (unavailable) Firestore error -> still 500, error write-unavailable", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/gatewayLogic")].exports;
+    const original = cached.applyMutation;
+    cached.applyMutation = async () => { throw Object.assign(new Error("simulated"), { code: 14 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: validMutationBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-unavailable");
+    } finally {
+        cached.applyMutation = original;
+    }
+});
+
+test("recordDelta: terminal (permission-denied) Firestore error -> still 500, error write-rejected", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/gatewayLogic")].exports;
+    const original = cached.applyDelta;
+    cached.applyDelta = async () => { throw Object.assign(new Error("simulated"), { code: 7 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordDelta(mockReq({ body: validDeltaBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-rejected");
+    } finally {
+        cached.applyDelta = original;
+    }
+});
+
+test("recordDelta: transient (unavailable) Firestore error -> still 500, error write-unavailable", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/gatewayLogic")].exports;
+    const original = cached.applyDelta;
+    cached.applyDelta = async () => { throw Object.assign(new Error("simulated"), { code: 14 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordDelta(mockReq({ body: validDeltaBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-unavailable");
+    } finally {
+        cached.applyDelta = original;
+    }
+});
+
+test("recordMutationsBatch: terminal (permission-denied) Firestore error -> still 500, error write-rejected", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/batchMutationLogic")].exports;
+    const original = cached.applyMutationsBatch;
+    cached.applyMutationsBatch = async () => { throw Object.assign(new Error("simulated"), { code: 7 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordMutationsBatch(mockReq({ body: validBatchBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-rejected");
+    } finally {
+        cached.applyMutationsBatch = original;
+    }
+});
+
+test("recordMutationsBatch: transient (unavailable) Firestore error -> still 500, error write-unavailable", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/batchMutationLogic")].exports;
+    const original = cached.applyMutationsBatch;
+    cached.applyMutationsBatch = async () => { throw Object.assign(new Error("simulated"), { code: 14 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordMutationsBatch(mockReq({ body: validBatchBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-unavailable");
+    } finally {
+        cached.applyMutationsBatch = original;
+    }
+});

@@ -696,3 +696,33 @@ test("computeAnalysis: a non-integer period falls back to 0 rather than throwing
     await handlers.computeAnalysis(mockReq({ body: validAnalysisBody({ period: "not-a-number" }) }), res);
     assert.equal(res.statusCode, 200);
 });
+
+test("provisionMember: terminal (permission-denied) transaction error -> still 500, error write-rejected", async () => {
+    resetProvisionAuthMocks();
+    seedHappyPathAuth(mockState);
+    mockState.createUser = async () => ({ uid: "doomed-uid" });
+    mockState.runTransactionError = Object.assign(new Error("simulated"), { code: 7 });
+    try {
+        const res = mockRes();
+        await handlers.provisionMember(mockReq({ body: validProvisionBody() }), res);
+        assert.equal(res.statusCode, 500);
+        assert.equal(jsonBody(res).error, "write-rejected");
+    } finally {
+        mockState.runTransactionError = null;
+    }
+});
+
+test("provisionMember: transient (unavailable) transaction error -> still 500, error write-unavailable", async () => {
+    resetProvisionAuthMocks();
+    seedHappyPathAuth(mockState);
+    mockState.createUser = async () => ({ uid: "doomed-uid" });
+    mockState.runTransactionError = Object.assign(new Error("simulated"), { code: 14 });
+    try {
+        const res = mockRes();
+        await handlers.provisionMember(mockReq({ body: validProvisionBody() }), res);
+        assert.equal(res.statusCode, 500);
+        assert.equal(jsonBody(res).error, "write-unavailable");
+    } finally {
+        mockState.runTransactionError = null;
+    }
+});
