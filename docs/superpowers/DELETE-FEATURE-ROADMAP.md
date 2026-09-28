@@ -24,6 +24,11 @@ used by every mutation of every entity, not a delete-ticket-sized change.
 Retry/Discard for a stuck write, and server-side error classification. Details in `KNOWN-ISSUES.md` and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
+**Status 2026-09-28: decided, next up.** Remaining scope is (C) server-side error classification, then (B) park +
+Retry/Discard. Taher chose **C first** (client still never drops), Discard = **re-pull from Firestore**, parked flag
+**persisted**, UI = **tappable header caption -> dialog**. Trace, trade-offs and decisions:
+`docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`. No code yet.
+
 ## 2. Staff delete has no row-level button — MEDIUM
 
 Identical gap to what products and orders had before this PR: `StaffStore.deleteStaff()` and its
@@ -69,6 +74,10 @@ suite caught pre-merge, and two adjacent-but-out-of-scope findings: `KNOWN-ISSUE
 `docs/superpowers/specs/2026-09-26-sales-analysis-deleted-product-labels-design.md`.
 
 ## 4. Photo cleanup on delete — unverified, not blocking
+
+**Status 2026-09-28: unblocked soon.** Storage plan is now active and the product-photos branch
+(`feature/2026-09-21-product-photos-firebase-storage`) works; Taher expects it to merge within days. Queued as the next
+priority after item 1's C and B, and pulled forward once that branch lands. It is an on-device check, not a build.
 
 `InventoryStore.deleteProduct()` calls `StorageService.deleteProductPhoto()`, guarded in a
 try/catch. Correct by code trace, but **not confirmed on-device** — no Storage plan is enabled
