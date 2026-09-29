@@ -3845,3 +3845,32 @@ together is the correct pattern for a hidden effect source; `visible: false` alo
 source produces a blank/transparent result and the source item is `visible: false`, check for
 `layer.enabled: true` before looking anywhere else — this is the first thing to rule out, not the
 last.
+
+## Skill 81: A Felgo-importing component can't be loaded by `qmltestrunner` — put its geometry in a pure `.js` helper, and make the container hand it the width it was designed for
+
+**PR #84 follow-up, 2026-09-29 (failed-upload photo tile: in-tile Retry/Discard).** Two targets (36dp
+Retry, 28dp Discard) have to share a 72dp tile without overlapping. `FailedTileOverlay.qml` uses
+Felgo-provided `dp()/sp()/Icon`, so CI can't instantiate it (same limit as `ProductPhotoGallery.qml`).
+Instead of testing a mirror, the positions/sizes, the scrim-contrast claim and the none/busy/failed
+rule live in `qml/helper/FailedTileGeometry.js` (`.pragma library`) and the QML component only paints
+what the helper returns. Then "hit boxes never overlap, never leave the tile, meet the size floor, at
+every dp scale" is a real, headless assertion (`tests/tst_FailedTileGeometry.qml`), including a
+1000-case deterministic monkey test. A contrast claim is only worth writing down if a too-weak value
+fails it: the test asserts a 30% scrim is rejected.
+
+**Bug caught in review before it shipped:** the first wiring put `anchors.margins: dp(2)` on the
+`Loader` hosting the overlay, so the overlay saw a 68dp tile, and the helper (correctly) scaled every
+target down to 94%. Geometry that is designed against a specific container size must be given that
+size: inset only the decoration (the scrim, via `scrimInset`), never the item the geometry reads
+`width` from.
+
+**Also decided, not observed:** no creation-time entrance animation on the overlay. The gallery model is
+a JS array reassigned on every `PhotoQueue.revisionChanged`, which resets the `ListView` and recreates
+delegates, so `NumberAnimation on opacity` would replay on every unrelated queue change. Reasoned from
+the code; verify on device if an entrance animation is ever wanted (it would need per-photoId "already
+shown" state, not a delegate-local animation).
+
+**The check:** when a QML component can't be loaded headless, ask what inside it has a right/wrong
+answer (sizes, overlaps, thresholds, state mapping) and move exactly that into a pure helper before
+writing tests. And after wiring, re-derive the size the helper actually receives.
+

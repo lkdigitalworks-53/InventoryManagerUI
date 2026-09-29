@@ -448,6 +448,7 @@ QtObject {
   (URL building; classification/backoff/breaker/reducer), same `.pragma library` +
   `functions/test/testSupport/*Parity.js` Node-mirror convention as `StuckWrites.js` (Skill 67) —
   see `tests/tst_PhotoUrl.qml`/`tests/tst_PhotoQueueLogic.qml` for the QML side.
+- `qml/components/FailedTileOverlay.qml` + `qml/helper/FailedTileGeometry.js` — in-tile Retry/Discard for a failed photo upload (2026-09-29, PR #84 follow-up). Overlay only paints and forwards taps; hit-box geometry, scrim contrast and the none/busy/failed rule are pure and headless-tested in `tests/tst_FailedTileGeometry.qml` (SKILLS Skill 81). A failed tile keeps the normal 72dp footprint — do not reintroduce width/height growth in `ProductPhotoGallery.qml`.
 - `qml/helper/EnvConfig.js` — `storagePrefixForEnv(env)` added 2026-09-21, deliberately separate
   from `databaseIdForEnv` (Storage paths spell `prd` literally where Firestore's database id is
   `(default)`) even though both share the same `dev`→`dev1` mapping.peration-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**

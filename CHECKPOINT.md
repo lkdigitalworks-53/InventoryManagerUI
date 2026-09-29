@@ -11,15 +11,24 @@ tile's Retry / Discard buttons look bad. Wants fluid, futuristic, on-theme, eleg
 
 ## Steps
 
-- [x] 1. Cloned repo, branched off PR #84 head, unset upstream (so no accidental push to PR #84's branch).
+- [x] 1. Cloned repo, branched off PR #84 head, unset upstream (no accidental push to PR #84's branch).
 - [x] 2. Read AGENTS.md, CHECKPOINT.md, the four skills above.
-- [x] 3. Explored code. Findings below.
-- [x] 4a. Owner chose layout **A (in-tile overlay)**.
-- [ ] 4b. **BLOCKED on owner:** Retry-button look (filled brand gradient vs frosted glass); answering also approves the design below.
-- [ ] 5. Write spec `docs/superpowers/specs/2026-09-29-photo-gallery-failed-tile-actions-design.md`.
-- [ ] 6. Write test plan (template: covered-by-tests list + On-Device plan: Happy, Negative, Edge, Affected Areas, Regression).
-- [ ] 7. TDD: tests first (`tests/tst_PhotoGalleryLayout.qml` + new component test), then QML.
-- [ ] 8. Update SKILLS.md (append-only), AGENTS.md, README.md as needed. Push. CI is the verifier (no Qt in sandbox, no app build).
+- [x] 3. Explored code (findings below).
+- [x] 4. Owner chose layout **A (in-tile overlay)** and **Retry = filled brand gradient**; design approved in chat.
+- [x] 5. Spec: `docs/superpowers/specs/2026-09-29-photo-gallery-failed-tile-actions-design.md`.
+- [x] 6. Test plan: `docs/superpowers/test-plans/2026-09-29-photo-gallery-failed-tile-actions-test-plan.md` (+ index row, supersede note in the older filmstrip plan).
+- [x] 7. Tests first: `tests/tst_FailedTileGeometry.qml` (22), `tests/tst_PhotoGalleryLayout.qml` (16; row-height mirror tests flipped to footprint-unchanged).
+- [x] 8. Code: `qml/helper/FailedTileGeometry.js`, `qml/components/FailedTileOverlay.qml`, gallery delegate rewired, `retry` icon in `Constants.iconMap`. Removed `_hasFailedQueued/_failedExtra/_rowHeight`.
+- [x] 9. Docs: SKILLS.md Skill 81, AGENTS.md bullet. README unchanged (nothing user-facing to add).
+- [x] 10. Sandbox-only Node run of the helper math (200k random cases, 0 violations). NOT the app, not qmltestrunner.
+- [ ] 11. **CI result on the pushed head** (owner / next session: check `checks.yml` run; QML job is the first real run of the 38 tests above).
+- [ ] 12. Open PR: base = PR #84 branch (stacked). Owner reviews on GitHub.
+- [ ] 13. On-device run of the test plan's section 5 (owner).
+
+**Deviations from the approved draft (told to owner):** entrance fade-in dropped (model rebuilt as JS array
+resets the ListView -> animation would replay on unrelated queue changes; reasoned, not observed). Review
+caught the overlay being given a 68dp container (2dp margins) which would have shrunk the targets; fixed.
+**Resume point if interrupted:** everything through step 10 is committed and pushed on this branch.
 
 ## Findings (step 3)
 
