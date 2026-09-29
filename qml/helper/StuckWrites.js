@@ -17,8 +17,25 @@
 // ([2s, 8s, 30s, 2m, 10m]): long enough to ride out a deploy blip.
 var THRESHOLD = 5
 
-// state = { failures: { requestId: count }, stuck: { requestId: true } }
-function newState() { return { failures: {}, stuck: {} } }
+// state = { failures: { requestId: count }, stuck: { requestId: true },
+//           terminal: { requestId: true } }
+// `terminal` = the server's LATEST answer for that write was "rejected" (see
+// REJECTED); it only labels the write, it never changes retry or dropping.
+function newState() { return { failures: {}, stuck: {}, terminal: {} } }
+
+// functions/lib/writeError.js: the server answers HTTP 500 either way, so the
+// body's `error` string is the only signal. Everything else (write-unavailable,
+// write-failed, an unparseable body) is treated as "may still succeed".
+var REJECTED = "write-rejected"
+
+// `body` is the raw responseText or an already-parsed object. Never throws.
+function errorCodeOf(body) {
+    var b = body
+    if (typeof b === "string") {
+        try { b = JSON.parse(b) } catch (e) { return "" }
+    }
+    return (b && typeof b.error === "string") ? b.error : ""
+}
 
 // A request that timed out (Gateway aborted it) is reported as TIMEOUT, not as
 // status 0. It counts only while the device believes it is online: a hang with
@@ -32,8 +49,10 @@ function isStuckStatus(status, online) {
 
 // Records one failed send. Returns true only for the failure that tips the item
 // over THRESHOLD, so the caller can react once per item.
-function noteFailure(state, requestId, status, online) {
+function noteFailure(state, requestId, status, online, errorCode) {
     if (!isStuckStatus(status, online)) return false
+    if (errorCode === REJECTED) state.terminal[requestId] = true
+    else delete state.terminal[requestId]
     var n = (state.failures[requestId] || 0) + 1
     state.failures[requestId] = n
     if (n !== THRESHOLD) return false
@@ -43,11 +62,19 @@ function noteFailure(state, requestId, status, online) {
 
 function stuckCount(state) { return Object.keys(state.stuck).length }
 
+// Stuck writes the server has said it rejects. Always <= stuckCount.
+function terminalCount(state) {
+    var n = 0
+    for (var id in state.stuck) if (state.terminal[id]) n++
+    return n
+}
+
 // Forgets every requestId that has left the outbox (sent, dropped, coalesced,
 // signed out). liveIds = { requestId: true }. Returns the new stuck count.
 function prune(state, liveIds) {
     var id
     for (id in state.stuck) if (!liveIds[id]) delete state.stuck[id]
     for (id in state.failures) if (!liveIds[id]) delete state.failures[id]
+    for (id in state.terminal) if (!liveIds[id]) delete state.terminal[id]
     return stuckCount(state)
 }

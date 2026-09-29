@@ -102,6 +102,12 @@ Retry/Discard, with Discard rolling back to the outbox item's `before`; (C) have
 Firestore error codes to distinct HTTP statuses (today every exception is `500 write-failed`) so the client
 can classify precisely instead of counting.
 
+**Update 2026-09-28 (part C landed, branch `fix/2026-09-28-gateway-write-error-classification`):** (C) is done, but
+NOT as distinct statuses: the status stays 500 and the body `error` is `write-rejected` / `write-unavailable` /
+`write-failed` (a 4xx would make the delta and operation senders drop the write, SKILLS Skill 74). The client labels
+stuck writes the server rejected ("N change(s) rejected by the server. Still retrying."). Still open: (B) park +
+Retry/Discard (Taher's Q2-Q4: re-pull on Discard, persisted parked flag, tappable caption -> dialog).
+
 ---
 
 ## Delete: staff delete has the identical missing-UI gap as products/orders had — RESOLVED 2026-09-21

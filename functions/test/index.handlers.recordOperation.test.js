@@ -161,3 +161,33 @@ test("recordOperation: applyOperation throwing -> 500 write-failed, not an unhan
         cached.applyOperation = original;
     }
 });
+
+test("recordOperation: terminal (permission-denied) Firestore error -> still 500, error write-rejected", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/operationLogic")].exports;
+    const original = cached.applyOperation;
+    cached.applyOperation = async () => { throw Object.assign(new Error("simulated"), { code: 7 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordOperation(mockReq({ body: validOperationBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-rejected");
+    } finally {
+        cached.applyOperation = original;
+    }
+});
+
+test("recordOperation: transient (unavailable) Firestore error -> still 500, error write-unavailable", async () => {
+    seedHappyPathAuth(mockState);
+    const cached = require.cache[require.resolve("../lib/operationLogic")].exports;
+    const original = cached.applyOperation;
+    cached.applyOperation = async () => { throw Object.assign(new Error("simulated"), { code: 14 }); };
+    try {
+        const res = mockRes();
+        await handlers.recordOperation(mockReq({ body: validOperationBody() }), res);
+        assert.equal(res.statusCode, 500, "status must stay 500 so the client never sees a 4xx and drops the write");
+        assert.equal(jsonBody(res).error, "write-unavailable");
+    } finally {
+        cached.applyOperation = original;
+    }
+});

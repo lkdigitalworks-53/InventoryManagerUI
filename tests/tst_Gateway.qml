@@ -771,6 +771,93 @@ TestCase {
         compare(Gateway.stuckCount, 1)
     }
 
+    // -- server error code -> stuckTerminalCount (part C, 2026-09-28) ----------
+    // Same "drive _noteFailure directly" pattern. The XHR handlers pass the raw
+    // responseText as the 3rd argument.
+
+    function _rejectedBody() { return JSON.stringify({ ok: false, error: "write-rejected" }) }
+    function _unavailableBody() { return JSON.stringify({ ok: false, error: "write-unavailable" }) }
+
+    function _failWith(item, status, body, n) {
+        for (var i = 0; i < n; ++i) Gateway._noteFailure(item, status, body)
+    }
+
+    function test_stuckTerminalCount_starts_at_zero() {
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_a_rejected_write_raises_stuckTerminalCount_only_once_stuck() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 4)
+        compare(Gateway.stuckTerminalCount, 0)
+        _failWith(item, 500, _rejectedBody(), 1)
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 1)
+    }
+
+    function test_an_outage_answer_leaves_stuckTerminalCount_at_zero() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _unavailableBody(), 5)
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_missing_or_garbage_bodies_are_not_terminal() {
+        var item = _queueWrite("o1")
+        var bodies = [undefined, null, "", "<html>502</html>", "{}"]
+        for (var i = 0; i < bodies.length; ++i) Gateway._noteFailure(item, 500, bodies[i])
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_the_timeout_path_without_a_body_still_works() {
+        var item = _queueWrite("o1")
+        _failWith(item, StuckWrites.TIMEOUT, undefined, 5)
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_terminal_count_follows_the_latest_answer() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.stuckTerminalCount, 1)
+        Gateway._noteFailure(item, 503, _unavailableBody())
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(Gateway.stuckCount, 1, "still stuck, just no longer labelled rejected")
+    }
+
+    function test_terminal_count_is_a_subset_of_stuckCount() {
+        var a = _queueWrite("o1")
+        var b = _queueWrite("o2")
+        _failWith(a, 500, _rejectedBody(), 5)
+        _failWith(b, 500, _unavailableBody(), 5)
+        compare(Gateway.stuckCount, 2)
+        compare(Gateway.stuckTerminalCount, 1)
+    }
+
+    function test_terminal_count_drops_when_the_write_leaves_the_outbox() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.stuckTerminalCount, 1)
+        OutboxStore.markSent(item.requestId)
+        Gateway._reschedule()
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_clear_resets_stuckTerminalCount() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.clear()
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_a_rejected_write_never_leaves_the_outbox_by_itself() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 20)
+        var still = OutboxStore.items.filter(function(i) { return i.requestId === item.requestId })
+        compare(still.length, 1, "part C only labels: the client must never drop a write")
+    }
+
     function test_the_toast_fires_again_after_the_count_returned_to_zero() {
         var a = _queueWrite("o1")
         _failTimes(a, 500, 5)

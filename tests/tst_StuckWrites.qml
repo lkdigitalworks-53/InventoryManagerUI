@@ -181,6 +181,123 @@ TestCase {
         compare(SW.stuckCount(state), 1)
     }
 
+    // ── terminal flag (server said "write-rejected") ─────────────────────────
+
+    function _stuckWith(state, id, code) {
+        // Puts `id` into stuck, its latest answer being `code`.
+        for (var i = 0; i < SW.THRESHOLD; ++i) SW.noteFailure(state, id, 500, true, code)
+    }
+
+    function test_errorCodeOf_reads_the_error_string_from_text_or_object() {
+        compare(SW.errorCodeOf('{"ok":false,"error":"write-rejected"}'), "write-rejected")
+        compare(SW.errorCodeOf({ ok: false, error: "write-unavailable" }), "write-unavailable")
+        compare(SW.errorCodeOf('{"error":"write-failed"}'), "write-failed")
+    }
+
+    function test_errorCodeOf_never_throws_on_junk() {
+        var junk = [undefined, null, "", "not json", "<html>502</html>", "[]", "null", "42", '{"error":7}',
+                    '{"error":null}', '{"ok":false}', {}, [], 0, 7, true, { error: 5 }]
+        for (var i = 0; i < junk.length; ++i)
+            compare(SW.errorCodeOf(junk[i]), "", "junk #" + i)
+    }
+
+    function test_REJECTED_is_the_server_wire_string() {
+        compare(SW.REJECTED, "write-rejected")
+    }
+
+    function test_a_rejected_stuck_write_is_counted_terminal() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        compare(SW.stuckCount(state), 1)
+        compare(SW.terminalCount(state), 1)
+    }
+
+    function test_rejected_below_threshold_is_not_terminal_yet() {
+        var state = SW.newState()
+        for (var i = 0; i < SW.THRESHOLD - 1; ++i) SW.noteFailure(state, "a", 500, true, SW.REJECTED)
+        compare(SW.terminalCount(state), 0, "terminalCount only counts writes that are stuck")
+        SW.noteFailure(state, "a", 500, true, SW.REJECTED)
+        compare(SW.terminalCount(state), 1)
+    }
+
+    function test_unavailable_unknown_and_missing_codes_are_not_terminal() {
+        var codes = ["write-unavailable", "write-failed", "", undefined, "anything-else"]
+        for (var i = 0; i < codes.length; ++i) {
+            var state = SW.newState()
+            _stuckWith(state, "a", codes[i])
+            compare(SW.stuckCount(state), 1)
+            compare(SW.terminalCount(state), 0, "code " + codes[i])
+        }
+    }
+
+    function test_the_latest_answer_wins_in_both_directions() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        compare(SW.terminalCount(state), 1)
+        SW.noteFailure(state, "a", 503, true, "write-unavailable")
+        compare(SW.terminalCount(state), 0, "outage after a rejection: no longer labelled rejected")
+        SW.noteFailure(state, "a", 500, true, SW.REJECTED)
+        compare(SW.terminalCount(state), 1)
+    }
+
+    function test_ignored_statuses_never_touch_the_flag() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        SW.noteFailure(state, "a", 401, true, "write-unavailable")
+        SW.noteFailure(state, "a", 409, true, "write-unavailable")
+        SW.noteFailure(state, "a", 0, true, "write-unavailable")
+        SW.noteFailure(state, "a", SW.TIMEOUT, false, "write-unavailable")
+        compare(SW.terminalCount(state), 1, "auth, conflict, offline and offline-timeout are not server answers about the write")
+    }
+
+    function test_a_timeout_online_clears_the_flag() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        SW.noteFailure(state, "a", SW.TIMEOUT, true)
+        compare(SW.terminalCount(state), 0, "a hang is not a rejection; the last real answer is stale")
+    }
+
+    function test_terminal_is_tracked_per_write() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        _stuckWith(state, "b", "write-unavailable")
+        _stuckWith(state, "c", SW.REJECTED)
+        compare(SW.stuckCount(state), 3)
+        compare(SW.terminalCount(state), 2)
+    }
+
+    function test_prune_forgets_terminal_flags_of_writes_that_left() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        _stuckWith(state, "b", SW.REJECTED)
+        SW.prune(state, { b: true })
+        compare(SW.terminalCount(state), 1)
+        compare(Object.keys(state.terminal).length, 1, "no leaked flag for the pruned id")
+        SW.prune(state, {})
+        compare(SW.terminalCount(state), 0)
+        compare(Object.keys(state.terminal).length, 0)
+    }
+
+    function test_a_reused_id_after_prune_starts_clean() {
+        var state = SW.newState()
+        _stuckWith(state, "a", SW.REJECTED)
+        SW.prune(state, {})
+        _stuckWith(state, "a", "write-unavailable")
+        compare(SW.terminalCount(state), 0)
+    }
+
+    function test_the_code_does_not_change_when_a_write_tips_into_stuck() {
+        var a = SW.newState(), b = SW.newState()
+        var tippedA = 0, tippedB = 0
+        for (var i = 0; i < 10; ++i) {
+            if (SW.noteFailure(a, "x", 500, true, SW.REJECTED)) tippedA++
+            if (SW.noteFailure(b, "x", 500, true)) tippedB++
+        }
+        compare(tippedA, 1)
+        compare(tippedB, 1)
+        compare(SW.stuckCount(a), SW.stuckCount(b), "the code is a label; it must not move the threshold")
+    }
+
     // ── monkey ───────────────────────────────────────────────────────────────
 
     // Random failures and prunes over a handful of ids, checked step by step
@@ -280,5 +397,43 @@ TestCase {
         for (var i = 0; i < 4; ++i) SW.noteFailure(s, "r1", SW.TIMEOUT, true)
         compare(SW.noteFailure(s, "r1", SW.TIMEOUT, false), false)
         compare(SW.noteFailure(s, "r1", SW.TIMEOUT, true), true)
+    }
+    // Terminal-flag monkey: random codes/statuses/prunes vs a reference model.
+    function test_monkey_terminal_flag_matches_a_reference_model() {
+        var statuses = [0, 200, 401, 409, 500, 503, SW.TIMEOUT]
+        var codes = [SW.REJECTED, "write-unavailable", "write-failed", "", undefined]
+        var ids = ["a", "b", "c", "d"]
+        for (var seed = 1; seed <= 25; ++seed) {
+            var rnd = _rng(seed * 7)
+            var state = SW.newState()
+            var refCount = {}, refStuck = {}, refTerm = {}
+            for (var step = 0; step < 300; ++step) {
+                var where = "seed " + seed + " step " + step
+                if (rnd() < 0.85) {
+                    var id = ids[Math.floor(rnd() * ids.length)]
+                    var st = statuses[Math.floor(rnd() * statuses.length)]
+                    var code = codes[Math.floor(rnd() * codes.length)]
+                    var counts = (st === SW.TIMEOUT) ? true : (st >= 400 && st !== 401 && st !== 409)
+                    if (counts) {
+                        if (code === SW.REJECTED) refTerm[id] = true
+                        else delete refTerm[id]
+                        refCount[id] = (refCount[id] || 0) + 1
+                        if (refCount[id] === 5) refStuck[id] = true
+                    }
+                    SW.noteFailure(state, id, st, true, code)
+                } else {
+                    var live = {}
+                    for (var k = 0; k < ids.length; ++k) if (rnd() < 0.5) live[ids[k]] = true
+                    SW.prune(state, live)
+                    for (var rc in refCount) if (!live[rc]) delete refCount[rc]
+                    for (var rs in refStuck) if (!live[rs]) delete refStuck[rs]
+                    for (var rt in refTerm) if (!live[rt]) delete refTerm[rt]
+                }
+                var want = 0
+                for (var sid in refStuck) if (refTerm[sid]) want++
+                compare(SW.terminalCount(state), want, where)
+                verify(SW.terminalCount(state) <= SW.stuckCount(state), where + " terminal <= stuck")
+            }
+        }
     }
 }

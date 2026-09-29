@@ -131,6 +131,9 @@ QtObject {
     // GlassHeader shows a persistent "not syncing" line while it is above 0.
     // This only REPORTS: retry, backoff and dropping are decided elsewhere.
     property int stuckCount: 0
+    // How many of those the server answered "write-rejected" (poison write,
+    // not an outage). Label only: the app still retries them all.
+    property int stuckTerminalCount: 0
     property var _stuckState: StuckWrites.newState()
 
     // Pending recordDelta callbacks, keyed by outbox requestId — NOT
@@ -481,9 +484,12 @@ QtObject {
     // write becomes stuck; the header line stays up until the count drops again.
     // `status` may be a real HTTP status or StuckWrites.TIMEOUT (D5): a timeout
     // only counts while the device believes it's online -- see StuckWrites.js.
-    function _noteFailure(item, status) {
+    // `body` (optional): the response text, for the server's error code.
+    function _noteFailure(item, status, body) {
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
-        if (!StuckWrites.noteFailure(_stuckState, item.requestId, status, online)) return
+        var tipped = StuckWrites.noteFailure(_stuckState, item.requestId, status, online, StuckWrites.errorCodeOf(body))
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
+        if (!tipped) return
         var wasQuiet = stuckCount === 0
         stuckCount = StuckWrites.stuckCount(_stuckState)
         if (wasQuiet)
@@ -497,6 +503,7 @@ QtObject {
         var queued = OutboxStore.items
         for (var i = 0; i < queued.length; ++i) live[queued[i].requestId] = true
         stuckCount = StuckWrites.prune(_stuckState, live)
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
     }
 
     function _reschedule() {
@@ -674,7 +681,7 @@ QtObject {
                     console.warn("[Gateway] recordMutation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                                  "statusText:", xhr.statusText, item.entity, item.entityId, effResponseText, "headers:", headersSeen)
                     OutboxStore.markFailed(item.requestId)
-                    _noteFailure(item, effStatus)
+                    _noteFailure(item, effStatus, effResponseText)
                 }
             }
             OutboxStore.clearInFlight(item)
@@ -801,7 +808,7 @@ QtObject {
                         console.warn("[Gateway] recordMutationsBatch failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                                      item.entity, item.items.length, effResponseText)
                         OutboxStore.markFailed(item.requestId)
-                        _noteFailure(item, effStatus)
+                        _noteFailure(item, effStatus, effResponseText)
                     }
                 }
             }
@@ -890,7 +897,7 @@ QtObject {
                 console.warn("[Gateway] recordDelta failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                              item.entity, item.entityId, effResponseText)
                 OutboxStore.markFailed(item.requestId)
-                _noteFailure(item, effStatus)
+                _noteFailure(item, effStatus, effResponseText)
             }
             OutboxStore.clearInFlight(item)
 
@@ -955,7 +962,7 @@ QtObject {
                 console.warn("[Gateway] recordOperation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                              item.requestId, item.opType, effResponseText)
                 OutboxStore.markFailed(item.requestId)
-                _noteFailure(item, effStatus)
+                _noteFailure(item, effStatus, effResponseText)
             }
             OutboxStore.clearInFlight(item)
 
@@ -1076,6 +1083,7 @@ QtObject {
         _operationWaiters = ({})
         _stuckState = StuckWrites.newState()
         stuckCount = 0
+        stuckTerminalCount = 0
         if (_drainTimer) _drainTimer.stop()
     }
 }

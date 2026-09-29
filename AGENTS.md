@@ -433,7 +433,8 @@ QtObject {
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
-- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan)
+- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan). Since 2026-09-28 it also tracks the server's latest `write-rejected` answer per write (`REJECTED`, `errorCodeOf`, `terminalCount`), published as `Gateway.stuckTerminalCount` for the `GlassHeader` caption; label only, never changes retry or dropping
+- `functions/lib/writeError.js` — pure `classifyWriteError(e)`: Firestore/gRPC error code -> `write-rejected` / `write-unavailable` / `write-failed` body string for the five `write-failed` catch sites in `functions/index.js`. HTTP status stays 500 (SKILLS Skill 74)
 - `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,

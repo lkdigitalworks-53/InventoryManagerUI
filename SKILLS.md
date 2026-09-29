@@ -3724,7 +3724,7 @@ doesn't, harmlessly (any non-2xx already maps to `ok=false`, and only the error-
 "status 0"), noted rather than changed.
 
 
-## Skill 75: A value crossing the C++/QML boundary needs ONE representation, and a "file gone" branch mapped to HTTP 400 disguises a local bug as a server bug
+## Skill 77: A value crossing the C++/QML boundary needs ONE representation, and a "file gone" branch mapped to HTTP 400 disguises a local bug as a server bug
 
 **Found on-device, PR #84 (product photos), 2026-09-28.** Four symptoms (spinner forever, nothing in
 Storage, instant "failed", `Cannot open: file://file///C:/...`), two root causes. (1)
@@ -3746,7 +3746,7 @@ by default: once one tile can be taller (failed tile + button row), give every c
 stored value; for each gate in a drain function, name the event that re-runs it.
 
 
-## Skill 76: A delegate with `required property` loses the implicit `index`; a fixed-count RowLayout of user data must wrap; a dialog that copies store data goes stale; and when two surfaces share a helper, log the failure before theorising
+## Skill 78: A delegate with `required property` loses the implicit `index`; a fixed-count RowLayout of user data must wrap; a dialog that copies store data goes stale; and when two surfaces share a helper, log the failure before theorising
 
 **Found on-device, PR #84 (product photos), 2026-09-28, second round.** (1) "Cover" showed on every photo tile:
 the delegate declared `required property string modelData` but read `index`. Once a delegate has any required
@@ -3769,7 +3769,7 @@ declared; for every `RowLayout` fed by a `Repeater` over user data, name the max
 for every `property var x` assigned once in an `openFor()`, name the signal that refreshes it.
 
 
-## Skill 77: A test that asserts "nothing was enqueued" must name WHAT must not be enqueued — a ledger row is a legitimate second write
+## Skill 79: A test that asserts "nothing was enqueued" must name WHAT must not be enqueued — a ledger row is a legitimate second write
 
 **Found in CI, PR #84, 2026-09-28.** `test_applyPhotoIds_never_enqueues_a_gateway_mutation` asserted
 `OutboxStore.pendingCount === 0`, but `applyPhotoIds(..., "add")` also records a `photo_change` ledger row
@@ -3784,7 +3784,7 @@ writes" test, grep the function body for every `Gateway.`/`TransactionStore.`/`A
 **The check:** for each "nothing enqueued" assertion, list the side-effect calls of the function under test and
 confirm the asserted count equals the sum of the intended ones.
 
-## Skill 78: `clip: true` clips to the bounding box, not `radius` — a rounded-corner thumbnail needs a `MultiEffect` mask, not just `clip`
+## Skill 80: `clip: true` clips to the bounding box, not `radius` — a rounded-corner thumbnail needs a `MultiEffect` mask, not just `clip`
 
 **Found on-device, PR #84, 2026-09-29.** `ProductPhotoGallery.qml`'s tiles were `Rectangle { radius: ...; clip:
 true }` with a `PreserveAspectCrop` `Image` filling them — reported as "the photos goes out of the rectangle."
@@ -3807,7 +3807,7 @@ exists.
 rounded-corner *candidate*, not a proven one — check whether the child's own shape is masked to `radius`, not just
 clipped to the box, before trusting a "rounded" thumbnail to actually render rounded.
 
-## Skill 79: Rejecting a scrollable "+" tile once doesn't mean rejecting scrolling — pin the fixed action outside the Flickable, not instead of it
+## Skill 81: Rejecting a scrollable "+" tile once doesn't mean rejecting scrolling — pin the fixed action outside the Flickable, not instead of it
 
 **Found on-device, PR #84, 2026-09-29.** The 2026-09-28 round rejected a horizontal `Flickable` for the photo strip
 because it would hide the `+` tile until scrolled, and chose `Flow` instead (wraps to rows). That fixed the
@@ -3825,7 +3825,7 @@ built.
 whether a fixed action (an add button, a "done" affordance) needs to stay reachable regardless of scroll position —
 if so, it goes in a sibling outside the scrollable item's own model, not inside it.
 
-## Skill 80: `visible: false` is not enough to feed a `MultiEffect` source/mask — it needs `layer.enabled: true`
+## Skill 82: `visible: false` is not enough to feed a `MultiEffect` source/mask — it needs `layer.enabled: true`
 
 **Found on-device, PR #84 round 5, 2026-09-29 — a regression I introduced in round 4 and had
 already flagged as unverified.** `RoundedThumb.qml` fed `MultiEffect.source`/`maskSource` from an
@@ -3846,7 +3846,7 @@ source produces a blank/transparent result and the source item is `visible: fals
 `layer.enabled: true` before looking anywhere else — this is the first thing to rule out, not the
 last.
 
-## Skill 81: A Felgo-importing component can't be loaded by `qmltestrunner` — put its geometry in a pure `.js` helper, and make the container hand it the width it was designed for
+## Skill 83: A Felgo-importing component can't be loaded by `qmltestrunner` — put its geometry in a pure `.js` helper, and make the container hand it the width it was designed for
 
 **PR #84 follow-up, 2026-09-29 (failed-upload photo tile: in-tile Retry/Discard).** Two targets (36dp
 Retry, 28dp Discard) have to share a 72dp tile without overlapping. `FailedTileOverlay.qml` uses
@@ -3873,4 +3873,20 @@ shown" state, not a delegate-local animation).
 **The check:** when a QML component can't be loaded headless, ask what inside it has a right/wrong
 answer (sizes, overlaps, thresholds, state mapping) and move exactly that into a pure helper before
 writing tests. And after wiring, re-derive the size the helper actually receives.
+## Skill 84: Don't encode a new failure class in the HTTP status when existing client paths already treat every 4xx as a final decision
+
+**Found while designing** `fix/2026-09-28-gateway-write-error-classification` (roadmap item 1, part C). The plan was
+"map terminal Firestore errors to 4xx, transient to 503". Tracing the client first showed `Gateway._classifyDeltaResponse`
+and `_sendOperation` treat any 4xx with an `ok:false` body as a definitive server decision: the write is removed from
+the outbox and its callback fires. A poison write answered 4xx would have been DROPPED, the opposite of the PR's own
+"client never drops" rule. The batch sender already had the safer pattern: `_classifyBatchMutationFailure` allowlists
+`body.error` strings and ignores status.
+
+**Fix:** status stays 500; the body carries `write-rejected` / `write-unavailable` / `write-failed`
+(`functions/lib/writeError.js`). Old clients see the same 500 and behave as before. The client reads `body.error` only
+to label (`StuckWrites.errorCodeOf`, `terminalCount`).
+
+**Generalize:** before changing what status a server endpoint returns, grep every client branch on `status >= 400` /
+`< 500` for that endpoint. A status is shared vocabulary; a new body string is not. Also: the Admin SDK bypasses
+security rules, so `permission-denied` is rare from Cloud Functions; do not build on it being common.
 
