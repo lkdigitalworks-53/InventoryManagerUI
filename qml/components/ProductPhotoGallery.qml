@@ -33,7 +33,7 @@ Item {
     property string productId: ""
     property var photoIds: []          // confirmed, from the product doc -- first is cover
     property bool editable: true
-    property int tileSize: 72
+    property int tileSize: dp(72)
 
     signal addPhotoRequested()
     signal removeFailed(string photoId, string error)
