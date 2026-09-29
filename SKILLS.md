@@ -3576,3 +3576,301 @@ deleted product.
 lookup's contract needs an explicit existence signal (`null`/`undefined` vs. `""`) before the fallback logic can
 be written correctly — a map's `hasOwnProperty` gives this for free; a function usually doesn't, and needs its
 callers checked/updated everywhere it's constructed.
+
+---
+
+## Skill 74: Cross-system "atomicity" is a lie you tell precisely, not a property you achieve — and a `pragma Singleton QtObject` can't host `Connections{}` even when nothing else about it looks singleton-specific
+
+**Found while building the product-photos-in-Firebase-Storage feature, 2026-09-21/25** (design:
+`docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`): Taher asked for
+"atomic upload and id creation." Firebase Storage and Firestore have no shared transaction — nothing
+makes this literally true. What's actually achievable: write the bytes first, then one Firestore
+transaction that both records the id and its idempotency marker, so an id is never visible without
+its bytes. The only failure mode left is an orphaned, unreferenced Storage object — a cost issue,
+not a correctness one. Stating this precisely in the design spec (not softening "atomic" into a
+vague promise, and not refusing the word either) mattered more than any specific implementation
+choice: it's the difference between a documented, bounded risk and a claim that turns out false the
+first time a Cloud Function crashes mid-request.
+
+**Two traps found by reading the existing code, not by writing new code and hoping**: (1) a photo
+for a product created offline can arrive at the server before that product's own create mutation
+has landed, since both go through the same outbox but independently — gated by a new
+`OutboxStore.hasPendingForEntity(entity, entityId)`, reusing the existing `_keysForItem`/`_keyFor`
+helpers rather than re-deriving the plain/batch/delta item-shape branching. (2) product ids are
+counter-minted per tenant, so the same id can exist in two tenants — a queued upload is bound to the
+`uid`/`tenantId` active when it was enqueued and only drains under that exact identity; the server
+independently rejects a mismatch. Neither trap is hypothetical hardening — both are direct
+consequences of structures (the outbox, the counter-minted id scheme) that already existed in this
+codebase before this feature, found by reading `OutboxStore.qml` and the tenant-provisioning code
+before writing `PhotoQueue.qml`, not discovered afterward by a bug report.
+
+**A `pragma Singleton QtObject` cannot host a `Connections{}` block, at all, regardless of how
+ordinary the code inside it looks** (Skill 20 already establishes this for `Timer{}`; this feature
+found the identical constraint applies to `Connections{}` too, and it is easy to miss because
+nothing about a `Connections{}` block *looks* like it should collide with singleton semantics the
+way an app-lifetime `Timer{}` obviously might). `PhotoQueue.qml`'s first draft used
+`Connections { target: AuthService; function onIsOnlineChanged() { ... } }` to watch online status —
+syntactically ordinary, and it would have crashed the entire singleton chain at runtime the moment
+`PhotoQueue.qml` loaded, breaking every screen in the app, not just photos. Caught by re-reading
+Skill 20 before writing the file, not by a test (nothing in this environment can run `qmltestrunner`
+to catch it empirically). Fixed with the property-binding-watcher pattern Skill 20 already
+prescribes for the `Timer{}` case: `property bool _onlineWatcher: AuthService.isOnline` +
+`on_OnlineWatcherChanged: { ... }`. **The generalizable check, not just the specific fix**: before
+adding ANY declarative child object (not just `Timer{}`) to a `pragma Singleton QtObject` root, ask
+whether it's a plain `QtObject`-derived non-visual type (safe) or anything else (not safe) — the
+unsafe category is broader than "things that obviously look like Timer."
+
+**Parity-test convention, extended**: `StuckWrites.js`'s technique (strip `.pragma library`, run the
+underlying logic through plain Node for a real pass) already existed for QML helper modules. This
+feature applied it three more times — `PhotoUrl.js`, `PhotoQueueLogic.js`, and (implicitly, via the
+existing `handlerHarness.js` mock extended with a Storage backend) the server handlers themselves —
+and in every case the *first* real test run against the parity copy caught something a purely
+"written, reviewed by eye" pass would have missed: a test's own off-by-one in `PhotoUrl.js`'s
+separator-count assertion; a reducer bug in `PhotoQueueLogic.js` where a stale `'failed'` event
+against an already-`failed` item kept incrementing `attempts` past the cap (found by a monkey test,
+not a hand-written case); and, via the extended `handlerHarness.js`, a Storage-cleanup call that ran
+on every idempotent replay of `deleteProductPhoto`, unbounded. **The pattern generalizes past QML**:
+wherever a piece of pure logic exists that a live network/native call would otherwise make
+untestable in this sandbox, strip it down to the smallest form that runs in plain Node and actually
+run it — "I traced through this by hand and it looks right" is not the same claim as "296/296,
+stable across 3 runs."
+
+**Review-sweep addendum (2026-09-25)**: running `qt-development-skills:qt-qml-review`'s deterministic
+linter against a large existing file's WHOLE content, rather than filtering to only the lines a
+given PR actually added, produces mostly noise on a codebase with an established style the generic
+linter doesn't know about (this project uses `var` everywhere, `property var` for list-shaped state,
+anchors dot-notation, and `Qt.createQmlObject` as the Skill-20 timer workaround — all correct real-
+existing-code precedent, none of them things a fresh PR should "fix" in isolation). Diff-filter
+first; a linter run against whole files will bury the one or two real findings (in this feature's
+case, missing `Image.sourceSize` on new thumbnail tiles) under 200+ true-for-generic-QML-but-false-
+for-this-codebase hits. Separately, that same review pass — done by hand, no subagent-dispatch tool
+available in this environment — found four real, independent bugs purely by grepping for whether a
+function this session had just written was actually CALLED anywhere: `PhotoQueue.clear()` existed
+for sign-out hygiene but was never wired into the sign-out handler; `AuthService.ensureFreshToken()`
+was documented as being called from `PhotoQueue.drainNow()` but never actually was; and
+`PhotoQueue._load()` (`Component.onCompleted` on every real app launch) never called
+`_reschedule()`, meaning a photo queued in a previous session would sit frozen forever unless
+something else happened to trigger a drain — silently breaking "survive app close," a requirement
+stated explicitly at the start of the session. **None of these were caught by the unit tests written
+alongside the original code, because the tests exercised the functions in isolation and never asked
+"is this actually wired to anything."** A grep for a new function's own call sites, done once near
+the end of a feature rather than assumed complete because it compiles and its own unit test passes,
+is cheap and catches a class of bug that no amount of testing the function in isolation will ever
+surface.
+
+---
+
+## Skill 75: A new E2E test file that calls Gateway only *indirectly* (through a store helper) can silently skip the emulator-URL override every sibling file has
+
+**Found:** `test/e2e/tst_ProductPhotosE2E.qml`'s first real CI run (2026-09-27, on the merge commit
+that also brought in PR #83/#87) -- 6 of 7 tests failed with "product doc never appeared" polling
+the Firestore emulator, all 6 being exactly the tests that call `_createProduct()`. The 7th test
+(no `_createProduct()` call) passed.
+
+**Root cause:** `_createProduct()` calls `InventoryStore.addProduct()`, which calls
+`Gateway.recordMutation()`. Every other E2E file that touches `Gateway` sets
+`Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"` in `init()` (and restores
+`realFunctionUrl` in `cleanup()`) — `tst_InventoryE2E.qml`, `tst_StaffStoreE2E.qml`,
+`tst_SupplierStoreE2E.qml`, `tst_StockBatchStoreE2E.qml`, `tst_OrdersE2E.qml`,
+`tst_OrdersStoreE2E.qml`, `tst_ReturnAfterMetadataEditE2E.qml`, `tst_BulkImportChunkingE2E.qml` (for
+its own batch URL). This file's `init()` only set `FirebaseService.emulatorHost` (for direct
+Firestore/Storage REST polling) and posted its own `uploadProductPhoto`/`deleteProductPhoto` calls
+straight at `emulatorFunctionsBase` — neither of which touches `Gateway` at all. The one Gateway
+call in the whole file was buried inside a store helper, easy to miss precisely because it isn't a
+literal `_postDirect(...)` line you can see and pattern-match against the file's own convention.
+Without the override, `Gateway.recordMutation` posted to the real production URL; nothing ever
+landed in the local Firestore emulator the test was polling, so the poll always timed out.
+
+**The generalizable check**: before writing a new E2E test file, grep the *store functions* it calls
+(not just its own direct `_postDirect` lines) for any `Gateway.record*` call, and set every
+`Gateway.*Url` property that path touches in `init()`/`cleanup()`, exactly matching whichever
+sibling file exercises the same store function already. A file can look complete — it warms up its
+own functions, sets the Firestore emulator host, follows every other convention correctly — and
+still silently talk to production because one call is one indirection away from the file's own
+visible network calls. The same class of bug bit this branch once already, one layer down:
+`PhotoQueue.uploadUrl`/`StorageService.deleteUrl` had to be made overridable in the first place
+(commit `80874f7`, this branch) before any test could point them at the emulator at all —
+overridable is necessary but not sufficient if a new test then forgets to actually override one.
+
+---
+
+## Skill 76: A new raw-XHR test helper needs the QTBUG-49896 snapshot too — and check the repo's own trail for a status-code symptom *before* theorizing
+
+**Found:** `test_upload_rejects_an_eleventh_photo` failed on three consecutive CI runs
+(2026-09-27). The third run's diagnostic `verify()` finally showed `got 0 -- response: ` — status 0,
+empty body — for the one call that should return **409**.
+
+**Root cause:** QTBUG-49896 (Skill 45): QML's `XMLHttpRequest` resets `xhr.status` to 0 at the
+readyState 3->4 transition for some responses; a 409 is the original bug report's own repro.
+`Gateway` (`_captureBeforeStatusIsLost`) and `PhotoQueue` already snapshot status/body at
+HEADERS_RECEIVED/LOADING and fall back to it. `test/e2e/E2EHelpers.js`'s `postDirect` — written for
+the photos e2e test's direct function calls — read `xhr.status` once at DONE, so it silently
+reported 0 for exactly the 409 the test was asserting on. **Production was never affected**
+(`PhotoQueue` had the workaround from the start); only the test helper was.
+
+**The mistake worth recording:** the first reading of "status 0" was "transient connection flake
+under a 11-call burst," and a retry-on-0 was written and pushed on that theory before checking
+whether this repo had ever seen `status 0` before. It had, at length (Skills 43-45, a 13-round
+investigation with this exact signature). The retry failed identically — deterministic, not
+transient — which is what finally sent the search into SKILLS.md. Skill 44's own lesson applied
+verbatim: an exact, mechanical symptom (status 0 on a specific status code) is cheap to grep the
+repo's own history for, and disproportionately likely to already have an answer. The retry was
+removed since its premise was wrong.
+
+**The check:** any new raw `XMLHttpRequest` in this codebase (test helper or production) that
+inspects `xhr.status` needs the HEADERS_RECEIVED/LOADING snapshot fallback. Grep for
+`new XMLHttpRequest` and confirm each site has it; `StorageService.deleteUrl`'s delete XHR still
+doesn't, harmlessly (any non-2xx already maps to `ok=false`, and only the error-message text says
+"status 0"), noted rather than changed.
+
+
+## Skill 75: A value crossing the C++/QML boundary needs ONE representation, and a "file gone" branch mapped to HTTP 400 disguises a local bug as a server bug
+
+**Found on-device, PR #84 (product photos), 2026-09-28.** Four symptoms (spinner forever, nothing in
+Storage, instant "failed", `Cannot open: file://file///C:/...`), two root causes. (1)
+`ImageProcessor.persistLocalCopy` returns `QUrl::fromLocalFile().toString()` (a `file:///` URL) but one
+consumer read it as a bare path (`NativeFile.readFileBase64` -> `QFile("file:///..")` never exists ->
+"file gone" -> terminal 400, XHR never sent) and another blindly prepended `"file://"`. (2)
+`PhotoQueue`'s one-shot drain timer fired while the item was still gated on its product's OutboxStore
+create, found nothing to do, and never re-armed.
+
+**Lessons.** (a) Tolerate both forms in every consumer through one tested, idempotent helper
+(`PhotoUrl.toLocalPath` / `toFileUrl`); items persisted by older builds keep the old form forever. (b)
+Report local failures as local (log line), not as an HTTP status that sends you to server logs. (c)
+Every gate in a drain function needs a wake-up on the thing it waits for (`OutboxStore.revision`); a
+timer that only fires "when due" cannot know a gate opened. (d) `RowLayout` vertically CENTERS children
+by default: once one tile can be taller (failed tile + button row), give every child
+`Layout.alignment: Qt.AlignTop`.
+
+**The check:** grep stored paths for `"file://" +`, and any `readFileBase64(` / `QFile(` fed from a
+stored value; for each gate in a drain function, name the event that re-runs it.
+
+
+## Skill 76: A delegate with `required property` loses the implicit `index`; a fixed-count RowLayout of user data must wrap; a dialog that copies store data goes stale; and when two surfaces share a helper, log the failure before theorising
+
+**Found on-device, PR #84 (product photos), 2026-09-28, second round.** (1) "Cover" showed on every photo tile:
+the delegate declared `required property string modelData` but read `index`. Once a delegate has any required
+property Qt no longer injects `index`/`modelData`, so `visible: index === 0` threw a ReferenceError, the binding
+never ran, and `visible` stayed at its default `true`. A failed binding does not fail loudly on screen — it just
+leaves the default. (2) The strip was a `RowLayout`: more than ~4 tiles ran off-screen, and the + tile with them.
+(3) `EditProductDialog.photoIds` was copied once in `openFor()`, so a photo confirmed while the dialog was open
+never appeared. (4) The Inventory list cover is still unproven (see the test plan) — the same URL helper feeds the
+gallery and the list, so the fix was diagnostics, not a guess.
+
+**Lessons.** (a) Declare `required property int index` (and `modelData`) together, always; grep every delegate that
+has one `required property` for a bare `index`/`modelData` read. (b) Any row whose length is user data needs `Flow`
+(or a `Flickable` with the trailing action pinned) — never `RowLayout`. Inside a `Flow`, size with `width`/`height`,
+not `Layout.*`. (c) A dialog that copies a store field on open must re-read on the store's `revision` signal, through
+a tested store function (`InventoryStore.photoIdsFor`). (d) Add `Image.onStatusChanged` Error logging before
+theorising about why an image doesn't render — it turns "no cover" into a URL you can open in a browser.
+
+**The check:** for every `delegate:` with a `required property`, confirm every `index`/`modelData` read in its body is
+declared; for every `RowLayout` fed by a `Repeater` over user data, name the maximum count and the overflow story;
+for every `property var x` assigned once in an `openFor()`, name the signal that refreshes it.
+
+
+## Skill 77: A test that asserts "nothing was enqueued" must name WHAT must not be enqueued — a ledger row is a legitimate second write
+
+**Found in CI, PR #84, 2026-09-28.** `test_applyPhotoIds_never_enqueues_a_gateway_mutation` asserted
+`OutboxStore.pendingCount === 0`, but `applyPhotoIds(..., "add")` also records a `photo_change` ledger row
+(`TransactionStore.recordPhotoChange` -> `Gateway.recordMutation("transaction", ...)`), so pendingCount is 1. The
+production code was right; the test's claim was too broad. It also cost a CI round because the test was written
+without tracing what the function calls.
+
+**Lesson.** Assert the specific entity (`OutboxStore.hasPendingForEntity("inventory", id)` false) plus the exact
+expected count of the intended side effect (1 ledger row; 0 when no `changedPhotoId`). Before writing a "never
+writes" test, grep the function body for every `Gateway.`/`TransactionStore.`/`ActivityLog.` call it reaches.
+
+**The check:** for each "nothing enqueued" assertion, list the side-effect calls of the function under test and
+confirm the asserted count equals the sum of the intended ones.
+
+## Skill 78: `clip: true` clips to the bounding box, not `radius` — a rounded-corner thumbnail needs a `MultiEffect` mask, not just `clip`
+
+**Found on-device, PR #84, 2026-09-29.** `ProductPhotoGallery.qml`'s tiles were `Rectangle { radius: ...; clip:
+true }` with a `PreserveAspectCrop` `Image` filling them — reported as "the photos goes out of the rectangle."
+`clip: true` only clips children to the item's axis-aligned bounding box; it does not use `radius` as a clip path.
+The `Image` is genuinely inside its parent's box the whole time — it just isn't rounded, so its square corners
+visually overlap the parent's rounded corners.
+
+**Fix.** `MultiEffect { source: <hidden Image>; maskEnabled: true; maskSource: <hidden Rectangle radius=N> }` (Qt
+6.5+, `QtQuick.Effects`). Both the source and the mask can be `visible: false` — Qt Quick still renders them to an
+offscreen texture for the effect; they don't need to be on-screen themselves. Factored into a small reusable
+`RoundedThumb.qml` since it's needed at 2+ call sites — the moment a rounded-image mask is needed twice, extract it
+rather than duplicating the source+mask+MultiEffect trio.
+
+**Not tested by this repo's CI.** `qmltestrunner`'s CI job can't load anything that imports Felgo, and this
+component only exists inside a Felgo-importing file — so a masking bug here is on-device-only, discovered by
+looking, not by a red test. Say so plainly in the checkpoint/test plan rather than implying automated coverage
+exists.
+
+**The check:** any `Rectangle { radius: N; clip: true }` with an `Image`/`Item` child that visually fills it is a
+rounded-corner *candidate*, not a proven one — check whether the child's own shape is masked to `radius`, not just
+clipped to the box, before trusting a "rounded" thumbnail to actually render rounded.
+
+## Skill 79: Rejecting a scrollable "+" tile once doesn't mean rejecting scrolling — pin the fixed action outside the Flickable, not instead of it
+
+**Found on-device, PR #84, 2026-09-29.** The 2026-09-28 round rejected a horizontal `Flickable` for the photo strip
+because it would hide the `+` tile until scrolled, and chose `Flow` instead (wraps to rows). That fixed the
+"hidden +" problem but reintroduced a different one: reflowing rows read as boxy and grew the dialog vertically as
+photos were added — the actual complaint this round responds to.
+
+**Resolution, not a reversal.** The two decisions aren't actually in tension: `RowLayout { ListView
+(Layout.fillWidth) ; + tile (Layout.preferredWidth, fixed) }` puts the fixed action OUTSIDE the scrollable region
+entirely, so it's allocated by the outer layout, not scrolled content — always reachable, same guarantee the
+2026-09-28 round wanted, while the photos themselves scroll instead of wrapping. Skill 76 already named this exact
+shape ("a `Flickable` with the trailing action pinned") as the alternative to `Flow`; this round is that alternative,
+built.
+
+**The check:** before switching a horizontal `Flow`/`RowLayout`/`Flickable` for user-data-length content, check
+whether a fixed action (an add button, a "done" affordance) needs to stay reachable regardless of scroll position —
+if so, it goes in a sibling outside the scrollable item's own model, not inside it.
+
+## Skill 80: `visible: false` is not enough to feed a `MultiEffect` source/mask — it needs `layer.enabled: true`
+
+**Found on-device, PR #84 round 5, 2026-09-29 — a regression I introduced in round 4 and had
+already flagged as unverified.** `RoundedThumb.qml` fed `MultiEffect.source`/`maskSource` from an
+`Image` and a `Rectangle`, both `visible: false`, on the assumption that Qt Quick still renders
+invisible items to a texture for effect sampling. It doesn't: `visible: false` means the item
+contributes no scenegraph render node at all, so there's nothing for the effect to sample — the
+masked output is blank/transparent. Everything else on the tile that WAS `visible: true` (the grey
+background, the cover/remove badges) rendered fine, which is exactly what made the bug look like
+"the photo is just missing" rather than "the whole tile is broken."
+
+**Fix:** add `layer.enabled: true` to the source and mask items. This forces Qt to render that item
+into an offscreen texture regardless of whether it's composited on-screen — the actual mechanism
+`MultiEffect`/`ShaderEffectSource`-style sampling needs. `visible: false` + `layer.enabled: true`
+together is the correct pattern for a hidden effect source; `visible: false` alone is not.
+
+**The check:** if a `MultiEffect`, `ShaderEffect`, or anything else sampling an `Item` as a texture
+source produces a blank/transparent result and the source item is `visible: false`, check for
+`layer.enabled: true` before looking anywhere else — this is the first thing to rule out, not the
+last.
+
+## Skill 81: A Felgo-importing component can't be loaded by `qmltestrunner` — put its geometry in a pure `.js` helper, and make the container hand it the width it was designed for
+
+**PR #84 follow-up, 2026-09-29 (failed-upload photo tile: in-tile Retry/Discard).** Two targets (36dp
+Retry, 28dp Discard) have to share a 72dp tile without overlapping. `FailedTileOverlay.qml` uses
+Felgo-provided `dp()/sp()/Icon`, so CI can't instantiate it (same limit as `ProductPhotoGallery.qml`).
+Instead of testing a mirror, the positions/sizes, the scrim-contrast claim and the none/busy/failed
+rule live in `qml/helper/FailedTileGeometry.js` (`.pragma library`) and the QML component only paints
+what the helper returns. Then "hit boxes never overlap, never leave the tile, meet the size floor, at
+every dp scale" is a real, headless assertion (`tests/tst_FailedTileGeometry.qml`), including a
+1000-case deterministic monkey test. A contrast claim is only worth writing down if a too-weak value
+fails it: the test asserts a 30% scrim is rejected.
+
+**Bug caught in review before it shipped:** the first wiring put `anchors.margins: dp(2)` on the
+`Loader` hosting the overlay, so the overlay saw a 68dp tile, and the helper (correctly) scaled every
+target down to 94%. Geometry that is designed against a specific container size must be given that
+size: inset only the decoration (the scrim, via `scrimInset`), never the item the geometry reads
+`width` from.
+
+**Also decided, not observed:** no creation-time entrance animation on the overlay. The gallery model is
+a JS array reassigned on every `PhotoQueue.revisionChanged`, which resets the `ListView` and recreates
+delegates, so `NumberAnimation on opacity` would replay on every unrelated queue change. Reasoned from
+the code; verify on device if an entrance animation is ever wanted (it would need per-photoId "already
+shown" state, not a delegate-local animation).
+
+**The check:** when a QML component can't be loaded headless, ask what inside it has a right/wrong
+answer (sizes, overlaps, thresholds, state mapping) and move exactly that into a pure helper before
+writing tests. And after wiring, re-derive the size the helper actually receives.
+

@@ -121,11 +121,22 @@ function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicate
 // interchangeable.
 function postDirect(tc, url, payload, timeoutMs, timeoutMessage) {
     var status = -1, text = "", done = false
+    // QTBUG-49896 workaround (same as Gateway._captureBeforeStatusIsLost / PhotoQueue -- see
+    // SKILLS.md Skill 45): QML's XMLHttpRequest can reset xhr.status to 0 at the readyState 3->4
+    // transition for some responses (a 409 is the original reporter's repro), so snapshot
+    // status/body at HEADERS_RECEIVED/LOADING and fall back to it at DONE. A genuine network
+    // failure never reaches HEADERS_RECEIVED, so it still reports 0 -- only the lost-status case
+    // is recovered. Added 2026-09-27 after test_upload_rejects_an_eleventh_photo's expected 409
+    // arrived here as status 0 on every CI run.
+    var snap = { status: 0, text: "" }
     var xhr = new XMLHttpRequest()
     xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {
+            if (xhr.status !== 0) { snap.status = xhr.status; snap.text = xhr.responseText }
+        }
         if (xhr.readyState === XMLHttpRequest.DONE) {
-            status = xhr.status
-            text = xhr.responseText
+            status = (xhr.status !== 0) ? xhr.status : snap.status
+            text = (xhr.status !== 0) ? xhr.responseText : snap.text
             done = true
         }
     }
@@ -135,4 +146,74 @@ function postDirect(tc, url, payload, timeoutMs, timeoutMessage) {
     xhr.send(JSON.stringify(payload))
     tc.tryVerify(function() { return done }, timeoutMs, timeoutMessage)
     return { status: status, text: text }
+}
+
+// Polls a raw REST GET against the Storage emulator (added 2026-09-25 for the
+// product-photos feature's e2e test) -- same reasoning as pollEmulatorDoc:
+// asserting via the client's own StorageService would only prove the
+// client's local state is self-consistent, not that an object actually
+// reached the emulated bucket. objectPath is the same unencoded
+// "{env}/tenants/.../{photoId}.jpg" shape PhotoUrl.js builds -- this
+// function does the %2F encoding itself, callers pass the raw path.
+// Returns the object's metadata JSON once GET returns 200, or null if the
+// timeout elapses while it's still 404 (object not written) -- a genuine
+// bug (upload silently failing) and "just needs another moment" both look
+// identical to a caller polling once, which is why this retries instead.
+function pollEmulatorStorageObject(tc, emulatorStorageHost, bucket, objectPath, timeoutMs, message) {
+    var encoded = objectPath.split("/").map(encodeURIComponent).join("%2F")
+    var url = emulatorStorageHost + "/v0/b/" + bucket + "/o/" + encoded
+    var latest = null
+    var inFlight = false
+
+    function fire() {
+        if (inFlight) return
+        inFlight = true
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                latest = (xhr.status === 200) ? JSON.parse(xhr.responseText) : null
+                inFlight = false
+            }
+        }
+        xhr.open("GET", url, true)
+        xhr.send()
+    }
+
+    tc.tryVerify(function() {
+        fire()
+        return latest !== null
+    }, timeoutMs, message + " (objectPath=" + objectPath + ")")
+
+    return latest
+}
+
+// Same as pollEmulatorStorageObject but polls for the object's ABSENCE --
+// used to verify deleteProductPhoto's best-effort Storage cleanup actually
+// removed the object, not just that the Firestore side (photoIds array)
+// updated. A 404 here means "gone"; tryVerify's predicate is the inverse of
+// pollEmulatorStorageObject's.
+function pollEmulatorStorageObjectAbsent(tc, emulatorStorageHost, bucket, objectPath, timeoutMs, message) {
+    var encoded = objectPath.split("/").map(encodeURIComponent).join("%2F")
+    var url = emulatorStorageHost + "/v0/b/" + bucket + "/o/" + encoded
+    var lastStatus = -1
+    var inFlight = false
+
+    function fire() {
+        if (inFlight) return
+        inFlight = true
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                lastStatus = xhr.status
+                inFlight = false
+            }
+        }
+        xhr.open("GET", url, true)
+        xhr.send()
+    }
+
+    tc.tryVerify(function() {
+        fire()
+        return lastStatus === 404
+    }, timeoutMs, message + " (objectPath=" + objectPath + ")")
 }

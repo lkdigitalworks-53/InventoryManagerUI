@@ -9,7 +9,7 @@ A cross-platform inventory and business management application built with **Felg
 | Module | Capabilities |
 |--------|-------------|
 | **Orders** | Create, view, approve, and track customer orders; stock-checked order completion; batch approval |
-| **Inventory** | Product catalog, stock level tracking, low-stock alerts, restock workflows |
+| **Inventory** | Product catalog, stock level tracking, low-stock alerts, restock workflows; multi-photo product gallery synced via Cloud Storage (see "Firebase Configuration" for `storage.rules`) |
 | **Sales** | Revenue analytics, order volume charts, top-selling products, cumulative sales metrics |
 | **Staff** | Team member management, department distribution, activity feed, leave tracking |
 
@@ -183,6 +183,29 @@ All six growing collections (`orders`/`inventory`/`staff`/`suppliers`/`transacti
 `stock_batches`) are read via bounded, cursor-paginated queries — see "Scaling" above and
 `SKILLS.md` Skill 32.
 
+**Cloud Storage** (added 2026-09-21, product photos): a product's photos live in Cloud Storage,
+not as a URL string on the product doc — `tenants/{t}/inventory/{id}.photoIds` holds up to 10
+photo ids (first = cover); the download URL is computed at display time (`qml/helper/PhotoUrl.js`)
+from `{env}/tenants/{t}/products/{p}/{photoId}[_t].jpg`, never stored. `storage.rules` (repo root)
+allows public read by path (the id is an unguessable random string, and there's no path listing)
+and denies every client write — uploads and deletes go through two Cloud Functions,
+`uploadProductPhoto`/`deleteProductPhoto`, the same idempotent-on-`requestId` pattern as
+`recordMutation`. Deploy `storage.rules` and both functions before this does anything in
+production; neither is automatic on merge. Full design:
+`docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`.
+Local photo paths (2026-09-28): `ImageProcessor.persistLocalCopy` returns a `file://` URL, not a bare
+path. `PhotoUrl.toLocalPath` (for `NativeFile.readFileBase64`) and `PhotoUrl.toFileUrl` (for QML
+`Image.source`) accept either form; never concatenate `"file://" +` onto a stored path.
+Gallery behaviour (2026-09-29): tiles live in a horizontal `ListView` filmstrip (`qml/components/
+ProductPhotoGallery.qml`) with a `+` tile pinned outside it at a fixed position, so it's always
+reachable without scrolling — a wrapping `Flow` was tried first (2026-09-28) but its square image
+corners visibly overran the rounded tile frame (`clip: true` clips to the bounding box, not the
+`radius`); thumbnails are now clipped to their rounded shape with a `MultiEffect` mask
+(`qml/components/RoundedThumb.qml`). Only the first confirmed tile shows the cover badge (now a
+small corner pill, not a full-width banner); the Edit dialog re-reads
+`InventoryStore.photoIdsFor()` on every `InventoryStore.revision` change so a photo that finishes
+uploading appears without reopening the dialog.
+
 ---
 
 ## Configuration
@@ -214,7 +237,7 @@ Four independent layers, each with its own CI job in `.github/workflows/checks.y
 |---|---|---|
 | QML unit tests (pure logic) | `tests/` | `qmltestrunner -input tests -platform offscreen` |
 | Cloud Functions logic | `functions/test/` | `cd functions && npm test` (`node:test`) |
-| Firestore security rules | `test/firestore.rules.test.js` (see `FIRESTORE_RULES.md`) | `firebase emulators:exec` |
+| Firestore + Storage security rules | `test/firestore.rules.test.js`, `test/storage.rules.test.js` (see `FIRESTORE_RULES.md`, `storage.rules`) | `firebase emulators:exec --only firestore,storage` |
 | End-to-end (real Store/DataModel code against the real Firebase Local Emulator Suite) | `test/e2e/` | `qmltestrunner -input test/e2e`, seeded via `node test/e2e/seed.js` |
 
 See `AGENTS.md`'s **Testing & QA Agent** section for what each layer actually covers, and
@@ -448,6 +471,10 @@ Then apply the same security rules (`FIRESTORE_RULES.md`) to each database
 
 Auth users, Storage, and Cloud Functions are **shared** across environments —
 only the Firestore database differs. `test`/`dev1` start empty (MVP fresh-data).
+Since Storage itself has no per-environment split the way Firestore does, product photos rely on
+an `{env}` path prefix (`prd`/`test`/`dev1`, via `EnvConfig.storagePrefixForEnv` — see "Firebase
+Configuration" above) to keep the three environments' objects from colliding in the one shared
+bucket; this is the reason that prefix exists, not an arbitrary choice.
 
 All 5 Cloud Functions (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
 `recordMutationsBatch`) resolve their Firestore database **per request** from a client-declared
