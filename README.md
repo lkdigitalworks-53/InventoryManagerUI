@@ -196,9 +196,15 @@ production; neither is automatic on merge. Full design:
 Local photo paths (2026-09-28): `ImageProcessor.persistLocalCopy` returns a `file://` URL, not a bare
 path. `PhotoUrl.toLocalPath` (for `NativeFile.readFileBase64`) and `PhotoUrl.toFileUrl` (for QML
 `Image.source`) accept either form; never concatenate `"file://" +` onto a stored path.
-Gallery behaviour (2026-09-28): tiles live in a `Flow` (wraps to rows, so the + tile is never pushed off-screen);
-only the first confirmed tile shows "Cover"; the Edit dialog re-reads `InventoryStore.photoIdsFor()` on every
-`InventoryStore.revision` change so a photo that finishes uploading appears without reopening the dialog.
+Gallery behaviour (2026-09-29): tiles live in a horizontal `ListView` filmstrip (`qml/components/
+ProductPhotoGallery.qml`) with a `+` tile pinned outside it at a fixed position, so it's always
+reachable without scrolling — a wrapping `Flow` was tried first (2026-09-28) but its square image
+corners visibly overran the rounded tile frame (`clip: true` clips to the bounding box, not the
+`radius`); thumbnails are now clipped to their rounded shape with a `MultiEffect` mask
+(`qml/components/RoundedThumb.qml`). Only the first confirmed tile shows the cover badge (now a
+small corner pill, not a full-width banner); the Edit dialog re-reads
+`InventoryStore.photoIdsFor()` on every `InventoryStore.revision` change so a photo that finishes
+uploading appears without reopening the dialog.
 
 ---
 

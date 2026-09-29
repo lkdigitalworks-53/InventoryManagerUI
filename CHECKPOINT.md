@@ -1,3 +1,106 @@
+# CHECKPOINT — 2026-09-29 PR #84 device-test round 4: photo arrangement + rounded-corner overflow
+
+**Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes in the SAME PR per owner).
+**Commit identity:** `Taher (via Claude session) <lkdwtaher@gmail.com>` (owner instruction this session — supersedes
+both `<taher.lkdw@gmail.com>` and `<tsadmin@gmail.com>` seen in earlier commits on this branch; use this one going forward until told otherwise).
+**Skills invoked:** superpowers:brainstorming, qt-development-skills:qt-qml, qt-development-skills:qt-ui-design, ponytail:ponytail (+ caveman chat style).
+**Rules:** no build/run, no Qt tooling in sandbox, CI is the signal; push without asking; PAT only in push URL — **owner: rotate it, it sits in plaintext in chat (flagged again this session, same as round 3 — still unrotated as far as this session can tell).**
+
+## Two real bugs, neither touched by the 2026-09-28 round
+
+| # | Symptom (owner, testing PR #84 on-device) | Root cause | Status |
+|---|---|---|---|
+| 1 | "Photos goes out of the rectangle" | `clip: true` on a `Rectangle` clips children to the axis-aligned bounding box, NOT to `radius`. The tile's `Image` (`PreserveAspectCrop`, filling the box) is a plain rectangle — its square corners sit past the rounded frame's arc at all four corners. The 2026-09-28 round fixed a *different* overflow (tiles running off the right edge, via `Flow`) and never attempted rounded-corner clipping at all. | FIXED — new `RoundedThumb.qml`, `MultiEffect` mask. On-device/visual verification only: no CI job reaches this file (Felgo-gated), see test plan |
+| 2 | "I don't like the UI arrangement of the photos" | The Flow-wrap grid (2026-09-28's own fix) reflows into uneven rows and grows vertically as photos are added, pushing the rest of the edit form down — a working but boxy pattern, not the horizontal-filmstrip pattern this kind of multi-photo UI usually uses. | ADDRESSED — rewritten as a horizontal `ListView` filmstrip |
+
+## What changed
+
+- `qml/components/ProductPhotoGallery.qml` rewritten: `RowLayout { ListView (horizontal,
+  Layout.fillWidth, clip) ; + tile (Layout.preferredWidth, fixed) }`. The `+` tile is deliberately
+  kept OUTSIDE the scrollable `ListView` at a fixed position — the 2026-09-28 test plan explicitly
+  rejected a horizontal `Flickable` because it would hide the `+` tile until scrolled; pinning it
+  outside the scroll region keeps that guarantee while still fixing the overflow/arrangement
+  complaint. Model is now one precomputed `_combined` array (confirmed photos, cover flagged at
+  build time, then queued items) instead of two separate Repeaters relying on the delegate's own
+  `index` — this also structurally removes the entire bug class the 2026-09-28 "Cover on every
+  tile" bug came from (a `required property` on a delegate silently drops implicit `index`
+  injection), since cover-ness is no longer inferred from `index` at all.
+- New `qml/components/RoundedThumb.qml`: `MultiEffect`-masked `Image`, reused at both tile call
+  sites (confirmed + queued) instead of duplicating the mask boilerplate. Requires Qt 6.5+
+  (`QtQuick.Effects`); CI is pinned to 6.8 (`.github/workflows/checks.yml`) so that's fine for CI,
+  but this file is never actually exercised by CI (see below) — first real proof is on-device. If
+  corners still look square there, check for a `QtQuick.Effects` shader-compile console warning;
+  that would mean the Qt install is missing `qtshadertools`.
+- Cover badge: small corner star pill (top-left) instead of the old full-width bottom banner —
+  part of the arrangement rework, not a separate ask.
+- Swapped two hardcoded hex colors (`#dc2626`, `#2563eb`) for the existing `Constants.danger` /
+  `Constants.accentBlue` tokens already used elsewhere in the app — same idea, now themed instead
+  of a stray literal (`Constants.danger` is `#ef4444`, a slightly different red than the old
+  `#dc2626`; flagging the exact-shade change here in case it matters to owner, since it's the one
+  visible pixel difference not explicitly asked for).
+- `tests/tst_PhotoGalleryLayout.qml` rewritten (16 tests): the old file's 9 tests specifically
+  proved `Flow`-wrap row math, which no longer applies to a `ListView`. New tests mirror
+  `_refreshAll`'s combined-array construction (ordering, cover flag, empty/queued-only cases) and
+  reproduce the real `RowLayout`+`ListView`+fixed-tile composition to prove the `+` tile can never
+  leave the container regardless of photo count, scroll state, or container width (100-iteration
+  monkey test included).
+- `README.md` and the design spec's "UI" section both had the 2026-09-28 `Flow` arrangement
+  documented as current fact — updated to match.
+- New test plan: `docs/superpowers/test-plans/2026-09-29-photo-gallery-filmstrip-rearrange-test-plan.md`,
+  README index + chain note added.
+- `EditProductDialog.qml`: **no change** — `ProductPhotoGallery`'s public properties/signals
+  (`productId`, `photoIds`, `editable`, `addPhotoRequested`, `removeFailed`) are unchanged, so its
+  one embed site didn't need touching. Confirmed via grep before starting (single embed site, no
+  other file references `tileSize` or gallery internals) — kept the blast radius to the two
+  component files + the test file.
+
+## Deliberately NOT done (flagged, not guessed)
+
+- No hero/large cover image above the filmstrip. Considered it (common on customer-facing product
+  pages) and rejected it for THIS screen specifically: this is an inventory edit *form*, not a
+  customer product page — a large hero would eat vertical space better spent on the form fields
+  below it (Progressive Disclosure / Performance Load). Said here so it's a visible decision, not
+  a silent omission, in case owner disagrees.
+- Did not fix the pre-existing `tileSize` unit inconsistency (`root.tileSize` used as a raw pixel
+  value in most places, `dp(160)` used for the failed-tile width) — it predates this round, isn't
+  what was reported, and touching it would change on-screen sizes as an unrelated side effect.
+  Flagging it here rather than silently fixing or silently ignoring it.
+- Did not add per-tile drop shadows or other extra visual flourish beyond what fixes the two
+  reported complaints — the rest of this dialog uses flat 1px borders, not shadows, and matching
+  that existing local convention seemed more "theme-consistent" than adding a new visual language.
+
+## Steps
+
+1. Read memory (project files), loaded 5 skills (caveman, qt-ui-design, qt-qml, ponytail,
+   brainstorming-adjacent reasoning — no separate brainstorm doc written, reasoning captured here
+   instead per lean-session judgment).
+2. Cloned fresh, checked out PR #84 head (`27293fc`), read the last 3 checkpoint entries + the
+   2026-09-28 test plan in full (found the "rejected scrollable + tile" decision there — this is
+   why the redesign pins the `+` tile outside the list instead of just switching to a plain
+   `Flickable`).
+3. Read `ProductPhotoGallery.qml`, `EditProductDialog.qml`'s embed site, `Constants.qml` (design
+   tokens), confirmed CI's Qt version (6.8) and that no CI job actually compiles/renders this file
+   (Felgo-gated, qmltestrunner-only CI).
+4. Wrote `RoundedThumb.qml`, rewrote `ProductPhotoGallery.qml`, rewrote the test file, updated
+   README + design spec + test-plan README index, wrote the new test plan.
+5. Corrected commit identity mid-session per owner's explicit instruction this session
+   (`lkdwtaher@gmail.com` — see "Commit identity" above; an earlier reply in this same session had
+   guessed `taher.lkdw@gmail.com` from the branch's own git history before owner corrected it).
+
+## Next steps (resume here)
+
+1. Wait for CI on the new push (qml-tests job; the other two jobs — functions, firestore-rules —
+   are untouched by this change and should be unaffected).
+2. Owner: on-device check per the new test plan, section 5 — corners actually rounded, `+` tile
+   reachable at every photo count, failed-tile Retry/Discard row not clipped.
+3. The 2026-09-28 round's OPEN item (R3 / Bug 3 — list-cover thumbnail not showing, diagnostics
+   added but root cause not yet confirmed) is still open and untouched by this session — see the
+   "round 3" entry immediately below for its own diagnosis checklist. Not forgotten, just a
+   different area of the same PR.
+4. Rotate the GitHub PAT — flagged again, still appears to be the same one from round 3.
+
+---
+
 # CHECKPOINT — 2026-09-28 (round 3) PR #84: CI red test + list-cover (no thumbnail) investigation
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes in the SAME PR per owner).

@@ -7,20 +7,26 @@ import "../helper"
 import "../helper/PhotoUrl.js" as PhotoUrl
 import "../model"
 
-// ProductPhotoGallery — cover photo + thumbnail strip for a product's photos (2026-09-21 photos
-// feature). Replaces EditProductDialog's old single-photo Image+Icon+BusyIndicator block.
+// ProductPhotoGallery — horizontal photo filmstrip for a product's photos (2026-09-21 photos
+// feature; rearranged 2026-09-29 from a wrapping Flow grid to this filmstrip after PR #84
+// device-test feedback: "arrangement" felt boxy, and square image corners visibly overran the
+// rounded tile frame at all four corners — clip:true clips to the bounding box, not the radius;
+// see RoundedThumb.qml).
 // Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md, "UI"
 //
-// Shows, left to right: every id in `photoIds` (server-confirmed, first = cover), then every
-// PhotoQueue item still pending for this product (not yet confirmed). A photoId can appear in
-// EITHER list, never both -- PhotoQueue.discard()/InventoryStore.applyPhotoIds() keep them
-// disjoint (queue item removed exactly when its id is confirmed into photoIds).
+// Layout: [ horizontally scrolling ListView of tiles ][ fixed + tile ]. The + tile sits OUTSIDE
+// the scrollable ListView, at a fixed position, on purpose — the 2026-09-28 test plan rejected a
+// horizontal Flickable specifically because it would hide the + tile until scrolled. Pinning it
+// outside the scroll region keeps that guarantee (always reachable, no scroll needed) while still
+// fixing the overflow/wrap complaint: only the photo tiles scroll, and a Flickable can never
+// overflow its own bounds the way a wrapping Flow's uneven last row could look.
 //
-// Each tile's image source, in order: PhotoQueue's persisted local file (if this photoId is still
-// queued -- works fully offline, it's this device's own file), else the computed Storage thumbnail
-// URL (StorageService.photoDownloadUrl, thumb: true). A still-queued tile shows a spinner overlay
-// (enqueued/uploading/retrying) or a Retry/Discard mini-row (failed). A confirmed tile shows a
-// small remove (×) button when editable.
+// Model: every id in `photoIds` (server-confirmed, first = cover), then every PhotoQueue item
+// still pending for this product (not yet confirmed) — built once into `_combined` rather than
+// left as two separate Repeaters, so a tile's cover flag is a precomputed field (`isCover`) and
+// not something the delegate has to infer from its own `index` (that inference is what caused the
+// original "Cover on every tile" bug: a delegate with a `required property` on it stops Qt from
+// injecting an un-declared `index`).
 Item {
     id: root
 
@@ -32,29 +38,29 @@ Item {
     signal addPhotoRequested()
     signal removeFailed(string photoId, string error)
 
-    implicitHeight: strip.implicitHeight
-
-    // Explicit property + revision-driven refresh, NOT a `model: root._queuedForProduct()`
-    // function-call binding -- this codebase's own established pattern for "a list-store changed,
-    // re-sync a derived view" (DataModel.qml's OrdersStore.revisionChanged -> _syncOrdersModel())
-    // uses an explicit revision counter + Connections rather than relying on QML's binding engine
-    // to track property reads transitively through a nested function call for a Repeater model.
-    // Matching that proven pattern here rather than assuming the alternative works, since this
-    // can't be verified without qmltestrunner or a device in this sandbox and a silently-stale
-    // gallery would be a real, hard-to-notice UX bug.
     property var _queued: []
-    function _refreshQueued() {
-        var out = []
+    property var _combined: []
+
+    function _refreshAll() {
+        var q = []
         for (var i = 0; i < PhotoQueue.items.length; ++i) {
-            if (PhotoQueue.items[i].productId === root.productId) out.push(PhotoQueue.items[i])
+            if (PhotoQueue.items[i].productId === root.productId) q.push(PhotoQueue.items[i])
         }
-        _queued = out
+        root._queued = q
+
+        var out = []
+        for (var c = 0; c < root.photoIds.length; ++c)
+            out.push({ kind: "confirmed", photoId: root.photoIds[c], isCover: c === 0 })
+        for (var j = 0; j < q.length; ++j)
+            out.push({ kind: "queued", item: q[j] })
+        root._combined = out
     }
-    Component.onCompleted: _refreshQueued()
-    onProductIdChanged: _refreshQueued()
+    Component.onCompleted: _refreshAll()
+    onProductIdChanged: _refreshAll()
+    onPhotoIdsChanged: _refreshAll()
     Connections {
         target: PhotoQueue
-        function onRevisionChanged() { root._refreshQueued() }
+        function onRevisionChanged() { root._refreshAll() }
     }
 
     function _thumbUrl(photoId) {
@@ -74,128 +80,127 @@ Item {
         })
     }
 
-    // Flow, not RowLayout: a RowLayout never wraps or scrolls, so 5+ tiles ran off-screen and took
-    // the + tile with them (PR #84 device test, 2026-09-28). Max 10 photos -> at most a few rows.
-    Flow {
-        id: strip
+    readonly property bool _hasFailedQueued: {
+        for (var i = 0; i < root._queued.length; ++i)
+            if (root._queued[i].state === "failed") return true
+        return false
+    }
+    // A failed tile grows a Retry/Discard row below its image (real touch targets, not 9px text
+    // crammed inside a 72px square) -- the row's extra height, added to every delegate's box via
+    // the shared ListView height so a failed tile is never clipped.
+    readonly property int _failedExtra: dp(Constants.space2) + dp(40)
+    readonly property int _rowHeight: root.tileSize + (root._hasFailedQueued ? root._failedExtra : 0)
+
+    implicitHeight: filmRow.implicitHeight
+
+    RowLayout {
+        id: filmRow
         anchors.left: parent.left
         anchors.right: parent.right
         spacing: dp(Constants.space2)
 
-        Repeater {
-            model: root.photoIds
-            delegate: Rectangle {
-                required property string modelData
-                // Must be declared: with any `required property` on a delegate Qt stops injecting
-                // the implicit `index`, so `index === 0` below threw a ReferenceError, the binding
-                // never ran, and `visible` stayed at its default (true) -> "Cover" on every tile.
-                required property int index
-                width: root.tileSize
-                height: root.tileSize
-                radius: dp(Constants.radius)
-                color: Constants.subtleBg
-                border.color: Constants.borderColor
-                border.width: 1
-                clip: true
+        ListView {
+            id: filmList
+            Layout.fillWidth: true
+            Layout.preferredHeight: root._rowHeight
+            orientation: ListView.Horizontal
+            clip: true
+            spacing: dp(Constants.space2)
+            model: root._combined
 
-                Image {
-                    anchors.fill: parent
-                    anchors.margins: dp(2)
-                    source: root._thumbUrl(modelData)
-                    sourceSize.width: root.tileSize
-                    sourceSize.height: root.tileSize
-                    fillMode: Image.PreserveAspectCrop
-                    cache: true
-                    asynchronous: true
-                    onStatusChanged: if (status === Image.Error) console.warn("[ProductPhotoGallery] thumb failed to load:", source)
-                }
-
-                Rectangle {
-                    visible: root.editable
-                    width: dp(20); height: dp(20)
-                    radius: dp(10)
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.margins: dp(2)
-                    color: "#111827"
-                    opacity: 0.85
-                    Icon { anchors.centerIn: parent; name: "close"; size: sp(11); color: "#ffffff" }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root._removeConfirmed(modelData)
-                    }
-                }
-
-                Rectangle {
-                    visible: index === 0
-                    anchors.bottom: parent.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    height: dp(14)
-                    color: "#111827"
-                    opacity: 0.6
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("Cover")
-                        color: "#ffffff"
-                        font.pixelSize: sp(8)
-                    }
-                }
+            add: Transition {
+                NumberAnimation { properties: "opacity,scale"; from: 0; to: 1; duration: Constants.durMed; easing.type: Easing.OutCubic }
             }
-        }
+            remove: Transition {
+                NumberAnimation { properties: "opacity,scale"; from: 1; to: 0; duration: Constants.durFast; easing.type: Easing.InCubic }
+            }
+            displaced: Transition {
+                NumberAnimation { properties: "x"; duration: Constants.durMed; easing.type: Easing.OutCubic }
+            }
 
-        Repeater {
-            model: root._queued
-            // Column = image tile on top, Retry/Discard row BELOW it (outside the tile, so the
-            // buttons get real touch targets instead of 9px text inside a 72px square).
-            delegate: ColumnLayout {
-                id: queuedTile
+            delegate: Item {
+                id: tile
                 required property var modelData
-                readonly property bool failed: modelData.state === "failed"
-                width: failed ? Math.max(root.tileSize, dp(160)) : root.tileSize
-                spacing: dp(Constants.space2)
+                readonly property bool isQueued: modelData.kind === "queued"
+                readonly property bool isFailed: isQueued && modelData.item.state === "failed"
+                width: isFailed ? Math.max(root.tileSize, dp(160)) : root.tileSize
+                height: filmList.height
 
                 Rectangle {
-                    Layout.preferredWidth: root.tileSize
-                    Layout.preferredHeight: root.tileSize
+                    id: frame
+                    width: root.tileSize
+                    height: root.tileSize
                     radius: dp(Constants.radius)
                     color: Constants.subtleBg
-                    border.color: queuedTile.failed ? "#dc2626" : Constants.borderColor
+                    border.color: tile.isFailed ? Constants.danger : Constants.borderColor
                     border.width: 1
-                    clip: true
 
-                    Image {
+                    RoundedThumb {
+                        id: thumb
                         anchors.fill: parent
                         anchors.margins: dp(2)
-                        // mainFilePath is a file:// URL (or a bare path for older items) -- toFileUrl
-                        // accepts both; a blind "file://" + path double-prefixed it (device log).
-                        source: PhotoUrl.toFileUrl(queuedTile.modelData.mainFilePath)
-                        sourceSize.width: root.tileSize
-                        sourceSize.height: root.tileSize
-                        fillMode: Image.PreserveAspectCrop
-                        cache: false
-                        asynchronous: true
+                        radius: dp(Constants.radius) - dp(2)
+                        cache: !tile.isQueued
+                        // Queued: this device's own local file (works fully offline). Confirmed:
+                        // the computed Storage thumbnail URL.
+                        source: tile.isQueued
+                            ? PhotoUrl.toFileUrl(tile.modelData.item.mainFilePath)
+                            : root._thumbUrl(tile.modelData.photoId)
+                        onStatusChanged: if (!tile.isQueued && status === Image.Error)
+                            console.warn("[ProductPhotoGallery] thumb failed to load:", source)
                     }
 
                     QQC.BusyIndicator {
                         anchors.centerIn: parent
-                        running: !queuedTile.failed
-                        visible: !queuedTile.failed
+                        visible: tile.isQueued && !tile.isFailed
+                        running: visible
                     }
-
                     Icon {
-                        visible: queuedTile.failed
+                        visible: tile.isFailed
                         anchors.centerIn: parent
                         name: "warn"
                         size: sp(22)
-                        color: "#dc2626"
+                        color: Constants.danger
+                    }
+
+                    // Cover badge -- small corner pill instead of the old full-width bottom
+                    // banner text: reads as "this one is special" without visually dominating a
+                    // 72px tile (part of the 2026-09-29 arrangement rework).
+                    Rectangle {
+                        visible: !tile.isQueued && tile.modelData.isCover
+                        width: dp(20); height: dp(20)
+                        radius: dp(10)
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.margins: dp(2)
+                        color: "#111827"
+                        opacity: 0.85
+                        Icon { anchors.centerIn: parent; name: "star"; size: sp(11); color: "#ffffff" }
+                    }
+
+                    Rectangle {
+                        visible: !tile.isQueued && root.editable
+                        width: dp(20); height: dp(20)
+                        radius: dp(10)
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: dp(2)
+                        color: "#111827"
+                        opacity: 0.85
+                        Icon { anchors.centerIn: parent; name: "close"; size: sp(11); color: "#ffffff" }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root._removeConfirmed(tile.modelData.photoId)
+                        }
                     }
                 }
 
                 RowLayout {
-                    visible: queuedTile.failed
-                    Layout.fillWidth: true
+                    visible: tile.isFailed
+                    anchors.top: frame.bottom
+                    anchors.topMargin: dp(Constants.space2)
+                    width: tile.width
                     spacing: dp(Constants.space2)
 
                     Rectangle {
@@ -203,19 +208,19 @@ Item {
                         Layout.preferredHeight: dp(40)
                         radius: dp(Constants.radius)
                         color: Constants.subtleBg
-                        border.color: "#2563eb"
+                        border.color: Constants.accentBlue
                         border.width: 1
                         Text {
                             anchors.centerIn: parent
                             text: qsTr("Retry")
-                            color: "#2563eb"
+                            color: Constants.accentBlue
                             font.pixelSize: sp(Constants.fsSmall)
                             font.bold: true
                         }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: PhotoQueue.retry(queuedTile.modelData.photoId)
+                            onClicked: PhotoQueue.retry(tile.modelData.item.photoId)
                         }
                     }
                     Rectangle {
@@ -223,29 +228,31 @@ Item {
                         Layout.preferredHeight: dp(40)
                         radius: dp(Constants.radius)
                         color: Constants.subtleBg
-                        border.color: "#dc2626"
+                        border.color: Constants.danger
                         border.width: 1
                         Text {
                             anchors.centerIn: parent
                             text: qsTr("Discard")
-                            color: "#dc2626"
+                            color: Constants.danger
                             font.pixelSize: sp(Constants.fsSmall)
                             font.bold: true
                         }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: PhotoQueue.discard(queuedTile.modelData.photoId)
+                            onClicked: PhotoQueue.discard(tile.modelData.item.photoId)
                         }
                     }
                 }
             }
         }
 
+        // Fixed, outside the scrollable ListView -- see file header. Same 10-photo ceiling as
+        // before.
         Rectangle {
             visible: root.editable && (root.photoIds.length + root._queued.length) < 10
-            width: root.tileSize
-            height: root.tileSize
+            Layout.preferredWidth: root.tileSize
+            Layout.preferredHeight: root.tileSize
             radius: dp(Constants.radius)
             color: Constants.subtleBg
             border.color: Constants.borderColor

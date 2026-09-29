@@ -3783,3 +3783,44 @@ writes" test, grep the function body for every `Gateway.`/`TransactionStore.`/`A
 
 **The check:** for each "nothing enqueued" assertion, list the side-effect calls of the function under test and
 confirm the asserted count equals the sum of the intended ones.
+
+## Skill 78: `clip: true` clips to the bounding box, not `radius` — a rounded-corner thumbnail needs a `MultiEffect` mask, not just `clip`
+
+**Found on-device, PR #84, 2026-09-29.** `ProductPhotoGallery.qml`'s tiles were `Rectangle { radius: ...; clip:
+true }` with a `PreserveAspectCrop` `Image` filling them — reported as "the photos goes out of the rectangle."
+`clip: true` only clips children to the item's axis-aligned bounding box; it does not use `radius` as a clip path.
+The `Image` is genuinely inside its parent's box the whole time — it just isn't rounded, so its square corners
+visually overlap the parent's rounded corners.
+
+**Fix.** `MultiEffect { source: <hidden Image>; maskEnabled: true; maskSource: <hidden Rectangle radius=N> }` (Qt
+6.5+, `QtQuick.Effects`). Both the source and the mask can be `visible: false` — Qt Quick still renders them to an
+offscreen texture for the effect; they don't need to be on-screen themselves. Factored into a small reusable
+`RoundedThumb.qml` since it's needed at 2+ call sites — the moment a rounded-image mask is needed twice, extract it
+rather than duplicating the source+mask+MultiEffect trio.
+
+**Not tested by this repo's CI.** `qmltestrunner`'s CI job can't load anything that imports Felgo, and this
+component only exists inside a Felgo-importing file — so a masking bug here is on-device-only, discovered by
+looking, not by a red test. Say so plainly in the checkpoint/test plan rather than implying automated coverage
+exists.
+
+**The check:** any `Rectangle { radius: N; clip: true }` with an `Image`/`Item` child that visually fills it is a
+rounded-corner *candidate*, not a proven one — check whether the child's own shape is masked to `radius`, not just
+clipped to the box, before trusting a "rounded" thumbnail to actually render rounded.
+
+## Skill 79: Rejecting a scrollable "+" tile once doesn't mean rejecting scrolling — pin the fixed action outside the Flickable, not instead of it
+
+**Found on-device, PR #84, 2026-09-29.** The 2026-09-28 round rejected a horizontal `Flickable` for the photo strip
+because it would hide the `+` tile until scrolled, and chose `Flow` instead (wraps to rows). That fixed the
+"hidden +" problem but reintroduced a different one: reflowing rows read as boxy and grew the dialog vertically as
+photos were added — the actual complaint this round responds to.
+
+**Resolution, not a reversal.** The two decisions aren't actually in tension: `RowLayout { ListView
+(Layout.fillWidth) ; + tile (Layout.preferredWidth, fixed) }` puts the fixed action OUTSIDE the scrollable region
+entirely, so it's allocated by the outer layout, not scrolled content — always reachable, same guarantee the
+2026-09-28 round wanted, while the photos themselves scroll instead of wrapping. Skill 76 already named this exact
+shape ("a `Flickable` with the trailing action pinned") as the alternative to `Flow`; this round is that alternative,
+built.
+
+**The check:** before switching a horizontal `Flow`/`RowLayout`/`Flickable` for user-data-length content, check
+whether a fixed action (an add button, a "done" affordance) needs to stay reachable regardless of scroll position —
+if so, it goes in a sibling outside the scrollable item's own model, not inside it.

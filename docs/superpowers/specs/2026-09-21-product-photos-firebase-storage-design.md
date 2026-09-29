@@ -221,10 +221,16 @@ on-device-only verification, same as every other native change this project has 
 
 ## UI
 
-- New `qml/components/ProductPhotoGallery.qml`: cover photo plus a thumbnail strip. Each thumbnail's source
-  is (in order) its `PhotoQueue` persisted local file if a matching queue item exists, else the computed
-  Storage URL. `enqueued`/`uploading`/`retrying` show a spinner overlay; `failed` shows an error badge with
-  Retry/Discard; nothing else changes about the picker itself.
+- New `qml/components/ProductPhotoGallery.qml`: a horizontal filmstrip (`ListView`) of thumbnails,
+  cover first, with a `+` tile pinned outside the scrollable list at a fixed position (always
+  reachable, never requires scrolling). Each thumbnail's source is (in order) its `PhotoQueue`
+  persisted local file if a matching queue item exists, else the computed Storage URL.
+  `enqueued`/`uploading`/`retrying` show a spinner overlay; `failed` shows an error badge with
+  Retry/Discard below the tile; nothing else changes about the picker itself. Thumbnails are
+  clipped to a rounded rectangle via a `MultiEffect` mask (`qml/components/RoundedThumb.qml`) —
+  `clip: true` alone clips to the bounding box, not the `radius`, which is why a first pass
+  (2026-09-28, wrapping `Flow`) still showed square image corners past the rounded frame. Revised
+  2026-09-29 after PR #84 device-test feedback on both the overflow and the grid arrangement.
 - `EditProductDialog.qml`: replaces the current single-photo `applyPhotoSource`/`clearPhotoSource` wiring
   with "add a photo" (enqueues) and per-photo remove (calls `deleteProductPhoto` directly — removal doesn't
   need the queue, there's no large payload and no offline case worth queuing for a delete). Legacy

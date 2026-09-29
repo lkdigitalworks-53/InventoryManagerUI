@@ -1,12 +1,16 @@
 import QtQuick
+import QtQuick.Layouts
 import QtTest
 
-// PR #84 device-test bugs 1 and 4 (2026-09-28), as decisive experiments in the style of
-// tst_RepeaterModelReactivity.qml. ProductPhotoGallery.qml imports Felgo (dp()/sp()/Icon) and can't
-// load under qmltestrunner, so these reproduce ITS structure with plain QtQuick and fixed sizes.
-// They prove the Qt semantics the fix relies on; they do not load the real file. The real gallery
-// is covered by the on-device section of docs/superpowers/test-plans/2026-09-28-photo-gallery-
-// cover-scroll-list-test-plan.md.
+// PR #84 arrangement rework (2026-09-29): ProductPhotoGallery.qml moved from a wrapping Flow grid
+// to a horizontal filmstrip ListView with a fixed + tile pinned outside it. It imports Felgo
+// (dp()/sp()/Icon) and can't load under qmltestrunner, so this file proves the two load-bearing
+// pieces of logic separately: (1) `_refreshAll`'s combined-array construction, mirrored as pure
+// JS -- decisive, no delegate/`index`-injection ambiguity to reproduce, unlike the old
+// `index === 0` cover check this replaces; (2) the RowLayout+ListView+fixed-tile composition,
+// reproduced with real Qt layout types at the gallery's own sizes, proving the + tile's position
+// never depends on scroll content. The rounded-corner mask (RoundedThumb.qml, MultiEffect) has no
+// meaningful non-visual assertion and is on-device/visual-only -- see the test plan.
 // NOT RUN IN THIS SANDBOX (no Qt toolchain, standing instruction) -- CI is the proof.
 TestCase {
     id: tc
@@ -14,173 +18,171 @@ TestCase {
     visible: true
     width: 320; height: 400
 
-    // ── Bug 1: "Cover" label on every tile ───────────────────────────────
-    // Fixed pattern: the delegate declares `required property int index`, exactly as the gallery
-    // does now. (Without that declaration Qt does not inject `index` once a delegate has any
-    // required property, `index === 0` throws, and `visible` keeps its default of true.)
-    Item {
-        id: coverHost
-        width: 300; height: 100
-        property var ids: ["a", "b", "c", "d", "e"]
-        Row {
-            Repeater {
-                id: coverRepeater
-                model: coverHost.ids
-                delegate: Rectangle {
-                    required property string modelData
-                    required property int index
-                    width: 20; height: 20
-                    property alias coverLabel: label
-                    Rectangle { id: label; visible: index === 0; width: 5; height: 5 }
-                }
-            }
+    // ── Mirrors of ProductPhotoGallery.qml's own logic ───────────────────
+    function buildCombined(photoIds, queued) {
+        var out = []
+        for (var c = 0; c < photoIds.length; ++c)
+            out.push({ kind: "confirmed", photoId: photoIds[c], isCover: c === 0 })
+        for (var j = 0; j < queued.length; ++j)
+            out.push({ kind: "queued", item: queued[j] })
+        return out
+    }
+    function hasFailedQueued(queued) {
+        for (var i = 0; i < queued.length; ++i)
+            if (queued[i].state === "failed") return true
+        return false
+    }
+    function rowHeight(tileSize, failedExtra, queued) {
+        return tileSize + (hasFailedQueued(queued) ? failedExtra : 0)
+    }
+
+    // ── Combined-array ordering and cover flag ────────────────────────────
+    function test_confirmed_photos_come_first_cover_first() {
+        var out = buildCombined(["a", "b", "c"], [])
+        compare(out.length, 3)
+        compare(out[0].photoId, "a"); verify(out[0].isCover)
+        verify(!out[1].isCover); verify(!out[2].isCover)
+    }
+
+    function test_exactly_one_cover_regardless_of_count() {
+        for (var n = 1; n <= 10; ++n) {
+            var ids = []
+            for (var i = 0; i < n; ++i) ids.push("p" + i)
+            var out = buildCombined(ids, [])
+            var covers = out.filter(function(x) { return x.isCover }).length
+            compare(covers, 1, n + " photos -> exactly one cover")
         }
     }
 
-    function _coverCount() {
-        var n = 0
-        for (var i = 0; i < coverRepeater.count; ++i)
-            if (coverRepeater.itemAt(i).coverLabel.visible) n++
-        return n
+    function test_cover_moves_to_new_first_after_removal() {
+        var out = buildCombined(["b", "c"], [])   // "a" already removed by the caller
+        verify(out[0].isCover)
+        compare(out[0].photoId, "b")
     }
 
-    function test_cover_label_shows_on_the_first_tile_only() {
-        compare(coverRepeater.count, 5)
-        compare(_coverCount(), 1, "exactly one Cover label")
-        verify(coverRepeater.itemAt(0).coverLabel.visible, "on the first tile")
-        for (var i = 1; i < coverRepeater.count; ++i)
-            verify(!coverRepeater.itemAt(i).coverLabel.visible, "not on tile #" + i)
+    function test_queued_items_appended_after_all_confirmed() {
+        var out = buildCombined(["a", "b"], [{ photoId: "q1", state: "uploading" }, { photoId: "q2", state: "failed" }])
+        compare(out.length, 4)
+        compare(out[0].kind, "confirmed"); compare(out[1].kind, "confirmed")
+        compare(out[2].kind, "queued"); compare(out[2].item.photoId, "q1")
+        compare(out[3].kind, "queued"); compare(out[3].item.photoId, "q2")
     }
 
-    function test_cover_label_single_photo_still_covers_it() {
-        coverHost.ids = ["only"]
-        compare(coverRepeater.count, 1)
-        compare(_coverCount(), 1)
+    function test_no_confirmed_photos_no_cover_queued_only() {
+        var out = buildCombined([], [{ photoId: "q1", state: "uploading" }])
+        compare(out.length, 1)
+        compare(out[0].kind, "queued")
     }
 
-    function test_cover_label_no_photos_no_label() {
-        coverHost.ids = []
-        compare(coverRepeater.count, 0)
+    function test_empty_everything() {
+        compare(buildCombined([], []).length, 0)
     }
 
-    function test_cover_label_moves_to_new_first_after_the_cover_is_removed() {
-        coverHost.ids = ["a", "b", "c"]
-        coverHost.ids = ["b", "c"]
-        compare(_coverCount(), 1)
-        compare(coverRepeater.itemAt(0).modelData, "b")
-        verify(coverRepeater.itemAt(0).coverLabel.visible)
+    // ── Row-height formula (failed tile grows a Retry/Discard row below it) ─
+    function test_row_height_no_failed_items() {
+        compare(rowHeight(72, 48, [{ state: "uploading" }, { state: "enqueued" }]), 72)
+    }
+    function test_row_height_one_failed_item() {
+        compare(rowHeight(72, 48, [{ state: "uploading" }, { state: "failed" }]), 120)
+    }
+    function test_row_height_multiple_failed_still_one_row_taller() {
+        // A boolean flag, not a count -- N failed tiles still only need ONE extra row height,
+        // since they're side by side in the same horizontal row, not stacked.
+        compare(rowHeight(72, 48, [{ state: "failed" }, { state: "failed" }, { state: "failed" }]), 120)
+    }
+    function test_row_height_empty_queue() {
+        compare(rowHeight(72, 48, []), 72)
     }
 
-    // ── Bug 4: strip ran off-screen, + tile unreachable ──────────────────
-    // Flow with the gallery's tile size (72) and spacing (8) at a phone-ish 300 px content width.
+    // ── Fixed + tile: real RowLayout + horizontal ListView composition ────
+    // Reproduces ProductPhotoGallery's own structure (filmRow: [ListView Layout.fillWidth][+ tile
+    // Layout.preferredWidth]) at its own tile size, proving the + tile's box is allocated by the
+    // RowLayout itself and never depends on how much content is in the ListView or how far it's
+    // scrolled -- the guarantee the 2026-09-28 test plan asked for when it rejected a scrollable +
+    // tile.
     Item {
-        id: flowHost
+        id: filmHost
         width: 300
-        implicitHeight: strip.implicitHeight
         property int tiles: 5
         property bool addTile: true
-        property int wideFailedTiles: 0
-        Flow {
-            id: strip
+        RowLayout {
+            id: filmRow
             anchors.left: parent.left
             anchors.right: parent.right
             spacing: 8
-            Repeater {
-                id: tileRepeater
-                model: flowHost.tiles
+            ListView {
+                id: filmList
+                Layout.fillWidth: true
+                Layout.preferredHeight: 72
+                orientation: ListView.Horizontal
+                clip: true
+                spacing: 8
+                model: filmHost.tiles
                 delegate: Rectangle { width: 72; height: 72 }
             }
-            Repeater {
-                id: wideRepeater
-                model: flowHost.wideFailedTiles
-                delegate: Rectangle { width: 160; height: 72 + 8 + 40 }
+            Rectangle {
+                id: addTileItem
+                visible: filmHost.addTile
+                Layout.preferredWidth: 72
+                Layout.preferredHeight: 72
             }
-            Rectangle { id: addTileItem; visible: flowHost.addTile; width: 72; height: 72 }
         }
     }
 
-    function _allInsideWidth() {
-        for (var i = 0; i < strip.children.length; ++i) {
-            var c = strip.children[i]
-            if (!c.visible || c.width === 0) continue
-            if (c.x < 0 || c.x + c.width > flowHost.width + 0.5) return false
-        }
-        return true
-    }
-
-    // Positioners re-lay-out on the next polish pass, not synchronously with the property change.
-    function _settle() { wait(60) }
+    function _settle() { wait(60) }   // layouts/positioners relay out on the next polish pass
 
     function init() {
-        flowHost.width = 300
-        flowHost.tiles = 5
-        flowHost.addTile = true
-        flowHost.wideFailedTiles = 0
-        coverHost.ids = ["a", "b", "c", "d", "e"]
+        filmHost.width = 300
+        filmHost.tiles = 5
+        filmHost.addTile = true
         _settle()
     }
 
-    function test_five_photos_wrap_and_the_add_tile_stays_reachable() {
-        // 5 tiles + add tile = 6 items; 3 fit per 300 px row -> 2 rows.
-        verify(_allInsideWidth(), "nothing past the right edge (the reported bug)")
-        verify(addTileItem.x + addTileItem.width <= flowHost.width, "+ tile inside the visible width")
-        compare(flowHost.implicitHeight, 72 * 2 + 8, "two rows")
+    function test_add_tile_always_fully_inside_the_container_width() {
+        verify(addTileItem.x >= 0 && addTileItem.x + addTileItem.width <= filmHost.width + 0.5,
+               "+ tile inside the visible width, not pushed off by scroll content")
     }
 
-    function test_ten_photos_wrap_into_rows_without_overflow() {
-        flowHost.tiles = 9        // 9 photos + add tile = the 10-item ceiling incl. the + tile
+    function test_add_tile_position_independent_of_photo_count() {
+        filmHost.tiles = 1
         _settle()
-        verify(_allInsideWidth())
-        compare(flowHost.implicitHeight, 72 * 4 + 8 * 3, "ten items at 3 per row -> 4 rows")
+        var xFew = addTileItem.x
+        filmHost.tiles = 9
+        _settle()
+        var xMany = addTileItem.x
+        compare(xFew, xMany, "+ tile sits at a fixed offset from the right edge either way")
     }
 
-    function test_single_row_when_it_fits() {
-        flowHost.tiles = 2
+    function test_listview_scrolls_instead_of_pushing_the_add_tile() {
+        filmHost.tiles = 9   // 9*72 + 8*8 = 712px of content in a ~220px-wide list
         _settle()
-        compare(flowHost.implicitHeight, 72, "2 tiles + add tile fit one row")
-        verify(_allInsideWidth())
+        verify(filmList.contentWidth > filmList.width, "more content than fits -> scrollable")
+        verify(addTileItem.x + addTileItem.width <= filmHost.width + 0.5,
+               "+ tile still fully visible, unaffected by the overflow")
     }
 
-    function test_no_photos_only_the_add_tile() {
-        flowHost.tiles = 0
+    function test_no_add_tile_when_read_only() {
+        filmHost.addTile = false
         _settle()
-        compare(flowHost.implicitHeight, 72)
-        compare(addTileItem.x, 0)
+        verify(!addTileItem.visible)
     }
 
-    function test_read_only_no_add_tile_no_photos_has_no_height() {
-        flowHost.tiles = 0
-        flowHost.addTile = false
+    function test_narrow_container_still_keeps_add_tile_inside() {
+        filmHost.width = 160
         _settle()
-        compare(flowHost.implicitHeight, 0)
+        verify(addTileItem.x + addTileItem.width <= filmHost.width + 0.5)
+        filmHost.width = 300
+        _settle()
     }
 
-    function test_wide_failed_tile_wraps_instead_of_overflowing() {
-        flowHost.tiles = 2
-        flowHost.wideFailedTiles = 1
-        _settle()
-        verify(_allInsideWidth(), "160-wide failed tile with Retry/Discard row stays inside")
-    }
-
-    function test_narrow_container_relayouts_live() {
-        flowHost.tiles = 3
-        flowHost.width = 160       // 2 per row
-        _settle()
-        verify(_allInsideWidth())
-        verify(flowHost.implicitHeight >= 72 * 2 + 8, "grew taller instead of wider")
-        flowHost.width = 300
-        _settle()
-        verify(_allInsideWidth())
-    }
-
-    function test_monkey_random_counts_and_widths_never_overflow() {
+    function test_monkey_random_counts_and_widths_add_tile_never_escapes() {
         for (var i = 0; i < 100; ++i) {
-            flowHost.tiles = (i * 5) % 10
-            flowHost.wideFailedTiles = (i % 4 === 0) ? 1 : 0
-            flowHost.addTile = (i % 5) !== 0
-            flowHost.width = 180 + ((i * 37) % 160)      // 180..339 px, always >= widest tile (160)
+            filmHost.tiles = (i * 5) % 10
+            filmHost.addTile = (i % 5) !== 0
+            filmHost.width = 180 + ((i * 37) % 160)   // 180..339 px
             wait(10)
-            verify(_allInsideWidth(), "iteration " + i)
+            if (addTileItem.visible)
+                verify(addTileItem.x + addTileItem.width <= filmHost.width + 0.5, "iteration " + i)
         }
     }
 }
