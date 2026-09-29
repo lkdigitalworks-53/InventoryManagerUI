@@ -5,7 +5,7 @@ import QtTest
 // PR #84 arrangement rework (2026-09-29): ProductPhotoGallery.qml moved from a wrapping Flow grid
 // to a horizontal filmstrip ListView with a fixed + tile pinned outside it. It imports Felgo
 // (dp()/sp()/Icon) and can't load under qmltestrunner, so this file proves the two load-bearing
-// pieces of logic separately: (1) `_refreshAll`'s combined-array construction, mirrored as pure
+// pieces of logic separately (failed-tile Retry/Discard geometry: tests/tst_FailedTileGeometry.qml): (1) `_refreshAll`'s combined-array construction, mirrored as pure
 // JS -- decisive, no delegate/`index`-injection ambiguity to reproduce, unlike the old
 // `index === 0` cover check this replaces; (2) the RowLayout+ListView+fixed-tile composition,
 // reproduced with real Qt layout types at the gallery's own sizes, proving the + tile's position
@@ -26,14 +26,6 @@ TestCase {
         for (var j = 0; j < queued.length; ++j)
             out.push({ kind: "queued", item: queued[j] })
         return out
-    }
-    function hasFailedQueued(queued) {
-        for (var i = 0; i < queued.length; ++i)
-            if (queued[i].state === "failed") return true
-        return false
-    }
-    function rowHeight(tileSize, failedExtra, queued) {
-        return tileSize + (hasFailedQueued(queued) ? failedExtra : 0)
     }
 
     // ── Combined-array ordering and cover flag ────────────────────────────
@@ -78,20 +70,69 @@ TestCase {
         compare(buildCombined([], []).length, 0)
     }
 
-    // ── Row-height formula (failed tile grows a Retry/Discard row below it) ─
-    function test_row_height_no_failed_items() {
-        compare(rowHeight(72, 48, [{ state: "uploading" }, { state: "enqueued" }]), 72)
+    // ── Failed tiles keep the normal footprint (2026-09-29 in-tile Retry/Discard overlay) ─
+    // The old design widened a failed tile to 160dp and grew EVERY tile's row by 48dp (a
+    // mirrored `_rowHeight` formula pinned that here). The overlay lives inside the 72dp tile, so
+    // the invariant flipped: mixed failed/non-failed models must lay out exactly like all-normal
+    // ones. Stand-in composition (same delegate sizing rule as ProductPhotoGallery.qml's delegate).
+    ListView {
+        id: mixedList
+        width: 900   // wide enough that every delegate is instantiated (max 10 tiles = 792)
+        height: 72
+        orientation: ListView.Horizontal
+        spacing: 8
+        property var stateList: []
+        model: stateList
+        delegate: Item {
+            required property var modelData
+            width: 72          // ProductPhotoGallery delegate: width/height = tileSize, whatever the state
+            height: 72
+        }
     }
-    function test_row_height_one_failed_item() {
-        compare(rowHeight(72, 48, [{ state: "uploading" }, { state: "failed" }]), 120)
+
+    function test_failed_tiles_do_not_widen_or_grow_the_row() {
+        mixedList.stateList = ["uploading", "failed", "enqueued", "failed", "retrying"]
+        _settle()
+        compare(mixedList.count, 5)
+        compare(mixedList.height, 72)
+        compare(mixedList.contentWidth, 5 * 72 + 4 * 8, "5 tiles, 4 gaps -- failed ones are NOT 160 wide")
+        for (var i = 0; i < mixedList.count; ++i) {
+            var it = mixedList.itemAtIndex(i)
+            compare(it.width, 72, "tile " + i)
+            compare(it.height, 72, "tile " + i)
+        }
     }
-    function test_row_height_multiple_failed_still_one_row_taller() {
-        // A boolean flag, not a count -- N failed tiles still only need ONE extra row height,
-        // since they're side by side in the same horizontal row, not stacked.
-        compare(rowHeight(72, 48, [{ state: "failed" }, { state: "failed" }, { state: "failed" }]), 120)
+
+    function test_all_failed_row_is_same_size_as_all_normal_row() {
+        mixedList.stateList = ["failed", "failed", "failed"]
+        _settle()
+        var failedW = mixedList.contentWidth
+        mixedList.stateList = ["uploading", "uploading", "uploading"]
+        _settle()
+        compare(failedW, mixedList.contentWidth)
     }
-    function test_row_height_empty_queue() {
-        compare(rowHeight(72, 48, []), 72)
+
+    function test_empty_and_single_failed_row() {
+        mixedList.stateList = []
+        _settle()
+        compare(mixedList.count, 0)
+        mixedList.stateList = ["failed"]
+        _settle()
+        compare(mixedList.contentWidth, 72)
+        mixedList.stateList = []
+    }
+
+    function test_monkey_random_state_mixes_never_change_the_footprint() {
+        var all = ["enqueued", "uploading", "retrying", "failed"]
+        for (var i = 0; i < 60; ++i) {
+            var n = (i * 7) % 11, arr = []
+            for (var k = 0; k < n; ++k) arr.push(all[(i + k * 3) % 4])
+            mixedList.stateList = arr
+            _settle()
+            compare(mixedList.contentWidth, n === 0 ? 0 : n * 72 + (n - 1) * 8, "iteration " + i)
+            compare(mixedList.height, 72)
+        }
+        mixedList.stateList = []
     }
 
     // ── Fixed + tile: real RowLayout + horizontal ListView composition ────
