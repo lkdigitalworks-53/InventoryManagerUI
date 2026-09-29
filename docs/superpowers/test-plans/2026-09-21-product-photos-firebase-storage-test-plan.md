@@ -118,17 +118,18 @@ Rules / functions / e2e: unchanged by rounds 2-6. Regression set that must stay 
 `tst_PhotoQueueLogic`, `tst_PhotoUrl`, `tst_InventoryStore_photoIds`, `tst_OutboxStore`,
 `test/e2e/tst_ProductPhotosE2E.qml`, `functions/` Node suite.
 
-## Final-sweep findings that still need tests (2026-09-29, PR #84 review)
+## Final-sweep findings (2026-09-29, PR #84 review)
 
-Not covered by any test above, and each is a real gap found by reading the code:
+Each is a real gap found by reading the code. Status column is updated as they are fixed; tests are
+written but NOT run here (no Qt toolchain), CI is the proof.
 
-| # | Gap | Test to add |
-|---|---|---|
-| F1 | Item persisted as `uploading` (app killed/OS-suspended mid-upload) is never drained or re-armed on relaunch; no Retry/Discard because state is not `failed` | `tst_PhotoQueue`: `_load()` with a persisted `uploading` item -> becomes `enqueued` and is a drain candidate |
-| F2 | Deleting a product does not purge its queued/failed photos; they later 404 (terminal) and stay in the queue with no UI to discard | `tst_InventoryStore_deleteProductCascade`: queued items for the product are discarded (files removed) |
-| F3 | `uploadProductPhoto` writes Storage objects before the 404/409 checks, so those outcomes orphan both objects | `index.handlers.photos.test.js`: 404 and 409 paths write nothing (or delete what they wrote) |
-| F4 | `idToken`-empty branch in `_upload` returns without re-arming the drain | `tst_PhotoQueue`: token-empty pass leaves item drainable on next trigger |
-| F5 | Full-doc inventory `update` carries `before.photoIds`; a photo confirmed between edit and drain makes the edit 409 | Server test: `applyMutation` ignores/preserves `photoIds` in the `before` comparison |
+| # | Gap | Test | Status |
+|---|---|---|---|
+| F1 | Item persisted as `uploading` (app killed/OS-suspended mid-upload) is never drained or re-armed on relaunch; no Retry/Discard because state is not `failed` | `tst_PhotoQueue`: `_load()` with a persisted `uploading` item -> becomes `enqueued` and is a drain candidate | | FIXED: `tst_PhotoQueue` `test_relaunch_recovers_*`, `..._leaves_failed_and_retrying_*`, `..._only_the_uploading_items_of_a_mixed_queue`, `..._corrupt_storage_*`, `test_an_in_session_uploading_item_is_still_excluded_*` |
+| F2 | Deleting a product does not purge its queued/failed photos; they later 404 (terminal) and stay in the queue with no UI to discard | `tst_InventoryStore_deleteProductCascade`: queued items for the product are discarded (files removed) | | FIXED: `tst_InventoryStore_deleteProductCascade` `test_deleteProduct_discards_*` (queued, every state, with cascade, none, unknown id, empty queue, monkey) |
+| F3 | `uploadProductPhoto` writes Storage objects before the 404/409 checks, so those outcomes orphan both objects | `index.handlers.photos.test.js`: 404 and 409 paths write nothing (or delete what they wrote) | | open |
+| F4 | `idToken`-empty branch in `_upload` returns without re-arming the drain | `tst_PhotoQueue`: token-empty pass leaves item drainable on next trigger | | FIXED as a token watcher: `tst_PhotoQueue` `test_token_arrival_*` (drains, respects outbox gate, respects identity, empty queue), `test_token_cleared_does_not_drain` |
+| F5 | Full-doc inventory `update` carries `before.photoIds`; a photo confirmed between edit and drain makes the edit 409 | Server test: `applyMutation` ignores/preserves `photoIds` in the `before` comparison | | open |
 
 ## On-Device Test Plan (current behaviour, replaces the per-round checklists)
 
@@ -142,7 +143,7 @@ Felgo build on Android or iOS.
 - [ ] Filmstrip scrolls horizontally past ~4-5 tiles; nothing wraps; "+" tile visible without scrolling at 0-9 photos and gone at 10.
 - [ ] Inventory list: product with photos shows its first photo as the avatar.
 - [ ] Second device, same account: both photos appear. Remove one via (x): gone on both after refresh; if it was the cover, the next tile takes the star.
-- [ ] Force-close right after picking a photo, reopen: it resumes and completes. Repeat killing the app ~3 s later (mid-upload) - **expected to expose F1 until fixed**.
+- [ ] Force-close right after picking a photo, reopen: it resumes and completes. Repeat killing the app ~3 s later (mid-upload) (F1, fixed 2026-09-29).
 
 ### Negative Cases
 - [ ] Airplane mode + add photo: stays queued with spinner (no error), uploads on reconnect, resolves in place.
@@ -159,7 +160,8 @@ Felgo build on Android or iOS.
 - [ ] Read-only role: no x buttons, no "+" tile, strip still scrolls.
 - [ ] Bright and dark photos: Retry ring and x readable. Large system font / small phone: targets tappable, no overlap. Two or three failed tiles in one strip: not confused.
 - [ ] Windows profile path containing a space (desktop build).
-- [ ] **Delete a product while it has a queued/failed photo** (F2): expect no zombie failed item and no leftover local file.
+- [ ] **Delete a product while it has a queued/failed photo** (F2): expect no zombie failed item and no leftover local file. Known ceiling: an upload already in flight can still land server-side (Storage orphan until roadmap item 4).
+- [ ] Cold start with an expired session and a photo queued from last run (F4): once sign-in/refresh completes the photo uploads without any other action.
 
 ### Affected Areas (regression)
 - [ ] Product create/edit/delete unrelated to photos unchanged; deleting a product with photos removes both Storage objects (check console).

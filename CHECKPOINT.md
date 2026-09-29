@@ -28,3 +28,7 @@ Branch only, push without asking, PAT never written to the repo, no build/run, n
 ## Not done
 
 Nothing built or run. No SKILLS/AGENTS/README change (nothing implemented). Server untouched, so no Node tests planned for B.
+
+## Parallel workstream: photo follow-ups (from PR #84 review)
+
+Separate checkpoint, does not touch the roadmap-B work above: `docs/superpowers/specs/2026-09-29-pr84-photo-followups-CHECKPOINT.md`.

@@ -76,7 +76,12 @@ QtObject {
         if (_settings.itemsJson && _settings.itemsJson.length > 2) {
             try {
                 var arr = JSON.parse(_settings.itemsJson)
-                if (Array.isArray(arr)) items = arr
+                // "uploading" is only ever true for the lifetime of one XHR in one process. Found
+                // on disk at load it means the app died mid-upload: re-open it (the server dedupes
+                // by requestId, so a send that did land is a no-op). Not counted as an attempt.
+                if (Array.isArray(arr)) items = arr.map(function(it) {
+                    return (it && it.state === "uploading") ? Object.assign({}, it, { state: "enqueued" }) : it
+                })
             } catch (e) {
                 items = []
             }
@@ -299,6 +304,12 @@ QtObject {
     // QtObject root crashes the entire singleton chain at runtime (SKILLS.md Skill 20).
     property bool _onlineWatcher: AuthService.isOnline
     on_OnlineWatcherChanged: { if (_onlineWatcher) drainNow() }
+
+    // A token that arrives late (cold start, refresh in flight) must drain too: _upload() leaves the
+    // item queued when idToken is empty and nothing else re-arms. Event-driven, no polling; an
+    // emptied token (sign-out) is not a trigger. Same property-watcher form as above.
+    property string _tokenWatcher: AuthStore.idToken
+    on_TokenWatcherChanged: { if (_tokenWatcher.length > 0 && items.length > 0) drainNow() }
 
     // Re-arm the drain when the outbox changes. drainCandidates() gates an item on its product's
     // own pending create mutation (Trap 1); the one-shot _reschedule() timer fires once, finds the

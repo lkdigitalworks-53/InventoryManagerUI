@@ -3890,3 +3890,25 @@ to label (`StuckWrites.errorCodeOf`, `terminalCount`).
 `< 500` for that endpoint. A status is shared vocabulary; a new body string is not. Also: the Admin SDK bypasses
 security rules, so `permission-denied` is rare from Cloud Functions; do not build on it being common.
 
+## Skill 82: A state that is only true while a request is in flight must be repaired at load time — and "delete the parent" must reach the queue that points at it
+
+**PR #84 final sweep, 2026-09-29 (F1/F2/F4).** `PhotoQueue._upload` persists `state: "uploading"` *before*
+the XHR. That value only means something inside one process. Kill or suspend the app in that window and
+the next launch loads an item that no code path will ever pick up (drain and reschedule only take
+`enqueued`/`retrying`), and the UI offers no Retry/Discard because it isn't `failed`: an eternal spinner
+that still counts toward the 10-photo cap. Fix at the source, in `_load()`: `uploading` found on disk
+becomes `enqueued`, attempts unchanged (a crash is not a failed attempt). Safe to resend because the
+server dedupes by `requestId`. It must stay a load-time rule; in-session `uploading` still means "in
+flight, do not drain".
+
+Same sweep, same shape: `deleteProduct` cleaned confirmed `photoIds` but never the queue items that
+*point at* the product, so they later 404 (terminal) into a failed state with no UI. And `_upload`
+returned quietly on an empty `idToken` while nothing re-armed the drain when the token arrived; the fix
+is a property watcher (event-driven, empty token is not a trigger), not a retry timer, which would poll.
+
+**Known ceiling, not fixed:** an upload already in flight when the product is deleted can still land
+server-side; its Storage objects are orphaned until roadmap item 4 (server-side cleanup).
+
+**The check:** for every persisted state, ask "what does this mean after a restart?"; for every delete,
+grep who else holds the id (queues, outboxes, caches).
+

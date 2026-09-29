@@ -882,7 +882,11 @@ env.
   tests added during this feature's own review sweep for bugs the original tests didn't catch:
   `_load()` never having called `_reschedule()` (a photo queued last session would sit frozen
   forever — broke "survive app close" silently) and `drainNow()` never having called
-  `AuthService.ensureFreshToken()`.
+  `AuthService.ensureFreshToken()`. Final sweep (2026-09-29): load-time recovery of a persisted
+  `uploading` item, and drain-on-token-arrival (Skill 82). Token tests must reset `AuthStore.idToken`
+  in `cleanup()`; `NativeFile` is undefined here, so a drain that reaches `_upload` leaves `enqueued`.
+- `tests/tst_InventoryStore_deleteProductCascade.qml` also covers the queued-photo purge on product
+  delete (all four states, unknown id, deterministic monkey).
 - `tests/tst_OutboxStore.qml` gained `hasPendingForEntity` coverage (2026-09-21, product photos) —
   the gate for `PhotoQueue`'s Trap 1 (a photo for a product created offline must wait for that
   product's own create mutation to land).

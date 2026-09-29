@@ -1095,6 +1095,12 @@ QtObject {
         // throwing mid-function must never be able to abort work that
         // already completed above it.
         try {
+            // Photos still in PhotoQueue (any state) never reached photoIds. Left alone they 404
+            // once the delete lands, park as "failed" with no UI, and keep their local files.
+            // discard() replaces PhotoQueue.items, so filter() first and iterate the snapshot.
+            PhotoQueue.items.filter(function(q) { return q.productId === productId })
+                .forEach(function(q) { PhotoQueue.discard(q.photoId) })
+
             var photoIdsToDelete = Array.isArray(before.photoIds) ? before.photoIds : []
             for (var pdi = 0; pdi < photoIdsToDelete.length; ++pdi) {
                 (function(photoId) {
