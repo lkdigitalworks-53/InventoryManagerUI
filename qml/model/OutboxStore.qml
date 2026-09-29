@@ -380,6 +380,35 @@ QtObject {
         _save()
     }
 
+    // Is `requestId` the item currently dispatched (for any key it touches)?
+    function isInFlight(requestId) {
+        for (var k in _inFlightKeys)
+            if (_inFlightKeys[k] === requestId) return true
+        return false
+    }
+
+    // How many items are dispatched right now. Public and reactive, so a view can
+    // re-read isInFlight() when it changes without reaching for _inFlightKeys.
+    readonly property int inFlightCount: Object.keys(_inFlightKeys).length
+
+    // Make one queued item due immediately with a fresh backoff (attempts = 0, so
+    // a failed retry waits 2s again, not 10 min). Used by the stuck-writes
+    // dialog's "Retry now". Returns false, changing nothing, when the item is
+    // unknown or already in flight (it is being sent; a second send would only
+    // race it). Does NOT send: Gateway.drainNow() does.
+    function retryNow(requestId) {
+        if (isInFlight(requestId)) return false
+        var arr = items.slice()
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].requestId !== requestId) continue
+            arr[i] = Object.assign({}, arr[i], { attempts: 0, nextAttemptAt: Date.now() })
+            items = arr
+            _save()
+            return true
+        }
+        return false
+    }
+
     // Drop the whole queue. Used on sign-out so a pending tenant's writes
     // never replay under the next account.
     function clear() {

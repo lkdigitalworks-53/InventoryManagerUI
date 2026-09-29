@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import "../components"
 import "../helper/StuckWrites.js" as StuckWrites
+import "../helper/DescribeItem.js" as DescribeItem
 import "../helper/SendPolicy.js" as SendPolicy
 
 // Compliance gateway client (P0). Single entry point for every books-of-
@@ -494,6 +495,39 @@ QtObject {
         stuckCount = StuckWrites.stuckCount(_stuckState)
         if (wasQuiet)
             Toast.show(qsTr("Some changes aren't syncing. The app keeps retrying."))
+    }
+
+    // Rows for the stuck-writes dialog: every stuck write still queued, in queue
+    // order, as { requestId, title, detail, rejected, inFlight }. `rejected` = the
+    // server's latest answer was write-rejected. Reads live state on each call;
+    // views re-evaluate it off stuckCount, OutboxStore.revision and
+    // OutboxStore.inFlightCount.
+    function stuckRows() {
+        var rows = StuckWrites.rows(_stuckState, OutboxStore.items)
+        var out = []
+        for (var i = 0; i < rows.length; ++i) {
+            var d = DescribeItem.describe(rows[i].item)
+            out.push({
+                requestId: rows[i].requestId,
+                title: d.title,
+                detail: d.detail,
+                rejected: rows[i].terminal,
+                inFlight: OutboxStore.isInFlight(rows[i].requestId)
+            })
+        }
+        return out
+    }
+
+    // "Retry now" for one stuck write: due immediately, fresh backoff, sent by the
+    // drain below. Returns false for an id that is not stuck, not queued, or
+    // already in flight. It does NOT clear the stuck flag: if the server still
+    // fails it the header line must stay up (only leaving the outbox clears it,
+    // see _pruneStuck), and the flag is already set so nothing re-toasts.
+    function retryStuck(requestId) {
+        if (!StuckWrites.isStuck(_stuckState, requestId)) return false
+        if (!OutboxStore.retryNow(requestId)) return false
+        drainNow()
+        return true
     }
 
     // Forgets anything that has left the outbox, however it left (sent,

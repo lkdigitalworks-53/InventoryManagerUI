@@ -62,6 +62,27 @@ function noteFailure(state, requestId, status, online, errorCode) {
 
 function stuckCount(state) { return Object.keys(state.stuck).length }
 
+function isStuck(state, requestId) { return state.stuck[requestId] === true }
+
+// The stuck writes still in the outbox, in queue order, for the stuck-writes
+// dialog. `items` is OutboxStore.items. A stuck id no longer queued (sent or
+// dropped since the last prune) is skipped, so a stale dialog never shows a
+// ghost row. -> [{ requestId, terminal, item }]
+function rows(state, items) {
+    var out = []
+    var list = Array.isArray(items) ? items : []
+    for (var i = 0; i < list.length; ++i) {
+        var it = list[i]
+        if (!it || !state.stuck[it.requestId]) continue
+        out.push({
+            requestId: it.requestId,
+            terminal: state.terminal[it.requestId] === true,
+            item: it
+        })
+    }
+    return out
+}
+
 // Stuck writes the server has said it rejects. Always <= stuckCount.
 function terminalCount(state) {
     var n = 0
