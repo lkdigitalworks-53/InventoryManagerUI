@@ -168,7 +168,7 @@ Item {
                     // 72px tile (part of the 2026-09-29 arrangement rework).
                     Rectangle {
                         visible: !tile.isQueued && tile.modelData.isCover
-                        width: dp(20); height: dp(20)
+                        width: dp(15); height: dp(15)
                         radius: dp(10)
                         anchors.top: parent.top
                         anchors.left: parent.left
