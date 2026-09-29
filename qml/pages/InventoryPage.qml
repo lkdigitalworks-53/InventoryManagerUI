@@ -236,7 +236,7 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 size: "lg"
                 imageSource: card.product
-                    ? (Array.isArray(card.product.photoIds) && card.product.photoIds.length > 0
+                    ? (card.product.photoIds && card.product.photoIds.length > 0
                         ? StorageService.photoDownloadUrl(card.product.productId, card.product.photoIds[0], true)
                         : (card.product.photoUrl || ""))
                     : ""
