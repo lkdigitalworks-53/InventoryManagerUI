@@ -35,6 +35,11 @@ senders drop the write, Skill 74). Client labels rejected stuck writes in the he
 Design: `docs/superpowers/specs/2026-09-28-gateway-write-error-classification-design.md`. **Next: (B) park +
 Retry/Discard.**
 
+**Status 2026-09-29: part B scoped, not built.** Four sequential slices (dialog + Retry-now, park + persist, Discard + resync,
+cleanup). Two corrections to earlier notes: Party / Category / OrderChannel never go through `Gateway`, so they are out of B;
+the existing `syncFromFirebase()` full resync is the Discard re-pull. Plan and open decisions:
+`docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-plan.md`.
+
 ## 2. Staff delete has no row-level button — MEDIUM
 
 Identical gap to what products and orders had before this PR: `StaffStore.deleteStaff()` and its
@@ -85,8 +90,8 @@ suite caught pre-merge, and two adjacent-but-out-of-scope findings: `KNOWN-ISSUE
 (`feature/2026-09-21-product-photos-firebase-storage`) works; Taher expects it to merge within days. Queued as the next
 priority after item 1's C and B, and pulled forward once that branch lands. It is an on-device check, not a build.
 
-`InventoryStore.deleteProduct()` calls `StorageService.deleteProductPhoto()`, guarded in a
-try/catch. Correct by code trace, but **not confirmed on-device** — no Storage plan is enabled
+`InventoryStore.deleteProduct()` calls `StorageService.removeProductPhoto()` per `photoIds` entry (renamed by the photos PR;
+this text said `deleteProductPhoto()`), guarded in a try/catch. Correct by code trace, but **not confirmed on-device** — no Storage plan is enabled
 in this environment right now, so there's nothing to actually verify against. Re-test once a
 Storage plan is active; until then this is a known verification gap, not a known bug.
 
