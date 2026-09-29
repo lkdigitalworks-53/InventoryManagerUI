@@ -26,6 +26,8 @@ App {
     readonly property int syncStuckCount: Gateway.stuckCount
     // Of those, the ones the server rejected outright (Gateway.stuckTerminalCount).
     readonly property int syncStuckTerminalCount: Gateway.stuckTerminalCount
+    // GlassHeader's caption calls this when tapped.
+    function openStuckWrites() { stuckWritesSheet.open() }
 
     // Consume the Android Back event so it does NOT propagate to the OS (which
     // would background/exit the app). "AutoAccept" = mark the event accepted;
@@ -87,7 +89,7 @@ App {
         // read as undefined here, which is falsy, so they close exactly as
         // before — this only changes behavior for dialogs that actually
         // have something to guard.
-        var dialogs = [photoSourceSheet, addProductDlg, editProductDlg,
+        var dialogs = [stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
@@ -775,6 +777,7 @@ App {
     ConfirmDialog {
         id: confirmDlg
     }
+    StuckWritesSheet { id: stuckWritesSheet }
 
     StaffDetailDialog {
         id: staffDetailDlg
