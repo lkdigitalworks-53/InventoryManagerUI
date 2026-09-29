@@ -2,7 +2,7 @@
 
 // Handler-level tests for uploadProductPhoto and deleteProductPhoto (functions/index.js).
 // Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
-// Plan: docs/superpowers/plans/2026-09-21-product-photos-firebase-storage.md Task 5
+// Test plan: docs/superpowers/test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md
 //
 // Same harness/technique as index.handlers.test.js -- the actual exported handler functions,
 // with admin.auth()/Firestore/Storage mocked (testSupport/handlerHarness.js). Real Firebase

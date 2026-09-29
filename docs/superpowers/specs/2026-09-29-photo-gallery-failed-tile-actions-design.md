@@ -62,4 +62,4 @@ complaint). C is safest for Discard but adds a tap to the most common action.
 
 ## Testing
 
-See `docs/superpowers/test-plans/2026-09-29-photo-gallery-failed-tile-actions-test-plan.md`.
+See `docs/superpowers/test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md (round 6 row)`.
