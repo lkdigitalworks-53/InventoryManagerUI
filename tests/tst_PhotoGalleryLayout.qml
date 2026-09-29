@@ -176,11 +176,18 @@ TestCase {
     }
 
     function test_monkey_random_counts_and_widths_add_tile_never_escapes() {
+        // CI failure, 2026-09-29 (PR #84 round 4 push): iteration 31 (tiles=5, addTile visible,
+        // width=207px) read a stale addTileItem.x. The geometry itself has comfortable margin at
+        // every input this loop generates (RowLayout only ever needs ~80px minimum: 8px spacing +
+        // 72px add tile; ListView's own implicitWidth is 0, so it has no floor stopping it
+        // shrinking to fit) -- this was every other assertion in this file settling on wait(60)
+        // via _settle() while this one alone used a bare wait(10), the only difference between the
+        // one loop that failed and the ones that didn't.
         for (var i = 0; i < 100; ++i) {
             filmHost.tiles = (i * 5) % 10
             filmHost.addTile = (i % 5) !== 0
             filmHost.width = 180 + ((i * 37) % 160)   // 180..339 px
-            wait(10)
+            _settle()
             if (addTileItem.visible)
                 verify(addTileItem.x + addTileItem.width <= filmHost.width + 0.5, "iteration " + i)
         }
