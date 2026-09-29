@@ -43,7 +43,8 @@ the existing `syncFromFirebase()` full resync is the Discard re-pull. Plan and o
 **Status 2026-09-29 (later): part B slice S1 implemented, PR pending review.** Tappable header caption -> "Changes not
 syncing" sheet -> per-row Retry now (`OutboxStore.retryNow`, `Gateway.stuckRows/retryStuck`, `DescribeItem.js`). Retry
 keeps the stuck flag on purpose (design D1). Design: `docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`.
-**Next: S2 (park + persist, terminal only).**
+**Decision P5 (2026-09-29): S2 also persists the stuck flag for non-terminal writes** (stuck state was lost on relaunch, seen on device).
+**Next: S2 (persist stuck for all + park terminal only).**
 
 ## 2. Staff delete has no row-level button — MEDIUM
 
