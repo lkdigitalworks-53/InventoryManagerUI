@@ -3824,3 +3824,24 @@ built.
 **The check:** before switching a horizontal `Flow`/`RowLayout`/`Flickable` for user-data-length content, check
 whether a fixed action (an add button, a "done" affordance) needs to stay reachable regardless of scroll position —
 if so, it goes in a sibling outside the scrollable item's own model, not inside it.
+
+## Skill 80: `visible: false` is not enough to feed a `MultiEffect` source/mask — it needs `layer.enabled: true`
+
+**Found on-device, PR #84 round 5, 2026-09-29 — a regression I introduced in round 4 and had
+already flagged as unverified.** `RoundedThumb.qml` fed `MultiEffect.source`/`maskSource` from an
+`Image` and a `Rectangle`, both `visible: false`, on the assumption that Qt Quick still renders
+invisible items to a texture for effect sampling. It doesn't: `visible: false` means the item
+contributes no scenegraph render node at all, so there's nothing for the effect to sample — the
+masked output is blank/transparent. Everything else on the tile that WAS `visible: true` (the grey
+background, the cover/remove badges) rendered fine, which is exactly what made the bug look like
+"the photo is just missing" rather than "the whole tile is broken."
+
+**Fix:** add `layer.enabled: true` to the source and mask items. This forces Qt to render that item
+into an offscreen texture regardless of whether it's composited on-screen — the actual mechanism
+`MultiEffect`/`ShaderEffectSource`-style sampling needs. `visible: false` + `layer.enabled: true`
+together is the correct pattern for a hidden effect source; `visible: false` alone is not.
+
+**The check:** if a `MultiEffect`, `ShaderEffect`, or anything else sampling an `Item` as a texture
+source produces a blank/transparent result and the source item is `visible: false`, check for
+`layer.enabled: true` before looking anywhere else — this is the first thing to rule out, not the
+last.

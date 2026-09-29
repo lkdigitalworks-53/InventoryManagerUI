@@ -1,3 +1,64 @@
+# CHECKPOINT — 2026-09-29 PR #84 round 5: thumbnail not rendering (round 4 regression) + CI flake
+
+**Branch:** `feature/2026-09-21-product-photos-firebase-storage`. **Commit identity:**
+`Taher (via Claude session) <lkdwtaher@gmail.com>` (unchanged from round 4).
+**Skills invoked:** superpowers:systematic-debugging, qt-development-skills:qt-qml.
+**Owner also pushed directly this round** (before this session picked it up) — fast-forward
+merged, no conflict: `65884e3` (`InventoryPage.qml`: `Array.isArray(card.product.photoIds)` →
+truthy check — the Inventory list card's own thumbnail bug, unrelated to the gallery, likely
+because `photoIds` off the Firestore/Felgo bridge isn't a real JS `Array` and fails
+`Array.isArray`), `29375de` (cover badge 20dp→15dp, owner's own attempted fix for the bug below —
+kept it, but it wasn't the actual cause, see root cause).
+
+## Bug 1 (regression, introduced by round 4): gallery shows grey tile + badges, no photo
+
+**Symptom (owner, on-device):** grey rectangle, cover star + remove-× icons visible, no thumbnail
+image, in the Edit dialog's photo gallery.
+
+**Root cause investigation (systematic-debugging, Phase 1):** before round 4, tiles used a plain
+`Image` directly — photos DID render (that's what "goes out of the rectangle" meant: visible, just
+square-cornered). Round 4 replaced that with `RoundedThumb.qml`: an `Image` and a mask `Rectangle`,
+both `visible: false`, feeding a `MultiEffect` mask. `visible: false` means the scenegraph
+contributes NO render node for that item at all — nothing for `MultiEffect.source`/`maskSource`
+(both `ShaderEffectSource`-backed) to sample, so the masked output is blank/transparent. The grey
+`frame` background and the two always-visible badge `Rectangle`s (separate items, `visible: true`)
+show through untouched — exactly the reported symptom, and exactly consistent with photos working
+before this file existed.
+
+**Fix:** `layer.enabled: true` on both `img` and `maskShape` in `RoundedThumb.qml`. This forces an
+actual offscreen render pass for the item regardless of on-screen visibility — the missing piece.
+`visible: false` alone was never enough; I'd conflated it with `layer.enabled`'s behavior when I
+wrote round 4 (flagged as unverified/on-device-only in round 4's own checkpoint and test plan — the
+flag was right, the guess under it was wrong). New Skill 80.
+
+**Not independently confirmed on-device yet by this session** — CI can't reach this file (same
+Felgo-gating as before), so this is Phase 3's "single hypothesis, minimal test" applied as far as
+this sandbox allows; owner's next on-device check is the real test.
+
+## Bug 2 (CI, from round 4's push): flaky monkey test
+
+`PhotoGalleryLayout::test_monkey_random_counts_and_widths_add_tile_never_escapes`, iteration 31
+(tiles=5, addTile visible, width=207px) — `addTileItem.x` read stale. Geometry has comfortable
+margin at every input this loop generates (RowLayout only needs ~80px minimum: 8px spacing + 72px
+add tile; `ListView`'s own `implicitWidth` is 0, no floor stopping it shrinking) — ruled out a real
+overflow. The one actual difference between this assertion and every other one in the same file:
+every other test settles via `_settle()` (`wait(60)`); this one alone used a bare `wait(10)`.
+Changed to `_settle()` for consistency — not a new arbitrary number, the same margin already
+established and passing everywhere else in this file.
+
+## Next steps
+
+1. Owner: confirm photos actually render now (this is the real test — CI can't check it).
+2. Owner: confirm CI is green on the monkey test specifically; if it flakes again at a *different*
+   iteration even at 60ms, that's new information — question whether `wait()` is the right tool at
+   all before reaching for a third number (systematic-debugging Phase 4, step 4).
+3. Round 4's still-open item (Bug 3 from round 3 — list-cover thumbnail) is still untouched by this
+   session. Owner's `65884e3` (`Array.isArray` → truthy) is a plausible partial fix for a *related*
+   symptom on a *different* screen (Inventory list card) — worth checking whether it also explains
+   round 3's original list-cover finding, but that's owner's/next session's call, not assumed here.
+
+---
+
 # CHECKPOINT — 2026-09-29 PR #84 device-test round 4: photo arrangement + rounded-corner overflow
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84 head; fixes in the SAME PR per owner).

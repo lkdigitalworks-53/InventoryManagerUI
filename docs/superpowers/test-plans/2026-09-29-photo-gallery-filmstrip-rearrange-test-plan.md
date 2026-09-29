@@ -83,3 +83,9 @@ embed's own properties/signals — `productId`, `photoIds`, `editable`,
 
 **If corners still look square on-device**
 - [ ] Check the console for a `QtQuick.Effects` / shader compile warning on first launch — if present, the Qt install is missing the `qtshadertools` module (CI's `qmltestrunner` job never exercises this file at all, Felgo-gated — see "Affected areas" — so this is genuinely first-verified on your machine).
+
+**Round 5 addendum (2026-09-29):** the first on-device check found no photo at all, not just square
+corners — `visible: false` on the source/mask items wasn't enough to feed `MultiEffect` (no
+scenegraph node = nothing to sample); fixed with `layer.enabled: true` on both, see CHECKPOINT.md
+round 5 and SKILLS.md Skill 80. Re-check the "Happy" section above (corners AND that a photo shows
+at all) rather than assuming Bug 1 alone.
