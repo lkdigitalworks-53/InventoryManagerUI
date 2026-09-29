@@ -516,4 +516,174 @@ TestCase {
     function test_hasPendingForEntity_false_on_an_empty_queue() {
         compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
     }
+
+
+    // ── retryNow / isInFlight / inFlightCount (stuck-writes dialog, S1) ─────
+
+    function _failedItem(id, entityId, n) {
+        OutboxStore.enqueue({ requestId: id, entity: "order", entityId: entityId, action: "update", after: { v: 1 } })
+        for (var i = 0; i < n; ++i) OutboxStore.markFailed(id)
+    }
+
+    function _find(id) {
+        return OutboxStore.items.filter(function(i) { return i.requestId === id })[0]
+    }
+
+    function test_retryNow_makes_a_backed_off_item_due_with_fresh_attempts() {
+        _failedItem("r1", "o1", 5)
+        verify(_find("r1").nextAttemptAt > Date.now(), "precondition: backed off")
+        compare(_find("r1").attempts, 5)
+        var before = Date.now()
+        compare(OutboxStore.retryNow("r1"), true)
+        compare(_find("r1").attempts, 0)
+        verify(_find("r1").nextAttemptAt >= before && _find("r1").nextAttemptAt <= Date.now())
+        compare(OutboxStore.dueItems().length, 1)
+        compare(OutboxStore.nextDueInMs(), 0)
+    }
+
+    function test_after_retryNow_the_next_failure_restarts_the_backoff_at_the_first_step() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.retryNow("r1")
+        var t0 = Date.now()
+        OutboxStore.markFailed("r1")
+        compare(_find("r1").attempts, 1)
+        var delay = _find("r1").nextAttemptAt - t0
+        verify(delay >= 1900 && delay <= 2100, "expected ~2s, got " + delay)
+    }
+
+    function test_retryNow_unknown_id_returns_false_and_changes_nothing() {
+        _failedItem("r1", "o1", 3)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.retryNow("nope"), false)
+        compare(OutboxStore.retryNow(""), false)
+        compare(OutboxStore.retryNow(undefined), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryNow_on_an_in_flight_item_is_a_no_op() {
+        _failedItem("r1", "o1", 3)
+        var item = _find("r1")
+        OutboxStore.markInFlight(item)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.retryNow("r1"), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryNow_works_again_once_the_item_is_no_longer_in_flight() {
+        _failedItem("r1", "o1", 3)
+        var item = _find("r1")
+        OutboxStore.markInFlight(item)
+        OutboxStore.clearInFlight(item)
+        compare(OutboxStore.retryNow("r1"), true)
+    }
+
+    function test_retryNow_touches_only_the_named_item() {
+        _failedItem("r1", "o1", 4)
+        _failedItem("r2", "o2", 4)
+        var other = JSON.stringify(_find("r2"))
+        OutboxStore.retryNow("r1")
+        compare(JSON.stringify(_find("r2")), other)
+    }
+
+    function test_retryNow_keeps_the_payload_and_identity() {
+        _failedItem("r1", "o1", 2)
+        var enq = _find("r1").enqueuedAt
+        OutboxStore.retryNow("r1")
+        var it = _find("r1")
+        compare(it.requestId, "r1")
+        compare(it.entityId, "o1")
+        compare(it.after.v, 1)
+        compare(it.enqueuedAt, enq)
+        compare(OutboxStore.pendingCount, 1)
+    }
+
+    function test_retryNow_works_for_batch_delta_and_operation_items() {
+        OutboxStore.enqueueBatch({ requestId: "b1", entity: "inventory", items: [{ entityId: "p1", action: "update" }] })
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "p2", deltas: { stock: -1 } })
+        OutboxStore.enqueueOperation({ requestId: "op1", opType: "completeOrder", ops: [{ entity: "order", entityId: "o9" }] })
+        var ids = ["b1", "d1", "op1"]
+        for (var i = 0; i < ids.length; ++i) {
+            OutboxStore.markFailed(ids[i]); OutboxStore.markFailed(ids[i])
+            compare(OutboxStore.retryNow(ids[i]), true, ids[i])
+            compare(_find(ids[i]).attempts, 0, ids[i])
+        }
+        compare(OutboxStore.dueItems().length, 3)
+    }
+
+    function test_retryNow_survives_a_simulated_relaunch() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.retryNow("r1")
+        OutboxStore._load()
+        compare(_find("r1").attempts, 0)
+        compare(OutboxStore.dueItems().length, 1)
+    }
+
+    function test_retryNow_bumps_revision_only_when_it_changes_something() {
+        _failedItem("r1", "o1", 2)
+        var rev = OutboxStore.revision
+        OutboxStore.retryNow("nope")
+        compare(OutboxStore.revision, rev)
+        OutboxStore.retryNow("r1")
+        verify(OutboxStore.revision > rev)
+    }
+
+    function test_isInFlight_and_inFlightCount_track_markInFlight_and_clearInFlight() {
+        _failedItem("r1", "o1", 1)
+        var item = _find("r1")
+        compare(OutboxStore.isInFlight("r1"), false)
+        compare(OutboxStore.inFlightCount, 0)
+        OutboxStore.markInFlight(item)
+        compare(OutboxStore.isInFlight("r1"), true)
+        compare(OutboxStore.inFlightCount, 1)
+        OutboxStore.clearInFlight(item)
+        compare(OutboxStore.isInFlight("r1"), false)
+        compare(OutboxStore.inFlightCount, 0)
+    }
+
+    function test_isInFlight_true_for_a_batch_via_any_of_its_keys() {
+        OutboxStore.enqueueBatch({ requestId: "b1", entity: "inventory", items: [{ entityId: "p1" }, { entityId: "p2" }] })
+        OutboxStore.markInFlight(_find("b1"))
+        compare(OutboxStore.isInFlight("b1"), true)
+        compare(OutboxStore.isInFlight("other"), false)
+    }
+
+    function test_clear_resets_in_flight_state() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.markInFlight(_find("r1"))
+        OutboxStore.clear()
+        compare(OutboxStore.isInFlight("r1"), false)
+        compare(OutboxStore.inFlightCount, 0)
+    }
+
+    function test_monkey_retryNow_never_breaks_queue_invariants() {
+        var s = 7
+        var rnd = function() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var entities = ["m1", "m2", "m3"]
+        for (var step = 0; step < 300; ++step) {
+            var r = rnd()
+            var n = OutboxStore.items.length
+            var it = n > 0 ? OutboxStore.items[Math.floor(rnd() * n)] : null
+            if (r < 0.3 || !it) {
+                // Unique requestId per call, as Gateway mints them.
+                var e = entities[Math.floor(rnd() * entities.length)]
+                OutboxStore.enqueue({ requestId: "req-" + step, entity: "order", entityId: e, action: "update", after: { s: step } })
+            }
+            else if (r < 0.5) OutboxStore.markFailed(it.requestId)
+            else if (r < 0.65) OutboxStore.markInFlight(it)
+            else if (r < 0.75) OutboxStore.clearInFlight(it)
+            else if (r < 0.9) {
+                var wasInFlight = OutboxStore.isInFlight(it.requestId)
+                compare(OutboxStore.retryNow(it.requestId), !wasInFlight, "step " + step)
+            }
+            else { OutboxStore.clearInFlight(it); OutboxStore.markSent(it.requestId) }
+            var seen = {}
+            for (var i = 0; i < OutboxStore.items.length; ++i) {
+                var q = OutboxStore.items[i]
+                verify(!seen[q.requestId], "duplicate id at step " + step)
+                seen[q.requestId] = true
+                verify(q.attempts >= 0, "attempts at step " + step)
+            }
+            compare(OutboxStore.pendingCount, OutboxStore.items.length, "step " + step)
+        }
+    }
 }

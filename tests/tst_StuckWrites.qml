@@ -436,4 +436,108 @@ TestCase {
             }
         }
     }
+
+
+    // ── isStuck / rows (stuck-writes dialog, S1 2026-09-29) ─────────────────
+
+    function _stuckWrite(state, id, body) {
+        for (var i = 0; i < 5; ++i) SW.noteFailure(state, id, 500, true, body)
+    }
+
+    function test_isStuck_false_for_unknown_and_below_threshold() {
+        var s = SW.newState()
+        compare(SW.isStuck(s, "nope"), false)
+        SW.noteFailure(s, "a", 500, true)
+        compare(SW.isStuck(s, "a"), false)
+    }
+
+    function test_isStuck_true_only_from_the_threshold_failure() {
+        var s = SW.newState()
+        _stuckWrite(s, "a")
+        compare(SW.isStuck(s, "a"), true)
+        compare(SW.isStuck(s, "b"), false)
+    }
+
+    function test_isStuck_false_again_after_prune_removes_it() {
+        var s = SW.newState()
+        _stuckWrite(s, "a")
+        SW.prune(s, {})
+        compare(SW.isStuck(s, "a"), false)
+    }
+
+    function test_rows_empty_for_no_items_or_bad_items_argument() {
+        var s = SW.newState()
+        _stuckWrite(s, "a")
+        compare(SW.rows(s, []).length, 0)
+        compare(SW.rows(s, undefined).length, 0)
+        compare(SW.rows(s, null).length, 0)
+        compare(SW.rows(s, "x").length, 0)
+    }
+
+    function test_rows_lists_only_stuck_items_in_queue_order() {
+        var s = SW.newState()
+        _stuckWrite(s, "b")
+        _stuckWrite(s, "d")
+        SW.noteFailure(s, "c", 500, true) // failing but not stuck yet
+        var items = [{ requestId: "a" }, { requestId: "b" }, { requestId: "c" }, { requestId: "d" }]
+        var rows = SW.rows(s, items)
+        compare(rows.length, 2)
+        compare(rows[0].requestId, "b")
+        compare(rows[1].requestId, "d")
+        compare(rows[0].item, items[1])
+    }
+
+    function test_rows_skips_a_stuck_id_that_left_the_outbox() {
+        var s = SW.newState()
+        _stuckWrite(s, "gone")
+        _stuckWrite(s, "here")
+        var rows = SW.rows(s, [{ requestId: "here" }])
+        compare(rows.length, 1)
+        compare(rows[0].requestId, "here")
+    }
+
+    function test_rows_terminal_flag_follows_the_latest_server_answer() {
+        var s = SW.newState()
+        _stuckWrite(s, "r", SW.REJECTED)
+        _stuckWrite(s, "u", "write-unavailable")
+        var rows = SW.rows(s, [{ requestId: "r" }, { requestId: "u" }])
+        compare(rows[0].terminal, true)
+        compare(rows[1].terminal, false)
+        SW.noteFailure(s, "r", 500, true, "write-unavailable") // latest answer changes
+        compare(SW.rows(s, [{ requestId: "r" }])[0].terminal, false)
+    }
+
+    function test_rows_ignores_null_entries_in_items() {
+        var s = SW.newState()
+        _stuckWrite(s, "a")
+        compare(SW.rows(s, [null, undefined, { requestId: "a" }]).length, 1)
+    }
+
+    function test_rows_does_not_mutate_state() {
+        var s = SW.newState()
+        _stuckWrite(s, "a")
+        var before = JSON.stringify(s)
+        SW.rows(s, [{ requestId: "a" }])
+        compare(JSON.stringify(s), before)
+    }
+
+    function test_monkey_rows_length_always_matches_stuck_ids_still_queued() {
+        var ids = ["a", "b", "c", "d"]
+        for (var seed = 1; seed <= 5; ++seed) {
+            var rnd = _rng(seed)
+            var state = SW.newState()
+            var queued = {}
+            for (var step = 0; step < 200; ++step) {
+                var id = ids[Math.floor(rnd() * ids.length)]
+                var r = rnd()
+                if (r < 0.6) { queued[id] = true; SW.noteFailure(state, id, 500, true) }
+                else if (r < 0.8) { delete queued[id]; SW.prune(state, queued) }
+                var items = []
+                for (var k = 0; k < ids.length; ++k) if (queued[ids[k]]) items.push({ requestId: ids[k] })
+                var want = 0
+                for (var w = 0; w < items.length; ++w) if (SW.isStuck(state, items[w].requestId)) want++
+                compare(SW.rows(state, items).length, want, "seed " + seed + " step " + step)
+            }
+        }
+    }
 }

@@ -1131,4 +1131,179 @@ TestCase {
         Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
         compare(got, null, "a callback registered before clear() must never fire after it")
     }
+
+
+    // ── stuck-writes dialog: stuckRows / retryStuck (S1, 2026-09-29) ─────────
+    // Same "drive _noteFailure directly" pattern. retryStuck() calls drainNow();
+    // with no idToken (see the scope note at the top) that is safe: the sender
+    // guards return before any XHR.
+
+    function _stuckWriteItem(entityId) {
+        var item = _queueWrite(entityId)
+        _failTimes(item, 500, 5)
+        return item
+    }
+
+    function test_stuckRows_is_empty_when_nothing_is_stuck() {
+        compare(Gateway.stuckRows().length, 0)
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 4)
+        compare(Gateway.stuckRows().length, 0, "below the threshold is not stuck")
+    }
+
+    function test_stuckRows_describes_a_stuck_write() {
+        var item = _stuckWriteItem("o1")
+        var rows = Gateway.stuckRows()
+        compare(rows.length, 1)
+        compare(rows[0].requestId, item.requestId)
+        compare(rows[0].title, "Edited order")
+        compare(rows[0].detail, "o1")
+        compare(rows[0].rejected, false)
+        compare(rows[0].inFlight, false)
+    }
+
+    function test_stuckRows_flags_a_rejected_write() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.stuckRows()[0].rejected, true)
+    }
+
+    function test_stuckRows_flags_a_stuck_write_that_is_in_flight() {
+        var item = _stuckWriteItem("o1")
+        OutboxStore.markInFlight(item)
+        compare(Gateway.stuckRows()[0].inFlight, true)
+        OutboxStore.clearInFlight(item)
+        compare(Gateway.stuckRows()[0].inFlight, false)
+    }
+
+    function test_stuckRows_keeps_queue_order_and_length_matches_stuckCount() {
+        var a = _stuckWriteItem("o1")
+        var b = _stuckWriteItem("o2")
+        var rows = Gateway.stuckRows()
+        compare(rows.length, Gateway.stuckCount)
+        compare(rows[0].requestId, a.requestId)
+        compare(rows[1].requestId, b.requestId)
+    }
+
+    function test_stuckRows_drops_a_write_that_left_the_outbox_before_the_next_prune() {
+        var item = _stuckWriteItem("o1")
+        OutboxStore.markSent(item.requestId) // no _reschedule/_pruneStuck yet
+        compare(Gateway.stuckRows().length, 0, "never show a ghost row")
+    }
+
+    function test_stuckRows_uses_the_record_name_when_the_item_has_one() {
+        Gateway.mode = "gateway"
+        var id = Gateway.recordMutation("inventory", "p1", "update", { name: "Old" }, { name: "Sugar 1kg" })
+        var item = OutboxStore.items.filter(function(i) { return i.requestId === id })[0]
+        _failTimes(item, 500, 5)
+        compare(Gateway.stuckRows()[0].title, "Edited product")
+        compare(Gateway.stuckRows()[0].detail, "Sugar 1kg")
+    }
+
+    function test_retryStuck_makes_the_item_due_and_resets_its_backoff() {
+        var item = _stuckWriteItem("o1")
+        for (var i = 0; i < 5; ++i) OutboxStore.markFailed(item.requestId)
+        verify(OutboxStore.items[0].nextAttemptAt > Date.now(), "precondition: backed off")
+        compare(Gateway.retryStuck(item.requestId), true)
+        compare(OutboxStore.items[0].attempts, 0)
+        verify(OutboxStore.items[0].nextAttemptAt <= Date.now())
+    }
+
+    function test_retryStuck_keeps_the_write_stuck_and_does_not_toast_again() {
+        var item = _stuckWriteItem("o1")
+        var toasts = toastSpy.count
+        Gateway.retryStuck(item.requestId)
+        compare(Gateway.stuckCount, 1, "the header line must stay up until the write leaves the outbox")
+        compare(Gateway.stuckRows().length, 1)
+        // The retry fails again: still one stuck write, still no second toast.
+        Gateway._noteFailure(item, 500)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, toasts)
+    }
+
+    function test_a_retried_write_that_then_lands_drops_out_of_the_count() {
+        var item = _stuckWriteItem("o1")
+        Gateway.retryStuck(item.requestId)
+        OutboxStore.markSent(item.requestId)
+        Gateway._reschedule()
+        compare(Gateway.stuckCount, 0)
+        compare(Gateway.stuckRows().length, 0)
+    }
+
+    function test_retryStuck_refuses_a_write_that_is_not_stuck() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 4)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(Gateway.retryStuck(item.requestId), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryStuck_unknown_or_empty_id_is_a_no_op() {
+        _stuckWriteItem("o1")
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(Gateway.retryStuck("nope"), false)
+        compare(Gateway.retryStuck(""), false)
+        compare(Gateway.retryStuck(undefined), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryStuck_refuses_a_write_already_in_flight() {
+        var item = _stuckWriteItem("o1")
+        OutboxStore.markInFlight(item)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(Gateway.retryStuck(item.requestId), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryStuck_twice_in_a_row_is_harmless() {
+        var item = _stuckWriteItem("o1")
+        compare(Gateway.retryStuck(item.requestId), true)
+        compare(Gateway.retryStuck(item.requestId), true)
+        compare(OutboxStore.pendingCount, 1)
+        compare(Gateway.stuckCount, 1)
+    }
+
+    function test_retryStuck_touches_only_the_chosen_write() {
+        var a = _stuckWriteItem("o1")
+        var b = _stuckWriteItem("o2")
+        for (var i = 0; i < 3; ++i) { OutboxStore.markFailed(a.requestId); OutboxStore.markFailed(b.requestId) }
+        var bBefore = JSON.stringify(OutboxStore.items.filter(function(x) { return x.requestId === b.requestId })[0])
+        Gateway.retryStuck(a.requestId)
+        compare(JSON.stringify(OutboxStore.items.filter(function(x) { return x.requestId === b.requestId })[0]), bBefore)
+    }
+
+    function test_retryStuck_after_clear_is_a_no_op() {
+        var item = _stuckWriteItem("o1")
+        Gateway.clear()
+        compare(Gateway.retryStuck(item.requestId), false)
+        compare(Gateway.stuckRows().length, 0)
+    }
+
+    function test_retryStuck_with_a_rejected_write_keeps_the_rejected_label() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.retryStuck(item.requestId)
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.stuckRows()[0].rejected, true)
+    }
+
+    function test_monkey_stuckRows_always_matches_stuckCount_and_retryStuck_never_throws() {
+        var s = 11
+        var rnd = function() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var items = [_queueWrite("m1"), _queueWrite("m2"), _queueWrite("m3")]
+        var gone = {}
+        for (var step = 0; step < 200; ++step) {
+            var it = items[Math.floor(rnd() * items.length)]
+            var r = rnd()
+            // Gateway only ever reports failures / sends for writes still queued.
+            if (gone[it.requestId]) { Gateway.retryStuck(it.requestId); Gateway._pruneStuck() }
+            else if (r < 0.4) Gateway._noteFailure(it, 500)
+            else if (r < 0.6) Gateway.retryStuck(it.requestId)
+            else if (r < 0.7) OutboxStore.markInFlight(it)
+            else if (r < 0.8) OutboxStore.clearInFlight(it)
+            else if (r < 0.9) { OutboxStore.clearInFlight(it); OutboxStore.markSent(it.requestId); gone[it.requestId] = true; Gateway._pruneStuck() }
+            else Gateway._pruneStuck()
+            compare(Gateway.stuckRows().length, Gateway.stuckCount, "step " + step)
+        }
+    }
 }
