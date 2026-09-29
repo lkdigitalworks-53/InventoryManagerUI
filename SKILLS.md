@@ -3890,3 +3890,18 @@ to label (`StuckWrites.errorCodeOf`, `terminalCount`).
 `< 500` for that endpoint. A status is shared vocabulary; a new body string is not. Also: the Admin SDK bypasses
 security rules, so `permission-denied` is rare from Cloud Functions; do not build on it being common.
 
+## Skill 85: "Retry now" on a write already flagged stuck must not clear the flag, or the only alarm goes dark right after the user asked about it
+
+**Found while designing** part B slice S1 (`feat/2026-09-29-stuck-writes-dialog-retry-now`). The plan said Retry should "drop
+the requestId from `StuckWrites` state". For a *parked* item that is right. For a write that is merely stuck (still
+auto-retrying), it hides the header line and the dialog row the moment the user taps Retry; if the server rejects it
+again the user sees nothing for ~3 minutes (5 more failures to re-tip). `StuckWrites.noteFailure` only reports the failure
+that hits `THRESHOLD` exactly, so keeping the flag also means no second toast.
+
+**Fix:** `Gateway.retryStuck` -> `OutboxStore.retryNow` (attempts 0, `nextAttemptAt` now) and leaves `stuck` / `terminal`
+alone; only leaving the outbox clears them (`_pruneStuck`). `retryNow` refuses an in-flight item.
+
+**Generalize:** a manual "retry" should reset the *schedule*, not the *evidence*. Clear a warning only when the thing it
+warns about is gone. Also: a test that feeds `noteFailure` a raw response body instead of the parsed error code passes
+the wrong type silently (found by running the pure-JS test bodies in Node; `errorCodeOf` does the parsing in `Gateway`).
+

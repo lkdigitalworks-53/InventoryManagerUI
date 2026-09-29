@@ -1,7 +1,7 @@
 # Gateway stuck writes, part B: park + Retry / Discard — scope plan
 
 **Date:** 2026-09-29
-**Status:** PLAN ONLY. No code. P1-P3 DECIDED 2026-09-29 (see Decisions). P4 not asked, default stands. Slices are sequential; one PR each.
+**Status:** S1 IMPLEMENTED 2026-09-29 (`feat/2026-09-29-stuck-writes-dialog-retry-now`, see its design doc; one deliberate deviation: Retry keeps the stuck flag in S1). S2-S4 not started. Was: PLAN ONLY. No code. P1-P3 DECIDED 2026-09-29 (see Decisions). P4 not asked, default stands. Slices are sequential; one PR each.
 **Builds on:** `2026-09-28-gateway-stuck-write-retry-discard-options.md` (Q2-Q4 decided there), PR #75 (indicator), PR #93 (server classification).
 **Out of scope:** photo cleanup on delete (roadmap item 4), handled in a separate photos session. Interplay noted at the end.
 
