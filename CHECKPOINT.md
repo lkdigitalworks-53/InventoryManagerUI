@@ -1,3 +1,85 @@
+# CHECKPOINT — 2026-09-29 PR #84 follow-up: redesign photo-gallery Retry/Discard buttons (UI only)
+
+**Branch:** `feature/2026-09-29-photo-gallery-retry-discard-redesign`, cut from PR #84 head
+`e3236f2` (`feature/2026-09-21-product-photos-firebase-storage`). **Commit identity:**
+`Taher (via Claude session) <taher.lkdw@gmail.com>`. **Skills invoked:** superpowers:brainstorming
+(HARD-GATE: no code before design approval), qt-development-skills:qt-ui-design,
+qt-development-skills:qt-qml, frontend-design.
+
+**Trigger (owner):** PR #84 device testing — all bugs resolved. One change wanted: the failed-upload
+tile's Retry / Discard buttons look bad. Wants fluid, futuristic, on-theme, elegant, easy to use.
+
+## Steps
+
+- [x] 1. Cloned repo, branched off PR #84 head, unset upstream (no accidental push to PR #84's branch).
+- [x] 2. Read AGENTS.md, CHECKPOINT.md, the four skills above.
+- [x] 3. Explored code (findings below).
+- [x] 4. Owner chose layout **A (in-tile overlay)** and **Retry = filled brand gradient**; design approved in chat.
+- [x] 5. Spec: `docs/superpowers/specs/2026-09-29-photo-gallery-failed-tile-actions-design.md`.
+- [x] 6. Test plan: `docs/superpowers/test-plans/2026-09-29-photo-gallery-failed-tile-actions-test-plan.md` (+ index row, supersede note in the older filmstrip plan).
+- [x] 7. Tests first: `tests/tst_FailedTileGeometry.qml` (22), `tests/tst_PhotoGalleryLayout.qml` (16; row-height mirror tests flipped to footprint-unchanged).
+- [x] 8. Code: `qml/helper/FailedTileGeometry.js`, `qml/components/FailedTileOverlay.qml`, gallery delegate rewired, `retry` icon in `Constants.iconMap`. Removed `_hasFailedQueued/_failedExtra/_rowHeight`.
+- [x] 9. Docs: SKILLS.md Skill 81, AGENTS.md bullet. README unchanged (nothing user-facing to add).
+- [x] 10. Sandbox-only Node run of the helper math (200k random cases, 0 violations). NOT the app, not qmltestrunner.
+- [ ] 11. **CI result on the pushed head** (owner / next session: check `checks.yml` run; QML job is the first real run of the 38 tests above).
+- [ ] 12. Open PR: base = PR #84 branch (stacked). Owner reviews on GitHub.
+- [ ] 13. On-device run of the test plan's section 5 (owner).
+
+**Deviations from the approved draft (told to owner):** entrance fade-in dropped (model rebuilt as JS array
+resets the ListView -> animation would replay on unrelated queue changes; reasoned, not observed). Review
+caught the overlay being given a 68dp container (2dp margins) which would have shrunk the targets; fixed.
+**Resume point if interrupted:** everything through step 10 is committed and pushed on this branch.
+
+## Findings (step 3)
+
+- Buttons live inline in `qml/components/ProductPhotoGallery.qml` (delegate `RowLayout`, ~lines 190-235):
+  two hand-rolled `Rectangle`+`Text`+`MouseArea` boxes (outlined blue "Retry", outlined red "Discard"),
+  40dp tall, text only, no press feedback, no keyboard/a11y name.
+- **Layout shift is the real ugliness:** a failed tile widens 72dp -> 160dp AND every tile's ListView
+  grows 48dp taller (`_failedExtra`, `_rowHeight`, `_hasFailedQueued`). Tests
+  `test_row_height_*` in `tests/tst_PhotoGalleryLayout.qml` pin that growth; an in-tile redesign
+  would invert them (row height must NOT change).
+- Existing shared buttons (`GhostButton`, `DangerButton`, `PrimaryButton`, `IconActionButton`) are
+  48dp/38dp full-width style, not fit for a 72dp tile; the gallery does not use them.
+- Theme tokens: `Constants.brand1..5`, `danger`, `overlay`, `glassBg`, `radius*`, `durFast/Med`.
+  Light theme only. No `retry`/`refresh` glyph in `Constants.iconMap` yet (needs a mapping; verify the
+  Felgo `IconType` name before use). `warn`, `close`, `star`, `add`, `trash` exist.
+- Queue item shape: `{photoId, productId, state: enqueued|uploading|retrying|failed, attempts, nextAttemptAt, lastError}`.
+  `PhotoQueue.retry(photoId)` / `PhotoQueue.discard(photoId)` semantics stay untouched (UI-only scope).
+- Existing confirmed-tile "x" remove badge is 20dp (below WCAG 2.2 24px minimum target) — same
+  hit-area concern applies to any discard badge unless hit slop is enlarged.
+
+## Verified 2026-09-29 (PhotoQueueLogic.js)
+
+`TERMINAL_STATUS = {400,404,409,413}` go straight to `failed`; `PhotoQueue.retry()` resets attempts and
+re-enqueues, so Retry is futile for 400/404/413 (same file / product gone) but VALID for 409 (photo
+limit) once the user deletes another photo. So Retry must stay always-visible. Pre-existing, out of
+scope; noted as follow-up (reason text / undo toast).
+
+## Draft design (pending 4b)
+
+- New `qml/components/FailedTileOverlay.qml` (signals `retryRequested()`, `discardRequested()`), used
+  by the gallery delegate. Tile stays `tileSize` square: **no width change, no row-height growth**
+  (delete `_failedExtra`/`_hasFailedQueued`/`_rowHeight`; `implicitHeight = tileSize`; invert the
+  `test_row_height_*` tests).
+- Scrim slate-900 @ ~62% over the local thumbnail (white-on-scrim >= 4.5:1 worst case, computed).
+- Retry: 36dp circle, horizontally centred, y 28-64dp (hit 36x36). Discard: 22dp chip top-right,
+  hit 28x28 at y 0-28. Hit boxes disjoint (geometry test). 48dp guide unreachable with two targets in
+  72dp: 36/28 both >= WCAG 2.2 24px minimum. Only a bigger tile fixes that.
+- No caption text (no room without overlap); state carried by shape (refresh + x) + danger border,
+  not colour alone. `Accessible.name` "Retry upload" / "Discard photo".
+- Motion: opacity fade-in 160ms (durFast) when tile turns failed; press = scale 0.92 (transform only).
+  No blur (GPU cost per tile, cannot verify on device here).
+- Icon: add `retry` -> `IconType.refresh` and `discard` -> `IconType.close` mapping in Constants.iconMap.
+
+## Open decision (asked to owner)
+
+Layout approach: A) in-tile overlay (tile stays 72dp, scrim + circular retry + corner discard),
+B) capsule row below tile, C) tap failed tile -> bottom sheet. Recommendation: A.
+PR routing default: push this branch, open PR with base = PR #84 branch (stacked), so PR #84 stays clean.
+
+---
+
 # CHECKPOINT — 2026-09-29 PR #84 round 5: thumbnail not rendering (round 4 regression) + CI flake
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage`. **Commit identity:**
