@@ -3936,3 +3936,19 @@ Also: a "monkey" test is only a monkey test if you prove the generator reaches e
 `tst_InventoryStore_deleteProductCascade` used `1103515245 * seed`, which exceeds 2^53 in JS doubles, lost
 its low bits, and `rnd(4)` returned 0 forever (only `"enqueued"` was ever exercised; verified in Node).
 Use `a*m < 2^53` (`1664525`, `1013904223`, `% 2^32`) and assert the generator hit every state.
+
+## Skill 87: "Retry now" on a write already flagged stuck must not clear the flag, or the only alarm goes dark right after the user asked about it
+
+**Found while designing** part B slice S1 (`feat/2026-09-29-stuck-writes-dialog-retry-now`). The plan said Retry should "drop
+the requestId from `StuckWrites` state". For a *parked* item that is right. For a write that is merely stuck (still
+auto-retrying), it hides the header line and the dialog row the moment the user taps Retry; if the server rejects it
+again the user sees nothing for ~3 minutes (5 more failures to re-tip). `StuckWrites.noteFailure` only reports the failure
+that hits `THRESHOLD` exactly, so keeping the flag also means no second toast.
+
+**Fix:** `Gateway.retryStuck` -> `OutboxStore.retryNow` (attempts 0, `nextAttemptAt` now) and leaves `stuck` / `terminal`
+alone; only leaving the outbox clears them (`_pruneStuck`). `retryNow` refuses an in-flight item.
+
+**Generalize:** a manual "retry" should reset the *schedule*, not the *evidence*. Clear a warning only when the thing it
+warns about is gone. Also: a test that feeds `noteFailure` a raw response body instead of the parsed error code passes
+the wrong type silently (found by running the pure-JS test bodies in Node; `errorCodeOf` does the parsing in `Gateway`).
+

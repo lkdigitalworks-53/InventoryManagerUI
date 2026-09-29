@@ -40,6 +40,11 @@ cleanup). Two corrections to earlier notes: Party / Category / OrderChannel neve
 the existing `syncFromFirebase()` full resync is the Discard re-pull. Plan and open decisions:
 `docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-plan.md`.
 
+**Status 2026-09-29 (later): part B slice S1 implemented, PR pending review.** Tappable header caption -> "Changes not
+syncing" sheet -> per-row Retry now (`OutboxStore.retryNow`, `Gateway.stuckRows/retryStuck`, `DescribeItem.js`). Retry
+keeps the stuck flag on purpose (design D1). Design: `docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`.
+**Next: S2 (park + persist, terminal only).**
+
 ## 2. Staff delete has no row-level button — MEDIUM
 
 Identical gap to what products and orders had before this PR: `StaffStore.deleteStaff()` and its

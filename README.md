@@ -844,6 +844,15 @@ feeds `syncStuckTerminalCount` in `Main.qml`, and `GlassHeader` shows "N change(
 retrying." Retry, backoff and dropping are unchanged. Test plan:
 `docs/superpowers/test-plans/2026-09-28-gateway-write-error-classification-test-plan.md`.
 
+**Update 2026-09-29 (stuck-writes dialog + Retry now, part B slice S1):** the `GlassHeader` stuck caption is now
+underlined and tappable while online. It opens `StuckWritesSheet` (`qml/pages/`), one row per stuck write
+(`Gateway.stuckRows()`, labels from `qml/helper/DescribeItem.js`) with a "Retry now" button. `Gateway.retryStuck`
+calls `OutboxStore.retryNow` (attempts reset to 0, due immediately) and drains; the write stays flagged stuck until it
+actually leaves the outbox, so a retry the server rejects again keeps the header line up and never re-toasts. No
+parking, persistence or Discard yet (slices S2/S3). Design:
+`docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`; test plan:
+`docs/superpowers/test-plans/2026-09-29-stuck-writes-dialog-retry-now-test-plan.md`.
+
 **Update 2026-09-21 (C-3 phase 2, pure helpers):** added `qml/helper/SendPolicy.js` (10s foreground / 30s
 background timeout starting values, not measured, and +-20% retry jitter), `OperationKeys.js`
 (deterministic operation key and ids) and `CompletionPlan.js` (the pure planner that turns an order
