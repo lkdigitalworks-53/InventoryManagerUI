@@ -5,6 +5,7 @@ import Felgo
 
 import "../helper"
 import "../helper/PhotoUrl.js" as PhotoUrl
+import "../helper/FailedTileGeometry.js" as FTG
 import "../model"
 
 // ProductPhotoGallery — horizontal photo filmstrip for a product's photos (2026-09-21 photos
@@ -13,6 +14,10 @@ import "../model"
 // rounded tile frame at all four corners — clip:true clips to the bounding box, not the radius;
 // see RoundedThumb.qml).
 // Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md, "UI"
+//
+// Failed uploads (2026-09-29): Retry/Discard now live INSIDE the tile as FailedTileOverlay, so a failed
+// tile keeps the normal footprint -- no widening, no strip-height jump (the old text-button row below
+// the tile did both). See docs/superpowers/specs/2026-09-29-photo-gallery-failed-tile-actions-design.md.
 //
 // Layout: [ horizontally scrolling ListView of tiles ][ fixed + tile ]. The + tile sits OUTSIDE
 // the scrollable ListView, at a fixed position, on purpose — the 2026-09-28 test plan rejected a
@@ -80,17 +85,6 @@ Item {
         })
     }
 
-    readonly property bool _hasFailedQueued: {
-        for (var i = 0; i < root._queued.length; ++i)
-            if (root._queued[i].state === "failed") return true
-        return false
-    }
-    // A failed tile grows a Retry/Discard row below its image (real touch targets, not 9px text
-    // crammed inside a 72px square) -- the row's extra height, added to every delegate's box via
-    // the shared ListView height so a failed tile is never clipped.
-    readonly property int _failedExtra: dp(Constants.space2) + dp(40)
-    readonly property int _rowHeight: root.tileSize + (root._hasFailedQueued ? root._failedExtra : 0)
-
     implicitHeight: filmRow.implicitHeight
 
     RowLayout {
@@ -102,7 +96,7 @@ Item {
         ListView {
             id: filmList
             Layout.fillWidth: true
-            Layout.preferredHeight: root._rowHeight
+            Layout.preferredHeight: root.tileSize
             orientation: ListView.Horizontal
             clip: true
             spacing: dp(Constants.space2)
@@ -122,9 +116,10 @@ Item {
                 id: tile
                 required property var modelData
                 readonly property bool isQueued: modelData.kind === "queued"
-                readonly property bool isFailed: isQueued && modelData.item.state === "failed"
-                width: isFailed ? Math.max(root.tileSize, dp(160)) : root.tileSize
-                height: filmList.height
+                readonly property string overlayMode: FTG.overlayMode(modelData.kind, isQueued ? modelData.item.state : "")
+                readonly property bool isFailed: overlayMode === "failed"
+                width: root.tileSize
+                height: root.tileSize
 
                 Rectangle {
                     id: frame
@@ -133,7 +128,7 @@ Item {
                     radius: dp(Constants.radius)
                     color: Constants.subtleBg
                     border.color: tile.isFailed ? Constants.danger : Constants.borderColor
-                    border.width: 1
+                    border.width: tile.isFailed ? 2 : 1
 
                     RoundedThumb {
                         id: thumb
@@ -152,15 +147,19 @@ Item {
 
                     QQC.BusyIndicator {
                         anchors.centerIn: parent
-                        visible: tile.isQueued && !tile.isFailed
+                        visible: tile.overlayMode === "busy"
                         running: visible
                     }
-                    Icon {
-                        visible: tile.isFailed
-                        anchors.centerIn: parent
-                        name: "warn"
-                        size: sp(22)
-                        color: Constants.danger
+                    // Failed upload: Retry/Discard inside the tile (Loader owns create/destroy -- the
+                    // overlay only exists while the tile is failed).
+                    Loader {
+                        anchors.fill: parent   // full tile edge: the overlay's geometry is designed for it
+                        active: tile.isFailed
+                        sourceComponent: FailedTileOverlay {
+                            cornerRadius: dp(Constants.radius) - dp(2)
+                            onRetryRequested: PhotoQueue.retry(tile.modelData.item.photoId)
+                            onDiscardRequested: PhotoQueue.discard(tile.modelData.item.photoId)
+                        }
                     }
 
                     // Cover badge -- small corner pill instead of the old full-width bottom
@@ -192,55 +191,6 @@ Item {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root._removeConfirmed(tile.modelData.photoId)
-                        }
-                    }
-                }
-
-                RowLayout {
-                    visible: tile.isFailed
-                    anchors.top: frame.bottom
-                    anchors.topMargin: dp(Constants.space2)
-                    width: tile.width
-                    spacing: dp(Constants.space2)
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: dp(40)
-                        radius: dp(Constants.radius)
-                        color: Constants.subtleBg
-                        border.color: Constants.accentBlue
-                        border.width: 1
-                        Text {
-                            anchors.centerIn: parent
-                            text: qsTr("Retry")
-                            color: Constants.accentBlue
-                            font.pixelSize: sp(Constants.fsSmall)
-                            font.bold: true
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: PhotoQueue.retry(tile.modelData.item.photoId)
-                        }
-                    }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: dp(40)
-                        radius: dp(Constants.radius)
-                        color: Constants.subtleBg
-                        border.color: Constants.danger
-                        border.width: 1
-                        Text {
-                            anchors.centerIn: parent
-                            text: qsTr("Discard")
-                            color: Constants.danger
-                            font.pixelSize: sp(Constants.fsSmall)
-                            font.bold: true
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: PhotoQueue.discard(tile.modelData.item.photoId)
                         }
                     }
                 }
