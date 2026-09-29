@@ -1,3 +1,52 @@
+# CHECKPOINT — 2026-09-29 PR #84 follow-up: redesign photo-gallery Retry/Discard buttons (UI only)
+
+**Branch:** `feature/2026-09-29-photo-gallery-retry-discard-redesign`, cut from PR #84 head
+`e3236f2` (`feature/2026-09-21-product-photos-firebase-storage`). **Commit identity:**
+`Taher (via Claude session) <taher.lkdw@gmail.com>`. **Skills invoked:** superpowers:brainstorming
+(HARD-GATE: no code before design approval), qt-development-skills:qt-ui-design,
+qt-development-skills:qt-qml, frontend-design.
+
+**Trigger (owner):** PR #84 device testing — all bugs resolved. One change wanted: the failed-upload
+tile's Retry / Discard buttons look bad. Wants fluid, futuristic, on-theme, elegant, easy to use.
+
+## Steps
+
+- [x] 1. Cloned repo, branched off PR #84 head, unset upstream (so no accidental push to PR #84's branch).
+- [x] 2. Read AGENTS.md, CHECKPOINT.md, the four skills above.
+- [x] 3. Explored code. Findings below.
+- [ ] 4. **BLOCKED on owner:** approve design approach (see "Open decision").
+- [ ] 5. Write spec `docs/superpowers/specs/2026-09-29-photo-gallery-failed-tile-actions-design.md`.
+- [ ] 6. Write test plan (template: covered-by-tests list + On-Device plan: Happy, Negative, Edge, Affected Areas, Regression).
+- [ ] 7. TDD: tests first (`tests/tst_PhotoGalleryLayout.qml` + new component test), then QML.
+- [ ] 8. Update SKILLS.md (append-only), AGENTS.md, README.md as needed. Push. CI is the verifier (no Qt in sandbox, no app build).
+
+## Findings (step 3)
+
+- Buttons live inline in `qml/components/ProductPhotoGallery.qml` (delegate `RowLayout`, ~lines 190-235):
+  two hand-rolled `Rectangle`+`Text`+`MouseArea` boxes (outlined blue "Retry", outlined red "Discard"),
+  40dp tall, text only, no press feedback, no keyboard/a11y name.
+- **Layout shift is the real ugliness:** a failed tile widens 72dp -> 160dp AND every tile's ListView
+  grows 48dp taller (`_failedExtra`, `_rowHeight`, `_hasFailedQueued`). Tests
+  `test_row_height_*` in `tests/tst_PhotoGalleryLayout.qml` pin that growth; an in-tile redesign
+  would invert them (row height must NOT change).
+- Existing shared buttons (`GhostButton`, `DangerButton`, `PrimaryButton`, `IconActionButton`) are
+  48dp/38dp full-width style, not fit for a 72dp tile; the gallery does not use them.
+- Theme tokens: `Constants.brand1..5`, `danger`, `overlay`, `glassBg`, `radius*`, `durFast/Med`.
+  Light theme only. No `retry`/`refresh` glyph in `Constants.iconMap` yet (needs a mapping; verify the
+  Felgo `IconType` name before use). `warn`, `close`, `star`, `add`, `trash` exist.
+- Queue item shape: `{photoId, productId, state: enqueued|uploading|retrying|failed, attempts, nextAttemptAt, lastError}`.
+  `PhotoQueue.retry(photoId)` / `PhotoQueue.discard(photoId)` semantics stay untouched (UI-only scope).
+- Existing confirmed-tile "x" remove badge is 20dp (below WCAG 2.2 24px minimum target) — same
+  hit-area concern applies to any discard badge unless hit slop is enlarged.
+
+## Open decision (asked to owner)
+
+Layout approach: A) in-tile overlay (tile stays 72dp, scrim + circular retry + corner discard),
+B) capsule row below tile, C) tap failed tile -> bottom sheet. Recommendation: A.
+PR routing default: push this branch, open PR with base = PR #84 branch (stacked), so PR #84 stays clean.
+
+---
+
 # CHECKPOINT — 2026-09-29 PR #84 round 5: thumbnail not rendering (round 4 regression) + CI flake
 
 **Branch:** `feature/2026-09-21-product-photos-firebase-storage`. **Commit identity:**
