@@ -1,7 +1,7 @@
 # Gateway stuck writes, part B: park + Retry / Discard — scope plan
 
 **Date:** 2026-09-29
-**Status:** PLAN ONLY. No code. Decisions P1-P3 pending Taher (defaults marked PROPOSED). Slices are sequential; one PR each.
+**Status:** PLAN ONLY. No code. P1-P3 DECIDED 2026-09-29 (see Decisions). P4 not asked, default stands. Slices are sequential; one PR each.
 **Builds on:** `2026-09-28-gateway-stuck-write-retry-discard-options.md` (Q2-Q4 decided there), PR #75 (indicator), PR #93 (server classification).
 **Out of scope:** photo cleanup on delete (roadmap item 4), handled in a separate photos session. Interplay noted at the end.
 
@@ -16,7 +16,7 @@
 7. `StuckWrites` state is in-memory and rebuilt from failures after relaunch. A persisted parked flag is the first stuck-related state that survives a restart, so the header count must come from the outbox for parked items.
 8. Server signal from PR #93 is available: `StuckWrites.terminal[requestId]` = latest answer was `write-rejected`.
 
-## Design (PROPOSED defaults)
+## Design (P1-P3 decided; rest PROPOSED)
 
 - **Park rule (P1):** park only when the write tips over THRESHOLD **and** the server's latest answer was `write-rejected`. Transient / unknown 500s keep retrying and never get a Discard button. That is the whole reason C shipped first.
 - **Retry:** clear `parked`, set `nextAttemptAt = now`, reset `attempts`, drop the requestId from `StuckWrites` state. If it is rejected again it re-parks after 5 more attempts.
@@ -42,7 +42,16 @@ Each slice also ships its own test plan (Skill 49 template: unit, functional, ru
 
 Tap Retry and Discard repeatedly; relaunch mid-dialog; item leaves the outbox (sent by another path) while the dialog is open; parked item + new edit + relaunch; two parked items for one record (in-flight then edit); 20+ parked items; sign out with parked items; go offline while the confirm dialog is open; discard a create whose record already has photos queued; discard an operation whose awaiting caller already timed out.
 
-## Open decisions (grilling list)
+## Decisions (Taher, 2026-09-29)
+
+| # | Question | Chosen | Consequence |
+|---|---|---|---|
+| P1 | Park trigger | **Terminal-only** (`write-rejected`) | Unknown / transient 500s never park and never offer Discard. A real server bug that answers `write-failed` retries forever (accepted). |
+| P2 | Discard re-pull | **One `DataModel` handler, each store's existing full `syncFromFirebase()`** | List resets, first page refills, other pending edits hidden until they land or next resync (accepted). No new REST path. |
+| P3 | Edit while parked | **Merge into the parked item, stay parked** | Zero new code. New edit stays stuck until user taps Retry. Dialog must make that obvious. |
+| P4 | Slice order | **Not asked. Default stands:** S1 dialog + Retry-now, S2 park, S3 Discard | Next session starts S1; Taher can overrule in the PR. |
+
+## Alternatives considered (kept for the record)
 
 - **P1 park trigger.** PROPOSED terminal-only. Cost: an unknown `write-failed` 500 that is really a server bug has no escape hatch, only auto-retry forever. Alternative: also park unknown 500s after a longer window, with a stronger confirm on Discard.
 - **P2 discard mechanism.** PROPOSED full-store resync via one `DataModel` handler. Cost: the store list resets and refills only the first page; unrelated pending edits are hidden until they land or the next resync. Alternative: per-record fetch (new REST path, code in 6 stores, more tests).
