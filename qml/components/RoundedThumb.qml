@@ -21,10 +21,17 @@ Item {
     property bool cache: true
     property int fillMode: Image.PreserveAspectCrop
 
+    // `visible: false` alone means the scenegraph never renders this item at all — no node, so
+    // MultiEffect's `source`/`maskSource` (a ShaderEffectSource under the hood) has nothing to
+    // sample and the masked output is blank/transparent. `layer.enabled: true` forces a real
+    // offscreen render pass regardless of on-screen visibility, which is what actually feeds the
+    // effect. Without it: grey tile background + the cover/remove badges (separate, always-visible
+    // items) show, but no photo — exactly the "thumbnail not shown" bug found on-device, 2026-09-29.
     Image {
         id: img
         anchors.fill: parent
         visible: false
+        layer.enabled: true
         asynchronous: thumbRoot.asynchronous
         cache: thumbRoot.cache
         fillMode: thumbRoot.fillMode
@@ -37,6 +44,7 @@ Item {
         anchors.fill: parent
         radius: thumbRoot.radius
         visible: false
+        layer.enabled: true
     }
 
     MultiEffect {
