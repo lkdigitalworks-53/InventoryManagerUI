@@ -23,7 +23,7 @@
 | N2 | Note | No role check on photo endpoints (same known gap as `recordMutation`, KNOWN-ISSUES.md). Legacy sync clears `photoUrl` at queue time; Discard after terminal failure then loses the photo. |
 | N3 | Note | Touch targets: cover-remove x is 20dp, Retry 36dp, Discard 28dp. `SKILLS.md` has two "Skill 75" and two "Skill 76" headings. |
 | P1 | Ponytail | `FailedTileGeometry.js` (78) + test (209) + spec (65): contrast calculators exist only for tests; scaling for tile sizes that never occur (tile is fixed 72dp). Anchors in `FailedTileOverlay` replace it: about -300 lines. |
-| P2 | Ponytail | `InventoryStore.setPhoto` (dead, kept "not this task's job"), `clearPhotoSource` path, `EnvConfig.storagePrefixForEnv` + server twin duplicate an env map already mirrored in `PhotoUrl.js`. |
+| P2 | Ponytail | `InventoryStore.setPhoto`: zero callers in `qml/` and `tests/` (comment says kept on purpose) — delete. Client `EnvConfig.storagePrefixForEnv` and server `storageEnvPrefix` are the same 2-line map kept in sync by hand; acceptable, but note the drift risk. |
 
 ## NEXT SESSION — start here
 1. Fresh clone, branch off `feature/2026-09-21-product-photos-firebase-storage` (or off this branch once merged into it).
