@@ -42,4 +42,4 @@
 
 ## Next
 
-S2 (park + persist, terminal only). Its Retry will clear the parked flag and the `StuckWrites` state, which is the plan's original wording, because a parked item has no auto-retry to lose.
+S2 (persist stuck for all writes per P5, park terminal only). Found on device during this PR's review: the stuck state is in-memory, so a relaunch drops it (S1 keeps that as a deliberate limit; P5 fixes it in S2). Its Retry will clear the parked flag and the `StuckWrites` state, which is the plan's original wording, because a parked item has no auto-retry to lose.
