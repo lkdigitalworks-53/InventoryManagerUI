@@ -6,7 +6,7 @@ import "E2EHelpers.js" as E2EHelpers
 // E2E — product photos in Firebase Storage, against the real Firebase Local Emulator Suite
 // (Firestore + Auth + Functions + Storage). Design:
 // docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
-// Plan: docs/superpowers/plans/2026-09-21-product-photos-firebase-storage.md Task 13
+// Test plan: docs/superpowers/test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md
 //
 // WHAT THIS DOES NOT COVER, AND WHY: the client's real upload path is StorageService.
 // addProductPhoto -> NativeFile.toReadablePath/ImageProcessor.compressForUpload+persistLocalCopy

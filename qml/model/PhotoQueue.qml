@@ -12,7 +12,7 @@ import "../helper/PhotoUrl.js" as PhotoUrl
 // user-facing Retry/Discard, and per-item local-file cleanup, which is different enough lifecycle
 // to keep separate.
 // Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
-// Plan:   docs/superpowers/plans/2026-09-21-product-photos-firebase-storage.md Task 10
+// Test plan: docs/superpowers/test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md
 //
 // Queue item shape (persisted):
 //   { photoId, requestId (=photoId), productId, uid, tenantId,
@@ -31,7 +31,7 @@ import "../helper/PhotoUrl.js" as PhotoUrl
 // _upload() -- it decides WHICH items would be attempted (identity match, OutboxStore gate) without
 // touching Storage, the network, or a native file read, and IS unit-testable (tests/tst_PhotoQueue.qml).
 // _upload() itself (native file read + XHR) is not exercised under qmltestrunner, consistent with
-// Gateway._send's existing precedent -- CI's e2e suite (plan Task 13) is the real proof for that path.
+// Gateway._send's existing precedent -- CI's e2e suite (test/e2e/tst_ProductPhotosE2E.qml) is the real proof for that path.
 // The two ImageProcessor calls in discard() are guarded with `typeof ImageProcessor !== "undefined"`
 // so discard()'s queue-array removal (the part that matters for correctness and IS tested) stays
 // callable under qmltestrunner; the guard is a no-op difference on-device, where ImageProcessor is

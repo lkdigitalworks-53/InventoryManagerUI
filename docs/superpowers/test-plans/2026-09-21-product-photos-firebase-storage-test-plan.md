@@ -2,7 +2,7 @@
 
 **Branch/feature:** `feature/2026-09-21-product-photos-firebase-storage` (PR #84)
 **Design:** `docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`
-**Plan:** `docs/superpowers/plans/2026-09-21-product-photos-firebase-storage.md`
+**Later rounds (2026-09-28 → 09-29):** folded into the "Follow-up rounds" and "On-Device Test Plan" sections below (former separate addendum plans deleted; see git history of PR #84).
 
 This plan is explicit, per test, about which of two very different claims it's making: **"run for
 real, in this session, and passed"** (a number you can trust right now), or **"written, and will be
@@ -96,74 +96,84 @@ new test proves which fix). The lesson generalizes past this feature: a function
 proves it behaves correctly in isolation, not that anything actually calls it — see `SKILLS.md`
 Skill 74's review-sweep addendum.
 
-## On-Device Test Plan
+## Follow-up rounds (PR #84 device testing, 2026-09-28 → 09-29)
 
-Everything below needs a real Qt/Felgo build on Android or iOS, or a desktop build with a camera/
-gallery available. Deploy `storage.rules` and both Cloud Functions (`uploadProductPhoto`,
-`deleteProductPhoto`) first — none of this works against production until that happens.
+Nothing here was run in the sandbox except where stated (no Qt toolchain; CI is the proof).
+`ProductPhotoGallery.qml`, `RoundedThumb.qml`, `FailedTileOverlay.qml`, `EditProductDialog.qml`,
+`AvatarBadge.qml` import Felgo and cannot load under `qmltestrunner`; rendering and gestures are
+on-device only. Coverage is therefore NOT 100% for those files; the pure logic they use is covered.
+
+| Round | Symptom (owner, on device) | Root cause | Fix / automated proof |
+|---|---|---|---|
+| 1 | Nothing ever uploaded | `persistLocalCopy` returns `file://`; gallery re-prefixed it; `_upload` read it as a bare path -> "file gone" -> terminal 400 | Idempotent `PhotoUrl.toLocalPath/toFileUrl`. `tst_PhotoUrl.qml`, Node parity 19/19 (run) |
+| 1 | Spinner forever on offline-created product | Drain never re-armed when the product's outbox create landed | `_outboxWatcher` re-arms. `tst_PhotoQueue.qml` |
+| 2 | "Cover" on every tile | Delegate with `required property` loses implicit `index` | `required property int index`; later replaced by precomputed `isCover` in `_combined`. `tst_PhotoGalleryLayout.qml` |
+| 2 | New photo not shown in open dialog | `photoIds` snapshot copied in `openFor()` | `Connections` on `InventoryStore.revisionChanged` -> `photoIdsFor()`. `tst_InventoryStore_photoIds.qml` |
+| 2-5 | No cover/thumbnail in Inventory list | Round 2: unproven, diagnostics added. Later commits: list card wiring (`InventoryPage`) and the `MultiEffect` source problem (round 5 row) | `Image.Error` logs in `AvatarBadge`/gallery; no automated test (Felgo import) |
+| 3 | Photos overran rounded corners; arrangement "boxy" | `clip:true` clips to bounding box, not `radius` | `RoundedThumb.qml` (`MultiEffect` mask); `Flow` -> horizontal `ListView` filmstrip, `+` tile pinned outside scroll region |
+| 5 | No photo rendered at all (round-3 regression) | `visible:false` source/mask gives `MultiEffect` nothing to sample | `layer.enabled: true` on both (SKILLS.md Skill 80). Monkey-test flake fixed (`_settle()`) |
+| 6 | Failed tile widened to 160dp and grew the row; 9px buttons | Old text-button row below tile | In-tile `FailedTileOverlay` over a 72dp tile. `tst_FailedTileGeometry.qml` (22), layout tests flipped to "footprint unchanged" |
+
+Rules / functions / e2e: unchanged by rounds 2-6. Regression set that must stay green: `tst_PhotoQueue`,
+`tst_PhotoQueueLogic`, `tst_PhotoUrl`, `tst_InventoryStore_photoIds`, `tst_OutboxStore`,
+`test/e2e/tst_ProductPhotosE2E.qml`, `functions/` Node suite.
+
+## Final-sweep findings that still need tests (2026-09-29, PR #84 review)
+
+Not covered by any test above, and each is a real gap found by reading the code:
+
+| # | Gap | Test to add |
+|---|---|---|
+| F1 | Item persisted as `uploading` (app killed/OS-suspended mid-upload) is never drained or re-armed on relaunch; no Retry/Discard because state is not `failed` | `tst_PhotoQueue`: `_load()` with a persisted `uploading` item -> becomes `enqueued` and is a drain candidate |
+| F2 | Deleting a product does not purge its queued/failed photos; they later 404 (terminal) and stay in the queue with no UI to discard | `tst_InventoryStore_deleteProductCascade`: queued items for the product are discarded (files removed) |
+| F3 | `uploadProductPhoto` writes Storage objects before the 404/409 checks, so those outcomes orphan both objects | `index.handlers.photos.test.js`: 404 and 409 paths write nothing (or delete what they wrote) |
+| F4 | `idToken`-empty branch in `_upload` returns without re-arming the drain | `tst_PhotoQueue`: token-empty pass leaves item drainable on next trigger |
+| F5 | Full-doc inventory `update` carries `before.photoIds`; a photo confirmed between edit and drain makes the edit 409 | Server test: `applyMutation` ignores/preserves `photoIds` in the `before` comparison |
+
+## On-Device Test Plan (current behaviour, replaces the per-round checklists)
+
+Deploy `storage.rules` and both functions (`uploadProductPhoto`, `deleteProductPhoto`) first. Needs a real
+Felgo build on Android or iOS.
 
 ### Happy Path
-
-- [ ] Add a new product, open it, tap the "+" tile in the photo gallery, take a photo with the
-      camera. Confirm a spinner shows on the new tile immediately (before any network activity is
-      visible) and the photo appears as the cover once upload completes.
-- [ ] Add a second photo to the same product from the gallery/library picker. Confirm both photos
-      show, first one still marked "Cover".
-- [ ] On a **second device** (or the same account in a second app instance/emulator), open the same
-      product. Confirm both photos appear — this is the actual "sync across every device" check;
-      nothing above it proves this without a second device.
-- [ ] Remove one photo via its (×) button. Confirm it disappears from both devices after a refresh.
-- [ ] Force-close the app immediately after taking a photo (before the spinner clears). Reopen.
-      Confirm the photo resumes uploading and completes — this is the "survive app close" check for
-      the exact bug this feature's review sweep found and fixed
-      (`PhotoQueue._load()`/`_reschedule()`).
+- [ ] New product, "+" tile, take a photo: spinner tile immediately; photo becomes the cover on completion; log has no `Cannot open: file://` / `file://file`.
+- [ ] Second photo from library: both show; exactly ONE tile has the cover star (first tile, top-left); rounded corners on every tile with no square corner past the frame; a real photo renders (not grey).
+- [ ] Dialog stays open while a photo finishes: queued tile is replaced in place by the confirmed thumbnail, no reopen.
+- [ ] Filmstrip scrolls horizontally past ~4-5 tiles; nothing wraps; "+" tile visible without scrolling at 0-9 photos and gone at 10.
+- [ ] Inventory list: product with photos shows its first photo as the avatar.
+- [ ] Second device, same account: both photos appear. Remove one via (x): gone on both after refresh; if it was the cover, the next tile takes the star.
+- [ ] Force-close right after picking a photo, reopen: it resumes and completes. Repeat killing the app ~3 s later (mid-upload) - **expected to expose F1 until fixed**.
 
 ### Negative Cases
-
-- [ ] Turn on airplane mode, add a photo. Confirm it stays queued with a spinner (not an error) and
-      uploads automatically once airplane mode turns off — no manual retry needed.
-- [ ] Attempt to add an 11th photo to a product that already has 10. Confirm a clear error, not a
-      crash or a silently-dropped photo.
-- [ ] Kill the network mid-upload (not before starting it). Confirm the item moves to a visible
-      Retry/Discard state after enough failed attempts, rather than spinning forever.
-- [ ] Tap Discard on a failed item. Confirm it disappears and does not reappear on relaunch.
-- [ ] Tap Retry on a failed item. Confirm it re-attempts and can still succeed.
+- [ ] Airplane mode + add photo: stays queued with spinner (no error), uploads on reconnect, resolves in place.
+- [ ] Upload gives up (block function URL / bad token / kill network mid-upload): tile stays 72dp, red 2px border, dark scrim, gradient Retry circle, small frosted x top-right; neighbours and strip height do not move.
+- [ ] Retry while online: press shrinks the circle, tile flips to spinner, then normal tile. Retry while offline: back to spinner, eventually failed again. Items `failed` from the old build (URL-form paths) succeed on Retry.
+- [ ] Discard on a failed tile: removal animation, local file gone, does not return on relaunch, no gap.
+- [ ] 11th photo: clear failure; delete another photo; Retry succeeds.
+- [ ] TalkBack: controls announce as buttons "Retry upload" / "Discard photo".
 
 ### Edge Cases
+- [ ] Product created offline + photo added, then online: photo waits for the product, then uploads (no restart needed).
+- [ ] Sign out with a photo pending, sign in as another user: pending photo neither shows nor uploads.
+- [ ] Legacy `photoUrl` product: list still shows it; "Sync old photo to the cloud" works; photo stays visible during migration.
+- [ ] Read-only role: no x buttons, no "+" tile, strip still scrolls.
+- [ ] Bright and dark photos: Retry ring and x readable. Large system font / small phone: targets tappable, no overlap. Two or three failed tiles in one strip: not confused.
+- [ ] Windows profile path containing a space (desktop build).
+- [ ] **Delete a product while it has a queued/failed photo** (F2): expect no zombie failed item and no leftover local file.
 
-- [ ] Add a photo to a product that was itself just created while offline (both offline). Confirm
-      the photo waits until the product sync lands, then uploads — this is Trap 1 from the design
-      spec; the automated tests only prove the *gating logic*, not the real timing.
-- [ ] Sign out with a photo still uploading, sign in as a different user on the same device. Confirm
-      the pending photo does **not** appear or upload under the new account (the sign-out
-      `PhotoQueue.clear()` wiring this review sweep added).
-- [ ] Open a product with a legacy (pre-feature) single photo. Confirm the "Sync old photo to the
-      cloud" affordance appears and works, and the legacy photo remains visible (via the local file)
-      while the migration upload is in flight.
-- [ ] Very poor/flaky connection (throttled, not fully offline): confirm the circuit breaker doesn't
-      make the UI feel stuck — a failed attempt should still show progress (spinner→retry state),
-      not silence.
-
-### Affected Areas (regression — confirm nothing else broke)
-
-- [ ] Product create/edit/delete flows unrelated to photos still work normally (name, price, stock,
-      supplier fields).
-- [ ] Deleting a product with several photos removes them from Storage (check the Firebase console
-      or re-add a product with the same SKU and confirm no leftover images appear).
-- [ ] The inventory list's product cards still render correctly for products with zero photos, one
-      legacy photo, and multiple new-style photos, side by side.
-- [ ] Sign-out/sign-in still clears pending Gateway writes and locks as before (`Gateway.clear()`,
-      `LockManager.clear()`) — the new `PhotoQueue.clear()` call was added alongside them, not in
-      place of them.
+### Affected Areas (regression)
+- [ ] Product create/edit/delete unrelated to photos unchanged; deleting a product with photos removes both Storage objects (check console).
+- [ ] List cards render for zero photos, one legacy photo, and multiple new-style photos side by side.
+- [ ] Sign-out still clears Gateway writes and locks, plus `PhotoQueue.clear()`.
+- [ ] Price/stock edit while a photo is uploading does not raise a spurious conflict (F5).
 
 ### Monkey Testing
+- [ ] Mash add / remove / Retry / Discard on a 6-photo product: no crash, no duplicate tile, no stuck spinner, no leftover overlay.
+- [ ] Add 3 photos quickly with the dialog open: all appear in order, no duplicates. Open product A, add photo, close, open B at once: B never shows A's photos.
+- [ ] Toggle airplane mode repeatedly with photos queued on several products: all eventually upload, none lost or duplicated.
+- [ ] Background the app for several minutes mid-upload, foreground: completed or cleanly in progress (F1).
+- [ ] Scroll the strip while a photo uploads: spinner keeps running, no reset.
 
-- [ ] Rapidly tap add-photo → discard → add-photo → retry in quick succession on the same product.
-      Confirm the queue never ends up with duplicate entries for the same photo and the UI never
-      shows a stuck or contradictory state (e.g., a tile that's simultaneously "uploading" and
-      showing a Retry button).
-- [ ] Toggle airplane mode on and off repeatedly while multiple photos are queued for different
-      products. Confirm all of them eventually upload, in no particular guaranteed order, with none
-      lost or duplicated.
-- [ ] Background the app (don't force-close) for several minutes with a photo mid-upload, then
-      foreground it. Confirm it either completed or is still cleanly in progress, not stuck.
+### Known unknowns
+- Upload path through the real Cloud Function is proven only by on-device runs; a 4xx/5xx now is server-side (`photoValidation`, size, auth) - bring the log line.
+- `qt.network.http2: GOAWAY` is connection-level noise; status 0 is retried by design.
