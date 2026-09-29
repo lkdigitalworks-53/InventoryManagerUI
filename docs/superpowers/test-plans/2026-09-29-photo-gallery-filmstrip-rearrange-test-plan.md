@@ -66,7 +66,7 @@ embed's own properties/signals — `productId`, `photoIds`, `editable`,
 
 **Negative**
 - [ ] Airplane mode + add photo: spinner tile scrolls with the strip like any other tile, resolves in place.
-- [ ] Failed upload: red-bordered tile with a warning icon, Retry/Discard row directly below it (not clipped by the strip's height), the tile itself is wider (160px) than a normal tile and doesn't overlap its neighbours.
+- [ ] ~~Failed upload: red-bordered tile with a warning icon, Retry/Discard row below, tile widened to 160px.~~ **Superseded 2026-09-29** by `2026-09-29-photo-gallery-failed-tile-actions-test-plan.md`: Retry/Discard are now inside the normal 72dp tile.
 - [ ] Remove the cover photo: badge moves to the new first tile; smooth removal animation, no flash/jump.
 
 **Edge cases**
