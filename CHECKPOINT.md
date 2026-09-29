@@ -14,7 +14,8 @@ tile's Retry / Discard buttons look bad. Wants fluid, futuristic, on-theme, eleg
 - [x] 1. Cloned repo, branched off PR #84 head, unset upstream (so no accidental push to PR #84's branch).
 - [x] 2. Read AGENTS.md, CHECKPOINT.md, the four skills above.
 - [x] 3. Explored code. Findings below.
-- [ ] 4. **BLOCKED on owner:** approve design approach (see "Open decision").
+- [x] 4a. Owner chose layout **A (in-tile overlay)**.
+- [ ] 4b. **BLOCKED on owner:** Retry-button look (filled brand gradient vs frosted glass); answering also approves the design below.
 - [ ] 5. Write spec `docs/superpowers/specs/2026-09-29-photo-gallery-failed-tile-actions-design.md`.
 - [ ] 6. Write test plan (template: covered-by-tests list + On-Device plan: Happy, Negative, Edge, Affected Areas, Regression).
 - [ ] 7. TDD: tests first (`tests/tst_PhotoGalleryLayout.qml` + new component test), then QML.
@@ -38,6 +39,29 @@ tile's Retry / Discard buttons look bad. Wants fluid, futuristic, on-theme, eleg
   `PhotoQueue.retry(photoId)` / `PhotoQueue.discard(photoId)` semantics stay untouched (UI-only scope).
 - Existing confirmed-tile "x" remove badge is 20dp (below WCAG 2.2 24px minimum target) — same
   hit-area concern applies to any discard badge unless hit slop is enlarged.
+
+## Verified 2026-09-29 (PhotoQueueLogic.js)
+
+`TERMINAL_STATUS = {400,404,409,413}` go straight to `failed`; `PhotoQueue.retry()` resets attempts and
+re-enqueues, so Retry is futile for 400/404/413 (same file / product gone) but VALID for 409 (photo
+limit) once the user deletes another photo. So Retry must stay always-visible. Pre-existing, out of
+scope; noted as follow-up (reason text / undo toast).
+
+## Draft design (pending 4b)
+
+- New `qml/components/FailedTileOverlay.qml` (signals `retryRequested()`, `discardRequested()`), used
+  by the gallery delegate. Tile stays `tileSize` square: **no width change, no row-height growth**
+  (delete `_failedExtra`/`_hasFailedQueued`/`_rowHeight`; `implicitHeight = tileSize`; invert the
+  `test_row_height_*` tests).
+- Scrim slate-900 @ ~62% over the local thumbnail (white-on-scrim >= 4.5:1 worst case, computed).
+- Retry: 36dp circle, horizontally centred, y 28-64dp (hit 36x36). Discard: 22dp chip top-right,
+  hit 28x28 at y 0-28. Hit boxes disjoint (geometry test). 48dp guide unreachable with two targets in
+  72dp: 36/28 both >= WCAG 2.2 24px minimum. Only a bigger tile fixes that.
+- No caption text (no room without overlap); state carried by shape (refresh + x) + danger border,
+  not colour alone. `Accessible.name` "Retry upload" / "Discard photo".
+- Motion: opacity fade-in 160ms (durFast) when tile turns failed; press = scale 0.92 (transform only).
+  No blur (GPU cost per tile, cannot verify on device here).
+- Icon: add `retry` -> `IconType.refresh` and `discard` -> `IconType.close` mapping in Constants.iconMap.
 
 ## Open decision (asked to owner)
 
