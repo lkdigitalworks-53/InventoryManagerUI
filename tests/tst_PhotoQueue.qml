@@ -348,6 +348,66 @@ TestCase {
         compare(PhotoQueue.items[0].state, "enqueued", "identity gate holds when the token arrives")
     }
 
+    // ── PR #99 sweep 2: token-watcher edges the first pass did not pin down ────────────────────
+
+    function test_token_arrival_respects_an_open_circuit_breaker() {
+        PhotoQueue._breaker = ({ status: "open", consecutiveFailures: 5, cooldownUntil: Date.now() + 600000,
+                                 cooldownMs: 60000, tripCount: 1 })
+        PhotoQueue.enqueue(_call())
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.items[0].state, "enqueued", "breaker open: a token arrival must not send")
+    }
+
+    function test_hourly_token_refresh_leaves_a_failed_item_untouched() {
+        var it = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [Object.assign({}, it, { state: "failed", attempts: 8, lastError: 404 })]
+        AuthStore.idToken = "tok-1"
+        AuthStore.idToken = "tok-2"
+        compare(PhotoQueue.items[0].state, "failed", "failed waits for the user's Retry, whatever the token does")
+        compare(PhotoQueue.items[0].attempts, 8)
+        compare(PhotoQueue.items[0].lastError, 404)
+    }
+
+    function test_token_arrival_respects_a_retrying_items_backoff() {
+        var it = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [Object.assign({}, it, { state: "retrying", attempts: 2, nextAttemptAt: Date.now() + 600000 })]
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.items[0].state, "retrying", "backoff not elapsed: no early retry")
+        compare(PhotoQueue.items[0].attempts, 2)
+    }
+
+    function test_token_churn_monkey_never_loses_or_revives_items() {
+        // Deterministic LCG (a*m < 2^53, exact in a double). 60 random token set/clear/refresh events
+        // over a mixed queue: nothing lost or duplicated, failed/in-flight/backed-off/other-identity
+        // items never move, and the one eligible item is drained.
+        var seed = 987
+        function rnd(n) { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor(seed / 65536) % n }
+        var base = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [
+            Object.assign({}, base, { photoId: "live" }),
+            Object.assign({}, base, { photoId: "dead", state: "failed", attempts: 8, lastError: 400 }),
+            Object.assign({}, base, { photoId: "wait", state: "retrying", attempts: 1, nextAttemptAt: Date.now() + 600000 }),
+            Object.assign({}, base, { photoId: "fly", state: "uploading" }),
+            Object.assign({}, base, { photoId: "other", uid: "someone-else" })
+        ]
+        var sawToken = false
+        for (var i = 0; i < 60; ++i) {
+            var t = (rnd(3) === 0) ? "" : "tok-" + rnd(1000)
+            if (t !== "") sawToken = true
+            AuthStore.idToken = t
+        }
+        verify(sawToken, "the generator must produce at least one non-empty token")
+        compare(PhotoQueue.items.length, 5, "nothing lost or duplicated")
+        var byId = {}
+        for (var k = 0; k < PhotoQueue.items.length; ++k) byId[PhotoQueue.items[k].photoId] = PhotoQueue.items[k]
+        compare(byId.dead.state, "failed")
+        compare(byId.dead.attempts, 8)
+        compare(byId.wait.state, "retrying")
+        compare(byId.fly.state, "uploading")
+        compare(byId.other.state, "enqueued")
+        verify(byId.live.state !== "enqueued", "the eligible item must have been drained")
+    }
+
     // ── multiple items, mixed eligibility ───────────────────────────────────
 
     function test_drainCandidates_returns_only_the_eligible_subset_from_a_mixed_queue() {

@@ -197,3 +197,27 @@ On-device additions:
 - [ ] Delete a product that has a queued photo AND confirmed photos while offline, go online: confirmed photos are removed from Storage, no zombie queue item, no crash.
 - [ ] Hourly token refresh with a `failed` photo sitting in the gallery: no extra refresh, no state change, Retry still works.
 
+
+## PR #99 sweep 2 additions (2026-09-30)
+
+Written, NOT run (no Qt toolchain); CI is the proof. Counts re-verified with `git diff | grep -c` (`tst_PhotoQueue` +4 this pass = 38 total; `tst_InventoryStore_deleteProductCascade` has 8 added by PR #99, 16 total).
+
+| Layer | Covered | Test |
+|---|---|---|
+| Unit | token arrival while the breaker is open sends nothing | `test_token_arrival_respects_an_open_circuit_breaker` |
+| Unit / regression | hourly token refresh never revives a `failed` item | `test_hourly_token_refresh_leaves_a_failed_item_untouched` |
+| Unit | token arrival respects `retrying` backoff | `test_token_arrival_respects_a_retrying_items_backoff` |
+| Monkey | 60 random token set/clear events over a mixed queue: nothing lost, failed/in-flight/backed-off/other-identity items never move, eligible item drained | `test_token_churn_monkey_never_loses_or_revives_items` |
+| Rules / functional | server-side dedupe returns current `photoIds` (already covered, `index.handlers.photos.test.js`) | n/a, verified by reading |
+| E2E | not possible for F1/F2/F4: client-only, `NativeFile`/`ImageProcessor` are undefined under qmltestrunner | device checklist below |
+
+Device (happy, negative, edge, multi-scenario, monkey):
+- [ ] Happy: add a photo online, spinner then thumbnail, no duplicate ledger "photo added" row.
+- [ ] F1 negative: airplane mode, add photo, force-close, relaunch offline: tile shows waiting spinner (not stuck), go online: uploads, one ledger row.
+- [ ] F1 edge: force-close ~3 s into a real upload (mid-XHR), relaunch online: photo appears exactly once (server dedupe), no 409, photo count not doubled.
+- [ ] F1 multi: 3 photos queued offline, kill app, relaunch online: all three upload, cap of 10 still enforced.
+- [ ] F2 negative: delete a product with one queued, one failed and one confirmed photo: no zombie tile anywhere, no leftover local file, confirmed photo removed from Storage.
+- [ ] F2 edge: delete the product while a photo is mid-upload: no crash, no error dialog (a Storage orphan is the known ceiling).
+- [ ] F4 edge: cold start with an expired session and a queued photo: exactly one token refresh, photo uploads without any other action.
+- [ ] F4 negative: sign out with a queued photo, sign in as another user: nothing uploads under the new account, queue empty.
+- [ ] Monkey: 60 s of rapid airplane-mode toggling, add/discard/retry photos, background/foreground the app: no stuck spinner, no crash, tile count matches queue.

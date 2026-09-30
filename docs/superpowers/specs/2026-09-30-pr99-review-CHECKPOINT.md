@@ -8,7 +8,7 @@ Branch: `review/2026-09-30-pr99-full-sweep`, stacked on `fix/2026-09-29-pr84-pho
 - [x] 3 Read full `PhotoQueue.qml`, `deleteProduct`, `AuthStore.applyAuth`, `AuthService.refreshIdToken`, server dedupe (`functions/index.js` audit_log/requestId)
 - [x] 4 qt_qml_lint.py on changed files: no findings on PR-added lines (remaining hits are pre-existing)
 - [x] 5 Fix R1..R5 (see test plan "PR #99 review additions"); docs renumbered Skill 82 -> 85 (main already has 82-84); Skill 86 added
-- [ ] 6 Push, open stacked PR into PR #99 branch, wait for CI
-- [ ] 7 If CI red: read failing test names via check-runs API, fix on this branch
+- [x] 6 Push, open stacked PR into PR #99 branch (merged as #101, CI green on 1cb9d77)
+- [x] 7 CI was green, nothing to fix (continued in 2026-09-30-pr99-sweep2-CHECKPOINT.md)
 
 Open / not fixed (deliberate): cold-start race (`loadSession` sets `idToken` before `tenantId`, watcher drain skips on identity gate; covered by the `_load()` timer); in-flight upload at delete time can orphan Storage objects (server item 4); F3/F5 server work.
