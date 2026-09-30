@@ -834,6 +834,8 @@ outbox. This only reports: retry, backoff and dropping are untouched, so local s
 the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
+**Update 2026-09-29 (stuck state survives a relaunch, part B slice S2a):** the stuck-write state was in memory only, so closing the app hid the header line and the dialog rows, and because the outbox keeps its 10-minute backoff the alarm could stay dark for 40+ minutes. `Gateway` now saves each write's failure count, stuck flag and rejected label on its queued outbox item, restores them at launch (`Gateway.resumeStuck`, header line back before any retry, no toast), and re-checks stuck writes once at launch instead of waiting out the backoff. Park / Discard are still to come (S2b, S3). See SKILLS Skill 86 and `docs/superpowers/test-plans/2026-09-29-stuck-state-persist-s2a-test-plan.md`.
+
 **Update 2026-09-28 (server write-error classification, roadmap item 1 part C):** every failed Firestore write is
 now classified by `functions/lib/writeError.js` (`classifyWriteError`) into `write-rejected` (invalid-argument,
 not-found, already-exists, permission-denied, failed-precondition: retrying can never succeed), `write-unavailable`

@@ -1306,4 +1306,206 @@ TestCase {
             compare(Gateway.stuckRows().length, Gateway.stuckCount, "step " + step)
         }
     }
+
+    // ── stuck state survives a relaunch (P5: _noteFailure mirrors to the outbox,
+    //    resumeStuck rebuilds it) ─────────────────────────────────────────────
+    //
+    // A "relaunch" here = Gateway.clear()'s in-memory reset WITHOUT emptying the
+    // outbox (Gateway.clear() would also wipe OutboxStore, i.e. sign-out).
+
+    function _find(id) {
+        return OutboxStore.items.filter(function(i) { return i.requestId === id })[0]
+    }
+
+    function _relaunch() {
+        Gateway._stuckState = StuckWrites.newState()
+        Gateway._stuckResumed = false
+        Gateway.stuckCount = 0
+        Gateway.stuckTerminalCount = 0
+        toastSpy.clear()
+    }
+
+    function test_a_counted_failure_is_written_to_the_queued_item() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 3)
+        compare(_find(item.requestId).failures, 3)
+        compare(_find(item.requestId).stuck, undefined)
+    }
+
+    function test_the_tipping_failure_marks_the_queued_item_stuck() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        compare(_find(item.requestId).failures, 5)
+        compare(_find(item.requestId).stuck, true)
+    }
+
+    function test_a_rejected_answer_is_written_as_terminal_and_a_later_outage_answer_clears_it() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(_find(item.requestId).terminal, true)
+        _failWith(item, 500, _unavailableBody(), 1)
+        compare(_find(item.requestId).terminal, undefined)
+        compare(_find(item.requestId).stuck, true)
+    }
+
+    function test_uncounted_failures_write_nothing() {
+        var item = _queueWrite("o1")
+        var snapshot = JSON.stringify(_find(item.requestId))
+        _failTimes(item, 0, 3)
+        _failTimes(item, 401, 3)
+        _failTimes(item, 409, 3)
+        compare(JSON.stringify(_find(item.requestId)), snapshot)
+    }
+
+    function test_relaunch_restores_the_stuck_count_and_the_dialog_row() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        _relaunch()
+        compare(Gateway.stuckCount, 0, "precondition: nothing known before resumeStuck")
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 1)
+        var rows = Gateway.stuckRows()
+        compare(rows.length, 1)
+        compare(rows[0].requestId, item.requestId)
+        compare(rows[0].rejected, true)
+    }
+
+    function test_relaunch_does_not_toast_again() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(toastSpy.count, 0)
+    }
+
+    function test_relaunch_makes_a_backed_off_stuck_write_due_once() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        OutboxStore.markFailed(item.requestId)
+        verify(_find(item.requestId).nextAttemptAt > Date.now(), "precondition: backed off")
+        _relaunch()
+        Gateway.resumeStuck()
+        verify(_find(item.requestId).nextAttemptAt <= Date.now())
+        compare(_find(item.requestId).attempts, 1, "attempts untouched")
+    }
+
+    function test_resumeStuck_runs_once_per_launch() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        OutboxStore.markFailed(item.requestId)
+        var backedOff = _find(item.requestId).nextAttemptAt
+        Gateway.resumeStuck()
+        compare(_find(item.requestId).nextAttemptAt, backedOff, "second call must not wake it again")
+    }
+
+    function test_a_failed_recheck_after_relaunch_counts_on_top_and_never_retips() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        Gateway._noteFailure(item, 500)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 0)
+        compare(_find(item.requestId).failures, 6)
+    }
+
+    function test_a_write_that_finally_lands_after_relaunch_clears_the_line() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 1)
+        OutboxStore.markSent(item.requestId)
+        Gateway._pruneStuck()
+        compare(Gateway.stuckCount, 0)
+        compare(Gateway.stuckRows().length, 0)
+    }
+
+    function test_a_failure_before_resumeStuck_cannot_erase_persisted_state() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        _relaunch()
+        Gateway._noteFailure(item, 0) // an uncounted failure arrives BEFORE resumeStuck ran
+        compare(_find(item.requestId).stuck, true)
+        compare(_find(item.requestId).failures, 5)
+        compare(Gateway.stuckCount, 1)
+    }
+
+    function test_relaunch_restores_writes_still_counting_and_they_tip_on_time() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 3)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 0)
+        _failTimes(item, 500, 1)
+        compare(Gateway.stuckCount, 0)
+        _failTimes(item, 500, 1)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 1, "the first time it tips it still toasts, relaunch or not")
+    }
+
+    function test_relaunch_with_no_stuck_writes_changes_nothing() {
+        _queueWrite("o1")
+        var snapshot = JSON.stringify(OutboxStore.items)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 0)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_relaunch_restores_only_the_stuck_writes_among_several() {
+        var a = _queueWrite("o1")
+        var b = _queueWrite("o2")
+        var c = _queueWrite("o3")
+        _failTimes(a, 500, 5)
+        _failTimes(b, 500, 2)
+        _failWith(c, 500, _rejectedBody(), 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 2)
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.stuckRows().length, 2)
+    }
+
+    function test_sign_out_clears_the_state_and_lets_the_next_launch_resume_again() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 500, 5)
+        Gateway.resumeStuck()
+        Gateway.clear() // sign-out: outbox wiped too
+        compare(Gateway.stuckCount, 0)
+        compare(OutboxStore.items.length, 0)
+        Gateway.mode = "gateway"
+        var next = _queueWrite("o9")
+        _failTimes(next, 500, 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 1, "resume works again after clear()")
+    }
+
+    function test_the_persisted_state_matches_the_live_state_after_random_failures() {
+        var s = 987654
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var items = [_queueWrite("m1"), _queueWrite("m2"), _queueWrite("m3")]
+        var statuses = [500, 503, 404, 401, 409, 0]
+        var bodies = [_rejectedBody(), _unavailableBody(), ""]
+        for (var step = 0; step < 200; ++step) {
+            var it = items[Math.floor(rnd() * items.length)]
+            Gateway._noteFailure(it, statuses[Math.floor(rnd() * statuses.length)],
+                                 bodies[Math.floor(rnd() * bodies.length)])
+            if (rnd() < 0.1) {
+                var liveStuck = Gateway.stuckCount
+                var liveTerminal = Gateway.stuckTerminalCount
+                _relaunch()
+                Gateway.resumeStuck()
+                compare(Gateway.stuckCount, liveStuck, "step " + step)
+                compare(Gateway.stuckTerminalCount, liveTerminal, "step " + step)
+                compare(toastSpy.count, 0, "step " + step + ": a relaunch never toasts")
+            }
+            compare(Gateway.stuckRows().length, Gateway.stuckCount, "step " + step)
+        }
+    }
 }
