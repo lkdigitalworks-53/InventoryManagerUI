@@ -834,6 +834,8 @@ outbox. This only reports: retry, backoff and dropping are untouched, so local s
 the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
 `docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
+**Update 2026-09-29 (stuck state survives a relaunch, part B slice S2a):** the stuck-write state was in memory only, so closing the app hid the header line and the dialog rows, and because the outbox keeps its 10-minute backoff the alarm could stay dark for 40+ minutes. `Gateway` now saves each write's failure count, stuck flag and rejected label on its queued outbox item, restores them at launch (`Gateway.resumeStuck`, header line back before any retry, no toast), and re-checks stuck writes once at launch instead of waiting out the backoff. Park / Discard are still to come (S2b, S3). See SKILLS Skill 88 and `docs/superpowers/test-plans/2026-09-29-stuck-state-persist-s2a-test-plan.md`.
+
 **Update 2026-09-28 (server write-error classification, roadmap item 1 part C):** every failed Firestore write is
 now classified by `functions/lib/writeError.js` (`classifyWriteError`) into `write-rejected` (invalid-argument,
 not-found, already-exists, permission-denied, failed-precondition: retrying can never succeed), `write-unavailable`
@@ -843,6 +845,15 @@ reads `body.error` only to label: `StuckWrites` tracks the server's latest answe
 feeds `syncStuckTerminalCount` in `Main.qml`, and `GlassHeader` shows "N change(s) rejected by the server. Still
 retrying." Retry, backoff and dropping are unchanged. Test plan:
 `docs/superpowers/test-plans/2026-09-28-gateway-write-error-classification-test-plan.md`.
+
+**Update 2026-09-29 (stuck-writes dialog + Retry now, part B slice S1):** the `GlassHeader` stuck caption is now
+underlined and tappable while online. It opens `StuckWritesSheet` (`qml/pages/`), one row per stuck write
+(`Gateway.stuckRows()`, labels from `qml/helper/DescribeItem.js`) with a "Retry now" button. `Gateway.retryStuck`
+calls `OutboxStore.retryNow` (attempts reset to 0, due immediately) and drains; the write stays flagged stuck until it
+actually leaves the outbox, so a retry the server rejects again keeps the header line up and never re-toasts. No
+parking, persistence or Discard yet (slices S2/S3). Design:
+`docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`; test plan:
+`docs/superpowers/test-plans/2026-09-29-stuck-writes-dialog-retry-now-test-plan.md`.
 
 **Update 2026-09-21 (C-3 phase 2, pure helpers):** added `qml/helper/SendPolicy.js` (10s foreground / 30s
 background timeout starting values, not measured, and +-20% retry jitter), `OperationKeys.js`

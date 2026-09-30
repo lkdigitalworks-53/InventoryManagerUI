@@ -29,6 +29,9 @@ import "../helper/SendPolicy.js" as SendPolicy
 //   floors: {field: minValue}, clientTimestamp, enqueuedAt, attempts,
 //   nextAttemptAt } — distinguished from a plain item by having `deltas`
 // instead of `before`/`after`.
+// Any item may also carry the stuck-write state (P5, see StuckWrites.js):
+//   failures (server-side failure count), stuck: true, terminal: true
+// Absent = never failed that way; old saved items load without them.
 // dueItems/markSent/markFailed/nextDueInMs only key off requestId, so all
 // three shapes flow through them unchanged — only enqueue/enqueueBatch/
 // enqueueDelta differ, in how they build the item and (new this session)
@@ -378,6 +381,78 @@ QtObject {
         }
         items = arr
         _save()
+    }
+
+    // Persist one write's stuck state onto its queued item (StuckWrites.metaOf).
+    // Falsy fields are removed, not stored as false/0, so an item that never failed
+    // server-side stays byte-identical to what older builds saved. Saves only when
+    // something changed. Returns false when the id is not queued (it left the outbox).
+    function setStuckMeta(requestId, meta) {
+        var m = meta || {}
+        var failures = (typeof m.failures === "number" && m.failures > 0) ? Math.floor(m.failures) : 0
+        var arr = items.slice()
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].requestId !== requestId) continue
+            var next = Object.assign({}, arr[i])
+            if (failures > 0) next.failures = failures; else delete next.failures
+            if (m.stuck === true) next.stuck = true; else delete next.stuck
+            if (m.terminal === true) next.terminal = true; else delete next.terminal
+            if (JSON.stringify(next) === JSON.stringify(arr[i])) return true
+            arr[i] = next
+            items = arr
+            _save()
+            return true
+        }
+        return false
+    }
+
+    // Make every stuck, backed-off, not-in-flight item due now, once, WITHOUT
+    // resetting attempts: Gateway calls this at launch so a stale "not syncing"
+    // flag is re-checked immediately, and if the write still fails the next backoff
+    // is the long step it had already reached. (retryNow is the other one: fresh
+    // attempts, for a person's tap.) Returns how many items it moved.
+    function wakeStuck() {
+        var nowMs = Date.now()
+        var arr = items.slice()
+        var moved = 0
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].stuck !== true) continue
+            if ((arr[i].nextAttemptAt || 0) <= nowMs) continue
+            if (isInFlight(arr[i].requestId)) continue
+            arr[i] = Object.assign({}, arr[i], { nextAttemptAt: nowMs })
+            moved++
+        }
+        if (moved > 0) { items = arr; _save() }
+        return moved
+    }
+
+    // Is `requestId` the item currently dispatched (for any key it touches)?
+    function isInFlight(requestId) {
+        for (var k in _inFlightKeys)
+            if (_inFlightKeys[k] === requestId) return true
+        return false
+    }
+
+    // How many items are dispatched right now. Public and reactive, so a view can
+    // re-read isInFlight() when it changes without reaching for _inFlightKeys.
+    readonly property int inFlightCount: Object.keys(_inFlightKeys).length
+
+    // Make one queued item due immediately with a fresh backoff (attempts = 0, so
+    // a failed retry waits 2s again, not 10 min). Used by the stuck-writes
+    // dialog's "Retry now". Returns false, changing nothing, when the item is
+    // unknown or already in flight (it is being sent; a second send would only
+    // race it). Does NOT send: Gateway.drainNow() does.
+    function retryNow(requestId) {
+        if (isInFlight(requestId)) return false
+        var arr = items.slice()
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].requestId !== requestId) continue
+            arr[i] = Object.assign({}, arr[i], { attempts: 0, nextAttemptAt: Date.now() })
+            items = arr
+            _save()
+            return true
+        }
+        return false
     }
 
     // Drop the whole queue. Used on sign-out so a pending tenant's writes

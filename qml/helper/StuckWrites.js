@@ -12,6 +12,12 @@
 // 401 (token refresh) and 409 (CAS conflict, dropped elsewhere) never count: they
 // resolve on their own or the write leaves the outbox. Retry, backoff and dropping
 // are not decided here.
+//
+// P5 (docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-plan.md): the
+// state is MIRRORED onto each outbox item (metaOf -> OutboxStore.setStuckMeta) and
+// rebuilt from the items on launch (hydrate), so a relaunch does not forget a stuck
+// write. The outbox item is the source of truth across launches; this object is the
+// in-memory working copy.
 
 // 5 server-side failures is about 3 minutes with OutboxStore's backoff
 // ([2s, 8s, 30s, 2m, 10m]): long enough to ride out a deploy blip.
@@ -62,6 +68,27 @@ function noteFailure(state, requestId, status, online, errorCode) {
 
 function stuckCount(state) { return Object.keys(state.stuck).length }
 
+function isStuck(state, requestId) { return state.stuck[requestId] === true }
+
+// The stuck writes still in the outbox, in queue order, for the stuck-writes
+// dialog. `items` is OutboxStore.items. A stuck id no longer queued (sent or
+// dropped since the last prune) is skipped, so a stale dialog never shows a
+// ghost row. -> [{ requestId, terminal, item }]
+function rows(state, items) {
+    var out = []
+    var list = Array.isArray(items) ? items : []
+    for (var i = 0; i < list.length; ++i) {
+        var it = list[i]
+        if (!it || !state.stuck[it.requestId]) continue
+        out.push({
+            requestId: it.requestId,
+            terminal: state.terminal[it.requestId] === true,
+            item: it
+        })
+    }
+    return out
+}
+
 // Stuck writes the server has said it rejects. Always <= stuckCount.
 function terminalCount(state) {
     var n = 0
@@ -77,4 +104,37 @@ function prune(state, liveIds) {
     for (id in state.failures) if (!liveIds[id]) delete state.failures[id]
     for (id in state.terminal) if (!liveIds[id]) delete state.terminal[id]
     return stuckCount(state)
+}
+
+// Persisted shape of one write's stuck state, for OutboxStore.setStuckMeta:
+// { failures: n, stuck: bool, terminal: bool }. A write with no state is all zero/false.
+function metaOf(state, requestId) {
+    return {
+        failures: state.failures[requestId] || 0,
+        stuck: state.stuck[requestId] === true,
+        terminal: state.terminal[requestId] === true
+    }
+}
+
+// Rebuilds the state from persisted outbox items (relaunch). Never throws: a
+// malformed item is skipped, a malformed field is ignored. Repairs two impossible
+// combinations so a bad save can neither hide a stuck write nor toast twice:
+// failures >= THRESHOLD means stuck, and stuck means failures >= THRESHOLD.
+function hydrate(items) {
+    var state = newState()
+    var list = Array.isArray(items) ? items : []
+    for (var i = 0; i < list.length; ++i) {
+        var it = list[i]
+        if (!it || !it.requestId) continue
+        var id = it.requestId
+        var n = (typeof it.failures === "number" && it.failures > 0) ? Math.floor(it.failures) : 0
+        var isStuck = it.stuck === true || n >= THRESHOLD
+        if (isStuck) {
+            state.stuck[id] = true
+            if (n < THRESHOLD) n = THRESHOLD
+        }
+        if (n > 0) state.failures[id] = n
+        if (it.terminal === true) state.terminal[id] = true
+    }
+    return state
 }

@@ -3936,3 +3936,36 @@ Also: a "monkey" test is only a monkey test if you prove the generator reaches e
 `tst_InventoryStore_deleteProductCascade` used `1103515245 * seed`, which exceeds 2^53 in JS doubles, lost
 its low bits, and `rnd(4)` returned 0 forever (only `"enqueued"` was ever exercised; verified in Node).
 Use `a*m < 2^53` (`1664525`, `1013904223`, `% 2^32`) and assert the generator hit every state.
+
+## Skill 87: "Retry now" on a write already flagged stuck must not clear the flag, or the only alarm goes dark right after the user asked about it
+
+**Found while designing** part B slice S1 (`feat/2026-09-29-stuck-writes-dialog-retry-now`). The plan said Retry should "drop
+the requestId from `StuckWrites` state". For a *parked* item that is right. For a write that is merely stuck (still
+auto-retrying), it hides the header line and the dialog row the moment the user taps Retry; if the server rejects it
+again the user sees nothing for ~3 minutes (5 more failures to re-tip). `StuckWrites.noteFailure` only reports the failure
+that hits `THRESHOLD` exactly, so keeping the flag also means no second toast.
+
+**Fix:** `Gateway.retryStuck` -> `OutboxStore.retryNow` (attempts 0, `nextAttemptAt` now) and leaves `stuck` / `terminal`
+alone; only leaving the outbox clears them (`_pruneStuck`). `retryNow` refuses an in-flight item.
+
+**Generalize:** a manual "retry" should reset the *schedule*, not the *evidence*. Clear a warning only when the thing it
+warns about is gone. Also: a test that feeds `noteFailure` a raw response body instead of the parsed error code passes
+the wrong type silently (found by running the pure-JS test bodies in Node; `errorCodeOf` does the parsing in `Gateway`).
+
+## Skill 88: A "stuck" flag that lives only in memory is forgotten on relaunch, and the persisted backoff makes the alarm stay dark far longer than the in-session ~3 minutes
+
+**Found on device** reviewing PR #97 (S1): after force-closing the app the dialog was empty. `StuckWrites` state was in-memory
+by design, but `OutboxStore` persists `attempts`, so a write that had already failed 5 times resumes at the **10-minute** backoff
+step, and the 5 new failures the counter then needs take roughly 40+ minutes (traced from `_backoffMs`, not run). A user who
+reopens the app every few minutes never sees the alarm for a permanently broken write.
+
+**Fix (P5, S2a):** mirror the evidence onto the queued item (`failures`, `stuck`, `terminal` via `OutboxStore.setStuckMeta`),
+rebuild it at launch (`StuckWrites.hydrate`, `Gateway.resumeStuck`, before the first drain), and make stuck items due **once**
+(`OutboxStore.wakeStuck`, attempts kept). Because the state rides on the outbox item it is pruned for free when the item leaves
+the outbox.
+
+**Generalize:** (1) if the retry *schedule* survives a restart, the alarm's *evidence* must survive with it, or the two disagree.
+(2) Repair impossible persisted combinations on load (`stuck` with a low count, count at threshold without `stuck`), or a bad
+save can hide the alarm or toast twice. (3) Load persisted state before anything can write to it (`_noteFailure` calls
+`resumeStuck` first), or an early failure overwrites what was about to be restored. (4) A relaunch is not a new event: no toast.
+

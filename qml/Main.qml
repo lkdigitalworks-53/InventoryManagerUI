@@ -26,6 +26,8 @@ App {
     readonly property int syncStuckCount: Gateway.stuckCount
     // Of those, the ones the server rejected outright (Gateway.stuckTerminalCount).
     readonly property int syncStuckTerminalCount: Gateway.stuckTerminalCount
+    // GlassHeader's caption calls this when tapped.
+    function openStuckWrites() { stuckWritesSheet.open() }
 
     // Consume the Android Back event so it does NOT propagate to the OS (which
     // would background/exit the app). "AutoAccept" = mark the event accepted;
@@ -87,7 +89,7 @@ App {
         // read as undefined here, which is falsy, so they close exactly as
         // before — this only changes behavior for dialogs that actually
         // have something to guard.
-        var dialogs = [photoSourceSheet, addProductDlg, editProductDlg,
+        var dialogs = [stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
@@ -318,6 +320,9 @@ App {
             // Kick the one-shot FIFO backfill once the upstream stores have
             // had a beat to land their data. The check inside is idempotent.
             migrationKickoffTimer.restart()
+            // Restore the "not syncing" state of writes that were stuck before the
+            // app closed, and re-check them once (no-op after the first call).
+            Gateway.resumeStuck()
             // Flush any compliance-gateway writes that were queued offline /
             // before this tenant context was known (no-op in "direct" mode).
             Gateway.drainNow()
@@ -775,6 +780,7 @@ App {
     ConfirmDialog {
         id: confirmDlg
     }
+    StuckWritesSheet { id: stuckWritesSheet }
 
     StaffDetailDialog {
         id: staffDetailDlg

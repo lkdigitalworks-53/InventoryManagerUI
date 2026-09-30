@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import "../components"
 import "../helper/StuckWrites.js" as StuckWrites
+import "../helper/DescribeItem.js" as DescribeItem
 import "../helper/SendPolicy.js" as SendPolicy
 
 // Compliance gateway client (P0). Single entry point for every books-of-
@@ -135,6 +136,8 @@ QtObject {
     // not an outage). Label only: the app still retries them all.
     property int stuckTerminalCount: 0
     property var _stuckState: StuckWrites.newState()
+    // Has this launch already rebuilt _stuckState from the outbox? See resumeStuck().
+    property bool _stuckResumed: false
 
     // Pending recordDelta callbacks, keyed by outbox requestId — NOT
     // persisted (callbacks are JS functions, can't survive relaunch or
@@ -486,14 +489,66 @@ QtObject {
     // only counts while the device believes it's online -- see StuckWrites.js.
     // `body` (optional): the response text, for the server's error code.
     function _noteFailure(item, status, body) {
+        // A failure must never overwrite persisted state it has not loaded yet.
+        resumeStuck()
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
         var tipped = StuckWrites.noteFailure(_stuckState, item.requestId, status, online, StuckWrites.errorCodeOf(body))
         stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
+        // P5: mirror onto the queued item so the state survives a relaunch.
+        OutboxStore.setStuckMeta(item.requestId, StuckWrites.metaOf(_stuckState, item.requestId))
         if (!tipped) return
         var wasQuiet = stuckCount === 0
         stuckCount = StuckWrites.stuckCount(_stuckState)
         if (wasQuiet)
             Toast.show(qsTr("Some changes aren't syncing. The app keeps retrying."))
+    }
+
+    // Launch step (Main.qml, before the first drain), once per launch: rebuild the
+    // stuck state from the persisted outbox items so the header line and the dialog
+    // rows are back BEFORE any send is attempted, then make stuck items due once so
+    // a flag left over from before the app was closed is re-checked now, not after
+    // their 10-minute backoff. No toast: the person was already told. A failed
+    // re-check counts on top of the persisted count and never re-tips.
+    function resumeStuck() {
+        if (_stuckResumed) return
+        _stuckResumed = true
+        _stuckState = StuckWrites.hydrate(OutboxStore.items)
+        stuckCount = StuckWrites.stuckCount(_stuckState)
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
+        OutboxStore.wakeStuck()
+    }
+
+    // Rows for the stuck-writes dialog: every stuck write still queued, in queue
+    // order, as { requestId, title, detail, rejected, inFlight }. `rejected` = the
+    // server's latest answer was write-rejected. Reads live state on each call;
+    // views re-evaluate it off stuckCount, OutboxStore.revision and
+    // OutboxStore.inFlightCount.
+    function stuckRows() {
+        var rows = StuckWrites.rows(_stuckState, OutboxStore.items)
+        var out = []
+        for (var i = 0; i < rows.length; ++i) {
+            var d = DescribeItem.describe(rows[i].item)
+            out.push({
+                requestId: rows[i].requestId,
+                title: d.title,
+                detail: d.detail,
+                rejected: rows[i].terminal,
+                inFlight: OutboxStore.isInFlight(rows[i].requestId)
+            })
+        }
+        return out
+    }
+
+    // "Retry now" for one stuck write: due immediately, fresh backoff, sent by the
+    // drain below. Returns false for an id that is not stuck, not queued, or
+    // already in flight. It does NOT clear the stuck flag: if the server still
+    // fails it the header line must stay up (only leaving the outbox clears it,
+    // see _pruneStuck), and the flag is already set so nothing re-toasts.
+    function retryStuck(requestId) {
+        if (!StuckWrites.isStuck(_stuckState, requestId)) return false
+        if (!OutboxStore.retryNow(requestId)) return false
+        drainNow()
+        return true
     }
 
     // Forgets anything that has left the outbox, however it left (sent,
@@ -1082,6 +1137,7 @@ QtObject {
         }
         _operationWaiters = ({})
         _stuckState = StuckWrites.newState()
+        _stuckResumed = false
         stuckCount = 0
         stuckTerminalCount = 0
         if (_drainTimer) _drainTimer.stop()
