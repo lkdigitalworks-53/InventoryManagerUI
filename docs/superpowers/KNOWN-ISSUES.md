@@ -5,6 +5,45 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
+
+**Found on-device (Taher, PR #97 test).** Member `status` set to suspended, then restock a product: toast "Could not
+restock", the stuck list showed one write. After setting the member active and tapping Retry now, the stock batch
+appeared but the product's `stock` in Firestore did not change. Batch and stock disagree.
+
+**Cause (code reading, plus Taher's two on-device confirmations: the toast, and `stock` unchanged in Firestore).**
+`InventoryStore.restock` sends two unrelated writes in parallel: `StockBatchStore.addBatch` (`Gateway.recordMutation`,
+sender `_send`) and `Gateway.recordDelta` (sender `_sendDelta`). A suspended member gets 403
+`{ok:false, error:"no-tenant-context"}` on both. `_send` retries any non-2xx that is not a CAS conflict, so the batch
+stays queued and stuck. `_classifyDeltaResponse` treats a 4xx with a well-formed `ok:false` body as a definitive
+rejection, so the delta is removed from the outbox and its callback gets the failure (which is the toast). Retry now
+then lands only the batch. Not caused by the stuck-writes dialog or state persistence (PR #97 / S2a); those only made it
+visible. Any 4xx on the delta produces the same batch-without-stock state, not just a suspended member.
+
+**Also lost in that path:** the ActivityLog "Restocked" entry and the purchase `TransactionStore` record, because they
+run inside the delta callback. That callback lives in memory (`Gateway._deltaCallbacks`), so even a delta that is only
+retried and then succeeds after a relaunch lands on the server without them.
+
+**Decision (Taher, 2026-09-30): make batch + stock delta ONE atomic operation** (`Gateway.recordOperation`, the C-3
+atomic outbox), so both land or neither does. Documented only; nothing built. Rejected for now: (A) retrying deltas on
+403, which fixes this one path but leaves the two writes independent and the callback loss unchanged.
+
+**Leads for whoever builds it** (not verified, open questions):
+- `functions/lib/operationLogic.js` has `OP_TYPES = ["completeOrder"]`; a `restock` opType needs server logic and a
+  deterministic `opKey` (`OperationKeys.js` has the pattern) so a re-run is exactly-once. This also bears on the
+  RestockDialog double-submit item (ASYNC-REENTRANCY-BUGS C-4).
+- The batch id comes from `StockBatchStore.nextBatchId`, a network mint that can itself fail (`_queuePendingMint`). Decide
+  whether the id is minted before the operation or by the server.
+- The ActivityLog / purchase record should follow the operation's applied signal, not an in-memory callback, or the
+  relaunch loss stays.
+- Supplier resolution (`_resolveSupplierId`) stays a separate step before the operation; its failure handling is unchanged.
+- Not checked: other places that pair `addBatch` with `recordDelta` (for example product create with opening stock) and
+  may have the same shape.
+
+**Until built:** to force a stuck write in device tests use a single-write action (edit a product name), not Restock.
+
+---
+
 ## Async re-entrancy / double-submit bug class — tracked separately, severity-ranked
 
 Found via the 2026-09-14 order-completion double-submit fix (PR #70): a whole *class* of bugs where
