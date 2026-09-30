@@ -23,9 +23,19 @@ TestCase {
 
     function init() {
         PhotoQueue.clear()
+        AuthStore.idToken = ""
+        AuthStore.isAuthenticated = false   // ensureFreshToken() must stay a no-op (no refresh XHR)
         AuthStore.uid = "u1"
         AuthStore.tenantId = "t1"
         OutboxStore.clear()
+        // _breaker is singleton state shared by every test file in this qmltestrunner process; a
+        // drain that hits the "file unreadable" branch counts a failure and 5 trip it open for 60 s.
+        PhotoQueue._breaker = ({ status: "closed", consecutiveFailures: 0, cooldownUntil: 0, cooldownMs: 60000, tripCount: 0 })
+    }
+
+    // Never leak a live token into the next test's event-loop turn (PhotoQueue drains on token arrival).
+    function cleanup() {
+        AuthStore.idToken = ""
     }
 
     function _call(overrides) {
@@ -237,6 +247,165 @@ TestCase {
         compare(PhotoQueue.pendingCount, 1, "must not drop the item")
         compare(PhotoQueue.items[0].state, "enqueued", "must not mark it failed for a missing token")
         compare(PhotoQueue.items[0].attempts, 0, "must not count this against the attempt cap")
+    }
+
+    // ── F1 (PR #84 final sweep): an item persisted as "uploading" must not stay stuck ────────
+    // _upload() persists state "uploading" before the XHR. Kill/suspend in that window and, on the
+    // next launch, drainCandidates/_reschedule (which only take enqueued|retrying) never picked it
+    // up: spinner forever, no Retry/Discard, still counted toward the 10-photo cap.
+
+    function _persistedThenRelaunched(items) {
+        PhotoQueue.items = items
+        PhotoQueue._save()
+        PhotoQueue.items = []
+        PhotoQueue._load()
+    }
+
+    function test_relaunch_recovers_an_item_persisted_mid_upload() {
+        var it = PhotoQueue.enqueue(_call())
+        _persistedThenRelaunched([Object.assign({}, it, { state: "uploading", attempts: 2 })])
+        compare(PhotoQueue.items[0].state, "enqueued")
+        compare(PhotoQueue.items[0].attempts, 2, "a crash is not a failed attempt: attempts kept")
+        compare(PhotoQueue.drainCandidates(Date.now()).length, 1, "and it must be drainable again")
+    }
+
+    function test_relaunch_leaves_failed_and_retrying_items_untouched() {
+        var base = PhotoQueue.enqueue(_call())
+        var failed = Object.assign({}, base, { photoId: "f", state: "failed", attempts: 8, lastError: 400 })
+        var retrying = Object.assign({}, base, { photoId: "r", state: "retrying", attempts: 3, nextAttemptAt: 4102444800000 })
+        _persistedThenRelaunched([failed, retrying])
+        compare(PhotoQueue.items[0].state, "failed", "failed waits for the user's Retry")
+        compare(PhotoQueue.items[0].lastError, 400)
+        compare(PhotoQueue.items[1].state, "retrying")
+        compare(PhotoQueue.items[1].nextAttemptAt, 4102444800000, "backoff kept")
+    }
+
+    function test_relaunch_recovers_only_the_uploading_items_of_a_mixed_queue() {
+        var b = PhotoQueue.enqueue(_call())
+        var states = ["enqueued", "uploading", "retrying", "failed", "uploading"]
+        var items = []
+        for (var i = 0; i < states.length; ++i)
+            items.push(Object.assign({}, b, { photoId: "p" + i, state: states[i] }))
+        _persistedThenRelaunched(items)
+        compare(PhotoQueue.items.length, 5, "nothing dropped or duplicated")
+        var want = ["enqueued", "enqueued", "retrying", "failed", "enqueued"]
+        for (var j = 0; j < want.length; ++j)
+            compare(PhotoQueue.items[j].state, want[j], "item " + j)
+    }
+
+    function test_relaunch_with_empty_or_corrupt_storage_is_still_a_harmless_noop() {
+        PhotoQueue.clear()
+        PhotoQueue._load()
+        compare(PhotoQueue.pendingCount, 0)
+        PhotoQueue._settings.itemsJson = "{not json"
+        PhotoQueue._load()
+        compare(PhotoQueue.pendingCount, 0, "corrupt JSON must not throw or invent items")
+    }
+
+    function test_an_in_session_uploading_item_is_still_excluded_from_drain() {
+        // Recovery is a LOAD-time rule only: it must not turn a genuinely in-flight upload back
+        // into a drain candidate (double send).
+        var it = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [Object.assign({}, it, { state: "uploading" })]
+        compare(PhotoQueue.drainCandidates(Date.now()).length, 0)
+    }
+
+    // ── F4: a token that arrives late must trigger a drain ───────────────────────────────────
+    // _upload() returns quietly when idToken is empty and nothing re-armed the drain, so the item
+    // waited for an unrelated trigger. The watcher is event-driven (no polling). Under
+    // qmltestrunner NativeFile is undefined, so a drain pass that does reach _upload() ends in the
+    // "file unreadable" branch: the item leaves "enqueued". That is the observable here.
+
+    function test_token_arrival_triggers_a_drain_pass() {
+        PhotoQueue.enqueue(_call())
+        compare(PhotoQueue.items[0].state, "enqueued", "precondition: no token, nothing sent")
+        AuthStore.idToken = "tok-1"
+        verify(PhotoQueue.items[0].state !== "enqueued", "token arrival must drain the queue")
+    }
+
+    function test_token_cleared_does_not_drain() {
+        AuthStore.idToken = "tok-1"          // queue empty: nothing to do, must not throw
+        PhotoQueue.enqueue(_call())
+        AuthStore.idToken = ""               // sign-out style clear
+        compare(PhotoQueue.items[0].state, "enqueued", "an empty token is not a trigger")
+    }
+
+    function test_token_arrival_respects_the_outbox_gate() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        PhotoQueue.enqueue(_call({ productId: "prod-1" }))
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.items[0].state, "enqueued", "gated on its product's create: still waiting")
+    }
+
+    function test_token_arrival_with_an_empty_queue_is_a_noop() {
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.pendingCount, 0)
+    }
+
+    function test_token_arrival_skips_an_item_from_a_different_identity() {
+        PhotoQueue.enqueue(_call({ uid: "someone-else" }))
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.items[0].state, "enqueued", "identity gate holds when the token arrives")
+    }
+
+    // ── PR #99 sweep 2: token-watcher edges the first pass did not pin down ────────────────────
+
+    function test_token_arrival_respects_an_open_circuit_breaker() {
+        PhotoQueue._breaker = ({ status: "open", consecutiveFailures: 5, cooldownUntil: Date.now() + 600000,
+                                 cooldownMs: 60000, tripCount: 1 })
+        PhotoQueue.enqueue(_call())
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.items[0].state, "enqueued", "breaker open: a token arrival must not send")
+    }
+
+    function test_hourly_token_refresh_leaves_a_failed_item_untouched() {
+        var it = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [Object.assign({}, it, { state: "failed", attempts: 8, lastError: 404 })]
+        AuthStore.idToken = "tok-1"
+        AuthStore.idToken = "tok-2"
+        compare(PhotoQueue.items[0].state, "failed", "failed waits for the user's Retry, whatever the token does")
+        compare(PhotoQueue.items[0].attempts, 8)
+        compare(PhotoQueue.items[0].lastError, 404)
+    }
+
+    function test_token_arrival_respects_a_retrying_items_backoff() {
+        var it = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [Object.assign({}, it, { state: "retrying", attempts: 2, nextAttemptAt: Date.now() + 600000 })]
+        AuthStore.idToken = "tok-1"
+        compare(PhotoQueue.items[0].state, "retrying", "backoff not elapsed: no early retry")
+        compare(PhotoQueue.items[0].attempts, 2)
+    }
+
+    function test_token_churn_monkey_never_loses_or_revives_items() {
+        // Deterministic LCG (a*m < 2^53, exact in a double). 60 random token set/clear/refresh events
+        // over a mixed queue: nothing lost or duplicated, failed/in-flight/backed-off/other-identity
+        // items never move, and the one eligible item is drained.
+        var seed = 987
+        function rnd(n) { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor(seed / 65536) % n }
+        var base = PhotoQueue.enqueue(_call())
+        PhotoQueue.items = [
+            Object.assign({}, base, { photoId: "live" }),
+            Object.assign({}, base, { photoId: "dead", state: "failed", attempts: 8, lastError: 400 }),
+            Object.assign({}, base, { photoId: "wait", state: "retrying", attempts: 1, nextAttemptAt: Date.now() + 600000 }),
+            Object.assign({}, base, { photoId: "fly", state: "uploading" }),
+            Object.assign({}, base, { photoId: "other", uid: "someone-else" })
+        ]
+        var sawToken = false
+        for (var i = 0; i < 60; ++i) {
+            var t = (rnd(3) === 0) ? "" : "tok-" + rnd(1000)
+            if (t !== "") sawToken = true
+            AuthStore.idToken = t
+        }
+        verify(sawToken, "the generator must produce at least one non-empty token")
+        compare(PhotoQueue.items.length, 5, "nothing lost or duplicated")
+        var byId = {}
+        for (var k = 0; k < PhotoQueue.items.length; ++k) byId[PhotoQueue.items[k].photoId] = PhotoQueue.items[k]
+        compare(byId.dead.state, "failed")
+        compare(byId.dead.attempts, 8)
+        compare(byId.wait.state, "retrying")
+        compare(byId.fly.state, "uploading")
+        compare(byId.other.state, "enqueued")
+        verify(byId.live.state !== "enqueued", "the eligible item must have been drained")
     }
 
     // ── multiple items, mixed eligibility ───────────────────────────────────

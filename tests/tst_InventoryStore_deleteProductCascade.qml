@@ -38,6 +38,21 @@ TestCase {
     function init() {
         InventoryStore.products = []
         StockBatchStore.batches = []
+        PhotoQueue.clear()
+    }
+
+    function _queued(photoId, productId, state) {
+        var it = PhotoQueue.enqueue({ photoId: photoId, productId: productId, uid: "u-none", tenantId: "t-none",
+                                      mainFilePath: "/d/" + photoId + ".jpg", thumbFilePath: "/d/" + photoId + "_t.jpg" })
+        if (state && state !== "enqueued") {
+            PhotoQueue.items = PhotoQueue.items.map(function(x) {
+                return x.photoId === photoId ? Object.assign({}, x, { state: state }) : x })
+        }
+        return it
+    }
+
+    function _queuedIds() {
+        return PhotoQueue.items.map(function(x) { return x.photoId }).sort()
     }
 
     function _product(id) {
@@ -136,6 +151,104 @@ TestCase {
         InventoryStore.deleteProduct("SKU-1")
 
         compare(InventoryStore.products.length, 0)
+    }
+
+    // ── F2 (PR #84 final sweep): queued/failed photos of a deleted product must go with it ─────
+    // deleteProduct only walked the CONFIRMED photoIds. A queued photo later 404s (terminal), sits
+    // as a "failed" item with no UI (its product is gone), and its local files are never removed.
+    // (uid/tenantId "u-none" keeps these items out of any drain pass in this environment.)
+
+    function test_deleteProduct_discards_the_products_queued_photos() {
+        InventoryStore.products = [_product("SKU-1"), _product("SKU-2")]
+        _queued("a1", "SKU-1"); _queued("a2", "SKU-1"); _queued("b1", "SKU-2")
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(_queuedIds().join(","), "b1", "only the other product's photo survives")
+        compare(PhotoQueue.pendingCount, 1)
+    }
+
+    function test_deleteProduct_discards_queued_photos_in_every_state() {
+        InventoryStore.products = [_product("SKU-1")]
+        var states = ["enqueued", "uploading", "retrying", "failed"]
+        for (var i = 0; i < states.length; ++i) _queued("p" + i, "SKU-1", states[i])
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(PhotoQueue.pendingCount, 0, "a failed or in-flight item must not outlive its product")
+    }
+
+    function test_deleteProduct_purges_queue_and_still_completes_the_rest_of_the_cascade() {
+        var p = _product("SKU-1")
+        p.photoIds = ["c1", "c2"]
+        InventoryStore.products = [p]
+        StockBatchStore.batches = [_batch("B-1", "SKU-1", 10, 20)]
+        _queued("q1", "SKU-1")
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(InventoryStore.products.length, 0)
+        compare(StockBatchStore.batches.length, 0)
+        compare(PhotoQueue.pendingCount, 0)
+    }
+
+    function test_deleteProduct_with_no_queued_photos_leaves_the_queue_alone() {
+        InventoryStore.products = [_product("SKU-1"), _product("SKU-2")]
+        _queued("b1", "SKU-2")
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(_queuedIds().join(","), "b1")
+    }
+
+    function test_deleteProduct_of_an_unknown_id_does_not_touch_the_queue() {
+        InventoryStore.products = [_product("SKU-1")]
+        _queued("a1", "SKU-GHOST")
+
+        InventoryStore.deleteProduct("SKU-GHOST")
+
+        compare(PhotoQueue.pendingCount, 1, "unknown product: early return, nothing purged")
+    }
+
+    function test_deleteProduct_with_an_empty_queue_does_not_throw() {
+        InventoryStore.products = [_product("SKU-1")]
+        InventoryStore.deleteProduct("SKU-1")
+        compare(PhotoQueue.pendingCount, 0)
+        compare(InventoryStore.products.length, 0)
+    }
+
+    function test_deleteProduct_queue_purge_monkey() {
+        // Deterministic LCG, 40 items over 3 products, delete one, the rest must be exactly intact.
+        // a*m < 2^53 so every product is exact in a double (the old 1103515245 multiplier was not:
+        // its low bits vanished and rnd(4) was 0 forever, i.e. only "enqueued" was ever tested).
+        var seed = 12345
+        function rnd(n) { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor(seed / 65536) % n }
+        var states = ["enqueued", "uploading", "retrying", "failed"]
+        InventoryStore.products = [_product("P0"), _product("P1"), _product("P2")]
+        var expectKeep = []
+        var seenStates = {}
+        var deleted = 0
+        for (var i = 0; i < 40; ++i) {
+            var pid = "P" + rnd(3)
+            var st = states[rnd(4)]
+            seenStates[st] = true
+            _queued("m" + i, pid, st)
+            if (pid !== "P1") expectKeep.push("m" + i); else ++deleted
+        }
+        compare(Object.keys(seenStates).length, 4, "the generator must reach every queue state")
+        verify(deleted > 0 && expectKeep.length > 0, "both a purged and a surviving group must exist")
+        InventoryStore.deleteProduct("P1")
+        compare(_queuedIds().join(","), expectKeep.sort().join(","))
+    }
+
+    function test_late_upload_confirmation_for_a_deleted_product_is_a_noop() {
+        // An in-flight upload can still confirm after its product is deleted; Main.qml's
+        // onPhotoUploaded then calls applyPhotoIds. It must neither throw nor resurrect anything.
+        InventoryStore.products = [_product("SKU-1"), _product("SKU-2")]
+        InventoryStore.deleteProduct("SKU-1")
+        InventoryStore.applyPhotoIds("SKU-1", ["late"], "late", "add")
+        compare(InventoryStore.products.length, 1)
+        compare(InventoryStore.products[0].productId, "SKU-2")
     }
 
     function test_deleteProduct_still_removes_the_product_itself_unchanged_regression() {
