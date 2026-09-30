@@ -3952,7 +3952,7 @@ alone; only leaving the outbox clears them (`_pruneStuck`). `retryNow` refuses a
 warns about is gone. Also: a test that feeds `noteFailure` a raw response body instead of the parsed error code passes
 the wrong type silently (found by running the pure-JS test bodies in Node; `errorCodeOf` does the parsing in `Gateway`).
 
-## Skill 86: A "stuck" flag that lives only in memory is forgotten on relaunch, and the persisted backoff makes the alarm stay dark far longer than the in-session ~3 minutes
+## Skill 88: A "stuck" flag that lives only in memory is forgotten on relaunch, and the persisted backoff makes the alarm stay dark far longer than the in-session ~3 minutes
 
 **Found on device** reviewing PR #97 (S1): after force-closing the app the dialog was empty. `StuckWrites` state was in-memory
 by design, but `OutboxStore` persists `attempts`, so a write that had already failed 5 times resumes at the **10-minute** backoff

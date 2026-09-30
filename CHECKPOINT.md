@@ -3,7 +3,7 @@
 **Branches:** S1 `feat/2026-09-29-stuck-writes-dialog-retry-now` (PR #97, off `main` @ `1a81554`, P5 docs PR #98 already merged into it). **S2a `feat/2026-09-29-s2a-persist-stuck-state`, stacked on the S1 branch** (retarget its PR to `main` after #97 merges; expect a small rebase if #97 is squash-merged).
 **Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-scope-CHECKPOINT.md`.
 **Skills invoked by Taher:** brainstorming, qt-qml, qt-ui-design, ponytail; caveman FULL (chat replies only).
-**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>` (email per Taher's instruction this session; earlier sessions used other addresses).
+**Commit identity:** `Taher <taher.lkdw53@gmail.com>` (Taher's claude.ai account email, per his instruction 2026-09-30; earlier commits on this branch used other addresses).
 
 ## Standing instructions (unchanged)
 
@@ -24,6 +24,7 @@ Branch only, push without asking (PAT only in the push URL, never in `.git/confi
 11. **S2a tests:** 16 `tst_StuckWrites`, 18 `tst_OutboxStore`, 16 `tst_Gateway` (incl. 3 monkeys). Node-ran the pure-JS logic incl. relaunch monkey: 1217 assertions OK. `tst_OutboxStore` / `tst_Gateway` NOT run (need Qt).
 12. Lint: no real new findings (the extra JS-2 / ORD-1 hits are linter false positives on `!==` and nested `function rnd()`; the extra BND-2 is the existing `items = arr` idiom). `Main.qml` shows a paren imbalance in the checker, present at `HEAD` too (checker quirk); my edit adds one balanced pair.
 13. Docs: test plan `2026-09-29-stuck-state-persist-s2a-test-plan.md` + index row, plan (a)-(d) resolved, roadmap, SKILLS Skill 86, AGENTS, README. Pushed, PR opened stacked on #97.
+14. **Rebase onto `main` (2026-09-30, Taher's request):** `main` moved to `13375cf` (PR #99, photo follow-ups). Rebased PR #97 (linearised; merge commits of #100/#103 replaced by their underlying commits). Conflicts: `SKILLS.md` (main already had Skills 85 + 86 from PR #99 -> kept both, renumbered this branch's retry-now skill 85 -> **87** and S2a's stuck-flag skill 86 -> **88**; README pointer updated to 88), `CHECKPOINT.md` (kept this branch's version, per Taher). `AGENTS.md` / `README.md` auto-merged. No `.qml`/`.js` conflicts. Nothing executed (no build, no Qt). Pushed with `--force-with-lease`.
 
 ## Deviation from the plan (for Taher to overrule in the PR)
 
