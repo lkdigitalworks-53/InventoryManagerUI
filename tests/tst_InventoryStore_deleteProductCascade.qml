@@ -219,17 +219,36 @@ TestCase {
 
     function test_deleteProduct_queue_purge_monkey() {
         // Deterministic LCG, 40 items over 3 products, delete one, the rest must be exactly intact.
+        // a*m < 2^53 so every product is exact in a double (the old 1103515245 multiplier was not:
+        // its low bits vanished and rnd(4) was 0 forever, i.e. only "enqueued" was ever tested).
         var seed = 12345
-        function rnd(n) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n }
+        function rnd(n) { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor(seed / 65536) % n }
+        var states = ["enqueued", "uploading", "retrying", "failed"]
         InventoryStore.products = [_product("P0"), _product("P1"), _product("P2")]
         var expectKeep = []
+        var seenStates = {}
+        var deleted = 0
         for (var i = 0; i < 40; ++i) {
             var pid = "P" + rnd(3)
-            _queued("m" + i, pid, ["enqueued", "uploading", "retrying", "failed"][rnd(4)])
-            if (pid !== "P1") expectKeep.push("m" + i)
+            var st = states[rnd(4)]
+            seenStates[st] = true
+            _queued("m" + i, pid, st)
+            if (pid !== "P1") expectKeep.push("m" + i); else ++deleted
         }
+        compare(Object.keys(seenStates).length, 4, "the generator must reach every queue state")
+        verify(deleted > 0 && expectKeep.length > 0, "both a purged and a surviving group must exist")
         InventoryStore.deleteProduct("P1")
         compare(_queuedIds().join(","), expectKeep.sort().join(","))
+    }
+
+    function test_late_upload_confirmation_for_a_deleted_product_is_a_noop() {
+        // An in-flight upload can still confirm after its product is deleted; Main.qml's
+        // onPhotoUploaded then calls applyPhotoIds. It must neither throw nor resurrect anything.
+        InventoryStore.products = [_product("SKU-1"), _product("SKU-2")]
+        InventoryStore.deleteProduct("SKU-1")
+        InventoryStore.applyPhotoIds("SKU-1", ["late"], "late", "add")
+        compare(InventoryStore.products.length, 1)
+        compare(InventoryStore.products[0].productId, "SKU-2")
     }
 
     function test_deleteProduct_still_removes_the_product_itself_unchanged_regression() {

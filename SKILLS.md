@@ -3890,7 +3890,7 @@ to label (`StuckWrites.errorCodeOf`, `terminalCount`).
 `< 500` for that endpoint. A status is shared vocabulary; a new body string is not. Also: the Admin SDK bypasses
 security rules, so `permission-denied` is rare from Cloud Functions; do not build on it being common.
 
-## Skill 82: A state that is only true while a request is in flight must be repaired at load time — and "delete the parent" must reach the queue that points at it
+## Skill 85: A state that is only true while a request is in flight must be repaired at load time — and "delete the parent" must reach the queue that points at it
 
 **PR #84 final sweep, 2026-09-29 (F1/F2/F4).** `PhotoQueue._upload` persists `state: "uploading"` *before*
 the XHR. That value only means something inside one process. Kill or suspend the app in that window and
@@ -3912,3 +3912,27 @@ server-side; its Storage objects are orphaned until roadmap item 4 (server-side 
 **The check:** for every persisted state, ask "what does this mean after a restart?"; for every delete,
 grep who else holds the id (queues, outboxes, caches).
 
+
+## Skill 86: A property-change handler runs synchronously in the middle of the setter's function — and singleton state leaks between test files
+
+**PR #99 full-sweep review, 2026-09-30.** Two lessons from one review of the token watcher and its tests.
+
+1. `AuthStore.applyAuth` assigns `idToken` *then* `expiresAtEpochSec`. An `on_TokenWatcherChanged` handler
+   fires synchronously at the first assignment, so anything it calls sees the **new** token with the **old**
+   expiry. `drainNow()` → `AuthService.ensureFreshToken()` therefore judged the just-refreshed token
+   expired and fired a redundant second refresh (+ `_loadUserProfile`, `tokenRefreshed`). Not infinite (the
+   second pass sees the fresh expiry), but wasteful and a flicker risk. Fix at the consumer:
+   `drainNow(skipTokenRefresh)`; the token watcher passes `true` (a token that just arrived needs no
+   refresh). Timer and online triggers keep the refresh. **The check:** when a handler reacts to one field
+   of a multi-field update, ask what the *other* fields hold at that instant.
+2. `PhotoQueue._breaker` is singleton state shared by every test file in one `qmltestrunner` process. Under
+   `qmltestrunner` a drain that reaches `_upload()` ends in the "file unreadable" branch, which records a
+   breaker failure; 5 of those trip the breaker open for 60 s and every later drain returns early. Tests
+   that assert "the drain ran" then fail depending on file order. `init()` must reset `_breaker`.
+   **The check:** any test asserting a side effect of a singleton must reset *all* the singleton's gating
+   state in `init()`, not only its data.
+
+Also: a "monkey" test is only a monkey test if you prove the generator reaches every branch. The LCG in
+`tst_InventoryStore_deleteProductCascade` used `1103515245 * seed`, which exceeds 2^53 in JS doubles, lost
+its low bits, and `rnd(4)` returned 0 forever (only `"enqueued"` was ever exercised; verified in Node).
+Use `a*m < 2^53` (`1664525`, `1013904223`, `% 2^32`) and assert the generator hit every state.

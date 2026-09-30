@@ -28,6 +28,9 @@ TestCase {
         AuthStore.uid = "u1"
         AuthStore.tenantId = "t1"
         OutboxStore.clear()
+        // _breaker is singleton state shared by every test file in this qmltestrunner process; a
+        // drain that hits the "file unreadable" branch counts a failure and 5 trip it open for 60 s.
+        PhotoQueue._breaker = ({ status: "closed", consecutiveFailures: 0, cooldownUntil: 0, cooldownMs: 60000, tripCount: 0 })
     }
 
     // Never leak a live token into the next test's event-loop turn (PhotoQueue drains on token arrival).

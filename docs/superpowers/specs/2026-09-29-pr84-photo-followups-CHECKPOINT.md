@@ -24,4 +24,4 @@ Not done on purpose: auto-discarding on terminal 404 (a misdeployed function als
 **Owner decision needed (my honest advice):** P1 (delete `FailedTileGeometry.js` + test + spec, ~-300 lines) — I now advise **do not do it**. It is merged, tested, device-verified UI; the replacement cannot be rendered or tested here; savings are LOC only. Touch-target sizes (20/28/36dp) are a device-UX call: enlarging fights the fixed 72dp tile, decide with a screenshot.
 
 ## Files touched this session
-`qml/model/PhotoQueue.qml`, `qml/model/InventoryStore.qml`, `tests/tst_PhotoQueue.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, test plan, `SKILLS.md` (Skill 82), `AGENTS.md`, this file, one pointer in `CHECKPOINT.md`.
+`qml/model/PhotoQueue.qml`, `qml/model/InventoryStore.qml`, `tests/tst_PhotoQueue.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, test plan, `SKILLS.md` (Skill 85), `AGENTS.md`, this file, one pointer in `CHECKPOINT.md`.
