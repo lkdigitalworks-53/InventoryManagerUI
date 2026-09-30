@@ -82,7 +82,7 @@ Rectangle {
                 visible: !app.isOnline || _stuck || (root.subtitle.length > 0 && root.greeting.length === 0)
                 text: !app.isOnline ? qsTr("App is offline, no operation allowed.")
                     : _stuck ? (app.syncStuckTerminalCount > 0
-                        ? qsTr("%n change(s) rejected by the server. Still retrying.", "", app.syncStuckTerminalCount)
+                        ? qsTr("%n change(s) rejected by the server. Tap to retry.", "", app.syncStuckTerminalCount)
                         : qsTr("%n change(s) not syncing. Still retrying.", "", app.syncStuckCount))
                     : root.subtitle
                 font.pixelSize: sp(Constants.fsCaption)

@@ -1279,12 +1279,13 @@ TestCase {
         compare(Gateway.stuckRows().length, 0)
     }
 
-    function test_retryStuck_with_a_rejected_write_keeps_the_rejected_label() {
+    function test_retryStuck_with_a_rejected_write_releases_it_but_keeps_it_stuck() {
         var item = _queueWrite("o1")
         _failWith(item, 500, _rejectedBody(), 5)
         Gateway.retryStuck(item.requestId)
-        compare(Gateway.stuckTerminalCount, 1)
-        compare(Gateway.stuckRows()[0].rejected, true)
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 0, "S2b: Retry releases the parked write")
+        compare(Gateway.stuckRows()[0].rejected, false)
     }
 
     function test_monkey_stuckRows_always_matches_stuckCount_and_retryStuck_never_throws() {
@@ -1506,6 +1507,209 @@ TestCase {
                 compare(toastSpy.count, 0, "step " + step + ": a relaunch never toasts")
             }
             compare(Gateway.stuckRows().length, Gateway.stuckCount, "step " + step)
+        }
+    }
+
+    // ── S2b: a rejected stuck write is parked (docs/superpowers/specs/2026-09-30-s2b-park-terminal-writes-design.md) ──
+
+    function _dueIds() { return OutboxStore.dueItems().map(function(i) { return i.requestId }) }
+
+    function test_a_rejected_write_is_parked_and_not_handed_to_the_drain() {
+        var item = _queueWrite("o1")
+        verify(_dueIds().indexOf(item.requestId) >= 0, "precondition: due")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(_dueIds().length, 0)
+        compare(OutboxStore.nextDueInMs(), -1, "drain timer stops")
+    }
+
+    function test_an_outage_write_is_stuck_but_keeps_retrying() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _unavailableBody(), 5)
+        compare(Gateway.stuckCount, 1)
+        compare(_dueIds().length, 1)
+    }
+
+    function test_park_rule_A_a_stuck_write_rejected_after_the_tip_parks() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _unavailableBody(), 5)
+        compare(_dueIds().length, 1)
+        _failWith(item, 500, _rejectedBody(), 1)
+        compare(_dueIds().length, 0)
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.stuckCount, 1)
+        compare(toastSpy.count, 1, "no second toast for the park")
+    }
+
+    function test_the_toast_says_paused_when_the_tipping_answer_is_a_rejection() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(toastSpy.count, 1)
+        verify(toastSpy.signalArguments[0][0].indexOf("paused") >= 0, toastSpy.signalArguments[0][0])
+    }
+
+    function test_the_toast_still_says_retrying_for_an_outage() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _unavailableBody(), 5)
+        verify(toastSpy.signalArguments[0][0].indexOf("keeps retrying") >= 0)
+    }
+
+    function test_retryStuck_on_a_parked_write_makes_it_due_once() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.retryStuck(item.requestId), true)
+        compare(_find(item.requestId).terminal, undefined)
+        compare(_find(item.requestId).stuck, true)
+        compare(_dueIds().join(","), item.requestId)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(Gateway.stuckRows()[0].rejected, false)
+    }
+
+    function test_a_retried_write_rejected_again_re_parks_after_one_attempt_without_a_toast() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.retryStuck(item.requestId)
+        toastSpy.clear()
+        _failWith(item, 500, _rejectedBody(), 1)
+        compare(_dueIds().length, 0)
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckRows()[0].rejected, true)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_a_retried_write_that_gets_an_outage_answer_goes_back_to_auto_retry() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.retryStuck(item.requestId)
+        _failWith(item, 503, _unavailableBody(), 1)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(_find(item.requestId).terminal, undefined)
+        compare(_dueIds().length, 1)
+    }
+
+    function test_a_retried_write_that_lands_leaves_nothing_parked() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.retryStuck(item.requestId)
+        OutboxStore.markSent(item.requestId)
+        Gateway._reschedule()
+        compare(Gateway.stuckCount, 0)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(Gateway.stuckRows().length, 0)
+    }
+
+    function test_retryStuck_on_one_parked_write_leaves_the_others_parked() {
+        var a = _queueWrite("o1")
+        var b = _queueWrite("o2")
+        _failWith(a, 500, _rejectedBody(), 5)
+        _failWith(b, 500, _rejectedBody(), 5)
+        Gateway.retryStuck(a.requestId)
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(_dueIds().join(","), a.requestId)
+    }
+
+    function test_a_parked_write_survives_a_relaunch_and_is_not_woken() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.stuckRows()[0].rejected, true)
+        compare(_dueIds().length, 0)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_after_a_relaunch_an_outage_stuck_write_is_woken_but_a_parked_one_is_not() {
+        var a = _queueWrite("o1")
+        var b = _queueWrite("o2")
+        _failWith(a, 500, _unavailableBody(), 5)
+        _failWith(b, 500, _rejectedBody(), 5)
+        for (var i = 0; i < 5; ++i) OutboxStore.markFailed(a.requestId)
+        verify(_find(a.requestId).nextAttemptAt > Date.now(), "precondition: backed off")
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(_dueIds().join(","), a.requestId)
+    }
+
+    function test_a_rejected_write_below_the_threshold_keeps_retrying() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 4)
+        compare(_dueIds().length, 1)
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_offline_401_and_409_answers_never_park() {
+        var item = _queueWrite("o1")
+        _failTimes(item, 0, 20)
+        _failTimes(item, 401, 20)
+        _failTimes(item, 409, 20)
+        compare(_dueIds().length, 1)
+        compare(Gateway.stuckCount, 0)
+    }
+
+    function test_an_edit_to_a_parked_record_merges_and_stays_parked() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.recordMutation("order", "o1", "update", null, { status: "done" })
+        compare(OutboxStore.items.length, 1)
+        compare(_find(item.requestId).after.status, "done")
+        compare(_dueIds().length, 0)
+        compare(Gateway.stuckTerminalCount, 1)
+    }
+
+    function test_a_parked_write_is_dropped_from_the_count_when_it_leaves_the_outbox() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        OutboxStore.markSent(item.requestId)
+        Gateway._reschedule()
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(Gateway.stuckRows().length, 0)
+    }
+
+    function test_sign_out_clears_parked_writes() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        Gateway.clear()
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(OutboxStore.items.length, 0)
+        compare(OutboxStore.nextDueInMs(), -1)
+    }
+
+    function test_retryStuck_twice_on_a_parked_write_is_harmless() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.retryStuck(item.requestId), true)
+        compare(Gateway.retryStuck(item.requestId), true)
+        compare(Gateway.stuckCount, 1)
+        compare(_dueIds().length, 1)
+    }
+
+    // Monkey: random answers, Retry taps, edits and relaunches. The dialog's `rejected`
+    // flag, the persisted outbox item and the drain must always agree, and a parked
+    // write must never be handed out.
+    function test_monkey_parked_writes_agree_across_state_outbox_and_drain() {
+        var s = 555
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var items = [_queueWrite("m1"), _queueWrite("m2"), _queueWrite("m3")]
+        var statuses = [500, 500, 500, 503, 404, 401, 409, 0]
+        var bodies = [_rejectedBody(), _unavailableBody(), ""]
+        for (var step = 0; step < 300; ++step) {
+            var it = items[Math.floor(rnd() * items.length)]
+            var roll = rnd()
+            if (roll < 0.6) Gateway._noteFailure(it, statuses[Math.floor(rnd() * statuses.length)], bodies[Math.floor(rnd() * bodies.length)])
+            else if (roll < 0.8) Gateway.retryStuck(it.requestId)
+            else if (roll < 0.9) { _relaunch(); Gateway.resumeStuck() }
+            else Gateway.recordMutation("order", it.entityId, "update", null, { status: "s" + step })
+            var parkedIds = []
+            for (var k = 0; k < OutboxStore.items.length; ++k)
+                if (StuckWrites.isParkedItem(OutboxStore.items[k])) parkedIds.push(OutboxStore.items[k].requestId)
+            var rows = Gateway.stuckRows()
+            var rejectedRows = rows.filter(function(r) { return r.rejected }).map(function(r) { return r.requestId })
+            compare(rejectedRows.join(","), parkedIds.join(","), "step " + step)
+            compare(Gateway.stuckTerminalCount, parkedIds.length, "step " + step)
+            var due = _dueIds()
+            for (var d = 0; d < due.length; ++d)
+                compare(parkedIds.indexOf(due[d]), -1, "step " + step + ": parked handed out")
         }
     }
 }

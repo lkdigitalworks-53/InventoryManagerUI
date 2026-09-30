@@ -1,7 +1,7 @@
 # Gateway stuck writes, part B: park + Retry / Discard — scope plan
 
 **Date:** 2026-09-29
-**Status:** S1 IMPLEMENTED 2026-09-29 (`feat/2026-09-29-stuck-writes-dialog-retry-now`, see its design doc; one deliberate deviation: Retry keeps the stuck flag in S1). S2-S4 not started. Was: PLAN ONLY. No code. P1-P3 DECIDED 2026-09-29 (see Decisions). P4 not asked, default stands. **P5 DECIDED 2026-09-29: S2 persists the stuck flag for ALL stuck writes, not only terminal ones (amends P1's persistence scope; park rule unchanged).** Slices are sequential; one PR each.
+**Status:** S2b IMPLEMENTED 2026-09-30 (`feat/2026-09-30-s2b-park-terminal-writes`; see its design doc: parked is derived `stuck && terminal`, park rule = state rule, parked blocks same-record writes, Retry clears `terminal`). S1 IMPLEMENTED 2026-09-29 (`feat/2026-09-29-stuck-writes-dialog-retry-now`, see its design doc; one deliberate deviation: Retry keeps the stuck flag in S1). S2-S4 not started. Was: PLAN ONLY. No code. P1-P3 DECIDED 2026-09-29 (see Decisions). P4 not asked, default stands. **P5 DECIDED 2026-09-29: S2 persists the stuck flag for ALL stuck writes, not only terminal ones (amends P1's persistence scope; park rule unchanged).** Slices are sequential; one PR each.
 **Builds on:** `2026-09-28-gateway-stuck-write-retry-discard-options.md` (Q2-Q4 decided there), PR #75 (indicator), PR #93 (server classification).
 **Out of scope:** photo cleanup on delete (roadmap item 4), handled in a separate photos session. Interplay noted at the end.
 

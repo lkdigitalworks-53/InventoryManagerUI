@@ -4,6 +4,7 @@ import QtCore
 
 import "../helper/SettingsPath.js" as SettingsPath
 import "../helper/SendPolicy.js" as SendPolicy
+import "../helper/StuckWrites.js" as StuckWrites
 
 // Durable outbox for compliance-gateway calls (P0). Every mutation routed
 // through Gateway is enqueued here FIRST (persisted to QSettings), then sent.
@@ -32,6 +33,9 @@ import "../helper/SendPolicy.js" as SendPolicy
 // Any item may also carry the stuck-write state (P5, see StuckWrites.js):
 //   failures (server-side failure count), stuck: true, terminal: true
 // Absent = never failed that way; old saved items load without them.
+// S2b: an item that is stuck AND terminal is PARKED (StuckWrites.isParkedItem):
+// dueItems/nextDueInMs/wakeStuck skip it and it holds its keys, so later writes
+// for the same record wait behind it. Only retryNow() releases it.
 // dueItems/markSent/markFailed/nextDueInMs only key off requestId, so all
 // three shapes flow through them unchanged — only enqueue/enqueueBatch/
 // enqueueDelta differ, in how they build the item and (new this session)
@@ -313,9 +317,15 @@ QtObject {
         // not both go out in the same drain, or they'd race each other.
         var claimed = {}
         for (var i = 0; i < items.length; ++i) {
+            var keys = _keysForItem(items[i])
+            if (StuckWrites.isParkedItem(items[i])) {
+                // Never sent, but its keys stay claimed: a later write for the same
+                // record must not pass it (Q-S2b-2 A).
+                for (var pk = 0; pk < keys.length; ++pk) claimed[keys[pk]] = true
+                continue
+            }
             if ((items[i].nextAttemptAt || 0) > nowMs) continue
             if (_isItemBlocked(items[i])) continue
-            var keys = _keysForItem(items[i])
             var clash = false
             for (var k = 0; k < keys.length; ++k) if (claimed[keys[k]]) { clash = true; break }
             if (clash) continue
@@ -350,7 +360,16 @@ QtObject {
         if (items.length === 0) return -1
         var nowMs = Date.now()
         var soonest = -1
+        var held = {} // keys held by a parked item: what waits behind it is not due
         for (var i = 0; i < items.length; ++i) {
+            var keys = _keysForItem(items[i])
+            var behind = false
+            for (var k = 0; k < keys.length; ++k) if (held[keys[k]]) behind = true
+            if (StuckWrites.isParkedItem(items[i])) {
+                for (var k2 = 0; k2 < keys.length; ++k2) held[keys[k2]] = true
+                continue
+            }
+            if (behind) continue
             var due = Math.max(0, (items[i].nextAttemptAt || 0) - nowMs)
             if (soonest < 0 || due < soonest) soonest = due
         }
@@ -417,6 +436,7 @@ QtObject {
         var moved = 0
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].stuck !== true) continue
+            if (StuckWrites.isParkedItem(arr[i])) continue // parked waits for the user, not the launch
             if ((arr[i].nextAttemptAt || 0) <= nowMs) continue
             if (isInFlight(arr[i].requestId)) continue
             arr[i] = Object.assign({}, arr[i], { nextAttemptAt: nowMs })
@@ -447,7 +467,9 @@ QtObject {
         var arr = items.slice()
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].requestId !== requestId) continue
-            arr[i] = Object.assign({}, arr[i], { attempts: 0, nextAttemptAt: Date.now() })
+            var next = Object.assign({}, arr[i], { attempts: 0, nextAttemptAt: Date.now() })
+            delete next.terminal // S2b: releases a parked write; a new "rejected" answer re-parks it
+            arr[i] = next
             items = arr
             _save()
             return true

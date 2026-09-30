@@ -26,7 +26,9 @@ var THRESHOLD = 5
 // state = { failures: { requestId: count }, stuck: { requestId: true },
 //           terminal: { requestId: true } }
 // `terminal` = the server's LATEST answer for that write was "rejected" (see
-// REJECTED); it only labels the write, it never changes retry or dropping.
+// REJECTED). S2b: a stuck write whose latest answer is "rejected" is PARKED
+// (see isParkedItem): no auto-retry until the user taps Retry. Parked is derived
+// (stuck && terminal), not a stored flag, so it cannot drift from its inputs.
 function newState() { return { failures: {}, stuck: {}, terminal: {} } }
 
 // functions/lib/writeError.js: the server answers HTTP 500 either way, so the
@@ -89,7 +91,24 @@ function rows(state, items) {
     return out
 }
 
-// Stuck writes the server has said it rejects. Always <= stuckCount.
+// S2b park rule (Taher, Q-S2b-1 A): parked = stuck AND the server's latest answer
+// was "rejected". True for a persisted outbox item too: same stuck repair as
+// hydrate (failures >= THRESHOLD means stuck), so a bad save cannot unpark it.
+function isParkedItem(it) {
+    if (!it || it.terminal !== true) return false
+    return it.stuck === true || (typeof it.failures === "number" && it.failures >= THRESHOLD)
+}
+
+function isParked(state, requestId) {
+    return state.stuck[requestId] === true && state.terminal[requestId] === true
+}
+
+// Retry on a parked write forgets "rejected" so it is due and sendable once. If
+// the server rejects it again noteFailure sets terminal and it re-parks after that
+// ONE attempt; a transient answer leaves it stuck and auto-retrying.
+function clearTerminal(state, requestId) { delete state.terminal[requestId] }
+
+// Stuck writes the server has said it rejects (= the parked ones). Always <= stuckCount.
 function terminalCount(state) {
     var n = 0
     for (var id in state.stuck) if (state.terminal[id]) n++

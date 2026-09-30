@@ -1,46 +1,42 @@
-# CHECKPOINT — 2026-09-29: DELETE-FEATURE-ROADMAP item 1 part B — S1 (PR #97, CI green, awaiting merge) + S2a (persist stuck state, P5) IMPLEMENTED, CI PENDING
+# CHECKPOINT — 2026-09-30: DELETE-FEATURE-ROADMAP item 1 part B — S2b (park terminal writes), IMPLEMENTED, CI PENDING
 
-**Branches:** S1 `feat/2026-09-29-stuck-writes-dialog-retry-now` (PR #97, off `main` @ `1a81554`, P5 docs PR #98 already merged into it). **S2a `feat/2026-09-29-s2a-persist-stuck-state`, stacked on the S1 branch** (retarget its PR to `main` after #97 merges; expect a small rebase if #97 is squash-merged).
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-scope-CHECKPOINT.md`.
-**Skills invoked by Taher:** brainstorming, qt-qml, qt-ui-design, ponytail; caveman FULL (chat replies only).
-**Commit identity:** `Taher <taher.lkdw53@gmail.com>` (Taher's claude.ai account email, per his instruction 2026-09-30; earlier commits on this branch used other addresses).
+**Branch:** `feat/2026-09-30-s2b-park-terminal-writes` (off `main` @ `0d77f9a`, which already contains S1 + S2a via PR #97).
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-30-s1-s2a-merged-CHECKPOINT.md`.
+**Skills invoked:** brainstorming, qt-qml, qt-ui-design, ponytail; caveman FULL (chat replies only).
+**Commit identity:** `Taher <dextran52@gmail.com>` (this claude.ai account's email, per this session's prompt; earlier sessions used other addresses, one per account).
 
 ## Standing instructions (unchanged)
-
-Branch only, push without asking (PAT only in the push URL, never in `.git/config` or the repo), no build/run, no Qt tooling in the sandbox (CI is the QML signal), tests toward 100% + test plan + SKILLS/AGENTS/README, honest advisor, small scope per session.
+Branch only, push without asking (PAT only in the push header, never in `.git/config`/repo), no build/run, no Qt tooling in sandbox (CI is the QML signal), tests toward 100% + test plan (Skill 49 template) + SKILLS/AGENTS/README as needed, honest advisor who grills before deciding, small scope per session so another account can resume from the remote branch.
 
 ## Step log
+1. Read memory (staff-delete-ui, stuck-write-retry-discard, ways-of-working, overview, engineering-lessons) + plan `2026-09-29-gateway-park-retry-discard-plan.md` + archived checkpoint. "s2b slice" = plan slice **S2b: park terminal writes** (S2a persistence already merged).
+2. Cloned repo, branched. Read the four skills, `StuckWrites.js`, `OutboxStore.qml` (`dueItems`, `nextDueInMs`, `markFailed`, `setStuckMeta`, `wakeStuck`, `retryNow`), `Gateway.qml` (`_noteFailure`, `resumeStuck`, `retryStuck`, `_pruneStuck`, `drainNow`).
 
-1. Read memory + plan doc (`2026-09-29-gateway-park-retry-discard-plan.md`), roadmap, test-plan README. Cloned repo, stripped the PAT from `origin`, archived old checkpoint.
-2. Traced `OutboxStore`, `StuckWrites.js`, `Gateway` (`_noteFailure`, `_pruneStuck`, `drainNow`, `_send` no-auth guard), `GlassHeader`, `Main.qml` back-button list, `BottomSheet`, `NotificationsSheet`.
-3. Wrote: `DescribeItem.js`; `StuckWrites.isStuck/rows`; `OutboxStore.retryNow/isInFlight/inFlightCount`; `Gateway.stuckRows/retryStuck`; `StuckWritesSheet.qml`; `Main.qml` wiring; `GlassHeader` tap.
-4. Tests: new `tst_DescribeItem.qml`; extended `tst_StuckWrites`, `tst_OutboxStore`, `tst_Gateway` (42 new cases).
-5. Ran in Node (not Qt): pure-JS test files 51/51 + 40/40; real `OutboxStore.qml` function bodies via a mirror 57/57. Found and fixed 2 test bugs. `tst_Gateway.qml` NOT executed.
-6. Docs: design doc (D1-D8), test plan + index row, roadmap + plan status, AGENTS, README, SKILLS Skill 85. Pushed.
-7. PR #97 on-device review (Taher): forced a stuck write (temp wrong `functionUrl`), dialog showed; stuck list did NOT survive relaunch. Confirmed intentional in S1 (in-memory `_stuckState`; write itself survives in `OutboxStore`). Found the test-plan setup line is wrong (a rules change cannot fail a Functions write: Admin SDK bypasses rules; emulator down = status 0 = offline, not stuck). Working setups: member `status` inactive -> 403 `no-tenant-context`, or temp wrong `functionUrl` -> 404.
-8. **Decision P5 (Taher):** S2 persists the stuck flag for ALL stuck writes, amending P1's persistence scope (park stays terminal-only). Docs only, on stacked branch `docs/2026-09-29-s2-persist-stuck-decision` (base = PR #97's branch): plan (P5 row, alternatives, open S2 questions a-d), S1 design "Next", roadmap. No code.
-9. Taher answered the P5 questions: (a) persist failure count too, (b) make stuck items due once at launch, (c) Claude's choice, (d) show header line at launch. Recorded in the plan (S2 split into S2a persistence / S2b park, overrulable). PR #98 merged into #97's branch; #97 CI all green, `mergeable_state` clean, not yet merged.
-10. **S2a code:** `StuckWrites.metaOf/hydrate`; `OutboxStore.setStuckMeta/wakeStuck` (+ item shape doc); `Gateway.resumeStuck` (once per launch, `_stuckResumed`, re-armed by `clear()`), `_noteFailure` calls `resumeStuck()` first then mirrors to the item; `Main.qml` calls `Gateway.resumeStuck()` before the first `drainNow()` in `onTenantContextReady`. (c) decided: `terminal` is persisted. No toast at launch. `attempts` not reset by the wake.
-11. **S2a tests:** 16 `tst_StuckWrites`, 18 `tst_OutboxStore`, 16 `tst_Gateway` (incl. 3 monkeys). Node-ran the pure-JS logic incl. relaunch monkey: 1217 assertions OK. `tst_OutboxStore` / `tst_Gateway` NOT run (need Qt).
-12. Lint: no real new findings (the extra JS-2 / ORD-1 hits are linter false positives on `!==` and nested `function rnd()`; the extra BND-2 is the existing `items = arr` idiom). `Main.qml` shows a paren imbalance in the checker, present at `HEAD` too (checker quirk); my edit adds one balanced pair.
-13. Docs: test plan `2026-09-29-stuck-state-persist-s2a-test-plan.md` + index row, plan (a)-(d) resolved, roadmap, SKILLS Skill 88 (was 86 before rebase), AGENTS, README. Pushed, PR opened stacked on #97.
-14. **Rebase onto `main` (2026-09-30, Taher's request):** `main` moved to `13375cf` (PR #99, photo follow-ups). Rebased PR #97 (linearised; merge commits of #100/#103 replaced by their underlying commits). Conflicts: `SKILLS.md` (main already had Skills 85 + 86 from PR #99 -> kept both, renumbered this branch's retry-now skill 85 -> **87** and S2a's stuck-flag skill 86 -> **88**; README pointer updated to 88), `CHECKPOINT.md` (kept this branch's version, per Taher). `AGENTS.md` / `README.md` auto-merged. No `.qml`/`.js` conflicts. Nothing executed (no build, no Qt). Pushed with `--force-with-lease`.
+## Code facts traced (2026-09-30, nothing run)
+- `StuckWrites.noteFailure` returns true only when the count **equals** THRESHOLD (5). After that it keeps counting; `terminal` is refreshed on every counted failure.
+- `terminal` is set ONLY by the body string `write-rejected` (HTTP 500). A 403 `no-tenant-context` (suspended member) or 404 never sets it, so those never park (P1).
+- `OutboxStore.dueItems()` and `nextDueInMs()` know nothing about a parked flag; a parked item would keep the drain timer spinning and keep re-sending.
+- `OutboxStore.wakeStuck()` (S2a, at launch) makes every `stuck` item due; it must NOT wake a parked item.
+- `dueItems()` uses a per-pass `claimed` key map; `_isItemBlocked` only looks at in-flight keys. A parked item that is merely skipped would let a later same-key sibling (queued while the first was in flight) send ahead of it.
+- `retryNow()` resets `attempts` and `nextAttemptAt` only; it keeps `stuck` (S1 deviation D1).
+- `enqueue()` coalesces into any not-in-flight item for the key, so a parked item absorbs later edits (P3, no new code).
 
-15. **PR #97 on-device finding (Taher, 2026-09-30):** suspended member, restock a product -> waiting list showed, survived relaunch. Member set active, Retry now -> batch created, **product stock NOT increased**. Root cause by code reading (NOT reproduced, NOT verified on device, pre-existing, not caused by S1/S2a): `InventoryStore.restock` fires TWO independent writes in parallel, `StockBatchStore.addBatch` (`recordMutation`, `_send`) and `Gateway.recordDelta` (`_sendDelta`). Server answers a suspended member with 403 `{ok:false,error:\"no-tenant-context\"}` on both. `_send` treats any non-2xx non-conflict as retryable -> batch stays queued and stuck. `_classifyDeltaResponse` treats 4xx + `ok:false` as a definitive rejection -> delta is `markSent` (dropped), callback gets `{ok:false}`, restock shows \"Could not restock\" and never records ActivityLog/purchase. Retry now later lands only the batch: ledger has qty, `product.stock` does not. Fix NOT started; awaiting Taher's decision (options in chat). Still to confirm on device: Firestore `stock` unchanged, and a \"Could not restock\" toast appeared at restock time.
+## Decisions (Taher, 2026-09-30)
+- Q-S2b-1 = **A** state rule: parked whenever stuck AND latest answer `write-rejected`; a rejected Retry re-parks after 1 attempt.
+- Q-S2b-2 = **A**: a parked item holds its keys; later same-record writes wait behind it.
+- Defaults I chose (overrulable in the PR): parked is DERIVED (`stuck && terminal`), no `parked`/`parkedAt` field; Retry clears `terminal`; reuse `stuckTerminalCount` as the parked count; copy updated (toast, caption, row, button). See design doc `docs/superpowers/specs/2026-09-30-s2b-park-terminal-writes-design.md` (D1-D7).
 
-16. **Taher's answers + decision (2026-09-30):** toast \"Could not restock\" was seen, Firestore `stock` unchanged -> step 15 root cause confirmed by device evidence. **Decision: restock's batch + stock delta must become ONE atomic operation (`recordOperation`, new opType). Document it and leave it: NO code in PR #97.** Documented on separate branch `docs/2026-09-30-restock-atomic-operation` (off `main`, KNOWN-ISSUES.md). S1 test plan got a caution: force the stuck write with a product-name edit, not Restock.
+## Step log (continued)
+3. Asked Q-S2b-1/2 via buttons; Taher answered A/A. Wrote design doc (D1-D7).
+4. Code: `StuckWrites.isParkedItem/isParked/clearTerminal`; `OutboxStore` (`dueItems` claims parked keys, `nextDueInMs` ignores parked + what waits behind, `wakeStuck` skips parked, `retryNow` deletes `terminal`); `Gateway` (`_noteFailure` toast wording, `retryStuck` clears terminal); copy in `GlassHeader`, `StuckWritesSheet`.
+5. Tests: 17 `tst_StuckWrites`, 25 `tst_OutboxStore`, 19 `tst_Gateway` new; 2 OutboxStore tests + 1 Gateway test updated for the new semantics (rejected stuck writes are no longer due). Node-ran `StuckWrites.js` logic: 37450 assertions OK. `tst_OutboxStore` / `tst_Gateway` NOT run (need Qt). Brace balance per edited file checked (Gateway test file has a pre-existing +9 from braces in strings).
+6. Docs: design doc, test plan + index row, plan status, roadmap, SKILLS Skill 89, AGENTS, README. Commit identity `Taher <dextran52@gmail.com>`.
 
-17. **Final-sweep review (2026-09-30, Taher's request):** requesting-code-review + qt-qml-review + ponytail-review run on S1+S2a (single manual pass, no subagents in chat). No Critical/Important. Fixed 2 nits (AGENTS Skill ref 86 -> 88, `Main.qml` comment order). 3 investigation targets + 2 ponytail notes left for device check / later. Details: `docs/superpowers/specs/2026-09-30-pr97-review-CHECKPOINT.md`. Review PR stacked on #97; merge it, then merge #97 as a merge commit.
-
-## Deviation from the plan (for Taher to overrule in the PR)
-
-Retry now keeps the stuck flag (design D1) instead of dropping it from `StuckWrites` state. Reason: silent 3-minute window after a rejected retry. S2's Retry (parked items) uses the plan's original wording.
+## Honest flags for Taher
+- S2b alone gives a rejected write a Retry button that will be rejected again; the only real exit is S3 Discard. Merge S2b into the S3 branch and ship to `main` together (same pattern as #100 into #97).
+- Everything else on a parked record queues behind it until Retry/Discard.
+- No verified recipe yet to force a real `write-rejected` on device (403/404 setups are NOT rejections). The test plan says so; ask for a recipe before the on-device pass.
+- Likely CI trouble spots: `tst_OutboxStore` operation-member test (`enqueueOperation` shape), `tst_Gateway` monkey (real singleton graph).
 
 ## NEXT SESSION — start here
-
-1. Merge order: #97 first (CI green, clean), then the S2a PR (retarget to `main`; CI on S2a is the first real run of the 50 new cases). Likely trouble spots on S2a CI: `tst_Gateway.qml` new relaunch cases (real singleton graph, `_relaunch()` helper resets `_stuckResumed`), `tst_OutboxStore` `setStuckMeta` JSON-compare no-op test, monkey tests.
-2. Taher on-device: run section 3 of `docs/superpowers/test-plans/2026-09-29-stuck-state-persist-s2a-test-plan.md` (setups: member `status` inactive -> 403, or temp wrong `functionUrl` -> 404).
-3. Then **S2b only** (park terminal writes: `parked`/`parkedAt`, no auto-retry, `dueItems` skips parked; header/dialog show parked; Discard is S3). New branch off `main` after S2a merges. Opens with the brainstorming gate. Do not combine slices.
-4. Done 2026-09-30: S1 test plan section 3 setup corrected (suspended member -> 403, or wrong `functionUrl` -> 404; new tenant each test). Docs PR stacked on #100.
-5. No migration for S1-queued stuck writes (Taher, 2026-09-30): S1 never ships alone and every PR is tested on a new tenant, so no stuck writes exist at the start of a test.
-6. Merge plan (Taher's call, 2026-09-30): merge the S2a PR (#100) into #97's branch and continue from there, one merge to `main`. Keep it a merge commit (not squash) so S1 and S2a stay separately revertable.
+1. Check CI on the S2b PR; fix failures from the real `results.xml`. 2. Taher on-device pass (test plan section 3). 3. Then **S3 only** (Discard + resync), new branch off this one or off `main` after merge; opens with the brainstorming gate.

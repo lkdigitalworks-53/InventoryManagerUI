@@ -6,7 +6,7 @@ import "../helper"
 import "../model"
 
 // Lists writes that keep failing server-side (Gateway.stuckRows) and lets the
-// user retry one now. Opened by tapping the GlassHeader caption (app.openStuckWrites).
+// user retry one now. Rejected (parked) writes are paused until Retry (S2b). Opened by tapping the GlassHeader caption (app.openStuckWrites).
 // No Discard here yet: see docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-plan.md (S3).
 BottomSheet {
     id: root
@@ -36,7 +36,7 @@ BottomSheet {
             font.pixelSize: sp(Constants.fsCaption)
             text: root._rows.length === 0
                 ? qsTr("Nothing is stuck right now.")
-                : qsTr("These changes are saved on this device and keep retrying. Retry sends one right away.")
+                : qsTr("These changes are saved on this device. Rejected ones wait until you tap Retry; the rest keep retrying.")
         }
 
         Repeater {
@@ -82,7 +82,7 @@ BottomSheet {
                         Text {
                             Layout.fillWidth: true
                             text: row.modelData.inFlight ? qsTr("Sending…")
-                                : row.modelData.rejected ? qsTr("Rejected by the server. Still retrying.")
+                                : row.modelData.rejected ? qsTr("Rejected by the server. Paused until you tap Retry.")
                                 : qsTr("Not syncing. Still retrying.")
                             color: row.modelData.inFlight ? Constants.textSecondary : Constants.danger
                             font.pixelSize: sp(Constants.fsCaption)
@@ -91,7 +91,7 @@ BottomSheet {
                     }
 
                     GhostButton {
-                        text: qsTr("Retry now")
+                        text: row.modelData.rejected ? qsTr("Retry") : qsTr("Retry now")
                         enabled: !row.modelData.inFlight
                         onClicked: {
                             if (Gateway.retryStuck(row.modelData.requestId))
