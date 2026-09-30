@@ -540,4 +540,161 @@ TestCase {
             }
         }
     }
+
+    // ── metaOf / hydrate (P5: stuck state survives a relaunch) ───────────────
+
+    function test_metaOf_an_unknown_write_is_all_zero() {
+        var m = SW.metaOf(SW.newState(), "nope")
+        compare(m.failures, 0)
+        compare(m.stuck, false)
+        compare(m.terminal, false)
+    }
+
+    function test_metaOf_reports_a_counting_write_before_it_is_stuck() {
+        var s = SW.newState()
+        _fail(s, "a", 500, 3)
+        var m = SW.metaOf(s, "a")
+        compare(m.failures, 3)
+        compare(m.stuck, false)
+    }
+
+    function test_metaOf_reports_a_stuck_terminal_write() {
+        var s = SW.newState()
+        for (var i = 0; i < 5; ++i) SW.noteFailure(s, "a", 500, true, "write-rejected")
+        var m = SW.metaOf(s, "a")
+        compare(m.failures, 5)
+        compare(m.stuck, true)
+        compare(m.terminal, true)
+    }
+
+    function test_hydrate_of_non_arrays_and_empty_input_is_an_empty_state() {
+        var inputs = [undefined, null, 0, "x", {}, []]
+        for (var i = 0; i < inputs.length; ++i) {
+            var s = SW.hydrate(inputs[i])
+            compare(SW.stuckCount(s), 0, "input " + i)
+            compare(Object.keys(s.failures).length, 0, "input " + i)
+        }
+    }
+
+    function test_hydrate_restores_a_stuck_write_and_its_failure_count() {
+        var s = SW.hydrate([{ requestId: "a", failures: 7, stuck: true }])
+        compare(SW.isStuck(s, "a"), true)
+        compare(s.failures["a"], 7)
+        compare(SW.stuckCount(s), 1)
+    }
+
+    function test_hydrate_restores_a_counting_write_that_is_not_yet_stuck() {
+        var s = SW.hydrate([{ requestId: "a", failures: 2 }])
+        compare(SW.isStuck(s, "a"), false)
+        compare(s.failures["a"], 2)
+        // and it tips on exactly the failure that would have tipped it before the relaunch
+        compare(SW.noteFailure(s, "a", 500), false)
+        compare(SW.noteFailure(s, "a", 500), false)
+        compare(SW.noteFailure(s, "a", 500), true)
+    }
+
+    function test_hydrate_restores_the_terminal_label() {
+        var s = SW.hydrate([{ requestId: "a", failures: 5, stuck: true, terminal: true },
+                            { requestId: "b", failures: 5, stuck: true }])
+        compare(SW.terminalCount(s), 1)
+        compare(SW.rows(s, [{ requestId: "a" }, { requestId: "b" }])[0].terminal, true)
+        compare(SW.rows(s, [{ requestId: "a" }, { requestId: "b" }])[1].terminal, false)
+    }
+
+    function test_hydrate_derives_stuck_when_failures_reached_the_threshold() {
+        var s = SW.hydrate([{ requestId: "a", failures: SW.THRESHOLD }])
+        compare(SW.isStuck(s, "a"), true)
+    }
+
+    function test_hydrate_repairs_stuck_with_a_too_low_count_so_it_cannot_toast_twice() {
+        var s = SW.hydrate([{ requestId: "a", failures: 1, stuck: true }])
+        compare(s.failures["a"], SW.THRESHOLD)
+        compare(SW.noteFailure(s, "a", 500), false, "already stuck: a later failure must not tip again")
+        compare(SW.noteFailure(s, "a", 500), false)
+    }
+
+    function test_hydrate_repairs_stuck_without_any_count() {
+        var s = SW.hydrate([{ requestId: "a", stuck: true }])
+        compare(s.failures["a"], SW.THRESHOLD)
+        compare(SW.stuckCount(s), 1)
+    }
+
+    function test_hydrate_after_more_failures_than_the_threshold_does_not_retip() {
+        var s = SW.hydrate([{ requestId: "a", failures: 9, stuck: true }])
+        compare(SW.noteFailure(s, "a", 500), false)
+        compare(s.failures["a"], 10)
+    }
+
+    function test_hydrate_ignores_malformed_items_and_fields() {
+        var s = SW.hydrate([null, undefined, 5, "x", {}, { requestId: "" }, { failures: 9, stuck: true },
+                            { requestId: "a", failures: "5", stuck: "yes", terminal: 1 },
+                            { requestId: "b", failures: -3 },
+                            { requestId: "c", failures: NaN },
+                            { requestId: "d", failures: 2.9 }])
+        compare(SW.stuckCount(s), 0)
+        compare(Object.keys(s.terminal).length, 0)
+        compare(s.failures["d"], 2, "a fractional count is floored")
+        compare(s.failures["b"], undefined)
+        compare(s.failures["c"], undefined)
+    }
+
+    function test_hydrate_returns_a_state_the_rest_of_the_module_accepts() {
+        var s = SW.hydrate([{ requestId: "a", failures: 5, stuck: true, terminal: true }])
+        compare(SW.prune(s, { "a": true }), 1)
+        compare(SW.prune(s, {}), 0)
+        compare(Object.keys(s.failures).length, 0)
+        compare(Object.keys(s.terminal).length, 0)
+    }
+
+    function test_hydrate_does_not_mutate_its_input() {
+        var items = [{ requestId: "a", failures: 1, stuck: true }]
+        var snapshot = JSON.stringify(items)
+        SW.hydrate(items)
+        compare(JSON.stringify(items), snapshot)
+    }
+
+    function test_metaOf_then_hydrate_round_trips_every_write() {
+        var s = SW.newState()
+        _fail(s, "counting", 500, 2)
+        for (var i = 0; i < 6; ++i) SW.noteFailure(s, "stuck", 503, true, "write-unavailable")
+        for (var j = 0; j < 5; ++j) SW.noteFailure(s, "poison", 500, true, "write-rejected")
+        var items = ["counting", "stuck", "poison"].map(function(id) {
+            var m = SW.metaOf(s, id)
+            return { requestId: id, failures: m.failures, stuck: m.stuck, terminal: m.terminal }
+        })
+        var back = SW.hydrate(JSON.parse(JSON.stringify(items)))
+        compare(JSON.stringify(back.failures), JSON.stringify(s.failures))
+        compare(JSON.stringify(back.stuck), JSON.stringify(s.stuck))
+        compare(JSON.stringify(back.terminal), JSON.stringify(s.terminal))
+    }
+
+    // Monkey: random failures on random writes, "relaunch" (persist -> hydrate) at
+    // random points. The relaunched state must behave exactly like the one that
+    // never relaunched: same stuck set, same terminal set, same tip decisions.
+    function test_monkey_a_relaunch_never_changes_what_the_state_would_have_done() {
+        var rnd = _rng(20260929)
+        var statuses = [500, 503, 404, 401, 409, 0, SW.TIMEOUT]
+        var codes = ["", "write-rejected", "write-unavailable"]
+        var ids = ["a", "b", "c", "d"]
+        var live = SW.newState()
+        var relaunched = SW.newState()
+        for (var step = 0; step < 400; ++step) {
+            var id = ids[Math.floor(rnd() * ids.length)]
+            var st = statuses[Math.floor(rnd() * statuses.length)]
+            var online = rnd() < 0.7
+            var code = codes[Math.floor(rnd() * codes.length)]
+            var t1 = SW.noteFailure(live, id, st, online, code)
+            var t2 = SW.noteFailure(relaunched, id, st, online, code)
+            compare(t1, t2, "step " + step)
+            if (rnd() < 0.15) {
+                var items = ids.map(function(x) {
+                    var m = SW.metaOf(relaunched, x)
+                    return { requestId: x, failures: m.failures, stuck: m.stuck, terminal: m.terminal }
+                })
+                relaunched = SW.hydrate(JSON.parse(JSON.stringify(items)))
+            }
+            compare(SW.stuckCount(relaunched), SW.stuckCount(live), "step " + step)
+            compare(SW.terminalCount(relaunched), SW.terminalCount(live), "step " + step)
+        }
+    }
 }

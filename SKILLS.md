@@ -3905,3 +3905,20 @@ alone; only leaving the outbox clears them (`_pruneStuck`). `retryNow` refuses a
 warns about is gone. Also: a test that feeds `noteFailure` a raw response body instead of the parsed error code passes
 the wrong type silently (found by running the pure-JS test bodies in Node; `errorCodeOf` does the parsing in `Gateway`).
 
+## Skill 86: A "stuck" flag that lives only in memory is forgotten on relaunch, and the persisted backoff makes the alarm stay dark far longer than the in-session ~3 minutes
+
+**Found on device** reviewing PR #97 (S1): after force-closing the app the dialog was empty. `StuckWrites` state was in-memory
+by design, but `OutboxStore` persists `attempts`, so a write that had already failed 5 times resumes at the **10-minute** backoff
+step, and the 5 new failures the counter then needs take roughly 40+ minutes (traced from `_backoffMs`, not run). A user who
+reopens the app every few minutes never sees the alarm for a permanently broken write.
+
+**Fix (P5, S2a):** mirror the evidence onto the queued item (`failures`, `stuck`, `terminal` via `OutboxStore.setStuckMeta`),
+rebuild it at launch (`StuckWrites.hydrate`, `Gateway.resumeStuck`, before the first drain), and make stuck items due **once**
+(`OutboxStore.wakeStuck`, attempts kept). Because the state rides on the outbox item it is pruned for free when the item leaves
+the outbox.
+
+**Generalize:** (1) if the retry *schedule* survives a restart, the alarm's *evidence* must survive with it, or the two disagree.
+(2) Repair impossible persisted combinations on load (`stuck` with a low count, count at threshold without `stuck`), or a bad
+save can hide the alarm or toast twice. (3) Load persisted state before anything can write to it (`_noteFailure` calls
+`resumeStuck` first), or an early failure overwrites what was about to be restored. (4) A relaunch is not a new event: no toast.
+

@@ -686,4 +686,204 @@ TestCase {
             compare(OutboxStore.pendingCount, OutboxStore.items.length, "step " + step)
         }
     }
+
+    // ── setStuckMeta / wakeStuck (P5: stuck state survives a relaunch) ───────
+
+    function _stuckMeta(failures, stuck, terminal) {
+        return { failures: failures, stuck: stuck, terminal: terminal }
+    }
+
+    function test_setStuckMeta_stores_the_three_fields_on_the_item() {
+        _failedItem("r1", "o1", 1)
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(6, true, true)), true)
+        compare(_find("r1").failures, 6)
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").terminal, true)
+    }
+
+    function test_setStuckMeta_survives_a_relaunch() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.items = []
+        OutboxStore._load() // re-read from Settings, as if the app had just started
+        compare(_find("r1").failures, 5)
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").terminal, true)
+        compare(_find("r1").attempts, 5, "attempts still persists next to it")
+    }
+
+    function test_setStuckMeta_omits_falsy_fields_so_an_untouched_item_is_unchanged() {
+        _failedItem("r1", "o1", 1)
+        var before = JSON.stringify(_find("r1"))
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(0, false, false)), true)
+        compare(JSON.stringify(_find("r1")), before)
+        compare(_find("r1").hasOwnProperty("failures"), false)
+        compare(_find("r1").hasOwnProperty("stuck"), false)
+        compare(_find("r1").hasOwnProperty("terminal"), false)
+    }
+
+    function test_setStuckMeta_removes_fields_that_are_no_longer_true() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.setStuckMeta("r1", _stuckMeta(6, true, false))
+        compare(_find("r1").terminal, undefined, "a later non-rejected answer clears the label")
+        compare(_find("r1").failures, 6)
+    }
+
+    function test_setStuckMeta_with_an_unchanged_value_does_not_save_again() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(3, false, false))
+        var rev = OutboxStore.revision
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(3, false, false)), true)
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_setStuckMeta_unknown_id_returns_false_and_changes_nothing() {
+        _failedItem("r1", "o1", 1)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        var rev = OutboxStore.revision
+        compare(OutboxStore.setStuckMeta("nope", _stuckMeta(5, true, true)), false)
+        compare(OutboxStore.setStuckMeta("", _stuckMeta(5, true, true)), false)
+        compare(OutboxStore.setStuckMeta(undefined, _stuckMeta(5, true, true)), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_setStuckMeta_tolerates_a_missing_or_malformed_meta() {
+        _failedItem("r1", "o1", 1)
+        var before = JSON.stringify(_find("r1"))
+        compare(OutboxStore.setStuckMeta("r1", undefined), true)
+        compare(OutboxStore.setStuckMeta("r1", null), true)
+        compare(OutboxStore.setStuckMeta("r1", { failures: "9", stuck: "yes", terminal: 1 }), true)
+        compare(OutboxStore.setStuckMeta("r1", { failures: -2 }), true)
+        compare(JSON.stringify(_find("r1")), before)
+        OutboxStore.setStuckMeta("r1", { failures: 2.9 })
+        compare(_find("r1").failures, 2)
+    }
+
+    function test_setStuckMeta_touches_only_the_named_item() {
+        _failedItem("r1", "o1", 1)
+        _failedItem("r2", "o2", 1)
+        var other = JSON.stringify(_find("r2"))
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        compare(JSON.stringify(_find("r2")), other)
+        compare(OutboxStore.items.length, 2)
+    }
+
+    function test_stuck_fields_survive_markFailed_retryNow_and_a_coalesced_edit() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.markFailed("r1")
+        compare(_find("r1").stuck, true)
+        OutboxStore.retryNow("r1")
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").failures, 5)
+        OutboxStore.enqueue({ requestId: "r9", entity: "order", entityId: "o1", action: "update", after: { v: 2 } })
+        compare(OutboxStore.items.length, 1, "coalesced into the stuck item")
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").terminal, true)
+        compare(_find("r1").after.v, 2)
+    }
+
+    function test_markSent_removes_the_stuck_state_with_the_item() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.markSent("r1")
+        compare(OutboxStore.items.length, 0)
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true)), false)
+    }
+
+    function test_wakeStuck_makes_a_backed_off_stuck_item_due_and_keeps_attempts() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        verify(_find("r1").nextAttemptAt > Date.now(), "precondition: backed off")
+        var before = Date.now()
+        compare(OutboxStore.wakeStuck(), 1)
+        verify(_find("r1").nextAttemptAt >= before && _find("r1").nextAttemptAt <= Date.now())
+        compare(_find("r1").attempts, 5, "attempts is NOT reset: a failed re-check keeps the long backoff")
+        compare(OutboxStore.dueItems().length, 1)
+    }
+
+    function test_after_wakeStuck_a_failed_recheck_waits_the_long_step_again() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.wakeStuck()
+        var t0 = Date.now()
+        OutboxStore.markFailed("r1")
+        var delay = _find("r1").nextAttemptAt - t0
+        verify(delay >= 480000, "expected the 10 min step (within jitter), got " + delay)
+    }
+
+    function test_wakeStuck_leaves_items_that_are_not_stuck_alone() {
+        _failedItem("r1", "o1", 3)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(3, false, false))
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_wakeStuck_skips_an_item_that_is_in_flight() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.markInFlight(_find("r1"))
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_wakeStuck_does_not_save_when_nothing_moves() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.wakeStuck()
+        var rev = OutboxStore.revision
+        compare(OutboxStore.wakeStuck(), 0, "second call: already due")
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_wakeStuck_on_an_empty_queue_is_zero() {
+        compare(OutboxStore.wakeStuck(), 0)
+    }
+
+    function test_wakeStuck_moves_only_the_stuck_ones_among_several() {
+        _failedItem("r1", "o1", 5)
+        _failedItem("r2", "o2", 5)
+        _failedItem("r3", "o3", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.setStuckMeta("r3", _stuckMeta(6, true, true))
+        compare(OutboxStore.wakeStuck(), 2)
+        verify(_find("r2").nextAttemptAt > Date.now(), "r2 is not stuck: still backed off")
+        compare(OutboxStore.dueItems().length, 2)
+    }
+
+    // Monkey: random meta writes, marks and relaunches must never lose or duplicate
+    // an item, and must always leave stuck === true only on items that say so.
+    function test_monkey_stuck_meta_never_corrupts_the_queue() {
+        var s = 424242
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var ids = ["m1", "m2", "m3"]
+        for (var i = 0; i < ids.length; ++i) _failedItem(ids[i], "o" + i, 2)
+        var expected = { m1: false, m2: false, m3: false }
+        for (var step = 0; step < 300; ++step) {
+            var id = ids[Math.floor(rnd() * ids.length)]
+            var roll = rnd()
+            if (roll < 0.4) {
+                var st = rnd() < 0.5
+                OutboxStore.setStuckMeta(id, _stuckMeta(st ? 5 : 2, st, st && rnd() < 0.5))
+                expected[id] = st
+            } else if (roll < 0.6) {
+                OutboxStore.markFailed(id)
+            } else if (roll < 0.75) {
+                OutboxStore.wakeStuck()
+            } else if (roll < 0.9) {
+                OutboxStore.items = []
+                OutboxStore._load()
+            } else {
+                OutboxStore.retryNow(id)
+            }
+            compare(OutboxStore.items.length, 3, "step " + step)
+            compare(OutboxStore.pendingCount, 3, "step " + step)
+            for (var k = 0; k < ids.length; ++k)
+                compare(_find(ids[k]).stuck === true, expected[ids[k]], "step " + step + " " + ids[k])
+        }
+    }
 }

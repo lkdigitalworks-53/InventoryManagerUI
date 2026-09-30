@@ -66,3 +66,4 @@ Same convention as every file above: `YYYY-MM-DD-<branch-or-feature>-test-plan.m
 `YYYY-MM-DD-on-device-test-plan-<feature>.md` for a manual-only checklist), written into this
 folder directly (not `specs/` or `plans/`), and a row added to the index table above — newest
 first, with a one-line note in "Chains worth knowing" if it supersedes or extends an existing one.
+| 2026-09-29 | [`2026-09-29-stuck-state-persist-s2a-test-plan.md`](2026-09-29-stuck-state-persist-s2a-test-plan.md) | `feat/2026-09-29-s2a-persist-stuck-state` | Automated + on-device, standard format (Skill 49). `DELETE-FEATURE-ROADMAP` item 1 part B, slice S2a (decision P5): stuck state persists on the outbox item and is restored at launch (no toast, stuck items re-checked once). 50 new QML cases; `StuckWrites.js` logic run in Node (1217 assertions); `tst_OutboxStore` / `tst_Gateway` CI / on-device only. Server untouched. |
