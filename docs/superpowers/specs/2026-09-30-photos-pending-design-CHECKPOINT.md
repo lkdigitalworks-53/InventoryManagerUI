@@ -12,7 +12,10 @@
 2. Cloned repo, set identity. Read root `CHECKPOINT.md`, photo design spec, photo test plan (final-sweep table F1-F5), PR #84 follow-ups checkpoint, PR #99 sweep 1 + 2 checkpoints, `DELETE-FEATURE-ROADMAP.md` item 4.
 3. **Verified against code on `main`** (not just docs): F3, F5, N1, N2 (role IS on `ctx`), P2 (see evidence below). Found one item no doc lists: no server-side cascade on product delete (see C1).
 4. GitHub REST API returned an abuse-detection rate limit on an unauthenticated call: open PR list NOT fetched. Open-PR state unknown to this session; `git branch -r` shows no photo branch besides the merged `feature/2026-09-21-product-photos-firebase-storage`.
-5. This file written, pushed.
+5. This file written, pushed (`6d1bdd5`).
+6. Q1 decided (a). Logged.
+7. F5 deeper read: deep-equal of `before` vs current doc exists at THREE sites, not one: `gatewayLogic.js:158` (single), `batchMutationLogic.js:114` (batch), `operationLogic.js:144` (ops, non-delta branch). All three then write `after` with `{merge:false}` (full replace). TRAP: relaxing the compare alone lets a stale client `after.photoIds` overwrite a newly confirmed photo = silent data loss. Any F5 fix MUST also preserve server `photoIds` on write. Client writes `photoIds` only as `[]` on create (`InventoryStore.qml` ~L226) and locally via `applyPhotoIds` (no gateway), so server-owned `photoIds` breaks no current client path. Delta branch (`gatewayLogic:221`) already merges over current: safe.
+8. Side effect noted: with F5 relaxed, a product DELETE with stale `before` succeeds while server has photos the client never saw, so client-side cleanup misses them. Strengthens C1.
 
 ## Pending inventory (evidence = read in code this session)
 
@@ -35,7 +38,8 @@
 
 | # | Question | Options | Status |
 |---|---|---|---|
-| Q1 | F3: how to stop orphans on 404/409 | (a) read product+count first; (b) write then delete on failure; (c) accept | OPEN |
+| Q1 | F3: how to stop orphans on 404/409 | (a) read product+count first; (b) write then delete on failure; (c) accept | **DECIDED (a)** by Taher 2026-09-30. Extra Firestore read before any Storage write; in-transaction 404/409 checks stay as final authority (race window accepted). Also prerequisite for C1: late upload must not recreate orphans after a cascade sweep. |
+| Q2 | F5: how to stop false 409 from `photoIds` drift | (a) server ignores `photoIds` in compare at all 3 sites AND preserves current `photoIds` on write; (b) client re-bases `before` at drain; (c) accept 409 | OPEN (I advise a) |
 
 ## NEXT (resume here)
 
