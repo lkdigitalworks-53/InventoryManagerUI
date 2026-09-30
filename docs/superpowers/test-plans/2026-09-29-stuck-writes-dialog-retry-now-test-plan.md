@@ -27,21 +27,28 @@
 
 ## 3. On-device checklist (the only coverage for the UI)
 
-Setup: a build where a write can be forced to fail (e.g. deploy a rule/function change that rejects one entity, or use a poisoned edit), online.
+Setup: use a **dev or test** environment and a **new tenant** (nothing stuck at the start). Stay online. Force a stuck write with one of these (corrected 2026-09-30 after on-device testing):
+
+- **A, no code (403 `no-tenant-context`):** Firestore console -> `users/{uid}.tenantId` -> `tenants/{tenantId}/members/{uid}` (tenant creation already made it) -> set `status` to `"suspended"` (the app's own suspended value; any value other than `"active"` gives the same 403). The app does not react to this while open or after a relaunch, so the write queues and fails. Edit a product name and save. Set `status` back to `"active"` to fix the cause.
+- **B, temporary code (404):** local, uncommitted: in `Gateway.qml` point `functionUrl` at `.../recordMutationX`, rebuild, edit a product name. Revert the URL and rebuild to fix the cause (the queued write survives the rebuild). Single-entity writes only (product edits); delta, operation and batch have their own URLs.
+
+**Do not use** a Firestore rules change (Cloud Functions write with the Admin SDK, which bypasses rules) or a stopped emulator (status 0 counts as offline, not stuck). Editing the document in the console only produces the 409 "changed elsewhere" toast, which is deliberately not counted.
+The "Rejected by the server" label (`write-rejected`) cannot be produced from the console: it needs a gRPC code 3, 5, 6, 7 or 9 thrown inside `applyMutation`. Mark that row "unit-tested only" unless a throwaway dev function is deployed.
 
 **Happy path**
 - [ ] Force one write to fail 5 times (~3 min). Toast appears once. Header caption reads "1 change(s) ... Still retrying." and is **underlined**.
 - [ ] Tap the caption: sheet "Changes not syncing" opens, one row: title ("Edited order"), detail (id or name), state line, "Retry now".
-- [ ] Fix the cause, tap "Retry now": toast "Retrying...", row shows "Sending..." then disappears, header line disappears.
-- [ ] Rejected write (server `write-rejected`): row says "Rejected by the server. Still retrying."
+- [ ] Fix the cause (setup A or B above), tap "Retry now": toast "Retrying...", row shows "Sending..." then disappears, header line disappears.
+- [ ] Rejected write (server `write-rejected`): row says "Rejected by the server. Still retrying." (unit-tested only, see setup)
 
 **Negative**
-- [ ] Cause not fixed: tap Retry now; row goes "Sending..." then back to "Not syncing"; header line stays; **no second toast**.
+- [ ] Cause not fixed: tap Retry now (only after ~3 min, once the caption is tappable); row goes "Sending..." then back to "Not syncing"; header line stays; **no second toast**.
 - [ ] Go offline: caption becomes the offline message and is **not** tappable.
 - [ ] Retry now is disabled while a row shows "Sending...".
 - [ ] Nothing stuck: tapping the caption area does nothing (caption hidden).
 
 **Edge**
+- [ ] Force-close and reopen while stuck: the write is kept and keeps retrying, but the stuck line is gone in this slice (S1 by design; S2a, PR #100, fixes it).
 - [ ] Two stuck writes: two rows, queue order; retry one, the other unchanged.
 - [ ] Stock delta / completion / bulk-import stuck: titles "Stock change", "Order completion", "N products changed".
 - [ ] Write leaves the outbox while the sheet is open (fixed elsewhere): row vanishes, empty text shows.
