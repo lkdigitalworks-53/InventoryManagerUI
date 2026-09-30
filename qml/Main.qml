@@ -320,11 +320,11 @@ App {
             // Kick the one-shot FIFO backfill once the upstream stores have
             // had a beat to land their data. The check inside is idempotent.
             migrationKickoffTimer.restart()
-            // Flush any compliance-gateway writes that were queued offline /
-            // before this tenant context was known (no-op in "direct" mode).
             // Restore the "not syncing" state of writes that were stuck before the
             // app closed, and re-check them once (no-op after the first call).
             Gateway.resumeStuck()
+            // Flush any compliance-gateway writes that were queued offline /
+            // before this tenant context was known (no-op in "direct" mode).
             Gateway.drainNow()
             logic.loadData()
             inviteMemberDlg.errorMessage = ""

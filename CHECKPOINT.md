@@ -30,6 +30,8 @@ Branch only, push without asking (PAT only in the push URL, never in `.git/confi
 
 16. **Taher's answers + decision (2026-09-30):** toast \"Could not restock\" was seen, Firestore `stock` unchanged -> step 15 root cause confirmed by device evidence. **Decision: restock's batch + stock delta must become ONE atomic operation (`recordOperation`, new opType). Document it and leave it: NO code in PR #97.** Documented on separate branch `docs/2026-09-30-restock-atomic-operation` (off `main`, KNOWN-ISSUES.md). S1 test plan got a caution: force the stuck write with a product-name edit, not Restock.
 
+17. **Final-sweep review (2026-09-30, Taher's request):** requesting-code-review + qt-qml-review + ponytail-review run on S1+S2a (single manual pass, no subagents in chat). No Critical/Important. Fixed 2 nits (AGENTS Skill ref 86 -> 88, `Main.qml` comment order). 3 investigation targets + 2 ponytail notes left for device check / later. Details: `docs/superpowers/specs/2026-09-30-pr97-review-CHECKPOINT.md`. Review PR stacked on #97; merge it, then merge #97 as a merge commit.
+
 ## Deviation from the plan (for Taher to overrule in the PR)
 
 Retry now keeps the stuck flag (design D1) instead of dropping it from `StuckWrites` state. Reason: silent 3-minute window after a rejected retry. S2's Retry (parked items) uses the plan's original wording.
