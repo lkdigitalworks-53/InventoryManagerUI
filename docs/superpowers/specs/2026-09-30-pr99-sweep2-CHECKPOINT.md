@@ -10,7 +10,7 @@ Rules: branch only; push with PAT held only in the push URL, never in git config
 - [x] 4 qt_qml_lint.py on PR-added lines: 0 real findings (4 JS-2 hits are `!==` false positives; JS-1 `var` is repo-wide style)
 - [x] 5 Added 4 tests to `tst_PhotoQueue.qml` for token-watcher edges (breaker open, failed untouched on hourly refresh, backoff respected, deterministic monkey)
 - [x] 6 Docs: test plan section "PR #99 sweep 2" + device checklist, cascade count 7 -> 8 and F4 count 5 -> 9 in the followups checkpoint; no new SKILL (no new lesson beyond Skill 85/86)
-- [ ] 7 Commit, push, open PR into PR #99 branch, read CI via check-runs API, fix if red
+- [x] 7 Committed f2cd84f, pushed, stacked PR opened into the PR #99 branch (CI result below)
 
 ## Verified NOT bugs (traced, do not re-investigate)
 - Cold-start identity race (`loadSession` sets `idToken` before `tenantId`): `_tokenWatcher` binds after `AuthService` construction has already run `loadSession`, so no change signal fires mid-load. Sign-in paths have an empty queue (`clear()` on sign-out).
