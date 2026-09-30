@@ -882,3 +882,4 @@ Task 10, flagged for a design check-in before it starts (see `CHECKPOINT.md`).
 
 ---
 
+**Update 2026-09-30 (rejected writes are parked, part B slice S2b):** a write the server has rejected (`write-rejected`) and that is already stuck no longer retries on its own: it is paused, the header says "N change(s) rejected by the server. Tap to retry.", and the dialog row has a Retry button. A rejected retry parks it again after one attempt; other stuck writes (outages) keep retrying. Later writes for the same record wait behind a parked one. Discard comes next (S3). See SKILLS Skill 89 and `docs/superpowers/test-plans/2026-09-30-s2b-park-terminal-writes-test-plan.md`.

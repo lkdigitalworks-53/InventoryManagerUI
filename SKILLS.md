@@ -3969,3 +3969,20 @@ the outbox.
 save can hide the alarm or toast twice. (3) Load persisted state before anything can write to it (`_noteFailure` calls
 `resumeStuck` first), or an early failure overwrites what was about to be restored. (4) A relaunch is not a new event: no toast.
 
+## Skill 89: Derive "parked" from the evidence you already persist, and make the parked item hold its keys, or the drain timer spins and siblings overtake it
+
+**Context (S2b):** a stuck write the server *rejected* must stop auto-retrying until the user taps Retry. The tempting design
+is a stored `parked` flag plus `parkedAt`. But `stuck` and `terminal` were already persisted (Skill 88), so `stuck && terminal`
+*is* the answer (`StuckWrites.isParkedItem`): nothing to migrate, nothing that can disagree with its inputs, and Retry is just
+"forget `terminal`" (a new rejection re-parks after one attempt).
+
+**Two traps the skip-it fix misses:** (1) `dueItems` must *claim the parked item's keys* before skipping it, or a later write for
+the same record (queued while the first was in flight) is sent ahead of it and Retry then loses the CAS race. (2) `nextDueInMs`
+must ignore the parked item **and whatever waits behind it**, or a blocked sibling reports "due now" and the drain timer spins at
+its 250 ms floor forever.
+
+**Generalize:** (1) prefer a derived flag over a stored one when its inputs are already persisted. (2) "Skip" in a scheduler is
+three places, not one: what is handed out, when to wake next, and what the launch re-check wakes. (3) A state that stops a retry
+loop needs a release path in the same change, and the release must be able to fail back into the state without new bookkeeping.
+(4) Copy that promised "keeps retrying" is a bug the moment the behaviour changes; grep the strings.
+

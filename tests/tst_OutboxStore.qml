@@ -778,6 +778,8 @@ TestCase {
         OutboxStore.retryNow("r1")
         compare(_find("r1").stuck, true)
         compare(_find("r1").failures, 5)
+        compare(_find("r1").terminal, undefined, "S2b: retryNow releases a parked write")
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true)) // rejected again
         OutboxStore.enqueue({ requestId: "r9", entity: "order", entityId: "o1", action: "update", after: { v: 2 } })
         compare(OutboxStore.items.length, 1, "coalesced into the stuck item")
         compare(_find("r1").stuck, true)
@@ -850,9 +852,10 @@ TestCase {
         _failedItem("r3", "o3", 5)
         OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
         OutboxStore.setStuckMeta("r3", _stuckMeta(6, true, true))
-        compare(OutboxStore.wakeStuck(), 2)
+        compare(OutboxStore.wakeStuck(), 1, "r3 is stuck AND terminal = parked: not woken")
         verify(_find("r2").nextAttemptAt > Date.now(), "r2 is not stuck: still backed off")
-        compare(OutboxStore.dueItems().length, 2)
+        verify(_find("r3").nextAttemptAt > Date.now(), "r3 is parked: still backed off")
+        compare(OutboxStore.dueItems().length, 1)
     }
 
     // Monkey: random meta writes, marks and relaunches must never lose or duplicate
@@ -884,6 +887,228 @@ TestCase {
             compare(OutboxStore.pendingCount, 3, "step " + step)
             for (var k = 0; k < ids.length; ++k)
                 compare(_find(ids[k]).stuck === true, expected[ids[k]], "step " + step + " " + ids[k])
+        }
+    }
+
+    // ── S2b: parked = stuck AND terminal (docs/superpowers/specs/2026-09-30-s2b-park-terminal-writes-design.md) ──
+
+    // A write that is due by the clock (attempts 0) and marked stuck + rejected.
+    function _parked(id, entityId) {
+        OutboxStore.enqueue({ requestId: id, entity: "order", entityId: entityId, action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta(id, _stuckMeta(5, true, true))
+    }
+    function _dueIds() { return OutboxStore.dueItems().map(function(i) { return i.requestId }) }
+
+    function test_a_parked_item_is_never_due_even_when_its_time_has_come() {
+        _parked("p1", "o1")
+        verify(_find("p1").nextAttemptAt <= Date.now(), "precondition: due by the clock")
+        compare(_dueIds().length, 0)
+    }
+
+    function test_a_stuck_item_that_is_not_rejected_is_still_due() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("s1", _stuckMeta(5, true, false))
+        compare(_dueIds().length, 1)
+    }
+
+    function test_a_rejected_item_below_the_stuck_threshold_is_not_parked() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("s1", _stuckMeta(2, false, true))
+        compare(_dueIds().length, 1)
+    }
+
+    function test_an_item_with_enough_failures_and_terminal_but_no_stuck_flag_is_parked() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.items = OutboxStore.items.map(function(i) { return Object.assign({}, i, { failures: 7, terminal: true }) })
+        compare(_dueIds().length, 0, "same repair as StuckWrites.hydrate")
+    }
+
+    function test_old_items_without_any_stuck_fields_are_not_parked() {
+        OutboxStore.enqueue({ requestId: "o", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        compare(_dueIds().length, 1)
+    }
+
+    function test_parked_is_skipped_but_unrelated_items_still_go_out() {
+        _parked("p1", "o1")
+        OutboxStore.enqueue({ requestId: "x1", entity: "order", entityId: "o2", action: "update", after: { v: 1 } })
+        compare(_dueIds().join(","), "x1")
+    }
+
+    function test_a_later_write_for_the_same_record_waits_behind_a_parked_one() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        compare(OutboxStore.items.length, 2, "delta is not coalesced into a plain item")
+        compare(_dueIds().length, 0, "Q-S2b-2 A: it may not pass the parked write")
+    }
+
+    function test_a_later_batch_touching_a_parked_record_waits_but_other_batches_go() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueBatch({ requestId: "b1", entity: "order", items: [{ entityId: "o1", action: "update", before: null, after: {} }] })
+        OutboxStore.enqueueBatch({ requestId: "b2", entity: "order", items: [{ entityId: "o9", action: "update", before: null, after: {} }] })
+        compare(_dueIds().join(","), "b2")
+    }
+
+    function test_a_write_queued_before_the_parked_one_is_not_held_by_it() {
+        OutboxStore.enqueueDelta({ requestId: "d0", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        _parked("p1", "o1")
+        compare(_dueIds().join(","), "d0", "queue order: only what comes AFTER a parked item waits")
+    }
+
+    function test_a_parked_item_holds_the_keys_of_every_entity_in_an_operation() {
+        OutboxStore.enqueueOperation({ requestId: "op1", ops: [
+            { entity: "order", entityId: "o1", action: "update", before: null, after: {} },
+            { entity: "inventory", entityId: "i1", action: "update", before: null, after: {} } ] })
+        OutboxStore.setStuckMeta("op1", _stuckMeta(5, true, true))
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "i1", deltas: { stock: 1 }, floors: {} })
+        compare(_dueIds().length, 0)
+    }
+
+    function test_nextDueInMs_ignores_parked_items() {
+        _parked("p1", "o1")
+        compare(OutboxStore.nextDueInMs(), -1, "only a parked item left: the drain timer must stop")
+    }
+
+    function test_nextDueInMs_ignores_what_waits_behind_a_parked_item() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        compare(OutboxStore.nextDueInMs(), -1, "a blocked sibling must not spin the timer at 0")
+    }
+
+    function test_nextDueInMs_still_sees_the_other_items() {
+        _parked("p1", "o1")
+        _failedItem("x1", "o2", 3)
+        var due = OutboxStore.nextDueInMs()
+        verify(due > 0, "x1 is backed off, p1 is ignored: " + due)
+    }
+
+    function test_wakeStuck_does_not_wake_a_parked_item() {
+        _failedItem("p1", "o1", 5)
+        OutboxStore.setStuckMeta("p1", _stuckMeta(5, true, true))
+        var at = _find("p1").nextAttemptAt
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(_find("p1").nextAttemptAt, at)
+    }
+
+    function test_retryNow_releases_a_parked_item_and_keeps_it_stuck() {
+        _parked("p1", "o1")
+        compare(OutboxStore.retryNow("p1"), true)
+        compare(_find("p1").terminal, undefined)
+        compare(_find("p1").stuck, true)
+        compare(_find("p1").failures, 5)
+        compare(_find("p1").attempts, 0)
+        compare(_dueIds().join(","), "p1")
+    }
+
+    function test_a_released_item_that_is_rejected_again_parks_again() {
+        _parked("p1", "o1")
+        OutboxStore.retryNow("p1")
+        OutboxStore.setStuckMeta("p1", _stuckMeta(6, true, true))
+        compare(_dueIds().length, 0)
+    }
+
+    function test_retryNow_releases_the_siblings_behind_it_once_the_item_goes_out() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        OutboxStore.retryNow("p1")
+        compare(_dueIds().join(","), "p1", "released item first; the sibling is still held by the in-flight/claimed key")
+        OutboxStore.markSent("p1")
+        compare(_dueIds().join(","), "d1")
+    }
+
+    function test_retryNow_on_a_not_rejected_item_changes_no_stuck_field() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("s1", _stuckMeta(5, true, false))
+        OutboxStore.retryNow("s1")
+        compare(_find("s1").stuck, true)
+        compare(_find("s1").terminal, undefined)
+        compare(_find("s1").failures, 5)
+    }
+
+    function test_an_edit_to_a_parked_record_merges_into_it_and_stays_parked() {
+        _parked("p1", "o1")
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o1", action: "update", after: { v: 2 } })
+        compare(OutboxStore.items.length, 1)
+        compare(_find("p1").after.v, 2)
+        compare(_dueIds().length, 0, "P3: stays parked until Retry")
+    }
+
+    function test_a_parked_item_is_still_pending_for_its_entity() {
+        _parked("p1", "o1")
+        compare(OutboxStore.hasPendingForEntity("order", "o1"), true, "photo gating keeps waiting")
+    }
+
+    function test_a_parked_item_stays_parked_across_a_relaunch() {
+        _parked("p1", "o1")
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(OutboxStore.items.length, 1)
+        compare(_find("p1").terminal, true)
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(_dueIds().length, 0)
+    }
+
+    function test_an_unparked_item_is_due_again_after_a_relaunch_wake() {
+        _failedItem("s1", "o1", 5)
+        OutboxStore.setStuckMeta("s1", _stuckMeta(5, true, false))
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(OutboxStore.wakeStuck(), 1)
+        compare(_dueIds().join(","), "s1")
+    }
+
+    function test_clear_removes_parked_items() {
+        _parked("p1", "o1")
+        OutboxStore.clear()
+        compare(OutboxStore.items.length, 0)
+        compare(OutboxStore.nextDueInMs(), -1)
+    }
+
+    function test_a_single_parked_item_among_many_does_not_hide_the_rest() {
+        for (var i = 0; i < 25; ++i)
+            OutboxStore.enqueue({ requestId: "q" + i, entity: "order", entityId: "o" + i, action: "update", after: { v: i } })
+        OutboxStore.setStuckMeta("q7", _stuckMeta(5, true, true))
+        compare(_dueIds().length, 24)
+        compare(_dueIds().indexOf("q7"), -1)
+    }
+
+    // Monkey: whatever the order of meta writes, wakes, retries, edits and relaunches,
+    // a parked item (and anything behind it on its record) is never handed out, nothing
+    // is lost, and the timer only runs when something can actually go.
+    function test_monkey_parked_items_are_never_handed_out() {
+        var s = 31337
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var ids = ["m1", "m2", "m3"]
+        for (var i = 0; i < ids.length; ++i)
+            OutboxStore.enqueue({ requestId: ids[i], entity: "order", entityId: "o" + i, action: "update", after: { v: i } })
+        for (var step = 0; step < 400; ++step) {
+            var id = ids[Math.floor(rnd() * ids.length)]
+            var roll = rnd()
+            if (roll < 0.3) OutboxStore.setStuckMeta(id, _stuckMeta(5, true, rnd() < 0.6))
+            else if (roll < 0.45) OutboxStore.markFailed(id)
+            else if (roll < 0.6) OutboxStore.wakeStuck()
+            else if (roll < 0.75) OutboxStore.retryNow(id)
+            else if (roll < 0.9) { OutboxStore.items = []; OutboxStore._load() }
+            else OutboxStore.enqueue({ requestId: "e" + step, entity: "order", entityId: "o" + Math.floor(rnd() * 3), action: "update", after: { v: step } })
+            var due = OutboxStore.dueItems()
+            var held = {}
+            var expected = []
+            for (var k = 0; k < OutboxStore.items.length; ++k) {
+                var it = OutboxStore.items[k]
+                var key = it.entity + "/" + it.entityId
+                if (it.stuck === true && it.terminal === true) { held[key] = true; continue }
+                if (held[key]) continue
+                if (it.nextAttemptAt <= Date.now()) expected.push(it.requestId)
+            }
+            compare(due.map(function(d) { return d.requestId }).join(","), expected.join(","), "step " + step)
+            compare(OutboxStore.nextDueInMs() < 0, !OutboxStore.items.some(function(x, idx) {
+                var kk = x.entity + "/" + x.entityId
+                if (x.stuck === true && x.terminal === true) return false
+                for (var j = 0; j < idx; ++j) {
+                    var y = OutboxStore.items[j]
+                    if (y.stuck === true && y.terminal === true && y.entity + "/" + y.entityId === kk) return false
+                }
+                return true
+            }), "timer state, step " + step)
         }
     }
 }

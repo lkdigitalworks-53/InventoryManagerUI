@@ -697,4 +697,171 @@ TestCase {
             compare(SW.terminalCount(relaunched), SW.terminalCount(live), "step " + step)
         }
     }
+
+    // ── S2b: parked = stuck AND the latest answer was "rejected" ─────────────
+
+    function _rejected(state, id, n) {
+        for (var i = 0; i < n; ++i) SW.noteFailure(state, id, 500, true, "write-rejected")
+    }
+    function _outage(state, id, n) {
+        for (var i = 0; i < n; ++i) SW.noteFailure(state, id, 500, true, "write-unavailable")
+    }
+
+    function test_isParkedItem_needs_stuck_and_terminal() {
+        compare(SW.isParkedItem({ stuck: true, terminal: true }), true)
+        compare(SW.isParkedItem({ stuck: true }), false)
+        compare(SW.isParkedItem({ terminal: true }), false)
+        compare(SW.isParkedItem({ stuck: true, terminal: false }), false)
+        compare(SW.isParkedItem({}), false)
+    }
+
+    function test_isParkedItem_repairs_a_missing_stuck_flag_like_hydrate() {
+        compare(SW.isParkedItem({ failures: 5, terminal: true }), true)
+        compare(SW.isParkedItem({ failures: 4, terminal: true }), false)
+        compare(SW.isParkedItem({ failures: 99, terminal: true }), true)
+    }
+
+    function test_isParkedItem_tolerates_garbage() {
+        var bad = [null, undefined, 0, "", "x", 7, [], { stuck: "true", terminal: "true" },
+                   { failures: "9", terminal: true }, { failures: NaN, terminal: true },
+                   { stuck: 1, terminal: 1 }]
+        for (var i = 0; i < bad.length; ++i)
+            compare(SW.isParkedItem(bad[i]), false, "case " + i)
+    }
+
+    function test_a_rejected_write_parks_on_the_failure_that_tips_it() {
+        var st = SW.newState()
+        _rejected(st, "a", 4)
+        compare(SW.isParked(st, "a"), false)
+        _rejected(st, "a", 1)
+        compare(SW.isParked(st, "a"), true)
+    }
+
+    function test_an_outage_write_is_stuck_but_never_parked() {
+        var st = SW.newState()
+        _outage(st, "a", 12)
+        compare(SW.isStuck(st, "a"), true)
+        compare(SW.isParked(st, "a"), false)
+    }
+
+    function test_park_rule_A_a_write_rejected_only_after_the_tip_still_parks() {
+        var st = SW.newState()
+        _outage(st, "a", 5)
+        compare(SW.isParked(st, "a"), false)
+        _rejected(st, "a", 1)
+        compare(SW.isParked(st, "a"), true, "Q-S2b-1 A: state rule, not edge rule")
+    }
+
+    function test_a_rejection_before_the_threshold_does_not_park() {
+        var st = SW.newState()
+        _rejected(st, "a", 3)
+        compare(SW.isParked(st, "a"), false)
+        compare(SW.terminalCount(st), 0)
+    }
+
+    function test_an_unknown_id_is_not_parked() {
+        compare(SW.isParked(SW.newState(), "nope"), false)
+    }
+
+    function test_clearTerminal_unparks_but_keeps_the_write_stuck() {
+        var st = SW.newState()
+        _rejected(st, "a", 5)
+        SW.clearTerminal(st, "a")
+        compare(SW.isParked(st, "a"), false)
+        compare(SW.isStuck(st, "a"), true)
+        compare(SW.stuckCount(st), 1)
+        compare(SW.terminalCount(st), 0)
+        compare(SW.metaOf(st, "a").failures, 5)
+    }
+
+    function test_a_released_write_rejected_again_re_parks_after_one_attempt() {
+        var st = SW.newState()
+        _rejected(st, "a", 5)
+        SW.clearTerminal(st, "a")
+        _rejected(st, "a", 1)
+        compare(SW.isParked(st, "a"), true)
+        compare(SW.stuckCount(st), 1, "never counted twice")
+    }
+
+    function test_a_released_write_that_gets_an_outage_answer_keeps_retrying() {
+        var st = SW.newState()
+        _rejected(st, "a", 5)
+        SW.clearTerminal(st, "a")
+        _outage(st, "a", 1)
+        compare(SW.isParked(st, "a"), false)
+        compare(SW.isStuck(st, "a"), true)
+    }
+
+    function test_clearTerminal_is_harmless_on_anything() {
+        var st = SW.newState()
+        SW.clearTerminal(st, "nope")
+        SW.clearTerminal(st, undefined)
+        SW.clearTerminal(st, "")
+        compare(JSON.stringify(st), JSON.stringify(SW.newState()))
+        _outage(st, "a", 5)
+        SW.clearTerminal(st, "a")
+        compare(SW.isStuck(st, "a"), true)
+    }
+
+    function test_parked_matches_terminalCount() {
+        var st = SW.newState()
+        _rejected(st, "a", 5)
+        _rejected(st, "b", 5)
+        _outage(st, "c", 5)
+        _rejected(st, "d", 2)
+        var parked = ["a", "b", "c", "d"].filter(function(i) { return SW.isParked(st, i) }).length
+        compare(parked, SW.terminalCount(st))
+        compare(parked, 2)
+    }
+
+    function test_parked_survives_metaOf_then_hydrate() {
+        var st = SW.newState()
+        _rejected(st, "a", 5)
+        var back = SW.hydrate([Object.assign({ requestId: "a" }, SW.metaOf(st, "a"))])
+        compare(SW.isParked(back, "a"), true)
+    }
+
+    function test_prune_forgets_parked_writes_that_left_the_outbox() {
+        var st = SW.newState()
+        _rejected(st, "a", 5)
+        SW.prune(st, {})
+        compare(SW.isParked(st, "a"), false)
+    }
+
+    // Monkey: the persisted-item rule and the in-memory rule must never disagree.
+    function test_monkey_isParkedItem_agrees_with_hydrate() {
+        var rnd = _rng(2024)
+        var fails = [undefined, 0, 1, 4, 4.9, 5, 6, 40, -3, NaN, "5", null]
+        var flags = [undefined, true, false, "true", 1, null]
+        for (var i = 0; i < 600; ++i) {
+            var it = { requestId: "r" + i }
+            var f = fails[Math.floor(rnd() * fails.length)]
+            var s = flags[Math.floor(rnd() * flags.length)]
+            var t = flags[Math.floor(rnd() * flags.length)]
+            if (f !== undefined) it.failures = f
+            if (s !== undefined) it.stuck = s
+            if (t !== undefined) it.terminal = t
+            compare(SW.isParked(SW.hydrate([it]), it.requestId), SW.isParkedItem(it), JSON.stringify(it))
+        }
+    }
+
+    // Monkey: random answers and releases never leave a parked write that is not stuck
+    // and never let the parked set exceed the stuck set.
+    function test_monkey_parked_is_always_a_subset_of_stuck() {
+        var rnd = _rng(77)
+        var st = SW.newState()
+        var ids = ["a", "b", "c"]
+        var codes = ["write-rejected", "write-unavailable", "write-failed", ""]
+        for (var i = 0; i < 500; ++i) {
+            var id = ids[Math.floor(rnd() * ids.length)]
+            if (rnd() < 0.2) SW.clearTerminal(st, id)
+            else SW.noteFailure(st, id, 500, true, codes[Math.floor(rnd() * codes.length)])
+            var parked = 0
+            for (var k = 0; k < ids.length; ++k) {
+                if (SW.isParked(st, ids[k])) { parked++; verify(SW.isStuck(st, ids[k]), "step " + i) }
+            }
+            compare(parked, SW.terminalCount(st), "step " + i)
+            verify(parked <= SW.stuckCount(st), "step " + i)
+        }
+    }
 }

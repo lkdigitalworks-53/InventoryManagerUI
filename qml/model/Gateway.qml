@@ -133,7 +133,8 @@ QtObject {
     // This only REPORTS: retry, backoff and dropping are decided elsewhere.
     property int stuckCount: 0
     // How many of those the server answered "write-rejected" (poison write,
-    // not an outage). Label only: the app still retries them all.
+    // not an outage). S2b: these are PARKED, not retried until the user taps
+    // Retry (StuckWrites.isParkedItem); the rest of the stuck writes keep retrying.
     property int stuckTerminalCount: 0
     property var _stuckState: StuckWrites.newState()
     // Has this launch already rebuilt _stuckState from the outbox? See resumeStuck().
@@ -500,7 +501,9 @@ QtObject {
         var wasQuiet = stuckCount === 0
         stuckCount = StuckWrites.stuckCount(_stuckState)
         if (wasQuiet)
-            Toast.show(qsTr("Some changes aren't syncing. The app keeps retrying."))
+            Toast.show(StuckWrites.isParked(_stuckState, item.requestId)
+                ? qsTr("A change was rejected by the server and is paused. Tap the line at the top to retry.")
+                : qsTr("Some changes aren't syncing. The app keeps retrying."))
     }
 
     // Launch step (Main.qml, before the first drain), once per launch: rebuild the
@@ -520,7 +523,7 @@ QtObject {
 
     // Rows for the stuck-writes dialog: every stuck write still queued, in queue
     // order, as { requestId, title, detail, rejected, inFlight }. `rejected` = the
-    // server's latest answer was write-rejected. Reads live state on each call;
+    // server's latest answer was write-rejected = the write is PARKED (S2b). Reads live state on each call;
     // views re-evaluate it off stuckCount, OutboxStore.revision and
     // OutboxStore.inFlightCount.
     function stuckRows() {
@@ -544,9 +547,13 @@ QtObject {
     // already in flight. It does NOT clear the stuck flag: if the server still
     // fails it the header line must stay up (only leaving the outbox clears it,
     // see _pruneStuck), and the flag is already set so nothing re-toasts.
+    // S2b: it DOES clear "rejected", which un-parks the write for one attempt; a
+    // fresh write-rejected answer re-parks it, anything else leaves it retrying.
     function retryStuck(requestId) {
         if (!StuckWrites.isStuck(_stuckState, requestId)) return false
         if (!OutboxStore.retryNow(requestId)) return false
+        StuckWrites.clearTerminal(_stuckState, requestId)
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
         drainNow()
         return true
     }
