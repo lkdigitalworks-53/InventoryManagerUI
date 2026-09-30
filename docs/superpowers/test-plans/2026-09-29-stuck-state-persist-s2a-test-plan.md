@@ -29,7 +29,7 @@ Each stuck-write fact is now mirrored onto the queued outbox item (`failures`, `
 
 ## 3. On-device checklist (the only coverage for relaunch, header and dialog)
 
-Setup: use a **dev or test** environment. Force a stuck write with either (A) set your member doc `tenants/{tenantId}/members/{uid}.status` to `"inactive"` (403), or (B) a local, uncommitted wrong `functionUrl` (404). Do **not** use a rules change or a stopped emulator: Admin SDK bypasses rules, and a stopped emulator is status 0 = offline. Online throughout.
+Setup: use a **dev or test** environment and a **new tenant** (so nothing is stuck at the start). Force a stuck write with either (A) set your member doc `tenants/{tenantId}/members/{uid}.status` to `"suspended"` (403; the app ignores the status, also after a relaunch), or (B) a local, uncommitted wrong `functionUrl` (404). Full steps in the S1 test plan section 3. Do **not** use a rules change or a stopped emulator: Admin SDK bypasses rules, and a stopped emulator is status 0 = offline. Online throughout. With setup B, revert the URL only when the checklist says to fix the cause: a rebuild is also a relaunch, so it restores the stuck state at launch too.
 
 **Happy path**
 - [ ] Edit a product name, wait ~3 min: toast once, header line underlined, dialog shows the row.
@@ -47,11 +47,10 @@ Setup: use a **dev or test** environment. Force a stuck write with either (A) se
 - [ ] Two stuck writes, one write still counting (fewer than 5 failures): reopen -> header says 2 (not 3), the counting write tips after the remaining failures with one toast.
 - [ ] Reopen five times in a row while stuck: count and rows stay the same; no growth in the outbox.
 - [ ] Stuck write edited again while stuck (coalesced): still stuck after reopen, latest value is the one retried.
-- [ ] Update the app from the S1 build with a stuck write queued: item has no new fields, loads as "not stuck", tips again after its normal 5 failures (documented limit: no migration).
 
 **Monkey**
 - [ ] Repeatedly force-close the app at random moments during a stuck retry, toggle airplane mode across launches, rotate the device. Header count always equals the number of dialog rows; no crash, no duplicate or lost writes.
 
 ## 4. Regression watch
 
-`tst_Gateway.qml` stuck-count / stuckRows / retryStuck cases, `tst_OutboxStore.qml` coalescing / in-flight / retryNow cases and `tst_StuckWrites.qml` counting / rows cases must stay green. `Gateway.clear()` now also re-arms `resumeStuck`. Old saved items (no `failures` / `stuck` / `terminal`) must load unchanged.
+`tst_Gateway.qml` stuck-count / stuckRows / retryStuck cases, `tst_OutboxStore.qml` coalescing / in-flight / retryNow cases and `tst_StuckWrites.qml` counting / rows cases must stay green. `Gateway.clear()` now also re-arms `resumeStuck`. Old saved items (no `failures` / `stuck` / `terminal`) must load unchanged (covered by unit tests; no S1 build with stuck writes exists outside test devices, and every PR is tested on a new tenant).
