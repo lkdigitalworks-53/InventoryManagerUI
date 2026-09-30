@@ -15,6 +15,8 @@
 5. This file written, pushed (`6d1bdd5`).
 6. Q1 decided (a). Logged.
 7. F5 deeper read: deep-equal of `before` vs current doc exists at THREE sites, not one: `gatewayLogic.js:158` (single), `batchMutationLogic.js:114` (batch), `operationLogic.js:144` (ops, non-delta branch). All three then write `after` with `{merge:false}` (full replace). TRAP: relaxing the compare alone lets a stale client `after.photoIds` overwrite a newly confirmed photo = silent data loss. Any F5 fix MUST also preserve server `photoIds` on write. Client writes `photoIds` only as `[]` on create (`InventoryStore.qml` ~L226) and locally via `applyPhotoIds` (no gateway), so server-owned `photoIds` breaks no current client path. Delta branch (`gatewayLogic:221`) already merges over current: safe.
+9. Q2 decided (c), logged with verified conflict behaviour.
+10. Role model read: `AuthStore.canManageInventory` = owner/admin; `canOpenProductDetail` = not staff; photo controls live in the edit dialog so UI already restricts photos to owner/admin. Server does not. `PhotoQueue` has no explicit 403 handling (only L252 terminal comment): demoted-user-with-queued-photo edge UNVERIFIED, must be read before design doc.
 8. Side effect noted: with F5 relaxed, a product DELETE with stale `before` succeeds while server has photos the client never saw, so client-side cleanup misses them. Strengthens C1.
 
 ## Pending inventory (evidence = read in code this session)
@@ -23,7 +25,7 @@
 |---|---|---|---|---|
 | F3 | `uploadProductPhoto` writes both Storage objects before the 404 (product missing) / 409 (cap) checks inside the transaction | `functions/index.js` ~L1052-1096: `bucket.file().save()` x2, then `runTransaction` returns 404/409 | server | fix, option (a) read-first |
 | F5 | `applyMutation` deep-equals the WHOLE doc incl. `photoIds` against client `before`; a photo confirmed between edit and drain 409s an unrelated edit | `functions/lib/gatewayLogic.js` ~L158 `_deepEqual(current, params.before)` | server | fix, option (a) server ignores+preserves `photoIds` |
-| N2 | No role check on `uploadProductPhoto` / `deleteProductPhoto` (viewer can upload/delete) | role already on `ctx` (`deriveContext`, L102); `recordMutation` already has a role check pattern L154-159 | server | decide with F3 (same files) |
+| N2 | No role check on `uploadProductPhoto` / `deleteProductPhoto`. CORRECTION: there is NO `viewer` role (earlier wording wrong). Roles = owner/admin/manager/staff. Client gates product management to owner/admin (`AuthStore.canManageInventory`); server gates only staff-delete + removed_staff tombstone (`index.js` L155-159), NOT inventory edits at all | role already on `ctx` (`deriveContext`, L102); `recordMutation` already has a role check pattern L154-159 | server | decide with F3 (same files) |
 | C1 | **New.** No server-side cascade when a product is deleted. Photo cleanup is client-only (`InventoryStore.deleteProduct` calls `removeProductPhoto` per `photoIds`). Offline/killed app/in-flight upload at delete time = permanent Storage orphans | grep of `functions/` shows no photo handling in the delete path | server | decide; this is DELETE-ROADMAP item 4's real content |
 | N1 | Client photo id `photo-<Date.now()>-<rand 0..999999>` on a PUBLIC-READ path; server accepts any id without `/` or `..` | `StorageService._nextPhotoId`; `photoValidation.isSafePathSegment` | client+server | decide (uuid vs server-minted) |
 | P2 | `InventoryStore.setPhoto` dead code | only hit: its own definition + comments, no callers in qml/tests | client | delete (ponytail) |
@@ -39,7 +41,8 @@
 | # | Question | Options | Status |
 |---|---|---|---|
 | Q1 | F3: how to stop orphans on 404/409 | (a) read product+count first; (b) write then delete on failure; (c) accept | **DECIDED (a)** by Taher 2026-09-30. Extra Firestore read before any Storage write; in-transaction 404/409 checks stay as final authority (race window accepted). Also prerequisite for C1: late upload must not recreate orphans after a cascade sweep. |
-| Q2 | F5: how to stop false 409 from `photoIds` drift | (a) server ignores `photoIds` in compare at all 3 sites AND preserves current `photoIds` on write; (b) client re-bases `before` at drain; (c) accept 409 | OPEN (I advise a) |
+| Q2 | F5: how to stop false 409 from `photoIds` drift | (a) server ignores `photoIds` in compare at all 3 sites AND preserves current `photoIds` on write; (b) client re-bases `before` at drain; (c) accept 409 | **DECIDED (c)** by Taher 2026-09-30 (I advised a; overruled, reason: two devices editing+uploading same product is real but he accepts redo). NO code change. Strict compare stays = also keeps the stale-`after` clobber protection. Verified cost: on 409 `Gateway` drops the stale write (`OutboxStore.markSent`) and `InventoryStore._onMutationConflicted` replaces the local row with server `current`; the user's edit is lost and must be redone by hand. Inventory-specific toast NOT verified (check at impl). Docs work only: add F5 as ACCEPTED limit in `KNOWN-ISSUES.md` + photo design spec 'Known limits'. C1 no longer forced by F5. |
+| Q3 | N2: role gate on photo endpoints | (a) server gate owner/admin (mirror `AuthStore.canManageInventory`) + PhotoQueue terminal handling of 403; (b) no gate, UI only; (c) gate ALL inventory mutations server-side (separate roadmap item) | OPEN (I advise a; c logged as roadmap) |
 
 ## NEXT (resume here)
 
