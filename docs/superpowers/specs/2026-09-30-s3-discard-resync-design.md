@@ -1,7 +1,7 @@
 # Gateway stuck writes, part B, slice S3: Discard + resync — design
 
-**Date:** 2026-09-30. **Branch:** `design/2026-09-30-s3-discard-resync` (stacked on PR #106, `feat/2026-09-30-s2b-park-terminal-writes`, CI green).
-**Status:** DESIGN PROPOSED. Decisions Q-S3-1..5 below are OPEN (Taher). No code. Implementation gate (brainstorming) closes when they are answered.
+**Date:** 2026-09-30. **Branch:** design `design/2026-09-30-s3-discard-resync` (PR #109), code `feat/2026-10-01-s3-discard-parked-writes` (stacked on it, on PR #106).
+**Status:** IMPLEMENTED 2026-10-01, CI pending. **Q-S3-1..5 DECIDED by Taher 2026-10-01: option A on all five** (see Resolved decisions). Nothing built or run (no Qt in sandbox).
 **Plan:** `2026-09-29-gateway-park-retry-discard-plan.md` (P1, P2, P3; slice S3). **Builds on:** S2b design (`parked = stuck && terminal`, parked holds its keys).
 **Out of scope:** photo cleanup (roadmap item 4), any server change, a Discard for non-rejected stuck writes (P1).
 
@@ -30,7 +30,7 @@ Small in code (about 70 lines across `StuckWrites.js`, `Gateway`, `DataModel`, `
 | D5 | Sheet: `Discard` on rejected rows only, beside `Retry`; disabled while offline or in flight. Tap opens a `ConfirmDialog` (Q-S3-2). Success toast "Change discarded". | P1: only server-rejected writes are discardable. | A `write-failed` 500 that never clears still has no exit (accepted in P1). |
 | D6 | Order of effects: remove first, resync second, fire-and-forget (Q-S3-4). | The server has said it will not accept this write; keeping it buys nothing. | If the network drops in that instant the list can stay stale until the next sync or launch (same as any failed sync). |
 
-## Open decisions for Taher
+## Decision questions (as asked)
 
 **Q-S3-1 What does Discard throw away?**
 - **A (recommended):** exactly the one queued item, merged later edits included (fact 1). Same-record writes queued behind it (D4) survive and send afterwards.
@@ -64,3 +64,13 @@ Small in code (about 70 lines across `StuckWrites.js`, `Gateway`, `DataModel`, `
 - The `removed_staff` tombstone stays in memory until relaunch (fact 5).
 - S3 is unverifiable on device without a rejection recipe (above).
 - Stacked on #106: if #106 changes in review, this branch rebases.
+
+## Resolved decisions (Taher, 2026-10-01): A on all five
+Q-S3-1 A (discard exactly the one item; later merged edits go with it; queued-behind writes survive), Q-S3-2 A (`ConfirmDialog`), Q-S3-3 P1 stands (rejected only), Q-S3-4 A (remove first, resync after, fire-and-forget), Q-S3-5 A (photos left to roadmap item 4). The on-device rejection recipe was not a lettered question: default taken, **no emulator flag built**; S3's happy path is CI-only until a recipe exists.
+
+## Implementation notes (what differs from the proposal)
+- **Local `ConfirmDialog` inside `StuckWritesSheet`**, not `Main.qml`'s `confirmDlg` (precedent: `ManageCategoriesDialog`, whose comment says the outer sheet hides a global confirm). Back / Close / tap-outside on the sheet are blocked while it is open via `busy: discardConfirm.opened` (Main's Back list already honours `busy`). **No `Main.qml` change**, so the list-order risk in Q-S3-2 A is replaced by this guard; verify on device.
+- **Delta callbacks are answered too** (`Gateway._failDeltaCallbacks`, `{ok:false, error:"discarded"}`). Not in the proposal: a parked delta item can have `recordDelta` callers waiting; removing the item silently would leave them hanging until relaunch (the same reason operation waiters are finished).
+- **The parked check reads the queued item** (`StuckWrites.isParkedItem`), not the in-memory state, so Discard works right after a relaunch before `resumeStuck()` has rebuilt the state.
+- **Failure toast** when `discardParked` returns false at confirm time ("Could not discard. Check your connection and try again."): the row may have been retried, sent, or gone offline while the confirm was open.
+- DataModel keeps a `_resyncStoreByEntity` map + pure `_storesToResync`; a test asserts every `Gateway._collections` entity is mapped or ignored (`stock_movement`).

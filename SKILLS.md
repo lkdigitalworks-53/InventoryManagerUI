@@ -3986,3 +3986,13 @@ three places, not one: what is handed out, when to wake next, and what the launc
 loop needs a release path in the same change, and the release must be able to fail back into the state without new bookkeeping.
 (4) Copy that promised "keeps retrying" is a bug the moment the behaviour changes; grep the strings.
 
+## Skill 90: Removing a queued write must answer everyone waiting on it, and its "is it still allowed" check must be made at execution time, from the persisted item
+
+**Context (S3 Discard):** dropping a parked write is one `markSent` plus a resync, but three things around it go wrong if you stop there.
+
+**Traps:** (1) A queued item can have callers waiting: `recordOperation` waiters AND `recordDelta` callbacks (several, when deltas coalesced). Removing the item silently leaves them hanging until relaunch; answer both with `{ok:false, error:"discarded"}` in the same change. (2) The button was drawn when the row was parked; by the time the confirm is accepted it may have been retried, sent, or the device offline. Re-check everything inside the Gateway function (mode, online, still queued, still parked, not in flight) and tell the user when it refuses. (3) Decide "parked" from the persisted item (`isParkedItem`), not the in-memory state: right after a relaunch the state has not been rebuilt yet and would wrongly refuse.
+
+**UI / tests:** a confirm that must sit over a `BottomSheet` should be local to the sheet (a global one is hidden by it), with `busy: confirm.opened` so Back / Close / tap-outside cannot close the sheet underneath. To test "this store was asked to re-read" without network, force `loadingMore = true`: `_resetAndFetch` then only sets `_resetPending`.
+
+**Generalize:** (1) every place that removes a queued item must ask "who is waiting on it?". (2) A destructive action re-validates at the moment of effect. (3) Merged edits share the parked item's requestId, so a discard removes them too: say so in the confirm copy.
+

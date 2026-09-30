@@ -41,6 +41,8 @@ TestCase {
 
     // Counts Toast.show() calls (the stuck-write indicator toasts once).
     SignalSpy { id: toastSpy; target: Toast; signalName: "showRequested" }
+    // S3: one entry per Discard that went through.
+    SignalSpy { id: discardSpy; target: Gateway; signalName: "parkedWriteDiscarded" }
 
     function init() {
         // Force "direct" for every case below so these tests stay isolated
@@ -59,6 +61,7 @@ TestCase {
         OutboxStore.clear()
         Gateway.clear() // also resets the stuck-write bookkeeping and stops the drain timer
         toastSpy.clear()
+        discardSpy.clear()
         AuthStore.idToken = "" // keep the _send/_sendBatch guard closed (see header)
         // In-memory reset alone isn't enough: Gateway.drainNow() itself
         // triggers AuthService's first-ever lazy construction (only real
@@ -1710,6 +1713,281 @@ TestCase {
             var due = _dueIds()
             for (var d = 0; d < due.length; ++d)
                 compare(parkedIds.indexOf(due[d]), -1, "step " + step + ": parked handed out")
+        }
+    }
+
+    // ── S3: Discard a parked write (docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md) ──
+
+    function _parkedWrite(entityId) {
+        var item = _queueWrite(entityId)
+        _failWith(item, 500, _rejectedBody(), 5)
+        return item
+    }
+
+    function _inOutbox(id) { return _find(id) !== undefined }
+
+    function test_discardParked_removes_the_write_clears_the_counts_and_emits_once() {
+        var item = _parkedWrite("o1")
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.discardParked(item.requestId), true)
+        compare(_inOutbox(item.requestId), false)
+        compare(Gateway.stuckCount, 0)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(Gateway.stuckRows().length, 0)
+        compare(discardSpy.count, 1)
+        compare(discardSpy.signalArguments[0][0], item.requestId)
+        compare(discardSpy.signalArguments[0][1], ["order"])
+    }
+
+    function test_discardParked_does_not_toast() {
+        var item = _parkedWrite("o1")
+        toastSpy.clear()
+        Gateway.discardParked(item.requestId)
+        compare(toastSpy.count, 0)
+    }
+
+    function test_discardParked_refuses_a_stuck_write_that_is_not_rejected() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _unavailableBody(), 5)
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(_inOutbox(item.requestId), true)
+        compare(Gateway.stuckCount, 1)
+        compare(discardSpy.count, 0)
+    }
+
+    function test_discardParked_refuses_a_rejected_write_that_is_not_yet_stuck() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 4)
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(_inOutbox(item.requestId), true)
+    }
+
+    function test_discardParked_refuses_unknown_empty_and_non_string_ids() {
+        _parkedWrite("o1")
+        compare(Gateway.discardParked("nope"), false)
+        compare(Gateway.discardParked(""), false)
+        compare(Gateway.discardParked(undefined), false)
+        compare(Gateway.discardParked(null), false)
+        compare(OutboxStore.items.length, 1)
+        compare(discardSpy.count, 0)
+    }
+
+    function test_discardParked_refuses_while_offline_and_works_once_back_online() {
+        var item = _parkedWrite("o1")
+        AuthService.isOnline = false
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(_inOutbox(item.requestId), true)
+        compare(discardSpy.count, 0)
+        AuthService.isOnline = true
+        compare(Gateway.discardParked(item.requestId), true)
+        compare(discardSpy.count, 1)
+    }
+
+    function test_discardParked_refuses_a_write_in_flight() {
+        var item = _parkedWrite("o1")
+        OutboxStore.markInFlight(item)
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(_inOutbox(item.requestId), true)
+        OutboxStore.clearInFlight(item)
+        compare(Gateway.discardParked(item.requestId), true)
+    }
+
+    function test_discardParked_refuses_outside_gateway_mode() {
+        var item = _parkedWrite("o1")
+        Gateway.mode = "direct"
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(_inOutbox(item.requestId), true)
+    }
+
+    function test_discardParked_twice_is_harmless() {
+        var item = _parkedWrite("o1")
+        compare(Gateway.discardParked(item.requestId), true)
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(discardSpy.count, 1)
+    }
+
+    function test_discardParked_after_sign_out_is_a_no_op() {
+        var item = _parkedWrite("o1")
+        Gateway.clear()
+        compare(Gateway.discardParked(item.requestId), false)
+        compare(discardSpy.count, 0)
+    }
+
+    function test_discardParked_after_a_retry_is_refused_until_it_is_rejected_again() {
+        var item = _parkedWrite("o1")
+        Gateway.retryStuck(item.requestId)
+        compare(Gateway.discardParked(item.requestId), false, "retry released it")
+        _failWith(item, 500, _rejectedBody(), 1)
+        compare(Gateway.discardParked(item.requestId), true, "re-parked")
+    }
+
+    function test_discardParked_touches_only_the_chosen_write() {
+        var a = _parkedWrite("o1")
+        var b = _parkedWrite("o2")
+        Gateway.discardParked(a.requestId)
+        compare(_inOutbox(b.requestId), true)
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 1)
+        compare(Gateway.stuckRows().length, 1)
+        compare(Gateway.stuckRows()[0].requestId, b.requestId)
+    }
+
+    function test_discardParked_also_discards_an_edit_merged_into_the_parked_write() {
+        var item = _parkedWrite("o1")
+        Gateway.recordMutation("order", "o1", "update", null, { status: "later edit" })
+        compare(OutboxStore.items.length, 1, "merged, not appended")
+        compare(Gateway.discardParked(item.requestId), true)
+        compare(OutboxStore.items.length, 0)
+    }
+
+    function test_discardParked_frees_a_write_queued_behind_it_for_the_same_record() {
+        var first = _queueWrite("o1")
+        OutboxStore.markInFlight(first)
+        Gateway.recordMutation("order", "o1", "update", null, { status: "second" })
+        OutboxStore.clearInFlight(first)
+        compare(OutboxStore.items.length, 2, "precondition: a held sibling")
+        var second = OutboxStore.items[1].requestId
+        _failWith(first, 500, _rejectedBody(), 5)
+        compare(_dueIds().indexOf(second), -1, "held behind the parked write")
+        compare(Gateway.discardParked(first.requestId), true)
+        compare(_inOutbox(second), true, "survivor stays queued")
+        verify(_dueIds().indexOf(second) >= 0, "and is now due")
+    }
+
+    function test_discardParked_then_relaunch_shows_nothing_stuck() {
+        var item = _parkedWrite("o1")
+        Gateway.discardParked(item.requestId)
+        _relaunch()
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 0)
+        compare(Gateway.stuckTerminalCount, 0)
+    }
+
+    function test_discardParked_works_right_after_a_relaunch_before_the_state_is_rebuilt() {
+        var item = _parkedWrite("o1")
+        _relaunch()
+        compare(Gateway.discardParked(item.requestId), true, "the persisted item decides, not the in-memory state")
+        Gateway.resumeStuck()
+        compare(Gateway.stuckCount, 0)
+    }
+
+    function test_discardParked_a_batch_reports_its_entity() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutations("inventory", [
+            { entityId: "p1", action: "update", before: { n: 1 }, after: { n: 2 } },
+            { entityId: "p2", action: "update", before: { n: 1 }, after: { n: 2 } } ])
+        var batch = OutboxStore.items[0]
+        _failWith(batch, 500, _rejectedBody(), 5)
+        compare(Gateway.discardParked(batch.requestId), true)
+        compare(discardSpy.signalArguments[0][1], ["inventory"])
+        compare(OutboxStore.items.length, 0)
+    }
+
+    function test_discardParked_a_delta_fails_its_waiting_callbacks_once() {
+        Gateway.mode = "gateway"
+        var got = []
+        var id = Gateway.recordDelta("inventory", "p1", { stock: -1 }, {}, {}, function(r) { got.push(r) })
+        Gateway.recordDelta("inventory", "p1", { stock: -2 }, {}, {}, function(r) { got.push(r) })
+        var item = _find(id)
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.discardParked(id), true)
+        compare(got.length, 2, "both coalesced callers told")
+        compare(got[0].ok, false)
+        compare(got[0].error, "discarded")
+        compare(got[0].discarded, true)
+        compare(discardSpy.signalArguments[0][1], ["inventory"])
+        compare(Gateway._deltaCallbacks[id], undefined)
+        Gateway.discardParked(id)
+        compare(got.length, 2, "no second delivery")
+    }
+
+    function test_discardParked_an_operation_fails_its_waiter_fires_the_signal_and_lists_every_entity() {
+        Gateway.mode = "gateway"
+        var got = null
+        var rejected = []
+        var onRejected = function(id, opType, r) { rejected.push({ id: id, opType: opType, r: r }) }
+        Gateway.operationRejected.connect(onRejected)
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["order", "o1"], ["inventory", "p2"]]), "k1", { awaitServer: true }, function(r) { got = r })
+        var item = _find("k1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(Gateway.discardParked("k1"), true)
+        Gateway.operationRejected.disconnect(onRejected)
+        compare(got.ok, false)
+        compare(got.error, "discarded")
+        compare(rejected.length, 1)
+        compare(rejected[0].opType, "completeOrder")
+        compare(discardSpy.signalArguments[0][1], ["inventory", "order"])
+        compare(Gateway._operationWaiters["k1"], undefined)
+    }
+
+    function test_discardParked_an_operation_nobody_awaits_still_fires_the_signals() {
+        Gateway.mode = "gateway"
+        var rejected = 0
+        var onRejected = function() { rejected++ }
+        Gateway.operationRejected.connect(onRejected)
+        Gateway.recordOperation("completeOrder", _opBody([["order", "o1"]]), "k2", {}, null)
+        _failWith(_find("k2"), 500, _rejectedBody(), 5)
+        compare(Gateway.discardParked("k2"), true)
+        Gateway.operationRejected.disconnect(onRejected)
+        compare(rejected, 1)
+        compare(discardSpy.count, 1)
+    }
+
+    function test_discardParked_an_operation_whose_waiter_already_timed_out_is_fine() {
+        Gateway.mode = "gateway"
+        var results = []
+        Gateway.recordOperation("completeOrder", _opBody([["order", "o1"]]), "k3", { awaitServer: true }, function(r) { results.push(r) })
+        _failWith(_find("k3"), 500, _rejectedBody(), 5)
+        Gateway._operationWaiters["k3"][0].timer.triggered() // the await window elapses: caller told "pending"
+        compare(results.length, 1)
+        compare(results[0].pending, true)
+        compare(Gateway.discardParked("k3"), true)
+        compare(results.length, 1, "no second answer to a caller that already got one")
+        compare(discardSpy.count, 1)
+    }
+
+    function test_discardParked_twenty_five_parked_writes_discard_one_by_one() {
+        var ids = []
+        for (var i = 0; i < 25; ++i) ids.push(_parkedWrite("o" + i).requestId)
+        compare(Gateway.stuckTerminalCount, 25)
+        for (var k = 0; k < ids.length; ++k) {
+            compare(Gateway.discardParked(ids[k]), true, "discard " + k)
+            compare(Gateway.stuckTerminalCount, 25 - k - 1)
+            compare(Gateway.stuckRows().length, 25 - k - 1)
+        }
+        compare(OutboxStore.items.length, 0)
+        compare(discardSpy.count, 25)
+    }
+
+    // Monkey: random failures, retries, discards, relaunches and offline flips. A
+    // discarded id never comes back, every true return emits exactly once, and the
+    // rows / counts always agree with the outbox.
+    function test_monkey_discard_never_resurrects_and_counts_always_agree() {
+        var s = 909
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var items = [_queueWrite("m1"), _queueWrite("m2"), _queueWrite("m3"), _queueWrite("m4")]
+        var bodies = [_rejectedBody(), _rejectedBody(), _unavailableBody(), ""]
+        var discarded = {}
+        var trues = 0
+        for (var step = 0; step < 400; ++step) {
+            var it = items[Math.floor(rnd() * items.length)]
+            var roll = rnd()
+            AuthService.isOnline = rnd() > 0.15
+            if (discarded[it.requestId]) { compare(Gateway.discardParked(it.requestId), false, "step " + step) }
+            else if (roll < 0.5) Gateway._noteFailure(it, 500, bodies[Math.floor(rnd() * bodies.length)])
+            else if (roll < 0.65) Gateway.retryStuck(it.requestId)
+            else if (roll < 0.9) {
+                var parkedBefore = StuckWrites.isParkedItem(_find(it.requestId))
+                var inFlight = rnd() < 0.1
+                if (inFlight) OutboxStore.markInFlight(it)
+                var ok = Gateway.discardParked(it.requestId)
+                if (inFlight) OutboxStore.clearInFlight(it)
+                compare(ok, parkedBefore && !inFlight && AuthService.isOnline, "step " + step)
+                if (ok) { trues++; discarded[it.requestId] = true }
+            } else { _relaunch(); Gateway.resumeStuck() }
+            for (var id in discarded) compare(_inOutbox(id), false, "step " + step + " resurrected " + id)
+            compare(Gateway.stuckRows().length, Gateway.stuckCount, "step " + step)
+            compare(discardSpy.count, trues, "step " + step)
         }
     }
 }

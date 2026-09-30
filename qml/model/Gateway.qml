@@ -116,6 +116,9 @@ QtObject {
     // survive a relaunch, these signals are how a caller recovers after one.
     signal operationApplied(string requestId, string opType, var results, bool replay)
     signal operationRejected(string requestId, string opType, var rejection)
+    // S3: a parked write was discarded by the user. `entities` = every entity it touched;
+    // DataModel re-reads those stores from Firestore (P2).
+    signal parkedWriteDiscarded(string requestId, var entities)
 
     property int inFlight: 0
 
@@ -556,6 +559,42 @@ QtObject {
         stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
         drainNow()
         return true
+    }
+
+    // S3 Discard: drops ONE parked (server-rejected) write for good and tells the
+    // stores to re-read (parkedWriteDiscarded). Checked again here, not trusted from
+    // the row the user tapped: gateway mode, online, still queued, still parked, not
+    // in flight; otherwise false and nothing changes. A later edit merged into the
+    // parked write is discarded with it (P3); writes queued behind it survive
+    // (Q-S3-1 A). Waiters on the item (operation or delta) are told { error: "discarded" }.
+    function discardParked(requestId) {
+        if (mode !== "gateway") return false
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        if (!online) return false
+        if (OutboxStore.isInFlight(requestId)) return false
+        var item = null
+        var queued = OutboxStore.items
+        for (var i = 0; i < queued.length; ++i)
+            if (queued[i].requestId === requestId) { item = queued[i]; break }
+        if (!item || !StuckWrites.isParkedItem(item)) return false
+
+        OutboxStore.markSent(requestId)
+        var gone = { ok: false, error: "discarded", discarded: true }
+        if (Array.isArray(item.ops)) _finishOperation(item, gone)
+        _failDeltaCallbacks(requestId, gone)
+        parkedWriteDiscarded(requestId, StuckWrites.entitiesOf(item))
+        _reschedule()
+        return true
+    }
+
+    // Fires (once) and forgets the recordDelta callbacks registered for requestId.
+    function _failDeltaCallbacks(requestId, result) {
+        var callbacks = _deltaCallbacks[requestId] || []
+        if (callbacks.length === 0) return
+        var map = Object.assign({}, _deltaCallbacks)
+        delete map[requestId]
+        _deltaCallbacks = map
+        for (var i = 0; i < callbacks.length; ++i) callbacks[i](result)
     }
 
     // Forgets anything that has left the outbox, however it left (sent,

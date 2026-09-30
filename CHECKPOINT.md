@@ -1,21 +1,28 @@
-# CHECKPOINT — 2026-09-30: DELETE-FEATURE-ROADMAP item 1 part B — S3 (Discard + resync) DESIGN, decisions open
+# CHECKPOINT — 2026-10-01: DELETE-FEATURE-ROADMAP item 1 part B — S3 (Discard + resync) IMPLEMENTED, CI PENDING
 
-**Branch:** `design/2026-09-30-s3-discard-resync`, stacked on PR #106 (`feat/2026-09-30-s2b-park-terminal-writes`, CI all green at `35c899e`). Docs only, no code.
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-30-s2b-CHECKPOINT.md`.
+**Branches (stack):** PR #106 `feat/2026-09-30-s2b-park-terminal-writes` (S2b, CI green) <- PR #109 `design/2026-09-30-s3-discard-resync` (design docs) <- **`feat/2026-10-01-s3-discard-parked-writes`** (S3 code, PR opened stacked on #109).
+**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-30-s3-design-CHECKPOINT.md`.
 **Skills invoked by Taher:** brainstorming, qt-qml, qt-ui-design, ponytail; caveman FULL (chat replies only).
-**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>` (per Taher's instruction this session).
+**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`.
 
 ## Standing instructions (unchanged)
-Branch only, push without asking (PAT only in the push URL, never in `.git/config`), no build/run, no Qt tooling in the sandbox (CI is the QML signal), tests toward 100% + test plan + SKILLS/AGENTS/README, honest advisor (grill before deciding), small scope per session (tokens run out, other accounts resume from the remote branch).
+Branch only, push without asking (PAT only in the push URL, never in `.git/config`), no build/run, no Qt tooling in the sandbox (CI is the QML signal), tests toward 100% + test plan + SKILLS/AGENTS/README, honest advisor, small scope per session (other accounts resume from the remote branch).
 
 ## Step log
-1. Read memory, skills, cloned repo (PAT stripped from remote), PR #106 = S2b, open, clean, CI green.
-2. Traced Gateway (`_noteFailure`, `retryStuck`, `_pruneStuck`, `_reschedule`, `_finishOperation`), OutboxStore (`enqueue` coalesce, `markSent`, `retryNow`), StuckWrites, DescribeItem, StuckWritesSheet, DataModel wiring, stores' `syncFromFirebase`/`_resetPending`, ConfirmDialog, Main back-button list, PhotoQueue.
-3. Wrote design `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`: D1-D6 proposed, Q-S3-1..5 OPEN. Findings: merged edits die with Discard; `removed_staff` tombstone merge means resync does not fully revert it; `recordOperation` has no production caller yet; no verified way to force a real `write-rejected` on device.
-4. Roadmap + plan status lines updated. Pushed, PR stacked on #106.
+1. (earlier) Design written, PR #109. Taher answered **A on all five** (Q-S3-1..5) on 2026-10-01; recorded in the design doc.
+2. Code: `StuckWrites.entitiesOf`; `Gateway.discardParked` + `parkedWriteDiscarded` + `_failDeltaCallbacks`; `DataModel._resyncStoreByEntity/_storesToResync/_resyncForDiscard` + `Connections{target: Gateway}`; `StuckWritesSheet` Discard button (rejected rows, online only) + local `ConfirmDialog` + `busy: discardConfirm.opened`. No `Main.qml` change (busy guard replaces the Back-list reorder).
+3. Tests: `tst_StuckWrites` +9, `tst_Gateway` +23 (incl. 400-step monkey), new `tst_DataModel_discardResync` 14 (network-free via `loadingMore`/`_resetPending`). Node-ran `entitiesOf` + mapping mirror: 630 assertions OK. **No QML test executed.**
+4. Docs: design (resolved decisions + implementation notes), test plan + index row, SKILLS 90, AGENTS, README, roadmap + plan status. Pushed, PR opened.
+
+## Deviations from the design proposal (Taher can overrule in the PR)
+- Delta callbacks are also answered on discard (not in the proposal).
+- Parked check reads the persisted item, not in-memory state.
+- Local confirm in the sheet, not Main's `confirmDlg`; no `Main.qml` edit.
+- Extra failure toast when the tap-time re-check refuses.
 
 ## NEXT SESSION — start here
-1. Get Taher's answers to Q-S3-1..5 (defaults if he says "your call": all A). Brainstorming gate stays closed until then.
-2. Implement S3 in ONE PR on a new branch stacked on this one (or on #106 if merged): `StuckWrites.entitiesOf`, `Gateway.discardParked` + `parkedWriteDiscarded`, `DataModel` handler, sheet Discard + confirm, tests, test plan (Skill 49 template), SKILLS/AGENTS/README, CHECKPOINT.
-3. Merge order: #106 -> this design PR -> S3 code PR. S2b must not reach `main` without S3.
-4. Flag to Taher at implementation: no on-device recipe for a real `write-rejected` yet.
+1. Read CI on the S3 PR first (first real run of 46 new QML cases). Likely trouble spots: `tst_Gateway` delta coalesce test (assumes the second `recordDelta` merges into the first), operation waiter / timer tests, `tst_DataModel_discardResync` (first test file that flips `loadingMore` on six singletons; `cleanup()` resets them).
+2. Taher on device: section 3 of `docs/superpowers/test-plans/2026-10-01-s3-discard-parked-writes-test-plan.md`. Blocker: no verified recipe for a real `write-rejected`; ask whether to add the debug-only emulator flag.
+3. Merge order: #106 -> #109 -> S3 code PR (retarget each to `main` as the one below merges). S2b must not reach `main` without S3.
+4. Then S4 cleanup (roadmap / KNOWN-ISSUES closed, test plans consolidated). Do not combine with S3.
+5. Open, not built: photos on discard of a parked product create (roadmap item 4); `removed_staff` tombstone stays in memory until relaunch.
