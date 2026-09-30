@@ -8,8 +8,8 @@
 | Item | Root cause (traced) | Fix | Tests |
 |---|---|---|---|
 | F1 | `_upload` persists `uploading`; `_load()` never repaired it; drain/reschedule only take `enqueued`/`retrying` | `PhotoQueue._load()` maps `uploading` -> `enqueued`, attempts kept (server dedupes by `requestId`) | `tst_PhotoQueue` 5 tests |
-| F2 | `deleteProduct` walked confirmed `photoIds` only; queue items pointing at the product never touched. One caller path (`DataModel:327`) | `InventoryStore.deleteProduct` discards every queue item of the product (snapshot `filter().forEach(discard)`) | `tst_InventoryStore_deleteProductCascade` 7 tests incl. monkey |
-| F4 | `_upload` returns on empty `idToken`; nothing re-armed when token arrived | `_tokenWatcher` property watcher -> `drainNow()` (non-empty token + non-empty queue only; no polling) | `tst_PhotoQueue` 5 tests |
+| F2 | `deleteProduct` walked confirmed `photoIds` only; queue items pointing at the product never touched. One caller path (`DataModel:327`) | `InventoryStore.deleteProduct` discards every queue item of the product (snapshot `filter().forEach(discard)`) | `tst_InventoryStore_deleteProductCascade` 8 tests incl. monkey and late-confirmation |
+| F4 | `_upload` returns on empty `idToken`; nothing re-armed when token arrived | `_tokenWatcher` property watcher -> `drainNow()` (non-empty token + non-empty queue only; no polling) | `tst_PhotoQueue` 9 tests (5 + 4 from sweep 2) |
 
 Evidence: Node-run sanity of the two logic snippets only (recovery map, snapshot-discard). No QML test was run.
 Known ceiling: upload already in flight at delete time can still land server-side (Storage orphan) — needs server-side cleanup (roadmap item 4).
