@@ -1098,8 +1098,14 @@ QtObject {
             // Photos still in PhotoQueue (any state) never reached photoIds. Left alone they 404
             // once the delete lands, park as "failed" with no UI, and keep their local files.
             // discard() replaces PhotoQueue.items, so filter() first and iterate the snapshot.
-            PhotoQueue.items.filter(function(q) { return q.productId === productId })
-                .forEach(function(q) { PhotoQueue.discard(q.photoId) })
+            // Own try/catch: a throw here (e.g. a native removeLocalCopy) must not skip the
+            // confirmed-photo removals below, which is what the outer try exists to protect.
+            try {
+                PhotoQueue.items.filter(function(q) { return q.productId === productId })
+                    .forEach(function(q) { PhotoQueue.discard(q.photoId) })
+            } catch (qe) {
+                console.warn("[InventoryStore] queued-photo purge threw for", productId, qe)
+            }
 
             var photoIdsToDelete = Array.isArray(before.photoIds) ? before.photoIds : []
             for (var pdi = 0; pdi < photoIdsToDelete.length; ++pdi) {

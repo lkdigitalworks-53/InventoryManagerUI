@@ -177,7 +177,11 @@ QtObject {
         return out
     }
 
-    function drainNow() {
+    // skipTokenRefresh: the token watcher passes true. AuthStore.applyAuth assigns idToken BEFORE
+    // expiresAtEpochSec, so a synchronous drain from the idToken change would see the OLD expiry,
+    // call ensureFreshToken() and fire a redundant second refresh. The timer's triggered() and the
+    // online watcher pass nothing (falsy) and keep the refresh.
+    function drainNow(skipTokenRefresh) {
         if (PQL.isBreakerOpen(_breaker, Date.now())) { _reschedule(); return }
         // Kick off a token refresh if one's needed, once per drain pass (not per item) -- same
         // placement as Gateway.drainNow(). Without this, an item stuck on a stale/missing idToken
@@ -185,7 +189,7 @@ QtObject {
         // get unstuck by something ELSE happening to refresh AuthStore.idToken first; this is a
         // real gap the design said would exist ("mirrors Gateway._send's ... idToken-not-ready
         // guard") but the first draft of this function never actually called it.
-        if (typeof AuthService !== "undefined" && AuthService)
+        if (!skipTokenRefresh && typeof AuthService !== "undefined" && AuthService)
             AuthService.ensureFreshToken()
         var candidates = drainCandidates(Date.now())
         for (var i = 0; i < candidates.length; ++i) _upload(candidates[i])
@@ -309,7 +313,7 @@ QtObject {
     // item queued when idToken is empty and nothing else re-arms. Event-driven, no polling; an
     // emptied token (sign-out) is not a trigger. Same property-watcher form as above.
     property string _tokenWatcher: AuthStore.idToken
-    on_TokenWatcherChanged: { if (_tokenWatcher.length > 0 && items.length > 0) drainNow() }
+    on_TokenWatcherChanged: { if (_tokenWatcher.length > 0 && items.length > 0) drainNow(true) }
 
     // Re-arm the drain when the outbox changes. drainCandidates() gates an item on its product's
     // own pending create mutation (Trap 1); the one-shot _reschedule() timer fires once, finds the

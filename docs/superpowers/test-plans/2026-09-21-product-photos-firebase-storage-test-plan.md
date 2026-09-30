@@ -125,11 +125,11 @@ written but NOT run here (no Qt toolchain), CI is the proof.
 
 | # | Gap | Test | Status |
 |---|---|---|---|
-| F1 | Item persisted as `uploading` (app killed/OS-suspended mid-upload) is never drained or re-armed on relaunch; no Retry/Discard because state is not `failed` | `tst_PhotoQueue`: `_load()` with a persisted `uploading` item -> becomes `enqueued` and is a drain candidate | | FIXED: `tst_PhotoQueue` `test_relaunch_recovers_*`, `..._leaves_failed_and_retrying_*`, `..._only_the_uploading_items_of_a_mixed_queue`, `..._corrupt_storage_*`, `test_an_in_session_uploading_item_is_still_excluded_*` |
-| F2 | Deleting a product does not purge its queued/failed photos; they later 404 (terminal) and stay in the queue with no UI to discard | `tst_InventoryStore_deleteProductCascade`: queued items for the product are discarded (files removed) | | FIXED: `tst_InventoryStore_deleteProductCascade` `test_deleteProduct_discards_*` (queued, every state, with cascade, none, unknown id, empty queue, monkey) |
-| F3 | `uploadProductPhoto` writes Storage objects before the 404/409 checks, so those outcomes orphan both objects | `index.handlers.photos.test.js`: 404 and 409 paths write nothing (or delete what they wrote) | | open |
-| F4 | `idToken`-empty branch in `_upload` returns without re-arming the drain | `tst_PhotoQueue`: token-empty pass leaves item drainable on next trigger | | FIXED as a token watcher: `tst_PhotoQueue` `test_token_arrival_*` (drains, respects outbox gate, respects identity, empty queue), `test_token_cleared_does_not_drain` |
-| F5 | Full-doc inventory `update` carries `before.photoIds`; a photo confirmed between edit and drain makes the edit 409 | Server test: `applyMutation` ignores/preserves `photoIds` in the `before` comparison | | open |
+| F1 | Item persisted as `uploading` (app killed/OS-suspended mid-upload) is never drained or re-armed on relaunch; no Retry/Discard because state is not `failed` | `tst_PhotoQueue`: `_load()` with a persisted `uploading` item -> becomes `enqueued` and is a drain candidate | FIXED: `tst_PhotoQueue` `test_relaunch_recovers_*`, `..._leaves_failed_and_retrying_*`, `..._only_the_uploading_items_of_a_mixed_queue`, `..._corrupt_storage_*`, `test_an_in_session_uploading_item_is_still_excluded_*` |
+| F2 | Deleting a product does not purge its queued/failed photos; they later 404 (terminal) and stay in the queue with no UI to discard | `tst_InventoryStore_deleteProductCascade`: queued items for the product are discarded (files removed) | FIXED: `tst_InventoryStore_deleteProductCascade` `test_deleteProduct_discards_*` (queued, every state, with cascade, none, unknown id, empty queue, monkey) |
+| F3 | `uploadProductPhoto` writes Storage objects before the 404/409 checks, so those outcomes orphan both objects | `index.handlers.photos.test.js`: 404 and 409 paths write nothing (or delete what they wrote) | open |
+| F4 | `idToken`-empty branch in `_upload` returns without re-arming the drain | `tst_PhotoQueue`: token-empty pass leaves item drainable on next trigger | FIXED as a token watcher: `tst_PhotoQueue` `test_token_arrival_*` (drains, respects outbox gate, respects identity, empty queue), `test_token_cleared_does_not_drain` |
+| F5 | Full-doc inventory `update` carries `before.photoIds`; a photo confirmed between edit and drain makes the edit 409 | Server test: `applyMutation` ignores/preserves `photoIds` in the `before` comparison | open |
 
 ## On-Device Test Plan (current behaviour, replaces the per-round checklists)
 
@@ -179,3 +179,21 @@ Felgo build on Android or iOS.
 ### Known unknowns
 - Upload path through the real Cloud Function is proven only by on-device runs; a 4xx/5xx now is server-side (`photoValidation`, size, auth) - bring the log line.
 - `qt.network.http2: GOAWAY` is connection-level noise; status 0 is retried by design.
+
+## PR #99 review additions (2026-09-30)
+
+Written, NOT run (no Qt toolchain); CI is the proof.
+
+| # | Finding | Coverage |
+|---|---|---|
+| R1 | Queue purge in `deleteProduct` shared one try/catch with confirmed-photo removal: a throw in `discard()` skipped Storage removals | Isolated in its own try/catch (`InventoryStore.qml`); no headless test can make `discard()` throw, so on-device check below |
+| R2 | Monkey test never left state `enqueued` (LCG overflow) | Fixed LCG + asserts every state and both groups are reached (`test_deleteProduct_queue_purge_monkey`) |
+| R3 | `PhotoQueue._breaker` shared across test files could trip open and starve the F4 drain test | Reset in `tst_PhotoQueue.init()` |
+| R4 | Late upload confirmation for a deleted product | `test_late_upload_confirmation_for_a_deleted_product_is_a_noop` |
+| R5 | Token watcher fired a redundant token refresh (stale expiry mid-`applyAuth`) | `drainNow(true)` from watcher. Not unit-testable (`ensureFreshToken` no-ops when unauthenticated); on-device check below |
+
+On-device additions:
+- [ ] Cold start, expired session, one queued photo: exactly ONE refresh request is made (log shows one `tokenRefreshed`), photo then uploads.
+- [ ] Delete a product that has a queued photo AND confirmed photos while offline, go online: confirmed photos are removed from Storage, no zombie queue item, no crash.
+- [ ] Hourly token refresh with a `failed` photo sitting in the gallery: no extra refresh, no state change, Retry still works.
+
