@@ -581,14 +581,15 @@ QtObject {
         OutboxStore.markSent(requestId)
         var gone = { ok: false, error: "discarded", discarded: true }
         if (Array.isArray(item.ops)) _finishOperation(item, gone)
-        _failDeltaCallbacks(requestId, gone)
+        _answerDeltaCallbacks(requestId, gone)
         parkedWriteDiscarded(requestId, StuckWrites.entitiesOf(item))
         _reschedule()
         return true
     }
 
-    // Fires (once) and forgets the recordDelta callbacks registered for requestId.
-    function _failDeltaCallbacks(requestId, result) {
+    // Fires (once) and forgets the recordDelta callbacks registered for requestId
+    // with `result` (the server's terminal answer, or { error: "discarded" }).
+    function _answerDeltaCallbacks(requestId, result) {
         var callbacks = _deltaCallbacks[requestId] || []
         if (callbacks.length === 0) return
         var map = Object.assign({}, _deltaCallbacks)
@@ -1002,14 +1003,7 @@ QtObject {
             }
             OutboxStore.clearInFlight(item)
 
-            if (classified.terminal) {
-                var callbacks = _deltaCallbacks[item.requestId] || []
-                var map = Object.assign({}, _deltaCallbacks)
-                delete map[item.requestId]
-                _deltaCallbacks = map
-                for (var i = 0; i < callbacks.length; ++i)
-                    callbacks[i](classified.result)
-            }
+            if (classified.terminal) _answerDeltaCallbacks(item.requestId, classified.result)
             _reschedule()
         }
         xhr.open("POST", deltaFunctionUrl)
