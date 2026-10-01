@@ -39,11 +39,17 @@
 - yagni check: `buildMarker`, `evaluateUploadPreflight` as separate exports are fine for testability; not worth fighting.
 - Lean otherwise. Net: about -2 marker fields, -1 rules block.
 
-## Questions for Taher (grill, one answer each)
-- **Q-A poison markers:** (1) cap `attempts>=5` then skip + log (fixes starvation and latency, marker stays for manual look), (2) per-drain time budget, (3) leave as is. I advise (1).
-- **Q-B unsafe id on inventory delete:** (1) 400 and block (current design, safe prefix, product undeletable), (2) allow delete, write no marker, log (orphans possible). Dev-only and ids are `PRD-###`: (1) is fine, just confirm import.
-- **Q-C slice rename** PH3/PH4/PH5: yes/no.
-- **Q-D revisit Q6 once:** piggyback drain (3 call sites, latency on user path, idle tenant waits) vs one scheduled function (no user latency, drains idle tenants, but needs a collection-group query/index across dev1/test/default DBs). You decided piggyback; I still lean scheduled, but your call stands unless you want to flip.
+## Answers (Taher, 2026-10-01) and resolution
+- **Q-A:** cap 5 attempts. Recorded as Q12; mechanics in PH3b.
+- **Q-B:** product id not found: delete locally; photo whose product id is not found: delete from Storage. Verified in code: BOTH ALREADY HOLD. `deleteProductPhoto` tolerates a missing product and deletes the objects; server-absent product delete returns 409 `current:null` and `InventoryStore._onMutationConflicted` removes the local row. Only defect: the toast says "restored". Recorded as Q13: no server change, pin tests F40/F41, PH4 toast fix (C26). Upload to a missing product stays 404, zero Storage writes (Q1).
+- **Q-C:** rename to PH3/PH4/PH5. Done in spec, test plan, README row, old checkpoint. Q14.
+- **Q-D:** scheduled function, own separate session, with error and response handling. Q6 amended, Q15. PH3 loses the drain; PH3b section added to the spec with a proposal and open questions Q-E..Q-I.
+
+## Fixes applied (docs only)
+C1 rules (`isServerOnlyCollection`), I1 cap (Q12), I2 marker `envPrefix` + U48, I3 one real file per case, I4 on-device row, I5 rename, M1 base note + checkpoint NEXT amended. `requestId` dropped from marker (ponytail). Test plan now 138 cases: unit 41, functional 36, rules 11, e2e 12, QML 26 + 12. Ids not renumbered (gaps = moved to PH3b).
+
+## OPEN (design NOT complete)
+Only PH3b: Q-E schema (`nextAttemptAt` + park by removing the field, advised), Q-F cadence/backoff/envs (10 min, linear x10 min, all 3), Q-G throw-at-end (advised), Q-H keep immediate post-commit sweep (advised), Q-I Blaze + Cloud Scheduler + who deploys (UNVERIFIED). PH3, PH4, PH5 designs are complete.
 
 ## NEXT (resume here)
-Taher answers Q-A..Q-D. Then one small docs commit on PR #108's branch: fix C1, I1-I5, M1. Re-run `git merge --no-commit` vs main. Then S3 may start (`feat/2026-10-01-photos-s3-server`, Node tests runnable in sandbox: `cd functions && npm ci && node --test`).
+1. Merge PR #108 (after Taher reviews). 2. Start PH3 on `feat/2026-10-01-photos-ph3-server`, task order in the old checkpoint NEXT minus the drain steps; Node tests run in sandbox (`cd functions && npm ci && node --test`). 3. PH3b in its own session after Taher answers Q-E..Q-I. 4. Re-run ponytail-audit and qt-qml-review at PH4/PH5 (first QML diffs).
