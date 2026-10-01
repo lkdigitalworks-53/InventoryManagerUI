@@ -3217,7 +3217,7 @@ question that actually disambiguates rather than guessing — here, whether the 
 just-pushed fix or a build that predates it, which fully resolves the `NewOrderDialog` half of the
 report on its own.
 
-## Skill 66: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
+## Skill 89: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
 
 **What happened**: on-device testing of the Tier C cascade-delete feature found a precisely
 reproducible bug: create a product with stock 10, sell 1 via a completed order, delete the

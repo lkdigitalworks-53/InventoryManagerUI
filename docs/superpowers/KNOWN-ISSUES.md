@@ -211,6 +211,11 @@ probably a shared `authorize(ctx.role, entity, action)` check called once per ha
 the same role/action rules `DataModel.qml`'s guards already encode client-side, so the two stay in
 sync by construction rather than by two people remembering to update both.
 
+**Update 2026-09-30 (photos design session):** the two product-photo endpoints (`uploadProductPhoto`,
+`deleteProductPhoto`) get a narrow owner/admin gate, mirroring `AuthStore.canManageInventory`. This is partial
+hardening only: a staff token can still edit or delete the product itself through `recordMutation`. When the general
+`authorize(ctx.role, entity, action)` check above is built, replace the photo gate with it instead of keeping two copies.
+
 ---
 
 ## Delete: product delete doesn't clean up stock batches or the product photo — RESOLVED 2026-09-02
