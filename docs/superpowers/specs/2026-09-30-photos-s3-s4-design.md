@@ -1,6 +1,6 @@
 # Product photos — pending items: PH3 (server), PH4 (client), PH5 (remove legacy `photoUrl`) — design
 
-**Status:** design only. Decisions Q1-Q11 taken by Taher 2026-09-30, Q12-Q15 on 2026-10-01 after the PR #108 review (ledger below). No code written. PH3 (server) can start once PR #108 merges. **PH3b (scheduled cleanup function) design is still OPEN**, see its section; PH3 does not depend on it.
+**Status:** design only. Decisions Q1-Q11 taken by Taher 2026-09-30, Q12-Q15 on 2026-10-01 after the PR #108 review (ledger below). No code written. PH3 (server) can start once PR #108 merges. **PH3b (scheduled cleanup function) design is decided except Q-I** (Blaze/Cloud Scheduler plan and who deploys), see its section; PH3 does not depend on it.
 **Slice labels:** PH3/PH4/PH5 (renamed from S3/S4/S5 on 2026-10-01: the stuck-writes workstream already owns `S3`, #109).
 **Checkpoint / evidence trail:** `2026-09-30-photos-pending-design-CHECKPOINT.md` (every code claim here was read on `main` @ `0d77f9a`; on 2026-10-01 `functions/`, `firestore.rules`, `storage.rules` re-checked unchanged on `main` @ `52776d7`, only client files moved; items marked UNVERIFIED were not).
 **Test plan:** `../test-plans/2026-09-30-photos-ph3-s4-s5-test-plan.md`.
@@ -19,7 +19,7 @@ Dev env only, no production, no backward compatibility, every PR tested on a NEW
 | Q3 | N2 role gate | **owner/admin only on both photo endpoints** + **403 becomes terminal in `PhotoQueueLogic`** | Mirrors `AuthStore.canManageInventory`. Partial hardening only; general fix stays in KNOWN-ISSUES (`recordMutation` has no role check) |
 | Q4 | C1 who cleans Storage on product delete | **Server cascade in `recordMutation`** after a committed inventory delete | Replaces the client loop |
 | Q5 | Durability | **Transactional cleanup marker** `pending_cleanup/{productId}` written in the SAME txn as the delete | Generic operation journal / cross-device lock = roadmap only |
-| Q6 | Who drains leftovers | **AMENDED 2026-10-01: scheduled function**, own slice PH3b, own session (was: piggyback in 3 handlers) | Piggyback dropped: it put awaited sweeps on user requests and left idle tenants stuck. PH3 keeps the immediate post-commit sweep only. Design of PH3b OPEN |
+| Q6 | Who drains leftovers | **AMENDED 2026-10-01: scheduled function**, own slice PH3b, own session (was: piggyback in 3 handlers) | Piggyback dropped: it put awaited sweeps on user requests and left idle tenants stuck. PH3 keeps the immediate post-commit sweep only. Design of PH3b decided except Q-I (deploy/plan facts) |
 | Q7 | Client per-photo delete loop | **Remove** (and its legacy branch); keep only the `PhotoQueue` purge | Decided by implication of the project facts; reversible |
 | Q8 | Legacy product `photoUrl` | **PH5: remove all** of it, own slice, after PH3/PH4 | |
 | Q9 | N1 photo id | **`Qt.uuid()` minus braces** (Q10a amendment) + **server whitelist** `[A-Za-z0-9_-]`, length 1-64 | Keep `photo-` prefix (42 chars) |
@@ -80,8 +80,8 @@ A separate `match /pending_cleanup/{docId} { allow ...: if false; }` is NOT enou
 - **P1 stock movements (planned, NOT merged):** its S1a/S1b also edit `applyMutation`, batch and ops (batch cap 200->150, ops write budgets). Expect merge conflicts in `gatewayLogic.js`; the two changes are independent. Q11 means no marker writes in batch/ops, so P1's write-budget arithmetic is unaffected. Single path gains one write per inventory delete (marker).
 - **F5 stays:** strict `before` compare including `photoIds` at all three sites. Add one pin test documenting it.
 
-## PH3b — scheduled cleanup function (own session, design OPEN)
-Replaces the piggyback drain (Q6 amended). Taher: separate session, must handle scheduler errors and response handling. NOT decided yet; proposal + open questions so the next session can grill and decide:
+## PH3b — scheduled cleanup function (own session, design decided except Q-I)
+Replaces the piggyback drain (Q6 amended). Taher: separate session, must handle scheduler errors and response handling. Proposal below was accepted as written (Q-E to Q-H); Q-I open:
 
 **Facts verified 2026-10-01:** no scheduled function exists in `functions/index.js` today; `firestore.indexes.json` is empty; marker lives at `tenants/{t}/pending_cleanup/{productId}`, so finding markers across tenants needs a **collection-group query**, per Firestore database (`DATABASE_ID_FOR_ENV`: `dev1`, `test`, `(default)`). Cloud Scheduler needs the Blaze plan (UNVERIFIED for this project; Storage use suggests yes). A scheduled function has no HTTP caller: "response handling" means structured logs, thrown-vs-swallowed errors and the run summary.
 
@@ -93,7 +93,8 @@ Replaces the piggyback drain (Q6 amended). Taher: separate session, must handle 
 - Reuse `sweepMarker` unchanged (id-reuse recheck, prefix guard).
 - Testing: export a pure `runCleanupSweep(deps)` so Node tests drive it with fakes (budget, parking, env isolation, throw-at-end); one emulator e2e calling it directly; real scheduler firing is a DV item (device/real project only).
 
-**Open questions for Taher:** Q-E marker schema `nextAttemptAt` + park-by-removal (advised) vs `createdAt` + in-memory filter. Q-F cadence 10 min and linear backoff x 10 min (advised) and all three envs. Q-G throw-at-end vs never throw (advised: throw-at-end). Q-H keep the immediate post-commit sweep in the delete handler (advised yes: instant cleanup, scheduler only for leftovers) vs scheduler-only. Q-I confirm Blaze + Cloud Scheduler is OK for the project, and who deploys functions (CI or manual).
+**Decided by Taher 2026-10-01 ("ok" to the advised defaults):** Q-E schema `nextAttemptAt` + park by removing the field (plus `parked: true`). Q-F run every 10 min, linear backoff `attempts x 10 min`, all three envs. Q-G throw only at the end of the run if an env-level failure happened, never for per-marker failures. Q-H keep the immediate awaited post-commit sweep in the delete handler.
+**Still OPEN (needs facts, "ok" cannot answer it): Q-I.** (1) Is the Firebase project on Blaze with Cloud Scheduler allowed? Storage use suggests yes, UNVERIFIED. (2) Who deploys functions: CI or manual? PH3b implementation must not start until Q-I is answered; PH3 does not depend on it.
 
 ## PH4 — client design
 1. `PhotoQueueLogic.js`: `TERMINAL_STATUS` `{400,413,404,409}` -> add `403`. A 403 goes straight to `failed` (existing Retry/Discard UI). Accepted trade-off: a reactivated suspended member's `no-tenant-context` 403 also needs a manual Retry.

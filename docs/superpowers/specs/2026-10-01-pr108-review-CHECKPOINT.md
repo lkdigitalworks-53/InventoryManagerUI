@@ -48,8 +48,11 @@
 ## Fixes applied (docs only)
 C1 rules (`isServerOnlyCollection`), I1 cap (Q12), I2 marker `envPrefix` + U48, I3 one real file per case, I4 on-device row, I5 rename, M1 base note + checkpoint NEXT amended. `requestId` dropped from marker (ponytail). Test plan now 138 cases: unit 41, functional 36, rules 11, e2e 12, QML 26 + 12. Ids not renumbered (gaps = moved to PH3b).
 
-## OPEN (design NOT complete)
-Only PH3b: Q-E schema (`nextAttemptAt` + park by removing the field, advised), Q-F cadence/backoff/envs (10 min, linear x10 min, all 3), Q-G throw-at-end (advised), Q-H keep immediate post-commit sweep (advised), Q-I Blaze + Cloud Scheduler + who deploys (UNVERIFIED). PH3, PH4, PH5 designs are complete.
+## PH3b decisions (Taher, 2026-10-01: "ok" to advised defaults)
+Q-E `nextAttemptAt` + park by field removal. Q-F 10 min cadence, linear backoff, 3 envs. Q-G throw-at-end only. Q-H keep immediate post-commit sweep. Written into the spec's PH3b section.
+
+## OPEN
+**Q-I only:** Blaze plan + Cloud Scheduler OK? Who deploys functions (CI or manual)? "ok" did not answer it; UNVERIFIED. Blocks PH3b implementation, not PH3/PH4/PH5. All other design is complete.
 
 ## NEXT (resume here)
 1. Merge PR #108 (after Taher reviews). 2. Start PH3 on `feat/2026-10-01-photos-ph3-server`, task order in the old checkpoint NEXT minus the drain steps; Node tests run in sandbox (`cd functions && npm ci && node --test`). 3. PH3b in its own session after Taher answers Q-E..Q-I. 4. Re-run ponytail-audit and qt-qml-review at PH4/PH5 (first QML diffs).
