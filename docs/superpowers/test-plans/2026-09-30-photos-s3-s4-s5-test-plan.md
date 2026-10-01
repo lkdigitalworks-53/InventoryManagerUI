@@ -188,7 +188,7 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 Defects this work pins, by case id: F22, E04, C19 (destroy-before-ack) | F37-F39 (F5 pin) | R01-R05, R11 (rules wildcard trap) | U15, U45, E08, E09 (prefix widening) | F07, F08 (F3 orphans) | C01, C05 (403 retry loop) | S09 (profile photo).
 
 ## 8. Mutation checks to run in the sandbox for PH3 (Node side, planned)
-Remove role gate; skip preflight; write marker outside the txn; write marker on CAS conflict; sweep without the product-absent re-check; drop the `/` suffix guard; widen whitelist to allow `/`;; batch/ops reject removed. Each must turn at least one case red.
+Remove role gate; skip preflight; write marker outside the txn; write marker on CAS conflict; sweep without the product-absent re-check; drop the `/` suffix guard; widen whitelist to allow `/`; batch/ops reject removed. Each must turn at least one case red.
 
 ## 9. On-Device Test Plan (new tenant per PR; app is disabled offline so no offline steps)
 
