@@ -504,3 +504,244 @@ test("recordMutationsBatch: transient (unavailable) Firestore error -> still 500
         cached.applyMutationsBatch = original;
     }
 });
+
+// -- PH3 product-delete cascade (design Q4/Q5/Q11/Q13; test plan F18-F28, F30, F41) ---------------
+// applyMutation is mocked in this harness, so the atomicity of "marker in the SAME transaction" is
+// proven in gatewayLogic.test.js (F18/F19/F22/F23); here we prove what index.js itself decides: the
+// prefix it hands to applyMutation, and when (and only when) it sweeps after the commit.
+const CASCADE_TENANT = "tenant-cascade";
+const CASCADE_PREFIX = "test/tenants/" + CASCADE_TENANT + "/products/PRD-1/";
+const MARKER_PATH = "tenants/" + CASCADE_TENANT + "/pending_cleanup/PRD-1";
+const PRODUCT_PATH = "tenants/" + CASCADE_TENANT + "/inventory/PRD-1";
+
+function cascadeReset(opts) {
+    const o = opts || {};
+    mockState.docs = {};
+    mockState.setCalls = [];
+    mockState.applyMutationCalls = [];
+    mockState.applyMutationResult = { ok: true };
+    mockState.storageFiles = {};
+    mockState.storageDeleteFilesCalls = [];
+    mockState.storageDeleteFilesError = null;
+    mockState.storageBucketError = null;
+    mockState.docDeleteCalls = [];
+    mockState.docDeleteError = null;
+    seedHappyPathAuth(mockState, { tenantId: CASCADE_TENANT, role: o.role });
+    // Stand-in for what the (mocked) transaction would have committed.
+    if (o.marker !== false) {
+        mockState.docs[MARKER_PATH] = { productId: "PRD-1", envPrefix: "test", prefix: CASCADE_PREFIX, attempts: 0, lastError: null };
+    }
+    mockState.storageFiles[CASCADE_PREFIX + "photo-1.jpg"] = Buffer.from("a");
+    mockState.storageFiles[CASCADE_PREFIX + "photo-1_t.jpg"] = Buffer.from("b");
+    mockState.storageFiles["test/tenants/" + CASCADE_TENANT + "/products/PRD-10/photo-9.jpg"] = Buffer.from("other");
+}
+
+function deleteBody(overrides) {
+    return validMutationBody(Object.assign({
+        entity: "inventory", entityId: "PRD-1", action: "delete", before: { name: "Widget" }, after: null,
+        requestId: "del-req-" + Math.random()
+    }, overrides || {}));
+}
+
+test("F19 recordMutation inventory delete: passes the exact prefix + env prefix to applyMutation (dev, test, prd, unknown)", async () => {
+    const expectEnv = { dev: "dev1", test: "test", prd: "prd", bogus: "prd" };
+    for (const env of Object.keys(expectEnv)) {
+        cascadeReset();
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody({ env: env }) }), res);
+        assert.equal(res.statusCode, 200, env);
+        const p = mockState.applyMutationCalls[0];
+        assert.equal(p.cleanupEnvPrefix, expectEnv[env], env);
+        assert.equal(p.cleanupPrefix, expectEnv[env] + "/tenants/" + CASCADE_TENANT + "/products/PRD-1/", env);
+    }
+});
+
+test("F20 recordMutation inventory delete: post-commit sweep deletes exactly the product prefix, marker removed", async () => {
+    cascadeReset();
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(mockState.storageDeleteFilesCalls, [{ prefix: CASCADE_PREFIX, force: true }]);
+    assert.equal(mockState.docs[MARKER_PATH], undefined, "marker removed after a clean sweep");
+    assert.deepEqual(mockState.docDeleteCalls, [MARKER_PATH]);
+    assert.equal(Object.keys(mockState.storageFiles).some((k) => k.startsWith(CASCADE_PREFIX)), false, "this product's photos gone");
+    assert.equal(Object.keys(mockState.storageFiles).length, 1, "PRD-10's photo untouched (prefix ends with /)");
+});
+
+test("F21 recordMutation inventory delete: sweep failure -> still 200, marker retained with attempts 1 + lastError", async () => {
+    cascadeReset();
+    mockState.storageDeleteFilesError = new Error("storage unavailable");
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res), { ok: true, entryId: mockState.applyMutationCalls[0].requestId });
+    const marker = mockState.docs[MARKER_PATH];
+    assert.equal(marker.attempts, 1);
+    assert.equal(marker.lastError, "storage unavailable");
+    assert.equal(marker.prefix, CASCADE_PREFIX, "merge-write keeps the rest of the marker");
+});
+
+test("F21b recordMutation inventory delete: even admin SDK construction throwing never fails the delete", async () => {
+    cascadeReset();
+    mockState.storageBucketError = new Error("no bucket");
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.ok(mockState.docs[MARKER_PATH], "marker stays for the PH3b scheduler");
+});
+
+test("F22 recordMutation inventory delete: CAS 409 -> no sweep, no storage call, marker never touched", async () => {
+    cascadeReset({ marker: false });
+    mockState.applyMutationResult = { ok: false, status: 409, conflict: true, current: { name: "server version" } };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(jsonBody(res).conflict, true);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+    assert.equal(mockState.docDeleteCalls.length, 0);
+    assert.equal(Object.keys(mockState.storageFiles).length, 3, "photos intact: no destroy-before-ack");
+});
+
+test("F23 recordMutation inventory delete: idempotent replay -> 200, no second sweep", async () => {
+    cascadeReset();
+    mockState.applyMutationResult = { ok: true, idempotentReplay: true };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+});
+
+test("F23b recordMutation inventory delete: applyMutation throwing (e.g. missing-cleanup-prefix) -> 500, no sweep", async () => {
+    cascadeReset();
+    const cached = require.cache[require.resolve("../lib/gatewayLogic")].exports;
+    const original = cached.applyMutation;
+    cached.applyMutation = async () => { throw new Error("missing-cleanup-prefix"); };
+    try {
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+        assert.equal(res.statusCode, 500);
+        assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+        assert.deepEqual(mockState.docDeleteCalls, []);
+    } finally {
+        cached.applyMutation = original;
+    }
+});
+
+test("F23c recordMutation inventory delete: a null applyMutation result is not a commit -> no sweep", async () => {
+    cascadeReset();
+    mockState.applyMutationResult = null;
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+});
+
+test("F24 recordMutation inventory update/create: no cleanup prefix, no sweep", async () => {
+    for (const action of ["update", "create"]) {
+        cascadeReset();
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody({ action: action, after: { name: "x" } }) }), res);
+        assert.equal(res.statusCode, 200, action);
+        assert.equal(mockState.applyMutationCalls[0].cleanupPrefix, null, action);
+        assert.equal(mockState.storageDeleteFilesCalls.length, 0, action);
+    }
+});
+
+test("F25 recordMutation stock_batch / order / supplier / staff delete: no prefix, no sweep", async () => {
+    for (const entity of ["stock_batch", "order", "supplier", "staff"]) {
+        cascadeReset();
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody({ entity: entity }) }), res);
+        assert.equal(res.statusCode, 200, entity);
+        assert.equal(mockState.applyMutationCalls[0].cleanupPrefix, null, entity);
+        assert.equal(mockState.storageDeleteFilesCalls.length, 0, entity);
+    }
+});
+
+test("F26 recordMutation inventory delete with an unsafe entityId -> 400 invalid-entity-id, nothing written", async () => {
+    for (const bad of ["PRD 1", "a/b", "..", "x.y", "p".repeat(65), "caf\u00e9"]) {
+        cascadeReset();
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody({ entityId: bad }) }), res);
+        assert.equal(res.statusCode, 400, JSON.stringify(bad));
+        assert.equal(jsonBody(res).error, "invalid-entity-id");
+        assert.equal(mockState.applyMutationCalls.length, 0, "applyMutation never reached");
+        assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+    }
+});
+
+test("F26b unsafe entityId on a NON-cascade mutation is unchanged (only inventory delete needs a prefix)", async () => {
+    cascadeReset();
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody({ entity: "order", action: "update", entityId: "ORD 1", after: { a: 1 } }) }), res);
+    assert.equal(res.statusCode, 200);
+});
+
+test("F27 recordMutation inventory delete of a product with zero photos: marker written, sweep harmless", async () => {
+    cascadeReset();
+    for (const key of Object.keys(mockState.storageFiles)) delete mockState.storageFiles[key];
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 1);
+    assert.equal(mockState.docs[MARKER_PATH], undefined);
+});
+
+test("F28 id reuse: product recreated before the sweep runs -> marker dropped, photos NOT swept", async () => {
+    cascadeReset();
+    mockState.docs[PRODUCT_PATH] = { name: "Recreated", photoIds: ["photo-1"] };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+    assert.equal(mockState.docs[MARKER_PATH], undefined, "stale marker dropped");
+    assert.equal(Object.keys(mockState.storageFiles).length, 3, "new product's photos intact");
+});
+
+test("F30 staff-role inventory delete behaves as today (no new role gate; pinned) and still sweeps", async () => {
+    cascadeReset({ role: "staff" });
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 1);
+});
+
+test("F41 delete of a server-absent product with non-null before -> 409 conflict, current null, no marker, no sweep (Q13 pin)", async () => {
+    cascadeReset({ marker: false });
+    mockState.applyMutationResult = { ok: false, status: 409, conflict: true, current: null };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 409);
+    const body = jsonBody(res);
+    assert.equal(body.conflict, true);
+    assert.equal(body.current, null);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+    assert.equal(mockState.docs[MARKER_PATH], undefined);
+});
+
+test("MONKEY recordMutation: 200 random entity/action/id combos never sweep unless inventory+delete with a safe id", async () => {
+    const entities = ["inventory", "stock_batch", "order", "supplier", "inventory", "inventory"];
+    const actions = ["create", "update", "delete", "delete", "delete"];
+    const ids = ["PRD-1", "PRD-2", "a/b", "..", "x y", "PRD-1", "p".repeat(70)];
+    let seed = 99;
+    const rnd = (n) => { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor((seed / 4294967296) * n); };
+    for (let i = 0; i < 200; i++) {
+        cascadeReset();
+        const entity = entities[rnd(entities.length)];
+        const action = actions[rnd(actions.length)];
+        const id = ids[rnd(ids.length)];
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody({ entity: entity, action: action, entityId: id, after: action === "delete" ? null : { a: 1 } }) }), res);
+        const safe = /^[A-Za-z0-9_-]{1,64}$/.test(id);
+        const cascade = entity === "inventory" && action === "delete";
+        if (cascade && !safe) {
+            assert.equal(res.statusCode, 400);
+            assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+        } else if (cascade) {
+            assert.equal(res.statusCode, 200);
+            assert.equal(mockState.storageDeleteFilesCalls.length, 1);
+            assert.ok(mockState.storageDeleteFilesCalls[0].prefix.endsWith("/products/" + id + "/"));
+        } else {
+            assert.equal(mockState.storageDeleteFilesCalls.length, 0, entity + "/" + action + "/" + id);
+        }
+    }
+});
