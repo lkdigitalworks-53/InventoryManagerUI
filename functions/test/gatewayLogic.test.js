@@ -642,3 +642,13 @@ test("F37 F5 pin (single path): stale before.photoIds -> 409 conflict, nothing w
     assert.deepEqual(result.current, { qty: 1, photoIds: ["photo-new"] });
     assert.equal(db.writes.length, 0);
 });
+
+test("F41 real logic: delete of a server-absent product with a non-null before -> 409, current null, no marker (Q13 pin)", async () => {
+    const db = makeFakeDbWithData({});
+    const result = await GatewayLogic.applyMutation(db, cascadeParams()); // before = { qty: 1 }, server has nothing
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.conflict, true);
+    assert.equal(result.current, null);
+    assert.equal(db.writes.length, 0);
+});
