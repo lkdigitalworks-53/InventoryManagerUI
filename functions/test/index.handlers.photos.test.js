@@ -35,7 +35,10 @@ function resetState(opts) {
     mockState.storageDeleteCalls = [];
     mockState.storageSaveError = null;
     mockState.storageDeleteError = null;
-    seedHappyPathAuth(mockState, { tenantId: TENANT });
+    mockState.onStorageSave = null;
+    mockState.storageDeleteFilesCalls = [];
+    mockState.docDeleteCalls = [];
+    seedHappyPathAuth(mockState, { tenantId: TENANT, role: o.role });
     if (o.product !== null) {
         mockState.docs["tenants/" + TENANT + "/inventory/" + PRODUCT] =
             Object.assign({ name: "Widget", photoIds: [] }, o.product || {});
@@ -124,10 +127,9 @@ test("uploadProductPhoto: 404 product-not-found when the product doc doesn't exi
     await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
     assert.equal(res.statusCode, 404);
     assert.equal(jsonBody(res).error, "product-not-found");
-    // Storage writes happen before the Firestore transaction in this design (orphan-on-crash is
-    // an accepted risk, see design spec) -- so objects DO get written even though the id is never
-    // recorded. This assertion documents that tradeoff rather than hiding it.
-    assert.equal(mockState.storageSaveCalls.length, 2);
+    // PH3 / F3 (design Q1): the product is read BEFORE any Storage write, so a 404 leaves ZERO
+    // orphan objects (this used to assert 2 saves, the old accepted-orphan behaviour).
+    assert.equal(mockState.storageSaveCalls.length, 0);
 });
 
 test("uploadProductPhoto: 409 photo-limit when the product already has 10 photos", async () => {
@@ -139,6 +141,7 @@ test("uploadProductPhoto: 409 photo-limit when the product already has 10 photos
     assert.equal(jsonBody(res).error, "photo-limit");
     const productDoc = mockState.docs["tenants/" + TENANT + "/inventory/" + PRODUCT];
     assert.deepEqual(productDoc.photoIds, tenPhotoIds, "unchanged");
+    assert.equal(mockState.storageSaveCalls.length, 0, "F3: a full gallery 409 writes no Storage objects");
 });
 
 test("uploadProductPhoto: missing Authorization header -> 401 missing-token", async () => {

@@ -100,6 +100,17 @@ function installMocks() {
         storageDeleteCalls: [],
         storageSaveError: null,
         storageDeleteError: null,
+        // PH3 (2026-10-03). onStorageSave(path): optional hook run inside every bucket.file().save(),
+        // lets a test change Firestore state "between" the upload preflight and the transaction.
+        // storageDeleteFilesCalls: [{prefix, force}] for bucket.deleteFiles; storageDeleteFilesError
+        // makes it throw. docDeleteCalls/docDeleteError: DocumentReference.delete() (marker removal).
+        // applyMutationCalls: the params object recordMutation handed to GatewayLogic.applyMutation.
+        onStorageSave: null,
+        storageDeleteFilesCalls: [],
+        storageDeleteFilesError: null,
+        docDeleteCalls: [],
+        docDeleteError: null,
+        applyMutationCalls: [],
         // admin.auth() extensions needed by provisionMember. Same
         // "throw until configured" default as verifyIdToken above, so a
         // test that forgets to configure one fails loudly, not silently.
@@ -124,7 +135,12 @@ function installMocks() {
                 const data = mockState.docs[docPath];
                 return { exists: data !== undefined, data: () => data };
             },
-            set: async (data, opts) => _writeDoc(docPath, data, opts)
+            set: async (data, opts) => _writeDoc(docPath, data, opts),
+            delete: async () => {
+                mockState.docDeleteCalls.push(docPath);
+                if (mockState.docDeleteError) throw mockState.docDeleteError;
+                delete mockState.docs[docPath];
+            }
         };
     }
 
@@ -170,11 +186,19 @@ function installMocks() {
             }),
             storage: () => ({
                 bucket: () => ({
+                    deleteFiles: async (opts) => {
+                        mockState.storageDeleteFilesCalls.push({ prefix: opts && opts.prefix, force: opts && opts.force });
+                        if (mockState.storageDeleteFilesError) throw mockState.storageDeleteFilesError;
+                        for (const key of Object.keys(mockState.storageFiles)) {
+                            if (opts && opts.prefix && key.startsWith(opts.prefix)) delete mockState.storageFiles[key];
+                        }
+                    },
                     file: (filePath) => ({
                         save: async (buf, opts) => {
                             if (mockState.storageSaveError) throw mockState.storageSaveError;
                             mockState.storageSaveCalls.push({ path: filePath, contentType: opts && opts.contentType });
                             mockState.storageFiles[filePath] = buf;
+                            if (mockState.onStorageSave) mockState.onStorageSave(filePath);
                         },
                         delete: async () => {
                             mockState.storageDeleteCalls.push({ path: filePath });
@@ -218,7 +242,10 @@ function installMocks() {
     require.cache[gatewayLogicPath] = {
         id: gatewayLogicPath, filename: gatewayLogicPath, loaded: true,
         exports: Object.assign({}, realGatewayLogic, {
-            applyMutation: async () => mockState.applyMutationResult,
+            applyMutation: async (db, params) => {
+                mockState.applyMutationCalls.push(params);
+                return mockState.applyMutationResult;
+            },
             applyDelta: async () => mockState.applyDeltaResult
         })
     };
