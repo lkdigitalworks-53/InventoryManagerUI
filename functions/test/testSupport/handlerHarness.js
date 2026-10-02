@@ -111,6 +111,7 @@ function installMocks() {
         docDeleteCalls: [],
         docDeleteError: null,
         applyMutationCalls: [],
+        storageBucketError: null, // admin.storage().bucket() itself throwing (handler sweep catch path)
         // admin.auth() extensions needed by provisionMember. Same
         // "throw until configured" default as verifyIdToken above, so a
         // test that forgets to configure one fails loudly, not silently.
@@ -185,7 +186,9 @@ function installMocks() {
                 createUser: (opts) => mockState.createUser(opts)
             }),
             storage: () => ({
-                bucket: () => ({
+                bucket: () => {
+                    if (mockState.storageBucketError) throw mockState.storageBucketError;
+                    return {
                     deleteFiles: async (opts) => {
                         mockState.storageDeleteFilesCalls.push({ prefix: opts && opts.prefix, force: opts && opts.force });
                         if (mockState.storageDeleteFilesError) throw mockState.storageDeleteFilesError;
@@ -206,7 +209,8 @@ function installMocks() {
                             delete mockState.storageFiles[filePath];
                         }
                     })
-                })
+                    };
+                }
             })
         }
     };

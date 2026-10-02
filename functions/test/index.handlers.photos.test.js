@@ -291,3 +291,198 @@ test("deleteProductPhoto: authenticated but no tenant context -> 403 no-tenant-c
     assert.equal(res.statusCode, 403);
     assert.equal(jsonBody(res).error, "no-tenant-context");
 });
+
+// ── PH3: role gate, whitelist, F3 preflight (design Q1/Q3/Q9/Q13; test plan F01-F10, F14-F16, F40) ──
+function photoCount() { return mockState.storageSaveCalls.length; }
+function auditWritten() {
+    return mockState.setCalls.some((c) => c.path.indexOf("/audit_log/") >= 0);
+}
+
+for (const role of ["staff", "manager"]) {
+    test("F01/F02 upload: " + role + " -> 403 role-not-allowed", async () => {
+        resetState({ role: role });
+        const res = mockRes();
+        await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+        assert.equal(res.statusCode, 403);
+        assert.equal(jsonBody(res).error, "role-not-allowed");
+    });
+
+    test("F03 upload 403 (" + role + "): zero Storage saves, zero audit/product writes, no inventory read", async () => {
+        resetState({ role: role });
+        mockState.setCalls = [];
+        const res = mockRes();
+        await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+        assert.equal(photoCount(), 0);
+        assert.equal(mockState.setCalls.length, 0);
+        assert.deepEqual(mockState.docs["tenants/" + TENANT + "/inventory/" + PRODUCT].photoIds, []);
+    });
+
+    test("F14 deletePhoto: " + role + " -> 403 role-not-allowed, zero Storage deletes, product untouched", async () => {
+        resetState({ role: role, product: { photoIds: ["photo-1"] } });
+        const res = mockRes();
+        await handlers.deleteProductPhoto(mockReq({ body: { env: "test", productId: PRODUCT, photoId: "photo-1" } }), res);
+        assert.equal(res.statusCode, 403);
+        assert.equal(jsonBody(res).error, "role-not-allowed");
+        assert.equal(mockState.storageDeleteCalls.length, 0);
+        assert.deepEqual(mockState.docs["tenants/" + TENANT + "/inventory/" + PRODUCT].photoIds, ["photo-1"]);
+    });
+}
+
+test("F03b role gate is exact: 'OWNER', empty and unknown roles are denied", async () => {
+    for (const role of ["OWNER", "Owner ", "viewer", "nonsense"]) {
+        resetState({ role: role });
+        // deriveContext falls back through member.role, so seed the exact string on both docs.
+        const res = mockRes();
+        await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+        assert.equal(res.statusCode, 403, role);
+        assert.equal(photoCount(), 0, role);
+    }
+});
+
+test("F04 upload: owner happy path, both objects saved, photoIds updated, audit written", async () => {
+    resetState({ role: "owner" });
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res).photoIds, ["photo-1"]);
+    assert.equal(photoCount(), 2);
+    assert.equal(auditWritten(), true);
+});
+
+test("F05 upload: admin happy path", async () => {
+    resetState({ role: "admin" });
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(photoCount(), 2);
+});
+
+test("F06 upload: unsafe ids -> 400, nothing read or written (whitelist)", async () => {
+    for (const bad of [{ photoId: "a/b" }, { photoId: "a b" }, { photoId: "x".repeat(65) }, { photoId: "%2e%2e" },
+                       { productId: "../x" }, { productId: "PRD 1" }, { productId: "p.q" }]) {
+        resetState();
+        mockState.setCalls = [];
+        const res = mockRes();
+        await handlers.uploadProductPhoto(mockReq({ body: uploadBody(Object.assign({ requestId: "r-" + Math.random() }, bad)) }), res);
+        assert.equal(res.statusCode, 400, JSON.stringify(bad));
+        assert.equal(photoCount(), 0);
+        assert.equal(mockState.setCalls.length, 0);
+    }
+});
+
+test("F07 upload: product missing -> 404 and ZERO Storage saves (F3)", async () => {
+    resetState({ product: null });
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assert.equal(res.statusCode, 404);
+    assert.equal(photoCount(), 0);
+    assert.equal(Object.keys(mockState.storageFiles).length, 0);
+});
+
+test("F08 upload: cap reached -> 409 and ZERO Storage saves (F3)", async () => {
+    resetState({ product: { photoIds: Array.from({ length: 10 }, (_, i) => "e-" + i) } });
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ photoId: "brand-new", requestId: "brand-new" }) }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(jsonBody(res).error, "photo-limit");
+    assert.equal(photoCount(), 0);
+});
+
+test("F08b upload at the cap boundary: 9 existing -> the 10th succeeds, then the 11th gets 409 with zero saves", async () => {
+    resetState({ product: { photoIds: Array.from({ length: 9 }, (_, i) => "e-" + i) } });
+    let res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ photoId: "tenth", requestId: "tenth" }) }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(photoCount(), 2);
+    res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ photoId: "eleventh", requestId: "eleventh" }) }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(photoCount(), 2, "no extra objects for the rejected 11th");
+});
+
+test("F08c upload replay of an already-confirmed photoId at the cap is NOT rejected by the preflight", async () => {
+    const ids = Array.from({ length: 10 }, (_, i) => "e-" + i);
+    resetState({ product: { photoIds: ids } });
+    const res = mockRes();
+    // different requestId (no audit doc yet) but the photoId is already confirmed: passes the preflight.
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ photoId: "e-3", requestId: "fresh-request" }) }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res).photoIds, ids, "no duplicate id appended");
+});
+
+test("F09 upload: same requestId replay -> idempotent, no extra object", async () => {
+    resetState();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), mockRes());
+    const before = photoCount();
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(jsonBody(res).already, true);
+    assert.equal(photoCount(), before);
+});
+
+test("F10 upload: product deleted AFTER the preflight -> txn 404 (pins the documented orphan limit)", async () => {
+    resetState();
+    const productPath = "tenants/" + TENANT + "/inventory/" + PRODUCT;
+    mockState.onStorageSave = () => { delete mockState.docs[productPath]; };
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assert.equal(res.statusCode, 404);
+    assert.equal(jsonBody(res).error, "product-not-found");
+    assert.equal(photoCount(), 2, "documented residual race: one orphan pair, accepted in the design");
+});
+
+test("F10b upload: unsafe tenantId from the users doc -> 403 no-tenant-context, nothing touched", async () => {
+    resetState();
+    mockState.docs["users/test-uid"].tenantId = "other/../tenant";
+    mockState.docs["tenants/other/../tenant/members/test-uid"] = { role: "owner", status: "active" };
+    mockState.setCalls = [];
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(jsonBody(res).error, "no-tenant-context");
+    assert.equal(photoCount(), 0);
+    assert.equal(mockState.setCalls.length, 0);
+});
+
+test("F15 deletePhoto: owner and admin happy path", async () => {
+    for (const role of ["owner", "admin"]) {
+        resetState({ role: role, product: { photoIds: ["photo-1", "photo-2"] } });
+        const res = mockRes();
+        await handlers.deleteProductPhoto(mockReq({ body: { env: "test", productId: PRODUCT, photoId: "photo-1" } }), res);
+        assert.equal(res.statusCode, 200, role);
+        assert.deepEqual(jsonBody(res).photoIds, ["photo-2"], role);
+        assert.equal(mockState.storageDeleteCalls.length, 2, role);
+    }
+});
+
+test("F16 deletePhoto: invalid ids -> 400, nothing deleted", async () => {
+    for (const bad of [{ photoId: "a/b" }, { photoId: "a b" }, { photoId: "x".repeat(65) }, { productId: "../x" }, { productId: "p q" }]) {
+        resetState();
+        const res = mockRes();
+        await handlers.deleteProductPhoto(mockReq({ body: Object.assign({ env: "test", productId: PRODUCT, photoId: "photo-1" }, bad) }), res);
+        assert.equal(res.statusCode, 400, JSON.stringify(bad));
+        assert.equal(mockState.storageDeleteCalls.length, 0);
+    }
+});
+
+test("F16b deletePhoto: unsafe tenantId -> 403 no-tenant-context, nothing deleted", async () => {
+    resetState();
+    mockState.docs["users/test-uid"].tenantId = "a/b";
+    const res = mockRes();
+    await handlers.deleteProductPhoto(mockReq({ body: { env: "test", productId: PRODUCT, photoId: "photo-1" } }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(mockState.storageDeleteCalls.length, 0);
+});
+
+test("F40 deletePhoto: product doc missing -> 200 and BOTH Storage objects still deleted (Q13 pin)", async () => {
+    resetState({ product: null });
+    const res = mockRes();
+    await handlers.deleteProductPhoto(mockReq({ body: { env: "test", productId: PRODUCT, photoId: "photo-1" } }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.storageDeleteCalls.length, 2);
+    assert.deepEqual(mockState.storageDeleteCalls.map((c) => c.path).sort(), [
+        "test/tenants/" + TENANT + "/products/" + PRODUCT + "/photo-1.jpg",
+        "test/tenants/" + TENANT + "/products/" + PRODUCT + "/photo-1_t.jpg"
+    ]);
+});
