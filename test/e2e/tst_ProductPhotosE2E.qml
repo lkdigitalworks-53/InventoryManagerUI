@@ -59,6 +59,19 @@ TestCase {
         return E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, docPath, entityId,
                                            predicateFn, timeoutMs, message)
     }
+    // pending_cleanup is server-only in firestore.rules: a member token reads 403, and pollEmulatorDoc
+    // maps any non-200 to null -- which made every "marker is gone" assertion pass vacuously. Read as
+    // the emulator admin instead ("owner" bypasses rules). Restores the member token afterwards.
+    function _pollMarker(productId, predicateFn, timeoutMs, message) {
+        var saved = fixture.idToken
+        fixture.idToken = "owner"
+        try {
+            return _pollDoc("tenants/" + fixture.tenantId + "/pending_cleanup/" + productId, productId,
+                            predicateFn, timeoutMs, message)
+        } finally {
+            fixture.idToken = saved
+        }
+    }
     function _pollStorageObject(objectPath, timeoutMs, message) {
         return E2EHelpers.pollEmulatorStorageObject(this, emulatorStorageHost, bucket,
                                                       objectPath, timeoutMs, message)
@@ -351,24 +364,32 @@ TestCase {
 
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
         _pollDoc(docPath, productId, function(d) { return d === null }, 10000, "product doc never deleted")
+        // Marker first, as the emulator admin: a sweep that failed leaves the marker with attempts/lastError,
+        // so on failure the message says WHY (the CI log is not always reachable).
+        var markerSeen = "unread"
+        var startedAt = Date.now()
+        _pollMarker(productId, function(d) {
+            markerSeen = JSON.stringify(d)
+            return d === null || (Date.now() - startedAt) > 8000
+        }, 12000, "marker poll")
+        verify(markerSeen === "null",
+               "sweep did not finish -- pending_cleanup marker still present: " + markerSeen)
         for (var j = 0; j < photoIds.length; ++j) {
-            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], false), 10000, "main " + j + " not swept")
-            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], true), 10000, "thumb " + j + " not swept")
+            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], false), 10000,
+                                     "marker removed but main " + j + " still in Storage")
+            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], true), 10000,
+                                     "marker removed but thumb " + j + " still in Storage")
         }
-        var markerPath = "tenants/" + fixture.tenantId + "/pending_cleanup/" + productId
-        _pollDoc(markerPath, productId, function(d) { return d === null }, 10000,
-                 "pending_cleanup marker was not removed after a clean sweep")
         _pollStorageObject(_objectPath(otherId, otherPhoto, false), 3000, "sibling product's photo was swept by mistake")
     }
 
     function test_deleting_a_product_with_no_photos_leaves_no_marker() {
         var productId = _createProduct("E2E Cascade NoPhotos", "SKU-E2E-PHOTO-12")
         InventoryStore.deleteProduct(productId)
-        var markerPath = "tenants/" + fixture.tenantId + "/pending_cleanup/" + productId
         _pollDoc("tenants/" + fixture.tenantId + "/inventory/" + productId, productId,
                  function(d) { return d === null }, 10000, "product doc never deleted")
-        _pollDoc(markerPath, productId, function(d) { return d === null }, 10000,
-                 "marker left behind for a product that never had photos")
+        _pollMarker(productId, function(d) { return d === null }, 10000,
+                    "marker left behind for a product that never had photos")
     }
 
     function test_batch_endpoint_rejects_an_inventory_delete_and_keeps_the_product() {

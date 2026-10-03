@@ -28,3 +28,12 @@
 2. PH3b (scheduled sweeper) BLOCKED on Taher's answer to Q-I.
 3. Remaining e2e: E03, E04, E05, E06, E09, E12.
 4. PH4 (client QML) after PH3 merges. PH5 after PH4.
+
+## Session 3 (2026-10-03, account lkdwtaher@gmail.com) -- CI red on PR #113
+9. CI on 32fe67e: QML 1553, Functions 302, Rules 45 green; E2E 56/57. Only failure: `test_deleting_a_product_sweeps_its_photos_and_removes_the_marker` ("main 0 not swept"). Job logs unreachable from the sandbox (blob host not allowlisted); PR bot comment + check annotations are the only signal.
+10. Ruled out (reproduced in sandbox with firebase-tools' Storage emulator class, admin 12): `bucket.deleteFiles({prefix, force:true})` lists and deletes the prefix correctly and spares a sibling product. Env/prefix wiring also checked: qmltestrunner has no APP_STAGE so the client env is "prd", same as the upload helper.
+11. FOUND test bug: `pending_cleanup` is server-only in firestore.rules, so the e2e member-token read gets 403 and `pollEmulatorDoc` maps non-200 to null -> both "marker removed" assertions were vacuous. Fix: `_pollMarker` reads as the emulator admin (`Bearer owner`).
+12. Cascade test now checks the marker FIRST and fails with the marker JSON (attempts/lastError) if the sweep did not finish, so the next CI comment names the cause. Root cause of the missing sweep is NOT yet known. This commit is diagnostic + vacuity fix, not a proven product fix.
+13. Possible new red: the no-photos test now asserts a real marker removal; if the sweep is broken it fails too (correct).
+## Next
+- Read the PR bot comment for the marker state, fix the real cause, rerun CI. Then E03-E06, E09, E12, R10; PH3b blocked on Q-I.
