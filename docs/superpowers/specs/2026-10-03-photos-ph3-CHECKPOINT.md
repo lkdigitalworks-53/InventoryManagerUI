@@ -13,3 +13,18 @@
 
 ## Deviations from the design (decided here, flagged for review)
 - `isCascadeEntityDelete` lives in the NEW leaf module `functions/lib/photoCleanup.js` (design said `gatewayLogic.js`, test plan said `photoCleanup.js`). Reason: batch/ops would otherwise need a new import of gatewayLogic internals; a leaf module avoids a cycle.
+4. Tasks 1-6 (commits f9be2a4..07e0116): id whitelist; `photoCleanup.js` + 32 unit tests; marker in `applyMutation`; batch/ops reject; handler wiring (role gate, F3 preflight, prefix to applyMutation, awaited post-commit sweep). Harness extended (`deleteFiles`, doc `delete`, `onStorageSave`, `applyMutationCalls`, `storageBucketError`).
+5. Handler tests (photos + recordMutation cascade), rules (`pending_cleanup` in `isServerOnlyCollection`) + R-tests, F41 real-logic pin. Node suite 446/446.
+6. First push (all code commits) done at start of session 2; PR opened after docs.
+7. Risk check: seed tenant `e2e-tenant` passes the whitelist; client `recordMutation` and `PhotoQueue` both send `FirebaseService.environment`, so sweep env matches upload env. `users/{uid}` is client-writable (pre-existing) but `deriveContext` checks tenant membership and the whitelist guards the path.
+8. 7 e2e cases added; mutation checks 10/10 killed; docs: test plan status, KNOWN-ISSUES, AGENTS.md, SKILLS 90-91. README has no photos section; unchanged.
+
+## State at end of this session
+- Branch pushed, PR to `main`. Waiting for CI (rules + e2e + QML unchanged). **Nothing run against emulators.**
+- If CI is red: read `results.xml`/job log first (standing rule). Likely suspects: e2e staff token swap (`fixture.idToken` mutation inside a test), the pre-existing traversal test error code, rules test import of `assert`.
+
+## Next (in order)
+1. Fix CI findings on this branch.
+2. PH3b (scheduled sweeper) BLOCKED on Taher's answer to Q-I.
+3. Remaining e2e: E03, E04, E05, E06, E09, E12.
+4. PH4 (client QML) after PH3 merges. PH5 after PH4.
