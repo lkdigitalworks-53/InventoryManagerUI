@@ -54,9 +54,18 @@
 19. R10 is NOT missing: `test/storage.rules.test.js` (7 tests, run by checks.yml next to the firestore rules) already pins public read, client write/delete denied, default-deny. `storage.rules` is unchanged in this PR. Test plan row R10 re-marked as covered by pre-existing tests (by inspection, CI does not report the two rules files separately).
 20. Commit identity this session: `tsadmin@gmail.com` (Taher's instruction). Earlier sessions used other ids; history is not rewritten.
 21. Docs-only branch `docs/2026-10-03-ph3-ci-green-sync` stacked on the PH3 branch. No code touched. SKILLS/AGENTS/README: no change needed (no new lesson, no behaviour change).
-## DECISION PENDING (asked Taher, not decided by Claude)
-- Add E03/E04/E05/E06/E09/E12 to #113, or ship #113 as is and do them in a follow-up PR? Claude recommends follow-up: each is an unrun e2e case, #113 is 23 files / +1653 and just went green after two red rounds; E03/E05/E09 also need new fixtures/hooks (third seeded user, Storage emulator failure hook, second tenant).
-- PH3b stays blocked on Q-I (Blaze / Cloud Scheduler, who deploys). PH4/PH5 are separate PRs after merge.
-## Next
-1. Taher answers the pending decision. Default if "your call": follow-up PR `test/2026-10-04-ph3-remaining-e2e`, E04 + E06 first (no new fixtures), then E12, then E03/E05/E09.
-2. Merge #113, then PH4 design->code.
+## DECISIONS (Taher, 2026-10-03) -- supersedes "DECISION PENDING"
+- D-1 Remaining PH3 e2e (E03, E04, E05, E06, E09, E12) go in a STACKED follow-up PR on #113, NOT into #113. #113 stays frozen so Taher can device-test a stable head.
+- D-2 Q-I answered: Blaze plan, scheduled functions allowed. PH3b UNBLOCKED (design: spec "PH3b" section, Q-E..Q-H accepted).
+- D-3 Taher deploys functions manually. No CI deploy exists or is planned.
+- D-4 Taher device-tests #113 now. Claude does nothing on #113 until findings arrive.
+## Deploy needed BEFORE device-testing #113 (answered to Taher)
+- YES. Changed deployable artifacts: Cloud Functions (`functions/index.js` + lib: role gate, F3 preflight, cascade sweep, batch/ops delete reject, id whitelist) and `firestore.rules` (`pending_cleanup` server-only).
+- NOT needed: `storage.rules` (unchanged), `firestore.indexes.json` (unchanged), `functions/package.json` (unchanged, no npm change), hosting.
+- Command (dev project only, never prd for a device test): `firebase deploy --only functions,firestore:rules --project <dev-project-id>`. Order does not matter: functions use the Admin SDK (bypass rules) and no client touches `pending_cleanup`. Deploy all functions, not a subset: the 5 changed handlers share `index.js`.
+- Device-test expectations (server-only PR, no QML change): owner/admin upload+delete photo works; manager/staff upload/delete now 403 (client shows a generic error until PH4, expected); deleting a product with photos removes the Storage objects; delete from a stale cache (photoIds missing) is a 409 conflict and the row reappears after resync (known, KNOWN-ISSUES item 1/F5); product/tenant ids outside `[A-Za-z0-9_-]{1,64}` are rejected by the photo endpoints (check old test data).
+- Record the deploy here when done: DEPLOYED #113 head `656cd2d` to <project> on <date> by Taher: ____ (Taher fills; not yet deployed as of this entry).
+## Next session (start here)
+1. Branch `test/2026-10-04-ph3-remaining-e2e` STACKED on `feat/2026-10-03-photos-ph3-server` (or on main if #113 merged). Order: E04, E06 (no new fixtures) -> E12 monkey -> E03 (third seeded user) -> E09 (second seeded tenant) -> E05 (Storage failure hook). One commit per case group, push each, wait for CI before the next group.
+2. If Taher's device findings arrive, fix them on #113 first.
+3. Then PH3b (scheduled sweeper) design->code on its own branch; then PH4.
