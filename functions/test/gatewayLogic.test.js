@@ -196,6 +196,16 @@ function baseParams(overrides) {
     }, overrides || {});
 }
 
+// PH3: an inventory DELETE needs the handler-validated sweep prefix (applyMutation throws without it).
+function cascadeParams(overrides) {
+    return baseParams(Object.assign({
+        action: "delete",
+        after: null,
+        cleanupEnvPrefix: "dev1",
+        cleanupPrefix: "dev1/tenants/tenant-1/products/sku-1/"
+    }, overrides || {}));
+}
+
 test("applyMutation writes the working doc and an audit_log entry for an update", async () => {
     const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
     await GatewayLogic.applyMutation(db, baseParams());
@@ -226,7 +236,7 @@ test("applyMutation writes the working doc and an audit_log entry for an update"
 
 test("applyMutation deletes the working doc (not the audit entry) for a delete action", async () => {
     const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
-    await GatewayLogic.applyMutation(db, baseParams({ action: "delete", after: null }));
+    await GatewayLogic.applyMutation(db, cascadeParams());
 
     const workingWrite = db.writes.find((w) => w.path === "tenants/tenant-1/inventory/sku-1");
     const auditWrite = db.writes.find((w) => w.path === "tenants/tenant-1/audit_log/req-1");
@@ -535,4 +545,110 @@ test("validateDeltaRequest accepts a valid request and resolves the collection",
     assert.equal(result.collection, "stock_batches");
     assert.deepEqual(result.deltas, { qtyRemaining: -3 });
     assert.deepEqual(result.floors, { qtyRemaining: 0 });
+});
+
+// ── PH3 cleanup marker (design Q5/Q11; test plan F18-F25, F37) ─────────────────────────────────
+const MARKER_PATH = "tenants/tenant-1/pending_cleanup/sku-1";
+
+test("F18 inventory delete: marker written in the SAME txn (doc delete + marker + audit, one commit)", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+    const result = await GatewayLogic.applyMutation(db, cascadeParams());
+    assert.deepEqual(result, { ok: true });
+    assert.deepEqual(db.writes.map((w) => w.type + ":" + w.path), [
+        "delete:tenants/tenant-1/inventory/sku-1",
+        "set:" + MARKER_PATH,
+        "set:tenants/tenant-1/audit_log/req-1"
+    ]);
+});
+
+test("F19 inventory delete: marker carries prefix, envPrefix, createdAt, attempts 0, lastError null", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+    await GatewayLogic.applyMutation(db, cascadeParams());
+    const marker = db.writes.find((w) => w.path === MARKER_PATH).data;
+    assert.deepEqual(marker, {
+        productId: "sku-1", envPrefix: "dev1", prefix: "dev1/tenants/tenant-1/products/sku-1/",
+        createdAt: "SERVER_TIMESTAMP_SENTINEL", attempts: 0, lastError: null
+    });
+    const prd = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+    await GatewayLogic.applyMutation(prd, cascadeParams({
+        cleanupEnvPrefix: "prd", cleanupPrefix: "prd/tenants/tenant-1/products/sku-1/" }));
+    assert.equal(prd.writes.find((w) => w.path === MARKER_PATH).data.prefix, "prd/tenants/tenant-1/products/sku-1/");
+});
+
+test("F22 inventory delete: CAS conflict -> 409, NO marker, NO writes at all (destroy-before-ack regression)", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 99 } }); // server moved on
+    const result = await GatewayLogic.applyMutation(db, cascadeParams()); // before = { qty: 1 }
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.conflict, true);
+    assert.equal(db.writes.length, 0);
+    assert.equal(Object.prototype.hasOwnProperty.call(db.store, MARKER_PATH), false);
+});
+
+test("F23 inventory delete: idempotent replay -> early return, no second marker", async () => {
+    const db = makeFakeDbWithData({}, ["tenants/tenant-1/audit_log/req-1"]);
+    const result = await GatewayLogic.applyMutation(db, cascadeParams());
+    assert.deepEqual(result, { ok: true, idempotentReplay: true });
+    assert.equal(db.writes.length, 0);
+});
+
+test("F24 inventory update/create/opening_balance: no marker", async () => {
+    for (const action of ["update", "create", "opening_balance"]) {
+        const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+        await GatewayLogic.applyMutation(db, baseParams({ action: action }));
+        assert.equal(db.writes.some((w) => w.path.indexOf("pending_cleanup") >= 0), false, action);
+    }
+});
+
+test("F25 non-inventory deletes (stock_batch, order, staff, supplier): no marker", async () => {
+    const cases = [["stock_batch", "stock_batches"], ["order", "orders"], ["staff", "staff"], ["supplier", "suppliers"]];
+    for (const [entity, collection] of cases) {
+        const path = "tenants/tenant-1/" + collection + "/sku-1";
+        const db = makeFakeDbWithData({ [path]: { qty: 1 } });
+        const result = await GatewayLogic.applyMutation(db, baseParams({ action: "delete", after: null, entity: entity, collection: collection }));
+        assert.equal(result.ok, true, entity);
+        assert.equal(db.writes.some((w) => w.path.indexOf("pending_cleanup") >= 0), false, entity);
+        assert.equal(db.writes.filter((w) => w.type === "delete").length, 1, entity);
+    }
+});
+
+test("inventory delete without a usable sweep prefix THROWS before any read or write", async () => {
+    for (const bad of [{ cleanupPrefix: undefined }, { cleanupPrefix: "" }, { cleanupEnvPrefix: undefined },
+                       { cleanupPrefix: "dev1/tenants/tenant-1/products/" },
+                       { cleanupPrefix: "dev1/tenants/tenant-1/products/other/" }]) {
+        const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+        await assert.rejects(() => GatewayLogic.applyMutation(db, cascadeParams(bad)), /missing-cleanup-prefix/);
+        assert.equal(db.writes.length, 0, JSON.stringify(bad));
+    }
+});
+
+test("inventory delete of a server-absent product with before=null: deletes nothing real, still leaves a marker", async () => {
+    // Pins current behaviour (deepEqual(null, null) passes CAS): the marker is harmless, the sweep
+    // re-checks the product doc and removes any stray objects.
+    const db = makeFakeDbWithData({});
+    const result = await GatewayLogic.applyMutation(db, cascadeParams({ before: null }));
+    assert.equal(result.ok, true);
+    assert.ok(db.writes.some((w) => w.path === MARKER_PATH));
+});
+
+test("F37 F5 pin (single path): stale before.photoIds -> 409 conflict, nothing written", async () => {
+    // A photo was confirmed on the server between the client's edit and the drain: strict compare
+    // (incl. photoIds) stays on purpose (Q2 accepted). Do NOT relax without server-preserving photoIds.
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1, photoIds: ["photo-new"] } });
+    const result = await GatewayLogic.applyMutation(db, baseParams({
+        before: { qty: 1, photoIds: [] }, after: { qty: 2, photoIds: [] } }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.deepEqual(result.current, { qty: 1, photoIds: ["photo-new"] });
+    assert.equal(db.writes.length, 0);
+});
+
+test("F41 real logic: delete of a server-absent product with a non-null before -> 409, current null, no marker (Q13 pin)", async () => {
+    const db = makeFakeDbWithData({});
+    const result = await GatewayLogic.applyMutation(db, cascadeParams()); // before = { qty: 1 }, server has nothing
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.conflict, true);
+    assert.equal(result.current, null);
+    assert.equal(db.writes.length, 0);
 });

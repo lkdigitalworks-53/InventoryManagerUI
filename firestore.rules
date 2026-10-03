@@ -57,7 +57,11 @@ service cloud.firestore {
     // Firestore grants a request if ANY matching rule allows it, so the
     // fallback's read rule has to carve this out explicitly too.
     function isServerOnlyCollection(name) {
-      return name in ['locks'];
+      // 'pending_cleanup' (PH3, 2026-10-03): product-photo cleanup markers, written and removed only by
+      // the recordMutation Cloud Function (Admin SDK). A member who could forge or erase one could
+      // either leave photos orphaned or stop a pending sweep. Listing the name HERE (not just adding
+      // a deny-all match block) is what actually denies: the wildcard below would still allow it.
+      return name in ['locks', 'pending_cleanup'];
     }
 
     // users/{uid}

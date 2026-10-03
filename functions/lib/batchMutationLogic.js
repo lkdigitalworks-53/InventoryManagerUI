@@ -19,6 +19,7 @@
 // pattern as gatewayLogic.js / cutoverLogic.js.
 
 const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual } = require("./gatewayLogic");
+const { isCascadeEntityDelete } = require("./photoCleanup");
 
 // Mirrored client-side as Gateway.qml's `maxBatchSize` property (no shared
 // build-time constant between this Node runtime and the QML client — see
@@ -59,6 +60,13 @@ function validateBatchMutationRequest(body) {
         }
         if (!entityId) {
             return { ok: false, status: 400, error: "missing-fields" };
+        }
+        // PH3 (design Q11): a product delete must leave a pending_cleanup marker, which this batch
+        // transaction deliberately does not write (it would break the 2-writes-per-item ceiling
+        // arithmetic above). Reject the WHOLE batch, zero writes. Client sends none today (bulk
+        // import is create-only); revisit when the delete roadmap builds an atomic product delete.
+        if (isCascadeEntityDelete(entity, action)) {
+            return { ok: false, status: 400, error: "cascade-delete-not-allowed" };
         }
         normalized.push({
             entityId: entityId,

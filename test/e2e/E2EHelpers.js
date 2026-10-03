@@ -54,7 +54,11 @@ function loadFixture(tc, fixtureUrl) {
 // Also checks tc.lastConflict on every tick and fails immediately with the
 // real conflict data if one appears for this docPath's entityId, rather
 // than waiting out the full timeout to report a generic message.
-function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicateFn, timeoutMs, message) {
+// `requireResponse` (optional, default false = historical behaviour): when true the predicate is not
+// evaluated until the first HTTP response has arrived. Without it `latest` starts as null, so any
+// "doc is absent" predicate (`d === null`) passes on the very first tryVerify tick, before a single
+// byte came back -- the check is vacuous. Absence checks MUST pass true.
+function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicateFn, timeoutMs, message, requireResponse) {
     var url = emulatorFirestoreHost
         + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + docPath
     var latest = null
@@ -104,6 +108,7 @@ function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicate
                 + ", server has: " + JSON.stringify(tc.lastConflict.current))
         }
         fire()
+        if (requireResponse === true && lastStatus === -1) return false
         return predicateFn(latest)
     }, timeoutMs, message + " (entityId=" + entityId + ", docPath=" + docPath + ")")
 

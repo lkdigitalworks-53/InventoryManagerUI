@@ -8,6 +8,19 @@
 
 **Totals (planned):** unit 41 + functional 36 = 77 Node cases (runnable in the sandbox); rules 11 + e2e 12 + client QML 26 + PH5 QML 12 = 61 CI-only cases. Grand total 138. Case ids are NOT renumbered after the 2026-10-01 review: U21-U27, F11-F13, F17, F29 moved to PH3b, so ids have gaps; U48, F40, F41, C26 are new.
 
+## PH3 implementation status (2026-10-03, branch `feat/2026-10-03-photos-ph3-server`)
+**Node (sandbox, run):** `cd functions && node --test` = 446 pass, 0 fail (347 before). 100% line coverage on `photoCleanup.js`, `photoValidation.js`, `gatewayLogic.js`, `batchMutationLogic.js`, `operationLogic.js` (`--experimental-test-coverage`; branch coverage 85-100%, not 100%).
+- Unit: U01-U20, U28-U48 implemented (`photoValidation.test.js`, `photoCleanup.test.js`). U21-U27 stay moved to PH3b.
+- Functional: F01-F10, F14-F16, F18-F28, F30-F41 implemented (`index.handlers.photos.test.js`, `index.handlers.test.js`, `gatewayLogic.test.js`, `batchMutationLogic.test.js`, `operationLogic.test.js`). F11-F13, F17, F29 stay moved to PH3b. Test ids were mapped by intent, not copied one-to-one from the tables: a few cases are merged or split (e.g. F08b/F08c, F21b, F23b/c, F26b).
+- Existing tests changed on purpose: the old "404 leaves 2 Storage saves" assertion now expects 0 (F3), and the old `applyMutation` inventory-delete test now passes a sweep prefix.
+- **Mutation checks (section 8), run in the sandbox: 10 of 10 killed** (role gate removed 7 red; preflight skipped 5; product-absent re-check dropped 3; `/` suffix dropped 26; whitelist allowing `/` 12, `.` 8, 65 chars 6; batch reject removed 2; ops reject removed 2; marker not written 3; marker written before the CAS compare killed; sweep after 409/replay 2). One earlier "survivor" was a bad mutation (matched a comment), redone correctly.
+**CI-only, WRITTEN BUT NOT RUN:**
+- Rules R01-R09, R11 (`test/firestore.rules.test.js`). R10 (`storage.rules`) not written.
+- E2E in `tst_ProductPhotosE2E.qml` (7 new): E02 (staff upload + delete 403), E01 (cascade sweep + marker gone, with a sibling product for E08), E07 (404, no objects), E10 (batch delete 400), E11 (409, no extra objects), plus a no-photos-product delete.
+**NOT written (still planned):** E03 (admin token; needs a third seeded user), E04 (stale-before delete 409), E05 (injected sweep failure; needs the Storage emulator hook), E06 (id reuse before sweep), E09 (two tenants, same productId; needs a second seeded tenant), E12 (monkey). Sections 5 and 6 (PH4/PH5 QML) untouched.
+**Not verified:** nothing in this PR has been exercised against the emulators or on a device. Section 9 (device plan) is unchanged and still to run after merge.
+
+
 ## 1. Unit tests (pure logic, `functions/test/`) — 41 planned
 New file `functions/lib/photoCleanup.js` (`buildSweepPrefix`, `buildMarker`, `canManagePhotos`, `isCascadeEntityDelete`, `evaluateUploadPreflight`, `sweepMarker`) and the whitelist in `photoValidation.js`. Status: planned.
 

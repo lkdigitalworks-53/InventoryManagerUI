@@ -540,3 +540,33 @@ production code is unaffected; `Main.qml` always wires a real `Logic` instance a
 "function")` in both wrappers, rather than touching any of the 4 unrelated pre-existing test
 files. New regression test added to `tests/tst_DataModel_restoreFifoSafeGuards.qml` reproducing
 the exact no-dispatcher setup.
+
+---
+
+## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03 (PR pending), PH3b/PH4 NOT BUILT
+
+Built: owner/admin gate on both photo endpoints (the narrow gate from the 2026-09-30 update above), `pending_cleanup`
+marker written in the product-delete transaction, post-commit prefix sweep, F3 upload preflight (no orphan objects on
+404/409), strict id whitelist. Design: `specs/2026-09-30-photos-s3-s4-design.md`. Accepted, on purpose:
+
+1. **F5 (strict CAS includes `photoIds`).** An edit whose `before.photoIds` is stale (a photo was confirmed on the
+   server between edit and drain) gets 409 and the user's edit is parked. Pinned by F37-F39. Relaxing it needs the
+   server to preserve `photoIds` itself; not done.
+2. **Residual upload race.** A product deleted between the F3 preflight read and the Storage write can leave one orphan
+   object pair (the transaction then returns 404). Pinned by F10. The marker sweep does not catch it (the marker was
+   written before the upload). PH3b's scheduled sweeper is the intended fix.
+3. **Failed sweep is only retried by PH3b.** Until the scheduled function exists, a sweep that fails (Storage outage)
+   leaves the marker with `attempts` and `lastError` and nothing re-drains it. Blocked on Q-I.
+4. **Batch/ops reject inventory deletes** (400 `cascade-delete-not-allowed`, whole request, zero writes): they cannot
+   write the marker without breaking their write-ceiling arithmetic. No client sends one today (bulk import is
+   create-only). Revisit when an atomic product delete is built.
+5. **Existing e2e `test_upload_rejects_a_productId_containing_a_path_traversal_slash`** still expects `invalid-request`;
+   the whitelist did not change that error code.
+6. **E2E helper vacuity (found 2026-10-03, PR #113 CI).** `E2EHelpers.pollEmulatorDoc` starts with `latest = null`, so a
+   `d === null` ("doc is absent") predicate passed on the first tick, before any response arrived. It hid a real failure:
+   the cascade test deleted from a client cache with no `photoIds` (photos were uploaded by direct POST), the server
+   returned 409 and the Gateway dropped the delete as stale (same family as item 1). Fixed for the photos tests via the new
+   optional `requireResponse` argument (absence checks must pass `true`). **Still vacuous, deliberately not touched in this
+   PR:** `tst_InventoryE2E.qml` (the product-delete check, ~line 262) and `tst_BulkImportChunkingE2E.qml` (~line 154). Making
+   `requireResponse` the default would make them honest but could turn them red; do it as its own small PR.
+

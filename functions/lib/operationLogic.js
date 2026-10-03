@@ -17,6 +17,7 @@ const {
     validateDeltaRequest,
     _deepEqual
 } = require("./gatewayLogic");
+const { isCascadeEntityDelete } = require("./photoCleanup");
 
 // 200 ops = up to 200 working-doc writes + 200 per-op audit entries + 1 marker
 // = 401 writes, under Firestore's ~500-writes-per-transaction ceiling. Mirrored
@@ -73,6 +74,12 @@ function validateOperationRequest(body) {
         else return { ok: false, status: 400, error: "unsupported-kind", opIndex: i };
         if (!v.ok) return Object.assign({}, v, { opIndex: i });
         if (!isSafeDocId(v.entityId)) return { ok: false, status: 400, error: "invalid-entity-id", opIndex: i };
+        // PH3 (design Q11): a product delete must leave a pending_cleanup marker, which this
+        // transaction deliberately does not write (it would break the write-ceiling arithmetic
+        // above). Reject the whole operation, zero writes. No client sends one today.
+        if (raw.kind === "mutation" && isCascadeEntityDelete(v.entity, v.action)) {
+            return { ok: false, status: 400, error: "cascade-delete-not-allowed", opIndex: i };
+        }
         ops.push(Object.assign({ kind: raw.kind }, v));
     }
     return { ok: true, requestId: requestId, opType: opType, ops: ops,

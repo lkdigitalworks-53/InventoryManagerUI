@@ -297,3 +297,58 @@ test("applyMutationsBatch's conflict check exempts an idempotent-replay item eve
     assert.equal(result.conflicts.length, 1);
     assert.equal(result.conflicts[0].entityId, "order-2");
 });
+
+// ── PH3 cascade-delete rejection + F5 pin (design Q11/Q2; test plan F31-F33, F36, F38) ─────────
+test("F31 batch with an inventory delete -> 400 cascade-delete-not-allowed", () => {
+    const r = BatchMutationLogic.validateBatchMutationRequest(validBody({
+        entity: "inventory", items: [validItem({ entityId: "PRD-1", action: "delete", after: null })]
+    }));
+    assert.deepEqual(r, { ok: false, status: 400, error: "cascade-delete-not-allowed" });
+});
+
+test("F32 batch of valid creates + one inventory delete -> WHOLE batch rejected, nothing normalized", () => {
+    const items = [
+        validItem({ entityId: "PRD-1", action: "create", before: null, after: { name: "a" } }),
+        validItem({ entityId: "PRD-2", action: "create", before: null, after: { name: "b" } }),
+        validItem({ entityId: "PRD-3", action: "delete", after: null }),
+        validItem({ entityId: "PRD-4", action: "create", before: null, after: { name: "d" } })
+    ];
+    const r = BatchMutationLogic.validateBatchMutationRequest(validBody({ entity: "inventory", items: items }));
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "cascade-delete-not-allowed");
+    assert.equal("items" in r, false);
+});
+
+test("F33 batch non-inventory delete is still accepted (stock_batch, order, staff, supplier)", () => {
+    for (const entity of ["stock_batch", "order", "staff", "supplier"]) {
+        const r = BatchMutationLogic.validateBatchMutationRequest(validBody({
+            entity: entity, items: [validItem({ entityId: "x-1", action: "delete", after: null })]
+        }));
+        assert.equal(r.ok, true, entity);
+        assert.equal(r.items[0].action, "delete");
+    }
+});
+
+test("F36 batch inventory create/update/opening_balance (import path) unaffected", () => {
+    for (const action of ["create", "update", "opening_balance"]) {
+        const r = BatchMutationLogic.validateBatchMutationRequest(validBody({
+            entity: "inventory", items: [validItem({ entityId: "PRD-1", action: action })]
+        }));
+        assert.equal(r.ok, true, action);
+    }
+});
+
+test("F36b a 200-item inventory create batch still validates (cap arithmetic untouched, no marker writes)", () => {
+    const items = Array.from({ length: 200 }, (_, i) => validItem({ entityId: "PRD-" + i, action: "create", before: null }));
+    assert.equal(BatchMutationLogic.validateBatchMutationRequest(validBody({ entity: "inventory", items: items })).ok, true);
+});
+
+test("F38 F5 pin (batch path): stale before.photoIds -> conflict, nothing written", async () => {
+    const db = makeFakeDb(null, { [workingPath("PRD-1")]: { qty: 1, photoIds: ["photo-new"] } });
+    const result = await BatchMutationLogic.applyMutationsBatch(db, baseBatchParams({
+        items: [validItem({ entityId: "PRD-1", before: { qty: 1, photoIds: [] }, after: { qty: 2, photoIds: [] } })]
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(db.writes.length, 0);
+});

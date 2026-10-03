@@ -437,6 +437,16 @@ QtObject {
 - `qml/helper/DescribeItem.js` — pure `describe(outboxItem)` -> `{title, detail}` plain-language row label for the stuck-writes sheet (single / batch / delta / operation items; never throws). `qml/pages/StuckWritesSheet.qml` lists `Gateway.stuckRows()` with a per-row "Retry now" (`Gateway.retryStuck` -> `OutboxStore.retryNow`, which resets attempts and makes the item due; it does NOT clear the stuck flag, see design D1). Opened by tapping the `GlassHeader` stuck caption via `app.openStuckWrites()` in `Main.qml`; it is first in the back-button `dialogs` list. Design: `docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`. Discard and park are later slices (S2/S3) of `2026-09-29-gateway-park-retry-discard-plan.md`
 - `functions/lib/writeError.js` — pure `classifyWriteError(e)`: Firestore/gRPC error code -> `write-rejected` / `write-unavailable` / `write-failed` body string for the five `write-failed` catch sites in `functions/index.js`. HTTP status stays 500 (SKILLS Skill 74)
 - `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
+- `functions/lib/photoCleanup.js` (2026-10-03, photos PH3) — pure logic for the product-photo cascade, no Firebase
+  imports (Firestore/Storage are injected into `sweepMarker`): `canManagePhotos` (owner/admin, exact match),
+  `isCascadeEntityDelete` (inventory + delete), `buildSweepPrefix` (null unless env/tenant/product all pass
+  `isSafePathSegment`; always ends in `/` so `PRD-1` never sweeps `PRD-10`), `buildMarker`, `evaluateUploadPreflight`
+  (F3), `sweepMarker` (never throws; refuses unless the stored prefix equals the rebuilt one; re-checks the product is
+  still absent before deleting). `index.js` binds it: `photoAccessDenied` (role + safe tenant), `sweepProductPhotos`,
+  and `recordMutation` passes `cleanupPrefix`/`cleanupEnvPrefix` to `GatewayLogic.applyMutation`, which writes
+  `pending_cleanup/{productId}` in the SAME transaction (after the CAS compare, so a 409 leaves no marker).
+  `batchMutationLogic`/`operationLogic` reject an inventory delete outright. `pending_cleanup` is server-only in
+  `firestore.rules` (`isServerOnlyCollection`; a lone deny match block would NOT deny — see Skill 90).
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
   identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
