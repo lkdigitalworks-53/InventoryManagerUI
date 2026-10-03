@@ -562,4 +562,11 @@ marker written in the product-delete transaction, post-commit prefix sweep, F3 u
    create-only). Revisit when an atomic product delete is built.
 5. **Existing e2e `test_upload_rejects_a_productId_containing_a_path_traversal_slash`** still expects `invalid-request`;
    the whitelist did not change that error code.
+6. **E2E helper vacuity (found 2026-10-03, PR #113 CI).** `E2EHelpers.pollEmulatorDoc` starts with `latest = null`, so a
+   `d === null` ("doc is absent") predicate passed on the first tick, before any response arrived. It hid a real failure:
+   the cascade test deleted from a client cache with no `photoIds` (photos were uploaded by direct POST), the server
+   returned 409 and the Gateway dropped the delete as stale (same family as item 1). Fixed for the photos tests via the new
+   optional `requireResponse` argument (absence checks must pass `true`). **Still vacuous, deliberately not touched in this
+   PR:** `tst_InventoryE2E.qml` (the product-delete check, ~line 262) and `tst_BulkImportChunkingE2E.qml` (~line 154). Making
+   `requireResponse` the default would make them honest but could turn them red; do it as its own small PR.
 

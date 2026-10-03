@@ -37,3 +37,14 @@
 13. Possible new red: the no-photos test now asserts a real marker removal; if the sweep is broken it fails too (correct).
 ## Next
 - Read the PR bot comment for the marker state, fix the real cause, rerun CI. Then E03-E06, E09, E12, R10; PH3b blocked on Q-I.
+
+## Session 3b (2026-10-03) -- CI log (results.xml) analysed
+14. CI on f11fe0d: E2E 56/57, same test. New message: "marker removed but main 0 still in Storage". Log lines decoded:
+    - the product-doc and marker polls were VACUOUS: `pollEmulatorDoc` begins with `latest = null`, so `d === null` is true on tick 1 before any response. Their real replies leak into the NEXT test's log (PRD-010 `status 200`, PRD-012 `status 404 ... pending_cleanup`).
+    - `[Gateway] recordMutation conflict -- dropping stale write ... inventory PRD-010` = the delete never applied. Cause: test uploaded photos via direct POST, so the client cache lacks `photoIds`; `deleteProduct` sent that stale row as CAS `before`; server 409 (strict CAS incl. photoIds, KNOWN-ISSUES item 1/F5).
+    - So the sweep code was never exercised. Server code is NOT implicated; no server change.
+15. Fix (test only): `requireResponse` flag on `pollEmulatorDoc` (+ `_pollDoc`), absence polls pass `true`; cascade test calls `InventoryStore.syncFromFirebase()` and waits for the server `photoIds` before `deleteProduct`; no-photos test uses strict polls.
+16. KNOWN-ISSUES item 6 added (two other tests still vacuous, left alone on purpose).
+17. UNVERIFIED: nothing run (no Qt in sandbox). Possible next red: the cascade test now really runs the sweep (marker + prefix delete through the Functions+Storage emulators); if it fails, the message names marker JSON or the leftover object.
+## Next
+- Read CI on this commit. Then E03-E06, E09, E12, R10; PH3b blocked on Q-I.

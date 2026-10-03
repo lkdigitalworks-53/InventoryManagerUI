@@ -55,9 +55,9 @@ TestCase {
     function _postDirect(url, payload, timeoutMs, timeoutMessage) {
         return E2EHelpers.postDirect(this, url, payload, timeoutMs, timeoutMessage)
     }
-    function _pollDoc(docPath, entityId, predicateFn, timeoutMs, message) {
+    function _pollDoc(docPath, entityId, predicateFn, timeoutMs, message, requireResponse) {
         return E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, docPath, entityId,
-                                           predicateFn, timeoutMs, message)
+                                           predicateFn, timeoutMs, message, requireResponse)
     }
     // pending_cleanup is server-only in firestore.rules: a member token reads 403, and pollEmulatorDoc
     // maps any non-200 to null -- which made every "marker is gone" assertion pass vacuously. Read as
@@ -67,7 +67,7 @@ TestCase {
         fixture.idToken = "owner"
         try {
             return _pollDoc("tenants/" + fixture.tenantId + "/pending_cleanup/" + productId, productId,
-                            predicateFn, timeoutMs, message)
+                            predicateFn, timeoutMs, message, true)
         } finally {
             fixture.idToken = saved
         }
@@ -360,10 +360,23 @@ TestCase {
         compare(_uploadPhoto(otherId, otherPhoto).status, 200, "sibling setup upload")
         _pollStorageObject(_objectPath(otherId, otherPhoto, false), 5000, "sibling setup object")
 
+        // The photos above went in by direct POST, so the client's cached product has no photoIds while
+        // the server doc now does. deleteProduct sends the CACHED row as the CAS `before`; against the
+        // server's row it mismatches -> 409 -> Gateway drops the delete as stale (seen in CI as
+        // "dropping stale write ... PRD-010"). Pull the server state first, like a real device would.
+        InventoryStore.syncFromFirebase()
+        tryVerify(function() {
+            var ps = InventoryStore.products
+            for (var k = 0; k < ps.length; ++k) {
+                if (ps[k].productId === productId) return ps[k].photoIds.length === photoIds.length
+            }
+            return false
+        }, 15000, "client never synced the server's photoIds for " + productId)
+
         InventoryStore.deleteProduct(productId)
 
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
-        _pollDoc(docPath, productId, function(d) { return d === null }, 10000, "product doc never deleted")
+        _pollDoc(docPath, productId, function(d) { return d === null }, 10000, "product doc never deleted", true)
         // Marker first, as the emulator admin: a sweep that failed leaves the marker with attempts/lastError,
         // so on failure the message says WHY (the CI log is not always reachable).
         var markerSeen = "unread"
@@ -387,7 +400,7 @@ TestCase {
         var productId = _createProduct("E2E Cascade NoPhotos", "SKU-E2E-PHOTO-12")
         InventoryStore.deleteProduct(productId)
         _pollDoc("tenants/" + fixture.tenantId + "/inventory/" + productId, productId,
-                 function(d) { return d === null }, 10000, "product doc never deleted")
+                 function(d) { return d === null }, 10000, "product doc never deleted", true)
         _pollMarker(productId, function(d) { return d === null }, 10000,
                     "marker left behind for a product that never had photos")
     }
