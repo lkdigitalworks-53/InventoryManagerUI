@@ -277,4 +277,109 @@ TestCase {
         }, 10000, "deleteProductPhoto never responded to the no-such-id request")
         compare(result.status, 200, "removing an absent id must be a no-op, not an error -- response: " + result.text)
     }
+
+    // ── PH3 (2026-10-03): role gate, F3 preflight, product-delete cascade ──
+    // Test plan: docs/superpowers/test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md (E-cases).
+    // Staff = fixture.secondIdToken (seed.js mints it; member role "staff"). _postDirect sends
+    // fixture.idToken, and init() reloads the fixture before every test, so swapping it inside one
+    // test cannot leak into the next.
+
+    function _objectPath(productId, photoId, thumb) {
+        return "prd/tenants/" + fixture.tenantId + "/products/" + productId + "/" + photoId
+               + (thumb ? "_t.jpg" : ".jpg")
+    }
+
+    function test_staff_cannot_upload_a_photo() {
+        var productId = _createProduct("E2E Photo Staff Upload", "SKU-E2E-PHOTO-7")
+        fixture.idToken = fixture.secondIdToken
+        var photoId = "e2e-staff-up-" + Date.now()
+        var r = _uploadPhoto(productId, photoId)
+        compare(r.status, 403, "staff upload must be refused -- response: " + r.text)
+        compare(JSON.parse(r.text).error, "role-not-allowed")
+        _pollStorageObjectAbsent(_objectPath(productId, photoId, false), 3000, "staff 403 still wrote a Storage object")
+    }
+
+    function test_staff_cannot_delete_a_photo_and_the_photo_survives() {
+        var productId = _createProduct("E2E Photo Staff Delete", "SKU-E2E-PHOTO-8")
+        var photoId = "e2e-staff-del-" + Date.now()
+        compare(_uploadPhoto(productId, photoId).status, 200, "owner setup upload failed")
+        _pollStorageObject(_objectPath(productId, photoId, false), 5000, "setup object never appeared")
+        fixture.idToken = fixture.secondIdToken
+        var r = _postDirect(emulatorFunctionsBase + "/deleteProductPhoto", {
+            env: "prd", productId: productId, photoId: photoId, requestId: "del-" + photoId
+        }, 10000, "deleteProductPhoto never responded to the staff request")
+        compare(r.status, 403, "staff delete must be refused -- response: " + r.text)
+        compare(JSON.parse(r.text).error, "role-not-allowed")
+        _pollStorageObject(_objectPath(productId, photoId, false), 3000, "staff 403 deleted the photo anyway")
+    }
+
+    function test_upload_to_a_missing_product_is_404_and_writes_no_objects() {
+        var productId = "PRD-E2E-GHOST-" + Date.now()
+        var photoId = "e2e-ghost-" + Date.now()
+        var r = _uploadPhoto(productId, photoId)
+        compare(r.status, 404, "response: " + r.text)
+        compare(JSON.parse(r.text).error, "product-not-found")
+        _pollStorageObjectAbsent(_objectPath(productId, photoId, false), 3000, "404 left an orphan main object")
+        _pollStorageObjectAbsent(_objectPath(productId, photoId, true), 3000, "404 left an orphan thumbnail")
+    }
+
+    function test_rejected_eleventh_photo_leaves_no_storage_object() {
+        var productId = _createProduct("E2E Photo Limit NoOrphan", "SKU-E2E-PHOTO-9")
+        for (var i = 0; i < 10; ++i) {
+            compare(_uploadPhoto(productId, "e2e-noorph-" + i + "-" + Date.now()).status, 200, "photo " + i)
+        }
+        var eleventhId = "e2e-noorph-11th-" + Date.now()
+        compare(_uploadPhoto(productId, eleventhId).status, 409)
+        _pollStorageObjectAbsent(_objectPath(productId, eleventhId, false), 3000, "409 left an orphan main object")
+        _pollStorageObjectAbsent(_objectPath(productId, eleventhId, true), 3000, "409 left an orphan thumbnail")
+    }
+
+    function test_deleting_a_product_sweeps_its_photos_and_removes_the_marker() {
+        var productId = _createProduct("E2E Photo Cascade", "SKU-E2E-PHOTO-10")
+        var photoIds = ["e2e-cascade-a-" + Date.now(), "e2e-cascade-b-" + Date.now()]
+        for (var i = 0; i < photoIds.length; ++i) {
+            compare(_uploadPhoto(productId, photoIds[i]).status, 200, "setup upload " + i)
+            _pollStorageObject(_objectPath(productId, photoIds[i], false), 5000, "setup object " + i)
+        }
+        // A sibling product's photo must survive the prefix sweep.
+        var otherId = _createProduct("E2E Photo Cascade Sibling", "SKU-E2E-PHOTO-11")
+        var otherPhoto = "e2e-cascade-sibling-" + Date.now()
+        compare(_uploadPhoto(otherId, otherPhoto).status, 200, "sibling setup upload")
+        _pollStorageObject(_objectPath(otherId, otherPhoto, false), 5000, "sibling setup object")
+
+        InventoryStore.deleteProduct(productId)
+
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        _pollDoc(docPath, productId, function(d) { return d === null }, 10000, "product doc never deleted")
+        for (var j = 0; j < photoIds.length; ++j) {
+            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], false), 10000, "main " + j + " not swept")
+            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], true), 10000, "thumb " + j + " not swept")
+        }
+        var markerPath = "tenants/" + fixture.tenantId + "/pending_cleanup/" + productId
+        _pollDoc(markerPath, productId, function(d) { return d === null }, 10000,
+                 "pending_cleanup marker was not removed after a clean sweep")
+        _pollStorageObject(_objectPath(otherId, otherPhoto, false), 3000, "sibling product's photo was swept by mistake")
+    }
+
+    function test_deleting_a_product_with_no_photos_leaves_no_marker() {
+        var productId = _createProduct("E2E Cascade NoPhotos", "SKU-E2E-PHOTO-12")
+        InventoryStore.deleteProduct(productId)
+        var markerPath = "tenants/" + fixture.tenantId + "/pending_cleanup/" + productId
+        _pollDoc("tenants/" + fixture.tenantId + "/inventory/" + productId, productId,
+                 function(d) { return d === null }, 10000, "product doc never deleted")
+        _pollDoc(markerPath, productId, function(d) { return d === null }, 10000,
+                 "marker left behind for a product that never had photos")
+    }
+
+    function test_batch_endpoint_rejects_an_inventory_delete_and_keeps_the_product() {
+        var productId = _createProduct("E2E Batch NoCascade", "SKU-E2E-PHOTO-13")
+        var r = _postDirect(emulatorFunctionsBase + "/recordMutationsBatch", {
+            env: "prd", entity: "inventory", requestId: "e2e-batch-del-" + Date.now(),
+            items: [{ entityId: productId, action: "delete", before: { name: "x" }, after: null, clientTimestamp: 1 }]
+        }, 10000, "recordMutationsBatch never responded")
+        compare(r.status, 400, "response: " + r.text)
+        compare(JSON.parse(r.text).error, "cascade-delete-not-allowed")
+        _pollDoc("tenants/" + fixture.tenantId + "/inventory/" + productId, productId,
+                 function(d) { return d !== null }, 3000, "batch rejection must leave the product in place")
+    }
 }
