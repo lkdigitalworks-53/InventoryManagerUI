@@ -48,3 +48,15 @@
 17. UNVERIFIED: nothing run (no Qt in sandbox). Possible next red: the cascade test now really runs the sweep (marker + prefix delete through the Functions+Storage emulators); if it fails, the message names marker JSON or the leftover object.
 ## Next
 - Read CI on this commit. Then E03-E06, E09, E12, R10; PH3b blocked on Q-I.
+
+## Session 4 (2026-10-03, account tsadmin@gmail.com) -- CI GREEN on PR #113
+18. Verified via API, not assumed: head `656cd2d`, all 5 checks success. Bot comment: 1957/1957 (QML 1553, Functions 302, Rules 45, E2E 57/57). The cascade e2e now passes with real (non-vacuous) polls, so the sweep + marker removal ran through the Functions+Storage emulators.
+19. R10 is NOT missing: `test/storage.rules.test.js` (7 tests, run by checks.yml next to the firestore rules) already pins public read, client write/delete denied, default-deny. `storage.rules` is unchanged in this PR. Test plan row R10 re-marked as covered by pre-existing tests (by inspection, CI does not report the two rules files separately).
+20. Commit identity this session: `tsadmin@gmail.com` (Taher's instruction). Earlier sessions used other ids; history is not rewritten.
+21. Docs-only branch `docs/2026-10-03-ph3-ci-green-sync` stacked on the PH3 branch. No code touched. SKILLS/AGENTS/README: no change needed (no new lesson, no behaviour change).
+## DECISION PENDING (asked Taher, not decided by Claude)
+- Add E03/E04/E05/E06/E09/E12 to #113, or ship #113 as is and do them in a follow-up PR? Claude recommends follow-up: each is an unrun e2e case, #113 is 23 files / +1653 and just went green after two red rounds; E03/E05/E09 also need new fixtures/hooks (third seeded user, Storage emulator failure hook, second tenant).
+- PH3b stays blocked on Q-I (Blaze / Cloud Scheduler, who deploys). PH4/PH5 are separate PRs after merge.
+## Next
+1. Taher answers the pending decision. Default if "your call": follow-up PR `test/2026-10-04-ph3-remaining-e2e`, E04 + E06 first (no new fixtures), then E12, then E03/E05/E09.
+2. Merge #113, then PH4 design->code.
