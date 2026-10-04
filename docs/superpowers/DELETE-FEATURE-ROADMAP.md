@@ -107,7 +107,7 @@ Found 2026-10-04 on the PR #113 device test. The photo part is fixed (client loo
 Still open: `InventoryStore.deleteProduct` sends the batch deletes, writes the Activity entry and discards queued photos at click
 time. A 409 on the product delete (any concurrent edit, incl. `photoIds`) then leaves a product with no stock batches.
 
-**Status 2026-10-05: design reviewed post-merge (2 High, 3 Medium findings, text fixed); Q-BC-1..7 DECIDED (Taher: defaults, option d); Q-BC-8 (server role gate) and Q-BC-9 (replay re-sweeps) OPEN.** Recommended: server removes the batches after the product
+**Status 2026-10-05: design reviewed post-merge (2 High, 3 Medium findings, text fixed); Q-BC-1..7 DECIDED (Taher: defaults, option d); Q-BC-8 (server owner/admin gate: yes) and Q-BC-9 (replay re-sweep: no, PH3b covers it) DECIDED 2026-10-05; order BC1 -> PH3b -> PH4 rest.** Recommended: server removes the batches after the product
 delete commits, reusing the PH3 `pending_cleanup` marker (not the atomic `recordOperation` the earlier notes pointed at: 199-batch
 cap, client batch list may be incomplete, `recordOperation` has no production caller on `main`). Slices BC1 server, BC2 client.
 `docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md`; test plan `test-plans/2026-10-04-product-delete-batch-cascade-test-plan.md`.

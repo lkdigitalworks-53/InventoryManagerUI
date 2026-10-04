@@ -14,15 +14,16 @@
 ## Findings (detail in the design doc)
 High: R1 discard path does not restore batches; R2 sweep audit entries have no actor (marker lacks fields). Medium: R3 chunk 200 vs unverified ceiling (now `SWEEP_CHUNK = 100`); R4 replay never sweeps; R5 no server role gate for product delete. Low: R6 old-client ordering text, R7 relaunch leaves queued photos, R8 audit `before` can lag, R9 stale identity.
 
-## OPEN — need Taher before BC1 code
-- **Q-BC-8** server owner/admin gate on `inventory` delete (default: add).
-- **Q-BC-9** idempotent replay re-runs the sweep if the marker exists (default: yes).
-- Order BC1 vs photos PH3b/PH4 (previous advice: BC1 first) still unconfirmed.
+## DECIDED 2026-10-05 (Taher)
+- **Q-BC-8 = yes**: owner/admin gate on `inventory` delete in `recordMutation` (403 `role-not-allowed`, zero writes).
+- **Q-BC-9 = no**: idempotent replay does NOT re-sweep. Reason: PH3b (scheduler) is designed and built right after BC1 and is the retry path for every marker; a replay re-sweep would be redundant hot-path code. Condition: reopen if PH3b slips. Crashed-sweep case (old E7) moves to the PH3b test plan. Testing effect: BC1 smaller, handler test pins replay-returns-early.
+- **Order**: BC1 -> PH3b -> PH4 rest (confirmed). Design is complete for BC1; waiting for Taher's go to start implementation.
+- PH3b design must: not abandon a capped marker silently (money data), pass marker actor fields through, tolerate concurrent handler+scheduler sweeps, accept old-format markers (`system` actor). Listed in the design doc, section "PH3b implications".
 
 ## NOT verified
 Nothing run (docs only). Firestore per-transaction write ceiling and whether `serverTimestamp()` counts as extra writes (also makes existing `MAX_OPS` / `MAX_BATCH_SIZE = 200` a latent question: 401 vs 601 writes). `qml` review: no QML exists yet for BC2, so the qt-qml-review linter was not run.
 
 ## NEXT SESSION — start here
-1. Get Taher's answers to Q-BC-8, Q-BC-9 and the order question; update the design ledger.
-2. BC1 (server) on `feat/2026-10-05-bc1-server-batch-sweep` off `main`: marker actor fields, `sweepBatches` dep (`SWEEP_CHUNK = 100`), handler wiring (+ replay sweep if Q-BC-9 = a, + role gate if Q-BC-8 = a), comment reword in `operationLogic.js`, Node tests (`cd functions && npm ci && node --test` runs in-session), e2e E1-E7, docs. Record Taher's functions deploy here before BC2.
+1. Taher says go: start BC1. (Q-BC-8/9 and order already decided; ledger updated.)
+2. BC1 (server) on `feat/2026-10-05-bc1-server-batch-sweep` off `main`: marker actor fields, `sweepBatches` dep (`SWEEP_CHUNK = 100`), handler wiring + owner/admin gate for `inventory` delete (no replay sweep), comment reword in `operationLogic.js`, Node tests (`cd functions && npm ci && node --test` runs in-session), e2e E1-E6, docs. Record Taher's functions deploy here before BC2.
 3. BC2 (client) after BC1 merged AND deployed: remove batch loop, `mutationApplied`, resync on conflict, `_storesToResync` adds `stock_batch` for `inventory` (R1), Activity + queue purge on ack.
