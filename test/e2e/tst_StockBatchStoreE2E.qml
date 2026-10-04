@@ -244,4 +244,95 @@ TestCase {
         verify(cached !== null, "StockBatchStore's local cache lost track of the batch entirely")
         compare(cached.note, "Changed directly server-side")
     }
+    // ── BC2: product delete is acked before anything else is destroyed or logged ──────────
+    // Design: docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md (BC2).
+    // Needs BC1 (server sweep) in the functions emulator, which the CI job runs from this checkout.
+
+    function _createProductWithStock(name, sku) {
+        var createdId = "", done = false
+        InventoryStore.addProduct(name, sku, "General", "", 100, "pc", 10, 2,
+                                  120, false, 0, fixture.supplierName, 80, "",
+                                  function(ok, id) { done = true; createdId = ok ? id : "" })
+        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        verify(createdId.length > 0, "addProduct did not return a productId")
+        E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, "tenants/" + fixture.tenantId + "/inventory/" + createdId,
+                                   createdId, function(d) { return d !== null }, 5000, "product doc never appeared", true)
+        return createdId
+    }
+
+    function _batchesOf(productId) {
+        return StockBatchStore.batches.filter(function(b) { return b.productId === productId })
+    }
+
+    function _batchDocPath(batchId) { return "tenants/" + fixture.tenantId + "/stock_batches/" + batchId }
+
+    function _productInCache(productId) {
+        var ps = InventoryStore.products
+        for (var k = 0; k < ps.length; ++k) if (ps[k].productId === productId) return ps[k]
+        return null
+    }
+
+    function test_BC2_product_delete_hides_batches_at_once_logs_after_ack_and_server_sweeps_them() {
+        var productId = _createProductWithStock("E2E BC2 Delete", "SKU-E2E-BC2-1")
+        tryVerify(function() { return _batchesOf(productId).length >= 1 }, 10000,
+                  "the initial-stock batch never reached the local cache")
+        var batchIds = _batchesOf(productId).map(function(b) { return b.batchId })
+        for (var i = 0; i < batchIds.length; ++i)
+            E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, _batchDocPath(batchIds[i]), batchIds[i],
+                                       function(d) { return d !== null }, 10000, "batch doc " + i + " never reached the server", true)
+        ActivityLog.clear()
+        OutboxStore.clear()
+
+        InventoryStore.deleteProduct(productId)
+
+        // Same call stack, before any network turn: local effects only.
+        compare(_batchesOf(productId).length, 0, "batches must be hidden locally at click time")
+        compare(ActivityLog.entries.length, 0, "no Activity entry before the server acked")
+        compare(OutboxStore.items.filter(function(it) { return it.entity === "stock_batch" }).length, 0,
+                "the client must not send any stock_batch delete")
+
+        tryVerify(function() {
+            return ActivityLog.entries.length === 1 && ActivityLog.entries[0].kind === "product_deleted"
+        }, 15000, "the product_deleted Activity entry never appeared after the ack")
+        compare(ActivityLog.entries[0].entityId, productId)
+        for (var j = 0; j < batchIds.length; ++j)
+            E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, _batchDocPath(batchIds[j]), batchIds[j],
+                                       function(d) { return d === null }, 20000,
+                                       "server sweep never removed batch " + batchIds[j], true)
+        compare(ActivityLog.entries.length, 1, "exactly one Activity entry for one delete")
+    }
+
+    function test_BC2_stale_product_delete_409_keeps_product_batches_and_activity_clean() {
+        var productId = _createProductWithStock("E2E BC2 Stale", "SKU-E2E-BC2-2")
+        tryVerify(function() { return _batchesOf(productId).length >= 1 }, 10000,
+                  "the initial-stock batch never reached the local cache")
+        var batchIds = _batchesOf(productId).map(function(b) { return b.batchId })
+        for (var i = 0; i < batchIds.length; ++i)
+            E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, _batchDocPath(batchIds[i]), batchIds[i],
+                                       function(d) { return d !== null }, 10000, "batch doc " + i + " never reached the server", true)
+        // Make the cached row stale: the server holds stock 10, the cache now claims 999, so the
+        // delete's compare-and-set `before` cannot match and the server answers 409.
+        var arr = InventoryStore.products.slice()
+        for (var k = 0; k < arr.length; ++k)
+            if (arr[k].productId === productId) arr[k] = Object.assign({}, arr[k], { stock: 999 })
+        InventoryStore.products = arr
+        ActivityLog.clear()
+        OutboxStore.clear()
+
+        InventoryStore.deleteProduct(productId)
+
+        tryVerify(function() {
+            var p = _productInCache(productId)
+            return p !== null && p.stock === 10
+        }, 15000, "the rejected delete did not restore the server's version of the product")
+        tryVerify(function() { return _batchesOf(productId).length === batchIds.length }, 15000,
+                  "the rejected delete did not bring the hidden batches back by re-read")
+        wait(2000) // room for any (forbidden) late sweep or Activity write to land
+        for (var j = 0; j < batchIds.length; ++j)
+            E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, _batchDocPath(batchIds[j]), batchIds[j],
+                                       function(d) { return d !== null }, 5000,
+                                       "batch " + batchIds[j] + " was destroyed by a delete that never committed", true)
+        compare(ActivityLog.entries.filter(function(e) { return e.kind === "product_deleted" }).length, 0,
+                "a rejected delete must not log 'Product deleted'")
+    }
 }

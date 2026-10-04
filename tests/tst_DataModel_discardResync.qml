@@ -39,7 +39,8 @@ TestCase {
     // ── the pure mapping ─────────────────────────────────────────────────────
 
     function test_each_entity_maps_to_its_store() {
-        compare(dm._storesToResync(["inventory"]), ["inventory"])
+        // BC2 (design R1): inventory always drags stock_batch along, right after it.
+        compare(dm._storesToResync(["inventory"]), ["inventory", "stock_batch"])
         compare(dm._storesToResync(["stock_batch"]), ["stock_batch"])
         compare(dm._storesToResync(["order"]), ["order"])
         compare(dm._storesToResync(["staff"]), ["staff"])
@@ -58,7 +59,7 @@ TestCase {
     }
 
     function test_several_entities_keep_first_seen_order_without_repeats() {
-        compare(dm._storesToResync(["order", "inventory", "order", "transaction"]), ["order", "inventory", "transaction"])
+        compare(dm._storesToResync(["order", "inventory", "order", "transaction"]), ["order", "inventory", "stock_batch", "transaction"])
     }
 
     function test_junk_input_gives_nothing() {
@@ -73,7 +74,7 @@ TestCase {
         var ignored = { "stock_movement": true }
         for (var entity in Gateway._collections) {
             if (ignored[entity]) continue
-            verify(dm._storesToResync([entity]).length === 1, "unmapped Gateway entity: " + entity)
+            verify(dm._storesToResync([entity]).length >= 1, "unmapped Gateway entity: " + entity)
         }
     }
 
@@ -81,14 +82,14 @@ TestCase {
 
     function test_resync_asks_only_the_affected_stores() {
         dm._resyncForDiscard(["inventory", "order"])
-        compare(_pending(), ["inventory", "order"])
+        compare(_pending(), ["inventory", "order", "stock_batch"])
     }
 
     function test_each_store_really_is_resynced() {
         for (var entity in stores) {
             cleanup(); init()
             dm._resyncForDiscard([entity])
-            compare(_pending(), [entity], entity)
+            compare(_pending(), entity === "inventory" ? ["inventory", "stock_batch"] : [entity], entity)
         }
     }
 
@@ -116,6 +117,59 @@ TestCase {
 
     function test_the_gateway_signal_with_no_entities_does_nothing() {
         Gateway.parkedWriteDiscarded("r1", [])
+        compare(_pending(), [])
+    }
+
+    // ── BC2: inventory drags stock_batch along (R1) ──────────────────────────
+
+    function test_inventory_adds_stock_batch_right_after_itself() {
+        compare(dm._storesToResync(["inventory", "order"]), ["inventory", "stock_batch", "order"])
+    }
+
+    function test_an_explicit_stock_batch_is_not_duplicated_in_either_order() {
+        compare(dm._storesToResync(["inventory", "stock_batch"]), ["inventory", "stock_batch"])
+        compare(dm._storesToResync(["stock_batch", "inventory"]), ["stock_batch", "inventory"])
+        compare(dm._storesToResync(["inventory", "inventory", "stock_batch", "inventory"]), ["inventory", "stock_batch"])
+    }
+
+    function test_stock_batch_alone_does_not_pull_inventory_in() {
+        compare(dm._storesToResync(["stock_batch"]), ["stock_batch"])
+    }
+
+    function test_discarding_a_parked_product_delete_rereads_the_batches() {
+        // The outbox no longer holds the batch deletes, so entitiesOf(item) is just ["inventory"].
+        Gateway.parkedWriteDiscarded("r-del", ["inventory"])
+        compare(_pending(), ["inventory", "stock_batch"])
+    }
+
+    // ── BC2: a rejected product delete rereads the batches ───────────────────
+
+    function test_delete_conflict_with_a_current_product_rereads_only_the_batches() {
+        Gateway.mutationConflicted("inventory", "p1", { productId: "p1", name: "W", stock: 3 }, "delete")
+        compare(_pending(), ["stock_batch"])
+    }
+
+    function test_delete_conflict_with_the_product_already_gone_still_rereads_the_batches() {
+        Gateway.mutationConflicted("inventory", "p1", null, "delete")
+        compare(_pending(), ["stock_batch"])
+    }
+
+    function test_update_conflict_on_inventory_rereads_nothing() {
+        Gateway.mutationConflicted("inventory", "p1", { productId: "p1", name: "W", stock: 3 }, "update")
+        compare(_pending(), [])
+    }
+
+    function test_delete_conflict_on_other_entities_rereads_nothing() {
+        var others = ["order", "stock_batch", "staff", "supplier", "transaction"]
+        for (var i = 0; i < others.length; ++i) {
+            cleanup(); init()
+            Gateway.mutationConflicted(others[i], "x1", null, "delete")
+            compare(_pending(), [], others[i])
+        }
+    }
+
+    function test_conflict_without_an_action_rereads_nothing() {
+        Gateway.mutationConflicted("inventory", "p1", null, "")
         compare(_pending(), [])
     }
 

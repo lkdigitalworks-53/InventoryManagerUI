@@ -43,6 +43,8 @@ TestCase {
     SignalSpy { id: toastSpy; target: Toast; signalName: "showRequested" }
     // S3: one entry per Discard that went through.
     SignalSpy { id: discardSpy; target: Gateway; signalName: "parkedWriteDiscarded" }
+    // BC2: one entry per single recordMutation that got a 2xx.
+    SignalSpy { id: appliedSpy; target: Gateway; signalName: "mutationApplied" }
 
     function init() {
         // Force "direct" for every case below so these tests stay isolated
@@ -62,6 +64,7 @@ TestCase {
         Gateway.clear() // also resets the stuck-write bookkeeping and stops the drain timer
         toastSpy.clear()
         discardSpy.clear()
+        appliedSpy.clear()
         AuthStore.idToken = "" // keep the _send/_sendBatch guard closed (see header)
         // In-memory reset alone isn't enough: Gateway.drainNow() itself
         // triggers AuthService's first-ever lazy construction (only real
@@ -1988,6 +1991,93 @@ TestCase {
             for (var id in discarded) compare(_inOutbox(id), false, "step " + step + " resurrected " + id)
             compare(Gateway.stuckRows().length, Gateway.stuckCount, "step " + step)
             compare(discardSpy.count, trues, "step " + step)
+        }
+    }
+    // ── BC2: mutationApplied (Q-BC-3 A) ───────────────────────────────────────
+
+    function test_ackSingle_removes_the_item_and_fires_mutationApplied_once() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
+        var item = OutboxStore.items[0]
+        compare(OutboxStore.pendingCount, 1)
+
+        Gateway._ackSingle(item)
+
+        compare(OutboxStore.pendingCount, 0)
+        compare(appliedSpy.count, 1)
+        compare(appliedSpy.signalArguments[0][0], "inventory")
+        compare(appliedSpy.signalArguments[0][1], "p1")
+        compare(appliedSpy.signalArguments[0][2], "delete")
+    }
+
+    function test_ackSingle_carries_the_items_own_action() {
+        Gateway.mode = "gateway"
+        var actions = ["create", "update", "delete"]
+        for (var i = 0; i < actions.length; ++i) {
+            Gateway.recordMutation("order", "o" + i, actions[i], null, { n: i })
+            Gateway._ackSingle(OutboxStore.items[0])
+            compare(appliedSpy.signalArguments[i][2], actions[i])
+            compare(appliedSpy.signalArguments[i][1], "o" + i)
+        }
+        compare(appliedSpy.count, 3)
+    }
+
+    function test_mutationApplied_fires_only_after_the_item_left_the_outbox() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
+        var item = OutboxStore.items[0]
+        var pendingAtEmit = -1
+        var probe = function() { pendingAtEmit = OutboxStore.pendingCount }
+        Gateway.mutationApplied.connect(probe)
+        Gateway._ackSingle(item)
+        Gateway.mutationApplied.disconnect(probe)
+        compare(pendingAtEmit, 0, "a listener must never see the acked item still queued")
+    }
+
+    function test_ackSingle_for_an_item_no_longer_queued_still_fires_and_does_not_throw() {
+        Gateway._ackSingle({ requestId: "ghost", entity: "inventory", entityId: "p9", action: "delete" })
+        compare(appliedSpy.count, 1)
+        compare(OutboxStore.pendingCount, 0)
+    }
+
+    function test_ackSingle_leaves_other_queued_items_alone() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("inventory", "p1", "delete", { name: "A" }, null)
+        Gateway.recordMutation("order", "o1", "update", { s: 1 }, { s: 2 })
+        Gateway._ackSingle(OutboxStore.items[0])
+        compare(OutboxStore.pendingCount, 1)
+        compare(OutboxStore.items[0].entityId, "o1")
+    }
+
+    function test_send_while_signed_out_acks_nothing() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
+        Gateway._send(OutboxStore.items[0])
+        compare(appliedSpy.count, 0, "no request went out, so nothing was applied")
+        compare(OutboxStore.pendingCount, 1)
+    }
+
+    function test_recording_a_mutation_never_fires_mutationApplied_by_itself() {
+        Gateway.mode = "gateway"
+        Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
+        Gateway.recordDelta("inventory", "p2", { stock: 1 }, {}, {}, function() {})
+        compare(appliedSpy.count, 0)
+    }
+
+    function test_monkey_every_ack_fires_exactly_once_with_its_own_arguments() {
+        Gateway.mode = "gateway"
+        var s = 4242
+        function rnd(n) { s = (s * 1664525 + 1013904223) % 4294967296; return Math.floor(s / 65536) % n }
+        var ents = ["inventory", "order", "staff", "supplier", "stock_batch"]
+        var acts = ["create", "update", "delete"]
+        for (var step = 0; step < 100; ++step) {
+            var e = ents[rnd(5)], a = acts[rnd(3)], id = "id" + rnd(7)
+            Gateway.recordMutation(e, id, a, { v: step }, a === "delete" ? null : { v: step + 1 })
+            var q = OutboxStore.items[OutboxStore.items.length - 1]
+            Gateway._ackSingle(q)
+            compare(appliedSpy.count, step + 1, "step " + step)
+            var args = appliedSpy.signalArguments[step]
+            compare(args[0], q.entity); compare(args[1], q.entityId); compare(args[2], q.action)
         }
     }
 }
