@@ -514,10 +514,10 @@ BottomSheet {
         InventoryStore.addProduct(nameField.text, skuField.text,
             categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
             taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */,
-            sizeField.text.trim(), function(ok, newId) {
+            sizeField.text.trim(), function(ok, newId, refusal) {
                 busy = false
                 if (!ok) {
-                    errorLabel.text = "Could not add product — try again"
+                    errorLabel.text = refusal ? refusal : "Could not add product — try again"
                     return
                 }
                 CategoryStore.setLastUsed(categoryCombo.currentText)

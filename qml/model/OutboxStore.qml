@@ -460,6 +460,37 @@ QtObject {
         return false
     }
 
+    // PR #122 S4: what is still unsynced for each record of `entity`, for the overlay and the
+    // "not synced" badge. -> { entityId: { state: "pending" | "parked", edit: item | null } }
+    //  - state "parked" if ANY item touching the record is parked (S2b: needs Retry/Discard),
+    //    else "pending" if a single-record write (create/update/delete) is queued. Same rule as
+    //    hasUnsyncedEditForEntity / hasParkedForEntity, so badge and sale guard never disagree.
+    //  - `edit` = the queued plain UPDATE for the record (parked or not), the only kind the
+    //    overlay replays; creates, deletes, deltas, batches, operations and held ledger rows
+    //    give a state but no edit (Q3 = product edit only; the rest is roadmap).
+    function unsyncedByEntity(entity) {
+        var out = {}
+        var prefix = entity + "/"
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.dependsOn) continue // held ledger row: its parent carries the state
+            var parked = StuckWrites.isParkedItem(it)
+            var isDeltaLike = !!(it.deltas || it.items || it.ops)
+            var keys = _keysForItem(it)
+            for (var k = 0; k < keys.length; ++k) {
+                if (keys[k].indexOf(prefix) !== 0) continue
+                var id = keys[k].substring(prefix.length)
+                var cur = out[id] || { state: "", edit: null }
+                if (parked) cur.state = "parked"
+                else if (!isDeltaLike && cur.state === "") cur.state = "pending"
+                if (!isDeltaLike && it.action === "update" && it.entity === entity && it.entityId === id)
+                    cur.edit = it
+                if (cur.state !== "") out[id] = cur
+            }
+        }
+        return out
+    }
+
     // Bump attempts and push out nextAttemptAt per the backoff schedule.
     function markFailed(requestId) {
         var arr = items.slice()

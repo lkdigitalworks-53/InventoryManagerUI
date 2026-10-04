@@ -306,6 +306,18 @@ Item {
                         label: "Low"
                     }
 
+                    // PR #122 S4: this product has a change that has not reached the server.
+                    // "Not synced" = queued / retrying; "Rejected" = parked, needs Retry or
+                    // Discard in the stuck-writes sheet. Same rule as the sale guard.
+                    StatusPill {
+                        objectName: "syncPill"
+                        readonly property string syncState: card.product
+                            ? (InventoryStore.syncStates[card.product.productId] || "") : ""
+                        visible: syncState !== ""
+                        status: syncState === "parked" ? "low" : "pending"
+                        label: syncState === "parked" ? qsTr("Rejected") : qsTr("Not synced")
+                    }
+
                     Item { Layout.fillWidth: true }
 
                     // Restock button
