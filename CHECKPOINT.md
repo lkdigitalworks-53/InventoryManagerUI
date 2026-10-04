@@ -22,3 +22,12 @@
 
 ## NOT verified
 Nothing run here (no Qt toolchain, standing rule). The hang and drift above are code-read hypotheses until the E2E repro runs on CI.
+
+## Taher's answers (2026-10-04)
+1. Mechanism: **B refuse completion** (advice was A; overruled, decision recorded). Honest cost of B: a sale at the counter is blocked until the user Retries/Discards the parked edit for that product. Accepted.
+2. Repro form: **red-by-design E2E, draft PR**.
+3. Scope: single-entity deltas only. Under B this means: guard in `DataModel._tryCompleteOrder` only. `_tryAdjustOrder` (returns/exchanges), `completeImportedOrder` and the failure-path `creditStockNoBatch` use the same deltas and may hang the same way: NOT touched, listed in KNOWN-ISSUES as open.
+
+## Step log (continued)
+3. Commit 1 (red by design): `test_completeOrder_behind_a_parked_write_is_refused_not_hung` in `test/e2e/tst_OrdersE2E.qml`. Expected CI: E2E fails on `completion hung behind a parked write`; everything else green.
+4. Commit 2: guard + unit tests + docs (see below once done).

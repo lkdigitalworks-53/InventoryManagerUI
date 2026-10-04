@@ -244,4 +244,78 @@ TestCase {
         }, 5000, "inventory stock changed even though completion was rejected")
         compare(Number(productDoc.fields.stock.integerValue), 10)
     }
+
+    // ── Order completion behind a PARKED write (2026-10-04, decision B: refuse) ───────────
+    // RED BY DESIGN on the commit that adds it (draft PR): before the fix, completing an order
+    // for a product with a parked single edit never answers. `OutboxStore.dueItems` keeps the
+    // parked item's key `inventory/<id>` claimed, so the stock delta queued by deductStock is
+    // skipped on every drain, its callback never fires, `_completingOrderIds[orderId]` stays
+    // set and every retry says "already being completed". The FIFO deltas (other keys) have
+    // already gone out, so batches drift from product.stock. Decision B: refuse up front,
+    // answer false at once, touch nothing, leave the order pending.
+    function _parkEditFor(productId) {
+        var rid = "e2e-orders-park-" + productId
+        OutboxStore.enqueue({ requestId: rid, entity: "inventory", entityId: productId, action: "update",
+                              before: { stock: 10 }, after: { stock: 10 } })
+        OutboxStore.setStuckMeta(rid, { failures: 5, stuck: true, terminal: true })
+        return rid
+    }
+
+    function _batchQty(productId) {
+        var sum = 0
+        for (var i = 0; i < StockBatchStore.batches.length; ++i)
+            if (StockBatchStore.batches[i].productId === productId) sum += StockBatchStore.batches[i].qtyRemaining
+        return sum
+    }
+
+    function test_completeOrder_behind_a_parked_write_is_refused_not_hung() {
+        var productId = _createProduct("E2E Order Parked", "SKU-E2E-ORD-3", 10)
+        var productDocPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        _pollEmulatorDoc(productDocPath, productId, function(d) { return d !== null }, 5000,
+                          "seeded product doc never appeared before creating the order")
+        var orderId = _addOrder(productId, 3)
+        var orderDocPath = "tenants/" + fixture.tenantId + "/orders/" + orderId
+        _pollEmulatorDoc(orderDocPath, orderId, function(d) { return d !== null }, 5000,
+                          "order doc never appeared before completing it")
+        tryVerify(function() { return _batchQty(productId) === 10 }, 10000, "initial-stock batch never reached the cache")
+
+        OutboxStore.clear()
+        var rid = _parkEditFor(productId)
+        lastConflict = null
+
+        var completed = false
+        var succeeded = true
+        dm._tryCompleteOrder(orderId, function(success) { completed = true; succeeded = success })
+
+        tryVerify(function() { return completed }, 2000,
+                  "completion hung behind a parked write: callback never fired (the bug)")
+        compare(succeeded, false)
+        verify(dm.stockErrorMsg.indexOf(InventoryStore.parkedWriteMessage) !== -1,
+               "the refusal must tell the user to fix or discard the stuck change, got: " + dm.stockErrorMsg)
+        compare(OrdersStore.getById(orderId).status, "pending", "a refused sale must leave the order pending")
+        verify(!dm._completingOrderIds[orderId], "the in-flight guard must not stay set after a refusal")
+        compare(InventoryStore.getById(productId).stock, 10, "no local stock change")
+        compare(_batchQty(productId), 10, "no FIFO consumption before the refusal")
+        compare(OutboxStore.items.length, 1, "only the parked item is queued: no delta was enqueued")
+
+        wait(1500)
+        var productDoc = E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, productDocPath, productId, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 10
+        }, 5000, "server stock changed although completion was refused", true)
+        compare(Number(productDoc.fields.stock.integerValue), 10)
+        E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, orderDocPath, orderId, function(d) {
+            return d !== null && d.fields.status.stringValue === "pending"
+        }, 5000, "server order status changed although completion was refused", true)
+
+        // After the user discards the parked write, completion goes through as normal.
+        OutboxStore.markSent(rid)
+        completed = false
+        succeeded = false
+        dm._tryCompleteOrder(orderId, function(success) { completed = true; succeeded = success })
+        tryVerify(function() { return completed }, 5000, "completion after discarding the parked write never answered")
+        verify(succeeded, "completion after discard failed: " + dm.stockErrorMsg)
+        _pollEmulatorDoc(productDocPath, productId, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 7
+        }, 5000, "stock never reached 7 after the discard and re-complete")
+    }
 }
