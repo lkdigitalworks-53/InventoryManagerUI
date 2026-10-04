@@ -4082,4 +4082,17 @@ Rules learned, in order of how easy they are to get wrong:
 4. Optimistic local ledger rows need an undo when the held row is dropped (`heldWritesDropped` -> `TransactionStore.removeLocal`), or a ghost row lives until the next refetch.
 5. "Any unsynced edit" for a sale guard must exclude stock DELTAS: back-to-back sales of one product each queue a delta and must not block each other.
 6. Do not change the arity of an existing signal (`mutationApplied`): QML throws on an emit with fewer arguments than declared and tests emit it by hand. Add a new signal (`writeAcked`) instead.
-Open (S4): overlay queued edits on server reads + a "not synced" badge, so a relaunch inside the retry window does not show the old price.
+S4 done in PR #122, see Skill 101.
+
+
+## Skill 101: Overlay a queued edit by replaying only the fields the user CHANGED, and derive the badge from the same function as the sale guard
+
+Context (PR #122): a relaunch inside the retry window re-read Firestore and showed the old price while the edit was still queued; and a > 1 MiB description was queued and retried for nothing.
+Rules:
+1. Replay the diff of the queued item's `before` vs `after` (`UnsyncedOverlay.changedFields`), never the whole `after`. `after` is the full doc as of edit time; replaying it undoes a stock change made since (a sale on another device). A merged item keeps the earliest `before` and the latest `after`, so the diff is the net change.
+2. Overlay each PAGE of a paged read (`_fetchFromFirebase` concatenates pages); overlaying only the first page or only `products` at the end misses rows or double-applies.
+3. Do NOT overlay in the conflict handler: a conflicted edit has already left the outbox, `current` from the server is the truth.
+4. Badge state, overlay input and sale guard must come from ONE outbox pass (`OutboxStore.unsyncedByEntity`) or they drift: batch members, operations and held ledger rows are excluded from "unsynced edit" but a PARKED one of any kind still marks the product parked. A monkey test compares the three.
+5. Publish `syncStates` only when it really changed: the outbox changes on every sale delta, and a bound `StatusPill` per product card re-evaluates on every assignment.
+6. Size caps: Firestore stores string bytes + 1, field name bytes + 1, number 8, boolean/null 1, + 32 per doc. Measure UTF-8 BYTES (Devanagari is 3 bytes per char, emoji 4), not characters, and keep a reserve (`DocLimits.RESERVE_BYTES`, 4 KiB) for the doc name and server-added fields. The cap is an estimate; the server stays the authority. Refuse before anything is queued, and pre-check in the dialog BEFORE it closes or the user loses the edit.
+7. QML has no `TextEncoder`; `DocLimits.utf8Bytes` counts surrogate pairs by hand.

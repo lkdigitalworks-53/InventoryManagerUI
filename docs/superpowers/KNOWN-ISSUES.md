@@ -618,8 +618,8 @@ manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #
 
 ## Unsynced product edit (PR #121 follow-up, 2026-10-05)
 - **Fixed in `feat/2026-10-05-unsynced-edit-ledger` (CI unverified):** a product edit's `field_change` / `stock_adjustment` rows and its Activity entry no longer register when the server rejects the edit; a sale is refused while the product has any queued edit.
-- **Open S4:** a relaunch inside the retry window still shows the server's old value (price 25) because server reads do not overlay queued edits; there is no "not synced" badge. The sale guard makes this safe, not correct.
+- **S4 done in PR #122 (CI unverified):** server reads overlay queued AND parked edits (changed fields only) and the product card / edit dialog show a "Not synced" / "Rejected" badge. A queued CREATE is not injected into a read after a relaunch (the product is missing from the list until the create syncs): roadmap.
 - **Open (roadmap, decision Q3):** `created`, `purchase`, `photo_change`, `sale`, `return`, `price_adjust` ledger rows still register before their parent write is acked (same bug as device observation 1). Needs `recordEdit` + `dependsOn` per call site.
 - **Open:** Activity `product_updated` for an edit is in-memory until the ack; an app death between edit and ack drops the entry (the ledger rows survive).
-- **Open:** a client-side size check on `description` (> 1 MiB) would stop the hopeless write at the source instead of parking it. Not done (not in the decisions).
-- **Unverified blind-edit risk:** `Gateway._reschedule()` is what prunes orphans; the conflict and permanent-drop paths were not each confirmed to end in `_reschedule()` (discard does). `pruneOrphans` also runs at load, so worst case the rows leave at the next relaunch.
+- **Fixed in PR #122 (CI unverified):** a product doc over 1 MiB (`DocLimits`, estimate with a 4 KiB reserve) is refused before anything is queued; the dialogs pre-check. Gap: bulk import (`ImportPreviewDialog`, `recordMutations`) has no size check; an oversize row is still rejected by the server and removed by `_onBatchMutationFailedPermanently`.
+- **Verified by code read (PR #122):** every send path (single, batch, delta, operation) ends in `Gateway._reschedule()` after a conflict or permanent drop, so `pruneOrphans` runs. Not run.
