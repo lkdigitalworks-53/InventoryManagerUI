@@ -19,6 +19,7 @@
 - Rules R01-R09, R11 (`test/firestore.rules.test.js`). R10 (`storage.rules`) is covered by the pre-existing `test/storage.rules.test.js` (7 tests, unchanged by PH3; mapped by inspection).
 - E2E in `tst_ProductPhotosE2E.qml` (7 new): E02 (staff upload + delete 403), E01 (cascade sweep + marker gone, with a sibling product for E08), E07 (404, no objects), E10 (batch delete 400), E11 (409, no extra objects), plus a no-photos-product delete.
 **NOT written (still planned):** E03 (admin token; needs a third seeded user), E04 (stale-before delete 409), E05 (injected sweep failure; needs the Storage emulator hook), E06 (id reuse before sweep), E09 (two tenants, same productId; needs a second seeded tenant), E12 (monkey). Sections 5 and 6 (PH4/PH5 QML) untouched.
+**2026-10-04 (branch `fix/2026-10-04-pr113-upload-delete-race`):** PH4 item 3 pulled forward after a device bug. E04 now WRITTEN, UNRUN (`test_stale_delete_409_keeps_the_product_and_every_photo`: product + 3 photoIds + 6 objects survive a stale-before delete, no marker). C13/C19 can't be a QML spy (functions not reassignable); the e2e case is their pin.
 **Not verified:** nothing in this PR has been exercised against the emulators or on a device. Section 9 (device plan) is unchanged and still to run after merge.
 
 
@@ -218,6 +219,7 @@ Remove role gate; skip preflight; write marker outside the txn; write marker on 
 - [ ] Demote an admin to staff while a photo sits queued: the tile ends in `failed` with Retry/Discard (one attempt, no retry loop).
 - [ ] Try to upload a 6th photo (cap): clear failure, nothing extra in Storage.
 - [ ] Product deleted on device B while device A has an upload queued: A's tile ends failed/purged, nothing appears in Storage.
+- [ ] Device A uploads a photo while device B deletes the SAME product (product with several photos): EXPECT either (i) delete commits: product gone on both, Storage prefix empty after the sweep; or (ii) delete 409s: product restored on B with ALL photos incl. A's new one, toast "Couldn't delete", Storage objects unchanged. FAIL = fewer photos than before. KNOWN in (ii): the product's batches are gone and Activity says deleted (KNOWN-ISSUES 2026-10-04). Repeat 3x, both orderings.
 
 ### Edge Cases
 - [ ] Device A edits the price while device B uploads a photo to the same product: A's save gets the conflict toast, row reverts to server state, A redoes the edit (accepted F5 behavior). Check whether an inventory-specific conflict toast actually shows (UNVERIFIED).

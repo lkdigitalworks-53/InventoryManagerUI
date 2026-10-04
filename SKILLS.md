@@ -4009,3 +4009,17 @@ and it re-reads the product so a reused id is never swept.
 the same regex first, and the "mutation" survived because nothing changed. Anchor the pattern on the full code line, and
 treat any surviving mutation as a bug in the mutation until proven otherwise.
 
+## Skill 92: A design's "intermediate states are safe" claim is a hypothesis; the side effect lives where it is called, not where the fix is planned
+
+**Context (photos PH3, device bug 2026-10-04):** the design said building the server cascade (PH3) before the client change
+(PH4) keeps every intermediate state free of destroy-before-ack. False: the destructive call is the client's per-photo
+`deleteProductPhoto` loop inside `deleteProduct`, and PH3 does not touch it. With a concurrent upload the delete 409s, the product
+survives, and the loop had already stripped its photos.
+
+**Generalize:** (1) For any delete/cascade, list EVERY side effect `deleteProduct` fires and mark each as before-ack or after-ack;
+only after-ack ones are safe. Here: photos (fixed), batches, activity log, queue purge (still before-ack). (2) When slicing server
+vs client work, a slice order claim needs the destructive caller removed in the FIRST slice, or it is not a safety claim. (3) A
+CAS whose `before` is the whole record makes unrelated concurrent edits (a photo upload) reject a delete; expect 409 on every
+two-device test of a delete. (4) A test that asserts "nothing was destroyed" needs a wait after the 409 signal, or it passes
+before the forbidden calls land.
+
