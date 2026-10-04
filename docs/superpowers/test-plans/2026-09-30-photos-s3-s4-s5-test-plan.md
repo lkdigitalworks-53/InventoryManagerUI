@@ -112,7 +112,7 @@ New file `functions/lib/photoCleanup.js` (`buildSweepPrefix`, `buildMarker`, `ca
 | F40 | deletePhoto: product doc missing -> 200, both Storage objects still deleted (Q13 pin) | functions/test/index.handlers.photos.test.js |
 | F41 | recordMutation delete of a server-absent product with non-null before -> 409 conflict, `current:null`, no marker, no sweep (Q13 pin) | functions/test/index.handlers.test.js |
 
-### Moved to PH3b (scheduled cleanup function, design open; case texts kept for the PH3b plan)
+### Moved to PH3b (scheduled cleanup function). **SUPERSEDED 2026-10-05: the PH3b cases now live in `2026-10-05-ph3b-scheduled-cleanup-test-plan.md` (design v2: no `nextAttemptAt`, no index). The `selectDue`/schema wording below is the v1 text, kept as history.**
 U21-U27 `selectDrainable` (age boundary, exclusion, cap 3, monkey) become `selectDue` cases when the schema is decided (Q-E). F11-F13, F17, F29 (drain piggyback in handlers) are replaced by `runCleanupSweep` cases: attempts cap 5 parks and leaves the query, backoff per attempt, per-env isolation, per-marker isolation, throw-at-end, summary log, 25-per-run budget, empty run is cheap. Plus one emulator e2e calling `runCleanupSweep` directly and a DV item for the real scheduler firing.
 
 ## 3. Rules tests (emulator, CI only) — 11 planned

@@ -450,6 +450,7 @@ QtObject {
   product's `stock_batches` in chunks of `SWEEP_CHUNK = 100` (one write batch per chunk: deletes + one audit entry each,
   deterministic id `cascade~{productId}~{batchId}` so overlapping sweeps never duplicate the audit) and skips any doc whose own
   `productId` differs. `recordMutation` gates `inventory` delete to owner/admin (403 `role-not-allowed`, before the prefix build). The `cascade~` audit-id prefix is RESERVED (`PhotoCleanup.isReservedAuditId`): every endpoint that uses a client `requestId` as an `audit_log` doc id must reject it (400).
+  PH3b (scheduled sweeper) is DESIGNED, NOT BUILT: use design v2 in `docs/superpowers/specs/2026-09-30-photos-s3-s4-design.md` (no `nextAttemptAt`, no index; the v1 text in git history is wrong, see its review P1-P3).
   Runbook: a `pending_cleanup/{productId}` doc that stays = a failed sweep (`attempts`, `lastError`). Until PH3b exists there is
   NO automatic retry and a replayed delete does NOT sweep: check the product is really gone, delete its `stock_batches`
   (query by `productId`) and Storage prefix by hand, then delete the marker.

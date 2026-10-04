@@ -4096,3 +4096,13 @@ Rules:
 5. Publish `syncStates` only when it really changed: the outbox changes on every sale delta, and a bound `StatusPill` per product card re-evaluates on every assignment.
 6. Size caps: Firestore stores string bytes + 1, field name bytes + 1, number 8, boolean/null 1, + 32 per doc. Measure UTF-8 BYTES (Devanagari is 3 bytes per char, emoji 4), not characters, and keep a reserve (`DocLimits.RESERVE_BYTES`, 4 KiB) for the doc name and server-added fields. The cap is an estimate; the server stays the authority. Refuse before anything is queued, and pre-check in the dialog BEFORE it closes or the user loses the edit.
 7. QML has no `TextEncoder`; `DocLimits.utf8Bytes` counts surrogate pairs by hand.
+
+## Skill 102: Review a "decided" schedule design against the docs ALREADY in the database and the deploy plumbing before building it
+
+Context (PH3b review, 2026-10-05): the v1 design scheduled retries with a new `nextAttemptAt` field and a collection-group index. Reading `buildMarker`, `firebase.json` and the README found three defects before any code existed.
+Rules:
+1. A range filter on a field that old docs lack returns NONE of them. Before adding a schedule field, list which docs already exist in the wild (here: markers from #113 and BC1, exactly the failed ones the sweeper is for). Prefer a due time computed in code from fields every doc already has.
+2. Collection-group queries that filter or order need an index with collection-group scope; ones that do neither need none (Firebase docs). When the set is small by construction, read it all and filter in code instead of owning an index.
+3. This repo has three Firestore databases and `firebase.json` has one `firestore` entry with no `database` key: `firebase deploy --only firestore:indexes` reaches `(default)` only. The emulator does not prove an index exists, so CI would be green while `dev1`/`test` fail. Check the deploy path of ANY index or rules change per database.
+4. `docRef.set(patch, {merge: true})` on a doc another process just deleted re-creates it as a partial doc. When two actors can touch one doc (handler sweep + scheduler), use `update()` for patches and let NOT_FOUND mean "someone else finished".
+5. A decision recorded as "ok to the advised defaults" binds only the text that was shown. When a later read finds the text wrong, reopen it explicitly (Q-E -> Q-K) instead of building to the old wording.
