@@ -354,6 +354,18 @@ QtObject {
         return false
     }
 
+    // D2/D3 (PR #119): is a PARKED item (stuck + the server said "rejected", waiting for the
+    // user to Retry or Discard) queued for this entity+entityId, in a single, batch, delta or
+    // operation item? Same keying as hasPendingForEntity. Anything written for that record now
+    // would queue behind the park and cannot be sent until the user clears it.
+    function hasParkedForEntity(entity, entityId) {
+        var key = _keyFor(entity, entityId)
+        for (var i = 0; i < items.length; ++i) {
+            if (StuckWrites.isParkedItem(items[i]) && _keysForItem(items[i]).indexOf(key) !== -1) return true
+        }
+        return false
+    }
+
     // Soonest nextAttemptAt across all items, or -1 if empty. Gateway uses
     // this to schedule its drain timer without busy-polling.
     function nextDueInMs() {

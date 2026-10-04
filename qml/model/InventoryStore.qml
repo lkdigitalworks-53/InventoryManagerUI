@@ -29,6 +29,9 @@ QtObject {
     // Skill 39's "residual trade-off" note.
     property bool _resetPending: false
     property var _cursor: null
+    // BC2: product deletes sent but not yet acked: productId -> { name, sku, stock }. In memory
+    // only (a relaunch forgets them on purpose, see _onMutationApplied).
+    property var _pendingDeletes: ({})
 
     // Bumped whenever `products` is reassigned. Consumers (DashboardPage,
     // InventoryPage) bind a watcher property to this to trigger their own
@@ -47,6 +50,7 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        Gateway.mutationApplied.connect(_onMutationApplied)
         Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
     }
 
@@ -94,6 +98,7 @@ QtObject {
         // `before`) and was just pushed back above — "your change didn't
         // save" would be confusing for what was actually a delete attempt.
         if (action === "delete") {
+            _dropPendingDelete(entityId)  // never applied: no Activity entry, no photo purge
             Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
         } else {
             Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
@@ -1047,7 +1052,17 @@ QtObject {
         return Math.round(((sp - cost) / cost) * 100);
     }
 
+    // D2/D3 (PR #119): a write for this product the server rejected is PARKED in the outbox
+    // until the user retries or discards it. A restock delta or a delete queued behind it
+    // cannot be sent: the restock dialog would hang and drift (batch written, stock not), the
+    // delete would hide the product locally and later 409 on a stale `before`. So both refuse
+    // up front with this message and write nothing.
+    readonly property string parkedWriteMessage: "Fix or discard the stuck change for this product first"
+    function hasParkedWrite(productId) { return OutboxStore.hasParkedForEntity("inventory", productId) }
+
+    // Returns parkedWriteMessage when refused (nothing changed), otherwise undefined.
     function deleteProduct(productId) {
+        if (hasParkedWrite(productId)) return parkedWriteMessage
         var arr = _clone();
         var before = null
         var found = false
@@ -1058,55 +1073,62 @@ QtObject {
         if (!found) return
 
         Gateway.recordMutation("inventory", productId, "delete", before, null)
-        ActivityLog.record("product_deleted",
-                           "Product deleted: " + before.name,
-                           (before.sku ? before.sku + " · " : "") + "stock " + (before.stock || 0),
-                           productId)
 
-        // Cascade: remove every batch for this product too, not just the
-        // ones with qtyRemaining > 0 -- an already-exhausted batch has no
-        // ongoing value once its product is gone, and leaving some behind
-        // while removing others is a more confusing half-measure than
-        // removing all of them. Same fire-and-forget audit pattern
-        // StockBatchStore already uses for its own mutations -- the
-        // working doc goes, the audit_log entry stays. See spec doc:
-        // docs/superpowers/specs/2026-09-02-cleanup-batches-photo-on-product-delete.md
+        // BC2 (docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md): nothing
+        // below the product delete itself is destroyed or logged before the server acks it. The
+        // Activity entry and the queued-photo purge wait in _onMutationApplied; the batches are
+        // removed by the server sweep (BC1). Keep what that entry needs until then.
+        var pd = Object.assign({}, _pendingDeletes)
+        pd[productId] = { name: before.name, sku: before.sku, stock: before.stock }
+        _pendingDeletes = pd
+
+        // Local-only: hide the product's batches (open AND exhausted) so valuation and pickers
+        // show no ghosts. NOTHING is sent: a client batch delete ran before the ack and destroyed
+        // the cost layers of a product whose delete was then rejected (PR #118 device test,
+        // 2026-10-04). A 409 or a discarded parked delete restores them (DataModel resync).
         if (typeof StockBatchStore !== "undefined" && StockBatchStore && StockBatchStore.batches) {
-            var bs = StockBatchStore.batches
-            var keep = []
-            for (var bi = 0; bi < bs.length; ++bi) {
-                var b = bs[bi]
-                if (b.productId === productId) {
-                    Gateway.recordMutation("stock_batch", b.batchId, "delete", b, null)
-                } else {
-                    keep.push(b)
-                }
-            }
-            StockBatchStore.batches = keep
+            StockBatchStore.batches = StockBatchStore.batches.filter(function(b) { return b.productId !== productId })
         }
+    }
 
-        // Local photo cleanup — best-effort, must never block or fail the delete above.
-        // Guarded with try/catch: PhotoQueue.discard reaches the native ImageProcessor
-        // singleton (registered only by the real app's main.cpp), undefined in a headless
-        // test environment (same failure class as Skill 58).
+    // BC2 (Q-BC-3 A): the server acked a recordMutation. Only a product delete we still remember
+    // acts; after a relaunch between click and ack the memory is gone, so the Activity entry and
+    // the photo purge are skipped (accepted: design R7, the server audit entry still exists).
+    function _onMutationApplied(entity, entityId, action) {
+        if (entity !== "inventory" || action !== "delete") return
+        if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, entityId)) return
+        var info = _pendingDeletes[entityId]
+        _dropPendingDelete(entityId)
+        ActivityLog.record("product_deleted",
+                           "Product deleted: " + info.name,
+                           (info.sku ? info.sku + " · " : "") + "stock " + (info.stock || 0),
+                           entityId)
+        _purgeQueuedPhotos(entityId)
+    }
+
+    function _dropPendingDelete(productId) {
+        if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, productId)) return
+        var pd = Object.assign({}, _pendingDeletes)
+        delete pd[productId]
+        _pendingDeletes = pd
+    }
+
+    // Local photo cleanup after a committed delete. Best-effort, must never block or fail the
+    // caller. PhotoQueue.discard reaches the native ImageProcessor singleton (registered only by
+    // the real app's main.cpp), undefined in a headless test environment (same failure class as
+    // Skill 58), hence the guard. Photos still in PhotoQueue (any state) never reached photoIds:
+    // left alone they 404 once the delete lands, park as "failed" with no UI and keep their local
+    // files. discard() replaces PhotoQueue.items, so filter() first and iterate the snapshot.
+    // Confirmed photos are NOT removed here: the server sweeps the product's Storage prefix after
+    // a committed delete (PH3 `pending_cleanup`). A client-side deleteProductPhoto loop ran before
+    // the ack and wiped photos of a product that survived (PR #113 device test, 2026-10-04).
+    // Do not reintroduce it.
+    function _purgeQueuedPhotos(productId) {
         try {
-            // Photos still in PhotoQueue (any state) never reached photoIds. Left alone they 404
-            // once the delete lands, park as "failed" with no UI, and keep their local files.
-            // discard() replaces PhotoQueue.items, so filter() first and iterate the snapshot.
-            try {
-                PhotoQueue.items.filter(function(q) { return q.productId === productId })
-                    .forEach(function(q) { PhotoQueue.discard(q.photoId) })
-            } catch (qe) {
-                console.warn("[InventoryStore] queued-photo purge threw for", productId, qe)
-            }
-
-            // Confirmed photos are NOT removed here. The server sweeps the product's Storage prefix
-            // only after a committed delete (PH3 `pending_cleanup`), so a 409-rejected delete -- e.g.
-            // another device just uploaded a photo and made this cache's `before` stale -- destroys
-            // nothing. A client-side deleteProductPhoto loop ran before the ack and wiped photos of
-            // a product that survived (PR #113 device test, 2026-10-04). Do not reintroduce it.
+            PhotoQueue.items.filter(function(q) { return q.productId === productId })
+                .forEach(function(q) { PhotoQueue.discard(q.photoId) })
         } catch (e) {
-            console.warn("[InventoryStore] photo cleanup threw for", productId, e)
+            console.warn("[InventoryStore] queued-photo purge threw for", productId, e)
         }
     }
 
@@ -1122,6 +1144,9 @@ QtObject {
             if (arr[i].productId === productId) { current = arr[i]; break; }
         }
         if (!current) { if (callback) callback(false); return }
+        // D2: refuse before the supplier auto-promote and the batch write, so nothing drifts.
+        // callback(false, false, message): callers show `message` instead of "try again".
+        if (hasParkedWrite(productId)) { if (callback) callback(false, false, parkedWriteMessage); return }
 
         _resolveSupplierId(party, function(supplierId, supplierFailed) {
             var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";

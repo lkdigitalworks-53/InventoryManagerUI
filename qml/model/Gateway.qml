@@ -100,6 +100,12 @@ QtObject {
     // don't see it.
     signal mutationConflicted(string entity, string entityId, var current, string action)
 
+    // BC2 (Q-BC-3 A): ONE recordMutation got a 2xx (applied, or an idempotent replay) and has
+    // left the outbox. Consumers filter on entity/action. Not fired for recordMutations
+    // batches, deltas or operations (no consumer needs them). Today: InventoryStore uses it to
+    // write the "product deleted" Activity entry and purge queued photos only AFTER the ack.
+    signal mutationApplied(string entity, string entityId, string action)
+
     // Fired when recordMutationsBatch rejects a chunk for a reason that can
     // never change on retry (see _classifyBatchMutationFailure below) —
     // the chunk is dropped from the outbox rather than retried forever.
@@ -733,6 +739,12 @@ QtObject {
         }
     }
 
+    // 2xx for one recordMutation: drop it from the outbox, then tell listeners (BC2).
+    function _ackSingle(item) {
+        OutboxStore.markSent(item.requestId)
+        mutationApplied(item.entity, item.entityId, item.action)
+    }
+
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
@@ -754,7 +766,7 @@ QtObject {
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
             var ok = effStatus >= 200 && effStatus < 300
             if (ok) {
-                OutboxStore.markSent(item.requestId)
+                _ackSingle(item)
             } else {
                 var conflict = _parseMutationConflict(effStatus, effResponseText)
                 if (conflict.isConflict) {

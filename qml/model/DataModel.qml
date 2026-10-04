@@ -295,9 +295,10 @@ Item {
                 dispatcher.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
-            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed) {
+            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed, refusal) {
                 if (!ok) {
-                    dispatcher.errorOccurred("network", "Could not restock — try again")
+                    if (refusal) dispatcher.errorOccurred("inventory", refusal)
+                    else dispatcher.errorOccurred("network", "Could not restock — try again")
                     return
                 }
                 dispatcher.productRestocked(productId)
@@ -324,7 +325,11 @@ Item {
                     + "). Complete or cancel them first.")
                 return
             }
-            InventoryStore.deleteProduct(productId)
+            var refusal = InventoryStore.deleteProduct(productId)
+            if (refusal) {
+                dispatcher.errorOccurred("inventory", refusal)
+                return
+            }
             dispatcher.productDeleted(productId)
         }
 
@@ -405,6 +410,13 @@ Item {
             if (key === "" || seen[key] === true) continue
             seen[key] = true
             out.push(key)
+            // BC2 (design R1): a product delete drops the product's batches locally and no longer
+            // sends batch deletes, so ANY inventory re-read must re-read batches too, or a
+            // discarded parked delete restores the product without its cost layers.
+            if (key === "inventory" && seen["stock_batch"] !== true) {
+                seen["stock_batch"] = true
+                out.push("stock_batch")
+            }
         }
         return out
     }
@@ -424,6 +436,13 @@ Item {
     Connections {
         target: Gateway
         function onParkedWriteDiscarded(requestId, entities) { _resyncForDiscard(entities) }
+        // BC2: a rejected product delete (409) leaves the product on the server with all its
+        // batches, but deleteProduct hid them locally. InventoryStore restores the product
+        // itself; the batches come back by re-read. Also right when current is null (product
+        // already gone elsewhere): the sweep removed the batches, the re-read confirms it.
+        function onMutationConflicted(entity, entityId, current, action) {
+            if (entity === "inventory" && action === "delete") _resyncForDiscard(["stock_batch"])
+        }
     }
 
     // ── OrdersStore revision tracking ─────────────────────────────────────────

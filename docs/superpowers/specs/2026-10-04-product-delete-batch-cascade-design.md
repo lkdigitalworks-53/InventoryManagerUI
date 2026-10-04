@@ -1,6 +1,6 @@
 # Product delete: stop destroying batches / activity / queued photos before the server acks — design
 
-**BC1 (server) IMPLEMENTED 2026-10-05** on `feat/2026-10-05-bc1-server-batch-sweep` (see the test plan header for results and deviations). BC2 (client) not started: it waits for BC1 merged AND deployed (Q-BC-6). Original status line follows.
+**BC2 (client) IMPLEMENTED 2026-10-04** on `feat/2026-10-04-bc2-client-ack-gating` (see "BC2 implementation + device-test observations"; needs BC1 deployed before merge). **BC1 (server) IMPLEMENTED 2026-10-05** on `feat/2026-10-05-bc1-server-batch-sweep` (see the test plan header for results and deviations). BC2 (client) not started: it waits for BC1 merged AND deployed (Q-BC-6). Original status line follows.
 **Status:** design only. **Decisions Q-BC-1..Q-BC-7 DECIDED 2026-10-04 by Taher: default option on all seven** (ledger below). No code written. Implementation starts with BC1 once the order vs the photos items is settled (see ledger, "Order").
 **Reviewed 2026-10-05** (post-merge review of PR #116, see "Design review 2026-10-05"): 2 High + 3 Medium + 4 Low findings; text fixed in this file. **Q-BC-8 and Q-BC-9 DECIDED 2026-10-05 (Taher: gate = yes; replay re-sweep = no, because PH3b is designed and built right after BC1). Order BC1 -> PH3b -> PH4 rest confirmed.** Design is complete for BC1.
 **Branch:** `docs/2026-10-04-product-delete-batch-cascade-design` (off `main` @ `157dc6b`).
@@ -179,3 +179,30 @@ Strict atomic product+batches transaction (option b), unless Q-BC-1 says so. Bat
 ## Acceptance
 
 BC1: functions suite green incl. new tests; sweep deletes exactly the product's batches and audits each once; reused id deletes nothing; failure keeps marker with `attempts + 1`; other tenant and other product untouched (mutation-tested). BC2: CI green; `deleteProduct` sends no `stock_batch` delete; a 409 leaves product, batches, activity and queued photos intact after the resync; **discarding a parked product delete also restores the batches (R1)**; a committed delete logs Activity once.
+
+## BC2 implementation + device-test observations (2026-10-04)
+
+**Built exactly as the design says (Q-BC-3 A, Q-BC-4, R1):** `Gateway.mutationApplied(entity, entityId, action)` fired by `_ackSingle` on a single-mutation 2xx; `deleteProduct` sends only the product delete and hides the product's batches locally; Activity entry and queued-photo purge run in `InventoryStore._onMutationApplied`; a delete conflict re-reads batches (`DataModel` `onMutationConflicted`) and a discard re-reads batches whenever inventory is re-read (`_storesToResync`). Deviations: (a) `tst_InventoryStore_deleteAck.qml` (planned) was NOT created, its cases live in `tst_InventoryStore_deleteProductCascade.qml` (same singletons, one file less); (b) `_ackSingle` is a 3-line helper only so the ack is testable without an XHR; (c) the remembered delete is in memory only (R7, accepted).
+
+**The PR #118 device test found three things BC2 does not (and should not silently) cover.** Evidence and root causes: `KNOWN-ISSUES.md` section "PR #118 device test". Decisions for Taher, each with my honest default. I am NOT building any of these before you answer.
+
+**D1 Description size.** Cap `description` (and `name`) length. Options: (a) client cap only (`FormValidator`, instant feedback, a patched/old client or a direct call still sends 1 MiB), (b) server cap only (safe, but the user finds out minutes later via the rejected list, which is the symptom you saw), (c) both. **Default (c)**, small numbers (for example 2,000 chars for description; pick yours). Cost: a server limit rejects old data that is already longer; the check must be on write, not read. Needs your number and whether existing long descriptions must still be editable.
+
+**D2 Restock behind a parked write.** The dialog waits on a delta that cannot be sent. Options: (a) before sending, `restock` checks `OutboxStore` for a parked item on the same product and refuses with a toast ("Fix or discard the stuck change for this product first"), nothing is written, no drift; (b) let the dialog close on a "queued" answer after the 10 s foreground window (the delta still waits behind the park, so stock stays wrong and the batch is already created: drift), (c) skip the batch write too until the delta is sent. **Default (a)**: smallest, never creates drift, one new string. Against: it blocks restocking until the user clears the stuck write, which is the honest state. The same check is arguably needed for every awaited delta (order completion), UNVERIFIED how many callers hang the same way; I would grep them before building (ponytail: fix the shared place, not the dialog).
+
+**D3 Delete queued behind a parked write.** After BC2 nothing is destroyed, but the product disappears locally while its delete cannot be sent, and a later discard of the park makes the delete 409 on the stale `before`. Options: (a) refuse the delete while the product has a parked write, same toast as D2 (the product stays visible, no ghost); (b) allow it (today) and accept the 409 + retry; (c) on discard of a parked write, drop a queued delete for the same record and restore the product. **Default (a)**, same helper as D2. Against: the user cannot delete a product with a stuck edit until they discard it (one extra tap, and it states the real reason).
+
+**D4 Merge order.** BC2 must not merge before BC1 is deployed (Q-BC-6). Do you confirm BC1 is deployed to `inventorymanager-48392`? If not: deploy, record it in the checkpoint, then merge. I cannot verify this.
+
+**D5 Next slice after BC2.** PH3b (scheduled sweeper, designed, and BC1's Q-BC-9 = no relies on it landing right after) vs the D1-D3 fixes. **Default: D2+D3 first (one small PR, data drift today), then PH3b**, because PH3b makes the sweeper the only retry path for money data and is bigger. Against: Q-BC-9 says PH3b follows BC1 immediately; each slice of delay widens the crashed-sweep window (dev only, no production data).
+
+## Decisions recorded 2026-10-04 (Taher, after the PR #119 review)
+
+- **D1 description size: NO cap in the app. Leave it.** Accepted risk: a description over about 1 MiB is parked as a server rejection (KNOWN-ISSUES). Revisit only if it recurs.
+- **D2 restock behind a parked write: refuse (option a).** Built in commit `2362d9d` as `restock` -> `callback(false, false, message)`.
+- **D3 delete behind a parked write: refuse (option a).** Built in the same commit as `deleteProduct` -> returns the message, nothing hidden or queued.
+- **D4: BC1 is deployed** to `inventorymanager-48392` (Taher's statement; not verifiable from here). The "do not merge until deploy recorded" blocker on PR #119 is cleared by this line.
+- **D5: D2 + D3 ride in PR #119 as a separate commit** (not a separate PR) so they are tested together. PH3b stays the next slice.
+- **Shared place (ponytail):** one outbox predicate (`OutboxStore.hasParkedForEntity`) and one message (`InventoryStore.parkedWriteMessage`) serve both. Order-completion deltas (`deductStock`, `creditStockNoBatch`) await the same way and are NOT guarded: not decided, UNVERIFIED whether they hang. Open as a follow-up decision.
+- **CI on `405d209`:** QML 1634, Functions 329, Rules 45 green; E2E 59/60. The one failure (`test_BC2_stale_product_delete_409_...`) was a harness gap: `DataModel` is not a singleton, so without a declared instance its `onMutationConflicted` batch re-read never ran. Fixed in `ee6fe4d` (test only; production code was right, Main.qml instantiates DataModel).
+

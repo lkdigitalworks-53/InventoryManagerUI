@@ -34,10 +34,29 @@ import "../qml/model"
 TestCase {
     name: "InventoryStore_deleteProductCascade"
 
+    property string _prevMode: ""
+
     function init() {
+        _prevMode = Gateway.mode
+        Gateway.mode = "gateway"      // recordMutation enqueues (no network without an idToken)
+        OutboxStore.clear()
+        ActivityLog.clear()
+        InventoryStore._pendingDeletes = ({})
         InventoryStore.products = []
         StockBatchStore.batches = []
         PhotoQueue.clear()
+    }
+
+    function cleanup() {
+        OutboxStore.clear()
+        Gateway.mode = _prevMode
+    }
+
+    // The server's 2xx for the product delete (Gateway fires this from _ackSingle).
+    function _ack(id, action) { Gateway.mutationApplied("inventory", id, action === undefined ? "delete" : action) }
+
+    function _entries(kind) {
+        return ActivityLog.entries.filter(function(e) { return e.kind === kind })
     }
 
     function _queued(photoId, productId, state) {
@@ -160,6 +179,8 @@ TestCase {
         _queued("a1", "SKU-1"); _queued("a2", "SKU-1"); _queued("b1", "SKU-2")
 
         InventoryStore.deleteProduct("SKU-1")
+        compare(PhotoQueue.pendingCount, 3, "BC2 (Q-BC-4): nothing is purged before the ack")
+        _ack("SKU-1")
 
         compare(_queuedIds().join(","), "b1", "only the other product's photo survives")
         compare(PhotoQueue.pendingCount, 1)
@@ -171,6 +192,7 @@ TestCase {
         for (var i = 0; i < states.length; ++i) _queued("p" + i, "SKU-1", states[i])
 
         InventoryStore.deleteProduct("SKU-1")
+        _ack("SKU-1")
 
         compare(PhotoQueue.pendingCount, 0, "a failed or in-flight item must not outlive its product")
     }
@@ -183,9 +205,11 @@ TestCase {
         _queued("q1", "SKU-1")
 
         InventoryStore.deleteProduct("SKU-1")
-
         compare(InventoryStore.products.length, 0)
         compare(StockBatchStore.batches.length, 0)
+        compare(PhotoQueue.pendingCount, 1, "queued photo waits for the ack")
+        _ack("SKU-1")
+
         compare(PhotoQueue.pendingCount, 0)
     }
 
@@ -194,6 +218,7 @@ TestCase {
         _queued("b1", "SKU-2")
 
         InventoryStore.deleteProduct("SKU-1")
+        _ack("SKU-1")
 
         compare(_queuedIds().join(","), "b1")
     }
@@ -203,13 +228,17 @@ TestCase {
         _queued("a1", "SKU-GHOST")
 
         InventoryStore.deleteProduct("SKU-GHOST")
+        _ack("SKU-GHOST")
 
-        compare(PhotoQueue.pendingCount, 1, "unknown product: early return, nothing purged")
+        compare(PhotoQueue.pendingCount, 1, "unknown product: early return, nothing remembered, nothing purged")
+        compare(Object.keys(InventoryStore._pendingDeletes).length, 0)
+        compare(OutboxStore.pendingCount, 0, "unknown product: nothing sent")
     }
 
     function test_deleteProduct_with_an_empty_queue_does_not_throw() {
         InventoryStore.products = [_product("SKU-1")]
         InventoryStore.deleteProduct("SKU-1")
+        _ack("SKU-1")
         compare(PhotoQueue.pendingCount, 0)
         compare(InventoryStore.products.length, 0)
     }
@@ -235,7 +264,211 @@ TestCase {
         compare(Object.keys(seenStates).length, 4, "the generator must reach every queue state")
         verify(deleted > 0 && expectKeep.length > 0, "both a purged and a surviving group must exist")
         InventoryStore.deleteProduct("P1")
+        compare(PhotoQueue.pendingCount, 40, "nothing purged before the ack")
+        _ack("P1")
         compare(_queuedIds().join(","), expectKeep.sort().join(","))
+    }
+
+    // ── BC2 (design 2026-10-04-product-delete-batch-cascade, Q-BC-3 A / Q-BC-4) ─────────────
+    // deleteProduct sends ONLY the product delete. Batches are hidden locally, removed by the
+    // server sweep (BC1); the Activity entry and the queued-photo purge wait for the ack.
+
+    function test_BC2_deleteProduct_queues_exactly_one_inventory_delete_and_no_stock_batch_write() {
+        InventoryStore.products = [_product("SKU-1")]
+        StockBatchStore.batches = [_batch("B-1", "SKU-1", 10, 20), _batch("B-2", "SKU-1", 0, 20), _batch("B-3", "SKU-1", 3, 5)]
+
+        InventoryStore.deleteProduct("SKU-1")
+
+        compare(OutboxStore.items.length, 1)
+        compare(OutboxStore.items[0].entity, "inventory")
+        compare(OutboxStore.items[0].action, "delete")
+        compare(OutboxStore.items.filter(function(i) { return i.entity === "stock_batch" }).length, 0)
+        compare(StockBatchStore.batches.length, 0, "still hidden locally, open and exhausted alike")
+    }
+
+    function test_BC2_other_products_batches_are_neither_hidden_nor_sent() {
+        InventoryStore.products = [_product("SKU-1"), _product("SKU-2")]
+        StockBatchStore.batches = [_batch("B-1", "SKU-1", 10, 20), _batch("B-2", "SKU-2", 4, 7)]
+        InventoryStore.deleteProduct("SKU-1")
+        compare(StockBatchStore.batches.length, 1)
+        compare(StockBatchStore.batches[0].batchId, "B-2")
+    }
+
+    function test_BC2_no_activity_entry_at_click_time() {
+        InventoryStore.products = [_product("SKU-1")]
+        InventoryStore.deleteProduct("SKU-1")
+        compare(ActivityLog.entries.length, 0)
+    }
+
+    function test_BC2_ack_writes_exactly_one_activity_entry_with_name_sku_and_stock() {
+        var p = _product("SKU-1"); p.sku = "W-1"; p.stock = 7
+        InventoryStore.products = [p]
+        InventoryStore.deleteProduct("SKU-1")
+
+        _ack("SKU-1")
+
+        var es = _entries("product_deleted")
+        compare(es.length, 1)
+        compare(es[0].title, "Product deleted: Widget SKU-1")
+        compare(es[0].subtitle, "W-1 · stock 7")
+        compare(es[0].entityId, "SKU-1")
+    }
+
+    function test_BC2_activity_subtitle_without_a_sku_is_just_the_stock() {
+        var p = _product("SKU-1"); p.sku = ""; p.stock = 0
+        InventoryStore.products = [p]
+        InventoryStore.deleteProduct("SKU-1")
+        _ack("SKU-1")
+        compare(_entries("product_deleted")[0].subtitle, "stock 0")
+    }
+
+    function test_BC2_a_second_ack_for_the_same_delete_logs_nothing_more() {
+        InventoryStore.products = [_product("SKU-1")]
+        InventoryStore.deleteProduct("SKU-1")
+        _ack("SKU-1"); _ack("SKU-1")
+        compare(_entries("product_deleted").length, 1, "an idempotent replay ack must not double-log")
+        compare(Object.keys(InventoryStore._pendingDeletes).length, 0)
+    }
+
+    function test_BC2_acks_for_other_entities_actions_or_ids_are_ignored() {
+        InventoryStore.products = [_product("SKU-1")]
+        _queued("a1", "SKU-1")
+        InventoryStore.deleteProduct("SKU-1")
+
+        Gateway.mutationApplied("order", "SKU-1", "delete")
+        Gateway.mutationApplied("stock_batch", "SKU-1", "delete")
+        _ack("SKU-1", "update")
+        _ack("SKU-1", "create")
+        _ack("SKU-1", "")
+        _ack("SKU-OTHER")
+        _ack("")
+
+        compare(ActivityLog.entries.length, 0)
+        compare(PhotoQueue.pendingCount, 1)
+        compare(Object.keys(InventoryStore._pendingDeletes).join(","), "SKU-1", "still waiting for ITS ack")
+    }
+
+    function test_BC2_a_rejected_delete_forgets_it_so_a_late_ack_logs_and_purges_nothing() {
+        InventoryStore.products = [_product("SKU-1")]
+        _queued("a1", "SKU-1")
+        InventoryStore.deleteProduct("SKU-1")
+
+        InventoryStore._onMutationConflicted("inventory", "SKU-1",
+            { productId: "SKU-1", name: "Widget SKU-1", stock: 9, minStock: 0, price: 100, sellingPrice: 100, unit: "pc", category: "Widgets", sku: "" }, "delete")
+        _ack("SKU-1")
+
+        compare(ActivityLog.entries.length, 0, "a delete that never committed is never logged")
+        compare(PhotoQueue.pendingCount, 1, "its queued photo survives")
+        compare(InventoryStore.products.length, 1, "the product came back")
+    }
+
+    function test_BC2_a_rejected_update_does_not_forget_a_pending_delete() {
+        InventoryStore.products = [_product("SKU-1")]
+        InventoryStore.deleteProduct("SKU-1")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "update")
+        _ack("SKU-1")
+        compare(_entries("product_deleted").length, 1)
+    }
+
+    function test_BC2_delete_again_after_a_rejected_delete_logs_once() {
+        InventoryStore.products = [_product("SKU-1")]
+        InventoryStore.deleteProduct("SKU-1")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1",
+            { productId: "SKU-1", name: "Widget SKU-1", stock: 5, minStock: 0, price: 100, sellingPrice: 100, unit: "pc", category: "Widgets", sku: "" }, "delete")
+        InventoryStore.deleteProduct("SKU-1")
+        _ack("SKU-1")
+        compare(_entries("product_deleted").length, 1)
+    }
+
+    function test_BC2_after_a_relaunch_the_ack_skips_activity_and_purge_by_design() {
+        // Design R7 (accepted): the pending map is in memory only. The server audit entry exists.
+        InventoryStore.products = [_product("SKU-1")]
+        _queued("a1", "SKU-1")
+        InventoryStore.deleteProduct("SKU-1")
+        InventoryStore._pendingDeletes = ({})   // what a relaunch does
+
+        _ack("SKU-1")
+
+        compare(ActivityLog.entries.length, 0)
+        compare(PhotoQueue.pendingCount, 1)
+    }
+
+    function test_BC2_two_pending_deletes_are_acked_independently() {
+        InventoryStore.products = [_product("SKU-1"), _product("SKU-2")]
+        _queued("a1", "SKU-1"); _queued("b1", "SKU-2")
+        InventoryStore.deleteProduct("SKU-1"); InventoryStore.deleteProduct("SKU-2")
+
+        _ack("SKU-2")
+        compare(_queuedIds().join(","), "a1")
+        compare(_entries("product_deleted").length, 1)
+        compare(_entries("product_deleted")[0].entityId, "SKU-2")
+
+        _ack("SKU-1")
+        compare(PhotoQueue.pendingCount, 0)
+        compare(_entries("product_deleted").length, 2)
+    }
+
+    function test_BC2_prototype_named_ids_cannot_confuse_the_pending_map() {
+        InventoryStore.products = [_product("constructor")]
+        InventoryStore.deleteProduct("constructor")
+        _ack("toString"); _ack("hasOwnProperty"); _ack("__proto__")
+        compare(ActivityLog.entries.length, 0)
+        _ack("constructor")
+        compare(_entries("product_deleted").length, 1)
+        // and an id that was never deleted must not find anything on the prototype
+        _ack("constructor")
+        compare(_entries("product_deleted").length, 1)
+    }
+
+    function test_BC2_a_throwing_photo_purge_never_blocks_the_activity_entry_or_the_cleanup() {
+        InventoryStore.products = [_product("SKU-1")]
+        InventoryStore.deleteProduct("SKU-1")
+        PhotoQueue.items = null   // PhotoQueue.items.filter throws inside the purge
+
+        _ack("SKU-1")
+
+        compare(_entries("product_deleted").length, 1)
+        compare(Object.keys(InventoryStore._pendingDeletes).length, 0)
+        PhotoQueue.items = []
+    }
+
+    function test_BC2_the_real_gateway_ack_path_reaches_the_store() {
+        // Through Gateway._ackSingle (what _send calls on a 2xx), not a hand-fired signal.
+        InventoryStore.products = [_product("SKU-1")]
+        _queued("a1", "SKU-1")
+        InventoryStore.deleteProduct("SKU-1")
+        var item = OutboxStore.items[0]
+
+        Gateway._ackSingle(item)
+
+        compare(OutboxStore.pendingCount, 0)
+        compare(_entries("product_deleted").length, 1)
+        compare(PhotoQueue.pendingCount, 0)
+    }
+
+    function test_BC2_monkey_random_delete_ack_conflict_sequences() {
+        var s = 777
+        function rnd(n) { s = (s * 1664525 + 1013904223) % 4294967296; return Math.floor(s / 65536) % n }
+        var ids = ["P0", "P1", "P2", "P3"]
+        var logged = {}, pending = {}, applied = 0
+        for (var step = 0; step < 150; ++step) {
+            var id = ids[rnd(4)], roll = rnd(3)
+            if (roll === 0) {
+                InventoryStore.products = InventoryStore.products.concat([_product(id)].filter(function() {
+                    return !InventoryStore.getById(id) }))
+                var existed = !!InventoryStore.getById(id)
+                InventoryStore.deleteProduct(id)
+                if (existed) pending[id] = true
+            } else if (roll === 1) {
+                _ack(id)
+                if (pending[id]) { applied++; delete pending[id] }
+            } else {
+                InventoryStore._onMutationConflicted("inventory", id, null, "delete")
+                delete pending[id]
+            }
+            compare(_entries("product_deleted").length, applied, "step " + step)
+            compare(Object.keys(InventoryStore._pendingDeletes).sort().join(","), Object.keys(pending).sort().join(","), "step " + step)
+        }
     }
 
     function test_late_upload_confirmation_for_a_deleted_product_is_a_noop() {
