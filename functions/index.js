@@ -74,16 +74,32 @@ function photoStoragePath(envPrefix, tenantId, productId, photoId, thumb) {
         photoId + (thumb ? "_t" : "") + ".jpg";
 }
 
-// PH3 (design Q5): sweeps one product's photo prefix after a committed product delete and removes the
+// PH3 + BC1 (design Q5, Q-BC-1 d): cleans up after a committed product delete -- the product's
+// stock_batches (with one audit entry each), then its Storage photo prefix -- and removes the
 // pending_cleanup marker. All the decisions live in PhotoCleanup.sweepMarker (pure, never throws);
 // this only binds it to Firestore/Storage. A failed sweep leaves the marker for the PH3b scheduler.
-async function sweepProductPhotos(db, tenantId, marker) {
+async function sweepProductCleanup(db, tenantId, marker) {
     const tenantRoot = "tenants/" + tenantId;
     const markerRef = db.doc(tenantRoot + "/pending_cleanup/" + marker.productId);
     const productRef = db.doc(tenantRoot + "/inventory/" + marker.productId);
     const bucket = admin.storage().bucket(PHOTO_BUCKET_NAME);
     return PhotoCleanup.sweepMarker({
         productExists: async () => (await productRef.get()).exists,
+        sweepBatches: (productId, actor) => PhotoCleanup.sweepStockBatches({
+            listBatches: async (pid) => {
+                const snap = await db.collection(tenantRoot + "/stock_batches").where("productId", "==", pid).get();
+                return snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+            },
+            commitChunk: async (entries) => {
+                const wb = db.batch();
+                for (const e of entries) {
+                    wb.delete(db.doc(tenantRoot + "/stock_batches/" + e.batchId));
+                    wb.set(db.doc(tenantRoot + "/audit_log/" + e.auditId),
+                        Object.assign({}, e.audit, { serverTimestamp: FieldValue.serverTimestamp() }));
+                }
+                await wb.commit();
+            }
+        }, tenantId, productId, actor),
         deleteFiles: (prefix) => bucket.deleteFiles({ prefix: prefix, force: true }),
         deleteMarker: () => markerRef.delete(),
         updateMarker: (patch) => markerRef.set(patch, { merge: true })
@@ -177,9 +193,15 @@ exports.recordMutation = functions.onRequest(
         // The removed_staff tombstone is only ever written as part of a staff
         // delete (StaffStore.deleteStaff), so it carries the same restriction:
         // otherwise a low-privilege token could burn staff ids or plant names.
+        // BC1 (Q-BC-8): a product delete now also destroys the product's stock batches (server
+        // sweep), so it carries the same owner/admin restriction as the client's
+        // DataModel.onDeleteProduct gate. Checked before the prefix build and any transaction:
+        // 403, zero writes, no marker, no sweep. stock_batch deletes stay ungated (restock / FIFO
+        // paths use them for non-owner roles).
         const isStaffDelete = validated.entity === "staff" && validated.action === "delete";
         const isStaffTombstone = validated.entity === "removed_staff";
-        if ((isStaffDelete || isStaffTombstone)
+        const isProductDelete = PhotoCleanup.isCascadeEntityDelete(validated.entity, validated.action);
+        if ((isStaffDelete || isStaffTombstone || isProductDelete)
                 && ctx.role !== "owner" && ctx.role !== "admin") {
             send(res, 403, { ok: false, error: "role-not-allowed" });
             return;
@@ -188,7 +210,7 @@ exports.recordMutation = functions.onRequest(
         // PH3: a product delete leaves a pending_cleanup marker (written in the same transaction)
         // and sweeps the product's Storage prefix after the commit. The prefix is built here, from
         // whitelisted segments only; an unsafe id must never reach a prefix delete.
-        const isCascade = PhotoCleanup.isCascadeEntityDelete(validated.entity, validated.action);
+        const isCascade = isProductDelete;
         const cascadeEnvPrefix = storageEnvPrefix(body.env);
         const cascadePrefix = isCascade
             ? PhotoCleanup.buildSweepPrefix(cascadeEnvPrefix, ctx.tenantId, validated.entityId)
@@ -249,18 +271,20 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        // PH3: committed product delete (not a CAS conflict, not an idempotent replay) -> sweep its
-        // photos now, AWAITED (Cloud Functions CPU is throttled after the response). A failed sweep
-        // never fails the delete: the marker stays and the PH3b scheduler retries it.
+        // PH3 + BC1: committed product delete (not a CAS conflict, not an idempotent replay) -> sweep
+        // its batches and photos now, AWAITED (Cloud Functions CPU is throttled after the response).
+        // A failed sweep never fails the delete: the marker stays and the PH3b scheduler retries it.
+        // A replay deliberately does NOT re-sweep (Q-BC-9 = no): PH3b is the retry path.
         if (cascadePrefix !== null && result && result.ok === true && !result.idempotentReplay) {
             try {
-                const sweep = await sweepProductPhotos(db, ctx.tenantId, {
+                const sweep = await sweepProductCleanup(db, ctx.tenantId, {
                     productId: validated.entityId, envPrefix: cascadeEnvPrefix,
-                    prefix: cascadePrefix, attempts: 0
+                    prefix: cascadePrefix, attempts: 0,
+                    actorUid: actorUid, actorRole: ctx.role, requestId: validated.requestId
                 });
-                if (!sweep.ok) console.error("recordMutation: photo sweep failed, marker kept", sweep.error);
+                if (!sweep.ok) console.error("recordMutation: cleanup sweep failed, marker kept", sweep.error);
             } catch (e) {
-                console.error("recordMutation: photo sweep threw, marker kept", e);
+                console.error("recordMutation: cleanup sweep threw, marker kept", e);
             }
         }
 

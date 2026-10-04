@@ -166,7 +166,10 @@ async function applyMutation(db, params) {
             envPrefix: params.cleanupEnvPrefix,
             tenantId: params.tenantId,
             prefix: params.cleanupPrefix,
-            createdAt: params.serverTimestamp
+            createdAt: params.serverTimestamp,
+            actorUid: params.actorUid,
+            actorRole: params.actorRole,
+            requestId: params.requestId
         });
         if (!marker) throw new Error("missing-cleanup-prefix");
         markerRef = db.doc("tenants/" + params.tenantId + "/pending_cleanup/" + params.entityId);
