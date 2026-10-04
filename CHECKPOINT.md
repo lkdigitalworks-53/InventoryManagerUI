@@ -1,7 +1,7 @@
 # CHECKPOINT — 2026-10-05: unsynced product edit (PR #121 device-test follow-up)
 
 **Branch:** `feat/2026-10-05-unsynced-edit-ledger` (off PR #121 head `e9403ec`; stacked on `test/2026-10-04-order-completion-parked-delta-repro`).
-**Commit identity:** `dextran52@gmail.com` (standing instruction 2026-10-05; supersedes taher.lkdw53 in the archived checkpoint).
+**Commit identity:** `lkdwtaher@gmail.com` (instruction in the 2026-10-05 PR #122 session; supersedes dextran52 and taher.lkdw53). Name `lkdwtaher`, passed per commit with `git -c`, never written to git config.
 **Rules (standing):** branch only; push without asking (PAT only in push header via `/tmp/push.sh`, never in `.git/config`); no build/run; no Qt tooling in sandbox (CI = QML signal); small scope, resumable by another account; honest advisor; tests for every change + test plan from template; update SKILLS/AGENTS/README as needed.
 **Previous checkpoint archived:** `docs/superpowers/specs/2026-10-05-pr121-order-completion-parked-CHECKPOINT.md`.
 
@@ -36,8 +36,15 @@
 5. S3 done (NOT run): `DataModel._tryCompleteOrder` refuses unsynced edits (`InventoryStore.unsyncedEditMessage`), parked wins. Two old tests in `tst_DataModel_completeOrderParkedGuard.qml` flipped (plain pending / retrying edit now refused).
 6. Tests (76 new, none run): `tst_OutboxStore_dependsOn` (31), `tst_InventoryStore_updateProductAfterAck` (19), `tst_DataModel_completeOrderUnsyncedEditGuard` (26). Test plan + index row, SKILLS 100, AGENTS, KNOWN-ISSUES, README done.
 
+7. (PR #122 session, account 2) CI on `0d9b83c` was all green (QML, E2E, Functions, Rules). Code read of the PR; verified every Gateway send path (single / batch / delta / operation) ends in `_reschedule()` after conflict or permanent drop, so `pruneOrphans` runs.
+8. Decisions (Taher, this session): overlay PARKED edits too; client-side 1 MiB cap now; other ledger kinds stay roadmap and are rolled into the atomic-operation work (documented in `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md` and `DELETE-FEATURE-ROADMAP.md`); order after this PR: PH3b, PH4, PH5, then atomic operation.
+9. S4 done (NOT run), commit `15af7bc`: `OutboxStore.unsyncedByEntity`; `qml/helper/UnsyncedOverlay.js`; `InventoryStore` overlay per fetched page + `syncStates`/`syncStateOf`; `InventoryPage` ProductCard `syncPill`; `EditProductDialog` `syncNote`. Conflict handler deliberately does NOT overlay (the edit already left the outbox). Only changed fields are replayed (diff of before/after) so a server-side stock change is not undone.
+10. Cap done (NOT run), same commit: `qml/helper/DocLimits.js` (Firestore size estimate, limit = 1 MiB - 4 KiB reserve, UTF-8 bytes); `InventoryStore.updateRefusal`/`tooLargeMessage`; `updateProduct` returns the refusal; `addProduct` refuses before minting an id (callback 3rd arg); `DataModel` reports via `errorOccurred("inventory", ...)`; Edit/Add dialogs pre-check and stay open.
+11. Tests (134 new, none run), commit `178948d`: `tst_UnsyncedOverlay` (30), `tst_DocLimits` (30), `tst_OutboxStore_unsyncedByEntity` (30), `tst_InventoryStore_overlayAndCap` (44). Counts via `grep -c "^    function test_"`.
+12. Docs: test plan (sections 0b, 1, 4.7-4.14), test-plans index, SKILLS Skill 101, AGENTS, README, KNOWN-ISSUES, atomic-operation plan, DELETE-FEATURE-ROADMAP order.
+
 ## NEXT (for the next session / account)
-- Read CI on this branch's PR (base = PR #121 head branch). Expect failures only from blind QML: check first `test_nextDueInMs_ignores_held_items...` (jitter/backoff value), `test_edit_while_the_first_is_in_flight...` (`drainNow` in gateway mode offline), `test_conflict_drops_pending_activity...` (Toast / `_reschedule` Timer in test harness), `tst_Gateway` ack tests (`markAcked`).
-- S4: overlay queued/parked inventory edits in `InventoryStore._fetchFromFirebase` / `_normalizeProducts` result + `_onMutationConflicted`, "not synced" badge in product list / EditProductDialog. Needs a decision: overlay PARKED edits too (advice: yes, badge says "rejected"), and what Discard does (S3 discard-resync already re-reads).
-- Verify conflict + permanent-drop paths end in `Gateway._reschedule()` (pruneOrphans runs there).
-- Roadmap: same dependsOn for created/purchase/photo/sale/return/price_adjust; client-side description size cap.
+- Read CI on PR #122 (base = PR #121 head branch). Everything from step 9 on is blind QML; expect correction rounds. Check first: `tst_InventoryStore_overlayAndCap` `test_syncStates_is_not_republished...` (SignalSpy on `syncStatesChanged`), `test_dataModel_*` (role + `testLogic` harness), `test_addProduct_refuses_oversize...` (synchronous callback), `tst_DocLimits` boundary tests (1M-char string builds), `tst_OutboxStore_unsyncedByEntity` `enqueueOperation` call shape.
+- Not covered by a QML test (no harness): the two UI pieces `syncPill` (InventoryPage ProductCard) and `syncNote` / pre-check (EditProductDialog). On-device plan 4.8-4.13 covers them.
+- Known gaps (all documented in KNOWN-ISSUES): queued CREATE not injected into a read after a relaunch; bulk import has no size check; other ledger kinds (atomic-operation work); Activity `product_updated` is in-memory until the ack.
+- Then, by Taher's order: PH3b, PH4, PH5 (see `docs/superpowers/specs/2026-09-30-photos-s3-s4-design.md` and the photos test plan), then the atomic-operation work.

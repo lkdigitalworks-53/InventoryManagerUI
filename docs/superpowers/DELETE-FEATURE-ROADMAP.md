@@ -119,3 +119,5 @@ cap, client batch list may be incomplete, `recordOperation` has no production ca
   Dev environment only; Firestore gets cleared and re-verified from scratch each time, so there's
   no real backlog of pre-existing orphaned batches to backfill. Revisit only if this ever matters
   in a real environment with production data predating this fix.
+
+**Order after PR #122 (Taher, 2026-10-05): PH3b, then PH4, then the rest of the photos work (PH5), then the atomic-operation work (which also carries the remaining ledger kinds, see `plans/2026-09-20-atomic-operation-outbox.md`).** BC1 / BC2 are merged (#118, #119).
