@@ -1,5 +1,6 @@
 # Product delete: stop destroying batches / activity / queued photos before the server acks — design
 
+**BC1 (server) IMPLEMENTED 2026-10-05** on `feat/2026-10-05-bc1-server-batch-sweep` (see the test plan header for results and deviations). BC2 (client) not started: it waits for BC1 merged AND deployed (Q-BC-6). Original status line follows.
 **Status:** design only. **Decisions Q-BC-1..Q-BC-7 DECIDED 2026-10-04 by Taher: default option on all seven** (ledger below). No code written. Implementation starts with BC1 once the order vs the photos items is settled (see ledger, "Order").
 **Reviewed 2026-10-05** (post-merge review of PR #116, see "Design review 2026-10-05"): 2 High + 3 Medium + 4 Low findings; text fixed in this file. **Q-BC-8 and Q-BC-9 DECIDED 2026-10-05 (Taher: gate = yes; replay re-sweep = no, because PH3b is designed and built right after BC1). Order BC1 -> PH3b -> PH4 rest confirmed.** Design is complete for BC1.
 **Branch:** `docs/2026-10-04-product-delete-batch-cascade-design` (off `main` @ `157dc6b`).

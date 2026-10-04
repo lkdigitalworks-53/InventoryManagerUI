@@ -4041,3 +4041,8 @@ CAS whose `before` is the whole record makes unrelated concurrent edits (a photo
 two-device test of a delete. (4) A test that asserts "nothing was destroyed" needs a wait after the 409 signal, or it passes
 before the forbidden calls land.
 
+## Skill 95: A money-data sweep needs a defence filter below the query, deterministic ids, and a test harness that can express "bad input"
+
+**Context (BC1, 2026-10-05):** server sweep deleting a deleted product's `stock_batches` (cost layers).
+
+**Generalize:** (1) Do not trust the query alone: the pure sweep skips any doc whose own `productId` differs, so a wrong or widened query cannot delete another product's batches (mutation "drop the filter" fails 2 tests; "wrong query value" 9). (2) Deterministic audit ids (`cascade~{productId}~{batchId}`) make two overlapping sweeps (handler + the future scheduler) and any retry idempotent without a lease. (3) One write batch per chunk of 100 docs holds the deletes AND their audits: a failed commit leaves neither. (4) Harness traps: `seedHappyPathAuth` maps role `""` to owner, so a "no role" test silently ran as owner until the role was forced on both the user and member docs; a test helper default (`productId || "PRD-5"`) turned an "empty productId" fixture into a valid one. When a negative test passes on the first try, check the fixture actually expressed the bad input. (5) A required dependency (`sweepBatches`) that is missing must fail the sweep loudly (marker kept), never skip money cleanup silently.
