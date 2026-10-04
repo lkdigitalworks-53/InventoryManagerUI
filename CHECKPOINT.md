@@ -30,4 +30,14 @@
 
 ## Step log
 1. Cloned repo, read memory, PR #121 meta (draft, base main), OutboxStore, TransactionStore.recordFieldChange/_push, InventoryStore.updateProduct, Gateway.recordMutation/discardParked.
-2. Branch created, checkpoint rotated, decisions filed in memory.
+2. Branch created, checkpoint rotated, decisions filed in memory. Pushed.
+3. S1 done (NOT run): `OutboxStore` `dependsOn` (enqueue, dueItems/nextDueInMs skip held, `markAcked`, `pruneOrphans` + at load, `hasUnsyncedEditForEntity`); `Gateway.recordEdit`, `recordMutation(..., dependsOn)`, `_ackSingle` -> `markAcked`, new signals `writeAcked` + `heldWritesDropped`, `_reschedule` prunes. `mutationApplied` kept 3-arg on purpose (tests emit it by hand; QML throws on fewer args).
+4. S2 done (NOT run): `InventoryStore.updateProduct` enqueues edit first, rows depend on stored requestId, Activity deferred to `writeAcked` (in-memory, dropped on discard/conflict); `TransactionStore.removeLocal` on `heldWritesDropped`.
+5. S3 done (NOT run): `DataModel._tryCompleteOrder` refuses unsynced edits (`InventoryStore.unsyncedEditMessage`), parked wins. Two old tests in `tst_DataModel_completeOrderParkedGuard.qml` flipped (plain pending / retrying edit now refused).
+6. Tests (76 new, none run): `tst_OutboxStore_dependsOn` (31), `tst_InventoryStore_updateProductAfterAck` (19), `tst_DataModel_completeOrderUnsyncedEditGuard` (26). Test plan + index row, SKILLS 100, AGENTS, KNOWN-ISSUES, README done.
+
+## NEXT (for the next session / account)
+- Read CI on this branch's PR (base = PR #121 head branch). Expect failures only from blind QML: check first `test_nextDueInMs_ignores_held_items...` (jitter/backoff value), `test_edit_while_the_first_is_in_flight...` (`drainNow` in gateway mode offline), `test_conflict_drops_pending_activity...` (Toast / `_reschedule` Timer in test harness), `tst_Gateway` ack tests (`markAcked`).
+- S4: overlay queued/parked inventory edits in `InventoryStore._fetchFromFirebase` / `_normalizeProducts` result + `_onMutationConflicted`, "not synced" badge in product list / EditProductDialog. Needs a decision: overlay PARKED edits too (advice: yes, badge says "rejected"), and what Discard does (S3 discard-resync already re-reads).
+- Verify conflict + permanent-drop paths end in `Gateway._reschedule()` (pruneOrphans runs there).
+- Roadmap: same dependsOn for created/purchase/photo/sale/return/price_adjust; client-side description size cap.
