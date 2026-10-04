@@ -460,8 +460,11 @@ QtObject {
   `inventory` delete; the product's batches are just hidden in `StockBatchStore.batches` (the server sweeps them, BC1); the Activity
   entry and the queued-photo purge run in `_onMutationApplied` from the in-memory `_pendingDeletes` (dropped on a delete conflict;
   a relaunch forgets it on purpose). `DataModel._storesToResync` adds `stock_batch` after `inventory`, and a delete conflict re-reads
-  batches. Never reintroduce a client `stock_batch` delete or a click-time Activity entry. Needs BC1 deployed. Open (design D1-D3):
-  a parked write holds its record key, so a restock delta (dialog hangs) or a delete for that product waits behind it.
+  batches. Never reintroduce a client `stock_batch` delete or a click-time Activity entry. Needs BC1 deployed (it is).
+  D2/D3 (PR #119): a parked write holds its record key, so `InventoryStore.restock` and `deleteProduct` refuse up front when
+  `OutboxStore.hasParkedForEntity("inventory", id)` (callback `(false, false, message)` / return value = `parkedWriteMessage`) and write
+  nothing; `DataModel` and `RestockDialog` show the message. Order-completion deltas are NOT guarded (open). In E2E files declare
+  `DataModel { id: dm }`: it is not a singleton, so its Gateway `Connections` (resyncs) do not exist otherwise.
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
   identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`

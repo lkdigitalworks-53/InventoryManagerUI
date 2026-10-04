@@ -195,3 +195,14 @@ BC1: functions suite green incl. new tests; sweep deletes exactly the product's 
 **D4 Merge order.** BC2 must not merge before BC1 is deployed (Q-BC-6). Do you confirm BC1 is deployed to `inventorymanager-48392`? If not: deploy, record it in the checkpoint, then merge. I cannot verify this.
 
 **D5 Next slice after BC2.** PH3b (scheduled sweeper, designed, and BC1's Q-BC-9 = no relies on it landing right after) vs the D1-D3 fixes. **Default: D2+D3 first (one small PR, data drift today), then PH3b**, because PH3b makes the sweeper the only retry path for money data and is bigger. Against: Q-BC-9 says PH3b follows BC1 immediately; each slice of delay widens the crashed-sweep window (dev only, no production data).
+
+## Decisions recorded 2026-10-04 (Taher, after the PR #119 review)
+
+- **D1 description size: NO cap in the app. Leave it.** Accepted risk: a description over about 1 MiB is parked as a server rejection (KNOWN-ISSUES). Revisit only if it recurs.
+- **D2 restock behind a parked write: refuse (option a).** Built in commit `2362d9d` as `restock` -> `callback(false, false, message)`.
+- **D3 delete behind a parked write: refuse (option a).** Built in the same commit as `deleteProduct` -> returns the message, nothing hidden or queued.
+- **D4: BC1 is deployed** to `inventorymanager-48392` (Taher's statement; not verifiable from here). The "do not merge until deploy recorded" blocker on PR #119 is cleared by this line.
+- **D5: D2 + D3 ride in PR #119 as a separate commit** (not a separate PR) so they are tested together. PH3b stays the next slice.
+- **Shared place (ponytail):** one outbox predicate (`OutboxStore.hasParkedForEntity`) and one message (`InventoryStore.parkedWriteMessage`) serve both. Order-completion deltas (`deductStock`, `creditStockNoBatch`) await the same way and are NOT guarded: not decided, UNVERIFIED whether they hang. Open as a follow-up decision.
+- **CI on `405d209`:** QML 1634, Functions 329, Rules 45 green; E2E 59/60. The one failure (`test_BC2_stale_product_delete_409_...`) was a harness gap: `DataModel` is not a singleton, so without a declared instance its `onMutationConflicted` batch re-read never ran. Fixed in `ee6fe4d` (test only; production code was right, Main.qml instantiates DataModel).
+

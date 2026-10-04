@@ -4059,3 +4059,9 @@ before the forbidden calls land.
 
 **Generalize:** (1) Holding one key back is safe only if nothing that waits on it has a UI waiting on the answer: every `callback`-style await (`recordDelta`) needs a path for "cannot be sent now", not just "sent" and "failed". (2) One user action that writes several keys is ordered per key, not per action: when one key is held, the others still move. Either refuse the whole action up front or make it one atomic write. (3) Decide it in one shared place (a `hasParkedFor(entity, id)` check) rather than per dialog; grep every awaiting caller before choosing. (4) A fix that removes the destructive sibling write (BC2) makes the state recoverable but not pleasant: say so and decide the UX (design D2/D3) instead of declaring done.
 
+## Skill 98: A behaviour that lives in a non-singleton model object (DataModel) does not exist in a test that never instantiates it
+
+**Context (PR #119 CI, 2026-10-04):** BC2's E2E "stale delete 409" failed with "did not bring the hidden batches back by re-read". The re-read is `DataModel`'s `Connections { target: Gateway }`, and `DataModel` is created by `Main.qml`, not a `pragma Singleton`. `tst_StockBatchStoreE2E.qml` never declared one, so the production behaviour under test simply was not wired. The product-restore half passed because `InventoryStore` IS a singleton, which made the failure look like a logic bug.
+
+**Generalize:** (1) Before debugging production code for a missing side effect in a test, check WHO wires it and whether the test creates that object (`qmldir` `singleton` vs a declared item). (2) When a feature adds a reaction in a non-singleton, add `DataModel { id: dm }` (or the owner) to every test file that asserts the reaction, and say why in a comment. (3) A half-passing sequence (first assertion green, second red) is a hint that two different owners are involved.
+
