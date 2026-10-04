@@ -4,6 +4,8 @@ import "../components"
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/RealisedMath.js" as RealisedMath
 import "../helper/ImportMath.js" as ImportMath
+import "../helper/DocLimits.js" as DocLimits
+import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
 
 QtObject {
     id: root
@@ -51,6 +53,10 @@ QtObject {
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
         Gateway.mutationApplied.connect(_onMutationApplied)
+        OutboxStore.itemsChanged.connect(_refreshSyncStates)
+        _refreshSyncStates()
+        Gateway.writeAcked.connect(_onWriteAcked)
+        Gateway.parkedWriteDiscarded.connect(_onParkedWriteDiscarded)
         Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
     }
 
@@ -97,6 +103,7 @@ QtObject {
         // exists (someone else edited it after this client's stale
         // `before`) and was just pushed back above — "your change didn't
         // save" would be confusing for what was actually a delete attempt.
+        _dropPendingUpdateActivity(entityId, "")  // the edit never applied: no Activity entry
         if (action === "delete") {
             _dropPendingDelete(entityId)  // never applied: no Activity entry, no photo purge
             Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
@@ -156,7 +163,8 @@ QtObject {
                 console.warn("[InventoryStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return;
             }
-            products = products.concat(_normalizeProducts(result.items));
+            // S4: lay still-queued (pending or parked) product edits over the server copy.
+            products = products.concat(_overlayUnsynced(_normalizeProducts(result.items)));
             hasMore = result.hasMore;
             _cursor = result.nextCursor;
             if (hasMore) {
@@ -173,6 +181,35 @@ QtObject {
     }
 
     function syncFromFirebase() { _resetAndFetch(); }
+
+    // PR #122 S4. { productId: "pending" | "parked" } for products with an unsynced write,
+    // rebuilt whenever the outbox changes. Drives the "Not synced" / "Rejected" badge. Same rule
+    // as the sale guard (OutboxStore.unsyncedByEntity), so the two never disagree.
+    property var syncStates: ({})
+
+    function syncStateOf(productId) { return syncStates[productId] || "" }
+
+    function _refreshSyncStates() {
+        var next = UnsyncedOverlay.statesOf(OutboxStore.unsyncedByEntity("inventory"))
+        // Only publish a real change: this runs on EVERY outbox write (each sale delta).
+        if (JSON.stringify(next) !== JSON.stringify(syncStates)) syncStates = next
+    }
+
+    function _overlayUnsynced(arr) {
+        return UnsyncedOverlay.overlayAll(arr, OutboxStore.unsyncedByEntity("inventory"))
+    }
+
+    // PR #121 device obs 1 + PR #122: Firestore rejects a doc over 1 MiB, so refuse BEFORE
+    // anything is queued (nothing local changes, no ledger row, no retry loop).
+    readonly property string tooLargeMessage: "This product is too large to save (over 1 MiB). Shorten the description."
+
+    // "" = fits, otherwise the message to show. Used by the dialogs before they close and by
+    // updateProduct/addProduct as the last line of defence.
+    function updateRefusal(productId, fields) {
+        var idx = findIndexById(productId)
+        if (idx < 0) return ""
+        return DocLimits.exceedsDoc(Object.assign({}, products[idx], fields || {})) ? tooLargeMessage : ""
+    }
 
     function clear() {
         products = []
@@ -497,6 +534,15 @@ QtObject {
     // to product cost `price` when not supplied — matches the previous
     // implicit assumption).
     function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size, callback) {
+        // Size check first, before a productId is minted or a supplier created. A draft doc with
+        // a placeholder id is enough: the id is a few bytes, the description is the whole risk.
+        var draft = _newProductDoc("PRD-0000000000", name, sku, category, stock, minStock, price,
+                                   (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price,
+                                   !!taxable, taxPercent || 0, size || "", unit, description, party || "")
+        if (DocLimits.exceedsDoc(draft)) {
+            if (callback) callback(false, "", tooLargeMessage)
+            return
+        }
         // Resolve supplier first (only actually async when `party` is a
         // brand-new name that needs a fresh supplierId minted — an existing
         // id/name resolves synchronously-fast via the callback), then mint
@@ -1060,6 +1106,12 @@ QtObject {
     readonly property string parkedWriteMessage: "Fix or discard the stuck change for this product first"
     function hasParkedWrite(productId) { return OutboxStore.hasParkedForEntity("inventory", productId) }
 
+    // PR #121 follow-up (Taher, Q1 = Z): a product with ANY queued edit (retrying, in flight or
+    // parked) is not sold: this device and the server may disagree on its price/stock. Stock
+    // deltas from earlier sales do not count (OutboxStore.hasUnsyncedEditForEntity).
+    readonly property string unsyncedEditMessage: "This product has a change that hasn't synced yet. Wait for it to sync first"
+    function hasUnsyncedEdit(productId) { return OutboxStore.hasUnsyncedEditForEntity("inventory", productId) }
+
     // Returns parkedWriteMessage when refused (nothing changed), otherwise undefined.
     function deleteProduct(productId) {
         if (hasParkedWrite(productId)) return parkedWriteMessage
@@ -1094,6 +1146,53 @@ QtObject {
     // BC2 (Q-BC-3 A): the server acked a recordMutation. Only a product delete we still remember
     // acts; after a relaunch between click and ack the memory is gone, so the Activity entry and
     // the photo purge are skipped (accepted: design R7, the server audit entry still exists).
+    // Activity entries for product edits wait for the server's ack (same idea as the ledger rows,
+    // which wait in the outbox via `dependsOn`). In-memory only, like _pendingDeletes: Activity is
+    // a feed, not books-of-account, so an app death between edit and ack loses the entry, not the
+    // ledger. { productId: [ { parentId, title, subtitle } ] }
+    property var _pendingUpdateActivity: ({})
+
+    function _queueUpdateActivity(productId, parentId, title, subtitle) {
+        var map = Object.assign({}, _pendingUpdateActivity)
+        var list = (map[productId] || []).slice()
+        list.push({ parentId: parentId, title: title, subtitle: subtitle })
+        map[productId] = list
+        _pendingUpdateActivity = map
+    }
+
+    // parentId "" = drop every pending entry for the product; otherwise only that edit's.
+    function _dropPendingUpdateActivity(productId, parentId) {
+        var list = _pendingUpdateActivity[productId]
+        if (!list) return []
+        var keep = []
+        var gone = []
+        for (var i = 0; i < list.length; ++i) {
+            if (parentId === "" || list[i].parentId === parentId) gone.push(list[i])
+            else keep.push(list[i])
+        }
+        var map = Object.assign({}, _pendingUpdateActivity)
+        if (keep.length > 0) map[productId] = keep
+        else delete map[productId]
+        _pendingUpdateActivity = map
+        return gone
+    }
+
+    function _onParkedWriteDiscarded(requestId, entities) {
+        var ids = Object.keys(_pendingUpdateActivity)
+        for (var i = 0; i < ids.length; ++i) _dropPendingUpdateActivity(ids[i], requestId)
+    }
+
+    function _onWriteAcked(requestId, entity, entityId, action) {
+        if (entity !== "inventory") return
+        // Any acked action except delete: an edit made while the product's own create was still
+        // queued merges INTO that create (OutboxStore.enqueue), so the ack says "create". A merged
+        // delete drops the entry silently: the product is gone, there is nothing to report.
+        var due = _dropPendingUpdateActivity(entityId, requestId)
+        if (action === "delete") return
+        for (var d = 0; d < due.length; ++d)
+            ActivityLog.record("product_updated", due[d].title, due[d].subtitle, entityId)
+    }
+
     function _onMutationApplied(entity, entityId, action) {
         if (entity !== "inventory" || action !== "delete") return
         if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, entityId)) return
@@ -1326,9 +1425,12 @@ QtObject {
         return -1
     }
 
+    // Returns tooLargeMessage when refused (nothing changed), otherwise undefined.
     function updateProduct(productId, fields, reason) {
         var idx = findIndexById(productId)
         if (idx < 0) return
+        var refusal = updateRefusal(productId, fields)
+        if (refusal !== "") return refusal
         var arr = _clone()
         var prev = arr[idx]
         var p = arr[idx]
@@ -1371,18 +1473,20 @@ QtObject {
         if (fields.minStock     !== undefined) { _maybe("minStock", fields.minStock); p.minStock = fields.minStock }
         products = arr
         var reasonText = (reason || "").trim()
-        ActivityLog.record("product_updated",
-                           "Product updated: " + p.name,
-                           (p.sku ? p.sku + " · " : "") + "stock " + p.stock
-                               + (reasonText ? " · " + reasonText : ""),
-                           productId)
+        // Enqueue the edit FIRST: its stored requestId is what the ledger rows and the Activity
+        // entry wait for. "" (direct mode: no outbox) = nothing to wait for, record at once.
+        var parentId = Gateway.recordEdit("inventory", productId, "update", auditBefore, p)
+        var activityTitle = "Product updated: " + p.name
+        var activitySubtitle = (p.sku ? p.sku + " · " : "") + "stock " + p.stock
+                               + (reasonText ? " · " + reasonText : "")
+        if (parentId === "") ActivityLog.record("product_updated", activityTitle, activitySubtitle, productId)
+        else _queueUpdateActivity(productId, parentId, activityTitle, activitySubtitle)
         for (var ci = 0; ci < fieldChanges.length; ++ci) {
             var c = fieldChanges[ci]
-            TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText)
+            TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText, parentId)
         }
         if (stockChange)
-            TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText)
-        Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
+            TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText, parentId)
     }
 
     function getById(productId) {

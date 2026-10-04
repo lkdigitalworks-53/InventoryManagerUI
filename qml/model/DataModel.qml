@@ -265,9 +265,12 @@ Item {
                 return
             }
             InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent,
-                undefined, undefined, undefined, function(ok, productId) {
+                undefined, undefined, undefined, function(ok, productId, refusal) {
                     if (!ok) {
-                        dispatcher.errorOccurred("network", "Could not add product — try again")
+                        // refusal = over the 1 MiB doc limit (nothing was queued); otherwise a
+                        // mint/supplier failure that a retry can fix.
+                        if (refusal) dispatcher.errorOccurred("inventory", refusal)
+                        else dispatcher.errorOccurred("network", "Could not add product — try again")
                         return
                     }
                     dispatcher.productAdded(productId)
@@ -285,7 +288,13 @@ Item {
             // Value / Potential-profit / by-supplier Analysis reports) drifts.
             var before = InventoryStore.getById(productId)
             var oldStock = before ? before.stock : undefined
-            InventoryStore.updateProduct(productId, fields, reason)
+            var refusal = InventoryStore.updateProduct(productId, fields, reason)
+            if (refusal) {
+                // Over the 1 MiB doc limit: nothing changed, so no batch reconcile and no
+                // productUpdated. The dialogs pre-check, this is the backstop (e.g. import).
+                dispatcher.errorOccurred("inventory", refusal)
+                return
+            }
             _reconcileBatchesForStockEdit(productId, oldStock, fields.stock)
             dispatcher.productUpdated(productId)
         }
@@ -561,6 +570,39 @@ Item {
             if (callback) callback(false)
             return
         }
+        // Refuse up front when a line's product has a PARKED write (server rejected it, waiting for
+        // Retry/Discard). The parked item holds `inventory/<id>` in OutboxStore.dueItems, so the stock
+        // delta below would never be sent, its callback never fires, this order stays "already being
+        // completed" and the FIFO deltas (other keys) drift from product.stock. Checked BEFORE the
+        // in-flight set is touched and before any FIFO consumption, so a refusal has nothing to undo.
+        // Same message as restock/delete (D2/D3). The order stays "pending" (not "out of stock").
+        // PR #121 follow-up (Q1 = Z): a line whose product has ANY queued, unsynced edit is refused
+        // too (price/stock on this device may not be what the server will hold). Parked wins when
+        // both apply (it needs the user's action; a plain unsynced edit just needs to finish).
+        var parkedNames = []
+        var unsyncedNames = []
+        var parkedSeen = {}
+        var checkLines = o.products || []
+        for (var pi = 0; pi < checkLines.length; ++pi) {
+            var parkedInv = _resolveInventory(checkLines[pi])
+            if (!parkedInv || parkedSeen[parkedInv.productId]) continue
+            if (InventoryStore.hasParkedWrite(parkedInv.productId)) {
+                parkedSeen[parkedInv.productId] = true
+                parkedNames.push(checkLines[pi].name)
+            } else if (InventoryStore.hasUnsyncedEdit(parkedInv.productId)) {
+                parkedSeen[parkedInv.productId] = true
+                unsyncedNames.push(checkLines[pi].name)
+            }
+        }
+        if (parkedNames.length > 0 || unsyncedNames.length > 0) {
+            var msgs = []
+            if (parkedNames.length > 0) msgs.push(parkedNames.join(", ") + ": " + InventoryStore.parkedWriteMessage)
+            if (unsyncedNames.length > 0) msgs.push(unsyncedNames.join(", ") + ": " + InventoryStore.unsyncedEditMessage)
+            dataModel.stockErrorMsg = msgs.join("; ")
+            if (callback) callback(false)
+            return
+        }
+
         dataModel._completingOrderIds[orderId] = true
 
         // ── 1. Stock validation (against product.stock) ──────────────────

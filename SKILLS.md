@@ -4065,3 +4065,34 @@ before the forbidden calls land.
 
 **Generalize:** (1) Before debugging production code for a missing side effect in a test, check WHO wires it and whether the test creates that object (`qmldir` `singleton` vs a declared item). (2) When a feature adds a reaction in a non-singleton, add `DataModel { id: dm }` (or the owner) to every test file that asserts the reaction, and say why in a comment. (3) A half-passing sequence (first assertion green, second red) is a hint that two different owners are involved.
 
+## Skill 99: A "held key" ordering rule that blocks a write must be answered at the entry point of every flow that awaits it, before any side effect
+
+**Context (2026-10-04, PR #121):** a parked edit holds `inventory/<id>` in `OutboxStore.dueItems`. Order completion awaited a stock delta for that key, so the delta never went out, `deductStock`'s callback never fired, `_completingOrderIds[orderId]` stayed set and the FIFO deltas (other keys) drifted from `product.stock`. Restock and delete had been fixed the same way one PR earlier (Skill 97); completion was the next caller that awaits.
+
+**Generalize:** (1) Put the refusal at the TOP of the orchestration function, before the in-flight set is touched and before the first side effect, so a refusal has nothing to undo (a guard placed after FIFO consumption needs `restoreFifo` and credit-back paths of its own). (2) A refusal must answer through the same callback the flow already uses (`orderCompletionFailed` via `stockErrorMsg`), not a new channel, and must not change the record's status (the order stays `pending`, not "out of stock"). (3) After guarding one caller, grep every other caller of the same primitive (`deductStock`, `creditStockNoBatch`) and list the unguarded ones as open instead of assuming. (4) A red-by-design E2E commit first, then the fix, proves the bug on CI before the guard hides it.
+
+
+## Skill 100: A ledger row that belongs to an optimistic edit must be held in the OUTBOX until that edit is acked, and the dependency must name the STORED item
+
+Symptom (device, PR #121): an edit the server rejected (description > 1 MiB) still registered its `field_change` row, and a sale inside the ~3 min retry window sold at the unsynced price (or at the old one after a relaunch re-read Firestore).
+Rules learned, in order of how easy they are to get wrong:
+1. `Gateway.recordMutation` returns the NEW call's requestId, but `OutboxStore.enqueue` may MERGE the call into an older queued item that keeps ITS requestId. A dependent must hang off the stored item: use `Gateway.recordEdit`, which returns `stored.requestId`.
+2. `markSent` is used for ack, discard, conflict and permanent drop. Only the ack path may release dependents: `markAcked` removes the parent and clears `dependsOn` on its dependents in ONE `_save()` (two saves + a crash = dependents orphaned = lost ledger rows). Every other exit orphans them and `pruneOrphans` (from `Gateway._reschedule` and at load) deletes them.
+3. A held item must be invisible to `dueItems` AND `nextDueInMs`: held items are "due now", so a timer that only skips them in `dueItems` spins every 250 ms forever.
+4. Optimistic local ledger rows need an undo when the held row is dropped (`heldWritesDropped` -> `TransactionStore.removeLocal`), or a ghost row lives until the next refetch.
+5. "Any unsynced edit" for a sale guard must exclude stock DELTAS: back-to-back sales of one product each queue a delta and must not block each other.
+6. Do not change the arity of an existing signal (`mutationApplied`): QML throws on an emit with fewer arguments than declared and tests emit it by hand. Add a new signal (`writeAcked`) instead.
+S4 done in PR #122, see Skill 101.
+
+
+## Skill 101: Overlay a queued edit by replaying only the fields the user CHANGED, and derive the badge from the same function as the sale guard
+
+Context (PR #122): a relaunch inside the retry window re-read Firestore and showed the old price while the edit was still queued; and a > 1 MiB description was queued and retried for nothing.
+Rules:
+1. Replay the diff of the queued item's `before` vs `after` (`UnsyncedOverlay.changedFields`), never the whole `after`. `after` is the full doc as of edit time; replaying it undoes a stock change made since (a sale on another device). A merged item keeps the earliest `before` and the latest `after`, so the diff is the net change.
+2. Overlay each PAGE of a paged read (`_fetchFromFirebase` concatenates pages); overlaying only the first page or only `products` at the end misses rows or double-applies.
+3. Do NOT overlay in the conflict handler: a conflicted edit has already left the outbox, `current` from the server is the truth.
+4. Badge state, overlay input and sale guard must come from ONE outbox pass (`OutboxStore.unsyncedByEntity`) or they drift: batch members, operations and held ledger rows are excluded from "unsynced edit" but a PARKED one of any kind still marks the product parked. A monkey test compares the three.
+5. Publish `syncStates` only when it really changed: the outbox changes on every sale delta, and a bound `StatusPill` per product card re-evaluates on every assignment.
+6. Size caps: Firestore stores string bytes + 1, field name bytes + 1, number 8, boolean/null 1, + 32 per doc. Measure UTF-8 BYTES (Devanagari is 3 bytes per char, emoji 4), not characters, and keep a reserve (`DocLimits.RESERVE_BYTES`, 4 KiB) for the doc name and server-added fields. The cap is an estimate; the server stays the authority. Refuse before anything is queued, and pre-check in the dialog BEFORE it closes or the user loses the edit.
+7. QML has no `TextEncoder`; `DocLimits.utf8Bytes` counts surrogate pairs by hand.

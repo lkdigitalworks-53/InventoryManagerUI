@@ -106,6 +106,17 @@ QtObject {
     // write the "product deleted" Activity entry and purge queued photos only AFTER the ack.
     signal mutationApplied(string entity, string entityId, string action)
 
+    // Same moment as mutationApplied for ONE recordMutation/recordEdit 2xx, but carries the acked
+    // item's requestId (mutationApplied is 3-arg and emitted by tests, so it stays as is). Today:
+    // InventoryStore flushes the Activity entry of a product edit only after ITS edit is acked.
+    signal writeAcked(string requestId, string entity, string entityId, string action)
+
+    // Held ledger rows (OutboxStore `dependsOn`) deleted because the edit they waited on left
+    // the outbox WITHOUT a server ack (discarded, conflicted, permanently dropped). `items` are
+    // the dropped outbox items ({requestId, entity, entityId, dependsOn}); TransactionStore
+    // removes the matching optimistic local rows so no ghost row outlives the rejected edit.
+    signal heldWritesDropped(var items)
+
     // Fired when recordMutationsBatch rejects a chunk for a reason that can
     // never change on retry (see _classifyBatchMutationFailure below) —
     // the chunk is dropped from the outbox rather than retried forever.
@@ -188,7 +199,7 @@ QtObject {
     // The one call every store makes. `after` is the full post-mutation doc
     // (or null for deletes); `before` is the pre-mutation snapshot (or null
     // for creates). Returns the requestId so callers can correlate if needed.
-    function recordMutation(entity, entityId, action, before, after) {
+    function recordMutation(entity, entityId, action, before, after, dependsOn) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordMutation: bad entity/id", entity, entityId)
@@ -208,10 +219,39 @@ QtObject {
             action: action,
             before: before === undefined ? null : before,
             after: after === undefined ? null : after,
-            clientTimestamp: new Date().toISOString()
+            clientTimestamp: new Date().toISOString(),
+            dependsOn: dependsOn || undefined
         })
         drainNow()
         return requestId
+    }
+
+    // recordMutation for an EDIT whose ledger rows must wait for the server's ack. Same enqueue,
+    // but returns the requestId of the item that is actually STORED: OutboxStore.enqueue may
+    // merge this call into an older not-in-flight item for the same record (which keeps ITS
+    // requestId), and a dependent must hang off the item that will really be sent. Returns ""
+    // in direct mode (no outbox, nothing to wait for) or on a bad entity/id.
+    function recordEdit(entity, entityId, action, before, after) {
+        var collection = _collectionFor(entity)
+        if (!collection || !entityId) {
+            console.warn("[Gateway] recordEdit: bad entity/id", entity, entityId)
+            return ""
+        }
+        if (mode === "direct") {
+            _writeDirect(collection, entityId, action, after)
+            return ""
+        }
+        var stored = OutboxStore.enqueue({
+            requestId: _nextRequestId(),
+            entity: entity,
+            entityId: entityId,
+            action: action,
+            before: before === undefined ? null : before,
+            after: after === undefined ? null : after,
+            clientTimestamp: new Date().toISOString()
+        })
+        drainNow()
+        return stored.requestId
     }
 
     // Atomic server-side delta (Component 4) — for quantity fields where two
@@ -615,6 +655,8 @@ QtObject {
     }
 
     function _reschedule() {
+        var droppedHeld = OutboxStore.pruneOrphans() // held ledger rows whose parent edit left unacked never go out
+        if (droppedHeld.length > 0) heldWritesDropped(droppedHeld)
         _pruneStuck()
         if (!_drainTimer) {
             _drainTimer = Qt.createQmlObject(
@@ -741,8 +783,9 @@ QtObject {
 
     // 2xx for one recordMutation: drop it from the outbox, then tell listeners (BC2).
     function _ackSingle(item) {
-        OutboxStore.markSent(item.requestId)
+        OutboxStore.markAcked(item.requestId) // also releases ledger rows held behind this edit
         mutationApplied(item.entity, item.entityId, item.action)
+        writeAcked(item.requestId, item.entity, item.entityId, item.action)
     }
 
     function _send(item) {
