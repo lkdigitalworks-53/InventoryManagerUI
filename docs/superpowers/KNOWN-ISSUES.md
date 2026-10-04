@@ -570,3 +570,26 @@ marker written in the product-delete transaction, post-commit prefix sweep, F3 u
    PR:** `tst_InventoryE2E.qml` (the product-delete check, ~line 262) and `tst_BulkImportChunkingE2E.qml` (~line 154). Making
    `requireResponse` the default would make them honest but could turn them red; do it as its own small PR.
 
+---
+
+## Product delete is destroy-before-ack (found 2026-10-04, PR #113 device test) — photo part FIXED, batches/activity/queue NOT
+
+**Symptom:** device A uploads a photo while device B deletes the product (9 photos). Result: product still listed, 3 photos shown,
+4 objects in Storage, Activity says deleted, batches gone.
+
+**Root cause:** `InventoryStore.deleteProduct` starts irreversible side effects without waiting for the server's answer to the
+product delete. A's upload changes `photoIds`, B's CAS `before` is stale, the delete 409s and the product survives (the
+`_onMutationConflicted` restore is the "reappeared"). Meanwhile B had already sent one `deleteProductPhoto` per cached photo
+(PH4 item 3 of the design, not yet built in PH3-only PR #113), which removed ids and objects from the surviving product. The
+server upload path is NOT at fault: it 404s on a missing product.
+
+**Fixed (branch `fix/2026-10-04-pr113-upload-delete-race`):** removed the client photo loop; photos are removed only by the server
+sweep after a committed delete. Pinned by e2e `test_stale_delete_409_keeps_the_product_and_every_photo`.
+
+**Still open, same family (decide before PH4):**
+1. Batch deletes are sent before the product delete is acked -> after a 409 the product has no stock batches. Options: (a) gate
+   batch deletes on a Gateway "applied" signal (new ack plumbing, per-mutation); (b) one atomic `recordOperation` for product +
+   batches (the delete roadmap item, larger, also removes the `photoIds` CAS problem); (c) accept for dev. (b) is correct, (a) is a patch.
+2. `ActivityLog.record("product_deleted")` is written locally at click time even when the delete is rejected.
+3. `PhotoQueue.discard` of this device's queued photos runs before the ack: a rejected delete loses the user's pending photos.
+4. A delete 409s on any concurrent `photoIds` change (F5 family); the user retries after the restored row appears.

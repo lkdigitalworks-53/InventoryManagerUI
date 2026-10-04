@@ -396,6 +396,55 @@ TestCase {
         _pollStorageObject(_objectPath(otherId, otherPhoto, false), 3000, "sibling product's photo was swept by mistake")
     }
 
+    // PR #113 device test (2026-10-04): device A uploads a photo while device B deletes the product.
+    // A's upload makes B's cached `before.photoIds` stale -> the delete's CAS 409s and the product
+    // survives. The old client loop in deleteProduct fired deleteProductPhoto per cached id BEFORE that
+    // ack, so a product that was never deleted lost its photos. Nothing may be destroyed on a 409.
+    function test_stale_delete_409_keeps_the_product_and_every_photo() {
+        var productId = _createProduct("E2E Photo Stale Delete", "SKU-E2E-PHOTO-14")
+        var t = Date.now()
+        var cached = ["e2e-stale-a-" + t, "e2e-stale-b-" + t]
+        for (var i = 0; i < cached.length; ++i) {
+            compare(_uploadPhoto(productId, cached[i]).status, 200, "setup upload " + i)
+            _pollStorageObject(_objectPath(productId, cached[i], false), 5000, "setup object " + i)
+        }
+        InventoryStore.syncFromFirebase()
+        tryVerify(function() {
+            var ps = InventoryStore.products
+            for (var k = 0; k < ps.length; ++k)
+                if (ps[k].productId === productId) return ps[k].photoIds.length === cached.length
+            return false
+        }, 15000, "client never synced the server's photoIds for " + productId)
+
+        // "Device A": uploads a third photo after this client's cache was taken.
+        var late = "e2e-stale-late-" + t
+        compare(_uploadPhoto(productId, late).status, 200, "late upload from the other device")
+        _pollStorageObject(_objectPath(productId, late, false), 5000, "late object")
+
+        InventoryStore.deleteProduct(productId)
+
+        // The 409 pushes the server row back into the cache (_onMutationConflicted).
+        tryVerify(function() {
+            var ps = InventoryStore.products
+            for (var k = 0; k < ps.length; ++k)
+                if (ps[k].productId === productId) return ps[k].photoIds.length === cached.length + 1
+            return false
+        }, 15000, "stale delete was not rejected, or the restored row lost photos")
+        wait(2000) // room for any (forbidden) fire-and-forget photo deletes to land
+
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        var doc = _pollDoc(docPath, productId, function(d) { return d !== null }, 5000,
+                           "product doc must survive a rejected delete", true)
+        compare(doc.fields.photoIds.arrayValue.values.length, cached.length + 1,
+                "photoIds were destroyed by a delete that never committed")
+        var all = cached.concat([late])
+        for (var j = 0; j < all.length; ++j) {
+            _pollStorageObject(_objectPath(productId, all[j], false), 3000, "main " + j + " destroyed by a rejected delete")
+            _pollStorageObject(_objectPath(productId, all[j], true), 3000, "thumb " + j + " destroyed by a rejected delete")
+        }
+        _pollMarker(productId, function(d) { return d === null }, 5000, "a rejected delete must leave no cleanup marker")
+    }
+
     function test_deleting_a_product_with_no_photos_leaves_no_marker() {
         var productId = _createProduct("E2E Cascade NoPhotos", "SKU-E2E-PHOTO-12")
         InventoryStore.deleteProduct(productId)

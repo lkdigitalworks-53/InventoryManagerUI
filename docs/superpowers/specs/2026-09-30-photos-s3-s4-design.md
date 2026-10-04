@@ -32,7 +32,7 @@ Dev env only, no production, no backward compatibility, every PR tested on a NEW
 
 ## Slices and order
 
-PH3 first (server), then PH4 (client), then PH5. No deploy-order concern (dev only), but PH3-before-PH4 keeps every intermediate state free of the destroy-before-ack bug.
+PH3 first (server), then PH4 (client), then PH5. No deploy-order concern (dev only), but ~~PH3-before-PH4 keeps every intermediate state free of the destroy-before-ack bug.~~ **WRONG (found 2026-10-04, PR #113 device test):** the bug is the client `removeProductPhoto` loop, which stays live until PH4 item 3 ships; PH3 alone does not remove it. PH4 item 3 was pulled forward on `fix/2026-10-04-pr113-upload-delete-race`. Batches/activity log are still destroy-before-ack (KNOWN-ISSUES).
 
 | Slice | Branch (planned, may differ) | Touches | Verifiable by |
 |---|---|---|---|
