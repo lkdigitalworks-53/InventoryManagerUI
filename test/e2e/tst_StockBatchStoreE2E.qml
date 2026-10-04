@@ -38,6 +38,13 @@ import "E2EHelpers.js" as E2EHelpers
 TestCase {
     name: "StockBatchStoreE2E"
 
+    // DataModel is NOT a pragma Singleton (Main.qml instantiates it), so its Gateway
+    // Connections only exist if a test declares one, same as tst_OrdersE2E.qml. The BC2
+    // 409 test below relies on DataModel.onMutationConflicted re-reading the batches that
+    // deleteProduct hid locally; without this instance that resync never runs (CI failure
+    // on PR #119: "did not bring the hidden batches back by re-read").
+    DataModel { id: dm }
+
     readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
