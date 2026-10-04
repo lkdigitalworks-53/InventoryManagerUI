@@ -21,6 +21,16 @@ BottomSheet {
     // sheet underneath it (Main.qml's Back list honours `busy`).
     busy: discardConfirm.opened
 
+    // Re-read the rows whenever any of these move. The reads are the point of the
+    // bindings, not the values.
+    property int _stuckWatcher: Gateway.stuckCount
+    property int _outboxWatcher: OutboxStore.revision
+    property int _inFlightWatcher: OutboxStore.inFlightCount
+    property var _rows: {
+        root._stuckWatcher; root._outboxWatcher; root._inFlightWatcher
+        return Gateway.stuckRows()
+    }
+
     ConfirmDialog { id: discardConfirm }
 
     function _askDiscard(requestId) {
@@ -34,16 +44,6 @@ BottomSheet {
                 else Toast.show(qsTr("Could not discard. Check your connection and try again."))
             }
         })
-    }
-
-    // Re-read the rows whenever any of these move. The reads are the point of the
-    // bindings, not the values.
-    property int _stuckWatcher: Gateway.stuckCount
-    property int _outboxWatcher: OutboxStore.revision
-    property int _inFlightWatcher: OutboxStore.inFlightCount
-    property var _rows: {
-        root._stuckWatcher; root._outboxWatcher; root._inFlightWatcher
-        return Gateway.stuckRows()
     }
 
     ColumnLayout {
@@ -103,7 +103,7 @@ BottomSheet {
                         Text {
                             Layout.fillWidth: true
                             text: row.modelData.inFlight ? qsTr("Sending…")
-                                : row.modelData.rejected ? qsTr("Rejected by the server. Paused until you tap Retry.")
+                                : row.modelData.rejected ? qsTr("Rejected by the server. Paused until you tap Retry or Discard.")
                                 : qsTr("Not syncing. Still retrying.")
                             color: row.modelData.inFlight ? Constants.textSecondary : Constants.danger
                             font.pixelSize: sp(Constants.fsCaption)
