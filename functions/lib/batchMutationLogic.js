@@ -19,7 +19,7 @@
 // pattern as gatewayLogic.js / cutoverLogic.js.
 
 const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual } = require("./gatewayLogic");
-const { isCascadeEntityDelete } = require("./photoCleanup");
+const { isCascadeEntityDelete, isReservedAuditId } = require("./photoCleanup");
 
 // Mirrored client-side as Gateway.qml's `maxBatchSize` property (no shared
 // build-time constant between this Node runtime and the QML client — see
@@ -43,6 +43,9 @@ function validateBatchMutationRequest(body) {
     }
     if (!requestId) {
         return { ok: false, status: 400, error: "missing-fields" };
+    }
+    if (isReservedAuditId(requestId)) {
+        return { ok: false, status: 400, error: "invalid-request-id" };
     }
     if (items.length === 0) {
         return { ok: false, status: 400, error: "empty-batch" };

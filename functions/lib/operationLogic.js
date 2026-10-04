@@ -20,7 +20,9 @@ const {
 const { isCascadeEntityDelete } = require("./photoCleanup");
 
 // 200 ops = up to 200 working-doc writes + 200 per-op audit entries + 1 marker
-// = 401 writes, under Firestore's ~500-writes-per-transaction ceiling. Mirrored
+// = 401 writes, against a Firestore per-transaction ceiling the repo assumes is ~500. That ceiling,
+// and whether serverTimestamp() counts as an extra write per doc (which would make it 601), are both
+// UNVERIFIED (BC1 design review R3): treat MAX_OPS as a latent question, not a proven bound. Mirrored
 // client-side as Gateway.qml's `maxOperationOps` (no shared build-time constant
 // between this Node runtime and the QML client); both sides pin the value in a
 // test so drift fails a test instead of failing in production.
@@ -75,8 +77,9 @@ function validateOperationRequest(body) {
         if (!v.ok) return Object.assign({}, v, { opIndex: i });
         if (!isSafeDocId(v.entityId)) return { ok: false, status: 400, error: "invalid-entity-id", opIndex: i };
         // PH3 (design Q11): a product delete must leave a pending_cleanup marker, which this
-        // transaction deliberately does not write (it would break the write-ceiling arithmetic
-        // above). Reject the whole operation, zero writes. No client sends one today.
+        // transaction deliberately does not write (an unverified write ceiling, see MAX_OPS, and the
+        // marker/sweep belong to recordMutation). Rejected on purpose, whole operation, zero writes.
+        // No client sends one today. Batches of a deleted product are swept server-side (BC1).
         if (raw.kind === "mutation" && isCascadeEntityDelete(v.entity, v.action)) {
             return { ok: false, status: 400, error: "cascade-delete-not-allowed", opIndex: i };
         }

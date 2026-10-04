@@ -60,9 +60,11 @@ test("U18 MONKEY buildSweepPrefix: random ids never yield a prefix outside their
 test("U19 buildMarker: fields present, attempts 0, lastError null, prefix copied, tenantId not stored", () => {
     const prefix = C.buildSweepPrefix("dev1", "t_1", "PRD-5");
     const m = C.buildMarker({ productId: "PRD-5", envPrefix: "dev1", tenantId: "t_1", prefix: prefix, createdAt: "TS" });
-    assert.deepEqual(m, { productId: "PRD-5", envPrefix: "dev1", prefix: prefix, createdAt: "TS", attempts: 0, lastError: null });
+    assert.deepEqual(m, {
+        productId: "PRD-5", envPrefix: "dev1", prefix: prefix, createdAt: "TS", attempts: 0, lastError: null,
+        actorUid: null, actorRole: null, requestId: null
+    });
     assert.equal("tenantId" in m, false);
-    assert.equal("requestId" in m, false);
 });
 
 test("U20 buildMarker: null/empty/mismatched prefix refused", () => {
@@ -136,10 +138,11 @@ test("U39 preflight: photoIds missing or not an array treated as empty", () => {
 
 // ---- sweepMarker (U40-U48) ------------------------------------------------------------------
 function fakeDeps(over) {
-    const calls = { productExists: [], deleteFiles: [], deleteMarker: 0, updateMarker: [] };
+    const calls = { productExists: [], sweepBatches: [], order: [], deleteFiles: [], deleteMarker: 0, updateMarker: [] };
     const deps = Object.assign({
         productExists: async (id) => { calls.productExists.push(id); return false; },
-        deleteFiles: async (prefix) => { calls.deleteFiles.push(prefix); },
+        sweepBatches: async (id, actor) => { calls.order.push("batches"); calls.sweepBatches.push([id, actor]); },
+        deleteFiles: async (prefix) => { calls.order.push("files"); calls.deleteFiles.push(prefix); },
         deleteMarker: async () => { calls.deleteMarker++; },
         updateMarker: async (patch) => { calls.updateMarker.push(patch); }
     }, over || {});
@@ -157,6 +160,7 @@ test("U40 sweepMarker: product exists again -> marker deleted, deleteFiles NOT c
     const r = await C.sweepMarker(deps, TENANT, goodMarker());
     assert.deepEqual(r, { ok: true, dropped: true });
     assert.equal(calls.deleteFiles.length, 0);
+    assert.equal(calls.sweepBatches.length, 0, "id reused: the NEW product's batches must never be swept");
     assert.equal(calls.deleteMarker, 1);
 });
 
@@ -165,6 +169,9 @@ test("U41 sweepMarker: product absent -> deleteFiles once with exact prefix, mar
     const r = await C.sweepMarker(deps, TENANT, goodMarker());
     assert.deepEqual(r, { ok: true, swept: true });
     assert.deepEqual(calls.deleteFiles, ["dev1/tenants/t_1/products/PRD-5/"]);
+    assert.deepEqual(calls.order, ["batches", "files"], "batches first: they carry the money");
+    assert.equal(calls.sweepBatches.length, 1);
+    assert.equal(calls.sweepBatches[0][0], "PRD-5");
     assert.equal(calls.deleteMarker, 1);
     assert.equal(calls.updateMarker.length, 0);
 });
@@ -193,6 +200,7 @@ test("U44 sweepMarker: product read throws -> marker kept, attempts+1, no sweep 
     assert.equal(r.ok, false);
     assert.equal(r.error, "firestore down");
     assert.equal(calls.deleteFiles.length, 0);
+    assert.equal(calls.sweepBatches.length, 0, "unsure whether the product is back: no batch sweep either");
     assert.equal(calls.deleteMarker, 0);
     assert.equal(calls.updateMarker[0].attempts, 1);
 });
@@ -215,6 +223,7 @@ test("U45 sweepMarker: null prefix, prefix without trailing slash, or prefix != 
         assert.equal(r.ok, false, JSON.stringify(m));
         assert.equal(r.error, "unsafe-sweep-prefix");
         assert.equal(calls.deleteFiles.length, 0, JSON.stringify(m));
+        assert.equal(calls.sweepBatches.length, 0, "unsafe marker never reaches the batch sweep: " + JSON.stringify(m));
         assert.equal(calls.productExists.length, 0, "guard runs before any read");
         assert.equal(calls.deleteMarker, 0);
         assert.equal(calls.updateMarker[0].lastError, "unsafe-sweep-prefix");
@@ -280,4 +289,229 @@ test("sweepMarker: non-Error throw values and missing marker are handled", async
     assert.equal(c2.updateMarker.length, 1);
     const r3 = await C.sweepMarker(fakeDeps().deps, TENANT, undefined);
     assert.equal(r3.ok, false);
+});
+
+
+// ---- BC1: marker actor fields, sweepMarker batch step, sweepStockBatches ---------------------------
+test("BC-U01 buildMarker: actorUid / actorRole / requestId copied when strings", () => {
+    const prefix = C.buildSweepPrefix("dev1", "t_1", "PRD-5");
+    const m = C.buildMarker({
+        productId: "PRD-5", envPrefix: "dev1", tenantId: "t_1", prefix: prefix, createdAt: "TS",
+        actorUid: "uid-9", actorRole: "admin", requestId: "req-77"
+    });
+    assert.equal(m.actorUid, "uid-9");
+    assert.equal(m.actorRole, "admin");
+    assert.equal(m.requestId, "req-77");
+});
+
+test("BC-U02 buildMarker: missing, empty or non-string actor fields become null (Firestore rejects undefined)", () => {
+    const prefix = C.buildSweepPrefix("dev1", "t_1", "PRD-5");
+    for (const bad of [undefined, null, "", 0, 42, {}, [], true]) {
+        const m = C.buildMarker({
+            productId: "PRD-5", envPrefix: "dev1", tenantId: "t_1", prefix: prefix, createdAt: "TS",
+            actorUid: bad, actorRole: bad, requestId: bad
+        });
+        assert.equal(m.actorUid, null, String(bad));
+        assert.equal(m.actorRole, null, String(bad));
+        assert.equal(m.requestId, null, String(bad));
+        assert.equal(Object.values(m).includes(undefined), false, "no undefined value may reach Firestore");
+    }
+});
+
+test("BC-U03 sweepMarker: marker actor fields are passed through to sweepBatches", async () => {
+    const { deps, calls } = fakeDeps();
+    await C.sweepMarker(deps, TENANT, goodMarker({ actorUid: "uid-9", actorRole: "owner", requestId: "req-77" }));
+    assert.deepEqual(calls.sweepBatches, [["PRD-5", { actorUid: "uid-9", actorRole: "owner", requestId: "req-77" }]]);
+});
+
+test("BC-U04 sweepMarker: old-format marker (no actor fields) still sweeps; actor values are undefined for the io to default", async () => {
+    const { deps, calls } = fakeDeps();
+    const r = await C.sweepMarker(deps, TENANT, goodMarker());
+    assert.deepEqual(r, { ok: true, swept: true });
+    assert.deepEqual(calls.sweepBatches[0][1], { actorUid: undefined, actorRole: undefined, requestId: undefined });
+});
+
+test("BC-U05 sweepMarker: sweepBatches throws -> marker kept, attempts+1, lastError, Storage NOT swept", async () => {
+    const { deps, calls } = fakeDeps({ sweepBatches: async () => { throw new Error("firestore unavailable"); } });
+    const r = await C.sweepMarker(deps, TENANT, goodMarker({ attempts: 4 }));
+    assert.deepEqual(r, { ok: false, error: "firestore unavailable" });
+    assert.equal(calls.deleteFiles.length, 0, "a failed batch sweep stops the whole pass");
+    assert.equal(calls.deleteMarker, 0);
+    assert.equal(calls.updateMarker[0].attempts, 5);
+    assert.equal(calls.updateMarker[0].lastError, "firestore unavailable");
+});
+
+test("BC-U06 sweepMarker: a missing sweepBatches dep fails the sweep loudly (never silently skips money data)", async () => {
+    const { deps, calls } = fakeDeps({ sweepBatches: undefined });
+    const r = await C.sweepMarker(deps, TENANT, goodMarker());
+    assert.equal(r.ok, false);
+    assert.equal(calls.deleteFiles.length, 0);
+    assert.equal(calls.deleteMarker, 0, "marker kept so the batches are still cleaned up later");
+    assert.equal(calls.updateMarker[0].attempts, 1);
+});
+
+test("BC-U07 sweepMarker: batches ok but Storage fails -> marker kept; second pass re-sweeps batches idempotently", async () => {
+    let fail = true;
+    const { deps, calls } = fakeDeps({ deleteFiles: async () => { if (fail) throw new Error("storage down"); } });
+    assert.equal((await C.sweepMarker(deps, TENANT, goodMarker())).ok, false);
+    assert.equal(calls.sweepBatches.length, 1);
+    fail = false;
+    assert.equal((await C.sweepMarker(deps, TENANT, goodMarker({ attempts: 1 }))).ok, true);
+    assert.equal(calls.sweepBatches.length, 2);
+    assert.equal(calls.deleteMarker, 1);
+});
+
+test("BC-U08 SWEEP_CHUNK is 100 (R3: 2 writes per doc stays far under the unverified ~500 ceiling)", () => {
+    assert.equal(C.SWEEP_CHUNK, 100);
+});
+
+test("BC-U09 buildCascadeAuditId: deterministic cascade~{productId}~{batchId}", () => {
+    assert.equal(C.buildCascadeAuditId("PRD-5", "B-1"), "cascade~PRD-5~B-1");
+    assert.equal(C.buildCascadeAuditId("PRD-5", "B-1"), C.buildCascadeAuditId("PRD-5", "B-1"));
+    assert.notEqual(C.buildCascadeAuditId("PRD-5", "B-1"), C.buildCascadeAuditId("PRD-5", "B-2"));
+    assert.notEqual(C.buildCascadeAuditId("PRD-5", "B-1"), C.buildCascadeAuditId("PRD-6", "B-1"));
+});
+
+function fakeIo(docs, over) {
+    const calls = { list: [], commits: [] };
+    const io = Object.assign({
+        listBatches: async (pid) => { calls.list.push(pid); return docs; },
+        commitChunk: async (entries) => { calls.commits.push(entries); }
+    }, over || {});
+    return { io, calls };
+}
+function batchDocs(n, productId, prefix) {
+    return Array.from({ length: n }, (_, i) => ({
+        id: (prefix || "B") + i, data: { batchId: (prefix || "B") + i, productId: productId || "PRD-5", qtyRemaining: i }
+    }));
+}
+const ACTOR = { actorUid: "uid-9", actorRole: "admin", requestId: "req-77" };
+
+test("BC-U10 sweepStockBatches: zero batches -> no commit, returns 0", async () => {
+    const { io, calls } = fakeIo([]);
+    assert.equal(await C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), 0);
+    assert.deepEqual(calls.list, ["PRD-5"]);
+    assert.equal(calls.commits.length, 0);
+});
+
+test("BC-U11 sweepStockBatches: one batch -> one chunk with delete + audit entry (exact shape)", async () => {
+    const docs = batchDocs(1);
+    const { io, calls } = fakeIo(docs);
+    assert.equal(await C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), 1);
+    assert.equal(calls.commits.length, 1);
+    assert.deepEqual(calls.commits[0], [{
+        batchId: "B0",
+        auditId: "cascade~PRD-5~B0",
+        audit: {
+            entryId: "cascade~PRD-5~B0", tenantId: TENANT, actorUid: "uid-9", actorRole: "admin",
+            action: "delete", entity: "stock_batch", entityId: "B0", before: docs[0].data, after: null,
+            clientTimestamp: null, requestId: "cascade~PRD-5~B0", cascadeOf: "req-77"
+        }
+    }]);
+});
+
+test("BC-U12 sweepStockBatches: chunk boundaries 99 / 100 / 101 / 200 / 250 docs -> ceil(n/100) commits, none over 100, every doc once", async () => {
+    const expectChunks = { 99: [99], 100: [100], 101: [100, 1], 200: [100, 100], 250: [100, 100, 50] };
+    for (const n of Object.keys(expectChunks)) {
+        const { io, calls } = fakeIo(batchDocs(Number(n)));
+        assert.equal(await C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), Number(n));
+        assert.deepEqual(calls.commits.map((c) => c.length), expectChunks[n], "n=" + n);
+        const ids = calls.commits.flat().map((e) => e.batchId);
+        assert.equal(new Set(ids).size, Number(n), "no doc twice, none dropped, n=" + n);
+    }
+});
+
+test("BC-U13 sweepStockBatches: docs of ANOTHER product (wrong query result) are never deleted", async () => {
+    const docs = batchDocs(2, "PRD-5").concat(batchDocs(3, "PRD-50", "X"), [{ id: "E0", data: { productId: "" } }], [
+        { id: "N1", data: null }, { id: "N2", data: {} }, null, undefined
+    ]);
+    const { io, calls } = fakeIo(docs);
+    assert.equal(await C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), 2);
+    assert.deepEqual(calls.commits.flat().map((e) => e.batchId), ["B0", "B1"]);
+});
+
+test("BC-U14 sweepStockBatches: listBatches returns null/undefined -> treated as no batches", async () => {
+    for (const v of [null, undefined]) {
+        const { io, calls } = fakeIo(v);
+        assert.equal(await C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), 0);
+        assert.equal(calls.commits.length, 0);
+    }
+});
+
+test("BC-U15 sweepStockBatches: actor missing -> audit actor 'system', no back-link (old-format marker)", async () => {
+    for (const actor of [undefined, null, {}, { actorUid: "", actorRole: null }]) {
+        const { io, calls } = fakeIo(batchDocs(1));
+        await C.sweepStockBatches(io, TENANT, "PRD-5", actor);
+        const a = calls.commits[0][0].audit;
+        assert.equal(a.actorUid, "system");
+        assert.equal(a.actorRole, "system");
+        assert.equal(a.cascadeOf, null);
+        assert.equal(Object.values(a).includes(undefined), false);
+    }
+});
+
+test("BC-U16 sweepStockBatches: listBatches throws -> propagates, nothing committed", async () => {
+    const { io, calls } = fakeIo([], { listBatches: async () => { throw new Error("query failed"); } });
+    await assert.rejects(() => C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), /query failed/);
+    assert.equal(calls.commits.length, 0);
+});
+
+test("BC-U17 sweepStockBatches: commit of chunk 2 throws -> propagates, chunk 1 already committed, chunk 3 never tried", async () => {
+    let n = 0;
+    const { io, calls } = fakeIo(batchDocs(250), {
+        commitChunk: async (entries) => { n++; if (n === 2) throw new Error("commit failed"); calls.commits.push(entries); }
+    });
+    await assert.rejects(() => C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR), /commit failed/);
+    assert.equal(calls.commits.length, 1);
+    assert.equal(n, 2);
+});
+
+test("BC-U18 sweepStockBatches: before is the batch as read (not copied away), tenant comes from the argument", async () => {
+    const docs = batchDocs(1);
+    const { io, calls } = fakeIo(docs);
+    await C.sweepStockBatches(io, "tenant_zzz", "PRD-5", ACTOR);
+    assert.equal(calls.commits[0][0].audit.before, docs[0].data);
+    assert.equal(calls.commits[0][0].audit.tenantId, "tenant_zzz");
+});
+
+test("BC-U19 sweepStockBatches: two overlapping sweeps produce the SAME audit ids (no duplicate audit)", async () => {
+    const docs = batchDocs(3);
+    const a = fakeIo(docs);
+    const b = fakeIo(docs);
+    await Promise.all([
+        C.sweepStockBatches(a.io, TENANT, "PRD-5", ACTOR),
+        C.sweepStockBatches(b.io, TENANT, "PRD-5", ACTOR)
+    ]);
+    assert.deepEqual(a.calls.commits.flat().map((e) => e.auditId), b.calls.commits.flat().map((e) => e.auditId));
+});
+
+test("BC-U20 MONKEY sweepStockBatches: 300 random result sets never delete a doc whose productId differs, never exceed the chunk size", async () => {
+    let seed = 4242;
+    const rnd = (n) => { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor((seed / 4294967296) * n); };
+    const owners = ["PRD-5", "PRD-5", "PRD-50", "PRD-4", "", null, undefined];
+    for (let i = 0; i < 300; i++) {
+        const n = rnd(260);
+        const docs = Array.from({ length: n }, (_, k) => ({ id: "D" + k, data: { productId: owners[rnd(owners.length)] } }));
+        const { io, calls } = fakeIo(docs);
+        const deleted = await C.sweepStockBatches(io, TENANT, "PRD-5", ACTOR);
+        const expected = docs.filter((d) => d.data.productId === "PRD-5").map((d) => d.id);
+        assert.equal(deleted, expected.length);
+        assert.deepEqual(calls.commits.flat().map((e) => e.batchId), expected);
+        for (const c of calls.commits) assert.ok(c.length >= 1 && c.length <= C.SWEEP_CHUNK);
+    }
+});
+
+test("RES-U1 isReservedAuditId: exact case-sensitive prefix only; non-strings are never reserved", () => {
+    for (const id of ["cascade~", "cascade~PRD-1~B1", "cascade~~"]) assert.equal(C.isReservedAuditId(id), true, id);
+    for (const id of ["", "req-1", "Cascade~1", "xcascade~1", " cascade~1", "cascade", "cascade-1", null, undefined, 5, {}, []]) {
+        assert.equal(C.isReservedAuditId(id), false, JSON.stringify(id));
+    }
+});
+
+test("RES-U2 every id buildCascadeAuditId can produce is reserved (so no client requestId can ever equal one)", () => {
+    for (const [p, b] of [["PRD-1", "B1"], ["a:b", "c~d"], ["", ""], ["x", "y"]]) {
+        const id = C.buildCascadeAuditId(p, b);
+        assert.equal(C.isReservedAuditId(id), true, id);
+        assert.equal(id.indexOf(C.CASCADE_AUDIT_PREFIX), 0);
+    }
 });

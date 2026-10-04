@@ -111,6 +111,11 @@ function installMocks() {
         docDeleteCalls: [],
         docDeleteError: null,
         applyMutationCalls: [],
+        // BC1 (2026-10-05): db.batch() write batches used by the product-delete batch sweep.
+        // batchCommits: [[{type:"delete"|"set", path, data?}]] one entry per committed batch, in
+        // order. batchCommitError: when set, every wb.commit() throws it (nothing is applied).
+        batchCommits: [],
+        batchCommitError: null,
         storageBucketError: null, // admin.storage().bucket() itself throwing (handler sweep catch path)
         // admin.auth() extensions needed by provisionMember. Same
         // "throw until configured" default as verifyIdToken above, so a
@@ -152,12 +157,21 @@ function installMocks() {
     function collectionQuery(collPath, state) {
         return {
             orderBy: () => collectionQuery(collPath, state),
+            // BC1: single-field equality filter only (what the batch sweep uses), applied to the
+            // mockState.collections array for this path.
+            where: (field, op, value) => {
+                if (op !== "==") throw new Error("harness where(): only == is supported");
+                return collectionQuery(collPath, Object.assign({}, state, { where: (state.where || []).concat([[field, value]]) }));
+            },
             limit: (n) => collectionQuery(collPath, Object.assign({}, state, { limit: n })),
             startAfter: (afterDoc) => collectionQuery(collPath, Object.assign({}, state, { afterId: afterDoc.id })),
             get: async () => {
                 mockState.collectionGetCalls.push(collPath);
                 if (mockState.collectionGetError) throw mockState.collectionGetError;
-                const all = mockState.collections[collPath] || [];
+                let all = mockState.collections[collPath] || [];
+                for (const w of (state.where || [])) {
+                    all = all.filter((d) => d.data && d.data[w[0]] === w[1]);
+                }
                 let startIdx = 0;
                 if (state.afterId !== undefined) {
                     const idx = all.findIndex((d) => d.id === state.afterId);
@@ -221,6 +235,27 @@ function installMocks() {
             getFirestore: () => ({
                 doc: docRef,
                 collection: (collPath) => collectionQuery(collPath, {}),
+                batch: () => {
+                    const ops = [];
+                    return {
+                        delete: (ref) => { ops.push({ type: "delete", path: ref.path }); },
+                        set: (ref, data) => { ops.push({ type: "set", path: ref.path, data: data }); },
+                        commit: async () => {
+                            if (mockState.batchCommitError) throw mockState.batchCommitError;
+                            mockState.batchCommits.push(ops.map((o) => Object.assign({}, o)));
+                            for (const o of ops) {
+                                if (o.type === "set") { _writeDoc(o.path, o.data); continue; }
+                                delete mockState.docs[o.path];
+                                const cut = o.path.lastIndexOf("/");
+                                const coll = o.path.slice(0, cut);
+                                const id = o.path.slice(cut + 1);
+                                if (mockState.collections[coll]) {
+                                    mockState.collections[coll] = mockState.collections[coll].filter((d) => d.id !== id);
+                                }
+                            }
+                        }
+                    };
+                },
                 // txn.get/txn.set/txn.delete delegate straight to the same
                 // synchronous mockState.docs store docRef() uses -- sufficient
                 // for provisionMember's single read-then-write transaction;

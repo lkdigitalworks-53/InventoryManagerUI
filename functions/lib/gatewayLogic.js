@@ -8,7 +8,7 @@
 // Extracted from functions/index.js's exports.recordMutation (behavior-
 // preserving refactor — see docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md).
 
-const { isCascadeEntityDelete, buildMarker } = require("./photoCleanup");
+const { isCascadeEntityDelete, buildMarker, isReservedAuditId } = require("./photoCleanup");
 
 // P0 scope. `entity` -> collection name under the tenant root.
 const ENTITY_COLLECTIONS = {
@@ -58,6 +58,9 @@ function validateMutationRequest(body, entityCollections) {
     if (!entityId || !requestId) {
         return { ok: false, status: 400, error: "missing-fields" };
     }
+    if (isReservedAuditId(requestId)) {
+        return { ok: false, status: 400, error: "invalid-request-id" };
+    }
 
     return {
         ok: true,
@@ -90,6 +93,9 @@ function validateDeltaRequest(body, entityCollections) {
     }
     if (!entityId || !requestId) {
         return { ok: false, status: 400, error: "missing-fields" };
+    }
+    if (isReservedAuditId(requestId)) {
+        return { ok: false, status: 400, error: "invalid-request-id" };
     }
     if (!deltas || Object.keys(deltas).length === 0) {
         return { ok: false, status: 400, error: "missing-deltas" };
@@ -166,7 +172,10 @@ async function applyMutation(db, params) {
             envPrefix: params.cleanupEnvPrefix,
             tenantId: params.tenantId,
             prefix: params.cleanupPrefix,
-            createdAt: params.serverTimestamp
+            createdAt: params.serverTimestamp,
+            actorUid: params.actorUid,
+            actorRole: params.actorRole,
+            requestId: params.requestId
         });
         if (!marker) throw new Error("missing-cleanup-prefix");
         markerRef = db.doc("tenants/" + params.tenantId + "/pending_cleanup/" + params.entityId);

@@ -67,6 +67,8 @@ Role gate and whitelist added; existing behavior otherwise unchanged. It already
 3. Delete the marker.
 Any step that throws: leave the marker, `attempts += 1`, `lastError` = message truncated to 200 chars, log it. The attempts cap (Q12) is enforced by the PH3b scheduler, not here. Marker-delete failure is swallowed and logged. Two devices sweeping the same marker is safe (prefix delete is idempotent); no claim/lease.
 
+> **BC1 note (2026-10-05):** the marker now also drives the product's stock-batch cleanup (`sweepMarker` runs `sweepBatches` before the Storage delete) and carries `actorUid`/`actorRole`/`requestId`. PH3b must call the same `sweepMarker` with those fields, tolerate old markers (`system` actor), tolerate a concurrent handler sweep, and must NOT silently abandon a capped marker that still has batches (money data). See the BC design, "PH3b implications".
+
 ### Drain: moved to PH3b (Q6 amended)
 PH3 has NO drain. The only sweep is the awaited one right after a committed delete. A marker whose sweep failed stays put (durable) until PH3b ships. `selectDrainable` and all drain cases moved to PH3b (see test plan).
 

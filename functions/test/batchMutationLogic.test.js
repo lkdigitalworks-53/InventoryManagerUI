@@ -352,3 +352,11 @@ test("F38 F5 pin (batch path): stale before.photoIds -> conflict, nothing writte
     assert.equal(result.status, 409);
     assert.equal(db.writes.length, 0);
 });
+
+test("RES-B1 validateBatchMutationRequest rejects a batch requestId in the reserved cascade namespace (PR #118 review)", () => {
+    const result = BatchMutationLogic.validateBatchMutationRequest(validBody({ requestId: "cascade~PRD-1~B1" }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "invalid-request-id");
+    assert.equal(BatchMutationLogic.validateBatchMutationRequest(validBody({ requestId: "Cascade~x" })).ok, true, "case-sensitive");
+});

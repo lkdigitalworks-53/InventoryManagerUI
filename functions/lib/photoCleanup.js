@@ -8,6 +8,14 @@ const { isSafePathSegment } = require("./photoValidation");
 
 const MAX_LAST_ERROR_CHARS = 200;
 
+// Max stock_batch docs per sweep chunk. Each doc costs 2 writes (delete + audit entry), so a chunk is
+// 200 writes, 300 if serverTimestamp() counted as an extra write. Firestore's per-commit ceiling is
+// UNVERIFIED (repo assumes 500), so stay well under it. BC1 design R3.
+const SWEEP_CHUNK = 100;
+
+// Reserved audit_log id namespace of the per-batch cascade entries (see isReservedAuditId).
+const CASCADE_AUDIT_PREFIX = "cascade~";
+
 // Photos are managed by owner/admin only, mirroring the client's AuthStore.canManageInventory.
 // Exact, case-sensitive match: "OWNER", "Owner ", "", null, undefined and "viewer" (no such role
 // exists) are all denied.
@@ -37,6 +45,9 @@ function buildSweepPrefix(envPrefix, tenantId, productId) {
 // caller can never persist a marker that the sweep guard would refuse anyway.
 // `envPrefix` is stored so the sweep guard can rebuild the prefix (review I2); tenantId is NOT
 // stored: the sweep takes it from the doc path.
+// BC1 (R2): also carries the delete's actorUid / actorRole / requestId so the sweep (and the PH3b
+// scheduler, which has no request context) can attribute the per-batch audit entries. A missing or
+// non-string value is stored as null (Firestore rejects undefined) and read back as "system".
 function buildMarker(params) {
     const p = params || {};
     if (typeof p.prefix !== "string" || p.prefix === "") return null;
@@ -47,8 +58,15 @@ function buildMarker(params) {
         prefix: p.prefix,
         createdAt: p.createdAt,
         attempts: 0,
-        lastError: null
+        lastError: null,
+        actorUid: _strOrNull(p.actorUid),
+        actorRole: _strOrNull(p.actorRole),
+        requestId: _strOrNull(p.requestId)
     };
+}
+
+function _strOrNull(v) {
+    return typeof v === "string" && v !== "" ? v : null;
 }
 
 // Upload preflight (F3, Q1): decides from the product doc read BEFORE any Storage write, so a 404 or
@@ -71,13 +89,73 @@ function _errorText(e) {
     return text.length > MAX_LAST_ERROR_CHARS ? text.slice(0, MAX_LAST_ERROR_CHARS) : text;
 }
 
+// Deterministic audit id for one cascaded batch delete. Two overlapping sweeps (handler + PH3b
+// scheduler) or a retry write the SAME doc, so the audit never duplicates (Q-BC-2 A, R4).
+function buildCascadeAuditId(productId, batchId) {
+    return CASCADE_AUDIT_PREFIX + productId + "~" + batchId;
+}
+
+// Review fix (PR #118): the cascade audit ids live in the SAME audit_log keyspace as the client-chosen
+// requestIds of recordMutation / recordDelta / recordMutationsBatch / the photo endpoints, none of which
+// restricted the charset. A caller could pick a requestId equal to a future cascade id: the sweep's
+// unconditional `set` would then overwrite that (their own) audit entry, or the sweep's entry would make
+// their write answer as an idempotent replay. The prefix is therefore RESERVED: every endpoint that takes a
+// client requestId rejects it (400 invalid-request-id).
+function isReservedAuditId(id) {
+    return typeof id === "string" && id.indexOf(CASCADE_AUDIT_PREFIX) === 0;
+}
+
+// Deletes every stock_batch of one deleted product, one audit entry per batch (Q-BC-2 A), in chunks
+// of at most SWEEP_CHUNK docs, each chunk ONE atomic commit. io (async, injected):
+//   listBatches(productId) -> [{id, data}]   server-side query: tenants/{t}/stock_batches where
+//                                            productId == id. The tenant is bound in the io, which
+//                                            comes from the marker's doc PATH.
+//   commitChunk(entries)                     entries: [{batchId, auditId, audit}]; deletes each batch
+//                                            doc and sets each audit doc in ONE write batch. The
+//                                            binding adds serverTimestamp to every audit entry.
+// `actor` = {actorUid, actorRole, requestId} from the marker; absent => "system" / no back-link.
+// Defence in depth: docs whose own productId differs are skipped even if the query returned them
+// (a wrong query must never delete another product's cost layers). Throws on any io failure: the
+// caller (sweepMarker) keeps the marker and retries. Returns the number of batches deleted.
+async function sweepStockBatches(io, tenantId, productId, actor) {
+    const a = actor || {};
+    const found = await io.listBatches(productId);
+    const docs = (found || []).filter((d) => d && d.data && d.data.productId === productId);
+    for (let i = 0; i < docs.length; i += SWEEP_CHUNK) {
+        const entries = docs.slice(i, i + SWEEP_CHUNK).map((d) => ({
+            batchId: d.id,
+            auditId: buildCascadeAuditId(productId, d.id),
+            audit: {
+                entryId: buildCascadeAuditId(productId, d.id),
+                tenantId: tenantId,
+                actorUid: _strOrNull(a.actorUid) || "system",
+                actorRole: _strOrNull(a.actorRole) || "system",
+                action: "delete",
+                entity: "stock_batch",
+                entityId: d.id,
+                before: d.data,
+                after: null,
+                clientTimestamp: null,
+                requestId: buildCascadeAuditId(productId, d.id),
+                cascadeOf: _strOrNull(a.requestId)
+            }
+        }));
+        await io.commitChunk(entries);
+    }
+    return docs.length;
+}
+
 // Sweeps one marker. deps (all async, injected):
 //   productExists(productId) -> boolean   re-read of tenants/{t}/inventory/{p}
+//   sweepBatches(productId, actor)        deletes the product's stock_batches + audits (BC1, via
+//                                         sweepStockBatches); REQUIRED, a missing dep fails the
+//                                         sweep loudly instead of silently skipping money data
 //   deleteFiles(prefix)                   bucket.deleteFiles({prefix, force:true})
 //   deleteMarker()                        removes the marker doc
 //   updateMarker(patch)                   merge-writes {attempts, lastError} onto the marker
 // `tenantId` comes from the marker's doc PATH, never from its body. `marker` carries
-// {productId, envPrefix, prefix, attempts}.
+// {productId, envPrefix, prefix, attempts} plus optional {actorUid, actorRole, requestId} (absent on
+// markers written by #113: swept with actor "system").
 // Never throws. Returns {ok:true, swept:true} | {ok:true, dropped:true} (id reused, nothing swept)
 // | {ok:false, error}. On any failure the marker is kept with attempts+1 and a truncated lastError;
 // the attempts cap (Q12) is enforced by the PH3b scheduler, not here.
@@ -113,6 +191,16 @@ async function sweepMarker(deps, tenantId, marker) {
         return { ok: true, dropped: true };
     }
 
+    // Batches first: they carry the money. Order vs the Storage prefix matters little; each step is
+    // idempotent and a failure of either keeps the marker.
+    try {
+        await deps.sweepBatches(m.productId, {
+            actorUid: m.actorUid, actorRole: m.actorRole, requestId: m.requestId
+        });
+    } catch (e) {
+        return fail(e);
+    }
+
     try {
         await deps.deleteFiles(expected);
     } catch (e) {
@@ -129,5 +217,10 @@ module.exports = {
     buildMarker,
     evaluateUploadPreflight,
     sweepMarker,
+    sweepStockBatches,
+    buildCascadeAuditId,
+    isReservedAuditId,
+    CASCADE_AUDIT_PREFIX,
+    SWEEP_CHUNK,
     MAX_LAST_ERROR_CHARS
 };

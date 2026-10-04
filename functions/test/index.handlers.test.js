@@ -514,6 +514,18 @@ const CASCADE_PREFIX = "test/tenants/" + CASCADE_TENANT + "/products/PRD-1/";
 const MARKER_PATH = "tenants/" + CASCADE_TENANT + "/pending_cleanup/PRD-1";
 const PRODUCT_PATH = "tenants/" + CASCADE_TENANT + "/inventory/PRD-1";
 
+const BATCH_COLL = "tenants/" + CASCADE_TENANT + "/stock_batches";
+const OTHER_BATCH_COLL = "tenants/other-tenant/stock_batches";
+function batchRows(n, productId, prefix) {
+    return Array.from({ length: n }, (_, i) => ({
+        id: prefix + i, data: { batchId: prefix + i, productId: productId, qtyRemaining: i + 1 }
+    }));
+}
+function batchIds(coll) { return (mockState.collections[coll] || []).map((d) => d.id); }
+function auditPaths() {
+    return Object.keys(mockState.docs).filter((k) => k.indexOf("/audit_log/cascade~") >= 0).sort();
+}
+
 function cascadeReset(opts) {
     const o = opts || {};
     mockState.docs = {};
@@ -526,7 +538,20 @@ function cascadeReset(opts) {
     mockState.storageBucketError = null;
     mockState.docDeleteCalls = [];
     mockState.docDeleteError = null;
+    // BC1: stock_batches the sweep must find. PRD-1 has 3 (to be swept); PRD-10 and another tenant's
+    // PRD-1 must survive.
+    mockState.collections = {};
+    mockState.batchCommits = [];
+    mockState.batchCommitError = null;
+    mockState.collectionGetError = null;
+    mockState.collectionGetCalls = [];
+    mockState.collections[BATCH_COLL] = batchRows(3, "PRD-1", "B1-").concat(batchRows(1, "PRD-10", "O-"));
+    mockState.collections[OTHER_BATCH_COLL] = batchRows(1, "PRD-1", "T2-");
     seedHappyPathAuth(mockState, { tenantId: CASCADE_TENANT, role: o.role });
+    if (o.role === "") { // seedHappyPathAuth maps "" to owner; force a truly empty role
+        mockState.docs["users/test-uid"].role = "";
+        mockState.docs["tenants/" + CASCADE_TENANT + "/members/test-uid"].role = "";
+    }
     // Stand-in for what the (mocked) transaction would have committed.
     if (o.marker !== false) {
         mockState.docs[MARKER_PATH] = { productId: "PRD-1", envPrefix: "test", prefix: CASCADE_PREFIX, attempts: 0, lastError: null };
@@ -697,12 +722,238 @@ test("F28 id reuse: product recreated before the sweep runs -> marker dropped, p
     assert.equal(Object.keys(mockState.storageFiles).length, 3, "new product's photos intact");
 });
 
-test("F30 staff-role inventory delete behaves as today (no new role gate; pinned) and still sweeps", async () => {
+test("BC-H01 F30 replaced: staff / manager / empty role inventory delete -> 403 role-not-allowed (Q-BC-8), zero writes, nothing swept", async () => {
+    for (const role of ["staff", "manager", "", "OWNER", "viewer"]) {
+        cascadeReset({ role: role });
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+        assert.equal(res.statusCode, 403, JSON.stringify(role));
+        assert.equal(jsonBody(res).error, "role-not-allowed");
+        assert.equal(mockState.applyMutationCalls.length, 0, "gate runs before any transaction");
+        assert.equal(mockState.batchCommits.length, 0);
+        assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+        assert.equal(mockState.docDeleteCalls.length, 0);
+        assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"], "batches intact");
+        assert.equal(Object.keys(mockState.storageFiles).length, 3, "photos intact");
+        assert.ok(mockState.docs[MARKER_PATH], "pre-existing marker untouched");
+    }
+});
+
+test("BC-H02 owner and admin inventory delete -> 200 and swept", async () => {
+    for (const role of ["owner", "admin"]) {
+        cascadeReset({ role: role });
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+        assert.equal(res.statusCode, 200, role);
+        assert.deepEqual(batchIds(BATCH_COLL), ["O-0"], role);
+    }
+});
+
+test("BC-H03 gate runs BEFORE the prefix build: staff delete with an unsafe id is 403, not 400", async () => {
     cascadeReset({ role: "staff" });
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody({ entityId: "a/b" }) }), res);
+    assert.equal(res.statusCode, 403);
+});
+
+test("BC-H04 gate is scoped: staff may still delete stock_batch / order / supplier and update or create inventory", async () => {
+    const cases = [
+        { entity: "stock_batch", action: "delete", after: null },
+        { entity: "order", action: "delete", after: null },
+        { entity: "supplier", action: "delete", after: null },
+        { entity: "inventory", action: "update", after: { name: "x" } },
+        { entity: "inventory", action: "create", after: { name: "x" } }
+    ];
+    for (const c of cases) {
+        cascadeReset({ role: "staff" });
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody(c) }), res);
+        assert.equal(res.statusCode, 200, c.entity + "/" + c.action);
+        assert.equal(mockState.batchCommits.length, 0, "no sweep: " + c.entity + "/" + c.action);
+    }
+});
+
+test("BC-H05 owner delete: the sweep deletes exactly this product's batches in this tenant", async () => {
+    cascadeReset();
     const res = mockRes();
     await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
     assert.equal(res.statusCode, 200);
+    assert.deepEqual(batchIds(BATCH_COLL), ["O-0"], "PRD-1's 3 batches gone, PRD-10's survives");
+    assert.deepEqual(batchIds(OTHER_BATCH_COLL), ["T2-0"], "other tenant's PRD-1 batch untouched");
+    assert.equal(mockState.batchCommits.length, 1);
+    assert.equal(mockState.batchCommits[0].length, 6, "3 deletes + 3 audit sets in ONE write batch");
+    assert.equal(mockState.docs[MARKER_PATH], undefined, "marker removed after a clean sweep");
+});
+
+test("BC-H06 sweep audit: one entry per batch, deterministic id, actor from the delete request, cascadeOf back-link", async () => {
+    cascadeReset();
+    const body = deleteBody({ requestId: "del-req-A" });
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: body }), res);
+    const auditRoot = "tenants/" + CASCADE_TENANT + "/audit_log/";
+    assert.deepEqual(auditPaths(), [
+        auditRoot + "cascade~PRD-1~B1-0", auditRoot + "cascade~PRD-1~B1-1", auditRoot + "cascade~PRD-1~B1-2"
+    ]);
+    const a = mockState.docs[auditRoot + "cascade~PRD-1~B1-1"];
+    assert.deepEqual(a, {
+        entryId: "cascade~PRD-1~B1-1", tenantId: CASCADE_TENANT, actorUid: "test-uid", actorRole: "owner",
+        action: "delete", entity: "stock_batch", entityId: "B1-1",
+        before: { batchId: "B1-1", productId: "PRD-1", qtyRemaining: 2 }, after: null,
+        clientTimestamp: null, requestId: "cascade~PRD-1~B1-1", cascadeOf: "del-req-A",
+        serverTimestamp: "MOCK_SERVER_TIMESTAMP"
+    });
+});
+
+test("BC-H07 handler passes the delete's actor and requestId into the sweep (cascadeOf comes from the MARKER, not the request)", async () => {
+    cascadeReset({ role: "admin" });
+    mockState.docs[MARKER_PATH] = Object.assign({}, mockState.docs[MARKER_PATH], { requestId: "marker-req" });
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody({ requestId: "del-req-B" }) }), res);
+    const p = mockState.applyMutationCalls[0];
+    assert.equal(p.actorUid, "test-uid");
+    assert.equal(p.actorRole, "admin");
+    assert.equal(p.requestId, "del-req-B");
+    const a = mockState.docs["tenants/" + CASCADE_TENANT + "/audit_log/cascade~PRD-1~B1-0"];
+    assert.equal(a.actorUid, "test-uid");
+    assert.equal(a.actorRole, "admin");
+    assert.equal(a.cascadeOf, "del-req-B", "handler builds the sweep marker from the live request");
+});
+
+test("BC-H08 CAS 409: batches NOT touched, no audit, no commit (the destroy-before-ack bug, server side)", async () => {
+    cascadeReset({ marker: false });
+    mockState.applyMutationResult = { ok: false, status: 409, conflict: true, current: { name: "server" } };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 409);
+    assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"]);
+    assert.equal(mockState.batchCommits.length, 0);
+    assert.equal(auditPaths().length, 0);
+    assert.equal(mockState.collectionGetCalls.length, 0, "no query at all");
+});
+
+test("BC-H09 idempotent replay: NO sweep (Q-BC-9 = no, PH3b is the retry path); batches stay", async () => {
+    cascadeReset();
+    mockState.applyMutationResult = { ok: true, idempotentReplay: true };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"]);
+    assert.equal(mockState.batchCommits.length, 0);
+    assert.equal(mockState.collectionGetCalls.length, 0);
+});
+
+test("BC-H10 batch query fails -> still 200, marker kept (attempts 1, lastError), batches intact, Storage NOT swept", async () => {
+    cascadeReset();
+    mockState.collectionGetError = new Error("query unavailable");
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    const marker = mockState.docs[MARKER_PATH];
+    assert.equal(marker.attempts, 1);
+    assert.equal(marker.lastError, "query unavailable");
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0, "failed batch step stops the pass");
+    assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"]);
+});
+
+test("BC-H11 write-batch commit fails -> still 200, marker kept, nothing deleted, no audit written, Storage NOT swept", async () => {
+    cascadeReset();
+    mockState.batchCommitError = new Error("commit unavailable");
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.docs[MARKER_PATH].attempts, 1);
+    assert.equal(mockState.docs[MARKER_PATH].lastError, "commit unavailable");
+    assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"], "delete + audit are one commit: all or nothing");
+    assert.equal(auditPaths().length, 0);
+    assert.equal(mockState.storageDeleteFilesCalls.length, 0);
+});
+
+test("BC-H12 retry after a failed sweep finishes the job and never duplicates the audit (deterministic ids)", async () => {
+    cascadeReset();
+    mockState.batchCommitError = new Error("commit unavailable");
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), mockRes());
+    assert.equal(auditPaths().length, 0);
+    mockState.batchCommitError = null;
+    // a later pass over the surviving marker (same code path the PH3b scheduler will call)
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), mockRes());
+    assert.deepEqual(batchIds(BATCH_COLL), ["O-0"]);
+    assert.equal(auditPaths().length, 3, "exactly one audit entry per batch");
+    assert.equal(mockState.docs[MARKER_PATH], undefined);
+});
+
+test("BC-H13 id reuse: product re-created before the sweep -> NO batch deleted, no audit, marker dropped", async () => {
+    cascadeReset();
+    mockState.docs[PRODUCT_PATH] = { name: "Recreated" };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"], "the NEW product's batches survive");
+    assert.equal(mockState.batchCommits.length, 0);
+    assert.equal(mockState.docs[MARKER_PATH], undefined);
+});
+
+test("BC-H14 product with zero batches: no commit, photos still swept, marker removed", async () => {
+    cascadeReset();
+    mockState.collections[BATCH_COLL] = batchRows(1, "PRD-10", "O-");
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockState.batchCommits.length, 0);
     assert.equal(mockState.storageDeleteFilesCalls.length, 1);
+    assert.equal(mockState.docs[MARKER_PATH], undefined);
+});
+
+test("BC-H15 250 batches -> 3 commits of 100/100/50 docs (200/200/100 ops), all gone, 250 audit entries", async () => {
+    cascadeReset();
+    mockState.collections[BATCH_COLL] = batchRows(250, "PRD-1", "M-").concat(batchRows(2, "PRD-10", "O-"));
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(mockState.batchCommits.map((c) => c.length), [200, 200, 100]);
+    assert.deepEqual(batchIds(BATCH_COLL), ["O-0", "O-1"]);
+    assert.equal(auditPaths().length, 250);
+});
+
+test("BC-H16 sweep order: batches are committed before the Storage prefix is deleted", async () => {
+    cascadeReset();
+    const order = [];
+    const prevDeleteFiles = mockState.storageDeleteFilesCalls;
+    mockState.storageDeleteFilesCalls = { push: (c) => { order.push("files:" + mockState.batchCommits.length); prevDeleteFiles.push(c); } };
+    const res = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
+    mockState.storageDeleteFilesCalls = prevDeleteFiles;
+    assert.deepEqual(order, ["files:1"], "Storage delete ran only after the (single) batch commit");
+});
+
+test("BC-H17 MONKEY recordMutation: 200 random role/entity/action/id combos -> batches deleted only for owner|admin inventory delete with a safe id", async () => {
+    const roles = ["owner", "admin", "manager", "staff", "", "owner"];
+    const entities = ["inventory", "stock_batch", "order", "supplier", "inventory", "staff"];
+    const actions = ["create", "update", "delete", "delete", "delete"];
+    const ids = ["PRD-1", "PRD-1", "a/b", "..", "x y", "PRD-1"];
+    let seed = 7;
+    const rnd = (n) => { seed = (seed * 1664525 + 1013904223) % 4294967296; return Math.floor((seed / 4294967296) * n); };
+    for (let i = 0; i < 200; i++) {
+        const role = roles[rnd(roles.length)];
+        const entity = entities[rnd(entities.length)];
+        const action = actions[rnd(actions.length)];
+        const id = ids[rnd(ids.length)];
+        cascadeReset({ role: role });
+        const res = mockRes();
+        await handlers.recordMutation(mockReq({ body: deleteBody({ entity: entity, action: action, entityId: id, after: action === "delete" ? null : { a: 1 } }) }), res);
+        const safe = /^[A-Za-z0-9_-]{1,64}$/.test(id);
+        const privileged = role === "owner" || role === "admin";
+        const productDelete = entity === "inventory" && action === "delete";
+        const tag = [role, entity, action, id].join("/");
+        if (productDelete && privileged && safe) {
+            assert.equal(res.statusCode, 200, tag);
+            assert.deepEqual(batchIds(BATCH_COLL), ["O-0"], tag);
+        } else {
+            assert.deepEqual(batchIds(BATCH_COLL), ["B1-0", "B1-1", "B1-2", "O-0"], "never swept: " + tag);
+            assert.equal(mockState.batchCommits.length, 0, tag);
+        }
+        const gated = ((entity === "staff" && action === "delete") || entity === "removed_staff" || productDelete) && !privileged;
+        if (gated) assert.equal(res.statusCode, 403, tag);
+    }
 });
 
 test("F41 delete of a server-absent product with non-null before -> 409 conflict, current null, no marker, no sweep (Q13 pin)", async () => {
@@ -744,4 +995,19 @@ test("MONKEY recordMutation: 200 random entity/action/id combos never sweep unle
             assert.equal(mockState.storageDeleteFilesCalls.length, 0, entity + "/" + action + "/" + id);
         }
     }
+});
+
+test("RES-H1 recordMutation / recordDelta: a requestId in the reserved cascade namespace -> 400 invalid-request-id, zero writes (PR #118 review)", async () => {
+    cascadeReset();
+    const r1 = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody({ entity: "stock_batch", entityId: "B1-0", before: {}, requestId: "cascade~PRD-1~B1-0" }) }), r1);
+    assert.equal(r1.statusCode, 400);
+    assert.equal(jsonBody(r1).error, "invalid-request-id");
+    const r2 = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({ requestId: "cascade~PRD-1~B1-0" }) }), r2);
+    assert.equal(r2.statusCode, 400);
+    assert.equal(jsonBody(r2).error, "invalid-request-id");
+    assert.equal(mockState.applyMutationCalls.length, 0);
+    assert.equal(mockState.batchCommits.length, 0);
+    assert.equal(mockState.setCalls.length, 0);
 });

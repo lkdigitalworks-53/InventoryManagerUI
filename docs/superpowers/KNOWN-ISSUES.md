@@ -586,7 +586,17 @@ server upload path is NOT at fault: it 404s on a missing product.
 **Fixed (branch `fix/2026-10-04-pr113-upload-delete-race`):** removed the client photo loop; photos are removed only by the server
 sweep after a committed delete. Pinned by e2e `test_stale_delete_409_keeps_the_product_and_every_photo`.
 
-**Still open, same family (decide before PH4):**
+**BC1 (server) implemented 2026-10-05 (branch `feat/2026-10-05-bc1-server-batch-sweep`, not yet deployed):** after a committed
+product delete the server now also removes the product's `stock_batches` (queried server side by `productId`, chunks of 100,
+one `cascade~{productId}~{batchId}` audit entry per batch) before it sweeps the Storage prefix, driven by the same
+`pending_cleanup` marker. The marker now carries `actorUid`/`actorRole`/`requestId`. `recordMutation` gained an owner/admin gate
+on `inventory` delete (403 `role-not-allowed`). Items 1-3 below stay open until BC2 (client) lands AND BC1 is deployed.
+**New limits created by BC1:** (a) a failed batch sweep leaves the marker and WAITS for PH3b (no replay re-sweep, Q-BC-9 = no);
+batches are money data, so PH3b must not silently abandon a capped marker. (b) Until BC2 ships, an old client still sends its own
+`stock_batch` deletes; they answer 409 `current: null` after the sweep (harmless, no toast). (c) A direct token call by
+manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #118 review C1: the `cascade~` audit-id prefix is reserved (400 `invalid-request-id`); `recordMutation` / `recordDelta` still do NOT validate the rest of `requestId` / `entityId` (no `/` or length check, unlike `operationLogic.isSafeDocId`): pre-existing, flagged here, fix on its own branch.
+
+**Still open, same family (items 1-3 close with BC2; decide before PH4):**
 1. Batch deletes are sent before the product delete is acked -> after a 409 the product has no stock batches. Options: (a) gate
    batch deletes on a Gateway "applied" signal (new ack plumbing, per-mutation); (b) one atomic `recordOperation` for product +
    batches (the delete roadmap item, larger, also removes the `photoIds` CAS problem); (c) accept for dev. (b) is correct, (a) is a patch.
