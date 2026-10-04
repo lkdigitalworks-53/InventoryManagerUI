@@ -1,6 +1,6 @@
 # Product photos — pending items: PH3 (server), PH4 (client), PH5 (remove legacy `photoUrl`) — design
 
-**Status:** design only. Decisions Q1-Q11 taken by Taher 2026-09-30, Q12-Q15 on 2026-10-01 after the PR #108 review (ledger below). No code written. PH3 (server) can start once PR #108 merges. **PH3b (scheduled cleanup function) design is decided except Q-I** (Blaze/Cloud Scheduler plan and who deploys), see its section; PH3 does not depend on it.
+**Status:** design only. Decisions Q1-Q11 taken by Taher 2026-09-30, Q12-Q15 on 2026-10-01 after the PR #108 review (ledger below). No code written. PH3 (server) can start once PR #108 merges. **PH3b (scheduled cleanup function): design v2 reviewed 2026-10-05, ready for implementation once Q-J/Q-K/Q-L are answered (defaults adopted); v1 schema superseded**, see its section; PH3 does not depend on it.
 **Slice labels:** PH3/PH4/PH5 (renamed from S3/S4/S5 on 2026-10-01: the stuck-writes workstream already owns `S3`, #109).
 **Checkpoint / evidence trail:** `2026-09-30-photos-pending-design-CHECKPOINT.md` (every code claim here was read on `main` @ `0d77f9a`; on 2026-10-01 `functions/`, `firestore.rules`, `storage.rules` re-checked unchanged on `main` @ `52776d7`, only client files moved; items marked UNVERIFIED were not).
 **Test plan:** `../test-plans/2026-09-30-photos-ph3-s4-s5-test-plan.md`.
@@ -25,7 +25,7 @@ Dev env only, no production, no backward compatibility, every PR tested on a NEW
 | Q9 | N1 photo id | **`Qt.uuid()` minus braces** (Q10a amendment) + **server whitelist** `[A-Za-z0-9_-]`, length 1-64 | Keep `photo-` prefix (42 chars) |
 | Q10 | Small items | N3: second Skill 66 renamed **Skill 89** (DONE in this session). P1 `FailedTileGeometry.js` keep. D1 keep. L1 fold into PH4 only if <=3 lines. OC dropped. DV goes in the test plan. P2 `setPhoto` goes in PH5 | |
 | Q11 | Inventory delete via batch / ops bypasses the marker | **Reject `inventory`+`delete` in `recordMutationsBatch` and `recordOperation`** via one shared predicate | Upgrade to a shared marker helper when the delete roadmap builds atomic product+batches delete |
-| Q12 | Poison markers (review I1) | **Cap 5 attempts**, then the marker is parked (kept, never auto-deleted, logged) | Chosen by Taher. Mechanics live in PH3b |
+| Q12 | Poison markers (review I1) | **Cap 5 attempts**, then the marker is parked (kept, never auto-deleted, logged) | Chosen by Taher. Mechanics live in PH3b. **Under review 2026-10-05 (Q-J): cap 5 predates money data in the marker; default is now park at 12 with backoff capped at 30 min** |
 | Q13 | Product id not found | **Delete = idempotent on both sides, no server change**: photo delete already works with a missing product (existing code, pin test F40); product delete of a server-absent product gets 409 `current:null` and the client already removes the local row (pin test F41). PH4 fixes the misleading toast | Verified in code 2026-10-01. Upload to a missing product stays 404 with zero Storage writes (Q1) |
 | Q14 | Slice names | **PH3 / PH4 / PH5 (+ PH3b)** | Collision with stuck-writes S3 |
 | Q15 | Scheduler timing | **PH3b is its own session**, needs error + response handling designed | PH3 ships without a drain: failed sweeps wait for PH3b (dev only, accepted) |
@@ -82,21 +82,69 @@ A separate `match /pending_cleanup/{docId} { allow ...: if false; }` is NOT enou
 - **P1 stock movements (planned, NOT merged):** its S1a/S1b also edit `applyMutation`, batch and ops (batch cap 200->150, ops write budgets). Expect merge conflicts in `gatewayLogic.js`; the two changes are independent. Q11 means no marker writes in batch/ops, so P1's write-budget arithmetic is unaffected. Single path gains one write per inventory delete (marker).
 - **F5 stays:** strict `before` compare including `photoIds` at all three sites. Add one pin test documenting it.
 
-## PH3b — scheduled cleanup function (own session, design decided except Q-I)
-Replaces the piggyback drain (Q6 amended). Taher: separate session, must handle scheduler errors and response handling. Proposal below was accepted as written (Q-E to Q-H); Q-I open:
+## PH3b — scheduled cleanup function (design v2, reviewed 2026-10-05; READY once Q-J / Q-K / Q-L are answered)
 
-**Facts verified 2026-10-01:** no scheduled function exists in `functions/index.js` today; `firestore.indexes.json` is empty; marker lives at `tenants/{t}/pending_cleanup/{productId}`, so finding markers across tenants needs a **collection-group query**, per Firestore database (`DATABASE_ID_FOR_ENV`: `dev1`, `test`, `(default)`). Cloud Scheduler needs the Blaze plan (UNVERIFIED for this project; Storage use suggests yes). A scheduled function has no HTTP caller: "response handling" means structured logs, thrown-vs-swallowed errors and the run summary.
+Replaces the piggyback drain (Q6 amended). v1 (2026-10-01, `nextAttemptAt` schema + collection-group index) is in git history at `7ec2fc6`; the 2026-10-05 review below found it would not work as written. **Nothing is built.** Code facts below were read on `main` @ `7ec2fc6` (functions suite 491/491 green in-session before this change).
 
-**Proposal (not decided):**
-- Marker gets `nextAttemptAt` (initial = commit time + 60 s). Scheduler queries `collectionGroup('pending_cleanup').where('nextAttemptAt','<=',now).orderBy('nextAttemptAt').limit(25)`: one field, range + order on the SAME field, so only a collection-group single-field index exemption in `firestore.indexes.json` is needed, no composite index.
-- Failure: `attempts += 1`, `nextAttemptAt = now + attempts x 10 min`. At `attempts >= 5` (Q12) **park**: delete the `nextAttemptAt` field (an absent field is not indexed, so it leaves the query: no head-of-line starvation), set `parked: true`, keep the doc, log at error severity. Parked markers need a human (console query on `parked == true`).
-- Run every 10 min, `maxInstances: 1`, timeout well under the period. Loop envs independently; per marker try/catch; per env try/catch; one summary log line per env `{env, scanned, swept, droppedIdReuse, failed, parked}`.
-- Errors: per-marker and per-env failures are logged and counted, never abort the run. Throw at the very end only if any env-level failure happened (so the run shows as failed in Cloud Scheduler/Logging). No `retryCount`: the next run is the retry and every step is idempotent.
-- Reuse `sweepMarker` unchanged (id-reuse recheck, prefix guard).
-- Testing: export a pure `runCleanupSweep(deps)` so Node tests drive it with fakes (budget, parking, env isolation, throw-at-end); one emulator e2e calling it directly; real scheduler firing is a DV item (device/real project only).
+### Review ledger (2026-10-05, code read + Firebase docs, NOT run against a real project)
 
-**Decided by Taher 2026-10-01 ("ok" to the advised defaults):** Q-E schema `nextAttemptAt` + park by removing the field (plus `parked: true`). Q-F run every 10 min, linear backoff `attempts x 10 min`, all three envs. Q-G throw only at the end of the run if an env-level failure happened, never for per-marker failures. Q-H keep the immediate awaited post-commit sweep in the delete handler.
-**Q-I ANSWERED 2026-10-03 (Taher): (1) project is on Blaze, scheduled functions allowed; (2) Taher deploys functions MANUALLY (no CI deploy). PH3b is UNBLOCKED. Consequences to design for: the scheduled function does not exist until Taher runs the deploy; first deploy of a scheduled function enables Cloud Scheduler/Pub/Sub APIs (CLI prompts); verify Scheduler free-tier job quota in the console, not from memory; record every manual deploy in the checkpoint so deployed != main drift is visible.** (Original question, kept for history:) (1) Is the Firebase project on Blaze with Cloud Scheduler allowed? Storage use suggests yes, UNVERIFIED. (2) Who deploys functions: CI or manual? PH3b implementation must not start until Q-I is answered; PH3 does not depend on it.
+| ID | Sev | Finding | Resolution in v2 |
+|---|---|---|---|
+| P1 | High | v1 queries `where('nextAttemptAt','<=',now)`. Markers written by PR #113 / BC1 have no such field (`photoCleanup.buildMarker` writes `createdAt, attempts, lastError` + actor fields only). A Firestore range filter excludes docs lacking the field, so the failed markers PH3b exists to rescue would never be returned | No new schedule field. Due time is computed in code from fields EVERY marker has (`createdAt`, `attempts`) plus one new failure-time field (`lastAttemptAtMs`) |
+| P2 | High | v1 needs a collection-group single-field index. (a) Collection-group indexes are not automatic (Firebase docs: filtered/ordered collection-group queries need an index with collection-group scope). (b) `firebase.json` has ONE `firestore` object with no `database` key, so `firebase deploy --only firestore:indexes` targets `(default)` only; README says `dev1`/`test` rules are applied by hand per database. (c) The emulator-based CI would not prove the index exists (UNVERIFIED but widely stated; treat as unproven) | No index. Per Firebase docs a collection-group query that neither filters nor orders needs no index. Read all markers (`limit(MAX_SCAN)`), filter in code. Markers exist only for failed/crashed sweeps, so the read is tiny. No `firestore.indexes.json` or `firebase.json` change |
+| P3 | High | `index.js` `sweepProductCleanup.updateMarker` is `markerRef.set(patch, {merge:true})`. `set`+merge on a deleted doc RE-CREATES it as `{attempts, lastError}` with no `productId`/`prefix`/`envPrefix`. Today only one sweeper exists so it is dormant. With PH3b the handler sweep and the scheduler can overlap: one succeeds and deletes the marker, the other fails and resurrects a zombie that fails `unsafe-sweep-prefix` forever and ends parked | `updateMarker` becomes `markerRef.update(patch)` (rejects NOT_FOUND on a deleted doc; `sweepMarker.fail` already swallows that). Regression test needs the handler harness to grow `update` (it has none today) |
+| P4 | Med | Q12 (cap 5, ~100 min of linear backoff then parked) was chosen for photos only. Since BC1 the marker also carries money data (batches). A Storage/Firestore outage of a few hours would park markers and need a human | Q-J below |
+| P5 | Med | No timeout/budget in v1 ("timeout well under the period"). One marker with 1000 batches is 10 commits + a Storage delete | `timeoutSeconds: 300`, `budgetMs: 240000` checked before each marker, remainder `deferred` to the next run (`maxInstances: 1`, 10 min cadence: no overlap) |
+| P6 | Med | v1 grace "commit + 60 s" equals the HTTP handler's default timeout (no `timeoutSeconds` set on `recordMutation`, so Cloud Functions default; UNVERIFIED in console). `createdAt` is set a second or two into the request, so a 60 s grace can overlap a still-running handler sweep | Fresh-marker grace is 90 s |
+| P7 | Med | Cross-env safety: the scheduler reads three databases but Storage is ONE shared bucket. A `prd`-prefixed marker found in the `dev1` database must never delete `prd/...` objects | `selectDue` rejects a marker whose `envPrefix` differs from `storageEnvPrefix(env being scanned)` as malformed (parked, never swept) |
+| P8 | Low | A collection-group query on `pending_cleanup` returns matches at ANY depth, and tenant/product come from the doc body unless forced | Tenant and product id come from the doc PATH only (`parseMarkerPath`, regex + `isSafePathSegment`); body `productId` must equal the path id or the marker is malformed |
+| P9 | Low | A thrown run error is the only signal Cloud Scheduler shows; per-marker failures never throw (Q-G), so the job shows green while every marker fails. No alerting exists in the project | Q-L below |
+| P10 | Low | Overlapping sweeps both write `attempts + 1` from the same read: undercount by one | Accepted: the cap is soft. Audit ids are deterministic (`cascade~{p}~{b}`) and deletes of missing docs are no-ops, so overlap duplicates nothing (read in `buildCascadeAuditId` / `commitChunk`) |
+
+BC-design "PH3b implications" 1-6 are all covered: (1) the scheduler reuses `index.js` `sweepProductCleanup` as-is (it binds `sweepBatches`); (2) capped markers are parked visibly, never deleted; (3) overlap safe, see P3/P10; (4) old markers sweep as `system`; (5) crashed-sweep case = test U-R-crash; (6) the scheduler takes no client `requestId`.
+
+### Decision ledger
+
+| Q | Question | Status |
+|---|---|---|
+| Q-E | v1: `nextAttemptAt` + park by removing the field | **SUPERSEDED by Q-K** (reason: P1, P2). Taher's 2026-10-01 "ok" was given to a proposal that had these defects |
+| Q-F | Run every 10 min, all three envs | kept. Backoff shape changes under Q-J |
+| Q-G | Throw only at the end, only for env-level failures | kept |
+| Q-H | Keep the immediate awaited post-commit sweep | kept |
+| Q-I | Blaze + manual deploy | answered 2026-10-03 |
+| **Q-J** | Backoff and park cap. **(a) keep v1: delay `attempts x 10 min`, park at 5 (~100 min)** vs **(b) recommended: delay `min(attempts,3) x 10 min` (10, 20, 30, 30 ...), park at 12 (~5 h)** | **OPEN. Default adopted for the plan: (b).** Cost of (b): a poisoned marker retries ~12 times (12 cheap runs) before a human is told. Cost of (a): one Storage outage > 100 min leaves money batches waiting on a human. `PARK_AT` is a constant; tests import it, so switching is one line |
+| **Q-K** | Schedule by (a) **recommended: in-code due time from `createdAt`/`attempts`/`lastAttemptAtMs`, unfiltered collection-group read, no index** vs (b) v1 `nextAttemptAt` + index exemption + per-database index deploy + one-off backfill of existing markers | **OPEN. Default adopted: (a).** (a) trade-off: every non-deleted marker (incl. parked) is read each run, capped at `MAX_SCAN = 500`; fine while markers are rare, revisit if parked markers pile up. (b) trade-off: needs `firebase.json` multi-database indexes or manual console steps in 3 databases, and a backfill; CI cannot prove either |
+| **Q-L** | Alerting on `parked`/errors. (a) **recommended now: none, runbook = console query `parked == true` + Logs Explorer severity ERROR; recorded as a PRODUCTION-publish blocker** vs (b) one log-based alert policy in Cloud Monitoring (console config, no code) | **OPEN. Default adopted: (a).** Honest note: with (a) a parked money marker is invisible unless someone looks |
+
+### Design v2
+
+**Marker fields.** Unchanged at write time (`buildMarker`, `applyMutation` and the delete handler are NOT touched). New fields are written only by the sweeper: on failure `lastAttemptAtMs` (number, from `deps.now()`), on park `parked: true`, `parkedAtMs`.
+
+**Due rule (pure).** `dueAtMs = (lastAttemptAtMs ?? createdAtMs) + delayMs(attempts)`; `delayMs(a) = 90_000` for `a <= 0` or a non-number, else `min(a, 3) x 600_000`. Due when `nowMs >= dueAtMs`. `parked === true` is skipped. Due markers are processed oldest `dueAtMs` first (the budget then favours the longest-waiting).
+
+**New pure functions in `lib/photoCleanup.js`:** `parseMarkerPath(path)` -> `{tenantId, productId} | null`; `delayMs(attempts)`; `selectDue(markers, nowMs, expectedEnvPrefix)` -> `{due, notDue, parked, malformed}` (never throws; the four groups partition the input); `runCleanupSweep(deps)`; constants `GRACE_MS`, `BACKOFF_STEP_MS`, `BACKOFF_STEPS`, `PARK_AT`, `MAX_SCAN`, `RUN_BUDGET_MS`. `sweepMarker` gains `lastAttemptAtMs: deps.now()` in its failure patch (`deps.now` optional, defaults to `Date.now`).
+
+**`runCleanupSweep(deps)`.** deps: `envs`, `listMarkers(env) -> [{path, data, createdAtMs}]`, `sweep(env, tenantId, marker) -> sweepMarker result`, `park(env, tenantId, productId, reason)`, `now()`, `log(severity, obj)`. For each env in its own try/catch: list, `selectDue`, park every malformed marker at once (reason `malformed-marker: ...`, never swept), then sweep due markers one at a time, each in its own try/catch, stopping new work when `now() - start >= RUN_BUDGET_MS` (rest counted `deferred`). After a failed sweep, if `attempts + 1 >= PARK_AT` call `park`. A `park` that throws is logged and counted `failed`; the run continues. One summary per env `{env, scanned, swept, droppedIdReuse, failed, parked, malformed, notDue, deferred, backlog, error}` (`backlog: true` when the read hit `MAX_SCAN`, also logged at ERROR). Returns `{envs, envFailures}`.
+
+**Binding in `index.js`.**
+```
+exports.cleanupPendingMarkers = onSchedule(
+  { schedule: "every 10 minutes", region: "asia-south1", timeoutSeconds: 300, maxInstances: 1, retryCount: 0 },
+  async () => { const out = await runCleanupSweep(<bound deps>); if (out.envFailures > 0) throw new Error(...); });
+```
+`listMarkers` = `scopedDb(env).collectionGroup("pending_cleanup").limit(MAX_SCAN).get()`. `sweep` = existing `sweepProductCleanup(scopedDb(env), tenantId, {...data, productId: <from path>})`. `park` = `markerRef.update({parked:true, parkedAtMs, lastError})` plus `console.error`. `firebase-functions/v2/scheduler` `onSchedule` and `ScheduleFunction.run()` were confirmed present in the installed SDK; `maxInstances` is inherited from `GlobalOptions` (type-level only; confirm at first deploy).
+
+**Errors and response handling.** Per-marker failure: marker kept, counted. Per-env failure (cannot read, database missing): counted in `envFailures`, other envs still run. End of run: throw only if `envFailures > 0` (the run then shows failed in Cloud Scheduler / Logging). `retryCount: 0` explicit: the next run is the retry and every step is idempotent. Parked markers are NEVER deleted by code. **Un-park runbook:** in the console set `parked` to false and `attempts` to 0 on the marker (it is swept on the next run).
+
+**Deploy facts (Taher deploys manually).** Deploy ALL functions, not only the new one: the P3 fix lives in `recordMutation`'s shared module, and a scheduler-only deploy would leave the handler racy. Record every deploy in the checkpoint (deployed != main drift). First deploy of a scheduled function prompts to enable Cloud Scheduler (and related) APIs. Scheduler location must be available for `asia-south1` (UNVERIFIED, confirm at deploy). Verify the free-tier job quota in the console, not from memory.
+
+**Slices (each small, resumable, own commit).**
+- S-A `photoCleanup.js` pure functions + unit tests (Node, runnable in sandbox).
+- S-B `index.js`: P3 `update` fix, `cleanupPendingMarkers`, harness `update` + `collectionGroup`, functional tests.
+- S-C `test/e2e/cleanupSweep.e2e.test.js` (+ add it to the `node --test` list in `.github/workflows/checks.yml`), docs (AGENTS runbook line, KNOWN-ISSUES, roadmap), no deploy.
+Test plan: `../test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md`.
+
+**Acceptance.** Functions suite green with new tests; new-code line + branch coverage of `lib/photoCleanup.js` 100% (`node --test --experimental-test-coverage`); emulator e2e green on CI; after a manual deploy a seeded stuck marker disappears within two runs on a real project (DV).
 
 ## PH4 — client design
 1. `PhotoQueueLogic.js`: `TERMINAL_STATUS` `{400,413,404,409}` -> add `403`. A 403 goes straight to `failed` (existing Retry/Discard UI). Accepted trade-off: a reactivated suspended member's `no-tenant-context` 403 also needs a manual Retry.
