@@ -49,11 +49,11 @@ async function read(relPath) {
 // One POST. Retries only on a network-level failure (the first call to a
 // function in the emulator can be slow while it loads); retrying is safe here
 // because the endpoint is idempotent per requestId, which is what is under test.
-async function post(body, token) {
+async function post(body, token, endpoint) {
     let lastError;
     for (let attempt = 0; attempt < 4; attempt++) {
         try {
-            const res = await fetch(FUNCTIONS_BASE + "/recordOperation", {
+            const res = await fetch(FUNCTIONS_BASE + (endpoint || "/recordOperation"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (token || fixture.idToken) },
                 body: JSON.stringify(body),
@@ -91,7 +91,11 @@ const stockDelta = (id, n, floors, clamps) => ({ kind: "delta", entity: "invento
 test.after(async () => {
     for (const p of createdPaths) await db.doc(p).delete();
     const audits = await db.collection(T + "audit_log").listDocuments();
-    for (const ref of audits) if (ref.id.startsWith("completeOrder:opE2E")) await ref.delete();
+    for (const ref of audits) {
+        if (ref.id.startsWith("completeOrder:opE2E") || ref.id.startsWith("bcE2E-") || ref.id.startsWith("cascade~bcE2E-")) await ref.delete();
+    }
+    for (const ref of await db.collection(T + "stock_batches").listDocuments()) if (ref.id.startsWith("bcE2E-")) await ref.delete();
+    for (const ref of await db.collection(T + "pending_cleanup").listDocuments()) if (ref.id.startsWith("bcE2E-")) await ref.delete();
 });
 
 test("warm-up: an empty body is a clean 400, not a hang or a 500", async () => {
@@ -235,4 +239,139 @@ test("many concurrent retries of ONE request id apply it exactly once (the C-3 d
     assert.equal(results.filter((r) => r.body.idempotentReplay === false).length, 1, "exactly one real application");
     assert.equal((await read("inventory/opE2E-r1")).stock, 9, "stock dropped once, not six times");
     assert.equal((await read("stock_batches/opE2E-br1")).qtyRemaining, 9);
+});
+
+
+// ---- BC1: product delete cascades to its stock batches on the server (recordMutation) -----------
+// Design: docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md (Q-BC-1 d, Q-BC-8, Q-BC-9).
+// Own ids ("bcE2E-"); no env in the body => "(default)" database and "prd" Storage prefix, the same
+// pair these tests read and write. The photo half of the cascade is covered by tst_ProductPhotosE2E.
+// Not coverable over HTTP: id-reuse and failing-sweep recovery (no way to run a sweep without a
+// delete, no failure injection); those are unit cases BC-H10..BC-H13 / BC-U05..BC-U07 until PH3b.
+const delBody = (productId, before, requestId) => ({
+    entity: "inventory", entityId: productId, action: "delete", requestId: requestId,
+    before: before, after: null, clientTimestamp: "2026-10-05T10:00:00.000Z"
+});
+const mutate = (body, token) => post(body, token, "/recordMutation");
+
+async function seedProductWithBatches(productId, n) {
+    const product = { productId: productId, name: "BC " + productId, stock: 7 };
+    await seed("inventory/" + productId, product);
+    const batches = [];
+    for (let i = 0; i < n; i++) {
+        const b = { batchId: productId + "-b" + i, productId: productId, qtyRemaining: i, unitCost: 2 };
+        batches.push(b);
+        await seed("stock_batches/" + b.batchId, b);
+    }
+    return { product: product, batches: batches };
+}
+
+async function batchesOf(productId) {
+    const snap = await db.collection(T + "stock_batches").where("productId", "==", productId).get();
+    return snap.docs.map((d) => d.id).sort();
+}
+
+async function cascadeAudits(productId) {
+    const refs = await db.collection(T + "audit_log").listDocuments();
+    return refs.map((r) => r.id).filter((id) => id.startsWith("cascade~" + productId + "~")).sort();
+}
+
+test("BC E1: owner deletes a product with 3 batches -> product, batches and marker gone; one audit per batch with actor + back-link", async () => {
+    const { product, batches } = await seedProductWithBatches("bcE2E-p1", 3);
+    await seed("stock_batches/bcE2E-other-b", { batchId: "bcE2E-other-b", productId: "bcE2E-p1x", qtyRemaining: 1 });
+
+    const r = await mutate(delBody("bcE2E-p1", product, "bcE2E-del-1"));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    assert.equal(await read("inventory/bcE2E-p1"), null);
+    assert.deepEqual(await batchesOf("bcE2E-p1"), []);
+    assert.notEqual(await read("stock_batches/bcE2E-other-b"), null, "another product's batch untouched");
+    assert.equal(await read("pending_cleanup/bcE2E-p1"), null, "marker removed after a clean sweep");
+    assert.deepEqual(await cascadeAudits("bcE2E-p1"), batches.map((b) => "cascade~bcE2E-p1~" + b.batchId));
+    const a = await read("audit_log/cascade~bcE2E-p1~bcE2E-p1-b1");
+    assert.equal(a.actorUid, "e2e-owner");
+    assert.equal(a.action, "delete");
+    assert.equal(a.entity, "stock_batch");
+    assert.equal(a.cascadeOf, "bcE2E-del-1");
+    assert.deepEqual(a.before, batches[1]);
+    assert.notEqual(await read("audit_log/bcE2E-del-1"), null, "the product delete's own audit entry exists");
+});
+
+test("BC E2: stale delete (409) keeps the product AND every batch; no marker, no cascade audit", async () => {
+    const { product } = await seedProductWithBatches("bcE2E-p2", 3);
+    const stale = Object.assign({}, product, { stock: 6 }); // server has stock 7
+
+    const r = await mutate(delBody("bcE2E-p2", stale, "bcE2E-del-2"));
+    assert.equal(r.status, 409);
+    assert.equal(r.body.conflict, true);
+
+    assert.deepEqual(await read("inventory/bcE2E-p2"), product);
+    assert.deepEqual(await batchesOf("bcE2E-p2"), ["bcE2E-p2-b0", "bcE2E-p2-b1", "bcE2E-p2-b2"]);
+    assert.equal(await read("pending_cleanup/bcE2E-p2"), null);
+    assert.deepEqual(await cascadeAudits("bcE2E-p2"), []);
+});
+
+test("BC E4: 250 batches -> all removed across 100-doc chunks, 250 audit entries", async () => {
+    const productId = "bcE2E-p4";
+    const product = { productId: productId, name: "BC big", stock: 1 };
+    await seed("inventory/" + productId, product);
+    for (let start = 0; start < 250; start += 100) {
+        const wb = db.batch();
+        for (let i = start; i < Math.min(start + 100, 250); i++) {
+            wb.set(db.doc(T + "stock_batches/bcE2E-p4-b" + i), { batchId: "bcE2E-p4-b" + i, productId: productId, qtyRemaining: 0 });
+        }
+        await wb.commit();
+    }
+    const r = await mutate(delBody(productId, product, "bcE2E-del-4"));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(await batchesOf(productId), []);
+    assert.equal((await cascadeAudits(productId)).length, 250);
+});
+
+test("BC E6: old client sends its per-batch deletes AFTER the sweep -> each is a 409 with current null, nothing written, one audit per batch", async () => {
+    const { product, batches } = await seedProductWithBatches("bcE2E-p6", 2);
+    assert.equal((await mutate(delBody("bcE2E-p6", product, "bcE2E-del-6"))).status, 200);
+
+    for (const b of batches) {
+        const r = await mutate({
+            entity: "stock_batch", entityId: b.batchId, action: "delete", requestId: "bcE2E-old-" + b.batchId,
+            before: b, after: null, clientTimestamp: "2026-10-05T10:00:00.000Z"
+        });
+        assert.equal(r.status, 409, JSON.stringify(r.body));
+        assert.equal(r.body.conflict, true);
+        assert.equal(r.body.current, null);
+        assert.equal(await read("audit_log/bcE2E-old-" + b.batchId), null, "a 409 writes no audit entry");
+    }
+    assert.equal((await cascadeAudits("bcE2E-p6")).length, 2);
+    assert.deepEqual(await batchesOf("bcE2E-p6"), []);
+});
+
+test("BC replay: the same delete request sent twice -> 200 both times, no second sweep, no duplicate audit (Q-BC-9 = no)", async () => {
+    const { product } = await seedProductWithBatches("bcE2E-p7", 2);
+    const body = delBody("bcE2E-p7", product, "bcE2E-del-7");
+    assert.equal((await mutate(body)).status, 200);
+    // a batch another device created after the sweep (the documented late-restock orphan family)
+    await seed("stock_batches/bcE2E-p7-late", { batchId: "bcE2E-p7-late", productId: "bcE2E-p7", qtyRemaining: 3 });
+    assert.equal((await mutate(body)).status, 200);
+    assert.deepEqual(await batchesOf("bcE2E-p7"), ["bcE2E-p7-late"], "replay returns early: it does NOT sweep (PH3b is the retry path)");
+    assert.equal((await cascadeAudits("bcE2E-p7")).length, 2);
+});
+
+test("BC role gate: a staff token cannot delete a product (403), batches and product intact; staff may still delete a stock_batch", async () => {
+    const { product, batches } = await seedProductWithBatches("bcE2E-p8", 2);
+
+    const denied = await mutate(delBody("bcE2E-p8", product, "bcE2E-del-8"), fixture.secondIdToken);
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error, "role-not-allowed");
+    assert.deepEqual(await read("inventory/bcE2E-p8"), product);
+    assert.equal((await batchesOf("bcE2E-p8")).length, 2);
+    assert.equal(await read("pending_cleanup/bcE2E-p8"), null);
+    assert.equal(await read("audit_log/bcE2E-del-8"), null);
+
+    const allowed = await mutate({
+        entity: "stock_batch", entityId: batches[0].batchId, action: "delete", requestId: "bcE2E-sb-8",
+        before: batches[0], after: null, clientTimestamp: "2026-10-05T10:00:00.000Z"
+    }, fixture.secondIdToken);
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+    assert.deepEqual(await batchesOf("bcE2E-p8"), ["bcE2E-p8-b1"]);
 });

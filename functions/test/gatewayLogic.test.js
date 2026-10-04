@@ -567,12 +567,24 @@ test("F19 inventory delete: marker carries prefix, envPrefix, createdAt, attempt
     const marker = db.writes.find((w) => w.path === MARKER_PATH).data;
     assert.deepEqual(marker, {
         productId: "sku-1", envPrefix: "dev1", prefix: "dev1/tenants/tenant-1/products/sku-1/",
-        createdAt: "SERVER_TIMESTAMP_SENTINEL", attempts: 0, lastError: null
+        createdAt: "SERVER_TIMESTAMP_SENTINEL", attempts: 0, lastError: null,
+        actorUid: "uid-1", actorRole: "owner", requestId: "req-1"
     });
     const prd = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
     await GatewayLogic.applyMutation(prd, cascadeParams({
         cleanupEnvPrefix: "prd", cleanupPrefix: "prd/tenants/tenant-1/products/sku-1/" }));
     assert.equal(prd.writes.find((w) => w.path === MARKER_PATH).data.prefix, "prd/tenants/tenant-1/products/sku-1/");
+});
+
+test("BC-G01 inventory delete: marker carries the DELETE's actor and requestId (R2), whatever they are", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+    await GatewayLogic.applyMutation(db, cascadeParams({ actorUid: "uid-77", actorRole: "admin", requestId: "req-xyz" }));
+    const marker = db.writes.find((w) => w.path === MARKER_PATH).data;
+    assert.equal(marker.actorUid, "uid-77");
+    assert.equal(marker.actorRole, "admin");
+    assert.equal(marker.requestId, "req-xyz");
+    const audit = db.writes.find((w) => w.path === "tenants/tenant-1/audit_log/req-xyz").data;
+    assert.equal(marker.requestId, audit.requestId, "marker back-links to the product-delete audit entry");
 });
 
 test("F22 inventory delete: CAS conflict -> 409, NO marker, NO writes at all (destroy-before-ack regression)", async () => {
