@@ -1,8 +1,8 @@
 # Test plan — product delete: batches removed by the server after the ack (BC1 server, BC2 client)
 
-**Design:** `../specs/2026-10-04-product-delete-batch-cascade-design.md` (decisions Q-BC-1..7 OPEN; this plan assumes the recommended defaults, option d).
+**Design:** `../specs/2026-10-04-product-delete-batch-cascade-design.md` (decisions Q-BC-1..7 DECIDED 2026-10-04: defaults, option d).
 **Branches (planned):** `feat/2026-10-05-bc1-server-batch-sweep`, `feat/2026-10-05-bc2-client-ack-gating`.
-**Status:** written BEFORE implementation. **Nothing built or run.** No Qt toolchain in the sandbox (standing rule); Node tests can run in-session, QML / rules / e2e are CI-only. If Taher changes Q-BC-1 to option (b), sections 1-2 must be rewritten.
+**Status:** written BEFORE implementation. **Nothing built or run.** No Qt toolchain in the sandbox (standing rule); Node tests can run in-session, QML / rules / e2e are CI-only. If Q-BC-1 is ever reopened to option (b), sections 1-2 must be rewritten.
 
 ## 1. Unit
 

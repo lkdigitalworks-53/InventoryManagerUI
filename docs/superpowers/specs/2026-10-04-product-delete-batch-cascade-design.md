@@ -1,10 +1,28 @@
 # Product delete: stop destroying batches / activity / queued photos before the server acks — design
 
-**Status:** design only, decisions OPEN (Q-BC-1..Q-BC-7 below, Taher answers in the PR). No code written.
+**Status:** design only. **Decisions Q-BC-1..Q-BC-7 DECIDED 2026-10-04 by Taher: default option on all seven** (ledger below). No code written. Implementation starts with BC1 once the order vs the photos items is settled (see ledger, "Order").
 **Branch:** `docs/2026-10-04-product-delete-batch-cascade-design` (off `main` @ `157dc6b`).
 **Roadmap:** new item 5 in `docs/superpowers/DELETE-FEATURE-ROADMAP.md`. Source: `KNOWN-ISSUES.md` "Product delete is destroy-before-ack" (items 1-3 still open after the photo part was fixed in #113/#115).
 **Test plan:** `../test-plans/2026-10-04-product-delete-batch-cascade-test-plan.md`.
 **Evidence rule:** everything marked READ was read in the code on `main` @ `157dc6b` this session. UNVERIFIED = not checked.
+
+## Decision ledger (Taher, 2026-10-04: "go with default option for all")
+
+| # | Decision | Note |
+|---|---|---|
+| Q-BC-1 | **(d) server cascade** via the `pending_cleanup` marker. Not the atomic `recordOperation` | Taher accepted my advice against the earlier Q11 / roadmap direction. Gives up strict atomicity (safe-direction eventual consistency). If a 200+ batch product ever needs strict atomicity, reopen (b) |
+| Q-BC-2 | **A**: one audit entry per batch, deterministic id `cascade~{productId}~{batchId}`, written by the sweep | Extra writes in the sweep, chunked at <= 200 |
+| Q-BC-3 | **A**: new `Gateway.mutationApplied(entity, entityId, action)` fired once on a 2xx; Activity entry and queue purge hang off it | Touches `Gateway.qml` (hot file). A relaunch between click and ack skips the Activity entry (server audit still exists): accepted |
+| Q-BC-4 | Queued photos purged **on ack**, not at click time | Gap: queued photos may 404 once and park as `failed` before the ack lands; accepted |
+| Q-BC-5 | F5 (delete 409s on any `photoIds` change) stays out of scope | After this fix a 409 destroys nothing; still annoying |
+| Q-BC-6 | **Two PRs: BC1 server first, BC2 client after BC1 is merged AND deployed** | Taher deploys functions manually; record the deploy in the checkpoint. BC2 before the deploy = batches never deleted, ghosts in valuation |
+| Q-BC-7 | Yes: soften the `operationLogic.js` "write-ceiling arithmetic" comment in BC1 | Its own numbers give 2 x 200 + 2 = 402 < 500 (500 itself UNVERIFIED), so the comment's claim looks wrong. `recordOperation` still rejects cascade deletes (kept) |
+
+**Verified this session (code read, nothing run), closes two items from the "Not verified" list:**
+- P1 stock-movements ledger (S1a/S1b) is NOT built on `main`: `gatewayLogic.js` only has the `stock_movement` collection-name map entry, no derivation code. So BC1 has no ledger interaction today. If P1 lands later, the sweep must emit its rows or P1 must exclude cascade deletes; note this in the P1 design then.
+- Photo UI is already owner/admin only: `ProductPhotoGallery` is `editable: root.editMode` in `EditProductDialog`, and the Edit action only shows when `AuthStore.canManageInventory` (owner/admin). A manager/staff 403 is therefore rare in the UI, so PH4 item 1 (403 terminal) is low urgency, not blocking.
+
+**Still unverified:** Firestore per-transaction write ceiling; `recordMutation` role handling for `stock_batch` delete (read before BC1 code).
 
 ## Why this item (honest ranking)
 
