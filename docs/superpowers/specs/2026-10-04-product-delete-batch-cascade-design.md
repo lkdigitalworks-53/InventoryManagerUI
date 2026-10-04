@@ -28,6 +28,22 @@
 
 **Still unverified:** Firestore per-transaction write ceiling; `recordMutation` role handling for `stock_batch` delete: READ 2026-10-05, none (R5, Q-BC-8). UNVERIFIED still: how the stuck-writes dialog words a parked 403 `role-not-allowed` for a product delete (the staff delete already parks the same error; check the string when BC1 is on a device).
 
+## Code review 2026-10-05 (PR #118, BC1 implementation)
+
+Method: read the full diff against `main` @ `6077c46`, traced every new call site, ran `cd functions && npm ci && node --test` (483 -> 491 with the fix), mutation-checked the fix. Skills: requesting-code-review, ponytail-review, qt-qml-review (no QML in the diff: nothing to lint; BC2 will need it). READ = code read, nothing deployed.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| C1 | Med | Cascade audit ids `cascade~{p}~{b}` share the `audit_log` keyspace with client-chosen `requestId`s, and `validateMutationRequest` / `validateDeltaRequest` / the batch validator / the photo endpoints accept ANY non-empty requestId. A member could pre-claim a cascade id: the sweep's unconditional `set` then overwrites that audit entry (ledger tamper of their own record), or the sweep's entry makes their write answer as an idempotent replay | FIXED: `cascade~` reserved, 400 `invalid-request-id` (`invalid-request` on photo endpoints); tests RES-G1..G3, RES-B1, RES-U1..U2, RES-H1, RES-P1 |
+| C2 | Low | PH3b implication #1 wrongly said the scheduler needs no extra code; `sweepBatches` is a REQUIRED dep bound only in `index.js` | FIXED in text (item 1 above) |
+| C3 | Low | PR title still said "WIP: tests next", body empty | FIXED (title + body) |
+| C4 | Low | Test plan section 3 (on-device) assumed BC2 (client ack gating). With BC1 alone the stale-delete case 3.2 CANNOT pass (old client still sends its batch deletes before the ack) | FIXED: new section 3.0 (BC1-only on-device plan) |
+| C5 | Info | Checkpoint listed CI as "NOT verified"; CI is green on `f222a44` (QML 1601, Functions 323, Rules 45, E2E 58). Functions count differs from `node --test` (483) because the CI junit summary counts differently; not a missing-test signal, not investigated further | NOTED in checkpoint + test plan |
+| C6 | Info | The three BC1 commits carry `lkdwtaher@gmail.com`; this account's identity is `lkdigitalworks@gmail.com`. History not rewritten (PR already open, CI green); review-session commits use the right one | NOTED |
+| C7 | Pre-existing | `recordMutation` / `recordDelta` do not validate `requestId` / `entityId` charset (`/`, length) the way `operationLogic.isSafeDocId` does; an id containing `/` builds a bad doc path. Only the cascade prefix is restricted now | FLAGGED in KNOWN-ISSUES, not fixed here (own branch) |
+
+Checked and found fine: collection name `stock_batches` and field `productId` match the client; single-field equality needs no index (`firestore.indexes.json` empty); `FieldValue` is imported; write batch is 200 writes (300 worst case) per commit; role gate sits before the prefix build and before any transaction; replay path unchanged; old-client 409 path matches R6; no leftover `sweepProductPhotos` in code.
+
 ## Design review 2026-10-05 (post-merge review of PR #116)
 
 Method: re-read every claim against `main` @ `1c5a521` (READ = code read this session, nothing run). Skills: requesting-code-review (findings, severity), ponytail-audit (over-engineering), qt-qml-review (BC2 QML surface, read-only; no QML written yet so no linter run).
@@ -61,11 +77,12 @@ Verified correct (no change): marker written after the CAS check inside the same
 **Testing effect:** BC1 gets smaller (no replay-sweep handler cases, no E7). The handler test pins the PH3 behaviour (replay returns early, no sweep). Overlapping-sweep safety is tested on `sweepBatches` directly. The crashed-sweep recovery case (old E7) moves to the PH3b test plan, where it is the scheduler's core case.
 
 ### PH3b implications (input for the PH3b design, not built here)
-1. The scheduler calls the same `sweepMarker`, so batches are covered with no extra scheduler code. It must pass the marker's actor fields (R2) through.
+1. The scheduler calls the same `sweepMarker`, but `deps.sweepBatches` is REQUIRED and is bound only inside `index.js` `sweepProductCleanup` (PR #118 review correction: this item used to say "no extra scheduler code"). The scheduler must reuse that binding (or an equivalent one); a scheduler that builds its own deps without `sweepBatches` fails EVERY marker loudly, by design. It must also pass the marker's actor fields (R2) through.
 2. **The attempts cap (PH3b design Q12) must not silently abandon a marker.** A capped marker that still has batches leaves money orphans; park it visibly (marker flag + log line) instead of dropping it. Decide in the PH3b design.
 3. Scheduler and handler can sweep the same marker concurrently: both must be safe (deterministic audit ids; deletes of missing docs are no-ops).
 4. Old-format markers from #113 (no actor fields) must keep working (`system` actor).
 5. Take over the crashed-sweep case (old E7) in its test plan.
+6. The `cascade~` audit-id prefix is RESERVED (PR #118 review): `recordMutation`, `recordDelta`, `recordMutationsBatch` and the two photo endpoints reject a client `requestId` starting with it. Any new endpoint that takes a client `requestId` and uses it as an `audit_log` doc id must apply `PhotoCleanup.isReservedAuditId` too.
 
 ## Why this item (honest ranking)
 

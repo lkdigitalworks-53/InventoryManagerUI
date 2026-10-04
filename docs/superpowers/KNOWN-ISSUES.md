@@ -594,7 +594,7 @@ on `inventory` delete (403 `role-not-allowed`). Items 1-3 below stay open until 
 **New limits created by BC1:** (a) a failed batch sweep leaves the marker and WAITS for PH3b (no replay re-sweep, Q-BC-9 = no);
 batches are money data, so PH3b must not silently abandon a capped marker. (b) Until BC2 ships, an old client still sends its own
 `stock_batch` deletes; they answer 409 `current: null` after the sweep (harmless, no toast). (c) A direct token call by
-manager/staff to delete a product now gets 403 (the UI never sends it).
+manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #118 review C1: the `cascade~` audit-id prefix is reserved (400 `invalid-request-id`); `recordMutation` / `recordDelta` still do NOT validate the rest of `requestId` / `entityId` (no `/` or length check, unlike `operationLogic.isSafeDocId`): pre-existing, flagged here, fix on its own branch.
 
 **Still open, same family (items 1-3 close with BC2; decide before PH4):**
 1. Batch deletes are sent before the product delete is acked -> after a 409 the product has no stock batches. Options: (a) gate

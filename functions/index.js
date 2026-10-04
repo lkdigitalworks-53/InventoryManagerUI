@@ -1085,7 +1085,7 @@ exports.uploadProductPhoto = functions.onRequest(
         const productId = String(body.productId || "");
         const photoId = String(body.photoId || "");
         const requestId = String(body.requestId || photoId || "");
-        if (!productId || !photoId || !requestId) {
+        if (!productId || !photoId || !requestId || PhotoCleanup.isReservedAuditId(requestId)) {
             send(res, 400, { ok: false, error: "invalid-request" });
             return;
         }
@@ -1240,7 +1240,7 @@ exports.deleteProductPhoto = functions.onRequest(
         const productId = String(body.productId || "");
         const photoId = String(body.photoId || "");
         const requestId = String(body.requestId || (photoId ? "del-" + photoId : ""));
-        if (!productId || !photoId || !requestId) {
+        if (!productId || !photoId || !requestId || PhotoCleanup.isReservedAuditId(requestId)) {
             send(res, 400, { ok: false, error: "invalid-request" });
             return;
         }

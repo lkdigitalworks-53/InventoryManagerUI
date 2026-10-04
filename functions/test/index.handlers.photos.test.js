@@ -486,3 +486,17 @@ test("F40 deletePhoto: product doc missing -> 200 and BOTH Storage objects still
         "test/tenants/" + TENANT + "/products/" + PRODUCT + "/photo-1_t.jpg"
     ]);
 });
+
+test("RES-P1 uploadProductPhoto / deleteProductPhoto: a requestId in the reserved cascade namespace -> 400 invalid-request, no Storage write (PR #118 review)", async () => {
+    resetState();
+    const r1 = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody({ requestId: "cascade~PRD-1~B1" }) }), r1);
+    assert.equal(r1.statusCode, 400);
+    assert.equal(jsonBody(r1).error, "invalid-request");
+    const r2 = mockRes();
+    await handlers.deleteProductPhoto(mockReq({ body: deleteBody({ requestId: "cascade~PRD-1~B1" }) }), r2);
+    assert.equal(r2.statusCode, 400);
+    assert.equal(jsonBody(r2).error, "invalid-request");
+    assert.equal(mockState.storageSaveCalls.length, 0);
+    assert.equal(mockState.storageDeleteCalls.length, 0);
+});

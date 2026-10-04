@@ -996,3 +996,18 @@ test("MONKEY recordMutation: 200 random entity/action/id combos never sweep unle
         }
     }
 });
+
+test("RES-H1 recordMutation / recordDelta: a requestId in the reserved cascade namespace -> 400 invalid-request-id, zero writes (PR #118 review)", async () => {
+    cascadeReset();
+    const r1 = mockRes();
+    await handlers.recordMutation(mockReq({ body: deleteBody({ entity: "stock_batch", entityId: "B1-0", before: {}, requestId: "cascade~PRD-1~B1-0" }) }), r1);
+    assert.equal(r1.statusCode, 400);
+    assert.equal(jsonBody(r1).error, "invalid-request-id");
+    const r2 = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({ requestId: "cascade~PRD-1~B1-0" }) }), r2);
+    assert.equal(r2.statusCode, 400);
+    assert.equal(jsonBody(r2).error, "invalid-request-id");
+    assert.equal(mockState.applyMutationCalls.length, 0);
+    assert.equal(mockState.batchCommits.length, 0);
+    assert.equal(mockState.setCalls.length, 0);
+});

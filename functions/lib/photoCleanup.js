@@ -13,6 +13,9 @@ const MAX_LAST_ERROR_CHARS = 200;
 // UNVERIFIED (repo assumes 500), so stay well under it. BC1 design R3.
 const SWEEP_CHUNK = 100;
 
+// Reserved audit_log id namespace of the per-batch cascade entries (see isReservedAuditId).
+const CASCADE_AUDIT_PREFIX = "cascade~";
+
 // Photos are managed by owner/admin only, mirroring the client's AuthStore.canManageInventory.
 // Exact, case-sensitive match: "OWNER", "Owner ", "", null, undefined and "viewer" (no such role
 // exists) are all denied.
@@ -89,7 +92,17 @@ function _errorText(e) {
 // Deterministic audit id for one cascaded batch delete. Two overlapping sweeps (handler + PH3b
 // scheduler) or a retry write the SAME doc, so the audit never duplicates (Q-BC-2 A, R4).
 function buildCascadeAuditId(productId, batchId) {
-    return "cascade~" + productId + "~" + batchId;
+    return CASCADE_AUDIT_PREFIX + productId + "~" + batchId;
+}
+
+// Review fix (PR #118): the cascade audit ids live in the SAME audit_log keyspace as the client-chosen
+// requestIds of recordMutation / recordDelta / recordMutationsBatch / the photo endpoints, none of which
+// restricted the charset. A caller could pick a requestId equal to a future cascade id: the sweep's
+// unconditional `set` would then overwrite that (their own) audit entry, or the sweep's entry would make
+// their write answer as an idempotent replay. The prefix is therefore RESERVED: every endpoint that takes a
+// client requestId rejects it (400 invalid-request-id).
+function isReservedAuditId(id) {
+    return typeof id === "string" && id.indexOf(CASCADE_AUDIT_PREFIX) === 0;
 }
 
 // Deletes every stock_batch of one deleted product, one audit entry per batch (Q-BC-2 A), in chunks
@@ -206,6 +219,8 @@ module.exports = {
     sweepMarker,
     sweepStockBatches,
     buildCascadeAuditId,
+    isReservedAuditId,
+    CASCADE_AUDIT_PREFIX,
     SWEEP_CHUNK,
     MAX_LAST_ERROR_CHARS
 };

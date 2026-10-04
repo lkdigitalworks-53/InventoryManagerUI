@@ -500,3 +500,18 @@ test("BC-U20 MONKEY sweepStockBatches: 300 random result sets never delete a doc
         for (const c of calls.commits) assert.ok(c.length >= 1 && c.length <= C.SWEEP_CHUNK);
     }
 });
+
+test("RES-U1 isReservedAuditId: exact case-sensitive prefix only; non-strings are never reserved", () => {
+    for (const id of ["cascade~", "cascade~PRD-1~B1", "cascade~~"]) assert.equal(C.isReservedAuditId(id), true, id);
+    for (const id of ["", "req-1", "Cascade~1", "xcascade~1", " cascade~1", "cascade", "cascade-1", null, undefined, 5, {}, []]) {
+        assert.equal(C.isReservedAuditId(id), false, JSON.stringify(id));
+    }
+});
+
+test("RES-U2 every id buildCascadeAuditId can produce is reserved (so no client requestId can ever equal one)", () => {
+    for (const [p, b] of [["PRD-1", "B1"], ["a:b", "c~d"], ["", ""], ["x", "y"]]) {
+        const id = C.buildCascadeAuditId(p, b);
+        assert.equal(C.isReservedAuditId(id), true, id);
+        assert.equal(id.indexOf(C.CASCADE_AUDIT_PREFIX), 0);
+    }
+});

@@ -7,6 +7,8 @@
 
 **BC1 implemented 2026-10-05** (branch `feat/2026-10-05-bc1-server-batch-sweep`). Functions suite 446 -> 483 passing in-session (`cd functions && npm ci && node --test`; count re-derived with `git diff | grep -c`). Mutation-checked in-session (each killed by >= 2 tests): drop the `productId` defence filter, chunk skip, chunk size 500, drop first entry, drop role gate, wrong query value, wrong tenant, marker drops actor, drop back-link, random audit id, skip the batch step. **Deviations from the plan below (honest):** the 1000-batch unit case is 250 (handler) / 260 random sizes (monkey) / 99-100-101-200-250 (units); e2e E3 (id reuse) and E5 (failing sweep) are NOT e2e because over HTTP there is no way to run a sweep without a delete and no failure injection: they are unit cases BC-H10..BC-H13 and BC-U05..BC-U07 until PH3b; the 2000-sequence monkey is two smaller ones (BC-U20 300 random result sets, BC-H17 200 random role/entity/action/id combos). Added e2e (in `test/e2e/recordOperation.e2e.test.js`, wired in CI already; NOT run here): E1, E2, E4, E6, replay (Q-BC-9 pin), role gate. Existing test F30 (staff delete allowed, "pinned") was replaced by BC-H01 because Q-BC-8 reverses it on purpose. BC2 sections below are untouched.
 
+**PR #118 review (2026-10-05, same branch):** +8 Node cases (suite 483 -> 491): RES-G1..G3 (`validateMutationRequest` / `validateDeltaRequest` reject the reserved `cascade~` requestId, exact case-sensitive prefix, lookalikes stay valid), RES-B1 (batch validator), RES-U1..U2 (`isReservedAuditId`; every id `buildCascadeAuditId` can produce is reserved), RES-H1 (`recordMutation` + `recordDelta` -> 400, zero writes), RES-P1 (both photo endpoints -> 400, no Storage call). Mutation check: `isReservedAuditId` always false => 7 fail. CI on the PR was green before the fix (QML 1601, Functions 323, Rules 45, E2E 58); the Functions figure is the CI junit count and differs from `node --test` (483), not a gap. CI on the fix commit pending.
+
 ## 1. Unit
 
 ### BC1 (Node, `functions/test/`, runnable in the sandbox)
@@ -34,6 +36,14 @@
 - **Mutation checks (planned):** drop the `productId` filter; drop the exists-guard; swap batch/Storage order; drop the audit write; wrong tenant; *(R2)* drop the actor fields from the marker; *(R3)* raise `SWEEP_CHUNK`; *(R1)* drop the `stock_batch` addition in `_storesToResync`; each must fail at least one test.
 
 ## 3. On-device checklist (Taher; only coverage for toast, activity feed, valuation)
+
+### 3.0 BC1 ONLY (server deployed, client still old). Run this BEFORE BC2 exists
+Prerequisite: deploy (see checkpoint), new tenant, an owner account. Sections 3.1-3.5 below need BC2 and CANNOT all pass on BC1 alone.
+- **3.0.1 Happy path:** product with 3 batches and 1 photo => delete => Firestore: the 3 batches gone, each has an `audit_log` entry (id `cascade~{productId}~{batchId}` OR the old client's own audit if its delete landed first), Storage prefix empty, `pending_cleanup/{productId}` gone within ~1 min. Cloud Functions log for `recordMutation` shows no `cleanup sweep failed`.
+- **3.0.2 Old-client noise (R6):** same delete: the app shows no toast and no error for the batch deletes; stuck-writes header stays empty (they answer 409 `current: null`, dropped silently).
+- **3.0.3 Role gate:** log in as staff or manager: the UI refuses the delete ("Only owner/admin can delete products") and nothing is sent. The server 403 is not reachable from the UI (the client gate blocks first), so it stays automated-only (BC-H01, e2e role-gate case).
+- **3.0.4 Known-bad case, expected to FAIL until BC2:** device A edits the product, device B (stale) deletes it => B's product delete gets 409 but B's batch deletes were already sent, so the product returns WITHOUT its batches. Do not file this as a BC1 bug (KNOWN-ISSUES items 1-3).
+- **3.0.5 Edge:** product with 0 batches; 200+ batches (seeded by script) => all gone after the sweep; delete then re-create the same SKU (new id) => new product untouched.
 Prerequisite: BC1 deployed first (`firebase deploy --only functions --project <dev>`), deploy recorded in the checkpoint. New tenant per PR.
 - **3.1 Happy path:** product with 3 batches and photos => delete => gone from list; Inventory Value drops by the batch value; Activity shows one "Product deleted"; Firestore: no batches for the id, Storage prefix empty, no marker (after ~1 min).
 - **3.2 Negative (the bug):** device A edits product (price) while device B deletes it (stale) => B shows the "restored" toast, product AND its batches reappear after the resync, Inventory Value unchanged, no "Product deleted" entry, B's queued photo for it still queued.

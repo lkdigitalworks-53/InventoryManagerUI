@@ -664,3 +664,29 @@ test("F41 real logic: delete of a server-absent product with a non-null before -
     assert.equal(result.current, null);
     assert.equal(db.writes.length, 0);
 });
+
+// ── Review fix (PR #118): "cascade~" is a reserved audit_log id namespace ───────────────────────
+test("RES-G1 validateMutationRequest rejects a requestId in the reserved cascade namespace", () => {
+    for (const id of ["cascade~PRD-1~B1", "cascade~", "cascade~x"]) {
+        const result = GatewayLogic.validateMutationRequest(validBody({ requestId: id }));
+        assert.equal(result.ok, false, id);
+        assert.equal(result.status, 400, id);
+        assert.equal(result.error, "invalid-request-id", id);
+    }
+});
+
+test("RES-G2 validateDeltaRequest rejects a requestId in the reserved cascade namespace", () => {
+    for (const id of ["cascade~PRD-1~B1", "cascade~"]) {
+        const result = GatewayLogic.validateDeltaRequest(validDeltaBody({ requestId: id }));
+        assert.equal(result.ok, false, id);
+        assert.equal(result.status, 400, id);
+        assert.equal(result.error, "invalid-request-id", id);
+    }
+});
+
+test("RES-G3 the reservation is an exact, case-sensitive PREFIX: lookalikes stay valid", () => {
+    for (const id of ["req-cascade~1", "Cascade~1", "cascade-1", "cascade1~", " cascade~1", "xcascade~1"]) {
+        assert.equal(GatewayLogic.validateMutationRequest(validBody({ requestId: id })).ok, true, id);
+        assert.equal(GatewayLogic.validateDeltaRequest(validDeltaBody({ requestId: id })).ok, true, id);
+    }
+});
