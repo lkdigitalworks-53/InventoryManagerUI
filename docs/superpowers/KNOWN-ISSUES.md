@@ -603,3 +603,14 @@ manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #
 2. `ActivityLog.record("product_deleted")` is written locally at click time even when the delete is rejected.
 3. `PhotoQueue.discard` of this device's queued photos runs before the ack: a rejected delete loses the user's pending photos.
 4. A delete 409s on any concurrent `photoIds` change (F5 family); the user retries after the restored row appears.
+
+## PR #118 device test (2026-10-04): four observations. Root causes from CODE READ, not reproduced on a device
+
+**Setup:** add a product with a description over 1 MiB; edit it; wait 3 min; restock it; delete it.
+
+1. **Edit of a >1 MiB description is rejected 3 min later and the glass header shows the rejected list.** Not a new bug: the client has no size cap on `description` (nor on any text field) and the server write is refused (Firestore documents are capped at about 1 MiB; exact status/response UNVERIFIED), so the write is parked as a server rejection (S2b) and listed. Open: decision D1 (cap length client-side and server-side).
+2. **Restock confirm: dialog never closes, Confirm and Cancel dead, other fields still editable.** `RestockDialog.onPrimaryClicked` sets `busy = true` and clears it only in the callback of `InventoryStore.restock` -> `Gateway.recordDelta`. The parked edit from (1) HOLDS the key `inventory/{productId}` (`OutboxStore.dueItems`: a parked item claims its keys; later writes for the same record wait behind it), so the restock delta is never due, its callback never fires, `busy` stays true. Meanwhile `StockBatchStore.addBatch` runs in parallel on a different key and DOES land: **a batch exists but the product's stock was never incremented** (stock vs batch ledger drift). Open: decision D2.
+3. **Delete while the edit is parked: batches deleted, product and rejected list intact.** Same held key: the product delete waits behind the parked edit and is never sent, while the per-batch `stock_batch` deletes (other keys) go out at once. This is exactly the destroy-before-ack bug; BC2 (this branch) stops sending batch deletes, so nothing is destroyed on the server any more. New consequence (decision D3): the product vanishes from the local list while its delete sits behind the parked write; if the user then discards the parked edit, the delete goes out with the stale local `before` (which still contains the rejected edit) and answers 409, so the product returns (with its batches, after the resync) and the user must delete again.
+4. **Rejected list stays after the delete.** By design: a parked write is released only by Retry or Discard (S2b/S3), and a later delete of the same record does not touch it.
+
+**Status:** (3) fixed in the batch part by BC2 (PR pending, needs BC1 deployed). (1), (2), (3-consequence) are decisions D1-D3 in the design doc, NOT built.

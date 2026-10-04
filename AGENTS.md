@@ -455,6 +455,13 @@ QtObject {
   (query by `productId`) and Storage prefix by hand, then delete the marker.
   `batchMutationLogic`/`operationLogic` reject an inventory delete outright. `pending_cleanup` is server-only in
   `firestore.rules` (`isServerOnlyCollection`; a lone deny match block would NOT deny — see Skill 92).
+- BC2 (2026-10-04, client half of the product-delete cascade): `Gateway.mutationApplied(entity, entityId, action)` fires from
+  `_ackSingle` on a single `recordMutation` 2xx (not for batches, deltas, operations). `InventoryStore.deleteProduct` sends ONLY the
+  `inventory` delete; the product's batches are just hidden in `StockBatchStore.batches` (the server sweeps them, BC1); the Activity
+  entry and the queued-photo purge run in `_onMutationApplied` from the in-memory `_pendingDeletes` (dropped on a delete conflict;
+  a relaunch forgets it on purpose). `DataModel._storesToResync` adds `stock_batch` after `inventory`, and a delete conflict re-reads
+  batches. Never reintroduce a client `stock_batch` delete or a click-time Activity entry. Needs BC1 deployed. Open (design D1-D3):
+  a parked write holds its record key, so a restock delta (dialog hangs) or a delete for that product waits behind it.
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
   identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
