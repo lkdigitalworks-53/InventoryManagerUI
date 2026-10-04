@@ -1,3 +1,16 @@
+# CHECKPOINT — 2026-10-05 session: PR #121 final sweep (resume here)
+
+**Branch:** `review/2026-10-05-pr121-final-sweep` (stacked, base = `test/2026-10-04-order-completion-parked-delta-repro`, PR #121 head `fbcfe03`). Test + docs only; no `qml/` production change.
+**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>` (per -c, never in git config). Skills: requesting-code-review, ponytail-audit, qt-qml-review (linter on changed lines: only repo-wide style, `var`, `property var`, false `!==` hits).
+**CI on `fbcfe03`:** E2E 63/63, Functions 329/329, Rules 45/45 green; QML 1909/1910. Only red: `InventoryStore_updateProductAfterAck::test_over_one_MiB_description_rejected_registers_no_transaction`.
+**Root cause (code read, CI log not downloadable):** test written before the 1 MiB cap. PR #122 added `InventoryStore.updateRefusal`, so `updateProduct` with 1,048,577 chars is now refused and queues nothing; first `compare(_txItems().length, 1)` sees 0. Product behaviour is right (covered by `tst_InventoryStore_overlayAndCap::test_updateProduct_refuses_oversize_and_changes_nothing_device_obs_1`). Fix: test now uses 1,000,000 chars (under cap, accepted, then server-rejected) and asserts the accept.
+**Code review (full diff main...fbcfe03, 10 qml files):** no Critical, no Important code defect found by read. NOT verified by run.
+**Findings, not fixed on purpose:** (1) `Gateway.recordEdit` duplicates ~15 lines of `recordMutation` (ponytail: `reuse`); `hasUnsyncedEditForEntity`, `hasParkedForEntity`, `unsyncedByEntity` are three scans with one rule. Merging them is blind QML for a few lines; left. (2) Sale guard blocks offline sales behind any queued edit or create (Q1 = Z). (3) Bulk import has no size check (already in KNOWN-ISSUES).
+**Docs fixed:** test plan prereq claimed an oversize description forces a server rejection; the cap makes 4.2/4.3/4.4/4.10 unreachable that way (marked OPEN). KNOWN-ISSUES updated. SKILLS/AGENTS/README unchanged: no new behaviour or convention.
+**NEXT:** read CI on the stacked PR; merge it into the PR #121 head; then squash-merge PR #121. Taher: pick a way to force a server rejection for device cases 4.2/4.3/4.4/4.10.
+
+---
+
 # CHECKPOINT — 2026-10-05: unsynced product edit (PR #121 device-test follow-up)
 
 **Branch:** `feat/2026-10-05-unsynced-edit-ledger` (off PR #121 head `e9403ec`; stacked on `test/2026-10-04-order-completion-parked-delta-repro`).
