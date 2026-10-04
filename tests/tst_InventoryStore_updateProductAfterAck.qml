@@ -132,9 +132,12 @@ TestCase {
         compare(TransactionStore.entries.length, 0, "no ghost row in the local ledger")
         compare(_updatedActivity().length, 0)
     }
-    function test_over_one_MiB_description_rejected_registers_no_transaction() {
-        var big = "x".repeat(1048577)
-        InventoryStore.updateProduct("PRD-001", { description: big }, "")
+    // Large but UNDER the client cap (DocLimits.LIMIT_BYTES = 1 MiB - 4 KiB): the edit is accepted
+    // and queued, then the server rejects it. A description over the cap never reaches the outbox
+    // any more (updateRefusal, PR #122); that refusal is covered in tst_InventoryStore_overlayAndCap.
+    function test_server_rejected_large_description_registers_no_transaction() {
+        var big = "x".repeat(1000000)
+        compare(InventoryStore.updateProduct("PRD-001", { description: big }, ""), undefined, "under the cap: accepted")
         compare(_txItems().length, 1)
         _reject()
         compare(_txItems().length, 0)
