@@ -295,9 +295,10 @@ Item {
                 dispatcher.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
-            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed) {
+            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed, refusal) {
                 if (!ok) {
-                    dispatcher.errorOccurred("network", "Could not restock — try again")
+                    if (refusal) dispatcher.errorOccurred("inventory", refusal)
+                    else dispatcher.errorOccurred("network", "Could not restock — try again")
                     return
                 }
                 dispatcher.productRestocked(productId)
@@ -324,7 +325,11 @@ Item {
                     + "). Complete or cancel them first.")
                 return
             }
-            InventoryStore.deleteProduct(productId)
+            var refusal = InventoryStore.deleteProduct(productId)
+            if (refusal) {
+                dispatcher.errorOccurred("inventory", refusal)
+                return
+            }
             dispatcher.productDeleted(productId)
         }
 

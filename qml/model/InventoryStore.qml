@@ -1052,7 +1052,17 @@ QtObject {
         return Math.round(((sp - cost) / cost) * 100);
     }
 
+    // D2/D3 (PR #119): a write for this product the server rejected is PARKED in the outbox
+    // until the user retries or discards it. A restock delta or a delete queued behind it
+    // cannot be sent: the restock dialog would hang and drift (batch written, stock not), the
+    // delete would hide the product locally and later 409 on a stale `before`. So both refuse
+    // up front with this message and write nothing.
+    readonly property string parkedWriteMessage: "Fix or discard the stuck change for this product first"
+    function hasParkedWrite(productId) { return OutboxStore.hasParkedForEntity("inventory", productId) }
+
+    // Returns parkedWriteMessage when refused (nothing changed), otherwise undefined.
     function deleteProduct(productId) {
+        if (hasParkedWrite(productId)) return parkedWriteMessage
         var arr = _clone();
         var before = null
         var found = false
@@ -1134,6 +1144,9 @@ QtObject {
             if (arr[i].productId === productId) { current = arr[i]; break; }
         }
         if (!current) { if (callback) callback(false); return }
+        // D2: refuse before the supplier auto-promote and the batch write, so nothing drifts.
+        // callback(false, false, message): callers show `message` instead of "try again".
+        if (hasParkedWrite(productId)) { if (callback) callback(false, false, parkedWriteMessage); return }
 
         _resolveSupplierId(party, function(supplierId, supplierFailed) {
             var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";

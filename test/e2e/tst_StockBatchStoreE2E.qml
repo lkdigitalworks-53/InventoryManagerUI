@@ -342,4 +342,59 @@ TestCase {
         compare(ActivityLog.entries.filter(function(e) { return e.kind === "product_deleted" }).length, 0,
                 "a rejected delete must not log 'Product deleted'")
     }
+
+    // ── D2/D3: refuse restock and delete behind a parked write ────────────────────────────
+    // A parked item is seeded straight into the outbox (terminal + stuck, so Gateway never
+    // sends it) instead of provoking a real server rejection: the guard only reads the outbox.
+    function _parkEditFor(productId) {
+        var rid = "e2e-park-" + productId
+        OutboxStore.enqueue({ requestId: rid, entity: "inventory", entityId: productId, action: "update",
+                              before: { stock: 10 }, after: { stock: 10 } })
+        OutboxStore.setStuckMeta(rid, { failures: 5, stuck: true, terminal: true })
+        return rid
+    }
+
+    function test_D3_delete_behind_a_parked_write_is_refused_and_destroys_nothing() {
+        var productId = _createProductWithStock("E2E D3 Refuse", "SKU-E2E-D3-1")
+        tryVerify(function() { return _batchesOf(productId).length >= 1 }, 10000, "initial-stock batch never reached the cache")
+        var batchIds = _batchesOf(productId).map(function(b) { return b.batchId })
+        ActivityLog.clear()
+        OutboxStore.clear()
+        var rid = _parkEditFor(productId)
+
+        compare(InventoryStore.deleteProduct(productId), InventoryStore.parkedWriteMessage)
+
+        verify(_productInCache(productId) !== null, "the product must stay visible")
+        compare(_batchesOf(productId).length, batchIds.length, "batches must stay")
+        compare(OutboxStore.items.filter(function(it) { return it.action === "delete" }).length, 0, "no delete queued")
+        wait(1500)
+        for (var j = 0; j < batchIds.length; ++j)
+            E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, _batchDocPath(batchIds[j]), batchIds[j],
+                                       function(d) { return d !== null }, 5000, "batch " + batchIds[j] + " vanished", true)
+        E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, "tenants/" + fixture.tenantId + "/inventory/" + productId,
+                                   productId, function(d) { return d !== null }, 5000, "the product doc vanished", true)
+        compare(ActivityLog.entries.filter(function(e) { return e.kind === "product_deleted" }).length, 0)
+
+        // After the user discards the parked write, the delete goes through again.
+        OutboxStore.markSent(rid)
+        compare(InventoryStore.deleteProduct(productId), undefined)
+        compare(_productInCache(productId), null)
+    }
+
+    function test_D2_restock_behind_a_parked_write_is_refused_and_writes_no_batch() {
+        var productId = _createProductWithStock("E2E D2 Refuse", "SKU-E2E-D2-1")
+        tryVerify(function() { return _batchesOf(productId).length >= 1 }, 10000, "initial-stock batch never reached the cache")
+        var nBatches = _batchesOf(productId).length
+        OutboxStore.clear()
+        _parkEditFor(productId)
+        var result = null
+        InventoryStore.restock(productId, 5, "", 10, "", function(ok, sf, refusal) { result = { ok: ok, refusal: refusal } })
+
+        verify(result !== null, "the refusal must answer synchronously, not hang")
+        compare(result.ok, false)
+        compare(result.refusal, InventoryStore.parkedWriteMessage)
+        compare(_batchesOf(productId).length, nBatches, "no batch written")
+        compare(OutboxStore.items.length, 1, "only the parked item is queued")
+        compare(_productInCache(productId).stock, 10)
+    }
 }

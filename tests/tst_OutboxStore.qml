@@ -1111,4 +1111,71 @@ TestCase {
             }), "timer state, step " + step)
         }
     }
+
+    // ── hasParkedForEntity (D2/D3, PR #119: restock/delete refuse behind a park) ──
+
+    function _park(id) { return OutboxStore.setStuckMeta(id, { failures: 5, stuck: true, terminal: true }) }
+
+    function test_hasParkedForEntity_true_for_a_parked_single_item() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasParkedForEntity_false_for_an_unparked_pending_item() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasParkedForEntity_false_for_stuck_but_not_terminal() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("p1", { failures: 5, stuck: true, terminal: false })
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false, "stuck but still auto-retrying is not parked")
+    }
+
+    function test_hasParkedForEntity_false_for_another_id_or_another_entity() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-2"), false)
+        compare(OutboxStore.hasParkedForEntity("stock_batch", "prod-1"), false)
+        compare(OutboxStore.hasParkedForEntity("inventory", ""), false)
+    }
+
+    function test_hasParkedForEntity_sees_a_parked_delta_batch_and_operation_item() {
+        OutboxStore.enqueueDelta({ requestId: "pd", entity: "inventory", entityId: "prod-d", deltas: { stock: 1 } })
+        OutboxStore.enqueueBatch({ requestId: "pb", entity: "inventory", items: [{ entityId: "prod-b1", action: "update" }, { entityId: "prod-b2", action: "update" }] })
+        OutboxStore.enqueueOperation({ requestId: "po", opType: "x", ops: [{ entity: "inventory", entityId: "prod-o", action: "update" }] })
+        _park("pd"); _park("pb"); _park("po")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-d"), true, "delta")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-b1"), true, "batch member 1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-b2"), true, "batch member 2")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-o"), true, "operation op")
+    }
+
+    function test_hasParkedForEntity_false_once_the_parked_item_is_sent_or_dropped() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        OutboxStore.markSent("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasParkedForEntity_survives_a_relaunch() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasParkedForEntity_true_while_only_one_of_two_items_for_the_record_is_parked() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        OutboxStore.enqueueDelta({ requestId: "p2", entity: "inventory", entityId: "prod-1", deltas: { stock: 2 } })
+        _park("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasParkedForEntity_false_on_an_empty_queue() {
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
+    }
 }
