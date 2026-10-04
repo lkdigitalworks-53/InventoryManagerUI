@@ -446,7 +446,7 @@ QtObject {
   and `recordMutation` passes `cleanupPrefix`/`cleanupEnvPrefix` to `GatewayLogic.applyMutation`, which writes
   `pending_cleanup/{productId}` in the SAME transaction (after the CAS compare, so a 409 leaves no marker).
   `batchMutationLogic`/`operationLogic` reject an inventory delete outright. `pending_cleanup` is server-only in
-  `firestore.rules` (`isServerOnlyCollection`; a lone deny match block would NOT deny — see Skill 90).
+  `firestore.rules` (`isServerOnlyCollection`; a lone deny match block would NOT deny — see Skill 92).
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
   identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
@@ -963,3 +963,4 @@ env.
 4. **Pages & Dialogs Agent** → Surface required fields (HSN, GSTIN, movement reason, consent) and
    any privacy notice.
 5. Never edit historical ledger rows — relabels propagate by stable id, not by rewriting past rows.
+- **S3 Discard (2026-10-01, `feat/2026-10-01-s3-discard-parked-writes`):** `Gateway.discardParked(requestId)` (gateway mode, online, queued, `StuckWrites.isParkedItem`, not in flight) removes the item with `OutboxStore.markSent`, answers operation waiters and `recordDelta` callbacks with `{ok:false, error:"discarded"}`, emits `parkedWriteDiscarded(requestId, entities)` (`StuckWrites.entitiesOf`), `_reschedule()`. `DataModel._resyncForDiscard` re-reads each affected store once (`_resyncStoreByEntity`; `stock_movement` ignored). `StuckWritesSheet` shows Discard on rejected rows with a local `ConfirmDialog` and `busy: discardConfirm.opened`. SKILLS Skill 90. Design: `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`. Review sweep 2026-10-01 (branch `review/2026-10-01-pr110-final-sweep`): row / header copy now says "Retry or Discard"; recordDelta callbacks answered through one helper `Gateway._answerDeltaCallbacks`; test plan section 3.0 lists device prerequisites and the unverified `write-rejected` recipe (SKILLS Skill 91).

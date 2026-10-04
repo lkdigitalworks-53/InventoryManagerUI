@@ -3986,7 +3986,25 @@ three places, not one: what is handed out, when to wake next, and what the launc
 loop needs a release path in the same change, and the release must be able to fail back into the state without new bookkeeping.
 (4) Copy that promised "keeps retrying" is a bug the moment the behaviour changes; grep the strings.
 
-## Skill 90: In Firestore rules a deny-all `match` block does not deny if a wildcard also matches; list server-only collections in the helper the wildcard consults
+## Skill 90: Removing a queued write must answer everyone waiting on it, and its "is it still allowed" check must be made at execution time, from the persisted item
+
+**Context (S3 Discard):** dropping a parked write is one `markSent` plus a resync, but three things around it go wrong if you stop there.
+
+**Traps:** (1) A queued item can have callers waiting: `recordOperation` waiters AND `recordDelta` callbacks (several, when deltas coalesced). Removing the item silently leaves them hanging until relaunch; answer both with `{ok:false, error:"discarded"}` in the same change. (2) The button was drawn when the row was parked; by the time the confirm is accepted it may have been retried, sent, or the device offline. Re-check everything inside the Gateway function (mode, online, still queued, still parked, not in flight) and tell the user when it refuses. (3) Decide "parked" from the persisted item (`isParkedItem`), not the in-memory state: right after a relaunch the state has not been rebuilt yet and would wrongly refuse.
+
+**UI / tests:** a confirm that must sit over a `BottomSheet` should be local to the sheet (a global one is hidden by it), with `busy: confirm.opened` so Back / Close / tap-outside cannot close the sheet underneath. To test "this store was asked to re-read" without network, force `loadingMore = true`: `_resetAndFetch` then only sets `_resetPending`.
+
+**Generalize:** (1) every place that removes a queued item must ask "who is waiting on it?". (2) A destructive action re-validates at the moment of effect. (3) Merged edits share the parked item's requestId, so a discard removes them too: say so in the confirm copy.
+
+## Skill 91: Review a state change by grepping the words that describe the state, and by checking what an error recipe really throws
+
+**Context (PR #110 final sweep):** S3 added a second exit (Discard) to the parked state, but the row text still said "Paused until you tap Retry" and the header still said "Tap to retry". Same trap as Skill 89 (4), found again in review.
+
+**Traps:** (1) Adding an exit to a state makes every string that describes the state stale: grep the old wording across `qml/` and `docs/` in the same change. (2) A test recipe for a server error must produce a gRPC status code on the server. Errors the Admin SDK throws itself before the RPC (invalid document shape, nested arrays) carry no code, so `classifyWriteError` answers `write-failed`, not `write-rejected`; an oversize document is refused by the backend (INVALID_ARGUMENT) and does carry one. Reasoned from the code first, then observed on device: an oversize Description parks the row. (3) A helper named for one path (`_failDeltaCallbacks`) that a second path should reuse needs a neutral name first, then the old inline copy is deleted.
+
+**Generalize:** (1) new exit -> grep the state's copy. (2) A recipe is a claim: say "reasoned" or "observed". (3) Extract, rename neutrally, replace the duplicate in the same commit.
+
+## Skill 92: In Firestore rules a deny-all `match` block does not deny if a wildcard also matches; list server-only collections in the helper the wildcard consults
 
 **Context (photos PH3):** the new `pending_cleanup` markers must be writable only by the Cloud Function. The obvious change,
 `match /pending_cleanup/{id} { allow read, write: if false; }`, grants nothing and denies nothing: Firestore allows a request
@@ -3997,7 +4015,7 @@ bug once. The fix is to add the name to `isServerOnlyCollection`, which the wild
 a member AND the owner are both denied all four operations (R05). (2) Also pin that an ordinary wildcard collection still
 works (R08) so a too-broad exclusion is caught.
 
-## Skill 91: Never derive a prefix delete from a client-reachable id without a whitelist, a trailing slash, and a re-check
+## Skill 93: Never derive a prefix delete from a client-reachable id without a whitelist, a trailing slash, and a re-check
 
 **Context (photos PH3):** the product-delete sweep deletes everything under `{env}/tenants/{t}/products/{p}/`. Three ways it
 widens: an empty/odd product id (`.../products/` deletes every product's photos), a missing trailing slash (`PRD-1` also
@@ -4009,7 +4027,7 @@ and it re-reads the product so a reused id is never swept.
 the same regex first, and the "mutation" survived because nothing changed. Anchor the pattern on the full code line, and
 treat any surviving mutation as a bug in the mutation until proven otherwise.
 
-## Skill 92: A design's "intermediate states are safe" claim is a hypothesis; the side effect lives where it is called, not where the fix is planned
+## Skill 94: A design's "intermediate states are safe" claim is a hypothesis; the side effect lives where it is called, not where the fix is planned
 
 **Context (photos PH3, device bug 2026-10-04):** the design said building the server cascade (PH3) before the client change
 (PH4) keeps every intermediate state free of destroy-before-ack. False: the destructive call is the client's per-photo

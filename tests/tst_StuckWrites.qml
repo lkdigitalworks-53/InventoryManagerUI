@@ -864,4 +864,73 @@ TestCase {
             verify(parked <= SW.stuckCount(st), "step " + i)
         }
     }
+
+    // ── S3: entitiesOf (which stores a discarded write makes DataModel re-read) ──
+
+    function test_entitiesOf_single_batch_and_delta_items_name_their_one_entity() {
+        compare(SW.entitiesOf({ requestId: "a", entity: "order", entityId: "o1", action: "update" }), ["order"])
+        compare(SW.entitiesOf({ requestId: "b", entity: "inventory", items: [{ entityId: "p1" }, { entityId: "p2" }] }), ["inventory"])
+        compare(SW.entitiesOf({ requestId: "c", entity: "stock_batch", entityId: "s1", deltas: { qty: -1 } }), ["stock_batch"])
+    }
+
+    function test_entitiesOf_operation_lists_each_entity_once_in_first_seen_order() {
+        var item = { requestId: "k", opType: "completeOrder", ops: [
+            { entity: "inventory", entityId: "p1" }, { entity: "order", entityId: "o1" },
+            { entity: "inventory", entityId: "p2" }, { entity: "transaction", entityId: "t1" } ] }
+        compare(SW.entitiesOf(item), ["inventory", "order", "transaction"])
+    }
+
+    function test_entitiesOf_operation_ignores_the_top_level_entity() {
+        compare(SW.entitiesOf({ entity: "order", ops: [{ entity: "inventory" }] }), ["inventory"])
+    }
+
+    function test_entitiesOf_empty_ops_gives_nothing() {
+        compare(SW.entitiesOf({ ops: [] }), [])
+    }
+
+    function test_entitiesOf_skips_malformed_parts() {
+        compare(SW.entitiesOf({ ops: [null, undefined, {}, { entity: 5 }, { entity: "" }, { entity: "order" }] }), ["order"])
+        compare(SW.entitiesOf({ entity: "" }), [])
+        compare(SW.entitiesOf({ entity: 7 }), [])
+        compare(SW.entitiesOf({}), [])
+    }
+
+    function test_entitiesOf_never_throws_on_junk() {
+        var junk = [null, undefined, 0, 1, "x", [], [1], true, function() {}]
+        for (var i = 0; i < junk.length; ++i) compare(SW.entitiesOf(junk[i]), [], String(i))
+    }
+
+    function test_entitiesOf_prototype_names_are_just_names() {
+        compare(SW.entitiesOf({ ops: [{ entity: "constructor" }, { entity: "constructor" }, { entity: "toString" }] }), ["constructor", "toString"])
+    }
+
+    function test_entitiesOf_returns_a_fresh_array_each_call() {
+        var item = { entity: "order" }
+        var a = SW.entitiesOf(item)
+        a.push("x")
+        compare(SW.entitiesOf(item), ["order"])
+    }
+
+    // Monkey: random item shapes always give a duplicate-free list of non-empty strings.
+    function test_monkey_entitiesOf_is_always_a_distinct_list_of_names() {
+        var rnd = _rng(2026)
+        var names = ["inventory", "order", "staff", "", "supplier", 3, null, "removed_staff"]
+        for (var i = 0; i < 300; ++i) {
+            var item
+            if (rnd() < 0.5) item = { entity: names[Math.floor(rnd() * names.length)] }
+            else {
+                var ops = []
+                var n = Math.floor(rnd() * 6)
+                for (var k = 0; k < n; ++k) ops.push(rnd() < 0.1 ? null : { entity: names[Math.floor(rnd() * names.length)] })
+                item = { ops: ops }
+            }
+            var got = SW.entitiesOf(item)
+            var seen = {}
+            for (var g = 0; g < got.length; ++g) {
+                verify(typeof got[g] === "string" && got[g].length > 0, "step " + i)
+                verify(seen[got[g]] !== true, "step " + i + " duplicate " + got[g])
+                seen[got[g]] = true
+            }
+        }
+    }
 }

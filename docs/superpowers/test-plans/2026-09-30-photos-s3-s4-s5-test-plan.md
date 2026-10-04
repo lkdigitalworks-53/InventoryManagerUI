@@ -9,7 +9,7 @@
 **Totals (planned):** unit 41 + functional 36 = 77 Node cases (runnable in the sandbox); rules 11 + e2e 12 + client QML 26 + PH5 QML 12 = 61 CI-only cases. Grand total 138. Case ids are NOT renumbered after the 2026-10-01 review: U21-U27, F11-F13, F17, F29 moved to PH3b, so ids have gaps; U48, F40, F41, C26 are new.
 
 ## PH3 implementation status (2026-10-03, branch `feat/2026-10-03-photos-ph3-server`)
-**CI (2026-10-03, head `656cd2d`): GREEN, 1957/1957** (QML 1553, Functions 302, Rules 45, E2E 57). The R01-R09, R11 rules cases and the 7 e2e cases below were written unrun; they have now run in CI and pass. Still not run on a device. E03-E06, E09, E12 remain unwritten (decision pending, see checkpoint).
+**CI (2026-10-03, head `656cd2d`): GREEN, 1957/1957** (QML 1553, Functions 302, Rules 45, E2E 57). The R01-R09, R11 rules cases and the 7 e2e cases below were written unrun; they have now run in CI and pass. Device-tested 2026-10-04 (section 9), after #115 fixed the stale-delete negative case. E03-E06, E09, E12 remain unwritten (decision pending, see checkpoint).
 **Node (sandbox, run):** `cd functions && node --test` = 446 pass, 0 fail (347 before). 100% line coverage on `photoCleanup.js`, `photoValidation.js`, `gatewayLogic.js`, `batchMutationLogic.js`, `operationLogic.js` (`--experimental-test-coverage`; branch coverage 85-100%, not 100%).
 - Unit: U01-U20, U28-U48 implemented (`photoValidation.test.js`, `photoCleanup.test.js`). U21-U27 stay moved to PH3b.
 - Functional: F01-F10, F14-F16, F18-F28, F30-F41 implemented (`index.handlers.photos.test.js`, `index.handlers.test.js`, `gatewayLogic.test.js`, `batchMutationLogic.test.js`, `operationLogic.test.js`). F11-F13, F17, F29 stay moved to PH3b. Test ids were mapped by intent, not copied one-to-one from the tables: a few cases are merged or split (e.g. F08b/F08c, F21b, F23b/c, F26b).
@@ -206,38 +206,39 @@ Defects this work pins, by case id: F22, E04, C19 (destroy-before-ack) | F37-F39
 Remove role gate; skip preflight; write marker outside the txn; write marker on CAS conflict; sweep without the product-absent re-check; drop the `/` suffix guard; widen whitelist to allow `/`; batch/ops reject removed. Each must turn at least one case red.
 
 ## 9. On-Device Test Plan (new tenant per PR; app is disabled offline so no offline steps)
+**2026-10-04: ticked per Taher's report that PR #113 + #115 device testing passed** (the stale-delete negative case failed first, fixed by #115, retested OK). Not ticked: the PH4-only toast case and the DV gap items below (Storage plan, function logs, marker age), which were not reported.
 
 ### Happy Path
-- [ ] Owner: add photo to a product; it shows in the tile and the gallery.
-- [ ] Admin: same.
-- [ ] Owner: delete a product that has 3 photos; open a former photo URL in a browser: it is gone (404). Check the Storage console: the product prefix is empty.
-- [ ] After that delete, Firestore `pending_cleanup` has no doc for the product.
-- [ ] Delete a product with no photos: no error, no leftover marker.
+- [x] Owner: add photo to a product; it shows in the tile and the gallery.
+- [x] Admin: same.
+- [x] Owner: delete a product that has 3 photos; open a former photo URL in a browser: it is gone (404). Check the Storage console: the product prefix is empty.
+- [x] After that delete, Firestore `pending_cleanup` has no doc for the product.
+- [x] Delete a product with no photos: no error, no leftover marker.
 
 ### Negative Cases
-- [ ] Staff login: no photo controls visible.
-- [ ] Demote an admin to staff while a photo sits queued: the tile ends in `failed` with Retry/Discard (one attempt, no retry loop).
-- [ ] Try to upload a 6th photo (cap): clear failure, nothing extra in Storage.
-- [ ] Product deleted on device B while device A has an upload queued: A's tile ends failed/purged, nothing appears in Storage.
-- [ ] Device A uploads a photo while device B deletes the SAME product (product with several photos): EXPECT either (i) delete commits: product gone on both, Storage prefix empty after the sweep; or (ii) delete 409s: product restored on B with ALL photos incl. A's new one, toast "Couldn't delete", Storage objects unchanged. FAIL = fewer photos than before. KNOWN in (ii): the product's batches are gone and Activity says deleted (KNOWN-ISSUES 2026-10-04). Repeat 3x, both orderings.
+- [x] Staff login: no photo controls visible.
+- [x] Demote an admin to staff while a photo sits queued: the tile ends in `failed` with Retry/Discard (one attempt, no retry loop).
+- [x] Try to upload a 6th photo (cap): clear failure, nothing extra in Storage.
+- [x] Product deleted on device B while device A has an upload queued: A's tile ends failed/purged, nothing appears in Storage.
+- [x] Device A uploads a photo while device B deletes the SAME product (product with several photos): EXPECT either (i) delete commits: product gone on both, Storage prefix empty after the sweep; or (ii) delete 409s: product restored on B with ALL photos incl. A's new one, toast "Couldn't delete", Storage objects unchanged. FAIL = fewer photos than before. KNOWN in (ii): the product's batches are gone and Activity says deleted (KNOWN-ISSUES 2026-10-04). Repeat 3x, both orderings.
 
 ### Edge Cases
-- [ ] Device A edits the price while device B uploads a photo to the same product: A's save gets the conflict toast, row reverts to server state, A redoes the edit (accepted F5 behavior). Check whether an inventory-specific conflict toast actually shows (UNVERIFIED).
-- [ ] Delete a product, recreate one with the same name within a minute: new product's photos unaffected.
-- [ ] Delete a product on device A that device B already deleted: A's row disappears and the toast says it was already deleted, not "restored" (Q13, PH4).
-- [ ] Delete fails with a conflict (edit the product on device B first): photos on device A's product are still visible afterwards (destroy-before-ack fixed).
-- [ ] Product with 5 photos deleted: all 10 objects (main + thumb) gone.
+- [x] Device A edits the price while device B uploads a photo to the same product: A's save gets the conflict toast, row reverts to server state, A redoes the edit (accepted F5 behavior). Check whether an inventory-specific conflict toast actually shows (UNVERIFIED).
+- [x] Delete a product, recreate one with the same name within a minute: new product's photos unaffected.
+- [ ] Delete a product on device A that device B already deleted: A's row disappears and the toast says it was already deleted, not "restored" (Q13, PH4). NOT TESTABLE until PH4 (toast copy not built).
+- [x] Delete fails with a conflict (edit the product on device B first): photos on device A's product are still visible afterwards (destroy-before-ack fixed).
+- [x] Product with 5 photos deleted: all 10 objects (main + thumb) gone.
 
 ### Multiple scenarios
-- [ ] Two devices deleting two different products at once.
-- [ ] Delete on A while B is mid-upload to the same product.
-- [ ] Owner on A, admin on B, both uploading to different products.
+- [x] Two devices deleting two different products at once.
+- [x] Delete on A while B is mid-upload to the same product.
+- [x] Owner on A, admin on B, both uploading to different products.
 
 ### Monkey Testing
-- [ ] 10 rapid add-photo / delete-product / recreate cycles across 3 products; no crash, no broken tile, Storage console shows no prefix of a deleted product.
-- [ ] Kill the app right after tapping delete (before the toast): relaunch, the outbox finishes the delete; the post-commit sweep removes the marker (if it failed, the marker waits for PH3b).
-- [ ] Toggle airplane mode mid-upload: app disables itself; on reconnect the queue resumes or fails cleanly.
-- [ ] Spam the remove-photo button; rotate the device during a delete.
+- [x] 10 rapid add-photo / delete-product / recreate cycles across 3 products; no crash, no broken tile, Storage console shows no prefix of a deleted product.
+- [x] Kill the app right after tapping delete (before the toast): relaunch, the outbox finishes the delete; the post-commit sweep removes the marker (if it failed, the marker waits for PH3b).
+- [x] Toggle airplane mode mid-upload: app disables itself; on reconnect the queue resumes or fails cleanly.
+- [x] Spam the remove-photo button; rotate the device during a delete.
 
 ### Affected Areas (regression)
 | Area | Automated | On-device check |
@@ -253,9 +254,9 @@ Remove role gate; skip preflight; write marker outside the txn; write marker on 
 | Profile photo | S09 | change profile photo |
 
 ### Regression Tests (manual counterpart)
-- [ ] Delete a product: stock batches also disappear (older cascade).
-- [ ] Order reopen/reversal does not resurrect a deleted batch.
-- [ ] Bulk import still creates products.
+- [x] Delete a product: stock batches also disappear (older cascade).
+- [x] Order reopen/reversal does not resurrect a deleted batch.
+- [x] Bulk import still creates products.
 
 ### DV: device verification gap to close
 - [ ] Confirm on the real Storage plan (not the emulator) that the prefix sweep removes objects.

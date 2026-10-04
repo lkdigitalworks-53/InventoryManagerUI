@@ -17,7 +17,7 @@
 5. Handler tests (photos + recordMutation cascade), rules (`pending_cleanup` in `isServerOnlyCollection`) + R-tests, F41 real-logic pin. Node suite 446/446.
 6. First push (all code commits) done at start of session 2; PR opened after docs.
 7. Risk check: seed tenant `e2e-tenant` passes the whitelist; client `recordMutation` and `PhotoQueue` both send `FirebaseService.environment`, so sweep env matches upload env. `users/{uid}` is client-writable (pre-existing) but `deriveContext` checks tenant membership and the whitelist guards the path.
-8. 7 e2e cases added; mutation checks 10/10 killed; docs: test plan status, KNOWN-ISSUES, AGENTS.md, SKILLS 90-91. README has no photos section; unchanged.
+8. 7 e2e cases added; mutation checks 10/10 killed; docs: test plan status, KNOWN-ISSUES, AGENTS.md, SKILLS 92-93 (renumbered 2026-10-04 after merging main; were 90-91). README has no photos section; unchanged.
 
 ## State at end of this session
 - Branch pushed, PR to `main`. Waiting for CI (rules + e2e + QML unchanged). **Nothing run against emulators.**
