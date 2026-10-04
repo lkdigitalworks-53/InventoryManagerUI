@@ -1,5 +1,16 @@
 # CHECKPOINT — 2026-10-04: order-completion delta behind a parked write (repro + fix)
 
+## SESSION 2 (2026-10-04, PR #121 device test) — resume here
+**Branch:** `docs/2026-10-04-pr121-device-observations` (stacked on `test/2026-10-04-order-completion-parked-delta-repro`). Docs only so far. Commit identity `taher.lkdw53@gmail.com`. Caveman FULL (chat only).
+**State of PR #121:** CI green on `e9403ec`; Taher device-tested it: parked edit denies completion as intended. Merge is Taher's.
+**New observations (Taher), root causes from code read, recorded in KNOWN-ISSUES "PR #121 device test":** (1) ledger rows for a rejected edit, (2) sale at the unconfirmed local price while the edit retries, (3) relaunch inside the retry window shows the old server price while the edit stays queued.
+**Code facts that drive the options:** `updateProduct` writes local state + Activity + `TransactionStore.record*` at click time; every `record*` is its own outbox item; `Gateway.mutationApplied(entity, entityId, action)` exists (BC2) and `_pendingDeletes` is the in-memory precedent (lost on relaunch); `_load` has no outbox overlay; completion already needs the server (its stock delta awaits the server), so it never worked offline.
+**Open decisions (asked in chat, answers NOT yet recorded):**
+ Q1 local-edit policy: Y overlay queued edits on every server read + "not synced" badge (keeps optimistic UI, survives restart) / X apply only after ack (breaks offline-feel, rewrite) / Z = Y + refuse a sale of a product with any unsynced edit.
+ Q2 ledger mechanism: in-memory pending map like BC2 (lost on relaunch = silently lost ledger row) / outbox `dependsOn` (durable, client-only, touches core `OutboxStore`) / atomic server `recordOperation` (correct, needs `functions/` + deploy by Taher).
+ Q3 scope of ledger kinds in the first PR: product edit only (`field_change`, `stock_adjustment`, Activity `product_updated`) / all kinds.
+**NOT verified:** nothing run; all root causes are code reads. Item 3's "later flips to 30" is inferred from outbox persistence, not seen.
+
 **Branch:** `test/2026-10-04-order-completion-parked-delta-repro` (off `main` @ `f530865`, PR #119 merged).
 **Commit identity:** `taher.lkdw53@gmail.com`. **Rules (standing):** branch only; push without asking (PAT only in the push header via `/tmp/push.sh`, never in `.git/config`); no build/run; no Qt tooling in the sandbox (CI = the QML signal); small scope; honest advisor, grill before deciding. Skills read: brainstorming, ponytail, qt-qml. Caveman FULL (chat only).
 **Previous checkpoint archived:** `docs/superpowers/specs/2026-10-04-pr119-merged-CHECKPOINT.md`.
