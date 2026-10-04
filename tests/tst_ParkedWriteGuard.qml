@@ -47,17 +47,19 @@ TestCase {
     }
     // A rejected edit of `productId` that is now parked.
     function _park(productId, entity) {
-        var rid = "park-" + productId + "-" + (entity || "inventory")
-        OutboxStore.enqueue({ requestId: rid, entity: entity || "inventory", entityId: productId,
-                              action: "update", before: { v: 0 }, after: { v: 1 } })
-        OutboxStore.setStuckMeta(rid, { failures: 5, stuck: true, terminal: true })
-        return rid
+        // enqueue() merges into a pending item for the same record and returns THAT item, so park
+        // the returned requestId, not the one passed in (a queued delete/update may already exist).
+        var it = OutboxStore.enqueue({ requestId: "park-" + productId + "-" + (entity || "inventory"),
+                                       entity: entity || "inventory", entityId: productId,
+                                       action: "update", before: { v: 0 }, after: { v: 1 } })
+        OutboxStore.setStuckMeta(it.requestId, { failures: 5, stuck: true, terminal: true })
+        return it.requestId
     }
     function _count(entity, action) {
         return OutboxStore.items.filter(function(i) { return i.entity === entity && i.action === action }).length
     }
     function _restock(id) {
-        var out = { called: 0, ok: null, supplierFailed: null, refusal: null }
+        var out = { called: 0, ok: null, supplierFailed: null, refusal: undefined }
         InventoryStore.restock(id, 3, "", 10, "", function(ok, sf, refusal) {
             out.called++; out.ok = ok; out.supplierFailed = sf; out.refusal = refusal })
         return out
