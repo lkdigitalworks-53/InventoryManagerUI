@@ -463,7 +463,7 @@ QtObject {
   batches. Never reintroduce a client `stock_batch` delete or a click-time Activity entry. Needs BC1 deployed (it is).
   D2/D3 (PR #119): a parked write holds its record key, so `InventoryStore.restock` and `deleteProduct` refuse up front when
   `OutboxStore.hasParkedForEntity("inventory", id)` (callback `(false, false, message)` / return value = `parkedWriteMessage`) and write
-  nothing; `DataModel` and `RestockDialog` show the message. Order-completion deltas are NOT guarded (open). In E2E files declare
+  nothing; `DataModel` and `RestockDialog` show the message. Since 2026-10-04 (decision B, PR #121) `DataModel._tryCompleteOrder` refuses the same way (callback `false`, `stockErrorMsg` = "<product>: <parkedWriteMessage>", order stays `pending`, no FIFO, no delta, in-flight set untouched); returns/exchanges (`_tryAdjustOrder`), `completeImportedOrder` and the `creditStockNoBatch` failure path are NOT guarded (open). In E2E files declare
   `DataModel { id: dm }`: it is not a singleton, so its Gateway `Connections` (resyncs) do not exist otherwise.
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,

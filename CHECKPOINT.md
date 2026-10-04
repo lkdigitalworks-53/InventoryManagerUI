@@ -30,4 +30,10 @@ Nothing run here (no Qt toolchain, standing rule). The hang and drift above are 
 
 ## Step log (continued)
 3. Commit 1 (red by design): `test_completeOrder_behind_a_parked_write_is_refused_not_hung` in `test/e2e/tst_OrdersE2E.qml`. Expected CI: E2E fails on `completion hung behind a parked write`; everything else green.
-4. Commit 2: guard + unit tests + docs (see below once done).
+4. Draft PR #121 opened (base `main`).
+5. Commit 2: guard in `DataModel._tryCompleteOrder` (before `_completingOrderIds` is set, before FIFO), `tests/tst_DataModel_completeOrderParkedGuard.qml` (22 cases incl. monkey), test plan `docs/superpowers/test-plans/2026-10-04-order-completion-parked-write-test-plan.md` (+ index row), AGENTS.md, KNOWN-ISSUES (status + open list), SKILLS Skill 99.
+6. NEXT: read CI on PR #121 (bot PR comment lists failing tests). Expect: commit 1 red on the new E2E only; commit 2 green. If a new unit test is red, suspect the offline-harness assumption (`_completingOrderIds` set = proceeded) first. Then Taher device-tests section 4 of the test plan, marks PR ready, merges. After that: PH3b sweeper.
+
+## Open after this PR
+- Same hang, not guarded: `_tryAdjustOrder` (returns/exchanges), `completeImportedOrder`, `creditStockNoBatch` failure-path credit. Decide after the repro runs: the same refusal, or the bypass (advice was A, Taher chose B).
+- Order-completion E2E cases, new unit file and guard are all UNVERIFIED until CI. Nothing ran in-session.

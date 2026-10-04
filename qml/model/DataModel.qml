@@ -561,6 +561,28 @@ Item {
             if (callback) callback(false)
             return
         }
+        // Refuse up front when a line's product has a PARKED write (server rejected it, waiting for
+        // Retry/Discard). The parked item holds `inventory/<id>` in OutboxStore.dueItems, so the stock
+        // delta below would never be sent, its callback never fires, this order stays "already being
+        // completed" and the FIFO deltas (other keys) drift from product.stock. Checked BEFORE the
+        // in-flight set is touched and before any FIFO consumption, so a refusal has nothing to undo.
+        // Same message as restock/delete (D2/D3). The order stays "pending" (not "out of stock").
+        var parkedNames = []
+        var parkedSeen = {}
+        var checkLines = o.products || []
+        for (var pi = 0; pi < checkLines.length; ++pi) {
+            var parkedInv = _resolveInventory(checkLines[pi])
+            if (parkedInv && !parkedSeen[parkedInv.productId] && InventoryStore.hasParkedWrite(parkedInv.productId)) {
+                parkedSeen[parkedInv.productId] = true
+                parkedNames.push(checkLines[pi].name)
+            }
+        }
+        if (parkedNames.length > 0) {
+            dataModel.stockErrorMsg = parkedNames.join(", ") + ": " + InventoryStore.parkedWriteMessage
+            if (callback) callback(false)
+            return
+        }
+
         dataModel._completingOrderIds[orderId] = true
 
         // ── 1. Stock validation (against product.stock) ──────────────────
