@@ -567,18 +567,29 @@ Item {
         // completed" and the FIFO deltas (other keys) drift from product.stock. Checked BEFORE the
         // in-flight set is touched and before any FIFO consumption, so a refusal has nothing to undo.
         // Same message as restock/delete (D2/D3). The order stays "pending" (not "out of stock").
+        // PR #121 follow-up (Q1 = Z): a line whose product has ANY queued, unsynced edit is refused
+        // too (price/stock on this device may not be what the server will hold). Parked wins when
+        // both apply (it needs the user's action; a plain unsynced edit just needs to finish).
         var parkedNames = []
+        var unsyncedNames = []
         var parkedSeen = {}
         var checkLines = o.products || []
         for (var pi = 0; pi < checkLines.length; ++pi) {
             var parkedInv = _resolveInventory(checkLines[pi])
-            if (parkedInv && !parkedSeen[parkedInv.productId] && InventoryStore.hasParkedWrite(parkedInv.productId)) {
+            if (!parkedInv || parkedSeen[parkedInv.productId]) continue
+            if (InventoryStore.hasParkedWrite(parkedInv.productId)) {
                 parkedSeen[parkedInv.productId] = true
                 parkedNames.push(checkLines[pi].name)
+            } else if (InventoryStore.hasUnsyncedEdit(parkedInv.productId)) {
+                parkedSeen[parkedInv.productId] = true
+                unsyncedNames.push(checkLines[pi].name)
             }
         }
-        if (parkedNames.length > 0) {
-            dataModel.stockErrorMsg = parkedNames.join(", ") + ": " + InventoryStore.parkedWriteMessage
+        if (parkedNames.length > 0 || unsyncedNames.length > 0) {
+            var msgs = []
+            if (parkedNames.length > 0) msgs.push(parkedNames.join(", ") + ": " + InventoryStore.parkedWriteMessage)
+            if (unsyncedNames.length > 0) msgs.push(unsyncedNames.join(", ") + ": " + InventoryStore.unsyncedEditMessage)
+            dataModel.stockErrorMsg = msgs.join("; ")
             if (callback) callback(false)
             return
         }

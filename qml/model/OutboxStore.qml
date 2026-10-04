@@ -36,6 +36,11 @@ import "../helper/StuckWrites.js" as StuckWrites
 // S2b: an item that is stuck AND terminal is PARKED (StuckWrites.isParkedItem):
 // dueItems/nextDueInMs/wakeStuck skip it and it holds its keys, so later writes
 // for the same record wait behind it. Only retryNow() releases it.
+// Any item may carry `dependsOn: <requestId of another queued item>` (PR #121 follow-up):
+// a HELD item. dueItems/nextDueInMs never send it while dependsOn is set. markAcked(parent)
+// clears it (releases the dependents) in the same save that removes the parent; any other way
+// the parent leaves the queue (discard, conflict, permanent drop) orphans the dependents and
+// pruneOrphans() deletes them, so a ledger row is never sent for an edit the server never took.
 // dueItems/markSent/markFailed/nextDueInMs only key off requestId, so all
 // three shapes flow through them unchanged — only enqueue/enqueueBatch/
 // enqueueDelta differ, in how they build the item and (new this session)
@@ -91,6 +96,7 @@ QtObject {
             }
         }
         _refresh()
+        pruneOrphans()
     }
 
     function _save() {
@@ -176,9 +182,12 @@ QtObject {
         var nowMs = Date.now()
         var arr = items.slice()
 
-        for (var i = 0; i < arr.length; ++i) {
+        // A call that depends on another item is never merged into anything (it is a held
+        // ledger row with its own identity), and nothing merges into it (unique entityId).
+        for (var i = 0; !call.dependsOn && i < arr.length; ++i) {
             var candidate = arr[i]
             if (candidate.items || candidate.deltas || candidate.ops) continue // batches/deltas/operations aren't merge targets for a plain call
+            if (candidate.dependsOn) continue
             if (candidate.entity !== call.entity || candidate.entityId !== call.entityId) continue
             var key = _keyFor(call.entity, call.entityId)
             if (_inFlightKeys[key] === candidate.requestId) continue // this IS the dispatched one — don't touch it
@@ -203,6 +212,7 @@ QtObject {
             attempts: 0,
             nextAttemptAt: nowMs
         }
+        if (call.dependsOn) item.dependsOn = call.dependsOn
         arr.push(item)
         items = arr
         _save()
@@ -324,6 +334,7 @@ QtObject {
                 for (var pk = 0; pk < keys.length; ++pk) claimed[keys[pk]] = true
                 continue
             }
+            if (items[i].dependsOn) continue // held behind its parent edit (or orphaned, see pruneOrphans)
             if ((items[i].nextAttemptAt || 0) > nowMs) continue
             if (_isItemBlocked(items[i])) continue
             var clash = false
@@ -382,6 +393,7 @@ QtObject {
                 continue
             }
             if (behind) continue
+            if (items[i].dependsOn) continue // held: not due until its parent is acked (no timer spin)
             var due = Math.max(0, (items[i].nextAttemptAt || 0) - nowMs)
             if (soonest < 0 || due < soonest) soonest = due
         }
@@ -394,6 +406,58 @@ QtObject {
             if (items[i].requestId !== requestId) arr.push(items[i])
         items = arr
         _save()
+    }
+
+    // The server ACKED `requestId`: remove it AND release every item held behind it
+    // (dependsOn cleared), in ONE items assignment and ONE _save(). Atomic on purpose: two
+    // saves would let a crash between them leave dependents whose parent is gone, which
+    // load-time pruneOrphans() would then delete (a silently lost ledger row).
+    function markAcked(requestId) {
+        var arr = []
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.requestId === requestId) continue
+            if (it.dependsOn === requestId) {
+                it = Object.assign({}, it)
+                delete it.dependsOn
+            }
+            arr.push(it)
+        }
+        items = arr
+        _save()
+    }
+
+    // Delete held items whose parent is no longer queued and was not acked (discarded,
+    // conflicted, permanently dropped, or signed out). Returns the dropped items so the
+    // caller can undo any optimistic local copy. Saves only when something was dropped.
+    function pruneOrphans() {
+        var live = {}
+        for (var i = 0; i < items.length; ++i) live[items[i].requestId] = true
+        var keep = []
+        var dropped = []
+        for (var j = 0; j < items.length; ++j) {
+            var it = items[j]
+            if (it.dependsOn && !live[it.dependsOn]) dropped.push(it)
+            else keep.push(it)
+        }
+        if (dropped.length === 0) return dropped
+        items = keep
+        _save()
+        return dropped
+    }
+
+    // Is a single-record WRITE (create/update/delete, not a stock delta, batch member or
+    // operation, and not a held ledger row) still queued for this entity+entityId, in flight
+    // or parked? The sale guard uses this: a queued edit means the server and this device
+    // may disagree about the record, so it must not be sold yet. Deltas are excluded on
+    // purpose: back-to-back sales of one product each queue a stock delta.
+    function hasUnsyncedEditForEntity(entity, entityId) {
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.deltas || it.items || it.ops || it.dependsOn) continue
+            if (it.entity === entity && it.entityId === entityId) return true
+        }
+        return false
     }
 
     // Bump attempts and push out nextAttemptAt per the backoff schedule.

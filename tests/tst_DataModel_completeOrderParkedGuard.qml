@@ -121,19 +121,23 @@ TestCase {
         dm._tryCompleteOrder("ORD-1")
         compare(_status("ORD-1"), "pending")
     }
-    function test_stuck_but_not_parked_write_is_not_refused_edge() {
-        // Retrying (stuck, not terminal) is not parked: the delta queues behind it and drains once it clears.
+    function test_stuck_but_not_parked_write_is_refused_as_unsynced_edge() {
+        // Retrying (stuck, not terminal) is not PARKED, but it is an unsynced edit: since the PR #121
+        // follow-up (Q1 = Z) it is refused too, with the "hasn't synced yet" message, not the parked one.
         var it = OutboxStore.enqueue({ requestId: "retrying", entity: "inventory", entityId: "SKU-1",
                                        action: "update", before: { v: 0 }, after: { v: 1 } })
         OutboxStore.setStuckMeta(it.requestId, { failures: 2, stuck: true })
-        _complete("ORD-1")
-        verify(dm._completingOrderIds["ORD-1"] === true, "must proceed")
+        var r = _complete("ORD-1")
+        compare(r.ok, false)
+        compare(dm.stockErrorMsg, "Widget SKU-1: " + InventoryStore.unsyncedEditMessage)
+        verify(!dm._completingOrderIds["ORD-1"])
     }
-    function test_plain_pending_write_is_not_refused_edge() {
+    function test_plain_pending_edit_is_refused_as_unsynced_edge() {
         OutboxStore.enqueue({ requestId: "pending", entity: "inventory", entityId: "SKU-1",
                               action: "update", before: { v: 0 }, after: { v: 1 } })
-        _complete("ORD-1")
-        verify(dm._completingOrderIds["ORD-1"] === true)
+        var r = _complete("ORD-1")
+        compare(r.ok, false)
+        compare(dm.stockErrorMsg, "Widget SKU-1: " + InventoryStore.unsyncedEditMessage)
     }
 
     // ── multi-line orders ─────────────────────────────────────────────────
