@@ -4,6 +4,8 @@ import "../components"
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/RealisedMath.js" as RealisedMath
 import "../helper/ImportMath.js" as ImportMath
+import "../helper/DocLimits.js" as DocLimits
+import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
 
 QtObject {
     id: root
@@ -51,6 +53,8 @@ QtObject {
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
         Gateway.mutationApplied.connect(_onMutationApplied)
+        OutboxStore.itemsChanged.connect(_refreshSyncStates)
+        _refreshSyncStates()
         Gateway.writeAcked.connect(_onWriteAcked)
         Gateway.parkedWriteDiscarded.connect(_onParkedWriteDiscarded)
         Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
@@ -159,7 +163,8 @@ QtObject {
                 console.warn("[InventoryStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return;
             }
-            products = products.concat(_normalizeProducts(result.items));
+            // S4: lay still-queued (pending or parked) product edits over the server copy.
+            products = products.concat(_overlayUnsynced(_normalizeProducts(result.items)));
             hasMore = result.hasMore;
             _cursor = result.nextCursor;
             if (hasMore) {
@@ -176,6 +181,35 @@ QtObject {
     }
 
     function syncFromFirebase() { _resetAndFetch(); }
+
+    // PR #122 S4. { productId: "pending" | "parked" } for products with an unsynced write,
+    // rebuilt whenever the outbox changes. Drives the "Not synced" / "Rejected" badge. Same rule
+    // as the sale guard (OutboxStore.unsyncedByEntity), so the two never disagree.
+    property var syncStates: ({})
+
+    function syncStateOf(productId) { return syncStates[productId] || "" }
+
+    function _refreshSyncStates() {
+        var next = UnsyncedOverlay.statesOf(OutboxStore.unsyncedByEntity("inventory"))
+        // Only publish a real change: this runs on EVERY outbox write (each sale delta).
+        if (JSON.stringify(next) !== JSON.stringify(syncStates)) syncStates = next
+    }
+
+    function _overlayUnsynced(arr) {
+        return UnsyncedOverlay.overlayAll(arr, OutboxStore.unsyncedByEntity("inventory"))
+    }
+
+    // PR #121 device obs 1 + PR #122: Firestore rejects a doc over 1 MiB, so refuse BEFORE
+    // anything is queued (nothing local changes, no ledger row, no retry loop).
+    readonly property string tooLargeMessage: "This product is too large to save (over 1 MiB). Shorten the description."
+
+    // "" = fits, otherwise the message to show. Used by the dialogs before they close and by
+    // updateProduct/addProduct as the last line of defence.
+    function updateRefusal(productId, fields) {
+        var idx = findIndexById(productId)
+        if (idx < 0) return ""
+        return DocLimits.exceedsDoc(Object.assign({}, products[idx], fields || {})) ? tooLargeMessage : ""
+    }
 
     function clear() {
         products = []
@@ -500,6 +534,15 @@ QtObject {
     // to product cost `price` when not supplied — matches the previous
     // implicit assumption).
     function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size, callback) {
+        // Size check first, before a productId is minted or a supplier created. A draft doc with
+        // a placeholder id is enough: the id is a few bytes, the description is the whole risk.
+        var draft = _newProductDoc("PRD-0000000000", name, sku, category, stock, minStock, price,
+                                   (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price,
+                                   !!taxable, taxPercent || 0, size || "", unit, description, party || "")
+        if (DocLimits.exceedsDoc(draft)) {
+            if (callback) callback(false, "", tooLargeMessage)
+            return
+        }
         // Resolve supplier first (only actually async when `party` is a
         // brand-new name that needs a fresh supplierId minted — an existing
         // id/name resolves synchronously-fast via the callback), then mint
@@ -1382,9 +1425,12 @@ QtObject {
         return -1
     }
 
+    // Returns tooLargeMessage when refused (nothing changed), otherwise undefined.
     function updateProduct(productId, fields, reason) {
         var idx = findIndexById(productId)
         if (idx < 0) return
+        var refusal = updateRefusal(productId, fields)
+        if (refusal !== "") return refusal
         var arr = _clone()
         var prev = arr[idx]
         var p = arr[idx]

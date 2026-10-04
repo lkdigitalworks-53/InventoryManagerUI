@@ -308,6 +308,22 @@ BottomSheet {
             }
         }
 
+        // PR #122 S4: a queued edit is shown here (the overlay re-applies it after a relaunch)
+        // but the server does not have it yet.
+        Text {
+            id: syncNote
+            objectName: "syncNote"
+            readonly property string syncState: InventoryStore.syncStates[root.productId] || ""
+            Layout.fillWidth: true
+            visible: syncState !== ""
+            wrapMode: Text.Wrap
+            color: syncState === "parked" ? Constants.danger : Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            text: syncState === "parked"
+                  ? qsTr("A change to this product was rejected by the server. Retry or discard it from the stuck changes list.")
+                  : qsTr("A change to this product hasn't synced yet. It can't be sold until it does.")
+        }
+
         Text {
             text: "Product info"
             color: Constants.textSecondary
@@ -1078,7 +1094,7 @@ BottomSheet {
             errorLabel.text = errs.join(" · ")
             return
         }
-        productUpdateRequested(root.productId, {
+        var fields = {
             name: nameField.text.trim(),
             sku: skuField.text.trim(),
             category: categoryCombo.currentText,
@@ -1091,7 +1107,14 @@ BottomSheet {
             size: sizeField.text.trim(),
             stock: stk,
             minStock: ms
-        }, reasonField.text.trim())
+        }
+        // Over the Firestore 1 MiB doc limit: stay open so the edit is not lost, and say why.
+        var tooLarge = InventoryStore.updateRefusal(root.productId, fields)
+        if (tooLarge !== "") {
+            errorLabel.text = tooLarge
+            return
+        }
+        productUpdateRequested(root.productId, fields, reasonField.text.trim())
         errorLabel.text = ""
         LockManager.release("inventory", productId)
         editMode = false

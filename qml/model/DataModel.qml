@@ -265,9 +265,12 @@ Item {
                 return
             }
             InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent,
-                undefined, undefined, undefined, function(ok, productId) {
+                undefined, undefined, undefined, function(ok, productId, refusal) {
                     if (!ok) {
-                        dispatcher.errorOccurred("network", "Could not add product — try again")
+                        // refusal = over the 1 MiB doc limit (nothing was queued); otherwise a
+                        // mint/supplier failure that a retry can fix.
+                        if (refusal) dispatcher.errorOccurred("inventory", refusal)
+                        else dispatcher.errorOccurred("network", "Could not add product — try again")
                         return
                     }
                     dispatcher.productAdded(productId)
@@ -285,7 +288,13 @@ Item {
             // Value / Potential-profit / by-supplier Analysis reports) drifts.
             var before = InventoryStore.getById(productId)
             var oldStock = before ? before.stock : undefined
-            InventoryStore.updateProduct(productId, fields, reason)
+            var refusal = InventoryStore.updateProduct(productId, fields, reason)
+            if (refusal) {
+                // Over the 1 MiB doc limit: nothing changed, so no batch reconcile and no
+                // productUpdated. The dialogs pre-check, this is the backstop (e.g. import).
+                dispatcher.errorOccurred("inventory", refusal)
+                return
+            }
             _reconcileBatchesForStockEdit(productId, oldStock, fields.stock)
             dispatcher.productUpdated(productId)
         }
