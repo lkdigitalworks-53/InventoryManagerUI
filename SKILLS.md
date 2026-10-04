@@ -4070,3 +4070,16 @@ before the forbidden calls land.
 **Context (2026-10-04, PR #121):** a parked edit holds `inventory/<id>` in `OutboxStore.dueItems`. Order completion awaited a stock delta for that key, so the delta never went out, `deductStock`'s callback never fired, `_completingOrderIds[orderId]` stayed set and the FIFO deltas (other keys) drifted from `product.stock`. Restock and delete had been fixed the same way one PR earlier (Skill 97); completion was the next caller that awaits.
 
 **Generalize:** (1) Put the refusal at the TOP of the orchestration function, before the in-flight set is touched and before the first side effect, so a refusal has nothing to undo (a guard placed after FIFO consumption needs `restoreFifo` and credit-back paths of its own). (2) A refusal must answer through the same callback the flow already uses (`orderCompletionFailed` via `stockErrorMsg`), not a new channel, and must not change the record's status (the order stays `pending`, not "out of stock"). (3) After guarding one caller, grep every other caller of the same primitive (`deductStock`, `creditStockNoBatch`) and list the unguarded ones as open instead of assuming. (4) A red-by-design E2E commit first, then the fix, proves the bug on CI before the guard hides it.
+
+
+## Skill 100: A ledger row that belongs to an optimistic edit must be held in the OUTBOX until that edit is acked, and the dependency must name the STORED item
+
+Symptom (device, PR #121): an edit the server rejected (description > 1 MiB) still registered its `field_change` row, and a sale inside the ~3 min retry window sold at the unsynced price (or at the old one after a relaunch re-read Firestore).
+Rules learned, in order of how easy they are to get wrong:
+1. `Gateway.recordMutation` returns the NEW call's requestId, but `OutboxStore.enqueue` may MERGE the call into an older queued item that keeps ITS requestId. A dependent must hang off the stored item: use `Gateway.recordEdit`, which returns `stored.requestId`.
+2. `markSent` is used for ack, discard, conflict and permanent drop. Only the ack path may release dependents: `markAcked` removes the parent and clears `dependsOn` on its dependents in ONE `_save()` (two saves + a crash = dependents orphaned = lost ledger rows). Every other exit orphans them and `pruneOrphans` (from `Gateway._reschedule` and at load) deletes them.
+3. A held item must be invisible to `dueItems` AND `nextDueInMs`: held items are "due now", so a timer that only skips them in `dueItems` spins every 250 ms forever.
+4. Optimistic local ledger rows need an undo when the held row is dropped (`heldWritesDropped` -> `TransactionStore.removeLocal`), or a ghost row lives until the next refetch.
+5. "Any unsynced edit" for a sale guard must exclude stock DELTAS: back-to-back sales of one product each queue a delta and must not block each other.
+6. Do not change the arity of an existing signal (`mutationApplied`): QML throws on an emit with fewer arguments than declared and tests emit it by hand. Add a new signal (`writeAcked`) instead.
+Open (S4): overlay queued edits on server reads + a "not synced" badge, so a relaunch inside the retry window does not show the old price.
