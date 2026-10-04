@@ -1,7 +1,7 @@
 # Product delete: stop destroying batches / activity / queued photos before the server acks — design
 
 **Status:** design only. **Decisions Q-BC-1..Q-BC-7 DECIDED 2026-10-04 by Taher: default option on all seven** (ledger below). No code written. Implementation starts with BC1 once the order vs the photos items is settled (see ledger, "Order").
-**Reviewed 2026-10-05** (post-merge review of PR #116, see "Design review 2026-10-05"): 2 High + 3 Medium + 4 Low findings; text fixed in this file, **Q-BC-8 and Q-BC-9 are OPEN (need Taher)**.
+**Reviewed 2026-10-05** (post-merge review of PR #116, see "Design review 2026-10-05"): 2 High + 3 Medium + 4 Low findings; text fixed in this file. **Q-BC-8 and Q-BC-9 DECIDED 2026-10-05 (Taher: gate = yes; replay re-sweep = no, because PH3b is designed and built right after BC1). Order BC1 -> PH3b -> PH4 rest confirmed.** Design is complete for BC1.
 **Branch:** `docs/2026-10-04-product-delete-batch-cascade-design` (off `main` @ `157dc6b`).
 **Roadmap:** new item 5 in `docs/superpowers/DELETE-FEATURE-ROADMAP.md`. Source: `KNOWN-ISSUES.md` "Product delete is destroy-before-ack" (items 1-3 still open after the photo part was fixed in #113/#115).
 **Test plan:** `../test-plans/2026-10-04-product-delete-batch-cascade-test-plan.md`.
@@ -18,12 +18,14 @@
 | Q-BC-5 | F5 (delete 409s on any `photoIds` change) stays out of scope | After this fix a 409 destroys nothing; still annoying |
 | Q-BC-6 | **Two PRs: BC1 server first, BC2 client after BC1 is merged AND deployed** | Taher deploys functions manually; record the deploy in the checkpoint. BC2 before the deploy = batches never deleted, ghosts in valuation |
 | Q-BC-7 | Yes: soften the `operationLogic.js` "write-ceiling arithmetic" comment in BC1 | Its own numbers give 2 x 200 + 2 = 402 < 500 (500 itself UNVERIFIED), so the comment's claim looks wrong. `recordOperation` still rejects cascade deletes (kept) |
+| Q-BC-8 | **Yes (2026-10-05)**: server owner/admin gate on `inventory` delete in `recordMutation` | Same shape as the staff gate / `canManagePhotos`. Returns 403 `role-not-allowed` before any read or txn. Client already gates the same way, so the UI path never hits it. `recordMutationsBatch` / `recordOperation` already reject product deletes (cascade guard), so `recordMutation` is the only door |
+| Q-BC-9 | **No (2026-10-05)**: an idempotent replay does NOT re-run the sweep (PH3 behaviour kept) | Taher: PH3b is designed and implemented immediately after BC1, and its scheduler is the retry path for every marker, replay-orphaned ones included. See "PH3b implications". My first advice was yes; reversed after the PH3b timing was known (reasons in the section) |
 
 **Verified this session (code read, nothing run), closes two items from the "Not verified" list:**
 - P1 stock-movements ledger (S1a/S1b) is NOT built on `main`: `gatewayLogic.js` only has the `stock_movement` collection-name map entry, no derivation code. So BC1 has no ledger interaction today. If P1 lands later, the sweep must emit its rows or P1 must exclude cascade deletes; note this in the P1 design then.
 - Photo UI is already owner/admin only: `ProductPhotoGallery` is `editable: root.editMode` in `EditProductDialog`, and the Edit action only shows when `AuthStore.canManageInventory` (owner/admin). A manager/staff 403 is therefore rare in the UI, so PH4 item 1 (403 terminal) is low urgency, not blocking.
 
-**Still unverified:** Firestore per-transaction write ceiling; `recordMutation` role handling for `stock_batch` delete (read before BC1 code).
+**Still unverified:** Firestore per-transaction write ceiling; `recordMutation` role handling for `stock_batch` delete: READ 2026-10-05, none (R5, Q-BC-8). UNVERIFIED still: how the stuck-writes dialog words a parked 403 `role-not-allowed` for a product delete (the staff delete already parks the same error; check the string when BC1 is on a device).
 
 ## Design review 2026-10-05 (post-merge review of PR #116)
 
@@ -34,8 +36,8 @@ Method: re-read every claim against `main` @ `1c5a521` (READ = code read this se
 | R1 | High | Discard of a parked product delete restores the product but not its batches (`entitiesOf` -> `["inventory"]` only once batch deletes leave the outbox). Design only covered the 409 path | FIXED in text (client item 2) + test plan |
 | R2 | High | Per-batch audit entries (Q-BC-2 A) need actor / back-link but marker had none and PH3b has no request context; design said "no new marker field" | FIXED in text (server item 1) + test plan |
 | R3 | Med | Chunk of 200 docs = 400 writes (600 if `serverTimestamp` counts extra) vs UNVERIFIED ~500 ceiling; Q-BC-7 called the existing arithmetic wrong without evidence | FIXED: `SWEEP_CHUNK = 100` (300 writes even in the strict reading), Q-BC-7 reworded |
-| R4 | Med | Handler sweeps only when `!idempotentReplay`. A request that commits but dies before/while sweeping (client timeout is 30 s, function default is 60 s) is retried as a replay and never swept; with batches in the sweep that leaves money data waiting for PH3b | OPEN: **Q-BC-9** |
-| R5 | Med | `recordMutation` has NO server role gate for `inventory` delete (only staff / removed_staff). Client gate is owner/admin (READ `DataModel.onDeleteProduct`). Test-plan case "role-rejected delete => no sweep" has nothing to test. No capability is added by (d): a token could already delete product + batch docs | OPEN: **Q-BC-8** |
+| R4 | Med | Handler sweeps only when `!idempotentReplay`. A request that commits but dies before/while sweeping (client timeout is 30 s, function default is 60 s) is retried as a replay and never swept; with batches in the sweep that leaves money data waiting for PH3b | DECIDED **Q-BC-9 = no**: PH3b scheduler closes it |
+| R5 | Med | `recordMutation` has NO server role gate for `inventory` delete (only staff / removed_staff). Client gate is owner/admin (READ `DataModel.onDeleteProduct`). Test-plan case "role-rejected delete => no sweep" has nothing to test. No capability is added by (d): a token could already delete product + batch docs | DECIDED **Q-BC-8 = yes**: gate added in BC1 |
 | R6 | Low | "Old client just leaves the sweep less to do" had the order backwards (sweep first, then old client's batch deletes 409 with `current: null`) | FIXED in text + e2e E6 |
 | R7 | Low | Relaunch between click and ack skips not only the Activity entry (accepted) but also the queued-photo purge: those photos then upload, 404, park as `failed` with no UI and keep local files (the exact state the purge comment describes) | NOTED here; mitigation is PH4 rest ("already deleted" handling), no extra code in BC2 |
 | R8 | Low | Sweep reads batches then deletes without a transaction, so audit `before` can lag a concurrent delta. Only reachable by a stale offline device because the UI blocks delete while open orders reference the product | ACCEPTED, documented |
@@ -45,11 +47,24 @@ ponytail-audit: nothing to delete. Option (d) removes the client batch loop and 
 
 Verified correct (no change): marker written after the CAS check inside the same transaction; 409 writes no marker; ids whitelisted before any prefix delete; exists-guard runs first; `mutationConflicted` already carries `action`; `DataModel._resyncForDiscard` exists and calls `StockBatchStore.syncFromFirebase()`; client owner/admin gate; `recordOperation` has no caller outside `Gateway.qml` on `main`; exhausted batches never pruned.
 
-### Open decisions for Taher (grilled; defaults are my advice)
+### Decisions on the review findings (Taher, 2026-10-05)
 
-**Q-BC-8 Server role gate on inventory delete.** (a) add owner/admin gate in `recordMutation` for `inventory` delete, same helper shape as the staff gate and `canManagePhotos` (default), (b) leave ungated, drop the test case. For (a): consistent with the client and PH3, stops a staff-role token from triggering a server cascade over money data. Against (a): new 403 on a path where today nothing returns 403; the client treats 4xx as terminal and parks it (error classification, #93), PH4 item 1 (403 terminal for photos) is a different path, so verify the park UI wording is acceptable. For (b): zero new behaviour, but the sweep then trusts every caller. It adds no new capability either way.
+**Q-BC-8 DECIDED yes** (server owner/admin gate on product delete). Trade-off kept for the record: a new 403 on a path that returned none; the client parks 4xx as terminal (#93). The UI never sends it for non-owner/admin, so only a direct token call or a stale role cache sees it. Not gating would have meant the sweep trusts every caller.
 
-**Q-BC-9 Replay re-sweeps.** (a) on an idempotent replay of a cascade delete, read the marker and run `sweepMarker` if it still exists (default; one extra read per replay, sweep is idempotent and the audit ids are deterministic so overlap is safe), (b) keep PH3 behaviour (replay returns early) and rely on PH3b. For (b): no code change, but the only retry path for batch sweeps is a scheduler that is not built. Because batches are money data I advise (a); it also makes PH3b less urgent.
+**Q-BC-9 DECIDED no** (replay does not re-sweep). Reasoning with the PH3b timing Taher gave:
+- The hole is narrow: the function awaits the sweep, so a client timeout (30 s) does not stop it; only a function crash or instance kill between commit and sweep leaves an un-swept marker, and only a replay of that exact request then skips it.
+- PH3b's scheduler sweeps every surviving marker anyway, so a replay re-sweep would be a second retry path covering a subset of what PH3b covers, in the hottest handler, with new tests and an extra read per replay. Once PH3b ships it would be dead weight (ponytail: do not build what the next slice makes redundant).
+- Overlap safety is needed regardless (handler sweep vs scheduler sweep can run together), and deterministic audit ids already give it, so nothing is lost by skipping.
+- Cost accepted: from BC1 deploy until PH3b deploy, a crashed sweep waits. Dev only, no production data. Condition: this holds only because PH3b follows immediately; if PH3b slips, reopen and add the replay sweep.
+
+**Testing effect:** BC1 gets smaller (no replay-sweep handler cases, no E7). The handler test pins the PH3 behaviour (replay returns early, no sweep). Overlapping-sweep safety is tested on `sweepBatches` directly. The crashed-sweep recovery case (old E7) moves to the PH3b test plan, where it is the scheduler's core case.
+
+### PH3b implications (input for the PH3b design, not built here)
+1. The scheduler calls the same `sweepMarker`, so batches are covered with no extra scheduler code. It must pass the marker's actor fields (R2) through.
+2. **The attempts cap (PH3b design Q12) must not silently abandon a marker.** A capped marker that still has batches leaves money orphans; park it visibly (marker flag + log line) instead of dropping it. Decide in the PH3b design.
+3. Scheduler and handler can sweep the same marker concurrently: both must be safe (deterministic audit ids; deletes of missing docs are no-ops).
+4. Old-format markers from #113 (no actor fields) must keep working (`system` actor).
+5. Take over the crashed-sweep case (old E7) in its test plan.
 
 ## Why this item (honest ranking)
 
@@ -97,7 +112,7 @@ Also READ: exhausted batches are never pruned anywhere in `StockBatchStore` (no 
 1. `photoCleanup.buildMarker` gets **three new fields (review R2)**: `actorUid`, `actorRole`, `requestId` of the product delete (all already in `applyMutation` params). Reason: the per-batch audit entries (Q-BC-2) need an actor and a back-link, and the PH3b scheduler has no request context. The batch step itself is still implied by the marker's existence (marker = "this product was deleted, finish cleaning up"). Rename in docs only: it is now a product-delete cleanup marker, still `pending_cleanup/{productId}`. Old markers without the fields (written by #113) are swept with `actorUid: "system"`, `actorRole: "system"`, no `requestId`.
 2. `sweepMarker(deps, tenantId, marker)` order, each step idempotent: (i) unsafe-prefix guard (unchanged); (ii) `productExists` recheck, id reused => drop the marker, delete nothing (unchanged, and it now also protects the NEW product's batches from the batch sweep: this guard must stay first); (iii) **new** `deps.sweepBatches(productId)`: query `tenants/{t}/stock_batches` where `productId == id` (single-field equality, no composite index), delete in chunks of **at most `SWEEP_CHUNK = 100` docs (review R3)**, each chunk ONE `WriteBatch` holding the deletes and one audit entry per batch (`action: "delete"`, `entity: "stock_batch"`, `before` = the batch as read, actor fields from the marker, `cascadeOf` = marker `requestId`, deterministic id `cascade~{productId}~{batchId}` so two overlapping sweeps (R4) or a replay never duplicate the audit); (iv) delete Storage prefix (unchanged); (v) delete the marker. Any failure keeps the marker with `attempts + 1` (unchanged mechanics). Order of (iii) vs (iv) matters little; batches first because they carry the money.
 3. `index.js` `deleteProduct` handler path (`recordMutation` inventory delete): `deps.sweepBatches` wired next to `deleteFiles`. Same awaited post-commit sweep (Q-H).
-4. `recordMutation` role handling: unchanged (not re-read this session; no change in this slice).
+4. `recordMutation` role handling **(review R5, Q-BC-8 = yes)**: READ this session, the handler only gates `staff` delete and `removed_staff`; `inventory` and `stock_batch` deletes are open to any tenant member. BC1 adds an owner/admin gate for `entity === "inventory" && action === "delete"`, right next to the staff gate, before the cascade-prefix build and before any transaction. Rejected: 403 `role-not-allowed`, zero writes, no marker, no sweep. `stock_batch` delete stays ungated (restock / FIFO paths legitimately use it for non-owner roles; out of scope).
 5. Batch deletes **stop being sent by the client**. Older client during BC1-only (review R6, corrected): the sweep runs inside the product-delete request, i.e. BEFORE the old client's queued `stock_batch` deletes are sent; those then answer 409 with `current: null` (CAS `before` != missing doc), write nothing, and `StockBatchStore._onMutationConflicted` (READ) just removes the already-absent row, no toast. Harmless but noisy; covered by e2e E6.
 
 ### Client (`InventoryStore.deleteProduct`, `StockBatchStore`, `DataModel`)
@@ -133,7 +148,7 @@ Also READ: exhausted batches are never pruned anywhere in `StockBatchStore` (no 
 - **Race: product re-created with the same id before the sweep.** Covered by the exists-guard (marker dropped). Narrow window between guard and deletes accepted, same as photos.
 - **Race: restock of the deleted product arrives after the sweep.** Orphan batch. Pre-existing family (restock is two independent writes, KNOWN-ISSUES, decided 2026-09-30). Not made worse; PH3b does not fix it either.
 - **Deployed != main.** BC2 on a device with BC1 not deployed means batches never get deleted (client no longer sends them) and valuation shows ghosts after the next sync. Hence BC1 first and a deploy record. This is the biggest practical hazard.
-- **PH3b interaction.** Until PH3b ships, a failed batch sweep waits indefinitely (same accepted limit as photos). Because batches are money data, that limit is less comfortable than for photos. If you agree, PH3b priority should go up.
+- **PH3b interaction.** Until PH3b ships, a failed batch sweep waits indefinitely (same accepted limit as photos). Because batches are money data, that limit is less comfortable than for photos. PH3b is scheduled immediately after BC1 (Taher, 2026-10-05); Q-BC-9 = no relies on that.
 
 ## Not building
 
