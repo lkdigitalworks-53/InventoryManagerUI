@@ -379,6 +379,53 @@ Item {
         }
     }
 
+    // ── Discarded parked write -> re-read the affected stores (S3, P2) ──────────
+    // docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md. Gateway tells us
+    // which entities the discarded write touched; each owning store does its existing
+    // full syncFromFirebase() once (staff + removed_staff share StaffStore).
+    // `stock_movement` has no client store and is ignored. Keep in step with
+    // Gateway._collections (tst_DataModel_discardResync checks every entity).
+    readonly property var _resyncStoreByEntity: ({
+        "inventory": "inventory",
+        "stock_batch": "stock_batch",
+        "order": "order",
+        "staff": "staff",
+        "removed_staff": "staff",
+        "supplier": "supplier",
+        "transaction": "transaction"
+    })
+
+    // Pure: the distinct store keys to re-read for `entities`, in order.
+    function _storesToResync(entities) {
+        var out = []
+        var seen = {}
+        var list = Array.isArray(entities) ? entities : []
+        for (var i = 0; i < list.length; ++i) {
+            var key = Object.prototype.hasOwnProperty.call(_resyncStoreByEntity, list[i]) ? _resyncStoreByEntity[list[i]] : ""
+            if (key === "" || seen[key] === true) continue
+            seen[key] = true
+            out.push(key)
+        }
+        return out
+    }
+
+    function _resyncForDiscard(entities) {
+        var keys = _storesToResync(entities)
+        for (var i = 0; i < keys.length; ++i) {
+            if (keys[i] === "inventory") InventoryStore.syncFromFirebase()
+            else if (keys[i] === "stock_batch") StockBatchStore.syncFromFirebase()
+            else if (keys[i] === "order") OrdersStore.syncFromFirebase()
+            else if (keys[i] === "staff") StaffStore.syncFromFirebase()
+            else if (keys[i] === "supplier") SupplierStore.syncFromFirebase()
+            else if (keys[i] === "transaction") TransactionStore.syncFromFirebase()
+        }
+    }
+
+    Connections {
+        target: Gateway
+        function onParkedWriteDiscarded(requestId, entities) { _resyncForDiscard(entities) }
+    }
+
     // ── OrdersStore revision tracking ─────────────────────────────────────────
 
     Connections {

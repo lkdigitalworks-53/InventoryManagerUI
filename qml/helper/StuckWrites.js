@@ -103,6 +103,26 @@ function isParked(state, requestId) {
     return state.stuck[requestId] === true && state.terminal[requestId] === true
 }
 
+// S3: the distinct entity names one queued write touches (single, batch and delta
+// items have one; an operation item has one per op). Used by Discard to know which
+// stores to re-read. Never throws; malformed or unnamed parts are skipped.
+function entitiesOf(item) {
+    var out = []
+    var seen = {}
+    function add(e) {
+        if (typeof e !== "string" || e.length === 0 || seen[e] === true) return
+        seen[e] = true
+        out.push(e)
+    }
+    if (!item || typeof item !== "object") return out
+    if (Array.isArray(item.ops)) {
+        for (var i = 0; i < item.ops.length; ++i) add(item.ops[i] && item.ops[i].entity)
+    } else {
+        add(item.entity)
+    }
+    return out
+}
+
 // Retry on a parked write forgets "rejected" so it is due and sendable once. If
 // the server rejects it again noteFailure sets terminal and it re-parks after that
 // ONE attempt; a transient answer leaves it stuck and auto-retrying.
