@@ -1085,21 +1085,14 @@ QtObject {
             StockBatchStore.batches = keep
         }
 
-        // Photo cleanup — best-effort, must never block or fail the delete
-        // above. Wrapped in try/catch deliberately: StorageService.
-        // removeProductPhoto falls through to the native ImageProcessor
-        // singleton (registered only by the real app's main.cpp) when
-        // called for a server-confirmed photo, which is undefined in a
-        // headless test environment — the same class of failure as the
-        // DataModel logic/dispatcher bug (Skill 58): an unguarded call
-        // throwing mid-function must never be able to abort work that
-        // already completed above it.
+        // Local photo cleanup — best-effort, must never block or fail the delete above.
+        // Guarded with try/catch: PhotoQueue.discard reaches the native ImageProcessor
+        // singleton (registered only by the real app's main.cpp), undefined in a headless
+        // test environment (same failure class as Skill 58).
         try {
             // Photos still in PhotoQueue (any state) never reached photoIds. Left alone they 404
             // once the delete lands, park as "failed" with no UI, and keep their local files.
             // discard() replaces PhotoQueue.items, so filter() first and iterate the snapshot.
-            // Own try/catch: a throw here (e.g. a native removeLocalCopy) must not skip the
-            // confirmed-photo removals below, which is what the outer try exists to protect.
             try {
                 PhotoQueue.items.filter(function(q) { return q.productId === productId })
                     .forEach(function(q) { PhotoQueue.discard(q.photoId) })
@@ -1107,20 +1100,11 @@ QtObject {
                 console.warn("[InventoryStore] queued-photo purge threw for", productId, qe)
             }
 
-            var photoIdsToDelete = Array.isArray(before.photoIds) ? before.photoIds : []
-            for (var pdi = 0; pdi < photoIdsToDelete.length; ++pdi) {
-                (function(photoId) {
-                    StorageService.removeProductPhoto(productId, photoId, function(ok, err) {
-                        if (!ok) console.warn("[InventoryStore] removeProductPhoto failed for", productId, photoId, err)
-                    })
-                })(photoIdsToDelete[pdi])
-            }
-            // Legacy, never-migrated product: its only photo is a local file keyed by the
-            // product's own id (the old single-photo StorageService's scheme), not by a photoId --
-            // photoIds is empty so the loop above never reaches it.
-            if (photoIdsToDelete.length === 0 && before.photoUrl && typeof ImageProcessor !== "undefined") {
-                ImageProcessor.removeLocalCopy(productId)
-            }
+            // Confirmed photos are NOT removed here. The server sweeps the product's Storage prefix
+            // only after a committed delete (PH3 `pending_cleanup`), so a 409-rejected delete -- e.g.
+            // another device just uploaded a photo and made this cache's `before` stale -- destroys
+            // nothing. A client-side deleteProductPhoto loop ran before the ack and wiped photos of
+            // a product that survived (PR #113 device test, 2026-10-04). Do not reintroduce it.
         } catch (e) {
             console.warn("[InventoryStore] photo cleanup threw for", productId, e)
         }

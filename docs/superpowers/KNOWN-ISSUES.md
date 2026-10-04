@@ -540,3 +540,56 @@ production code is unaffected; `Main.qml` always wires a real `Logic` instance a
 "function")` in both wrappers, rather than touching any of the 4 unrelated pre-existing test
 files. New regression test added to `tests/tst_DataModel_restoreFifoSafeGuards.qml` reproducing
 the exact no-dispatcher setup.
+
+---
+
+## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03 (PR pending), PH3b/PH4 NOT BUILT
+
+Built: owner/admin gate on both photo endpoints (the narrow gate from the 2026-09-30 update above), `pending_cleanup`
+marker written in the product-delete transaction, post-commit prefix sweep, F3 upload preflight (no orphan objects on
+404/409), strict id whitelist. Design: `specs/2026-09-30-photos-s3-s4-design.md`. Accepted, on purpose:
+
+1. **F5 (strict CAS includes `photoIds`).** An edit whose `before.photoIds` is stale (a photo was confirmed on the
+   server between edit and drain) gets 409 and the user's edit is parked. Pinned by F37-F39. Relaxing it needs the
+   server to preserve `photoIds` itself; not done.
+2. **Residual upload race.** A product deleted between the F3 preflight read and the Storage write can leave one orphan
+   object pair (the transaction then returns 404). Pinned by F10. The marker sweep does not catch it (the marker was
+   written before the upload). PH3b's scheduled sweeper is the intended fix.
+3. **Failed sweep is only retried by PH3b.** Until the scheduled function exists, a sweep that fails (Storage outage)
+   leaves the marker with `attempts` and `lastError` and nothing re-drains it. Blocked on Q-I.
+4. **Batch/ops reject inventory deletes** (400 `cascade-delete-not-allowed`, whole request, zero writes): they cannot
+   write the marker without breaking their write-ceiling arithmetic. No client sends one today (bulk import is
+   create-only). Revisit when an atomic product delete is built.
+5. **Existing e2e `test_upload_rejects_a_productId_containing_a_path_traversal_slash`** still expects `invalid-request`;
+   the whitelist did not change that error code.
+6. **E2E helper vacuity (found 2026-10-03, PR #113 CI).** `E2EHelpers.pollEmulatorDoc` starts with `latest = null`, so a
+   `d === null` ("doc is absent") predicate passed on the first tick, before any response arrived. It hid a real failure:
+   the cascade test deleted from a client cache with no `photoIds` (photos were uploaded by direct POST), the server
+   returned 409 and the Gateway dropped the delete as stale (same family as item 1). Fixed for the photos tests via the new
+   optional `requireResponse` argument (absence checks must pass `true`). **Still vacuous, deliberately not touched in this
+   PR:** `tst_InventoryE2E.qml` (the product-delete check, ~line 262) and `tst_BulkImportChunkingE2E.qml` (~line 154). Making
+   `requireResponse` the default would make them honest but could turn them red; do it as its own small PR.
+
+---
+
+## Product delete is destroy-before-ack (found 2026-10-04, PR #113 device test) — photo part FIXED, batches/activity/queue NOT
+
+**Symptom:** device A uploads a photo while device B deletes the product (9 photos). Result: product still listed, 3 photos shown,
+4 objects in Storage, Activity says deleted, batches gone.
+
+**Root cause:** `InventoryStore.deleteProduct` starts irreversible side effects without waiting for the server's answer to the
+product delete. A's upload changes `photoIds`, B's CAS `before` is stale, the delete 409s and the product survives (the
+`_onMutationConflicted` restore is the "reappeared"). Meanwhile B had already sent one `deleteProductPhoto` per cached photo
+(PH4 item 3 of the design, not yet built in PH3-only PR #113), which removed ids and objects from the surviving product. The
+server upload path is NOT at fault: it 404s on a missing product.
+
+**Fixed (branch `fix/2026-10-04-pr113-upload-delete-race`):** removed the client photo loop; photos are removed only by the server
+sweep after a committed delete. Pinned by e2e `test_stale_delete_409_keeps_the_product_and_every_photo`.
+
+**Still open, same family (decide before PH4):**
+1. Batch deletes are sent before the product delete is acked -> after a 409 the product has no stock batches. Options: (a) gate
+   batch deletes on a Gateway "applied" signal (new ack plumbing, per-mutation); (b) one atomic `recordOperation` for product +
+   batches (the delete roadmap item, larger, also removes the `photoIds` CAS problem); (c) accept for dev. (b) is correct, (a) is a patch.
+2. `ActivityLog.record("product_deleted")` is written locally at click time even when the delete is rejected.
+3. `PhotoQueue.discard` of this device's queued photos runs before the ack: a rejected delete loses the user's pending photos.
+4. A delete 409s on any concurrent `photoIds` change (F5 family); the user retries after the restored row appears.

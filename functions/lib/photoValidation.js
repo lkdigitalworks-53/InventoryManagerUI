@@ -30,9 +30,15 @@ function validateImage(buffer, { maxBytes }) {
 // Storage paths). productId itself is still independently checked against Firestore's actual
 // inventory collection (a crafted id simply won't exist there), but Storage has no equivalent
 // existence check protecting it, and this closes the gap for both before either is ever used.
+//
+// 2026-10-03 (PH3, design Q9): tightened from "no '/' and no '..'" to a strict whitelist,
+// ^[A-Za-z0-9_-]{1,64}$. The old blacklist let spaces, control chars, unicode and "%2e%2e" through
+// into a PUBLIC-READ Storage path, and the product-delete prefix sweep (photoCleanup.js) must never
+// be handed a segment that could widen its prefix. Everything the app mints (tenant "t_<uid>",
+// product "PRD-###", photo "photo-<ms>-<rand>" or "photo-<uuid>") already fits.
+const SAFE_SEGMENT_RE = /^[A-Za-z0-9_-]{1,64}$/;
 function isSafePathSegment(value) {
-  return typeof value === 'string' && value.length > 0 && value.length <= 200 &&
-    !value.includes('/') && !value.includes('..');
+  return typeof value === 'string' && SAFE_SEGMENT_RE.test(value);
 }
 
 module.exports = { validateImage, isSafePathSegment };

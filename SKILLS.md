@@ -4004,3 +4004,40 @@ loop needs a release path in the same change, and the release must be able to fa
 
 **Generalize:** (1) new exit -> grep the state's copy. (2) A recipe is a claim: say "reasoned" or "observed". (3) Extract, rename neutrally, replace the duplicate in the same commit.
 
+## Skill 92: In Firestore rules a deny-all `match` block does not deny if a wildcard also matches; list server-only collections in the helper the wildcard consults
+
+**Context (photos PH3):** the new `pending_cleanup` markers must be writable only by the Cloud Function. The obvious change,
+`match /pending_cleanup/{id} { allow read, write: if false; }`, grants nothing and denies nothing: Firestore allows a request
+if ANY matching rule allows it, and `tenants/{t}/{collection}/{doc}` still matches and allows members. `locks` already had this
+bug once. The fix is to add the name to `isServerOnlyCollection`, which the wildcard rule checks.
+
+**Generalize:** (1) a new server-only collection means editing the exclusion list, then proving it with a rules test that
+a member AND the owner are both denied all four operations (R05). (2) Also pin that an ordinary wildcard collection still
+works (R08) so a too-broad exclusion is caught.
+
+## Skill 93: Never derive a prefix delete from a client-reachable id without a whitelist, a trailing slash, and a re-check
+
+**Context (photos PH3):** the product-delete sweep deletes everything under `{env}/tenants/{t}/products/{p}/`. Three ways it
+widens: an empty/odd product id (`.../products/` deletes every product's photos), a missing trailing slash (`PRD-1` also
+matches `PRD-10`), and a marker whose stored prefix was edited. So: ids pass `^[A-Za-z0-9_-]{1,64}$`; the prefix is built in one
+function that returns null otherwise; the sweep recomputes it from the doc path and refuses unless the stored one is identical;
+and it re-reads the product so a reused id is never swept.
+
+**Mutation-check trap:** when you scripted a mutation as a string replace, `replace(old, new, 1)` hit a doc COMMENT that quoted
+the same regex first, and the "mutation" survived because nothing changed. Anchor the pattern on the full code line, and
+treat any surviving mutation as a bug in the mutation until proven otherwise.
+
+## Skill 94: A design's "intermediate states are safe" claim is a hypothesis; the side effect lives where it is called, not where the fix is planned
+
+**Context (photos PH3, device bug 2026-10-04):** the design said building the server cascade (PH3) before the client change
+(PH4) keeps every intermediate state free of destroy-before-ack. False: the destructive call is the client's per-photo
+`deleteProductPhoto` loop inside `deleteProduct`, and PH3 does not touch it. With a concurrent upload the delete 409s, the product
+survives, and the loop had already stripped its photos.
+
+**Generalize:** (1) For any delete/cascade, list EVERY side effect `deleteProduct` fires and mark each as before-ack or after-ack;
+only after-ack ones are safe. Here: photos (fixed), batches, activity log, queue purge (still before-ack). (2) When slicing server
+vs client work, a slice order claim needs the destructive caller removed in the FIRST slice, or it is not a safety claim. (3) A
+CAS whose `before` is the whole record makes unrelated concurrent edits (a photo upload) reject a delete; expect 409 on every
+two-device test of a delete. (4) A test that asserts "nothing was destroyed" needs a wait after the 409 signal, or it passes
+before the forbidden calls land.
+

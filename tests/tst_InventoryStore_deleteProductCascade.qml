@@ -8,12 +8,11 @@ import "../qml/model"
 // (all of them, not just open ones), routes each through the same
 // Gateway.recordMutation("stock_batch", ..., "delete", ...) audit pattern
 // StockBatchStore already uses, and (as of the 2026-09-21 photos feature)
-// calls StorageService.removeProductPhoto once per remaining photoId, or
-// falls back to a direct native cleanup for a never-migrated product's
-// legacy photoUrl -- guarded in a try/catch since a native-context-property
-// call (ImageProcessor) is reachable from this path and this test
-// environment doesn't have it registered (same failure class as the
-// DataModel logic/dispatcher bug, Skill 58).
+// purges the product's queued photos (PhotoQueue.discard, native ImageProcessor
+// guarded in a try/catch -- same failure class as the DataModel logic/dispatcher
+// bug, Skill 58). Confirmed photos are NOT removed client-side any more (PH4 item 3,
+// 2026-10-04): the server sweeps them after a committed delete. The 409 case is pinned
+// in test/e2e/tst_ProductPhotosE2E.qml (test_stale_delete_409_keeps_the_product_and_every_photo).
 //
 // Also covers _activeBatches(), the shared filter introduced in the same
 // change to replace four duplicated inline guards (one per bug fix) with
@@ -124,12 +123,9 @@ TestCase {
     }
 
     function test_deleteProduct_with_multiple_photoIds_still_completes() {
-        // Exercises the actual 2026-09-21 multi-photo cascade loop (one removeProductPhoto call
-        // per id) rather than the no-photos fixture above. Can't spy on
-        // StorageService.removeProductPhoto to assert it was called per id -- QML `function`
-        // members aren't reassignable (see this file's 2026-09-14 correction note above, same
-        // constraint, same reason) -- so this proves the same thing the Gateway.recordMutation
-        // cases already do: the real call completes and doesn't block the delete.
+        // A product with confirmed photoIds deletes cleanly. The client no longer calls
+        // removeProductPhoto per id (it ran before the server ack and destroyed photos of a
+        // product whose delete was 409-rejected); the e2e test pins that no photo is touched.
         var p = _product("SKU-1")
         p.photoIds = ["photo-1", "photo-2"]
         InventoryStore.products = [p]
@@ -141,8 +137,9 @@ TestCase {
     }
 
     function test_deleteProduct_with_a_legacy_photoUrl_and_no_photoIds_still_completes() {
-        // A never-migrated product: photoIds is empty, photoUrl is set -- the cascade's other
-        // branch (direct ImageProcessor.removeLocalCopy(productId) for the legacy local file).
+        // A never-migrated product: photoIds is empty, photoUrl is set. The legacy local-file
+        // cleanup (ImageProcessor.removeLocalCopy) was removed with the photo loop; PH5 deletes
+        // photoUrl entirely. Delete must still complete.
         var p = _product("SKU-1")
         p.photoUrl = "file:///tmp/SKU-1.jpg"
         InventoryStore.products = [p]

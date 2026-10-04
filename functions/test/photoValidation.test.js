@@ -64,6 +64,63 @@ test('isSafePathSegment: rejects empty, non-string, and oversized values', () =>
   assert.equal(isSafePathSegment(null), false);
   assert.equal(isSafePathSegment(undefined), false);
   assert.equal(isSafePathSegment(42), false);
-  assert.equal(isSafePathSegment('x'.repeat(201)), false);
-  assert.equal(isSafePathSegment('x'.repeat(200)), true);
+  assert.equal(isSafePathSegment('x'.repeat(65)), false);
+  assert.equal(isSafePathSegment('x'.repeat(64)), true);
+});
+
+// ---- PH3 whitelist (design Q9; test plan U01-U12) -------------------------------------------
+test('whitelist U02: uuid-style id with hyphens accepted', () => {
+  assert.equal(isSafePathSegment('photo-3f2b8c1e-9d4a-4b7e-8a11-0c5d6e7f8a90'), true);
+});
+
+test('whitelist U03/U04: 64 chars accepted, 65 rejected (boundary)', () => {
+  assert.equal(isSafePathSegment('a'.repeat(64)), true);
+  assert.equal(isSafePathSegment('a'.repeat(65)), false);
+  assert.equal(isSafePathSegment('a'), true);
+});
+
+test('whitelist U05/U06: empty, "." and ".." rejected', () => {
+  for (const v of ['', '.', '..', '...']) assert.equal(isSafePathSegment(v), false, JSON.stringify(v));
+});
+
+test('whitelist U07: slash and backslash rejected', () => {
+  for (const v of ['a/b', 'a\\b', '/', '\\']) assert.equal(isSafePathSegment(v), false, JSON.stringify(v));
+});
+
+test('whitelist U08: space, tab, newline, NUL rejected', () => {
+  for (const v of ['a b', 'a\tb', 'a\nb', 'a\rb', 'a\u0000b', ' a', 'a ']) {
+    assert.equal(isSafePathSegment(v), false, JSON.stringify(v));
+  }
+});
+
+test('whitelist U09: emoji, RTL override, combining and full-width chars rejected', () => {
+  for (const v of ['a\u{1F600}', 'a\u202Eb', 'e\u0301', '\uFF21BC', 'caf\u00e9']) {
+    assert.equal(isSafePathSegment(v), false, JSON.stringify(v));
+  }
+});
+
+test('whitelist U10: percent-encoded traversal and other punctuation rejected', () => {
+  for (const v of ['%2e%2e', '%2F', 'a.b', 'a:b', 'a*b', 'a?b', 'a#b', 'a@b']) {
+    assert.equal(isSafePathSegment(v), false, JSON.stringify(v));
+  }
+});
+
+test('whitelist U11: non-strings rejected', () => {
+  for (const v of [null, undefined, 5, 0, true, {}, [], ['a'], () => 'a', Symbol('a')]) {
+    assert.equal(isSafePathSegment(v), false);
+  }
+});
+
+test('whitelist U12 MONKEY: 1000 random strings accepted iff the regex oracle says so', () => {
+  const oracle = /^[A-Za-z0-9_-]{1,64}$/;
+  const alphabet = 'abcXYZ019_-./\\ %\u00e9\u{1F600}\n\u0000';
+  let seed = 20261003;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const chars = Array.from(alphabet);
+  for (let i = 0; i < 1000; i++) {
+    const len = Math.floor(rnd() * 70);
+    let str = '';
+    for (let j = 0; j < len; j++) str += chars[Math.floor(rnd() * chars.length)];
+    assert.equal(isSafePathSegment(str), oracle.test(str), JSON.stringify(str));
+  }
 });

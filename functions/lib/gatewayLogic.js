@@ -8,6 +8,8 @@
 // Extracted from functions/index.js's exports.recordMutation (behavior-
 // preserving refactor — see docs/superpowers/plans/2026-07-11-p0-gateway-fast-follow.md).
 
+const { isCascadeEntityDelete, buildMarker } = require("./photoCleanup");
+
 // P0 scope. `entity` -> collection name under the tenant root.
 const ENTITY_COLLECTIONS = {
     inventory: "inventory",
@@ -146,8 +148,29 @@ function _refs(db, params) {
 // server state doesn't match the mutation's claimed `before` — defense in
 // depth against a stale client, on top of locking (Component 2) which is
 // meant to make this the rare, exceptional path rather than the norm.
+//
+// PH3 (photo cascade, design Q5): an inventory DELETE also writes a `pending_cleanup/{productId}`
+// marker in the SAME transaction, after the CAS compare passes -- so a conflict (409) writes no
+// marker and the handler sweeps nothing (the destroy-before-ack bug), and an idempotent replay
+// returns early (the marker already exists from the first commit). The handler supplies the
+// validated sweep prefix as params.cleanupPrefix/cleanupEnvPrefix; a cascade delete without a
+// usable prefix THROWS before the transaction rather than deleting a product we can never clean up.
 async function applyMutation(db, params) {
     const { auditRef, workingRef } = _refs(db, params);
+
+    let marker = null;
+    let markerRef = null;
+    if (isCascadeEntityDelete(params.entity, params.action)) {
+        marker = buildMarker({
+            productId: params.entityId,
+            envPrefix: params.cleanupEnvPrefix,
+            tenantId: params.tenantId,
+            prefix: params.cleanupPrefix,
+            createdAt: params.serverTimestamp
+        });
+        if (!marker) throw new Error("missing-cleanup-prefix");
+        markerRef = db.doc("tenants/" + params.tenantId + "/pending_cleanup/" + params.entityId);
+    }
 
     return db.runTransaction(async (txn) => {
         const existing = await txn.get(auditRef);
@@ -166,6 +189,7 @@ async function applyMutation(db, params) {
         } else {
             txn.set(workingRef, params.after || {}, { merge: false });
         }
+        if (marker) txn.set(markerRef, marker);
 
         txn.set(auditRef, {
             entryId: params.requestId,
