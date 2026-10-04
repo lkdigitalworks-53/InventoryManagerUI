@@ -40,9 +40,9 @@ A parked (server-rejected) write gets an exit. The Discard button (rejected rows
 | Recipe | Gives | How | Expect in the sheet |
 |---|---|---|---|
 | R1, no code (403 `no-tenant-context`) | NON-rejected stuck write | Console: `tenants/{tenantId}/members/{uid}.status` -> `"suspended"`. Edit product A's name and save (a single-write action; **not Restock**, it queues two writes). Set `status` back to `"active"` to fix the cause. | "Not syncing. Still retrying.", button "Retry now", **no Discard** |
-| R2, no code, **UNVERIFIED** (oversize field) | REJECTED (parked) write | Edit product B, paste more than 1 MiB of text into **Description** (paste, select all, copy, paste twice, repeat about 11 times), save. Firestore refuses a document over 1,048,576 bytes with INVALID_ARGUMENT, which the server classifies `write-rejected`. | After about 3 minutes: toast "paused", header "N change(s) rejected by the server. Tap to retry or discard.", row "Rejected by the server. Paused until you tap Retry or Discard.", buttons Retry + Discard |
+| R2, no code, **verified on device 2026-10-04** (oversize field) | REJECTED (parked) write | Edit product B, paste more than 1 MiB of text into **Description** (paste, select all, copy, paste twice, repeat about 11 times), save. Firestore refuses a document over 1,048,576 bytes with INVALID_ARGUMENT, which the server classifies `write-rejected`. | After about 3 minutes: toast "paused", header "N change(s) rejected by the server. Tap to retry or discard.", row "Rejected by the server. Paused until you tap Retry or Discard.", buttons Retry + Discard |
 | R3, debug flag | REJECTED write | **Not built.** Open decision, see the PR description. | n/a |
-- **R2 caveats.** Nobody has run R2: the exact server error was reasoned from the Firestore limits, not observed. If the row stays "Not syncing. Still retrying." the server answered with a non-rejected code: stop, take the Cloud Function log line `recordMutation write failed` and send it back. Pasting 1 MiB can make the text field laggy; the oversize write sits in the device outbox until you Discard it, so use a throwaway product and never a real one.
+- **R2 caveats.** Taher ran R2 on device: an oversize Description does produce a parked row. If the row stays "Not syncing. Still retrying." the server answered with a non-rejected code: stop, take the Cloud Function log line `recordMutation write failed` and send it back. Pasting 1 MiB can make the text field laggy; the oversize write sits in the device outbox until you Discard it, so use a throwaway product and never a real one.
 - **Wait time.** A write must fail 5 times before it is stuck. Retry delays are 2 s, 8 s, 30 s, 2 min (jittered), so about 3 minutes online. **Retry** on a parked row restarts the count and re-parks it after ONE attempt.
 - **Do not use:** a Firestore rules change (Cloud Functions use the Admin SDK and bypass rules), a stopped emulator (counts as offline, not stuck), or editing the document in the console (only gives the 409 "changed elsewhere" toast, deliberately not counted).
 - **Resetting between cases:** Discard the parked row (that is the feature) or fix the cause and Retry. If state gets muddled, start a new tenant.
@@ -79,3 +79,9 @@ A parked (server-rejected) write gets an exit. The Discard button (rejected rows
 
 ## 5. PR #110 final sweep (2026-10-01) — what the review changed
 Behaviour-neutral: row copy and header caption now mention Discard (SKILLS 89 rule: grep the strings), `StuckWritesSheet` members reordered (properties before the `ConfirmDialog` child), and the duplicated recordDelta-callback block in `Gateway` now uses one helper (`_answerDeltaCallbacks`, was `_failDeltaCallbacks`). Existing `tst_Gateway` delta cases cover the helper on both paths (terminal send answer and discard); no new cases needed. **Known gap:** `StuckWritesSheet` (Discard visibility, `enabled`, confirm wiring, toasts) has no automated test; the repo cannot load Felgo-dependent pages under `qmltestrunner`, so section 3 is its only coverage.
+
+## 6. Device results (Taher, 2026-10-04, build = #110 + #112 code)
+- All section 3.1 checks passed.
+- R-1: R2 (oversize Description) produced a parked row. No debug flag needed.
+- R-3: not exercised. Discard + resync finished before airplane mode could be switched off. Accepted as a corner case, no change.
+
