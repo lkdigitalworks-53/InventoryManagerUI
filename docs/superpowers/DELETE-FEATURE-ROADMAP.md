@@ -44,7 +44,7 @@ the existing `syncFromFirebase()` full resync is the Discard re-pull. Plan and o
 syncing" sheet -> per-row Retry now (`OutboxStore.retryNow`, `Gateway.stuckRows/retryStuck`, `DescribeItem.js`). Retry
 keeps the stuck flag on purpose (design D1). Design: `docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`.
 **Decision P5 (2026-09-29): S2 also persists the stuck flag for non-terminal writes** (stuck state was lost on relaunch, seen on device).
-**S2a (persist stuck state, P5) merged via #97.** **S2b (park rejected writes) implemented on `feat/2026-09-30-s2b-park-terminal-writes`, CI pending** (Q-S2b-1 A state rule, Q-S2b-2 A parked blocks same-record writes). **Next: S3 (Discard + resync); ship S2b + S3 to `main` together.** **S3 implemented 2026-10-01 (`feat/2026-10-01-s3-discard-parked-writes`, CI pending; Taher chose A on Q-S3-1..5). Next: S4 cleanup, then merge #106 + S3 together:** `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`.
+**S2a (persist stuck state, P5) merged via #97.** **S2b (park rejected writes) implemented on `feat/2026-09-30-s2b-park-terminal-writes`, CI pending** (Q-S2b-1 A state rule, Q-S2b-2 A parked blocks same-record writes). **Next: S3 (Discard + resync); ship S2b + S3 to `main` together.** **S3 implemented 2026-10-01 (`feat/2026-10-01-s3-discard-parked-writes`, CI pending; Taher chose A on Q-S3-1..5). Next: S4 cleanup, then merge #106 + S3 together:** **UPDATE 2026-10-04: #106, #109 and S3 (#110) are all merged to `main`; only S4 cleanup (docs, own PR) remains for item 1.** `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`.
 
 ## 2. Staff delete has no row-level button — MEDIUM
 
@@ -100,6 +100,17 @@ priority after item 1's C and B, and pulled forward once that branch lands. It i
 this text said `deleteProductPhoto()`), guarded in a try/catch. Correct by code trace, but **not confirmed on-device** — no Storage plan is enabled
 in this environment right now, so there's nothing to actually verify against. Re-test once a
 Storage plan is active; until then this is a known verification gap, not a known bug.
+
+## 5. Product delete destroys batches, Activity entry and queued photos before the server acks — HIGH (data integrity)
+
+Found 2026-10-04 on the PR #113 device test. The photo part is fixed (client loop removed, server sweep after a committed delete).
+Still open: `InventoryStore.deleteProduct` sends the batch deletes, writes the Activity entry and discards queued photos at click
+time. A 409 on the product delete (any concurrent edit, incl. `photoIds`) then leaves a product with no stock batches.
+
+**Status 2026-10-04: design written, decisions Q-BC-1..7 DECIDED (Taher: defaults, option d).** Recommended: server removes the batches after the product
+delete commits, reusing the PH3 `pending_cleanup` marker (not the atomic `recordOperation` the earlier notes pointed at: 199-batch
+cap, client batch list may be incomplete, `recordOperation` has no production caller on `main`). Slices BC1 server, BC2 client.
+`docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md`; test plan `test-plans/2026-10-04-product-delete-batch-cascade-test-plan.md`.
 
 ## Closed, not pending — recorded here so it isn't re-raised
 

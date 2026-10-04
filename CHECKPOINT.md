@@ -1,36 +1,24 @@
-# CHECKPOINT — 2026-10-01: DELETE-FEATURE-ROADMAP item 1 part B — S3 (Discard + resync) IMPLEMENTED, CI PENDING
+# CHECKPOINT — 2026-10-04: DELETE-FEATURE-ROADMAP item 5 = product-delete destroy-before-ack (design DECIDED, no code)
 
-**Branch:** `feat/2026-10-01-s3-discard-parked-writes`, PR #110 -> `main`. #106 (S2b) and #109 (S3 design) are both merged into `main` (squash); this branch was rebased onto `main` 2026-10-01 (S3 commit only). CI on #110 pending.
-**Previous checkpoint archived to:** `docs/superpowers/specs/2026-09-30-s3-design-CHECKPOINT.md`.
-**Skills invoked by Taher:** brainstorming, qt-qml, qt-ui-design, ponytail; caveman FULL (chat replies only).
-**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`.
-
-## 2026-10-01 final sweep of PR #110 (branch `review/2026-10-01-pr110-final-sweep`, stacked on the PR #110 branch)
-**Skills invoked by Taher:** requesting-code-review, qt-cpp-review, ponytail-review; caveman FULL. `qt-cpp-review` does not apply: the PR has no C++ (only QML / JS / docs / tests), so `qt-qml-review` rules were used instead. **Commit identity:** `taher.lkdw@gmail.com`.
-**Steps done:** (1) cloned, read PR #110 (17 files, 756+/27-), CI on head `e96c300` all green (QML 1601, Functions 249, Rules 35, E2E 50). (2) read every source line of the diff plus the callers it touches: `OutboxStore.markSent`, `_finishOperation`, delta callers in `InventoryStore` / `StockBatchStore`, all six `syncFromFirebase` / `_resetAndFetch` guards, `ConfirmDialog`, `BottomSheet.busy`, `Main._handleBack`. (3) qml lint run on PR vs `main`: only new item was member order in `StuckWritesSheet`. (4) fixes: stale copy (row + `GlassHeader`), member order, `_answerDeltaCallbacks` dedupe. (5) test plan: new section 3.0 prerequisites, Back / offline-after-discard / copy checks, section 5 addendum. (6) SKILLS 91, AGENTS, README.
-**Findings left open for Taher (not fixed, see PR):** R-1 no verified way to force `write-rejected` (oversize-description recipe is reasoned, unobserved); R-2 hardware Back with the discard confirm open may do nothing (Main swallows Back while the sheet is `busy`), depends on whether Qt maps Back to the confirm popup; R-3 `_resetAndFetch` clears a store before refetching, so a failed fetch right after Discard leaves the list empty until the next sync (existing behaviour, new trigger); R-4 `StuckWritesSheet` has no automated test (Felgo-dependent); R-5 generic "Could not discard" toast covers several refusal reasons.
-**Device results 2026-10-04 (Taher):** all 3.1 checks pass on #110 + #112 code. R-1 resolved (oversize Description parks a row, no debug flag). R-3 not reproducible (discard resync too fast), accepted. R-2: Back closed popups, one press vs two still to confirm. R-4, R-5 accepted.
-**NEXT:** merge #112 into #110 branch, wait CI green, squash-merge #110 into main. No code change since the tested build (docs only).
-
-## Standing instructions (unchanged)
-Branch only, push without asking (PAT only in the push URL, never in `.git/config`), no build/run, no Qt tooling in the sandbox (CI is the QML signal), tests toward 100% + test plan + SKILLS/AGENTS/README, honest advisor, small scope per session (other accounts resume from the remote branch).
+**Branch:** `docs/2026-10-04-product-delete-batch-cascade-design` (off `main` @ `157dc6b`). Docs only, no code.
+**Skills invoked by Taher:** brainstorming, qt-qml, qt-ui-design, ponytail; caveman FULL (chat only). qt-qml / qt-ui-design / ponytail: no code this session, nothing to apply.
+**Commit identity:** `taher.lkdw53@gmail.com`. **Previous root checkpoint** (S3, stale: #110 already merged) archived to `docs/superpowers/specs/2026-10-04-s3-merged-CHECKPOINT.md`.
+**Rules:** branch only; push without asking (PAT only in the push URL, never in `.git/config`); no build/run; no Qt tooling in the sandbox (CI is the QML signal); small scope (other accounts resume from the remote branch); honest advisor.
 
 ## Step log
-1. (earlier) Design written, PR #109. Taher answered **A on all five** (Q-S3-1..5) on 2026-10-01; recorded in the design doc.
-2. Code: `StuckWrites.entitiesOf`; `Gateway.discardParked` + `parkedWriteDiscarded` + `_failDeltaCallbacks`; `DataModel._resyncStoreByEntity/_storesToResync/_resyncForDiscard` + `Connections{target: Gateway}`; `StuckWritesSheet` Discard button (rejected rows, online only) + local `ConfirmDialog` + `busy: discardConfirm.opened`. No `Main.qml` change (busy guard replaces the Back-list reorder).
-3. Tests: `tst_StuckWrites` +9, `tst_Gateway` +23 (incl. 400-step monkey), new `tst_DataModel_discardResync` 14 (network-free via `loadingMore`/`_resetPending`). Node-ran `entitiesOf` + mapping mirror: 630 assertions OK. **No QML test executed.**
-4. Docs: design (resolved decisions + implementation notes), test plan + index row, SKILLS 90, AGENTS, README, roadmap + plan status. Pushed, PR #110 opened.
-5. #106 and #109 squash-merged; #110 rebased onto `main` (clean, no conflicts) and force-pushed with lease.
+1. Read memory (overview, ways-of-working, learnings), cloned repo, read `DELETE-FEATURE-ROADMAP.md`, root checkpoint, photos PH3 and PR #113 race checkpoints, photos design (PH3b/PH4/PH5), KNOWN-ISSUES destroy-before-ack entry.
+2. Progress check: item 1 (stuck writes) = C, S1, S2a, S2b, S3 all on `main` (#97, #106, #109, #110); only S4 docs cleanup left. Items 2, 3 resolved. Item 4 (photos): PH3 merged (#113, includes the PH4-item-3 loop removal from #115). Open there: PH3b scheduler (designed, unblocked), PH4 rest, PH5, remaining PH3 e2e, photos on discard of a parked product create. New item found: batches/activity/queue still destroyed before the ack.
+3. Ranked candidates (table in the design doc). Picked the destroy-before-ack remainder: only item with no design and the only normal-path wrong-data case. Design not done => this session is design only (per Taher's instruction).
+4. Code reads for the design: `InventoryStore.deleteProduct`, `Gateway.recordOperation` + signals, `operationLogic.js`, `gatewayLogic.applyMutation` marker, `photoCleanup.sweepMarker`, `DataModel._resyncForDiscard`, `StuckWrites.entitiesOf`. Findings: no per-mutation success signal in `Gateway`; `recordOperation` has no production caller on `main` (PR #90 open); exhausted batches are never pruned; `MAX_OPS` 200 would make a product with >199 batches undeletable under the atomic-op option.
+5. Wrote design (options a-d, recommendation d, decisions Q-BC-1..7), planned test plan, roadmap item 5, test-plan index row.
 
-## Deviations from the design proposal (Taher can overrule in the PR)
-- Delta callbacks are also answered on discard (not in the proposal).
-- Parked check reads the persisted item, not in-memory state.
-- Local confirm in the sheet, not Main's `confirmDlg`; no `Main.qml` edit.
-- Extra failure toast when the tap-time re-check refuses.
+6. Taher answered "default option for all": Q-BC-1..7 decided (ledger in the design doc). Verified by code read: P1 ledger not built (no BC1 interaction); photo UI already owner/admin only (PH4 403 low urgency). Asked: photos pending vs BC order; advice given in chat (BC1 first, then PH3b, PH4 rest after).
+
+## NOT verified
+Nothing run. Firestore per-transaction write ceiling (web search did not reach an authoritative statement). Whether the photo UI is already gated to owner/admin (affects PH4 403 urgency). Whether the P1 stock-movements ledger (S1a/S1b) derives rows on stock_batch deletes (must be read before BC1). `recordMutation` role handling for stock_batch delete (not re-read).
 
 ## NEXT SESSION — start here
-1. Read CI on the S3 PR first (first real run of 46 new QML cases). Likely trouble spots: `tst_Gateway` delta coalesce test (assumes the second `recordDelta` merges into the first), operation waiter / timer tests, `tst_DataModel_discardResync` (first test file that flips `loadingMore` on six singletons; `cleanup()` resets them).
-2. Taher on device: section 3 of `docs/superpowers/test-plans/2026-10-01-s3-discard-parked-writes-test-plan.md`. Blocker: no verified recipe for a real `write-rejected`; ask whether to add the debug-only emulator flag.
-3. Merge #110 now: S2b is already on `main`, so rejected writes park with no Discard exit until it lands. Do not cut a release from `main` before then.
-4. Then S4 cleanup (roadmap / KNOWN-ISSUES closed, test plans consolidated). Do not combine with S3.
-5. Open, not built: photos on discard of a parked product create (roadmap item 4); `removed_staff` tombstone stays in memory until relaunch.
+1. Q-BC-1..7 are decided (defaults). Confirm with Taher the ORDER (BC1 vs photos PH3b/PH4/PH5) if not yet answered; recommended: BC1, then PH3b, then PH4 rest.
+2. BC1 (server) on `feat/2026-10-05-bc1-server-batch-sweep` off `main`: `sweepBatches` dep in `photoCleanup.sweepMarker`, handler wiring, Node tests (run in-session: `cd functions && npm ci && node --test`), e2e cases E1-E5, docs. Taher deploys functions manually before BC2: record the deploy here.
+3. BC2 (client) only after BC1 is merged and deployed.
+4. Cheap parallel items if tokens allow: PH4 rest (403 terminal etc.), S4 docs cleanup (own PR). PH3b priority goes up if (d) is chosen.
