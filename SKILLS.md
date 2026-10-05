@@ -4121,3 +4121,15 @@ Rules:
 3. To test "the failure time is stamped after the tick" the clock must move INSIDE the failing call (a hook on the fake delete), not between ticks. Stepping the clock only between ticks never exercises the slack and would pass with or without it.
 4. To test "a concurrent sweeper deleted the doc mid-flight", hook the step the loser is blocked on (the Storage delete) and delete the doc there; then assert both that no `set()` touched the path and that `update()` WAS attempted, so the test cannot pass by never reaching the write.
 5. A monkey test over a stateful job needs invariants, not expected values: protected data survives, parked docs byte-identical, no doc written by the wrong primitive, counters never exceed their cap, every destructive call targets a prefix that was seeded as sweepable. Seed the PRNG and run several seeds so a failure reproduces.
+
+## Skill 104: An emulator e2e for a scheduled function runs the function in-process; refuse to start unless every emulator host is set
+
+Context (PH3b S-C, 2026-10-06): the functions emulator has no clock, so a scheduler cannot be triggered by it. Written without an emulator in the sandbox; CI green on its first run (2026-10-05, run 37353249915), so rules 1-7 are verified.
+Rules:
+1. Call the exported `onSchedule` function's `.run({})` in the test process (`require("functions/index.js")`). That is the exact entry Cloud Scheduler calls; HTTP-invoking is impossible for it.
+2. A test that deletes Storage objects must `process.exit(1)` unless BOTH `FIRESTORE_EMULATOR_HOST` and `FIREBASE_STORAGE_EMULATOR_HOST` are set; one missing host silently targets the real bucket.
+3. The root and `functions/` packages may pin different `firebase-admin` majors (here 14 vs 12). Give the test its own named app (`initializeApp(opts, "name")`) and require shared singletons (the logger) with `require.resolve(x, {paths:[functionsDir]})`, or a spy attaches to the wrong module instance. Verify in the sandbox that the file at least loads (`node` with fake emulator hosts) before pushing.
+4. Spy on the log the code already emits (`logger.write`) to read the run summary instead of adding a test-only return value.
+5. Seed with the SAME builder production uses (`buildMarker`) and override fields, so a schema change breaks the test instead of drifting from it. Register every created doc/object for `afterEach` deletion, including docs the code under test creates (audit entries).
+6. Assert a count equality (`scanned == collection size`), not only "everything was swept": equality catches both a skipped and a repeated page.
+7. Before trusting E2E that cannot run locally, run what you can: `node --check`, bracket balance, the module-load check, the guard exit. Say plainly what is unverified.

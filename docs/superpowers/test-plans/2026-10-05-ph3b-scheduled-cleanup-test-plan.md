@@ -125,7 +125,8 @@ Rules (emulator, CI): **no new rules case.** Markers are already server-only (R0
 
 Real-project note for FS10: the clock is stepped manually and the failure time is stamped 5 s after each tick (a hook bumps the clock inside the failing delete), which is what makes the tick slack testable; the 12th failure lands 300 min after the first.
 
-## 3. End-to-end (emulator, CI only: `test/e2e/cleanupSweep.e2e.test.js`, added to the `node --test` list in `checks.yml`) (5)
+## 3. End-to-end (emulator, CI only: `test/e2e/cleanupSweep.e2e.test.js`, added to the `node --test` list in `checks.yml`) (5 planned, 7 written)
+**S-C WRITTEN 2026-10-06 (branch `feat/2026-10-06-ph3b-sweeper-e2e-docs`), CI result pending.** Added beyond the plan: **E0** (a tick over all three databases completes: isolates the named-database risk) and **E6** (a fresh marker with a real server Timestamp is inside the 90 s grace and is NOT swept). E1 also asserts the audit entry actor/`cascadeOf` and that a live product's batch/photo in the same tenant survive; E2 asserts the `system` actor; E3 asserts the live product's batch (money data) survives; E5 asserts `scanned == collection size`.
 | ID | Case |
 |---|---|
 | E1 | seeded stuck marker + 3 batches + 2 Storage objects in two tenants -> `cleanupPendingMarkers.run({})` -> everything gone in both tenants (proves the unfiltered collection-group read crosses tenants on real Firestore semantics) |
