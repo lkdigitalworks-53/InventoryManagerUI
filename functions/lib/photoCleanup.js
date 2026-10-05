@@ -306,6 +306,28 @@ function _malformedReason(path, data, createdAtMs, expectedEnvPrefix) {
     return null;
 }
 
+// Firestore server Timestamp (has toMillis), Date, or finite number -> epoch ms; anything else
+// -> null (selectDue then flags the marker malformed "bad-created-at"). Pure: the SDK's Timestamp
+// class is never imported here, only duck-typed. Never throws.
+function timestampToMs(v) {
+    try {
+        if (v !== null && typeof v === "object") {
+            if (typeof v.toMillis === "function") {
+                const ms = v.toMillis();
+                return typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+            }
+            if (v instanceof Date) {
+                const ms = v.getTime();
+                return Number.isFinite(ms) ? ms : null;
+            }
+            return null;
+        }
+        return typeof v === "number" && Number.isFinite(v) ? v : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function _posInt(v, dflt) {
     return Number.isInteger(v) && v > 0 ? v : dflt;
 }
@@ -444,6 +466,7 @@ module.exports = {
     selectDue,
     readAllMarkers,
     runCleanupSweep,
+    timestampToMs,
     CASCADE_AUDIT_PREFIX,
     SWEEP_CHUNK,
     MAX_LAST_ERROR_CHARS,

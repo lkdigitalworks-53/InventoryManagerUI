@@ -17,6 +17,8 @@
 // that returns the same entryId.
 
 const functions = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
@@ -102,7 +104,11 @@ async function sweepProductCleanup(db, tenantId, marker) {
         }, tenantId, productId, actor),
         deleteFiles: (prefix) => bucket.deleteFiles({ prefix: prefix, force: true }),
         deleteMarker: () => markerRef.delete(),
-        updateMarker: (patch) => markerRef.set(patch, { merge: true })
+        // update(), NOT set(..., {merge:true}) (PH3b review P3): set+merge on a marker that a
+        // concurrent sweeper already deleted would RE-CREATE it as {attempts, lastError} with no
+        // productId/prefix/envPrefix, a zombie that fails unsafe-sweep-prefix forever. update()
+        // rejects NOT_FOUND instead, which sweepMarker's failure path already swallows.
+        updateMarker: (patch) => markerRef.update(patch)
     }, tenantId, marker);
 }
 
@@ -1315,3 +1321,63 @@ exports.deleteProductPhoto = functions.onRequest(
 
         send(res, 200, { ok: true, already: !!txnResult.already, photoIds: txnResult.photoIds });
     });
+
+// PH3b (design v2, S-B): scheduled drain of `pending_cleanup` markers whose handler sweep failed or
+// crashed. All decisions (due time, backoff, park at PARK_AT, budget, alert logs) live in
+// PhotoCleanup.runCleanupSweep (pure, unit-tested); this only binds it to the three databases, the
+// collection-group read, the shared sweep and the logger. No index: the collection-group read has
+// no filter and no orderBy (design Q-K), the due time is computed in code.
+const CLEANUP_ENVS = ["dev", "test", "prd"].map((name) => ({ name: name, envPrefix: storageEnvPrefix(name) }));
+
+// One env's whole marker collection group, paged (R1). `env` is {name, envPrefix}. Cursor = the
+// previous page's last snapshot; NO orderBy, so Firestore's default document-path order applies.
+async function listPendingMarkers(env) {
+    const db = scopedDb(env.name);
+    const read = await PhotoCleanup.readAllMarkers(async (cursor) => {
+        let q = db.collectionGroup("pending_cleanup").limit(PhotoCleanup.PAGE_SIZE);
+        if (cursor) q = q.startAfter(cursor);
+        return (await q.get()).docs;
+    });
+    return {
+        backlog: read.backlog,
+        entries: read.docs.map((d) => {
+            const data = d.data();
+            return { path: d.ref.path, data: data, createdAtMs: PhotoCleanup.timestampToMs(data.createdAt) };
+        })
+    };
+}
+
+// Parks a marker (kept, never deleted by code). The path came from a snapshot's ref, so it is a
+// real document path even for a malformed marker. Un-park runbook: AGENTS.md.
+async function parkPendingMarker(env, path, reason) {
+    await scopedDb(env.name).doc(path).update({
+        parked: true,
+        parkedAtMs: Date.now(),
+        lastError: String(reason).slice(0, PhotoCleanup.MAX_LAST_ERROR_CHARS)
+    });
+}
+
+// Structured log; `message` becomes jsonPayload.message, the field the PH3B_ALERT log filter matches.
+function cleanupLog(severity, obj) {
+    logger.write(Object.assign({ severity: severity }, obj));
+}
+
+exports.cleanupPendingMarkers = onSchedule(
+    { schedule: "every 10 minutes", region: "asia-south1", timeoutSeconds: 300, maxInstances: 1, retryCount: 0 },
+    async () => {
+        const out = await PhotoCleanup.runCleanupSweep({
+            envs: CLEANUP_ENVS,
+            listMarkers: listPendingMarkers,
+            sweep: (env, tenantId, marker) => sweepProductCleanup(scopedDb(env.name), tenantId, marker),
+            park: parkPendingMarker,
+            now: () => Date.now(),
+            log: cleanupLog
+        });
+        // Per-marker failures never throw (design Q-G): they are in the logs and the retry is the
+        // next run. Only an env-level failure (cannot read a database) fails the run, so Cloud
+        // Scheduler / Logging show it, after every other env has been processed.
+        if (out.envFailures > 0) {
+            throw new Error("PH3b cleanup: " + out.envFailures + " env(s) failed, see PH3B_ALERT logs");
+        }
+    }
+);
