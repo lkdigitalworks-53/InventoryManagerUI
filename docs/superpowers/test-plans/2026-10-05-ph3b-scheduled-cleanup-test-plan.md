@@ -120,7 +120,7 @@ Rules (emulator, CI): **no new rules case.** Markers are already server-only (R0
 | FS14 | MONKEY: 5 seeds x 36 random markers (9 flavours: fresh, old, parked, wrong env prefix, bad createdAt, no prefix, id mismatch, id reused, legacy) x 25 ticks with 40% random Storage failures; protected files survive, parked docs unchanged, no `set()` on markers, no zombie, attempts <= `PARK_AT`, every Storage sweep targets a sweepable seeded prefix |
 | FS15 | `createdAt` string -> malformed `bad-created-at` parked, Storage untouched; plain-number `createdAt` accepted |
 | FS16 | already-parked marker: never swept, never re-parked, never re-alerted over two runs |
-| FS17 | a THROWN sweep (Storage bucket cannot be created) -> WARNING + `failed`, never parks, attempts unchanged, run resolves |
+| FS17 | a THROWN sweep (Storage bucket cannot be created) -> ERROR `PH3B_ALERT sweep-threw` on EVERY run (S1, PR #126 final sweep; was WARNING before the rebase), `failed`, never parks, attempts unchanged, run resolves |
 | UT01-UT06 | `timestampToMs` (in `photoCleanup.test.js`): Timestamp stand-in, Date, number, invalid Date/NaN/Infinity, wrong types, throwing/non-finite `toMillis`, monkey 3000 values |
 
 Real-project note for FS10: the clock is stepped manually and the failure time is stamped 5 s after each tick (a hook bumps the clock inside the failing delete), which is what makes the tick slack testable; the 12th failure lands 300 min after the first.

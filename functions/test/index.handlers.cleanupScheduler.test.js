@@ -325,15 +325,25 @@ test("FS13 park throws at the cap: run() still resolves, marker not parked, PH3B
     assert.match(alerts[0].reason, /firestore update denied/);
 });
 
-test("FS17 a thrown sweep (Storage client cannot even be created) is a WARNING + failed, never parks, run resolves", async (t) => {
+test("FS17 a thrown sweep (Storage client cannot even be created) raises ERROR PH3B_ALERT sweep-threw every run, counts failed, never parks, run resolves", async (t) => {
     reset(); useClock(t, T0); const logs = captureLogs(t);
     const m = seedMarker({ attempts: C.PARK_AT - 1 });
     mockState.storageBucketError = new Error("bucket init failed"); // thrown by sweepProductCleanup itself
     await tick();
     assert.equal(mockState.docs[m.path].parked, undefined);
     assert.equal(mockState.docs[m.path].attempts, C.PARK_AT - 1, "a throw does not count as an attempt");
-    assert.equal(alertLogs(logs).length, 0);
+    const alerts = alertLogs(logs);
+    assert.equal(alerts.length, 1, "S1 (PR #126 final sweep): a persistent throw must alert, not retry silently");
+    assert.equal(alerts[0].message, C.ALERT_TAG + " sweep-threw");
+    assert.equal(alerts[0].severity, "ERROR");
+    assert.equal(alerts[0].env, "test");
+    assert.equal(alerts[0].tenantId, m.tenant);
+    assert.equal(alerts[0].productId, m.product);
+    assert.match(alerts[0].reason, /bucket init failed/);
     assert.equal(summaryOf(logs, "test").failed, 1);
+    await tick(); // still thrown next run: still alerts (it never backs off or parks)
+    assert.equal(alertLogs(logs).length, 2);
+    assert.equal(mockState.docs[m.path].attempts, C.PARK_AT - 1);
 });
 
 // ---- FS08 / FS09 ---------------------------------------------------------------------------------
