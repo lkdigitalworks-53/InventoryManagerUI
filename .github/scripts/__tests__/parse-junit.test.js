@@ -261,3 +261,21 @@ test('edge: testcase without a name and a failure without message or body fall b
   assert.equal(r.failedTests[0].name, '(unnamed test)');
   assert.equal(r.failedTests[0].message, 'No failure message provided.');
 });
+
+test('hardening: truncated/garbage XML with 20000 unterminated <testcase tags parses in linear time', () => {
+  const started = Date.now();
+  const r = parseJUnitXml('<testcase name="'.repeat(20000));
+  assert.equal(r.tests, 0);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms (was ~20000 ms with the looser tag class)`);
+});
+
+test('hardening: a truncated final tag (runner killed mid-write) does not hide the complete testcases before it', () => {
+  const r = parseJUnitXml('<testcase name="a -> b" classname="c"/>\n<testcase name="b" classname="c"/>\n<testcase name="cut off -> ');
+  assert.equal(r.tests, 2);
+  assert.equal(r.failed, 0);
+});
+
+test('hardening: a raw "<" inside an attribute value (invalid XML) ends that tag instead of swallowing the rest', () => {
+  const r = parseJUnitXml('<testcase name="bad < name" classname="c"/><testcase name="ok" classname="c"/><testcase name="ok2" classname="c"/>');
+  assert.equal(r.tests, 2); // the invalid tag is dropped; its valid neighbours are still counted
+});

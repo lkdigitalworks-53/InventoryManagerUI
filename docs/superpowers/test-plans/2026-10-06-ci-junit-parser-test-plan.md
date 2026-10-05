@@ -7,8 +7,9 @@
 2. When any `<testsuite>` exists in the concatenated artifact text (qmltestrunner's `results.xml`), only testsuite blocks were scanned, so bare node `<testcase>`s (`recordOperation`, `cleanupSweep`) were dropped. E2E reported QML only.
 **Not covered / out of scope:** test content of the app. Job pass/fail was never affected (exit codes gate the jobs); only the PR comment's counts and failed-test list were wrong. A failing test whose name had `>` could have been missing from the comment's list while the job was red.
 **Change:** count every `<testcase>` in the document with quote-aware tag matching; testsuite wrappers are no longer consulted (they carried nothing the summary uses).
+**Final sweep (2026-10-05, review PR stacked on this one):** (1) the tag body now also refuses a raw `<` (XML forbids it in a tag; node and Qt write `&lt;`, verified), which makes the scan linear: 320 KB of truncated tags took 20 s, now 2 ms; real 585-test replay unchanged. (2) `decodeXmlEntities` is no longer exported (no other user). (3) Known limit, not fixed on purpose: attribute values must be double-quoted (both generators do it; a single-quoted value containing `>` would undercount).
 
-## 1. Unit tests (run, green: `node --test .github/scripts/__tests__/*.test.js` = 52/52; `parse-junit.js` 100% line / 100% branch)
+## 1. Unit tests (run, green: `node --test .github/scripts/__tests__/*.test.js` = 55/55 after the PR #129 final sweep (52 before); `parse-junit.js` 100% line / 100% branch)
 | ID | What |
 |---|---|
 | existing 16 + 26 in other script files | unchanged, still green |
@@ -27,6 +28,10 @@
 | R2 | 585-case node-shaped fixture with 215 `->` names counts 585 (cause 1; the exact Functions numbers) |
 | R3 | MONKEY: 5 seeded runs x 300 testcases, random `>`, ` > `, `->`, escaped `&<"`, quotes, 10% failures: count, failed and failedTests exact |
 Real-data replay (sandbox): the real 585-test functions JUnit file parses to 585 (old parser: 370); a QML-style suite + two node files parses to 8 (old: 2).
+
+| H1 | HARDENING: 20000 unterminated `<testcase` tags parse in under 2 s (FAILS on the pre-sweep parser, verified) |
+| H2 | HARDENING: a truncated final tag (runner killed mid-write) keeps the complete testcases before it (guard: passes on both) |
+| H3 | HARDENING: raw `<` inside an attribute value ends that tag, neighbours still counted (FAILS on the pre-sweep parser, verified) |
 
 ## 3. E2E
 None for the parser itself. The next CI run of any PR is the end-to-end check. Expected: Functions 585 (not 370), and E2E higher than 63 by up to 24 (`cleanupSweep` 7 is certain to be new; `recordOperation` 17 only if its tests are flat, not inside `describe`: unverified, the E2E job log was not readable from the sandbox). Whatever the number, compare it with the `# tests` lines in the E2E job log.

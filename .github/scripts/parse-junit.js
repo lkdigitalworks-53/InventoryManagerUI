@@ -34,8 +34,12 @@ function extractAttr(tag, attrName) {
 // attribute values (a test named "x -> 400" is written verbatim), so `[^>]*` ended the tag inside the
 // name, fell into the open-tag branch and swallowed the following self-closing testcases: CI
 // reported 370 of 585 functions tests (exactly the 215 names containing ">").
-const TAG_BODY = '(?:[^>"]|"[^"]*")*';
-const ATTRS_LAZY = '((?:[^>"]|"[^"]*")*?)'; // lazy so a trailing "/" is left for the self-closing branch
+// A raw "<" can never appear inside a tag or an attribute value (XML forbids it; node and Qt both write
+// "&lt;"), so the body also refuses "<": an unterminated tag then ends at the next tag instead of scanning
+// to end of input from every "<testcase" (320 KB of truncated tags took 20 s with the looser class).
+// Attribute values must be double-quoted; both generators in this repo write them that way.
+const TAG_BODY = '(?:[^<>"]|"[^"<]*")*';
+const ATTRS_LAZY = '((?:[^<>"]|"[^"<]*")*?)'; // lazy so a trailing "/" is left for the self-closing branch
 const TESTCASE_RE = new RegExp(`<testcase\\b${TAG_BODY}\\/>|<testcase\\b${TAG_BODY}>[\\s\\S]*?<\\/testcase>`, 'g');
 const TESTCASE_OPEN_RE = new RegExp(`^<testcase\\b${TAG_BODY}>`);
 const FAILURE_RE = new RegExp(`<failure\\b${ATTRS_LAZY}(?:\\/>|>([\\s\\S]*?)<\\/failure>)`);
@@ -100,4 +104,4 @@ function parseJUnitXml(xml) {
   return { tests, failed, errors, skipped, passed, failedTests };
 }
 
-module.exports = { parseJUnitXml, decodeXmlEntities };
+module.exports = { parseJUnitXml };
