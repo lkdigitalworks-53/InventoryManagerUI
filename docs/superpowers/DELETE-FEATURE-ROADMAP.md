@@ -120,4 +120,4 @@ cap, client batch list may be incomplete, `recordOperation` has no production ca
   no real backlog of pre-existing orphaned batches to backfill. Revisit only if this ever matters
   in a real environment with production data predating this fix.
 
-**Order after PR #122 (Taher, 2026-10-05): PH3b, then PH4, then the rest of the photos work (PH5), then the atomic-operation work (which also carries the remaining ledger kinds, see `plans/2026-09-20-atomic-operation-outbox.md`).** BC1 / BC2 are merged (#118, #119).
+**Order after PR #122 (Taher, 2026-10-05): PH3b, then PH4, then the rest of the photos work (PH5), then the atomic-operation work (which also carries the remaining ledger kinds, see `plans/2026-09-20-atomic-operation-outbox.md`).** BC1 / BC2 are merged (#118, #119). **PH3b design v2 reviewed 2026-10-05** (v1 schema dropped: legacy markers invisible, index not deployable to dev1/test, `updateMarker` zombie race); ALL decisions taken 2026-10-05 (Q-J park at 12, Q-K no index, Q-L no alerting = production-publish blocker); ready for S-A. Test plan `test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md`.
