@@ -4124,7 +4124,7 @@ Rules:
 
 ## Skill 104: An emulator e2e for a scheduled function runs the function in-process; refuse to start unless every emulator host is set
 
-Context (PH3b S-C, 2026-10-06): the functions emulator has no clock, so a scheduler cannot be triggered by it. Written without an emulator in the sandbox, so UNVERIFIED until CI.
+Context (PH3b S-C, 2026-10-06): the functions emulator has no clock, so a scheduler cannot be triggered by it. Written without an emulator in the sandbox; CI green on its first run (2026-10-05, run 37353249915), so rules 1-7 are verified.
 Rules:
 1. Call the exported `onSchedule` function's `.run({})` in the test process (`require("functions/index.js")`). That is the exact entry Cloud Scheduler calls; HTTP-invoking is impossible for it.
 2. A test that deletes Storage objects must `process.exit(1)` unless BOTH `FIRESTORE_EMULATOR_HOST` and `FIREBASE_STORAGE_EMULATOR_HOST` are set; one missing host silently targets the real bucket.
