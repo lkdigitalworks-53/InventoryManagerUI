@@ -159,3 +159,123 @@ test('regression: passed count never goes negative even if attribute-derived mat
   const result = parseJUnitXml(xml);
   assert.ok(result.passed >= 0);
 });
+
+// ---- 2026-10-06: ">" in attribute values + bare testcases next to a <testsuite> file -------------------
+// Regression for CI undercounting (Functions 370 of 585: the 215 names containing "->"; E2E: node
+// --test files invisible next to qmltestrunner's results.xml). node's JUnit reporter writes ">" raw.
+
+test('regression: ">" inside a testcase name does not swallow its neighbours', () => {
+  const xml = `<testsuites>
+  <testcase name="F31 batch -> 400 cascade-delete-not-allowed" time="0.1" classname="test"/>
+  <testcase name="plain" time="0.1" classname="test"/>
+  <testcase name="a > b and c -> d" time="0.1" classname="test"/>
+</testsuites>`;
+  const r = parseJUnitXml(xml);
+  assert.equal(r.tests, 3);
+  assert.equal(r.passed, 3);
+});
+
+test('regression: bare node testcases are counted when a <testsuite> file is concatenated in front', () => {
+  const qml = `<testsuite name="tst_X" tests="2" failures="0"><testcase name="a" classname="tst_X"/><testcase name="b" classname="tst_X"/></testsuite>`;
+  const node = `<testsuites>\n<testcase name="E1 x" time="0.1" classname="test"/>\n<testcase name="E2 y" time="0.1" classname="test"/>\n<!-- tests 2 -->\n</testsuites>`;
+  const r = parseJUnitXml(qml + '\n' + node);
+  assert.equal(r.tests, 4);
+  assert.equal(r.passed, 4);
+});
+
+test('a failing testcase whose name and message contain ">" is reported with its full name and message', () => {
+  const xml = `<testsuites>
+  <testcase name="P1 -> 400" time="0.1" classname="test"/>
+  <testcase name="P2 -> 500" time="0.1" classname="test">
+    <failure message="expected 1 > 0 but got -> nothing" type="testCodeFailure">AssertionError</failure>
+  </testcase>
+  <testcase name="P3 -> 200" time="0.1" classname="test"/>
+</testsuites>`;
+  const r = parseJUnitXml(xml);
+  assert.equal(r.tests, 3);
+  assert.equal(r.failed, 1);
+  assert.equal(r.passed, 2);
+  assert.equal(r.failedTests[0].name, 'P2 -> 500');
+  assert.equal(r.failedTests[0].message, 'expected 1 > 0 but got -> nothing');
+});
+
+test('self-closing failure (qmltestrunner style) next to a ">" name still parses', () => {
+  const xml = `<testsuite name="s"><testcase name="q -> r" classname="s"><failure message="boom" result="fail"/></testcase><testcase name="ok" classname="s"/></testsuite>`;
+  const r = parseJUnitXml(xml);
+  assert.equal(r.tests, 2);
+  assert.equal(r.failed, 1);
+  assert.equal(r.failedTests[0].message, 'boom');
+});
+
+test('error and skipped testcases with ">" names are classified, not merged into neighbours', () => {
+  const xml = `<testsuites>
+  <testcase name="a -> b" classname="t"><error message="e > f"/></testcase>
+  <testcase name="c -> d" classname="t"><skipped/></testcase>
+  <testcase name="e -> f" classname="t"/>
+</testsuites>`;
+  const r = parseJUnitXml(xml);
+  assert.deepEqual([r.tests, r.errors, r.skipped, r.passed, r.failed], [3, 1, 1, 1, 0]);
+});
+
+test('nested <testsuite> (describe) with ">" names: every testcase counted once', () => {
+  const xml = `<testsuites><testsuite name="outer -> x"><testcase name="a" classname="t"/><testsuite name="inner"><testcase name="b -> c" classname="t"/></testsuite><testcase name="d" classname="t"/></testsuite></testsuites>`;
+  assert.equal(parseJUnitXml(xml).tests, 3);   // a, "b -> c", d
+});
+
+test('a document with no testcase at all (only comments / empty suites) yields zero', () => {
+  const r = parseJUnitXml('<testsuites>\n<!-- tests 0 -->\n<testsuite name="empty" tests="0"/>\n</testsuites>');
+  assert.deepEqual([r.tests, r.passed, r.failed], [0, 0, 0]);
+});
+
+test('MONKEY: 5 seeds x 300 testcases with random ">", "<" (escaped), "&", quotes: count and failures exact', () => {
+  const alphabet = ['a', 'B', ' ', '-', '>', ' > ', '->', '&amp;', '&lt;', '&gt;', '&quot;', "'", '/', '=', '(', ')', '0', '9'];
+  for (let seed = 1; seed <= 5; seed++) {
+    let x = seed * 2654435761 % 4294967296;
+    const rnd = () => { x = (x * 1664525 + 1013904223) % 4294967296; return x / 4294967296; };
+    let xml = '<testsuites>\n';
+    let wantFailed = 0;
+    for (let i = 0; i < 300; i++) {
+      let name = 'T' + i + ' ';
+      for (let k = 0, n = 1 + Math.floor(rnd() * 12); k < n; k++) name += alphabet[Math.floor(rnd() * alphabet.length)];
+      if (rnd() < 0.1) { wantFailed++; xml += `<testcase name="${name}" classname="t"><failure message="m &gt; n">x</failure></testcase>\n`; }
+      else xml += `<testcase name="${name}" classname="t"/>\n`;
+    }
+    xml += '</testsuites>';
+    const r = parseJUnitXml(xml);
+    assert.equal(r.tests, 300, 'seed ' + seed + ' tests');
+    assert.equal(r.failed, wantFailed, 'seed ' + seed + ' failed');
+    assert.equal(r.failedTests.length, wantFailed, 'seed ' + seed + ' failedTests');
+  }
+});
+
+test('REGRESSION FIXTURE: 585-case node junit shape with 215 ">" names counts all 585', () => {
+  let xml = '<?xml version="1.0" encoding="utf-8"?>\n<testsuites>\n';
+  for (let i = 0; i < 585; i++) xml += `\t<testcase name="case ${i}${i < 215 ? ' -> 400' : ''}" time="0.001" classname="test"/>\n`;
+  xml += '\t<!-- tests 585 -->\n</testsuites>\n';
+  assert.equal(parseJUnitXml(xml).tests, 585);
+});
+
+test('edge: testcase without a name and a failure without message or body fall back to placeholders', () => {
+  const r = parseJUnitXml('<testsuite><testcase classname="t"><failure/></testcase></testsuite>');
+  assert.equal(r.failed, 1);
+  assert.equal(r.failedTests[0].name, '(unnamed test)');
+  assert.equal(r.failedTests[0].message, 'No failure message provided.');
+});
+
+test('hardening: truncated/garbage XML with 20000 unterminated <testcase tags parses in linear time', () => {
+  const started = Date.now();
+  const r = parseJUnitXml('<testcase name="'.repeat(20000));
+  assert.equal(r.tests, 0);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms (was ~20000 ms with the looser tag class)`);
+});
+
+test('hardening: a truncated final tag (runner killed mid-write) does not hide the complete testcases before it', () => {
+  const r = parseJUnitXml('<testcase name="a -> b" classname="c"/>\n<testcase name="b" classname="c"/>\n<testcase name="cut off -> ');
+  assert.equal(r.tests, 2);
+  assert.equal(r.failed, 0);
+});
+
+test('hardening: a raw "<" inside an attribute value (invalid XML) ends that tag instead of swallowing the rest', () => {
+  const r = parseJUnitXml('<testcase name="bad < name" classname="c"/><testcase name="ok" classname="c"/><testcase name="ok2" classname="c"/>');
+  assert.equal(r.tests, 2); // the invalid tag is dropped; its valid neighbours are still counted
+});
