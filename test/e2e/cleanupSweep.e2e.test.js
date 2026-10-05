@@ -136,13 +136,13 @@ test("E2 (P1) a marker with only the fields PR #113 wrote is found and swept; ba
     });
     await putBatches(tenant, "p1", ["b1"]);
     await putObject(prefixOf(tenant, "p1") + "ph1.jpg");
+    const auditId = PH.buildCascadeAuditId("p1", "b1");
+    createdDocs.add("tenants/" + tenant + "/audit_log/" + auditId);   // registered BEFORE the tick: afterEach cleans it even if an assert below fails
 
     await tick(t);
 
     assert.equal(await readDoc("tenants/" + tenant + "/pending_cleanup/p1"), null);
     assert.equal(await readDoc("tenants/" + tenant + "/stock_batches/b1"), null);
-    const auditId = PH.buildCascadeAuditId("p1", "b1");
-    createdDocs.add("tenants/" + tenant + "/audit_log/" + auditId);
     assert.equal((await readDoc("tenants/" + tenant + "/audit_log/" + auditId)).actorUid, "system");
     assert.equal(await objectExists(prefixOf(tenant, "p1") + "ph1.jpg"), false);
 });
