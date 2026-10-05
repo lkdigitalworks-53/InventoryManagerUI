@@ -38,3 +38,6 @@ Branch `review/2026-10-05-pr124-design-review` (stacked on `docs/2026-10-05-ph3b
 3. Wrote `docs/superpowers/specs/2026-10-05-pr124-ph3b-design-second-review.md` (R1 Med, R2/R3 Low).
 4. User asked: why PH3b, what if skipped (ELI5). Answered in chat.
 NEXT: Taher reads review, merges #124 (or answers R1), then S-A.
+5. Taher decided: R1 = paged read; Q-L = set up alert. Researched Cloud Monitoring (log-based policy needs rate limit; channels incl. Google Cloud console mobile app; mobile/Slack/PagerDuty share a failure point so keep email). Cannot create the policy (no GCP access): wrote `docs/superpowers/specs/2026-10-05-ph3b-alert-runbook.md`.
+6. Updated spec (Q-K/Q-L amended, Paging + Alerting sections), test plan (unit 57, e2e 5, DV 9; UL01-07, UR15-18, E5, DV-9), AGENTS, KNOWN-ISSUES, test-plans README, SKILLS 102 rules 7-8. Pushed to PR #125.
+NEXT: Taher merges #124 then #125. Then S-A (`lib/photoCleanup.js` incl. `readAllMarkers`, alert logs, + unit tests). At S-C deploy Taher creates the alert and runs DV-9.

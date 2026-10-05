@@ -17,3 +17,9 @@ Skills: requesting-code-review (applied inline, no subagent: free-plan token bud
 | R3 | Low | `ponytail`: `DUE_SLACK_MS`, `GRACE_MS`, `BACKOFF_*`, `PARK_AT`, `MAX_SCAN`, `RUN_BUDGET_MS` = 7 constants for a dev-only sweeper. Not wrong; the slack constant is justified by a measured ~110 min error | Keep; no delete. net: -0 lines |
 
 No Critical. No blocker for merging PR #124.
+
+## Resolution (Taher, 2026-10-05)
+- R1: **paged read** (`PAGE_SIZE 200`, `MAX_PAGES 10`, cursor without orderBy). Spec, test plan (UL01-UL07, E5) updated.
+- R2: **alert now** (log-based, email + Google Cloud console mobile app). Runbook `2026-10-05-ph3b-alert-runbook.md`, test DV-9, log tests UR15-UR18. Production blocker stays until DV-9 passes.
+- R3: keep.
+New UNVERIFIED items: Admin SDK cursor-without-orderBy on a collection group (E5, DV-1), rate-limit/auto-close ranges, `gcloud` flag.
