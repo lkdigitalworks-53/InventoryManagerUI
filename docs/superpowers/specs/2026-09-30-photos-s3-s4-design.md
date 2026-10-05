@@ -1,6 +1,6 @@
 # Product photos — pending items: PH3 (server), PH4 (client), PH5 (remove legacy `photoUrl`) — design
 
-**Status:** design only. Decisions Q1-Q11 taken by Taher 2026-09-30, Q12-Q15 on 2026-10-01 after the PR #108 review (ledger below). No code written. PH3 (server) can start once PR #108 merges. **PH3b (scheduled cleanup function): design v2 reviewed 2026-10-05, ready for implementation; Q-J decided (park at 12), Q-K/Q-L defaults adopted pending Taher; v1 schema superseded**, see its section; PH3 does not depend on it.
+**Status:** design only. Decisions Q1-Q11 taken by Taher 2026-09-30, Q12-Q15 on 2026-10-01 after the PR #108 review (ledger below). No code written. PH3 (server) can start once PR #108 merges. **PH3b (scheduled cleanup function): design v2 reviewed 2026-10-05, all decisions taken 2026-10-05 (Q-J park at 12, Q-K no index, Q-L no alerting); ready for implementation; v1 schema superseded**, see its section; PH3 does not depend on it.
 **Slice labels:** PH3/PH4/PH5 (renamed from S3/S4/S5 on 2026-10-01: the stuck-writes workstream already owns `S3`, #109).
 **Checkpoint / evidence trail:** `2026-09-30-photos-pending-design-CHECKPOINT.md` (every code claim here was read on `main` @ `0d77f9a`; on 2026-10-01 `functions/`, `firestore.rules`, `storage.rules` re-checked unchanged on `main` @ `52776d7`, only client files moved; items marked UNVERIFIED were not).
 **Test plan:** `../test-plans/2026-09-30-photos-ph3-s4-s5-test-plan.md`.
@@ -82,7 +82,7 @@ A separate `match /pending_cleanup/{docId} { allow ...: if false; }` is NOT enou
 - **P1 stock movements (planned, NOT merged):** its S1a/S1b also edit `applyMutation`, batch and ops (batch cap 200->150, ops write budgets). Expect merge conflicts in `gatewayLogic.js`; the two changes are independent. Q11 means no marker writes in batch/ops, so P1's write-budget arithmetic is unaffected. Single path gains one write per inventory delete (marker).
 - **F5 stays:** strict `before` compare including `photoIds` at all three sites. Add one pin test documenting it.
 
-## PH3b — scheduled cleanup function (design v2, reviewed 2026-10-05; READY; Q-J decided, Q-K / Q-L defaults adopted pending Taher)
+## PH3b — scheduled cleanup function (design v2, reviewed 2026-10-05; ALL DECISIONS TAKEN 2026-10-05; ready for S-A)
 
 Replaces the piggyback drain (Q6 amended). v1 (2026-10-01, `nextAttemptAt` schema + collection-group index) is in git history at `7ec2fc6`; the 2026-10-05 review below found it would not work as written. **Nothing is built.** Code facts below were read on `main` @ `7ec2fc6` (functions suite 491/491 green in-session before this change).
 
@@ -108,13 +108,13 @@ BC-design "PH3b implications" 1-6 are all covered: (1) the scheduler reuses `ind
 | Q | Question | Status |
 |---|---|---|
 | Q-E | v1: `nextAttemptAt` + park by removing the field | **SUPERSEDED by Q-K** (reason: P1, P2). Taher's 2026-10-01 "ok" was given to a proposal that had these defects |
-| Q-F | Run every 10 min, all three envs | kept. Backoff shape changes under Q-J |
+| Q-F | Run every 10 min, all three envs | kept. Backoff shape replaced by Q-J |
 | Q-G | Throw only at the end, only for env-level failures | kept |
 | Q-H | Keep the immediate awaited post-commit sweep | kept |
 | Q-I | Blaze + manual deploy | answered 2026-10-03 |
 | **Q-J** | Backoff and park cap | **DECIDED 2026-10-05 (Taher): (b) delay `min(attempts,3) x 10 min` (10, 20, 30, 30 ...), park at `PARK_AT = 12`.** Supersedes Q12 (cap 5). Timing: with the tick slack below, the 12th failure lands ~300 min after the first failure (10+20+30+9x30); WITHOUT the slack every wait slips one 10-min tick and it is ~410 min. Cost accepted: a poisoned marker retries 12 times before it is flagged. `PARK_AT` stays a named constant. Never-park was offered and declined |
-| **Q-K** | Schedule by (a) **recommended: in-code due time from `createdAt`/`attempts`/`lastAttemptAtMs`, unfiltered collection-group read, no index** vs (b) v1 `nextAttemptAt` + index exemption + per-database index deploy + one-off backfill of existing markers | **OPEN. Default adopted: (a).** (a) trade-off: every non-deleted marker (incl. parked) is read each run, capped at `MAX_SCAN = 500`; fine while markers are rare, revisit if parked markers pile up. (b) trade-off: needs `firebase.json` multi-database indexes or manual console steps in 3 databases, and a backfill; CI cannot prove either |
-| **Q-L** | Alerting on `parked`/errors. (a) **recommended now: none, runbook = console query `parked == true` + Logs Explorer severity ERROR; recorded as a PRODUCTION-publish blocker** vs (b) one log-based alert policy in Cloud Monitoring (console config, no code) | **OPEN. Default adopted: (a).** Honest note: with (a) a parked money marker is invisible unless someone looks |
+| **Q-K** | Schedule by (a) **recommended: in-code due time from `createdAt`/`attempts`/`lastAttemptAtMs`, unfiltered collection-group read, no index** vs (b) v1 `nextAttemptAt` + index exemption + per-database index deploy + one-off backfill of existing markers | **DECIDED 2026-10-05 (Taher): (a), the recommended default.** (a) trade-off accepted: every non-deleted marker (incl. parked) is read each run, capped at `MAX_SCAN = 500`; fine while markers are rare, revisit if parked markers pile up. (b) declined: needs `firebase.json` multi-database indexes or manual console steps in 3 databases, and a backfill; CI cannot prove either. Reopen (b) only if parked/stuck markers routinely exceed `MAX_SCAN` (the run logs `backlog:true` at ERROR when that happens) |
+| **Q-L** | Alerting on `parked`/errors. (a) **recommended now: none, runbook = console query `parked == true` + Logs Explorer severity ERROR; recorded as a PRODUCTION-publish blocker** vs (b) one log-based alert policy in Cloud Monitoring (console config, no code) | **DECIDED 2026-10-05 (Taher): (a), the recommended default.** Accepted risk: with (a) a parked money marker is invisible unless someone looks, so "no alerting" is a hard BLOCKER for a production publish (add the Cloud Monitoring alert, or re-decide, before any production data exists). Dev only today |
 
 ### Design v2
 
@@ -161,10 +161,10 @@ Remove: `InventoryStore.qml` normalize (L132-133), clone fields (L198-199, L226)
 F5 stale-edit 409 (user redoes the edit). A failed sweep waits for the PH3b scheduled function (until PH3b ships it waits indefinitely; dev only). Residual race between upload preflight and Storage write. No timeliness guarantee on cleanup. Photo gate is partial hardening (staff token can still edit/delete products via `recordMutation`).
 
 ## Not building
-Generic cross-device operation journal / lock (existing `lockLogic.js` is a 90 s TTL lock and does not fit a persistent "deleting" state; CAS already 409s stale edits after a delete; atomic product+batches delete belongs to the delete roadmap via one `recordOperation`). Firestore trigger or scheduled function for cleanup. Server-minted photo ids. Offline photo cache. Deleting `FailedTileGeometry.js`. D1 attempt counting. General `authorize(role, entity, action)` (KNOWN-ISSUES).
+Generic cross-device operation journal / lock (existing `lockLogic.js` is a 90 s TTL lock and does not fit a persistent "deleting" state; CAS already 409s stale edits after a delete; atomic product+batches delete belongs to the delete roadmap via one `recordOperation`). Firestore trigger for cleanup (the scheduled sweeper is PH3b, designed above). Server-minted photo ids. Offline photo cache. Deleting `FailedTileGeometry.js`. D1 attempt counting. General `authorize(role, entity, action)` (KNOWN-ISSUES).
 
 ## Docs to update when implementing
-(PH3b adds: `AGENTS.md` scheduled function + `parked` runbook line, `firestore.indexes.json` exemption note.) `KNOWN-ISSUES.md` (F5 accepted entry; note photo gate in the authz entry is already cross-linked), photo design spec "Known limits", `AGENTS.md` file-map lines for `photoCleanup.js` and the new `pending_cleanup` collection, `README.md` if it lists collections, `SKILLS.md` (new skill only for lessons actually hit), test-plans `README.md` row (added with this design).
+(PH3b adds: `AGENTS.md` scheduled function + `parked` runbook line + un-park steps, `KNOWN-ISSUES.md` limits update, roadmap status. NO `firestore.indexes.json` or `firebase.json` change: Q-K = no index.) `KNOWN-ISSUES.md` (F5 accepted entry; note photo gate in the authz entry is already cross-linked), photo design spec "Known limits", `AGENTS.md` file-map lines for `photoCleanup.js` and the new `pending_cleanup` collection, `README.md` if it lists collections, `SKILLS.md` (new skill only for lessons actually hit), test-plans `README.md` row (added with this design).
 
 ## Acceptance
-PH3: functions suite green incl. new tests, rules + e2e green on CI, no Storage write on any 403/404/409 upload, marker written iff a delete committed. PH4: CI green, `deleteProduct` issues no `removeProductPhoto`, 403 never retries. PH5: no product `photoUrl` reference left except the test that asserts absence; profile photo untouched.
+PH3: functions suite green incl. new tests, rules + e2e green on CI, no Storage write on any 403/404/409 upload, marker written iff a delete committed. PH3b: see its Acceptance paragraph (coverage of new `photoCleanup.js` code, emulator e2e, a real stuck marker cleared within two runs after a manual deploy). PH4: CI green, `deleteProduct` issues no `removeProductPhoto`, 403 never retries. PH5: no product `photoUrl` reference left except the test that asserts absence; profile photo untouched.
