@@ -555,8 +555,8 @@ marker written in the product-delete transaction, post-commit prefix sweep, F3 u
 2. **Residual upload race.** A product deleted between the F3 preflight read and the Storage write can leave one orphan
    object pair (the transaction then returns 404). Pinned by F10. The marker sweep does not catch it (the marker was
    written before the upload). PH3b's scheduled sweeper is the intended fix.
-3. **Failed sweep is only retried by PH3b.** Until the scheduled function exists, a sweep that fails (Storage outage)
-   leaves the marker with `attempts` and `lastError` and nothing re-drains it. Blocked on Q-I.
+3. **Failed sweep is only retried by PH3b.** Until the scheduled function is DEPLOYED (built 2026-10-05, see "PH3b scheduled sweeper: accepted limits"), a sweep that fails (Storage outage)
+   leaves the marker with `attempts` and `lastError` and nothing re-drains it.
 4. **Batch/ops reject inventory deletes** (400 `cascade-delete-not-allowed`, whole request, zero writes): they cannot
    write the marker without breaking their write-ceiling arithmetic. No client sends one today (bulk import is
    create-only). Revisit when an atomic product delete is built.
@@ -626,3 +626,17 @@ manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #
 - **Fixed in PR #122 (CI unverified):** a product doc over 1 MiB (`DocLimits`, estimate with a 4 KiB reserve) is refused before anything is queued; the dialogs pre-check. Gap: bulk import (`ImportPreviewDialog`, `recordMutations`) has no size check; an oversize row is still rejected by the server and removed by `_onBatchMutationFailedPermanently`.
 - **Verified by code read (PR #122):** every send path (single, batch, delta, operation) ends in `Gateway._reschedule()` after a conflict or permanent drop, so `pruneOrphans` runs. Not run.
 - **Open (found in PR #121 final sweep, 2026-10-05):** (a) the sale guard counts a queued CREATE and a queued edit made OFFLINE as "unsynced": an offline edit, or a product added offline, cannot be sold offline until it syncs (decision Q1 = Z, accepted; real cost for an offline-first counter). (b) Device-test cases 4.2, 4.3, 4.4, 4.10 of `2026-10-05-unsynced-edit-ledger-test-plan.md` forced a server rejection with a > 1 MiB description; the client cap now refuses that up front, so no verified on-device way to force a rejection exists. Pick one before testing.
+
+
+## PH3b scheduled sweeper: accepted limits (BUILT 2026-10-05/06, NOT DEPLOYED)
+
+Code: S-A #126, S-B #127 (merged); e2e S-C (this branch). Found in the PR #126/#127 final sweeps; none changed in code on purpose.
+
+- **M1 env order.** Envs run `dev`, `test`, `prd` and share ONE 240 s budget. Many slow dev/test sweeps in a single run could defer `prd` markers to the next run. Needs many slow sweeps at once; backoff caps retries at 30 min. One-line fix exists (`["prd","test","dev"]`, plus edits to ~17 order-sensitive test assertions). Decision: keep, reopen if `deferred` is ever non-zero for `prd` in the logs.
+- **M2 no per-sweep timeout.** One sweep started at ~239 s can reach the 300 s function timeout. Safe: every step is idempotent, `attempts` is not bumped, the next run retries.
+- **M3 parked markers are never deleted** and count toward `MAX_SCAN` (2000). Only an unrealistic number could hide new ones; ERROR `PH3B_ALERT backlog` fires first. Humans clear parked markers (un-park or delete).
+- **M4 false `park-failed` alert.** If `updateMarker` hits NOT_FOUND at attempt 11 (a concurrent sweeper deleted the marker) `park` also NOT_FOUNDs and raises a false alert. Needs 11 failures plus a race.
+- **M5 summary `parked`** counts already-parked + capped markers, not newly parked malformed ones (those are in `malformed`).
+- **E2E cannot prove (DV-1..DV-9 on a real project do):** the no-index claim, cursor-without-`orderBy` on the real Admin SDK, structured-log field names in Cloud Logging, Cloud Scheduler location for `asia-south1`, `maxInstances` on a scheduled function, the alert policy.
+- **Deploy drift:** the P3 `update()` fix is in `recordMutation`'s shared module. Deploy ALL functions, not only the new one.
+- **Production blocker (Q-L):** the log-based alert (runbook `specs/2026-10-05-ph3b-alert-runbook.md`) must exist and DV-9 pass before production data relies on the sweeper.
