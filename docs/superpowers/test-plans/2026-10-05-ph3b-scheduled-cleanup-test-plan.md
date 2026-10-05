@@ -142,7 +142,7 @@ Prerequisite: deploy everything (`firebase deploy --only functions`), accept the
 ### 4.1 Happy path
 - [ ] DV-1 (the no-index claim): Logs Explorer shows a run of `cleanupPendingMarkers` with a summary line per env and NO `FAILED_PRECONDITION` / "requires an index".
 - [ ] DV-2: Cloud Scheduler console lists the job, schedule `every 10 minutes`, location acceptable.
-- [ ] DV-3: create a marker by hand in `dev1` (`tenants/<t>/pending_cleanup/PRD-DV1` with the fields of a real marker, a Storage file under its prefix, one fake `stock_batches` doc with that `productId`): within ~12 min the marker, file and batch are gone and a `cascade~` audit entry exists.
+- [ ] DV-3: create a marker by hand in `dev1` (`tenants/<t>/pending_cleanup/PRD-DV1` with EXACTLY these fields: `productId` string `PRD-DV1`, `envPrefix` string `dev1`, `prefix` string `dev1/tenants/<t>/products/PRD-DV1/`, `createdAt` TYPE TIMESTAMP (a string or missing = malformed, it parks instead of sweeping) set at least 2 minutes in the past, `attempts` number 0, `lastError` null; no `parked` field, a Storage file under its prefix, one fake `stock_batches` doc with that `productId`): within ~12 min the marker, file and batch are gone and a `cascade~` audit entry exists.
 
 ### 4.2 Negative
 - [ ] DV-4: marker with a wrong `prefix`: not swept, `attempts` rises each backoff, Storage untouched.
