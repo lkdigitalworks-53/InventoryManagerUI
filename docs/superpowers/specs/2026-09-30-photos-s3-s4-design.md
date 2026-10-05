@@ -146,7 +146,7 @@ exports.cleanupPendingMarkers = onSchedule(
 **Deploy facts (Taher deploys manually).** Deploy ALL functions, not only the new one: the P3 fix lives in `recordMutation`'s shared module, and a scheduler-only deploy would leave the handler racy. Record every deploy in the checkpoint (deployed != main drift). First deploy of a scheduled function prompts to enable Cloud Scheduler (and related) APIs. Scheduler location must be available for `asia-south1` (UNVERIFIED, confirm at deploy). Verify the free-tier job quota in the console, not from memory.
 
 **Slices (each small, resumable, own commit).**
-- S-A `photoCleanup.js` pure functions + unit tests (Node, runnable in sandbox).
+- S-A `photoCleanup.js` pure functions + unit tests (Node, runnable in sandbox). **DONE 2026-10-05** (PR from `feat/2026-10-05-ph3b-sweeper-lib`). Implementation deviation: `deps.park(env, path, reason)` replaces `park(env, tenantId, productId, reason)`; the binding in S-B must do `scopedDb(env).doc(path).update({parked:true, parkedAtMs, lastError})`. `listMarkers(env)` returns `{entries:[{path, data, createdAtMs}], backlog}` (the binding converts the Firestore Timestamp to ms).
 - S-B `index.js`: P3 `update` fix, `cleanupPendingMarkers`, harness `update` + `collectionGroup`, functional tests.
 - S-C `test/e2e/cleanupSweep.e2e.test.js` (+ add it to the `node --test` list in `.github/workflows/checks.yml`), docs (AGENTS runbook line, KNOWN-ISSUES, roadmap), no deploy.
 Test plan: `../test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md`.

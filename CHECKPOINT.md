@@ -11,7 +11,21 @@ Implement PH3b slice S-A. Design: `docs/superpowers/specs/2026-09-30-photos-s3-s
 
 ## Step log
 1. Read memory + CHECKPOINT + spec PH3b + test plan + `photoCleanup.js`; cloned repo; baseline 491/491.
-2. Branch created, old checkpoint archived, this checkpoint written.
+2. Branch created, old checkpoint archived, this checkpoint written (commit b45d8fc).
+3. Implemented in `functions/lib/photoCleanup.js`: constants (`GRACE_MS` ... `ALERT_TAG`), `parseMarkerPath`, `delayMs`, `selectDue`, `readAllMarkers`, `runCleanupSweep`; `sweepMarker` failure patch now carries `lastAttemptAtMs` (optional `deps.now`).
+4. Tests: +33 in `functions/test/photoCleanup.test.js` (UP, UD, US, UM), new `functions/test/cleanupSweep.test.js` (+33: UL, UR, extras). Suite 557/557 green; `photoCleanup.js` line/branch/function coverage 100%.
+5. Docs: test plan status + actual counts, test-plans README row, spec S-A DONE + deviation, AGENTS.md PH3b status, SKILLS 102 rule 9.
+6. Pushed + PR opened (see PR link in chat; number recorded below once known).
+
+## Decisions made without asking (flag in PR for Taher)
+- `deps.park(env, path, reason)` instead of `(env, tenantId, productId, reason)`: malformed markers may have no parsable path. Reversible in S-B.
+- `parked` is checked before malformed in `selectDue` (else a malformed marker is re-parked and re-alerted every run).
+- A THROWN `sweep` is WARNING + `failed`, never parks (attempts were not incremented). Only `{ok:false}` at `attempts+1 >= PARK_AT` parks.
+- Per-env summary log is always INFO; the ERROR `PH3B_ALERT` lines are separate (env-failed, backlog, marker-parked, park-failed).
+- One run-wide `RUN_BUDGET_MS` clock (not per env).
 
 ## NEXT
-(updated as steps complete)
+1. Taher reviews + merges the S-A PR (CI: functions suite only; no QML touched).
+2. **S-B** (`feat/2026-10-05-ph3b-sweeper-binding`): `index.js` P3 fix `updateMarker` -> `markerRef.update(patch)`; `exports.cleanupPendingMarkers = onSchedule(...)`; `listMarkers` via `readAllMarkers` + `collectionGroup("pending_cleanup")` (map Timestamp -> `createdAtMs`); `park` = `scopedDb(env).doc(path).update({parked:true, parkedAtMs, lastError})`; harness `update` + `collectionGroup`; functional tests FS01-FS10.
+3. **S-C**: e2e `test/e2e/cleanupSweep.e2e.test.js` (+ `checks.yml`), AGENTS runbook, KNOWN-ISSUES, roadmap.
+4. Taher deploys ALL functions manually, creates the alert (runbook), runs test plan section 4.
