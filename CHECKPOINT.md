@@ -15,7 +15,7 @@ Implement PH3b slice S-A. Design: `docs/superpowers/specs/2026-09-30-photos-s3-s
 3. Implemented in `functions/lib/photoCleanup.js`: constants (`GRACE_MS` ... `ALERT_TAG`), `parseMarkerPath`, `delayMs`, `selectDue`, `readAllMarkers`, `runCleanupSweep`; `sweepMarker` failure patch now carries `lastAttemptAtMs` (optional `deps.now`).
 4. Tests: +33 in `functions/test/photoCleanup.test.js` (UP, UD, US, UM), new `functions/test/cleanupSweep.test.js` (+33: UL, UR, extras). Suite 557/557 green; `photoCleanup.js` line/branch/function coverage 100%.
 5. Docs: test plan status + actual counts, test-plans README row, spec S-A DONE + deviation, AGENTS.md PH3b status, SKILLS 102 rule 9.
-6. Pushed + PR opened (see PR link in chat; number recorded below once known).
+6. Pushed; PR #126 opened against main (https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/126).
 
 ## Decisions made without asking (flag in PR for Taher)
 - `deps.park(env, path, reason)` instead of `(env, tenantId, productId, reason)`: malformed markers may have no parsable path. Reversible in S-B.
