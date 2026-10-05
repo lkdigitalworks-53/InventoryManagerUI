@@ -15,12 +15,14 @@ Next roadmap step after BC1/BC2/PR #121-#122 = **PH3b** (scheduled `pending_clea
 4. Design v2 written into `docs/superpowers/specs/2026-09-30-photos-s3-s4-design.md` (PH3b section replaced; v1 in git at `7ec2fc6`). Pushed.
 5. Test plan `docs/superpowers/test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md` (unit 45, functional 10, e2e 4, real-project 8; incl. monkey tests, coverage target). README index row added (also fixed a broken link to the photos plan). Docs: AGENTS pointer, KNOWN-ISSUES, roadmap, photos plan note, SKILLS 102.
 
+## Decisions
+- **Q-J DECIDED (Taher, 2026-10-05): park at 12**, delay `min(attempts,3) x 10 min`. Never-park and a shorter cap were offered and declined. Follow-up fix: `DUE_SLACK_MS = 60 s` (without it each wait slips a tick: ~410 min to park instead of ~300). In spec, test plan (US02 changed, US13 added, unit now 46), Skill 102 rule 5.
+
 ## OPEN decisions (Taher) — defaults adopted in the plan, answer to confirm or flip
-- **Q-J** backoff/park: default `min(attempts,3) x 10 min`, park at 12 (~5 h) vs v1 `attempts x 10 min`, park at 5 (~100 min).
 - **Q-K** (reverses Q-E): default in-code due time, unfiltered collection-group read, no index vs v1 `nextAttemptAt` + per-database index + backfill.
 - **Q-L** alerting: default none (runbook + production-publish blocker) vs one Cloud Monitoring alert.
 
 ## NEXT
-1. Taher answers Q-J / Q-K / Q-L (or accepts defaults). If Q-K = b, rewrite test plan sections 1.3, 1.4, 2, 3.
+1. Taher answers Q-K / Q-L (or accepts defaults). If Q-K = b, rewrite test plan sections 1.3, 1.4, 2, 3.
 2. Implement S-A (`lib/photoCleanup.js` pure functions + unit tests, sandbox-runnable), then S-B (index.js `update()` fix + `cleanupPendingMarkers` + harness `update`/`collectionGroup`), then S-C (e2e + docs). One branch per slice, push each.
 3. Taher deploys ALL functions manually, records the deploy here, runs section 4 of the test plan.

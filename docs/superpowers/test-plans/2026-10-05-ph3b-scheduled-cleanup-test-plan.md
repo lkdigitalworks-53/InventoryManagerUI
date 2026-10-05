@@ -3,8 +3,8 @@
 **Design:** `../specs/2026-09-30-photos-s3-s4-design.md`, section "PH3b — design v2" (review P1-P10, decisions Q-J / Q-K / Q-L).
 **Branches (planned):** `feat/2026-10-05-ph3b-sweeper-lib` (S-A), `feat/2026-10-05-ph3b-sweeper-binding` (S-B), `feat/2026-10-05-ph3b-sweeper-e2e-docs` (S-C).
 **Status:** written BEFORE implementation. **Nothing built, nothing run.** Baseline before this plan: functions suite 491/491 green (`cd functions && npm ci && node --test`). Node cases run in the sandbox; the emulator e2e and the real-scheduler checks are CI / on-project only.
-**Written for the DEFAULTS** (Q-J = b: park at 12, backoff 10/20/30/30 min; Q-K = a: no index, due time in code; Q-L = a: no alerting). Tests import `PARK_AT`, `GRACE_MS`, `BACKOFF_STEP_MS`, `BACKOFF_STEPS` instead of hard-coding them, so Q-J = a is a constants change. Q-K = b would rewrite sections 1.3-1.4, 2.1 and E1-E4.
-**Planned totals:** unit 45, functional 10, e2e 4, real-project (DV) 8. Counts to be re-derived with `grep -c "test(" ` after implementation, not carried forward.
+**Q-J DECIDED 2026-10-05 (Taher): park at 12, backoff 10/20/30/30 min.** Q-K = a (no index, due time in code) and Q-L = a (no alerting) are defaults still pending Taher. Tests import `PARK_AT`, `GRACE_MS`, `DUE_SLACK_MS`, `BACKOFF_STEP_MS`, `BACKOFF_STEPS` instead of hard-coding them. Q-K = b would rewrite sections 1.3-1.4, 2.1 and E1-E4.
+**Planned totals:** unit 46, functional 10, e2e 4, real-project (DV) 8. Counts to be re-derived with `grep -c "test(" ` after implementation, not carried forward.
 **Coverage target (user rule: 100% of new code):** line AND branch coverage of every new function in `functions/lib/photoCleanup.js` = 100%, measured with `node --test --experimental-test-coverage` (sandbox Node 22; availability of the flag on CI's Node is UNVERIFIED, so CI does not gate on it). `index.js` binding lines are covered by section 2 plus E1-E4.
 
 ## 1. Unit (Node, `functions/test/photoCleanup.test.js` extended + new `functions/test/cleanupSweep.test.js`)
@@ -32,11 +32,11 @@
 | UD06 | fractional (2.5) -> deterministic, no throw (floor or ceil, pinned by the test) |
 | UD07 | monotonic non-decreasing for attempts 0..50 |
 
-### 1.3 `selectDue` (12; four groups must partition the input)
+### 1.3 `selectDue` (13; four groups must partition the input)
 | ID | Case |
 |---|---|
 | US01 | fresh marker inside grace -> notDue |
-| US02 | exactly at `createdAtMs + GRACE_MS` -> due (boundary is `>=`); one ms earlier -> notDue |
+| US02 | boundary is `nowMs + DUE_SLACK_MS >= dueAtMs`: exactly `GRACE_MS - DUE_SLACK_MS` after `createdAtMs` -> due; one ms earlier -> notDue |
 | US03 | `lastAttemptAtMs` wins over `createdAtMs` for the due time |
 | US04 | **regression P1**: legacy marker (no `lastAttemptAtMs`, no actor fields, no `nextAttemptAt`) -> due once the grace has passed |
 | US05 | `parked: true` -> parked group, never due (also with attempts 0) |
@@ -46,6 +46,7 @@
 | US09 | missing / non-string `prefix`, missing `envPrefix` -> malformed |
 | US10 | `createdAtMs` missing, NaN, negative -> malformed |
 | US11 | due list sorted by `dueAtMs` ascending (oldest first), stable for ties |
+| US13 | **tick slack**: marker with attempts 1 failed at tick+5 s is NOT due 9 min later but IS due at the next tick (tick+10 min); same with attempts 3 (30 min) |
 | US12 | MONKEY: 5000 random markers (random types per field, random nowMs); never throws; sum of the four groups == input length; no marker in two groups |
 
 ### 1.4 `runCleanupSweep` (14, fakes only)
@@ -86,7 +87,7 @@
 | FS07 | per-marker failures only (Storage throws for every marker) -> `.run()` resolves |
 | FS08 | handler sweep and scheduler sweep of the same marker in parallel -> no duplicate audit docs, no zombie marker, files gone |
 | FS09 | id reused (product doc exists again) -> marker dropped, files and batches untouched |
-| FS10 | full lifecycle with a controllable clock: fail -> not retried inside the backoff -> retried after it -> failures to `PARK_AT` -> parked + ERROR log -> next run skips -> un-park (`parked:false, attempts:0`) -> swept |
+| FS10 | full lifecycle with a controllable clock, ticks every 10 min: fail -> not retried inside the backoff -> retried after it -> **12th failure lands ~300 min after the first (+-1 tick), not ~410** -> parked + ERROR log -> next run skips -> un-park (`parked:false, attempts:0`) -> swept |
 
 Rules (emulator, CI): **no new rules case.** Markers are already server-only (R01-R05, R11); the Admin SDK used by the scheduler bypasses rules by design. Pin only: R01-R05 stay green.
 
