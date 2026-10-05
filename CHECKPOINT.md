@@ -1,45 +1,40 @@
-# CHECKPOINT — 2026-10-05 session: PH3b design review (resume here)
+# CHECKPOINT — 2026-10-05 session: PH3b slice S-A + final sweep of PR #126 (resume here)
 
-**Branch:** `docs/2026-10-05-ph3b-design-review` (off `main` @ `7ec2fc6`). Docs only; no code, no deploy, nothing built or run except the existing functions suite (491/491 green, baseline).
-**Commit identity:** `tsadmin <tsadmin@gmail.com>` (user instruction this session), passed per commit with `git -c`, never written to a global config. Push via `/tmp/push.sh` (PAT only in the push header; recreate it if the sandbox reset).
-**Standing rules (user, this session):** clone repo each session; branch only; push without asking; no app build/run; no Qt tooling in sandbox (CI = QML signal); small scope, resumable by another account; honest advisor, grill decisions; tests + test plan for every change; update SKILLS/AGENTS/README as needed; terse ("caveman") chat replies.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-05-pr121-final-sweep-CHECKPOINT.md` (its NEXT: read CI on the stacked PR #121 sweep, merge, then PR #121; and Taher to pick a way to force a server rejection for device cases 4.2/4.3/4.4/4.10). Not touched here.
+**Branch:** `feat/2026-10-05-ph3b-sweeper-lib` (off `main` @ `a565bbd`). Slice **S-A only**: pure functions in `functions/lib/photoCleanup.js` + unit tests. No `index.js` change (that is S-B), no QML, no deploy, nothing built or run except the Node functions suite.
+**Commit identity:** `dextran52@gmail.com` (user, this session), passed per commit with `git -c`, never in global config. Push with PAT in the header only (never write the PAT into any file/memory).
+**Standing rules:** clone each session; branch only; push without asking; no app build/run; no Qt tooling in sandbox (CI = QML signal; no QML here anyway); small scope, resumable by another account; honest advisor; tests + test plan for every change; update SKILLS/AGENTS/README as needed; terse "caveman" replies.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-05-ph3b-design-merged-CHECKPOINT.md` (PH3b design v2 + reviews, PRs #124/#125 merged).
+**Baseline:** functions suite 491/491 green on `main` (Node 22.22.2, `cd functions && npm ci && node --test`).
 
 ## Task
-Next roadmap step after BC1/BC2/PR #121-#122 = **PH3b** (scheduled `pending_cleanup` sweeper). Already designed (v1, 2026-10-01). Reviewed against `main`, updated to v2, made ready for implementation.
+Implement PH3b slice S-A. Design: `docs/superpowers/specs/2026-09-30-photos-s3-s4-design.md` "PH3b". Test plan: `docs/superpowers/test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md` section 1 (UP, UD, US, UR, UL, UM = 57 cases).
 
 ## Step log
-1. Read skills (brainstorming, ponytail, qt-qml, qt-ui-design), cloned repo, read CHECKPOINT, roadmap, PH3b section, BC design "PH3b implications", `photoCleanup.js`, `index.js` sweep binding, firebase.json, workflows.
-2. Classified: architectural-lite (design exists; server-only Node work; no QML/UI, so qt-qml / qt-ui-design have nothing to apply). Review found P1-P10 (spec ledger). Three High: (P1) legacy markers have no `nextAttemptAt` so v1's query never returns them; (P2) the collection-group index cannot reach `dev1`/`test` via `firebase.json`, emulator CI would not catch it; (P3) `updateMarker` `set(merge)` re-creates a deleted marker as a zombie once handler + scheduler overlap.
-3. Verified by run/doc: functions suite 491/491; `firebase-functions/v2/scheduler` exports `onSchedule`, `ScheduleFunction.run()` exists; Firebase docs say an unfiltered collection-group query needs no index. NOT verified: scheduler location `asia-south1`, handler default timeout 60 s, emulator index behaviour, `maxInstances` on `onSchedule` at runtime.
-4. Design v2 written into `docs/superpowers/specs/2026-09-30-photos-s3-s4-design.md` (PH3b section replaced; v1 in git at `7ec2fc6`). Pushed.
-5. Test plan `docs/superpowers/test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md` (unit 45, functional 10, e2e 4, real-project 8; incl. monkey tests, coverage target). README index row added (also fixed a broken link to the photos plan). Docs: AGENTS pointer, KNOWN-ISSUES, roadmap, photos plan note, SKILLS 102.
-6. Q-J decided (park at 12) + tick-slack fix. Q-K and Q-L decided (defaults). Merge-readiness pass on the PR: docs-only diff (10 files, 0 non-.md), `main` has not moved since the base, no conflicts, secret scan 0 hits, table columns consistent, relative links valid, row counts re-derived from the test plan (unit 46, functional 10, e2e 4, DV 8), no placeholders. Self-review found and fixed 3 stale statements outside the PH3b section (spec said `firestore.indexes.json` exemption and listed the scheduled function under "Not building"; acceptance lacked PH3b).
+1. Read memory + CHECKPOINT + spec PH3b + test plan + `photoCleanup.js`; cloned repo; baseline 491/491.
+2. Branch created, old checkpoint archived, this checkpoint written (commit b45d8fc).
+3. Implemented in `functions/lib/photoCleanup.js`: constants (`GRACE_MS` ... `ALERT_TAG`), `parseMarkerPath`, `delayMs`, `selectDue`, `readAllMarkers`, `runCleanupSweep`; `sweepMarker` failure patch now carries `lastAttemptAtMs` (optional `deps.now`).
+4. Tests: +33 in `functions/test/photoCleanup.test.js` (UP, UD, US, UM), new `functions/test/cleanupSweep.test.js` (+33: UL, UR, extras). Suite 557/557 green; `photoCleanup.js` line/branch/function coverage 100%.
+5. Docs: test plan status + actual counts, test-plans README row, spec S-A DONE + deviation, AGENTS.md PH3b status, SKILLS 102 rules 9-10.
+6. Pushed; PR #126 opened against main (https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/126).
+7. **Final sweep of PR #126 (same day, skills: requesting-code-review, ponytail-audit scoped to the PR diff, qt-qml-review = n/a, no QML in the PR).** CI was green, no human review comments. Fixed in-branch: **S1** thrown `sweep` was WARNING-only = silent infinite retry (now ERROR `PH3B_ALERT sweep-threw`, still not parked); **S2** stored `prefix` != rebuilt prefix burned 12 attempts (~5 h) before parking (now malformed `bad-prefix`, parked at once); **S3** `MAX_SCAN` was exported but unused in code (now named in the backlog alert). Tests: +US15, +UR09b, +UR17b, UR04/UR12/UR17 tightened, monkey UR19 gained a wrong-prefix variant; suite 560/560, `photoCleanup.js` 100% line/branch/function; the 5 new/changed tests FAIL against the old lib (mutation check). Docs: test plan (counts 69), test-plans README, spec ledger S1/S2, AGENTS, SKILLS 102 rule 10.
+8. **ponytail result:** no deletes. `readAllMarkers` opts (`pageSize`, `maxPages`) are test-only knobs but cheap and they make UL05/UL07 possible: kept. Tests are long but the user mandate is 100% + monkey: kept.
 
-## Decisions
-- **Q-J DECIDED (Taher, 2026-10-05): park at 12**, delay `min(attempts,3) x 10 min`. Never-park and a shorter cap were offered and declined. Follow-up fix: `DUE_SLACK_MS = 60 s` (without it each wait slips a tick: ~410 min to park instead of ~300). In spec, test plan (US02 changed, US13 added, unit now 46), Skill 102 rule 5.
+## Carried forward to S-B / S-C (NOT fixed here, on purpose)
+- **Parked markers are read every run and never leave the scan.** 2000 parked markers (`MAX_SCAN`) blind the sweeper to newer ones; only the `backlog` alert warns. Accepted by Q-K/R1; S-C KNOWN-ISSUES must say so. Real fix = server-side `where(parked != true)` which needs the index Q-K declined.
+- **Park loop for malformed markers ignores `RUN_BUDGET_MS`** (sequential Firestore updates, 2000 x ~50 ms worst case ~100 s, under the 300 s timeout). Revisit if S-B DV shows slow parks.
+- **`updateMarker` failing every run** (swallowed in `sweepMarker`) keeps `attempts` flat: the marker never parks and its `{ok:false}` stays WARNING. Needs an S-B decision: alert on a persistent updateMarker failure or accept.
+- **Future-dated `lastAttemptAtMs`** (clock skew / hand edit) delays a marker for as long as the skew. Server clock only, so accepted.
+- S-B binding must: `listMarkers` -> `{entries, backlog}`; `park` = `scopedDb(env).doc(path).update({parked:true, parkedAtMs, lastError})`; P3 `updateMarker` -> `markerRef.update(patch)`.
 
-- **Q-K DECIDED (Taher, 2026-10-05, reverses Q-E): no index.** Due time computed in code, unfiltered collection-group read capped at `MAX_SCAN = 500`. Reopen only if the run logs `backlog:true`.
-- **Q-L DECIDED (Taher, 2026-10-05): no alerting now.** Runbook = console query `parked == true` + Logs Explorer severity ERROR. **Production-publish BLOCKER:** add the alert (or re-decide) before any production data exists.
-
-**No open design questions remain for PH3b.**
+## Decisions made without asking (flag in PR for Taher)
+- `deps.park(env, path, reason)` instead of `(env, tenantId, productId, reason)`: malformed markers may have no parsable path. Reversible in S-B.
+- `parked` is checked before malformed in `selectDue` (else a malformed marker is re-parked and re-alerted every run).
+- A THROWN `sweep` is `failed`, never parks (attempts were not incremented), but since the final sweep it logs ERROR `PH3B_ALERT sweep-threw` (was WARNING). Only `{ok:false}` at `attempts+1 >= PARK_AT` parks.
+- Per-env summary log is always INFO; the ERROR `PH3B_ALERT` lines are separate (env-failed, backlog, marker-parked, park-failed).
+- One run-wide `RUN_BUDGET_MS` clock (not per env).
 
 ## NEXT
-1. Review and merge PR #124 (docs only, merge-ready).
-2. Implement S-A (`lib/photoCleanup.js` pure functions + unit tests, sandbox-runnable), then S-B (index.js `update()` fix + `cleanupPendingMarkers` + harness `update`/`collectionGroup`), then S-C (e2e + docs). One branch per slice, push each.
-3. Taher deploys ALL functions manually, records the deploy here, runs section 4 of the test plan.
-
-
----
-## 2026-10-05 addendum: PR #124 second review (resume here)
-Branch `review/2026-10-05-pr124-design-review` (stacked on `docs/2026-10-05-ph3b-design-review`). Docs only; no build/run; CI = signal. Commit identity `taher.lkdw@gmail.com`.
-1. Cloned repo, read PR #124 body, spec PH3b section, memory notes. Skills read: requesting-code-review, ponytail-audit; qt-qml-review N/A (no QML).
-2. Verified P3 at `functions/index.js:105`, `scopedDb`, `isServerOnlyCollection`.
-3. Wrote `docs/superpowers/specs/2026-10-05-pr124-ph3b-design-second-review.md` (R1 Med, R2/R3 Low).
-4. User asked: why PH3b, what if skipped (ELI5). Answered in chat.
-NEXT: Taher reads review, merges #124 (or answers R1), then S-A.
-5. Taher decided: R1 = paged read; Q-L = set up alert. Researched Cloud Monitoring (log-based policy needs rate limit; channels incl. Google Cloud console mobile app; mobile/Slack/PagerDuty share a failure point so keep email). Cannot create the policy (no GCP access): wrote `docs/superpowers/specs/2026-10-05-ph3b-alert-runbook.md`.
-6. Updated spec (Q-K/Q-L amended, Paging + Alerting sections), test plan (unit 57, e2e 5, DV 9; UL01-07, UR15-18, E5, DV-9), AGENTS, KNOWN-ISSUES, test-plans README, SKILLS 102 rules 7-8. Pushed to PR #125.
-NEXT: Taher merges #124 then #125. Then S-A (`lib/photoCleanup.js` incl. `readAllMarkers`, alert logs, + unit tests). At S-C deploy Taher creates the alert and runs DV-9.
-7. Taher asked why a scheduler (vs Firestore-data-plus-code, trigger, queue). Answered in chat; decided: KEEP scheduler (E). Added ledger rows Q-M (Firestore trigger C declined), Q-N (Cloud Tasks D declined), Q-O (client drain B / piggyback A not chosen) to the PH3b decision ledger in the spec, with reasons and reopen conditions.
-8. PR #124 squash-merged to main as dc8e901. PR #125 rebased onto main (`git rebase --onto origin/main c95b89c`, no conflicts, tree identical to pre-rebase `e2892d2`), force-pushed with lease, base retargeted to `main`.
+1. Taher reviews + merges the S-A PR (CI: functions suite only; no QML touched).
+2. **S-B** (`feat/2026-10-05-ph3b-sweeper-binding`): `index.js` P3 fix `updateMarker` -> `markerRef.update(patch)`; `exports.cleanupPendingMarkers = onSchedule(...)`; `listMarkers` via `readAllMarkers` + `collectionGroup("pending_cleanup")` (map Timestamp -> `createdAtMs`); `park` = `scopedDb(env).doc(path).update({parked:true, parkedAtMs, lastError})`; harness `update` + `collectionGroup`; functional tests FS01-FS10.
+3. **S-C**: e2e `test/e2e/cleanupSweep.e2e.test.js` (+ `checks.yml`), AGENTS runbook, KNOWN-ISSUES, roadmap.
+4. Taher deploys ALL functions manually, creates the alert (runbook), runs test plan section 4.
