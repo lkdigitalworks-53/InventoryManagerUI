@@ -2,9 +2,9 @@
 
 **Design:** `../specs/2026-09-30-photos-s3-s4-design.md`, section "PH3b — design v2" (review P1-P10, decisions Q-J / Q-K / Q-L).
 **Branches (planned):** `feat/2026-10-05-ph3b-sweeper-lib` (S-A), `feat/2026-10-05-ph3b-sweeper-binding` (S-B), `feat/2026-10-05-ph3b-sweeper-e2e-docs` (S-C).
-**Status:** **S-A implemented 2026-10-05** (branch `feat/2026-10-05-ph3b-sweeper-lib`): sections 1.1-1.5 are written and green in the sandbox, functions suite 557/557 (491 baseline + 66), `lib/photoCleanup.js` line/branch/function coverage 100% (`node --test --experimental-test-coverage test/photoCleanup.test.js test/cleanupSweep.test.js`). Sections 2-4 (functional, e2e, real project) NOT written yet (S-B, S-C). Cases added beyond the plan during S-A: US14 (junk input), UR11b (park throws at the cap), UR14b (notDue count), UR16b (unparsable path), UR19 (monkey over `runCleanupSweep`), 4 small `runCleanupSweep` cases (junk sweep result, marker built from path id, garbage `listMarkers`, actor fields kept), 1 `readAllMarkers` defaults case. **Deviation from design v2:** `park(env, path, reason)` instead of `park(env, tenantId, productId, reason)` (a malformed marker may have no parsable path, the doc is addressed by its path; S-B binds `db.doc(path).update(...)`). Summary `parked` = already-parked + newly parked at the cap; `malformed` counted separately. Node cases run in the sandbox; the emulator e2e and the real-scheduler checks are CI / on-project only.
+**Status:** **S-A implemented 2026-10-05** (branch `feat/2026-10-05-ph3b-sweeper-lib`): sections 1.1-1.5 are written and green in the sandbox, functions suite 560/560 (491 baseline + 69), `lib/photoCleanup.js` line/branch/function coverage 100% (`node --test --experimental-test-coverage test/photoCleanup.test.js test/cleanupSweep.test.js`). Sections 2-4 (functional, e2e, real project) NOT written yet (S-B, S-C). Cases added beyond the plan during S-A: US14 (junk input), UR11b (park throws at the cap), UR14b (notDue count), UR16b (unparsable path), UR19 (monkey over `runCleanupSweep`), 4 small `runCleanupSweep` cases (junk sweep result, marker built from path id, garbage `listMarkers`, actor fields kept), 1 `readAllMarkers` defaults case. **Final sweep (same day) added US15, UR09b, UR17b and changed UR17/UR04** (see S1/S2 in the spec review ledger): a THROWN sweep now raises `PH3B_ALERT sweep-threw` instead of a silent WARNING, and a stored `prefix` that is not the rebuilt prefix is malformed at once. **Deviation from design v2:** `park(env, path, reason)` instead of `park(env, tenantId, productId, reason)` (a malformed marker may have no parsable path, the doc is addressed by its path; S-B binds `db.doc(path).update(...)`). Summary `parked` = already-parked + newly parked at the cap; `malformed` counted separately. Node cases run in the sandbox; the emulator e2e and the real-scheduler checks are CI / on-project only.
 **All design decisions taken 2026-10-05 (Taher): Q-J park at 12 with backoff 10/20/30/30 min; Q-K no index, due time computed in code; Q-L amended to a log-based alert (Taher creates it at deploy; R1 amended Q-K to a paged read).** Tests import `PARK_AT`, `GRACE_MS`, `DUE_SLACK_MS`, `BACKOFF_STEP_MS`, `BACKOFF_STEPS` instead of hard-coding them. If Q-K is ever reopened to the index design, sections 1.3, 1.4, 2 and 3 (E1-E4) must be rewritten.
-**Planned totals:** unit 57, functional 10, e2e 5, real-project (DV) 9. **Actual unit after S-A: 66** (33 in `photoCleanup.test.js` added by S-A, 33 in `cleanupSweep.test.js`, counted with `grep -c "^test("`); functional/e2e/DV still planned.
+**Planned totals:** unit 57, functional 10, e2e 5, real-project (DV) 9. **Actual unit after S-A + final sweep: 69** (34 in `photoCleanup.test.js` added by S-A, 35 in `cleanupSweep.test.js`, counted with `grep -c "^test("`); functional/e2e/DV still planned.
 **Coverage target (user rule: 100% of new code):** line AND branch coverage of every new function in `functions/lib/photoCleanup.js` = 100%, measured with `node --test --experimental-test-coverage` (sandbox Node 22; availability of the flag on CI's Node is UNVERIFIED, so CI does not gate on it). `index.js` binding lines are covered by section 2 plus E1-E4.
 
 ## 1. Unit (Node, `functions/test/photoCleanup.test.js` extended + new `functions/test/cleanupSweep.test.js`)
@@ -44,23 +44,25 @@
 | US07 | **P8**: body `productId` differs from path id -> malformed |
 | US08 | **P7**: marker `envPrefix` `"prd"` scanned under expected `"dev1"` -> malformed |
 | US09 | missing / non-string `prefix`, missing `envPrefix` -> malformed |
+| US15 | **final sweep S2**: stored `prefix` not EXACTLY the prefix rebuilt from env + path ids (other product / tenant / env, no trailing `/`, widened to `products/`, `null`, leading space) -> malformed `bad-prefix`; correct prefix still due; unsafe `envPrefix` equal to the scanned env -> malformed |
 | US10 | `createdAtMs` missing, NaN, negative -> malformed |
 | US11 | due list sorted by `dueAtMs` ascending (oldest first), stable for ties |
 | US13 | **tick slack**: marker with attempts 1 failed at tick+5 s is NOT due 9 min later but IS due at the next tick (tick+10 min); same with attempts 3 (30 min) |
 | US12 | MONKEY: 5000 random markers (random types per field, random nowMs); never throws; sum of the four groups == input length; no marker in two groups |
 
-### 1.4 `runCleanupSweep` (14, fakes only)
+### 1.4 `runCleanupSweep` (14 planned; 17 written incl. UR09b, UR17b, UR19, fakes only)
 | ID | Case |
 |---|---|
 | UR01 | happy path: 3 due markers in 1 env -> `sweep` called 3 times oldest first; summary `swept:3`, `envFailures:0` |
 | UR02 | empty run: no markers in any env -> no `sweep`/`park` call, all counters 0, no throw |
 | UR03 | env isolation: `listMarkers` throws for env 2 -> env 1 and env 3 still processed, `envFailures:1`, env 2 summary has `error` |
-| UR04 | marker isolation: `sweep` throws for marker A -> marker B still swept, A counted `failed` |
+| UR04 | marker isolation: `sweep` throws for marker A -> marker B still swept, A counted `failed`, one `sweep-threw` alert (S1) |
 | UR05 | `sweep` returns `{ok:false}` below the cap -> `failed`, `park` NOT called |
 | UR06 | `sweep` returns `{ok:false}` at `attempts + 1 == PARK_AT` -> `park` called once with the sweep's error text |
 | UR07 | `sweep` returns `{dropped:true}` -> `droppedIdReuse` +1, no park |
 | UR08 | budget: injected clock advances past `RUN_BUDGET_MS` after the 2nd marker -> 3rd and later `deferred`, none parked, none swept |
 | UR09 | malformed marker -> `park` immediately with reason `malformed-marker: ...`, `sweep` never called for it |
+| UR09b | **final sweep S2**: wrong stored prefix (4 variants incl. widened `products/`) -> parked at once, reason `malformed-marker: bad-prefix`, `sweep` never called, one alert |
 | UR10 | parked marker skipped: never swept, counted `parked` |
 | UR11 | `park` throws -> counted `failed`, run continues with the next marker |
 | UR12 | `listMarkers` reports `backlog:true` -> summary `backlog:true` and an ERROR log line containing `PH3B_ALERT` |
@@ -79,7 +81,8 @@
 | UL07 | MONKEY: 300 random (pageSize, maxPages, total) triples against a fake paged store; docs == first `min(total, pageSize*maxPages)` in order, `backlog` correct, calls <= maxPages |
 | UR15 | marker parked at the cap -> one ERROR log whose message starts `PH3B_ALERT` with `env`, `tenantId`, `productId`, `reason` |
 | UR16 | malformed marker parked -> same `PH3B_ALERT` ERROR log, reason starts `malformed-marker` |
-| UR17 | sub-cap failure -> WARNING log only, NO `PH3B_ALERT` anywhere (alert noise guard) |
+| UR17 | sub-cap `{ok:false}` failure -> WARNING log only, NO `PH3B_ALERT` anywhere (alert noise guard) |
+| UR17b | **final sweep S1**: a THROWN `sweep` (Error, string, undefined) -> exactly one ERROR `PH3B_ALERT sweep-threw` per run, no WARNING, never parked, counted `failed` |
 | UR18 | env-level failure (`listMarkers` throws) -> `PH3B_ALERT` ERROR log with `env`, run still throws at the end |
 
 ### 1.5 `sweepMarker` changes (4)

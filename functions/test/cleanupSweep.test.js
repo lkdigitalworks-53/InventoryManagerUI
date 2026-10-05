@@ -211,6 +211,11 @@ test("UR04 marker isolation: sweep throws for A -> B still swept, A counted fail
     assert.equal(summaryOf(out, "dev").swept, 1);
     assert.equal(r.parks.length, 0); // a throw means attempts were not incremented: never park on it
     assert.equal(out.envFailures, 0);
+    // ... but it must not be silent either: a thrown sweep never backs off or reaches the cap (final sweep S1)
+    const a = alerts(r.log);
+    assert.equal(a.length, 1);
+    assert.match(a[0].obj.message, /sweep-threw/);
+    assert.deepEqual([a[0].obj.env, a[0].obj.tenantId, a[0].obj.productId, a[0].obj.reason], ["dev", "T1", "A", "boom"]);
 });
 
 test("UR05 sweep ok:false below the cap -> failed, park NOT called", async () => {
@@ -267,6 +272,24 @@ test("UR09 malformed marker -> parked at once, reason malformed-marker: ..., nev
     assert.equal(summaryOf(out, "dev").malformed, 1);
 });
 
+test("UR09b wrong stored prefix -> parked at once (reason bad-prefix), never swept, one alert (final sweep S2)", async () => {
+    const wrong = [
+        { prefix: "dev1/tenants/T1/products/OTHER/" },   // another product's prefix
+        { prefix: "dev1/tenants/T1/products/P1" },       // trailing slash missing
+        { prefix: "dev1/tenants/T9/products/P1/" },      // another tenant's prefix
+        { prefix: "dev1/tenants/T1/products/" }          // widened to every product (the cascade's worst case)
+    ];
+    for (const over of wrong) {
+        const r = mkRun({ store: { dev: [entry("dev1", "T1", "P1", over)] } });
+        const out = await C.runCleanupSweep(r.deps);
+        assert.equal(r.sweeps.length, 0, JSON.stringify(over));
+        assert.equal(r.parks.length, 1);
+        assert.equal(r.parks[0].reason, "malformed-marker: bad-prefix");
+        assert.equal(summaryOf(out, "dev").malformed, 1);
+        assert.equal(alerts(r.log).length, 1);
+    }
+});
+
 test("UR10 parked marker skipped: never swept, counted parked, no park call", async () => {
     const r = mkRun({ store: { dev: [entry("dev1", "T1", "P1", { parked: true, attempts: 12 }, 99_999_999)] } });
     const out = await C.runCleanupSweep(r.deps);
@@ -312,6 +335,7 @@ test("UR12 backlog true -> summary backlog true and an ERROR PH3B_ALERT line", a
     assert.equal(a.length, 1);
     assert.equal(a[0].obj.env, "test");
     assert.match(a[0].obj.message, /backlog/);
+    assert.ok(String(a[0].obj.reason).indexOf(String(C.MAX_SCAN)) !== -1, "alert names the scan cap");
 });
 
 test("UR13 crashed sweep: attempts 0 marker older than grace -> swept next run, marker gone", async () => {
@@ -376,7 +400,7 @@ test("UR16b malformed marker with unparsable path: alert carries null ids, park 
     assert.equal(a[0].obj.productId, null);
 });
 
-test("UR17 sub-cap failure -> WARNING log only, NO PH3B_ALERT anywhere (noise guard)", async () => {
+test("UR17 sub-cap {ok:false} failure -> WARNING log only, NO PH3B_ALERT anywhere (noise guard)", async () => {
     const r = mkRun({
         store: { dev: [entry("dev1", "T1", "P1", { attempts: 2 })] },
         onSweep: () => ({ ok: false, error: "storage down" })
@@ -384,11 +408,23 @@ test("UR17 sub-cap failure -> WARNING log only, NO PH3B_ALERT anywhere (noise gu
     await C.runCleanupSweep(r.deps);
     assert.equal(r.log.filter((l) => l.sev === "WARNING").length, 1);
     assert.equal(r.log.filter((l) => JSON.stringify(l.obj).indexOf("PH3B_ALERT") !== -1).length, 0);
-    // a thrown sweep is also WARNING-only
+});
+
+test("UR17b a THROWN sweep -> one ERROR PH3B_ALERT sweep-threw per run, never parked, counted failed (final sweep S1)", async () => {
     const t = mkRun({ store: { dev: [entry("dev1", "T1", "P1")] }, onSweep: () => { throw new Error("x"); } });
-    await C.runCleanupSweep(t.deps);
-    assert.equal(t.log.filter((l) => JSON.stringify(l.obj).indexOf("PH3B_ALERT") !== -1).length, 0);
-    assert.equal(t.log.filter((l) => l.sev === "WARNING").length, 1);
+    const out = await C.runCleanupSweep(t.deps);
+    assert.equal(t.log.filter((l) => l.sev === "WARNING").length, 0);
+    assert.equal(alerts(t.log).length, 1);
+    assert.match(alerts(t.log)[0].obj.message, /sweep-threw/);
+    assert.equal(t.parks.length, 0);
+    assert.equal(summaryOf(out, "dev").failed, 1);
+    // a non-Error throw (string / undefined) is still reported, not lost
+    for (const thrown of ["plain string", undefined]) {
+        const u = mkRun({ store: { dev: [entry("dev1", "T1", "P1")] }, onSweep: () => { throw thrown; } });
+        await C.runCleanupSweep(u.deps);
+        assert.equal(alerts(u.log).length, 1);
+        assert.equal(typeof alerts(u.log)[0].obj.reason, "string");
+    }
 });
 
 test("UR18 env-level failure -> ERROR PH3B_ALERT with env; envFailures counted", async () => {
@@ -435,7 +471,7 @@ test("UR19 MONKEY runCleanupSweep: 300 random runs never throw; counters add up"
         const n = Math.floor(rnd() * 8);
         for (let j = 0; j < n; j++) {
             entries.push(entry("dev1", pick(["T1", "T2"]), "P" + j + "_" + i, pick([
-                {}, { parked: true }, { productId: "zz" }, { attempts: C.PARK_AT - 1 }, { envPrefix: "prd" }, { attempts: 3, lastAttemptAtMs: NOW }
+                {}, { parked: true }, { productId: "zz" }, { attempts: C.PARK_AT - 1 }, { envPrefix: "prd" }, { prefix: "dev1/tenants/T1/products/" }, { attempts: 3, lastAttemptAtMs: NOW }
             ]), Math.floor(rnd() * 1e7)));
         }
         const r = mkRun({

@@ -262,7 +262,8 @@ function _isTimeMs(v) {
 //   malformed [{path, data, reason}]
 // An entry is {path, data, createdAtMs}. dueAtMs = (data.lastAttemptAtMs ?? createdAtMs) +
 // delayMs(attempts); due when nowMs + DUE_SLACK_MS >= dueAtMs. Review P7: a marker whose envPrefix
-// differs from the env being scanned is malformed (the Storage bucket is shared by all envs).
+// differs from the env being scanned is malformed (the Storage bucket is shared by all envs), and
+// so is one whose `prefix` is not exactly the prefix rebuilt from env + path ids (S2).
 // Never throws.
 function selectDue(markers, nowMs, expectedEnvPrefix) {
     const out = { due: [], notDue: [], parked: [], malformed: [] };
@@ -297,7 +298,10 @@ function _malformedReason(path, data, createdAtMs, expectedEnvPrefix) {
     if (data === null) return "no-data";
     if (data.productId !== ids.productId) return "product-id-mismatch";
     if (typeof data.envPrefix !== "string" || data.envPrefix !== expectedEnvPrefix) return "env-prefix-mismatch";
-    if (typeof data.prefix !== "string" || data.prefix === "") return "bad-prefix";
+    // Fail fast (final sweep S2): a stored prefix that differs from the rebuilt one can never pass
+    // sweepMarker's guard and the body never changes, so 12 retries (~5 h) would only delay the park.
+    const want = buildSweepPrefix(data.envPrefix, ids.tenantId, ids.productId);
+    if (want === null || data.prefix !== want) return "bad-prefix";
     if (!_isTimeMs(createdAtMs)) return "bad-created-at";
     return null;
 }
@@ -336,7 +340,8 @@ async function readAllMarkers(fetchPage, opts) {
 //                                path, and the doc is addressed by its path anyway.
 //   now()  (sync)  log(severity, obj)  (sync)
 // Each env and each marker is isolated in its own try/catch. ERROR logs carry ALERT_TAG only for
-// what a human must act on (parked, malformed, backlog, env failure); sub-cap failures are WARNING.
+// what a human must act on (parked, malformed, backlog, env failure, a THROWN sweep); sub-cap
+// {ok:false} failures are WARNING.
 // Summary per env: {env, scanned, swept, droppedIdReuse, failed, parked (already parked + newly
 // parked at the cap), malformed (all parked at once), notDue, deferred, backlog, error}.
 // Returns {envs: [summary], envFailures}.
@@ -367,7 +372,7 @@ async function _runEnv(deps, env, s, start) {
     s.scanned = listed.entries.length;
     s.backlog = listed.backlog === true;
     if (s.backlog) {
-        deps.log("ERROR", { message: ALERT_TAG + " backlog", env: env.name, reason: "marker scan hit MAX_SCAN" });
+        deps.log("ERROR", { message: ALERT_TAG + " backlog", env: env.name, reason: "marker scan hit MAX_SCAN (" + MAX_SCAN + ")" });
     }
     const sel = selectDue(listed.entries, deps.now(), env.envPrefix);
     s.notDue = sel.notDue.length;
@@ -391,10 +396,11 @@ async function _sweepOne(deps, env, s, m) {
     try {
         res = await deps.sweep(env, m.tenantId, Object.assign({}, m.data, { productId: m.productId }));
     } catch (e) {
-        // sweepMarker never throws; a throw here is a bug or a lost connection. attempts were NOT
-        // incremented, so do not park on it. The next run retries.
+        // sweepMarker never throws; a throw here is a binding bug or a lost connection. attempts were
+        // NOT incremented, so the marker can neither back off nor reach PARK_AT: left silent it would
+        // be retried every run forever. Alert (final sweep S1) but do not park: the next run retries.
         s.failed++;
-        deps.log("WARNING", { message: "PH3B_SWEEP_FAILED", env: env.name, tenantId: m.tenantId, productId: m.productId, reason: _errorText(e) });
+        deps.log("ERROR", { message: ALERT_TAG + " sweep-threw", env: env.name, tenantId: m.tenantId, productId: m.productId, reason: _errorText(e) });
         return;
     }
     if (res && res.ok) {

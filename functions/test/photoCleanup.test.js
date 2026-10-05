@@ -724,6 +724,25 @@ test("US09 selectDue: missing / non-string / empty prefix or missing envPrefix -
     }
 });
 
+test("US15 selectDue: prefix must EQUAL the prefix rebuilt from env + path ids, else malformed bad-prefix (final sweep S2)", () => {
+    const bad = [
+        { prefix: "dev1/tenants/T1/products/P2/" }, { prefix: "dev1/tenants/T1/products/P1" },
+        { prefix: "dev1/tenants/T2/products/P1/" }, { prefix: "dev1/tenants/T1/products/" },
+        { prefix: "prd/tenants/T1/products/P1/" }, { prefix: null }, { prefix: " dev1/tenants/T1/products/P1/" }
+    ];
+    for (const over of bad) {
+        const r = C.selectDue([sdMarker("T1", "P1", over)], SD_NOW, "dev1");
+        assert.equal(r.malformed.length, 1, JSON.stringify(over));
+        assert.equal(r.malformed[0].reason, "bad-prefix", JSON.stringify(over));
+    }
+    // the correct prefix still passes (due: created 1e6 ms ago, attempts 0)
+    assert.equal(C.selectDue([sdMarker("T1", "P1")], SD_NOW, "dev1").due.length, 1);
+    // an env prefix that is not a safe segment can never rebuild a prefix: malformed even when it equals the scanned env
+    const r = C.selectDue([sdMarker("T1", "P1", { envPrefix: "a/b", prefix: "a/b/tenants/T1/products/P1/" })], SD_NOW, "a/b");
+    assert.equal(r.malformed.length, 1);
+    assert.equal(r.malformed[0].reason, "bad-prefix");
+});
+
 test("US10 selectDue: createdAtMs missing, NaN, negative, string, Infinity -> malformed", () => {
     for (const bad of [undefined, NaN, -1, "5", Infinity, null]) {
         const m = sdMarker("T1", "P1", {});
