@@ -592,6 +592,7 @@ one `cascade~{productId}~{batchId}` audit entry per batch) before it sweeps the 
 `pending_cleanup` marker. The marker now carries `actorUid`/`actorRole`/`requestId`. `recordMutation` gained an owner/admin gate
 on `inventory` delete (403 `role-not-allowed`). Items 1-3 below stay open until BC2 (client) lands AND BC1 is deployed.
 **PH3b review 2026-10-05 (design only, nothing changed in code):** `index.js` `updateMarker` uses `set(patch, {merge:true})`, which re-creates a marker another sweeper just deleted as a partial doc. Dormant today (one sweeper); it becomes real the moment PH3b runs beside the handler, so the PH3b slice S-B fixes it with `update()`. Do not deploy a scheduler without that fix.
+**PH3b second review 2026-10-05 (PR #125):** (R1, fixed in design) a single unordered `limit(500)` read would let parked markers starve new ones; now paged (`PAGE_SIZE` 200 x `MAX_PAGES` 10). (R2) PRODUCTION BLOCKER: the Cloud Monitoring alert on `PH3B_ALERT` logs must exist and pass test DV-9 before any production data (runbook `specs/2026-10-05-ph3b-alert-runbook.md`). Alerts reach email / Google Cloud console mobile app, not the Karobar app.
 **New limits created by BC1:** (a) a failed batch sweep leaves the marker and WAITS for PH3b (no replay re-sweep, Q-BC-9 = no);
 batches are money data, so PH3b must not silently abandon a capped marker. (b) Until BC2 ships, an old client still sends its own
 `stock_batch` deletes; they answer 409 `current: null` after the sweep (harmless, no toast). (c) A direct token call by

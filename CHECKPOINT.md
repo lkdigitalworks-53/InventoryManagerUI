@@ -28,3 +28,18 @@ Next roadmap step after BC1/BC2/PR #121-#122 = **PH3b** (scheduled `pending_clea
 1. Review and merge PR #124 (docs only, merge-ready).
 2. Implement S-A (`lib/photoCleanup.js` pure functions + unit tests, sandbox-runnable), then S-B (index.js `update()` fix + `cleanupPendingMarkers` + harness `update`/`collectionGroup`), then S-C (e2e + docs). One branch per slice, push each.
 3. Taher deploys ALL functions manually, records the deploy here, runs section 4 of the test plan.
+
+
+---
+## 2026-10-05 addendum: PR #124 second review (resume here)
+Branch `review/2026-10-05-pr124-design-review` (stacked on `docs/2026-10-05-ph3b-design-review`). Docs only; no build/run; CI = signal. Commit identity `taher.lkdw@gmail.com`.
+1. Cloned repo, read PR #124 body, spec PH3b section, memory notes. Skills read: requesting-code-review, ponytail-audit; qt-qml-review N/A (no QML).
+2. Verified P3 at `functions/index.js:105`, `scopedDb`, `isServerOnlyCollection`.
+3. Wrote `docs/superpowers/specs/2026-10-05-pr124-ph3b-design-second-review.md` (R1 Med, R2/R3 Low).
+4. User asked: why PH3b, what if skipped (ELI5). Answered in chat.
+NEXT: Taher reads review, merges #124 (or answers R1), then S-A.
+5. Taher decided: R1 = paged read; Q-L = set up alert. Researched Cloud Monitoring (log-based policy needs rate limit; channels incl. Google Cloud console mobile app; mobile/Slack/PagerDuty share a failure point so keep email). Cannot create the policy (no GCP access): wrote `docs/superpowers/specs/2026-10-05-ph3b-alert-runbook.md`.
+6. Updated spec (Q-K/Q-L amended, Paging + Alerting sections), test plan (unit 57, e2e 5, DV 9; UL01-07, UR15-18, E5, DV-9), AGENTS, KNOWN-ISSUES, test-plans README, SKILLS 102 rules 7-8. Pushed to PR #125.
+NEXT: Taher merges #124 then #125. Then S-A (`lib/photoCleanup.js` incl. `readAllMarkers`, alert logs, + unit tests). At S-C deploy Taher creates the alert and runs DV-9.
+7. Taher asked why a scheduler (vs Firestore-data-plus-code, trigger, queue). Answered in chat; decided: KEEP scheduler (E). Added ledger rows Q-M (Firestore trigger C declined), Q-N (Cloud Tasks D declined), Q-O (client drain B / piggyback A not chosen) to the PH3b decision ledger in the spec, with reasons and reopen conditions.
+8. PR #124 squash-merged to main as dc8e901. PR #125 rebased onto main (`git rebase --onto origin/main c95b89c`, no conflicts, tree identical to pre-rebase `e2892d2`), force-pushed with lease, base retargeted to `main`.
