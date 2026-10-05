@@ -863,3 +863,48 @@ test("UM04 sweepMarker: success and id-reuse drop write no patch", async () => {
     assert.deepEqual(await C.sweepMarker(reuse.deps, "T1", UM_MARKER), { ok: true, dropped: true });
     assert.equal(reuse.calls.patches.length, 0);
 });
+
+// ---- timestampToMs (PH3b S-B, binding helper; plan UT01-UT06) ---------------------------------
+test("UT01 timestampToMs: Firestore Timestamp stand-in (toMillis) -> ms", () => {
+    assert.equal(C.timestampToMs({ toMillis: () => 1234 }), 1234);
+    assert.equal(C.timestampToMs({ toMillis: () => 0 }), 0);
+});
+
+test("UT02 timestampToMs: Date and finite number -> ms", () => {
+    assert.equal(C.timestampToMs(new Date(5000)), 5000);
+    assert.equal(C.timestampToMs(7), 7);
+    assert.equal(C.timestampToMs(0), 0);
+});
+
+test("UT03 timestampToMs: invalid Date, NaN, Infinity -> null", () => {
+    assert.equal(C.timestampToMs(new Date("nope")), null);
+    assert.equal(C.timestampToMs(NaN), null);
+    assert.equal(C.timestampToMs(Infinity), null);
+    assert.equal(C.timestampToMs(-Infinity), null);
+});
+
+test("UT04 timestampToMs: wrong types -> null (string, null, undefined, boolean, plain object, array, function)", () => {
+    for (const v of ["1234", "", null, undefined, true, {}, { seconds: 1 }, [], [1], () => 1]) {
+        assert.equal(C.timestampToMs(v), null, String(typeof v) + ":" + JSON.stringify(v));
+    }
+});
+
+test("UT05 timestampToMs: toMillis that throws or returns a non-finite / non-number -> null, never throws", () => {
+    assert.equal(C.timestampToMs({ toMillis: () => { throw new Error("boom"); } }), null);
+    assert.equal(C.timestampToMs({ toMillis: () => NaN }), null);
+    assert.equal(C.timestampToMs({ toMillis: () => "5" }), null);
+    assert.equal(C.timestampToMs({ toMillis: () => undefined }), null);
+    const hostile = { get toMillis() { throw new Error("getter boom"); } };
+    assert.equal(C.timestampToMs(hostile), null);
+});
+
+test("UT06 timestampToMs: MONKEY 3000 random values never throw; result is null or a finite number", () => {
+    const rnd = mulberry32(31);
+    const pool = [NaN, Infinity, -1, 0, 1.5, "x", null, undefined, true, {}, [], new Date(0), new Date("bad"),
+        { toMillis: () => 9 }, { toMillis: () => NaN }, { toMillis: () => { throw new Error("x"); } }];
+    for (let i = 0; i < 3000; i++) {
+        const v = rnd() < 0.5 ? pool[Math.floor(rnd() * pool.length)] : (rnd() - 0.5) * 1e15;
+        const r = C.timestampToMs(v);
+        assert.ok(r === null || Number.isFinite(r), String(i));
+    }
+});
