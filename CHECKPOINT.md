@@ -28,3 +28,13 @@ Next roadmap step after BC1/BC2/PR #121-#122 = **PH3b** (scheduled `pending_clea
 1. Review and merge PR #124 (docs only, merge-ready).
 2. Implement S-A (`lib/photoCleanup.js` pure functions + unit tests, sandbox-runnable), then S-B (index.js `update()` fix + `cleanupPendingMarkers` + harness `update`/`collectionGroup`), then S-C (e2e + docs). One branch per slice, push each.
 3. Taher deploys ALL functions manually, records the deploy here, runs section 4 of the test plan.
+
+
+---
+## 2026-10-05 addendum: PR #124 second review (resume here)
+Branch `review/2026-10-05-pr124-design-review` (stacked on `docs/2026-10-05-ph3b-design-review`). Docs only; no build/run; CI = signal. Commit identity `taher.lkdw@gmail.com`.
+1. Cloned repo, read PR #124 body, spec PH3b section, memory notes. Skills read: requesting-code-review, ponytail-audit; qt-qml-review N/A (no QML).
+2. Verified P3 at `functions/index.js:105`, `scopedDb`, `isServerOnlyCollection`.
+3. Wrote `docs/superpowers/specs/2026-10-05-pr124-ph3b-design-second-review.md` (R1 Med, R2/R3 Low).
+4. User asked: why PH3b, what if skipped (ELI5). Answered in chat.
+NEXT: Taher reads review, merges #124 (or answers R1), then S-A.
