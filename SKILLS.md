@@ -4133,3 +4133,13 @@ Rules:
 5. Seed with the SAME builder production uses (`buildMarker`) and override fields, so a schema change breaks the test instead of drifting from it. Register every created doc/object for `afterEach` deletion, including docs the code under test creates (audit entries).
 6. Assert a count equality (`scanned == collection size`), not only "everything was swept": equality catches both a skipped and a repeated page.
 7. Before trusting E2E that cannot run locally, run what you can: `node --check`, bracket balance, the module-load check, the guard exit. Say plainly what is unverified.
+
+## Skill 105: Count JUnit testcases, never tags by `[^>]*`; a test count that does not move when tests are added is a defect signal
+
+Context (2026-10-06, found reviewing PR #128): the PR comment showed E2E 63 before AND after 7 tests were added, and Functions 370 where a local run gave 585 (open item O1 for weeks).
+Rules:
+1. node's JUnit reporter does NOT escape `>` in attribute values (`name="x -> 400"`). Match tags quote-aware (`(?:[^>"]|"[^"]*")*`), never `[^>]*`. A lazy variant is needed where `/>` must still end the tag.
+2. Count `<testcase>` over the whole document. Do not scope by `<testsuite>`: node emits none for flat `test()` calls, and a concatenated qmltestrunner file made the scan skip every bare testcase.
+3. When a number is "stable" after you add tests, or differs from a local run, stop and reproduce with the real tool output (`node --test --test-reporter=junit`) and feed it to the parser. Here it took ~10 lines and gave the exact answer (585 - 215 names with `>` = 370).
+4. A regression test is only proven when it FAILS on the old code: run the new tests against `git show HEAD~:path` once (7 of 9 failed here), without ever touching the working tree with `git stash` (a `stash drop` lost the fix once; recovery was `git fsck --unreachable`).
+5. Job exit codes gate CI; the PR comment is only a report. Fix reports in their own stacked PR so the feature PR stays reviewable.
