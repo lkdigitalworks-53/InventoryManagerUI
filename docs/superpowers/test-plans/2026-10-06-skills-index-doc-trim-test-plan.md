@@ -17,7 +17,7 @@ Mutation check (run, then discarded): turning the duplicate check off makes 3 of
 
 ## 2. Regression / provable-trim checks (run once, results in the PR)
 - Before: 106 skills, 1 duplicate id (`89`). After: 106 unique ids, index 11.5 KB vs `SKILLS.md` 306 KB (about 96% fewer tokens to read first).
-- README cut rule: a block goes only if it cites an existing Skill AND at least 85% of its backticked identifiers occur in that Skill's text AND it has at least 7 identifiers. 5 of 25 blocks passed (9,019 bytes). The other 20 stay; scores are listed in the PR.
+- README cut rule: a block goes only if it cites an existing Skill AND at least 85% of its backticked identifiers occur in that Skill's text AND it has at least 7 identifiers. 5 of 25 blocks passed (9,019 bytes). The other 20 stayed in PR #131. Follow-up (Taher approved, stacked PR): 4 more blocks at 0.80-0.83 removed (5,509 bytes); each lost only generic strings or identifiers documented elsewhere (checked by listing them).
 - Dead references: the never-committed code-review spec path is removed from AGENTS and SKILLS; the stale "staff row-level delete button missing" status row is corrected (`StaffPage.qml` has `deleteStaffBtn`).
 
 ## 3. E2E

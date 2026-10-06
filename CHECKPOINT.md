@@ -23,3 +23,5 @@
 1. Taher: review the PR; veto D1-D5 if wanted. Merge when CI is green.
 2. Later (not done, medium confidence, listed in the PR): README blocks 770/825/601/797 (~4.6 KB, scores 0.80-0.83), AGENTS stale status sections, 69 archived CHECKPOINT files.
 3. PH3b: deploy + DV-1..DV-9 are still open (steps given in chat, test plan section 4).
+
+5. 2026-10-06 later: Taher said "trim readme then move to ph4". Stacked branch `chore/2026-10-06-readme-trim-2` (base = PR #131 branch) removes 4 more README blocks (5,509 B; README now 47.6 KB). Then PH4 brainstorming started (design gate: no code until Taher approves).
