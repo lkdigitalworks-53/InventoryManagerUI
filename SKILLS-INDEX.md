@@ -1,0 +1,116 @@
+# SKILLS-INDEX.md
+
+<!-- GENERATED from SKILLS.md by .github/scripts/skills-index.js. Do not edit. After changing a skill heading run: node .github/scripts/skills-index.js --write -->
+
+Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the full text of every skill whose title touches your task:
+
+    awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md      # replace 104 with the id
+    grep -n -i "keyword" SKILLS-INDEX.md                            # find skills by topic
+
+- 1: Using CardKPI
+- 2: Using StatusBadge
+- 3: Using OrderRow
+- 4: Using SegmentedNav
+- 5: Using InlineDatePicker
+- 6: Emitting Logic Signals
+- 7: Singleton Store Access
+- 8: Accessing DataModel from Pages
+- 9: Accessing ViewHelper from Pages
+- 10: Adding a New Tab/Page
+- 11: Adding a New Store
+- 12: Firebase REST Pattern
+- 13: Responsive Layout Pattern
+- 14: PlaceholderPage
+- 15: Constants Color Tokens
+- 16: Auth & Session (AuthStore / AuthService)
+- 17: RBAC-Gated Pages — Property Pattern
+- 18: Delete Operations Pattern
+- 19: Profile Settings
+- 20: Connections in Singletons (Critical Constraint)
+- 21: India Compliance — Two-Tier Data Model
+- 22: Audit Log Entry Shape
+- 23: Stock-Movement Taxonomy (CGST 56(2))
+- 24: Tax-Identity Fields (HSN / GSTIN)
+- 25: Analysis Page — view modes & breakdown charts
+- 26: BreakdownMath.js — pure analytics grouping
+- 27: QML unit tests (qmltestrunner)
+- 28: Order adjustments, KPI derivation & multi-sheet export
+- 29: RealisedMath.js — one source of truth for realised money
+- 30: Build-time environments (dev / test / prd)
+- 31: New Order editable price + Analysis swipe navigation
+- 32: Paginated reads — `FirebaseService.query()` + `PagingHelper.js`
+- 33: Cloud Functions env-awareness — `scopedDb(env)`
+- 34: `computeAnalysis` — ported math + shared-fixture parity
+- 35: Testable Cloud Functions — `lib/` extraction + dependency injection
+- 36: Async write sequencing — single-flight, locking, CAS, and atomic deltas
+- 37: Before/after snapshot aliasing — shallow copy vs. in-place mutation
+- 38: Ledger-sync race — acting on a paginated store before it's complete
+- 39: Concurrent-reset race — two async resyncs, one paginated store
+- 40: Real-emulator E2E testing — cold starts, singleton construction order, and per-function URLs
+- 41: QSettings org-identifier fix — making a Settings-backed store's persistence actually testable under qmltestrunner
+- 42: Returns/analysis-revenue bug — a rebuild of `order.products` silently dropped `consumption[]` on ANY save, not just edits
+- 43: Dropped-field response contract — a client parser and a server response builder that never got diffed against each other
+- 44: A fix that explains every symptom except the one status code is still the wrong fix
+- 45: QTBUG-49896 — QML's XMLHttpRequest can lose `status` (reset to 0) at the readyState 3->4 transition
+- 46: Testing a real firebase-functions v2 HTTPS handler without a live emulator
+- 47: Reviewing `pr_taher_bug_fixes` — a `_clone()`/create-payload drift, a SKU-clobber, and an export column shift
+- 48: Consolidating scattered test plans into `docs/superpowers/test-plans/`, and the `pr_taher_bug_fixes` test plan
+- 49: Standard test plan structure (Taher's convention) — UT / Regression / E2E, then an on-device plan with 5 fixed sections
+- 50: Converting a sync id-minter to async without touching its bulk-import loop's actual shape
+- 51: A sync-to-async conversion didn't create a bug — it surfaced one a coincidence was hiding
+- 52: Extending Skill 46's handler-test harness to endpoints with no `lib/` module to mock
+- 53: Closing a coverage asymmetry that was an authoring artifact, not a scope decision
+- 54: Verifying sandbox execution capability instead of asserting it — real `qmltestrunner` works here, the Firebase emulator specifically doesn't (and exactly why)
+- 55: A PR flagged as "likely conflicts" for 6 days turned out to have exactly one conflicting
+- 56: PR CI status comment — researching QML coverage tooling first surfaced why "just add
+- 57: Bulk-import chunking — an oversized batch retried forever in silence, and the fix was mostly deletion, not addition
+- 58: `DataModel.qml`'s dispatcher Connections block called an undeclared `logic` — and AGENTS.md already said not to write the tests that found it
+- 59: A "revenue-only" ledger event needs a tax delta too, whenever the line it adjusts is taxable
+- 60: Finding every instance of a bug pattern — a checklist beats re-deriving the trace from scratch each time
+- 61: A local-cache status check can't guard against re-entrancy — the field it reads only updates at the END of the async chain it's supposed to be guarding
+- 62: A QML `function` declaration is a compiled, read-only member — it can't be monkey-patched from a test the way a plain JS object's method can
+- 63: `DataModel._tryCompleteOrder`'s happy path can't resolve synchronously in plain `qmltestrunner` — its callback is wired straight to a real Gateway/XHR round trip, unlike the callback-less local-apply helpers `_tryAdjustOrder` uses
+- 64: `git checkout --ours`/`--theirs` mean the OPPOSITE of what they mean in a merge, during a `git rebase`
+- 65: Fixing a UI-only re-entrancy gap needs a dedicated feedback signal, not the shared generic error bus — even when nothing here needs an entity-ID scope the way completion did
+- 66: A structurally-correct `busy` guard reported as still-broken on-device is a reason to trace deeper and ask, not to rewrite blind — and `Gateway.recordDelta` fans a coalesced write out to every registered callback
+- 89b: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
+- 67: A retry loop that never gives up is right offline — the defect was that it never said anything
+- 68: A proven UI fix pattern can hide two adjacent bugs that only surface once you re-trace the whole path — check both before shipping the third repeat of a pattern
+- 69: `node --test`'s own reported total isn't stable across Node versions — pin the version before trusting a local count against CI's
+- 70: Hard-deleting a record that history points at needs a name-keeping plan *and* an id-reuse guard — and "the test plan says it's fine" is not evidence
+- 71: A normalize/clone function that returns a fixed-field object literal silently drops any new field you add — check it before adding one, not after
+- 72: A background async continuation's failure signal must be checked against WHICH UI element is actually still open when it fires — not assumed to still be the one that started it
+- 73: A falsy-value lookup function can't distinguish "doesn't exist" from "exists but empty" — and a stamped-fallback fix silently inverts if you don't fix that first
+- 74: Cross-system "atomicity" is a lie you tell precisely, not a property you achieve — and a `pragma Singleton QtObject` can't host `Connections{}` even when nothing else about it looks singleton-specific
+- 75: A new E2E test file that calls Gateway only *indirectly* (through a store helper) can silently skip the emulator-URL override every sibling file has
+- 76: A new raw-XHR test helper needs the QTBUG-49896 snapshot too — and check the repo's own trail for a status-code symptom *before* theorizing
+- 77: A value crossing the C++/QML boundary needs ONE representation, and a "file gone" branch mapped to HTTP 400 disguises a local bug as a server bug
+- 78: A delegate with `required property` loses the implicit `index`; a fixed-count RowLayout of user data must wrap; a dialog that copies store data goes stale; and when two surfaces share a helper, log the failure before theorising
+- 79: A test that asserts "nothing was enqueued" must name WHAT must not be enqueued — a ledger row is a legitimate second write
+- 80: `clip: true` clips to the bounding box, not `radius` — a rounded-corner thumbnail needs a `MultiEffect` mask, not just `clip`
+- 81: Rejecting a scrollable "+" tile once doesn't mean rejecting scrolling — pin the fixed action outside the Flickable, not instead of it
+- 82: `visible: false` is not enough to feed a `MultiEffect` source/mask — it needs `layer.enabled: true`
+- 83: A Felgo-importing component can't be loaded by `qmltestrunner` — put its geometry in a pure `.js` helper, and make the container hand it the width it was designed for
+- 84: Don't encode a new failure class in the HTTP status when existing client paths already treat every 4xx as a final decision
+- 85: A state that is only true while a request is in flight must be repaired at load time — and "delete the parent" must reach the queue that points at it
+- 86: A property-change handler runs synchronously in the middle of the setter's function — and singleton state leaks between test files
+- 87: "Retry now" on a write already flagged stuck must not clear the flag, or the only alarm goes dark right after the user asked about it
+- 88: A "stuck" flag that lives only in memory is forgotten on relaunch, and the persisted backoff makes the alarm stay dark far longer than the in-session ~3 minutes
+- 89: Derive "parked" from the evidence you already persist, and make the parked item hold its keys, or the drain timer spins and siblings overtake it
+- 90: Removing a queued write must answer everyone waiting on it, and its "is it still allowed" check must be made at execution time, from the persisted item
+- 91: Review a state change by grepping the words that describe the state, and by checking what an error recipe really throws
+- 92: In Firestore rules a deny-all `match` block does not deny if a wildcard also matches; list server-only collections in the helper the wildcard consults
+- 93: Never derive a prefix delete from a client-reachable id without a whitelist, a trailing slash, and a re-check
+- 94: A design's "intermediate states are safe" claim is a hypothesis; the side effect lives where it is called, not where the fix is planned
+- 95: A money-data sweep needs a defence filter below the query, deterministic ids, and a test harness that can express "bad input"
+- 96: A server-minted id in a shared keyspace needs its namespace reserved against client-chosen ids
+- 97: A per-record ordering rule (parked write holds its key) must be checked against every caller that AWAITS and every sibling entity the same action writes
+- 98: A behaviour that lives in a non-singleton model object (DataModel) does not exist in a test that never instantiates it
+- 99: A "held key" ordering rule that blocks a write must be answered at the entry point of every flow that awaits it, before any side effect
+- 100: A ledger row that belongs to an optimistic edit must be held in the OUTBOX until that edit is acked, and the dependency must name the STORED item
+- 101: Overlay a queued edit by replaying only the fields the user CHANGED, and derive the badge from the same function as the sale guard
+- 102: Review a "decided" schedule design against the docs ALREADY in the database and the deploy plumbing before building it
+- 103: A test that passes on its first run proves nothing until a deliberate bug makes it fail; and a fake that merges N backends needs explicit per-query visibility
+- 104: An emulator e2e for a scheduled function runs the function in-process; refuse to start unless every emulator host is set
+- 105: Count JUnit testcases, never tags by `[^>]*`; a test count that does not move when tests are added is a defect signal
+- 106: Give a big reference file a GENERATED index and test it, instead of a hand-written summary; trim docs only by a rule you can run

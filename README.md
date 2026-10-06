@@ -249,8 +249,8 @@ construction order, per-function emulator URLs) before adding a new scenario the
 green, per-job failing-test name + reason + a direct link to that job's logs on red. Re-pushes
 update the same comment (matched via an HTML marker) rather than piling up duplicates. Logic lives
 in `.github/scripts/` (`parse-junit.js`, `resolve-job-url.js`, `build-summary.js`,
-`post-ci-comment.js`), unit/functional tested independently of any real GitHub Actions run — see
-`SKILLS.md` Skill 56 and `docs/superpowers/test-plans/2026-09-02-pr-ci-status-comment-test-plan.md`.
+`post-ci-comment.js`, `skills-index.js`), unit/functional tested independently of any real GitHub Actions run — see
+`SKILLS.md` Skill 56, `SKILLS-INDEX.md` (generated from SKILLS.md; `node .github/scripts/skills-index.js --write`) and `docs/superpowers/test-plans/2026-09-02-pr-ci-status-comment-test-plan.md`.
 
 **Update 2026-08-29:** all 8 `functions/index.js` HTTPS handlers now have handler-level test
 coverage (auth, request wiring, response-building — not just the `lib/` pure-logic layer the table
@@ -580,23 +580,7 @@ instead of a local-array max-scan, which wasn't safe under concurrent access. De
 
 See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
 
-**Update 2026-08-12:** Taher found this himself, on-device, immediately after the 2026-08-11 guard
-shipped and still didn't reliably catch the sync-incomplete window — no "still syncing" message on
-a prompt post-restart return, and Orders/Inventory screens showing inconsistent data that
-self-resolved given enough time. Root cause: `TransactionStore.Component.onCompleted` and `Main.
-qml`'s `onTenantContextReady` both call `_resetAndFetch()` on a cold start — both async, and since
-nothing gated a second call while the first was still mid-fetch, whichever landed second wiped
-`entries`/`_cursor` out from under the first, corrupting the rest of that pagination chain and
-leaving `hasMore` able to read `false` while `entries` was genuinely still incomplete — which is
-exactly why the 2026-08-11 guard (which only checks `hasMore`) didn't catch it. Fixed with
-`if (loadingMore) return` at the top of `_resetAndFetch()`, applied to every paginated store, not
-just `TransactionStore` (`InventoryStore`, `OrdersStore`, `StaffStore`, `StockBatchStore`,
-`SupplierStore`). A follow-up full sweep of all 21 `qml/model/*.qml` singletons found three more
-stores sharing the same dual-trigger exposure (`ActivityLog`, `CategoryStore`, `OrderChannelStore`)
-— structurally immune to the corruption itself (single bounded fetches, not multi-page pagination),
-but missing the same `AuthStore.tenantId.length > 0` guard on `Component.onCompleted` that every
-other store already had, fixed for consistency. See SKILLS Skill 39 for the full sweep table and a
-documented, not-yet-implemented residual edge case around account-switch timing.
+_Removed 2026-10-06 (each lesson lives in SKILLS.md, original text in git history): the 2026-08-06/10/12 concurrency fix notes (post-restart sync race, dual-trigger reset: Skills 36-39) and the 2026-08-29 bulk-import chunking and 2026-09-14 order-completion double-submit notes (Skills 57, 61). Find any skill with `grep -i keyword SKILLS-INDEX.md`._
 
 **Update 2026-08-11:** found immediately after the fix directly above, testing the same branch —
 complete an order, verify it in Firestore, close the app, reopen it, and return an item promptly:
@@ -621,47 +605,6 @@ everything else here don't read this ledger at all. Also added retry-with-backof
 which would have turned the new guard into a permanent lockout after one dropped request instead of
 a brief, correct wait. See SKILLS Skill 38 and `docs/superpowers/specs/
 2026-08-11-ledger-sync-race-CHECKPOINT.md` for the full investigation.
-
-**Update 2026-08-10:** found via Taher's own manual testing of the round-2 branch — a real order
-edit (add, complete, adjust price, save) hit a spurious "updated elsewhere" conflict toast with
-nobody else touching the order. `OrdersStore.applyAdjustment` built its CAS `before` snapshot as a
-shallow copy of the order, then mutated a nested field (`adjustments`) in place with `.push()` —
-since a shallow copy shares nested arrays by reference, that mutation leaked into `before` too, so
-the server's `_deepEqual(current, before)` check rejected the write (the whole write, not just the
-adjustment — nothing persisted, including the price change). Fixed by reassigning a new array
-(`.concat()`) instead of mutating the existing one in place, matching the replace-don't-mutate
-convention already used everywhere else in this codebase for this exact reason. A full sweep of
-every `Object.assign` call site in the project (25 total) confirmed this was the only instance of
-the pattern — see SKILLS Skill 37 and `docs/superpowers/specs/
-2026-08-10-before-snapshot-aliasing-CHECKPOINT.md` for the full investigation.
-
-**Update 2026-08-06:** a dedicated code review (`docs/superpowers/specs/
-2026-08-06-async-write-sequencing-code-review.md`, 8 Critical + 5 Important findings) found every
-mechanism above was individually correct but not fully wired end-to-end — the server-side CAS
-backstop, for instance, was fully implemented and tested, but the client never actually handled its
-409 conflict response, so a real conflict retried forever instead of resolving. All 8 Critical
-findings are now fixed:
-- The client now handles a CAS conflict properly: `Gateway.mutationConflicted(entity, entityId,
-  current)` fires when a write is dropped (not retried) due to a conflict, and all five stores that
-  call `recordMutation` (`OrdersStore`, `InventoryStore`, `StaffStore`, `SupplierStore`,
-  `StockBatchStore`) reconcile their local cache from `current` and notify the user.
-- `InventoryStore.restock`/`creditStockNoBatch` are now genuinely converted to `recordDelta` (a
-  prior checkpoint had asserted `restock` was already converted — it wasn't).
-- `firestore.rules` now denies client read/write on the `locks/**` collection — previously
-  unenforced, despite the design calling for it; any client could read/write lock documents
-  directly, bypassing `acquireLock`/`releaseLock` entirely.
-- `StockBatchStore.consumeFifo`/`topUpOldest` now roll back via `restoreFifo` when the
-  corresponding stock delta is rejected, in both `_tryCompleteOrder` and `_tryAdjustOrder` — FIFO
-  batches no longer stay decremented for units no completed sale/exchange accounts for.
-- `LockManager._classifyAcquireResponse` is now status-aware (only a real 409 means "someone else
-  holds this lock" — a 400/401/403/500 no longer shows a fabricated version of that message).
-- A regression introduced the same day it landed: `OrdersStore._normalizeOrder` was reading FIFO
-  consumption lineage off the wrong object, silently discarding it on every order and crashing on
-  any line whose product had been deleted — found and fixed same-session.
-- Removed a dead, dangerous duplicate order-approval code path that bypassed every mechanism above.
-
-See SKILLS Skill 36 for the full mechanism-by-mechanism detail and the reusable lessons from this
-round.
 
 **Update 2026-07-30:** `DataModel._tryAdjustOrder` (order returns/exchanges) now gets the same
 async-await treatment `_tryCompleteOrder` got — added-unit stock deductions are confirmed before
@@ -704,51 +647,6 @@ isolation —
    `_normalizeOrder()` used by both functions; audited all 4 other stores for the same pattern
    (only Orders had it — see SKILLS Skill 36 for the full mechanism and why the other stores were
    already safe).
-
-**Update 2026-08-29 (bulk-import chunking):** reported symptom — importing a CSV with more than
-200 rows silently stopped saving past row 200, with no error shown and the import dialog reporting
-full success anyway. Root cause: `Gateway.recordMutations()` sent an arbitrarily large batch as ONE
-HTTP call, with no awareness of `functions/lib/batchMutationLogic.js`'s 200-item cap; a batch over
-that cap gets a definitive 400 from the server, but `_sendBatch()`'s failure handling treated it
-identically to a transient network blip — `OutboxStore.markFailed()`, retried with backoff forever,
-never terminating, entirely silently — while `InventoryStore`/`OrdersStore` had already committed
-every row to local state before the HTTP round-trip even started. Fixed at the single choke point
-all three affected stores (`InventoryStore`, `OrdersStore`, `SupplierStore`) share:
-`Gateway.recordMutations()` now transparently splits an oversized `items` array into multiple
-`<=maxBatchSize` outbox entries, and `_sendBatch()` now classifies a batch failure as terminal
-(a definitive, payload-shape validation error that can never succeed on retry — narrower than "any
-4xx," see SKILLS Skill 57) or transient (unchanged existing retry behavior) instead of treating
-every non-conflict failure the same. A terminal failure now fires `batchMutationFailedPermanently`,
-which each store reconciles through the exact same signal-driven pattern already used for CAS
-conflicts (`mutationConflicted`) — rolling back the specific rows that never reached Firestore and
-surfacing it via the existing `Toast`/`ActivityLog`, no new UI mechanism. "Survives interruption"
-didn't need new persistence: `OutboxStore` already durably queues (and auto-resumes on relaunch)
-every chunk before `recordMutations()` returns, and the server's existing `requestId:entityId`
-audit-log dedup already makes a chunk that partially committed before a crash safe to retry — an
-initially-planned `ImportSessionStore` duplicating that tracking was cut in a `/ponytail` pass
-before any code was written (see Skill 57 for the full reasoning). 33 new test cases across
-`tests/tst_Gateway.qml`, `tests/tst_InventoryStore_upsertMany.qml`,
-`tests/tst_OrdersStore_mutations.qml`, a new `tests/tst_SupplierStore_batchMutationFailedPermanently.qml`,
-a new `test/e2e/tst_BulkImportChunkingE2E.qml` (first file to exercise `Gateway.batchFunctionUrl`
-against the real emulator), and 1 pinning regression test in `functions/test/batchMutationLogic.test.js`
-(run and verified — 110/110 passing).
-
-**Update 2026-09-14 (order-completion double-submit):** reported symptom — approving a pending
-order, then pressing Approve again before the first completion's write resolved (no busy indicator
-existed to say one was in flight), deducted stock and recorded the sale TWICE; order cart still
-showed the correct 1 item, but Transaction History / Product History / Sales Analysis all doubled.
-Root cause: `DataModel._tryCompleteOrder`'s only "already completing" guard read the LOCAL
-`OrdersStore` cache's `status` field, which only flips to `"completed"` at the very end of the same
-async chain it's meant to be guarding — a second call arriving mid-chain sees the same stale
-`"pending"` value and re-runs the whole deduction. `LockManager`'s pessimistic lock didn't (and by
-design, can't) catch this either: its server-side `acquireLock` re-grants a request from the SAME
-`actorUid` (needed for renewal heartbeats), so it stops a different device, not the same user
-double-clicking. Fixed with an explicit `_completingOrderIds` in-flight set in `DataModel.qml`
-(entity-scoped, independent of any caller), plus wiring `OrderDetailDialog.qml` up to the
-`busy`/`busyMessage` mechanism `BottomSheet.qml` already provides — it was the one dialog in this
-codebase that fired its update signal and closed immediately instead of waiting for a real
-completion ack. See SKILLS Skill 61 for the full investigation, including why this can't be tested
-by simply calling the function twice in sequence in this test suite's synchronous harness.
 
 **Update 2026-09-16 (NewOrderDialog double-submit, C-2):** after fixing the completion instance
 above, a sweep for the same bug *pattern* elsewhere in the app

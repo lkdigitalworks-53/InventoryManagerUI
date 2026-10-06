@@ -6,12 +6,20 @@
 **Previous checkpoint archived:** `docs/superpowers/specs/2026-10-05-pr129-final-sweep-CHECKPOINT.md`.
 
 ## Plan (tick as done)
-- [ ] 1 generator `.github/scripts/skills-index.js` + tests (unit, edge, negative, monkey, repo-state)
-- [ ] 2 rename older duplicate `Skill 89` -> `89b`; generate `SKILLS-INDEX.md`
-- [ ] 3 AGENTS.md read-order rule; SKILLS.md overview note; README script list
-- [ ] 4 trim: README Concurrency blocks that cite an existing Skill; dead refs; false Staff-delete status row
-- [ ] 5 test plan + index row, Skill 106, roadmap/README rows
-- [ ] 6 push, open PR, CI green, update memory
+- [x] 1 generator `.github/scripts/skills-index.js` + tests (unit, edge, negative, monkey, repo-state)
+- [x] 2 rename older duplicate `Skill 89` -> `89b`; generate `SKILLS-INDEX.md`
+- [x] 3 AGENTS.md read-order rule; SKILLS.md overview note; README script list
+- [x] 4 trim: README Concurrency blocks that cite an existing Skill; dead refs; false Staff-delete status row
+- [x] 5 test plan + index row, Skill 106, roadmap/README rows
+- [~] 6 push, open PR, CI green, update memory
 
 ## Step log
 1. Cloned, branch from main, read brainstorming + ponytail skills, scanned SKILLS/AGENTS/README (no exact duplicate long lines; README "Concurrency" = 34 KB dated changelog; 8 dead-looking refs; duplicate `Skill 89`).
+2. Generator + 21 tests (100% cover, mutation check: 3 new tests fail with the duplicate rule off). Older duplicate `Skill 89` -> `89b`. Index: 107 skills, 11.5 KB vs 306 KB.
+3. README trim by rule (cites existing Skill, >=85% identifiers found there, >=7 identifiers): 5 of 25 blocks, 9,019 bytes. AGENTS: stale Staff-delete row fixed, dead path removed, rule 3 "Read order". SKILLS: overview note, dead path removed, Skill 106.
+4. Test plan + README index row. Script tests 76/76.
+
+## NEXT
+1. Taher: review the PR; veto D1-D5 if wanted. Merge when CI is green.
+2. Later (not done, medium confidence, listed in the PR): README blocks 770/825/601/797 (~4.6 KB, scores 0.80-0.83), AGENTS stale status sections, 69 archived CHECKPOINT files.
+3. PH3b: deploy + DV-1..DV-9 are still open (steps given in chat, test plan section 4).

@@ -15,7 +15,7 @@ work against it).
 
 ## Session & Sandbox Conventions (established 2026-08-30)
 
-Two standing rules, written down once so they don't need repeating each session:
+Three standing rules, written down once so they don't need repeating each session:
 
 **1. Sandbox execution limits are not a reason to leave code unwritten.** A Cloud sandbox session
 can't build the actual Felgo/Qt app (Windows/Felgo toolchain, Taher's machine only) and can't run
@@ -47,6 +47,9 @@ say Claude pushes autonomously); the clarification is *why*: it's not just permi
 asking, it's a description of where verification actually happens — GitHub CI and Taher's own
 machine, not this chat.
 
+
+**3. Read order (token budget).** Do NOT read `SKILLS.md` in full: it is ~300 KB (~75k tokens). Read `SKILLS-INDEX.md` (~12 KB, generated), then read the FULL text of every skill whose title touches the task (`awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md`). Before touching an area (stores, gateway, outbox, photos, tests, CI) `grep -i <area> SKILLS-INDEX.md` and open every match; skipping a matching skill repeats a mistake that was already paid for. After adding or renaming a skill heading run `node .github/scripts/skills-index.js --write` (a script test fails the PR if the index is stale). Do not read `AGENTS.md` / `README.md` end to end either: use the section map (`grep -n '^## \|^### '`) and open the section you need.
+
 ---
 
 ## Current Feature Status
@@ -58,7 +61,7 @@ machine, not this chat.
 | Tenant workspace creation & member invitation | ✅ Done |
 | Orders CRUD + delete + auto-approve | ✅ Done — delete row-UI landed via `feature/product-order-delete-ui` (the backend logic pre-dated it; the button didn't exist until this branch — see Skill 58) |
 | Inventory CRUD + delete | ✅ Done — same as above, row-level delete button added via `feature/product-order-delete-ui` |
-| Staff CRUD + delete + credential provisioning | ⚠️ Delete logic + confirm-dialog wiring exist; row-level button still missing (identical gap to what Inventory/Orders had before `feature/product-order-delete-ui` — same fix, not yet done, see `docs/superpowers/KNOWN-ISSUES.md`). Credential-provisioning failures were completely silent (staff roster saved, but Team Members never got the person and nothing said why) — fixed 2026-09-27, see SKILLS.md Skill 72; underlying reason provisioning was failing for Taher's specific repro is still unconfirmed pending on-device retest. |
+| Staff CRUD + delete + credential provisioning | ✅ Delete done — row-level button added 2026-09-21 (see SKILLS Skill 68). Credential-provisioning failures were completely silent (staff roster saved, but Team Members never got the person and nothing said why) — fixed 2026-09-27, see SKILLS.md Skill 72; underlying reason provisioning was failing for Taher's specific repro is still unconfirmed pending on-device retest. |
 | Sales analytics from live completed orders | ✅ Done |
 | Analysis page — 6 view modes (Value/Purchased/Current/Revenue/Sold/Profit) | ✅ Done |
 | Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
@@ -603,7 +606,7 @@ QtObject {
 Functions gateway, tax-identity fields, DPDP privacy, and retention. **Adjacent, not part of P0
 itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, atomic deltas —
 `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, its 2026-08-06 review at
-`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, its 2026-08-08 round-2
+the 2026-08-06 code review (never committed; its findings are in SKILLS Skill 36), its 2026-08-08 round-2
 closure of the remaining findings at `docs/superpowers/specs/2026-08-08-review-round2-design.md`,
 README's "Concurrency & Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files
 but is a correctness concern, not a compliance one — don't conflate the two when reasoning about
