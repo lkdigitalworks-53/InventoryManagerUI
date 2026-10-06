@@ -76,10 +76,7 @@ function breakerWaitMs(state, now) {
   return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0;
 }
 
-function photoIdFromUuid(uuid) {
-  return 'photo-' + String(uuid).replace(/[{}]/g, '');
-}
 
 module.exports = {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, photoIdFromUuid,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs,
 };

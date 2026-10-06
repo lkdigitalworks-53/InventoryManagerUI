@@ -84,9 +84,3 @@ function breakerWaitMs(state, now) {
     var t = typeof now === 'number' ? now : Date.now()
     return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0
 }
-
-// PH4 item 2: photo ids are "photo-" + a UUID without braces (42 chars, inside the server whitelist
-// [A-Za-z0-9_-]{1,64}). Takes the uuid as an argument so it is testable without Qt.uuid().
-function photoIdFromUuid(uuid) {
-    return 'photo-' + String(uuid).replace(/[{}]/g, '')
-}

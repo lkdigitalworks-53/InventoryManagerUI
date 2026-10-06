@@ -1,10 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, photoIdFromUuid,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs,
 } = require('./testSupport/photoQueueLogicParity');
-const { isSafePathSegment } = require('../lib/photoValidation');
-const { randomUUID } = require('node:crypto');
 
 test('classifyError: terminal codes', () => {
   for (const s of [400, 413, 404, 409, 403]) assert.equal(classifyError(s), 'terminal'); // 403 = PH4 item 1 (C01/C02)
@@ -204,45 +202,4 @@ test('PH4 L1: _reschedule rule max(due, breakerWait) keeps the later of the two 
   assert.equal(Math.max(250, Math.max(0, breakerWaitMs(open, 1000))), 9000);
   assert.equal(Math.max(250, Math.max(30000, breakerWaitMs(open, 1000))), 30000);
   assert.equal(Math.max(250, Math.max(0, breakerWaitMs({ status: 'closed' }, 1000))), 250);
-});
-
-// ---- PH4 item 2: photo ids (C07-C12) ----
-test('PH4 C07/C09: id is photo- + 36-char uuid, 42 chars, <= 64', () => {
-  const id = photoIdFromUuid('{123e4567-e89b-12d3-a456-426614174000}');
-  assert.equal(id, 'photo-123e4567-e89b-12d3-a456-426614174000');
-  assert.match(id, /^photo-[A-Za-z0-9_-]{36}$/);
-  assert.equal(id.length, 42);
-});
-test('PH4 C08: braces are stripped, a brace-less uuid is unchanged', () => {
-  assert.equal(photoIdFromUuid('{abc}'), 'photo-abc');
-  assert.equal(photoIdFromUuid('abc'), 'photo-abc');
-});
-test('PH4 C10: 1000 generated ids are unique', () => {
-  const set = new Set(Array.from({ length: 1000 }, () => photoIdFromUuid(`{${randomUUID()}}`)));
-  assert.equal(set.size, 1000);
-});
-test('PH4 C11 parity: every id passes the SERVER whitelist (isSafePathSegment) for braced and plain uuids', () => {
-  for (let i = 0; i < 200; i++) {
-    const u = randomUUID();
-    assert.equal(isSafePathSegment(photoIdFromUuid(u)), true);
-    assert.equal(isSafePathSegment(photoIdFromUuid(`{${u}}`)), true);
-  }
-});
-test('PH4 C12 MONKEY: 5 seeds x 100 odd canonical forms (upper/lower, braces or not, urn prefix stripped by caller) stay whitelist-safe', () => {
-  for (let seed = 1; seed <= 5; seed++) {
-    let st = seed * 104729;
-    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
-    const hex = (n) => Array.from({ length: n }, () => '0123456789abcdefABCDEF'[rnd(22)]).join('');
-    for (let i = 0; i < 100; i++) {
-      const core = `${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`;
-      const u = rnd(2) ? `{${core}}` : core;
-      const id = photoIdFromUuid(u);
-      assert.equal(isSafePathSegment(id), true, id);
-      assert.equal(id.length, 42);
-    }
-  }
-});
-test('PH4 negative: a uuid that still contains characters outside the whitelist would be rejected by the server (the guard is real)', () => {
-  assert.equal(isSafePathSegment(photoIdFromUuid('a/b')), false);
-  assert.equal(isSafePathSegment(photoIdFromUuid('a b')), false);
 });

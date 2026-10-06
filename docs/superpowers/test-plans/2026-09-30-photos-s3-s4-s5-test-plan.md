@@ -152,7 +152,7 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 
 ## 5. Client QML (PH4) — 26 planned, CI only (no Qt in the sandbox)
 `tests/tst_PhotoQueueLogic.qml`, `tests/tst_InventoryStore_mutationConflicted.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, gallery test.
-**Status 2026-10-06 (branch `feat/2026-10-06-photos-ph4-client`):** items 1, 2, 4, 5 BUILT; item 3 shipped in #113 (C13-C21 already green); item 6 no change. WRITTEN: C01-C04, C07-C12 (as pure-helper tests; `tst_StorageServicePhotoId.qml` was dropped because `StorageService` cannot load under qmltestrunner: `ImageProcessor` is a context property), C22/C23 (pure part only), C26. Node mirror run for real: `photoQueueLogic.parity.test.js` 35/35 (was 23). QML cases are CI-only. NOT written: C05/C06 (a failed 403 reuses the existing retry() and breaker paths, which no code in this PR changed; the breaker already counts every failure), C24/C25 (no gallery code changed).
+**Status 2026-10-06 (branch `feat/2026-10-06-photos-ph4-client`):** items 1, 4, 5 BUILT; **item 2 (`Qt.uuid` ids) DROPPED: CI run on the first push failed with `Property 'uuid' of object Qt is not a function`, so the old id scheme stays; item 3 shipped in #113 (C13-C21 already green); item 6 no change. WRITTEN: C01-C04, C22/C23 (pure part only), C26. NOT BUILT: C07-C12 (item 2 dropped). Node mirror run for real: `photoQueueLogic.parity.test.js` 29/29 (was 23). QML cases are CI-only. NOT written: C05/C06 (a failed 403 reuses the existing retry() and breaker paths, which no code in this PR changed; the breaker already counts every failure), C24/C25 (no gallery code changed).
 
 | ID | Case | File |
 |---|---|---|
@@ -162,12 +162,12 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | C04 | reduceQueueItem failed 403 -> state failed on attempt 1, no backoff scheduled | tests/tst_PhotoQueueLogic.qml |
 | C05 | failed 403 then retry() -> enqueued again (Retry UI works) | tests/tst_PhotoQueueLogic.qml |
 | C06 | breaker still counts a 403 failure | tests/tst_PhotoQueueLogic.qml |
-| C07 | _nextPhotoId matches `^photo-[A-Za-z0-9_-]{36}$` | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
-| C08 | _nextPhotoId strips braces when Qt.uuid is stubbed with braces | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
-| C09 | _nextPhotoId length <= 64 | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
-| C10 | 1000 ids all unique | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
-| C11 | id passes a mirror of the server whitelist regex (parity test) | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
-| C12 | MONKEY stubbed Qt.uuid uppercase/odd canonical forms -> still whitelist-safe | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
+| C07 | _nextPhotoId matches `^photo-[A-Za-z0-9_-]{36}$` | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C08 | _nextPhotoId strips braces when Qt.uuid is stubbed with braces | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C09 | _nextPhotoId length <= 64 | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C10 | 1000 ids all unique | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C11 | id passes a mirror of the server whitelist regex (parity test) | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C12 | MONKEY stubbed Qt.uuid uppercase/odd canonical forms -> still whitelist-safe | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
 | C13 | deleteProduct with 3 photoIds: zero removeProductPhoto calls | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C14 | deleteProduct: only THIS product's queued photos discarded, others remain | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C15 | deleteProduct: queue purge throws -> delete and batch cascade still complete | tests/tst_InventoryStore_deleteProductCascade.qml |
