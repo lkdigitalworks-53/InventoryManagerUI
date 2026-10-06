@@ -1,11 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, photoIdFromUuid,
 } = require('./testSupport/photoQueueLogicParity');
+const { isSafePathSegment } = require('../lib/photoValidation');
+const { randomUUID } = require('node:crypto');
 
 test('classifyError: terminal codes', () => {
-  for (const s of [400, 413, 404, 409]) assert.equal(classifyError(s), 'terminal');
+  for (const s of [400, 413, 404, 409, 403]) assert.equal(classifyError(s), 'terminal'); // 403 = PH4 item 1 (C01/C02)
 });
 test('classifyError: transient codes', () => {
   for (const s of [401, 429, 500, 502, 503, 0]) assert.equal(classifyError(s), 'transient');
@@ -164,4 +166,83 @@ test('monkey: 500 random breaker sequences stay within invariants', () => {
       assert.ok(['open', 'closed'].includes(s.status));
     }
   }
+});
+
+// ---- PH4 item 1: 403 terminal (C04) ----
+test('PH4 C04: reduceQueueItem failed 403 -> failed on attempt 1, no backoff scheduled', () => {
+  const r = reduceQueueItem({ ...base, state: 'uploading', attempts: 0 }, { type: 'failed', status: 403 });
+  assert.equal(r.state, 'failed');
+  assert.equal(r.lastError, 403);
+  assert.equal(r.attempts, 1);
+  assert.equal(r.nextAttemptAt, 0, 'terminal must not schedule a retry');
+});
+test('PH4 C03 regression: 401/429/500/502/503/0 stay transient next to the new 403', () => {
+  for (const s of [401, 429, 500, 502, 503, 0]) assert.equal(classifyError(s), 'transient');
+  assert.equal(classifyError('403'), 'terminal', 'object-key lookup: a numeric string 403 is the same key');
+});
+
+// ---- PH4 item 4: L1 breakerWaitMs (C22/C23, pure part) ----
+test('PH4 L1: breakerWaitMs = time left on an open breaker', () => {
+  const open = { status: 'open', consecutiveFailures: 5, cooldownUntil: 61000, cooldownMs: 60000 };
+  assert.equal(breakerWaitMs(open, 1000), 60000);
+  assert.equal(breakerWaitMs(open, 60999), 1);
+});
+test('PH4 L1: breakerWaitMs is 0 when closed, expired, exactly at cooldownUntil, or the state is empty-ish', () => {
+  assert.equal(breakerWaitMs({ status: 'closed', cooldownUntil: 99999 }, 1000), 0);
+  const open = { status: 'open', cooldownUntil: 5000 };
+  assert.equal(breakerWaitMs(open, 5000), 0, 'at the boundary the breaker is closed (t < cooldownUntil is false)');
+  assert.equal(breakerWaitMs(open, 9000), 0, 'never negative');
+  assert.equal(breakerWaitMs({}, 1000), 0);
+});
+test('PH4 L1: with no explicit now it uses the clock', () => {
+  const open = { status: 'open', cooldownUntil: Date.now() + 100000 };
+  const w = breakerWaitMs(open);
+  assert.ok(w > 99000 && w <= 100000, String(w));
+});
+test('PH4 L1: _reschedule rule max(due, breakerWait) keeps the later of the two (a retry already later than the cooldown wins)', () => {
+  const open = { status: 'open', cooldownUntil: 10000 };
+  assert.equal(Math.max(250, Math.max(0, breakerWaitMs(open, 1000))), 9000);
+  assert.equal(Math.max(250, Math.max(30000, breakerWaitMs(open, 1000))), 30000);
+  assert.equal(Math.max(250, Math.max(0, breakerWaitMs({ status: 'closed' }, 1000))), 250);
+});
+
+// ---- PH4 item 2: photo ids (C07-C12) ----
+test('PH4 C07/C09: id is photo- + 36-char uuid, 42 chars, <= 64', () => {
+  const id = photoIdFromUuid('{123e4567-e89b-12d3-a456-426614174000}');
+  assert.equal(id, 'photo-123e4567-e89b-12d3-a456-426614174000');
+  assert.match(id, /^photo-[A-Za-z0-9_-]{36}$/);
+  assert.equal(id.length, 42);
+});
+test('PH4 C08: braces are stripped, a brace-less uuid is unchanged', () => {
+  assert.equal(photoIdFromUuid('{abc}'), 'photo-abc');
+  assert.equal(photoIdFromUuid('abc'), 'photo-abc');
+});
+test('PH4 C10: 1000 generated ids are unique', () => {
+  const set = new Set(Array.from({ length: 1000 }, () => photoIdFromUuid(`{${randomUUID()}}`)));
+  assert.equal(set.size, 1000);
+});
+test('PH4 C11 parity: every id passes the SERVER whitelist (isSafePathSegment) for braced and plain uuids', () => {
+  for (let i = 0; i < 200; i++) {
+    const u = randomUUID();
+    assert.equal(isSafePathSegment(photoIdFromUuid(u)), true);
+    assert.equal(isSafePathSegment(photoIdFromUuid(`{${u}}`)), true);
+  }
+});
+test('PH4 C12 MONKEY: 5 seeds x 100 odd canonical forms (upper/lower, braces or not, urn prefix stripped by caller) stay whitelist-safe', () => {
+  for (let seed = 1; seed <= 5; seed++) {
+    let st = seed * 104729;
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const hex = (n) => Array.from({ length: n }, () => '0123456789abcdefABCDEF'[rnd(22)]).join('');
+    for (let i = 0; i < 100; i++) {
+      const core = `${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`;
+      const u = rnd(2) ? `{${core}}` : core;
+      const id = photoIdFromUuid(u);
+      assert.equal(isSafePathSegment(id), true, id);
+      assert.equal(id.length, 42);
+    }
+  }
+});
+test('PH4 negative: a uuid that still contains characters outside the whitelist would be rejected by the server (the guard is real)', () => {
+  assert.equal(isSafePathSegment(photoIdFromUuid('a/b')), false);
+  assert.equal(isSafePathSegment(photoIdFromUuid('a b')), false);
 });

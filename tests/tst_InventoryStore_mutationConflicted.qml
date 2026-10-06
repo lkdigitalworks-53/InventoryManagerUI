@@ -96,4 +96,29 @@ TestCase {
         compare(InventoryStore.products.length, 1)
         compare(InventoryStore.products[0].productId, "SKU-1")
     }
+
+    // Q13 / C26 (PH4 item 5): the server row is already gone -> nothing was "restored".
+    function test_C26_delete_conflict_with_null_current_says_already_deleted_not_restored() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
+        compare(InventoryStore.products.length, 0, "the local row stays removed")
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0], "This product was already deleted elsewhere.")
+    }
+
+    function test_C26_delete_conflict_with_undefined_current_and_an_unknown_row_still_says_already_deleted() {
+        InventoryStore.products = []
+        InventoryStore._onMutationConflicted("inventory", "SKU-404", undefined, "delete")
+        compare(InventoryStore.products.length, 0)
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0], "This product was already deleted elsewhere.")
+    }
+
+    function test_C26_update_conflict_with_null_current_keeps_the_update_worded_toast() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "update")
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0],
+                "This product was updated elsewhere \u2014 your change didn't save. Refreshed to the latest version.")
+    }
 }

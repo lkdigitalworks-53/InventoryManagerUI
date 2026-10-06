@@ -223,6 +223,7 @@ QtObject {
             if (due < 0 || wait < due) due = wait
         }
         if (due < 0) { _drainTimer.stop(); return }
+        due = Math.max(due, PQL.breakerWaitMs(_breaker, now))  // L1: sleep through an open breaker's cooldown, not 250 ms polls
         _drainTimer.interval = Math.max(250, due)
         _drainTimer.restart()
     }

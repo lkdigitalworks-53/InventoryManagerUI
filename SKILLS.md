@@ -4156,3 +4156,14 @@ Rules:
 3. A generator that parses headings must fail on duplicate ids and on malformed headings (the file already had two `Skill 89`, found only when the generator ran) and must ignore headings inside code fences.
 4. Trim docs only by a rule that can be executed and repeated: cut a dated block only if it cites a skill that exists AND most of its backticked identifiers occur in that skill (5 of 25 README blocks passed at 85%). List what failed the rule as candidates, do not delete on judgement. Git history keeps the rest.
 5. A status row can be false: verify against the code (`StaffPage.qml` had the delete button the table said was missing) before copying a doc claim into a new doc.
+
+## Skill 107: A design item marked UNVERIFIED becomes a test that fails loudly on CI; a timer or XHR fix is split into a pure helper (tested) plus one QML line
+
+Context (2026-10-06, PH4 client): `Qt.uuid()` under headless `qmltestrunner` was UNVERIFIED in the design, and the L1 breaker-cooldown fix lives in `PhotoQueue._reschedule` (a Timer), which has no unit tests by design (its TESTABILITY NOTE).
+Rules:
+1. Do not stub an unverified platform call to keep CI green. Write the test against the REAL call (`PQL.photoIdFromUuid(Qt.uuid())` x1000) so the first CI run answers the question, and put the fallback (stub it) in the test comment. Keep the pure part (strip braces, add the prefix) as a function that takes the value, so it is testable either way.
+2. When a fix sits inside a Timer/XHR file that cannot be unit-tested, move the arithmetic into `PhotoQueueLogic.js` (`breakerWaitMs`), test it there and in the Node mirror, and leave exactly one line in the QML file. The design's "fold only if <= 3 lines" rule is met by the QML diff, not by the helper.
+3. `PhotoQueueLogic.js` has a hand-kept Node mirror (`functions/test/testSupport/photoQueueLogicParity.js`): every constant or function change goes into both, and the Node run is the only proof you can get in the sandbox (23 -> 35 cases here). A server-side validator (`isSafePathSegment`) can be required in the mirror test as a real parity check for ids the client mints.
+4. A test plan file name can be impossible (`tst_StorageServicePhotoId.qml`: `StorageService` needs the `ImageProcessor` context property). Say so in the plan and move the cases to the file that can run them; do not leave a planned file that can never load.
+5. Reading code for a small UI change can expose a gap the design did not list (the Q13 path skips the queued-photo purge). Write it into the design and the PR as a question; do not widen the change without asking.
+

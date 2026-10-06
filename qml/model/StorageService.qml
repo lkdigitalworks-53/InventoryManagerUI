@@ -3,6 +3,7 @@ import QtQuick
 
 import "../helper/EnvConfig.js" as EnvConfig
 import "../helper/PhotoUrl.js" as PhotoUrl
+import "../helper/PhotoQueueLogic.js" as PQL
 
 // StorageService — the product-photo abstraction the rest of the app talks to, so callers don't
 // need to know PhotoQueue, ImageProcessor, or the Cloud Functions exist.
@@ -23,9 +24,10 @@ QtObject {
     property string deleteUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/deleteProductPhoto"
 
     function _nextPhotoId() {
-        // Same scheme as Gateway._nextRequestId (req-<ms>-<rand>) -- photoId doubles as the
-        // upload's idempotency requestId, so it needs the same uniqueness guarantee.
-        return "photo-" + Date.now() + "-" + Math.floor(Math.random() * 1000000)
+        // photoId doubles as the upload's idempotency requestId, so it must be unique. PH4 item 2 (Q9):
+        // "photo-" + Qt.uuid() without braces. The pure part (strip braces, prefix) is tested in
+        // tests/tst_PhotoQueueLogic.qml; this file itself is untestable under qmltestrunner (ImageProcessor).
+        return PQL.photoIdFromUuid(Qt.uuid())
     }
 
     // Compress (main + a new thumbnail pass), persist both locally, and enqueue the upload.

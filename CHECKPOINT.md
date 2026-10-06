@@ -25,3 +25,7 @@
 3. PH3b: deploy + DV-1..DV-9 are still open (steps given in chat, test plan section 4).
 
 5. 2026-10-06 later: Taher said "trim readme then move to ph4". Stacked branch `chore/2026-10-06-readme-trim-2` (base = PR #131 branch) removes 4 more README blocks (5,509 B; README now 47.6 KB). Then PH4 brainstorming started (design gate: no code until Taher approves).
+
+6. PH4 client on `feat/2026-10-06-photos-ph4-client` (base = README-trim branch, which sits on #131): items 1 (403 terminal), 2 (`photo-` + uuid), 4 (L1: `breakerWaitMs` + one QML line), 5 (Q13 toast) built; item 3 was #113; item 6 no change. Tests: Node parity 35/35 run for real; QML (tst_PhotoQueueLogic, tst_InventoryStore_mutationConflicted) CI-only. Skill 107 + index regenerated. OPEN QUESTION for Taher: purge queued photos when delete conflicts with `current: null` (not done). Real `Qt.uuid()` headless is UNVERIFIED until CI runs.
+## NEXT (PH4)
+Merge order: #131 -> #132 -> PH4 PR. Then PH5 (legacy `photoUrl` removal) or PH3b deploy + DV-1..DV-9.

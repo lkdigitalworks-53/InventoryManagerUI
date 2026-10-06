@@ -10,7 +10,10 @@
 
 var BACKOFF_MS = [2000, 8000, 30000, 120000, 600000] // identical to OutboxStore._backoffMs -- do not fork
 var ATTEMPT_CAP = 8
-var TERMINAL_STATUS = { 400: true, 413: true, 404: true, 409: true }
+// 403 (PH4 item 1): the upload endpoint is owner/admin only, so a 403 never fixes itself by retrying -> failed
+// straight away (existing Retry/Discard UI). Accepted trade-off: a reactivated suspended member's
+// no-tenant-context 403 also needs one manual Retry.
+var TERMINAL_STATUS = { 400: true, 413: true, 404: true, 409: true, 403: true }
 var BREAKER_TRIP_AFTER = 5
 var BREAKER_COOLDOWN_BASE_MS = 60000
 var BREAKER_COOLDOWN_MAX_MS = 600000
@@ -73,4 +76,17 @@ function breakerReducer(state, event) {
 function isBreakerOpen(state, now) {
     var t = typeof now === 'number' ? now : Date.now()
     return state.status === 'open' && t < state.cooldownUntil
+}
+
+// PH4 item 4 (L1): ms until an open breaker closes, 0 when closed or already expired. PhotoQueue._reschedule
+// waits at least this long, instead of re-arming a 250 ms timer for the whole cooldown.
+function breakerWaitMs(state, now) {
+    var t = typeof now === 'number' ? now : Date.now()
+    return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0
+}
+
+// PH4 item 2: photo ids are "photo-" + a UUID without braces (42 chars, inside the server whitelist
+// [A-Za-z0-9_-]{1,64}). Takes the uuid as an argument so it is testable without Qt.uuid().
+function photoIdFromUuid(uuid) {
+    return 'photo-' + String(uuid).replace(/[{}]/g, '')
 }

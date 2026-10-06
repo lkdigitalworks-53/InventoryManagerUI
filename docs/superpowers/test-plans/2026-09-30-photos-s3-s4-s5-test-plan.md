@@ -151,7 +151,8 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | E12 | MONKEY 30 random interleavings of create/upload/delete/recreate over 3 products; invariant: no Storage object belongs to a deleted product except the documented race | test/e2e/tst_ProductPhotosE2E.qml (extend; raw `E2EHelpers.postDirect`) |
 
 ## 5. Client QML (PH4) — 26 planned, CI only (no Qt in the sandbox)
-`tests/tst_PhotoQueueLogic.qml`, `tests/tst_StorageService*.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, gallery test. Status: planned, CI only.
+`tests/tst_PhotoQueueLogic.qml`, `tests/tst_InventoryStore_mutationConflicted.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, gallery test.
+**Status 2026-10-06 (branch `feat/2026-10-06-photos-ph4-client`):** items 1, 2, 4, 5 BUILT; item 3 shipped in #113 (C13-C21 already green); item 6 no change. WRITTEN: C01-C04, C07-C12 (as pure-helper tests; `tst_StorageServicePhotoId.qml` was dropped because `StorageService` cannot load under qmltestrunner: `ImageProcessor` is a context property), C22/C23 (pure part only), C26. Node mirror run for real: `photoQueueLogic.parity.test.js` 35/35 (was 23). QML cases are CI-only. NOT written: C05/C06 (a failed 403 reuses the existing retry() and breaker paths, which no code in this PR changed; the breaker already counts every failure), C24/C25 (no gallery code changed).
 
 | ID | Case | File |
 |---|---|---|
@@ -161,12 +162,12 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | C04 | reduceQueueItem failed 403 -> state failed on attempt 1, no backoff scheduled | tests/tst_PhotoQueueLogic.qml |
 | C05 | failed 403 then retry() -> enqueued again (Retry UI works) | tests/tst_PhotoQueueLogic.qml |
 | C06 | breaker still counts a 403 failure | tests/tst_PhotoQueueLogic.qml |
-| C07 | _nextPhotoId matches `^photo-[A-Za-z0-9_-]{36}$` | tests/tst_StorageServicePhotoId.qml (new) |
-| C08 | _nextPhotoId strips braces when Qt.uuid is stubbed with braces | tests/tst_StorageServicePhotoId.qml (new) |
-| C09 | _nextPhotoId length <= 64 | tests/tst_StorageServicePhotoId.qml (new) |
-| C10 | 1000 ids all unique | tests/tst_StorageServicePhotoId.qml (new) |
-| C11 | id passes a mirror of the server whitelist regex (parity test) | tests/tst_StorageServicePhotoId.qml (new) |
-| C12 | MONKEY stubbed Qt.uuid uppercase/odd canonical forms -> still whitelist-safe | tests/tst_StorageServicePhotoId.qml (new) |
+| C07 | _nextPhotoId matches `^photo-[A-Za-z0-9_-]{36}$` | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
+| C08 | _nextPhotoId strips braces when Qt.uuid is stubbed with braces | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
+| C09 | _nextPhotoId length <= 64 | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
+| C10 | 1000 ids all unique | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
+| C11 | id passes a mirror of the server whitelist regex (parity test) | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
+| C12 | MONKEY stubbed Qt.uuid uppercase/odd canonical forms -> still whitelist-safe | tests/tst_PhotoQueueLogic.qml + functions/test/photoQueueLogic.parity.test.js (WRITTEN, 2026-10-06) |
 | C13 | deleteProduct with 3 photoIds: zero removeProductPhoto calls | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C14 | deleteProduct: only THIS product's queued photos discarded, others remain | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C15 | deleteProduct: queue purge throws -> delete and batch cascade still complete | tests/tst_InventoryStore_deleteProductCascade.qml |
@@ -176,11 +177,11 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | C19 | delete then 409 conflict -> row restored, removeProductPhoto never called | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C20 | headless env, ImageProcessor undefined -> no throw | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C21 | stock-batch cascade unaffected (existing cases still pass) | tests/tst_InventoryStore_deleteProductCascade.qml |
-| C22 | L1 (only if folded): breaker open -> timer armed once at cooldownUntil, not 250 ms | tests/tst_PhotoQueue.qml |
-| C23 | L1 (only if folded): after cooldown the queue drains | tests/tst_PhotoQueue.qml |
+| C22 | L1 (only if folded): breaker open -> timer armed once at cooldownUntil, not 250 ms | pure part `breakerWaitMs` in tests/tst_PhotoQueueLogic.qml + Node parity (WRITTEN); the timer itself is not unit-testable (see PhotoQueue TESTABILITY NOTE), device check below |
+| C23 | L1 (only if folded): after cooldown the queue drains | pure part `breakerWaitMs` in tests/tst_PhotoQueueLogic.qml + Node parity (WRITTEN); the timer itself is not unit-testable (see PhotoQueue TESTABILITY NOTE), device check below |
 | C24 | gallery remove fails with 403 -> removeFailed emitted with status text | tests/tst_PhotoGalleryLayout.qml, or a `test/felgo-dependent/` file if the gallery imports Felgo (decide at PH4) |
 | C25 | gallery remove ok -> applyPhotoIds called with remaining ids | tests/tst_PhotoGalleryLayout.qml, or a `test/felgo-dependent/` file if the gallery imports Felgo (decide at PH4) |
-| C26 | delete conflict with `current:null` -> local row removed, toast says already deleted (not "restored"); delete conflict with non-null current keeps the old toast | tests/tst_InventoryStore_deleteProductCascade.qml |
+| C26 | delete conflict with `current:null` -> local row removed, toast says already deleted (not "restored"); delete conflict with non-null current keeps the old toast | tests/tst_InventoryStore_mutationConflicted.qml (WRITTEN; has the Toast spy; +1 pin: update conflict with null current keeps its old toast) |
 
 ## 6. Client QML (PH5, legacy removal) — 12 planned, CI only
 

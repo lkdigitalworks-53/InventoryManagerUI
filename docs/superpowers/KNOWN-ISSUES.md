@@ -543,7 +543,7 @@ the exact no-dispatcher setup.
 
 ---
 
-## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03 (PR pending), PH3b/PH4 NOT BUILT
+## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03, PH3b merged (not yet deployed), PH4 client BUILT 2026-10-06 (items 1, 2, 4, 5; see the photos design)
 
 Built: owner/admin gate on both photo endpoints (the narrow gate from the 2026-09-30 update above), `pending_cleanup`
 marker written in the product-delete transaction, post-commit prefix sweep, F3 upload preflight (no orphan objects on

@@ -106,7 +106,12 @@ QtObject {
         _dropPendingUpdateActivity(entityId, "")  // the edit never applied: no Activity entry
         if (action === "delete") {
             _dropPendingDelete(entityId)  // never applied: no Activity entry, no photo purge
-            Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+            // Q13 (PH4 item 5): `current` null = the server row is already gone (deleted on another device),
+            // so nothing was "restored" -- the local row stays removed above.
+            if (current)
+                Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+            else
+                Toast.show(qsTr("This product was already deleted elsewhere."))
         } else {
             Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
         }

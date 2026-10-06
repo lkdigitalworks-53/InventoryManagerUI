@@ -28,7 +28,7 @@ TestCase {
     // ── classifyError ───────────────────────────────────────────────────────
 
     function test_classifyError_terminal_codes() {
-        var codes = [400, 413, 404, 409]
+        var codes = [400, 413, 404, 409, 403] // 403 = PH4 item 1 (C01/C02)
         for (var i = 0; i < codes.length; ++i)
             compare(PQL.classifyError(codes[i]), "terminal", "status " + codes[i])
     }
@@ -219,6 +219,60 @@ TestCase {
                 verify(s.cooldownMs <= 600000)
                 verify(["open", "closed"].indexOf(s.status) !== -1)
             }
+        }
+    }
+
+    // ── PH4 (client): 403 terminal, L1 breaker wait, photo ids ──────────────
+
+    function test_C04_failed_403_goes_straight_to_failed_with_no_backoff() {
+        var r = PQL.reduceQueueItem({ photoId: "p1", state: "uploading", attempts: 0, nextAttemptAt: 0, lastError: null },
+                                    { type: "failed", status: 403 })
+        compare(r.state, "failed")
+        compare(r.lastError, 403)
+        compare(r.attempts, 1)
+        compare(r.nextAttemptAt, 0)
+    }
+
+    function test_C03_other_transient_codes_stay_transient_next_to_403() {
+        var codes = [401, 429, 500, 502, 503, 0]
+        for (var i = 0; i < codes.length; ++i)
+            compare(PQL.classifyError(codes[i]), "transient", "status " + codes[i])
+    }
+
+    function test_L1_breakerWaitMs_is_the_time_left_on_an_open_breaker() {
+        var open = { status: "open", consecutiveFailures: 5, cooldownUntil: 61000, cooldownMs: 60000 }
+        compare(PQL.breakerWaitMs(open, 1000), 60000)
+        compare(PQL.breakerWaitMs(open, 60999), 1)
+    }
+
+    function test_L1_breakerWaitMs_is_zero_when_closed_expired_or_at_the_boundary() {
+        compare(PQL.breakerWaitMs({ status: "closed", cooldownUntil: 99999 }, 1000), 0)
+        compare(PQL.breakerWaitMs({ status: "open", cooldownUntil: 5000 }, 5000), 0)
+        compare(PQL.breakerWaitMs({ status: "open", cooldownUntil: 5000 }, 9000), 0)
+        compare(PQL.breakerWaitMs({}, 1000), 0)
+    }
+
+    function test_C07_C09_photoIdFromUuid_is_photo_prefix_plus_36_chars_without_braces() {
+        var id = PQL.photoIdFromUuid("{123e4567-e89b-12d3-a456-426614174000}")
+        compare(id, "photo-123e4567-e89b-12d3-a456-426614174000")
+        verify(/^photo-[A-Za-z0-9_-]{36}$/.test(id))
+        compare(id.length, 42)
+    }
+
+    function test_C08_photoIdFromUuid_strips_braces_and_leaves_plain_uuids_alone() {
+        compare(PQL.photoIdFromUuid("{abc}"), "photo-abc")
+        compare(PQL.photoIdFromUuid("abc"), "photo-abc")
+    }
+
+    // The UNVERIFIED point from the design (PH4 item 2): does Qt.uuid() work under headless qmltestrunner?
+    // If this fails on CI, stub Qt.uuid in StorageService tests instead and record it in Skill 107.
+    function test_C07_real_Qt_uuid_gives_a_server_whitelist_safe_id_and_1000_are_unique() {
+        var seen = {}
+        for (var i = 0; i < 1000; ++i) {
+            var id = PQL.photoIdFromUuid(Qt.uuid())
+            verify(/^photo-[A-Za-z0-9_-]{36}$/.test(id), "bad id: " + id)
+            verify(!seen[id], "duplicate id " + id)
+            seen[id] = true
         }
     }
 }
