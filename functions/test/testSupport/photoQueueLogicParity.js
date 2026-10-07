@@ -77,6 +77,10 @@ function breakerWaitMs(state, now) {
 }
 
 
+function shouldDiscardOnFailure(status, productExistsLocally) {
+  return status === 404 && productExistsLocally === false;
+}
+
 module.exports = {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure,
 };

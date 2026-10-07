@@ -84,3 +84,12 @@ function breakerWaitMs(state, now) {
     var t = typeof now === 'number' ? now : Date.now()
     return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0
 }
+
+// PH4 follow-up (Taher, 2026-10-06): a 404 means the server has no such product. If the product row is
+// ALSO gone locally, nothing can ever consume this photo, so discard it (and its local file) instead of
+// parking an invisible `failed` item. If the row still exists locally (a first photo, a create not visible
+// yet, a delete elsewhere whose snapshot is pending) keep the existing terminal 404: failed + Retry/Discard.
+// Strict `=== false`: an unknown answer (undefined/null) never discards.
+function shouldDiscardOnFailure(status, productExistsLocally) {
+    return status === 404 && productExistsLocally === false
+}

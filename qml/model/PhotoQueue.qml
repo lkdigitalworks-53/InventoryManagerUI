@@ -231,6 +231,11 @@ QtObject {
     // Not unit-tested under qmltestrunner -- see the TESTABILITY NOTE at the top of this file.
     // Mirrors Gateway._send's structure deliberately (the QTBUG-49896 status-loss workaround,
     // 45s timeout, the auth-header/idToken-not-ready guard) so this doesn't invent a second style.
+    // true / false, or undefined when the store cannot answer (never discard on undefined).
+    function _productExistsLocally(productId) {
+        try { return InventoryStore.hasProduct(productId) } catch (e) { return undefined }
+    }
+
     function _upload(item) {
         // Mark uploading first so a concurrent drainNow() (e.g. the backoff timer firing right as
         // AuthService.onIsOnlineChanged also fires) can't double-send the same item.
@@ -278,6 +283,11 @@ QtObject {
                 _breaker = PQL.breakerReducer(_breaker, { type: "success" })
                 photoUploaded(item.productId, item.photoId, parsed.photoIds || [])
             } else {
+                if (PQL.shouldDiscardOnFailure(effStatus, _productExistsLocally(item.productId))) {
+                    discard(item.photoId)   // 404 and the product row is gone locally too: nothing can consume it
+                    _reschedule()
+                    return
+                }
                 var next = PQL.reduceQueueItem(uploading, { type: "failed", status: effStatus })
                 _replaceItem(item.photoId, next)
                 _breaker = PQL.breakerReducer(_breaker, { type: "failure" })

@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure,
 } = require('./testSupport/photoQueueLogicParity');
 
 test('classifyError: terminal codes', () => {
@@ -202,4 +202,32 @@ test('PH4 L1: _reschedule rule max(due, breakerWait) keeps the later of the two 
   assert.equal(Math.max(250, Math.max(0, breakerWaitMs(open, 1000))), 9000);
   assert.equal(Math.max(250, Math.max(30000, breakerWaitMs(open, 1000))), 30000);
   assert.equal(Math.max(250, Math.max(0, breakerWaitMs({ status: 'closed' }, 1000))), 250);
+});
+
+// ---- PH4 follow-up: discard a queued photo on 404 only when the product row is gone locally too ----
+test('PH4 D1: 404 and product row gone locally -> discard', () => {
+  assert.equal(shouldDiscardOnFailure(404, false), true);
+});
+test('PH4 D2: 404 but the product row exists locally (first photo, create not visible yet) -> keep the terminal 404 (failed + Retry/Discard)', () => {
+  assert.equal(shouldDiscardOnFailure(404, true), false);
+  assert.equal(classifyError(404), 'terminal');
+});
+test('PH4 D3: an unknown answer (undefined/null/0/"") never discards', () => {
+  for (const v of [undefined, null, 0, '', NaN]) assert.equal(shouldDiscardOnFailure(404, v), false);
+});
+test('PH4 D4: only 404 discards: every other status with the row gone is left to the normal reducer', () => {
+  for (const st of [0, 400, 401, 403, 409, 413, 429, 500, 503, '404']) assert.equal(shouldDiscardOnFailure(st, false), false, String(st));
+});
+test('PH4 D5 MONKEY: 5 seeds x 200 random (status, exists) pairs match the one-line truth table', () => {
+  for (let seed = 1; seed <= 5; seed++) {
+    let st = seed * 15485863;
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const statuses = [0, 200, 400, 401, 403, 404, 404, 409, 413, 429, 500, 503];
+    const exists = [true, false, undefined, null];
+    for (let i = 0; i < 200; i++) {
+      const status = statuses[rnd(statuses.length)];
+      const e = exists[rnd(exists.length)];
+      assert.equal(shouldDiscardOnFailure(status, e), status === 404 && e === false);
+    }
+  }
 });

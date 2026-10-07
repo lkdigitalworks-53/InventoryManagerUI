@@ -99,13 +99,17 @@ QtObject {
             arr.splice(idx, 1)
         }
         products = arr
+        // Taher 2026-10-06: the server row is gone (`current` null) -> nothing can ever consume the photos still
+        // queued for this product, so discard them (and their local files). With a `current` the product still
+        // exists, so its queued photos stay (a missing `photoIds` there just means a first photo, see below).
+        if (!current) _purgeQueuedPhotos(entityId)
         // A rejected delete-conflict means the product still legitimately
         // exists (someone else edited it after this client's stale
         // `before`) and was just pushed back above — "your change didn't
         // save" would be confusing for what was actually a delete attempt.
         _dropPendingUpdateActivity(entityId, "")  // the edit never applied: no Activity entry
         if (action === "delete") {
-            _dropPendingDelete(entityId)  // never applied: no Activity entry, no photo purge
+            _dropPendingDelete(entityId)  // never applied: no Activity entry; the ack-time purge is skipped (the null-current case purges above)
             // Q13 (PH4 item 5): `current` null = the server row is already gone (deleted on another device),
             // so nothing was "restored" -- the local row stays removed above.
             if (current)
@@ -1503,6 +1507,12 @@ QtObject {
     // Confirmed photo ids for a product, as a fresh array ([] for an unknown product or a doc with
     // no/invalid photoIds). EditProductDialog re-reads this on every revision so a photo that
     // finishes uploading while the dialog is open shows up without closing and reopening it.
+    // True when this product's row is in the local list (the list is paginated: false only means "not
+    // loaded here"; PhotoQueue uses it together with a server 404, see PQL.shouldDiscardOnFailure).
+    function hasProduct(productId) {
+        return products.some(function(p) { return p.productId === productId })
+    }
+
     function photoIdsFor(productId) {
         var p = getById(productId);
         return (p && Array.isArray(p.photoIds)) ? p.photoIds.slice() : [];

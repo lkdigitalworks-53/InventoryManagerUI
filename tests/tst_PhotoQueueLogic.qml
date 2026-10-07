@@ -251,4 +251,15 @@ TestCase {
         compare(PQL.breakerWaitMs({ status: "open", cooldownUntil: 5000 }, 9000), 0)
         compare(PQL.breakerWaitMs({}, 1000), 0)
     }
+
+    function test_D1_D4_shouldDiscardOnFailure_only_for_404_with_the_product_row_gone() {
+        compare(PQL.shouldDiscardOnFailure(404, false), true)
+        compare(PQL.shouldDiscardOnFailure(404, true), false)
+        compare(PQL.shouldDiscardOnFailure(404, undefined), false)
+        compare(PQL.shouldDiscardOnFailure(404, null), false)
+        var others = [0, 400, 401, 403, 409, 413, 429, 500, 503]
+        for (var i = 0; i < others.length; ++i)
+            compare(PQL.shouldDiscardOnFailure(others[i], false), false, "status " + others[i])
+        compare(PQL.classifyError(404), "terminal")
+    }
 }

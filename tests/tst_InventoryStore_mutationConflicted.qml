@@ -121,4 +121,70 @@ TestCase {
         compare(toastSpy.signalArguments[0][0],
                 "This product was updated elsewhere \u2014 your change didn't save. Refreshed to the latest version.")
     }
+
+    // ---- Taher 2026-10-06: product row gone -> discard its queued photos; product still there -> keep them ----
+    function _queuePhoto(photoId, productId) {
+        return PhotoQueue.enqueue({ photoId: photoId, productId: productId, uid: "u-none", tenantId: "t-none",
+                                    mainFilePath: "/d/" + photoId + ".jpg", thumbFilePath: "/d/" + photoId + "_t.jpg" })
+    }
+    function _queuedIds() { return PhotoQueue.items.map(function(x) { return x.photoId }).sort() }
+
+    function test_C27_delete_conflict_with_null_current_discards_that_products_queued_photos_only() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }, { productId: "SKU-2", name: "Other" }]
+        _queuePhoto("p-a", "SKU-1"); _queuePhoto("p-b", "SKU-1"); _queuePhoto("p-c", "SKU-2")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
+        compare(_queuedIds(), ["p-c"], "SKU-1's photos are gone, SKU-2's survives")
+        PhotoQueue.clear()
+    }
+
+    function test_C28_update_conflict_with_null_current_also_discards_queued_photos() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        _queuePhoto("p-a", "SKU-1")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "update")
+        compare(PhotoQueue.pendingCount, 0)
+        PhotoQueue.clear()
+    }
+
+    function test_C29_conflict_WITH_a_current_keeps_the_queued_photos() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        _queuePhoto("p-a", "SKU-1")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", { productId: "SKU-1", name: "Widget v2" }, "delete")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", { productId: "SKU-1", name: "Widget v3" }, "update")
+        compare(_queuedIds(), ["p-a"])
+        PhotoQueue.clear()
+    }
+
+    function test_C30_a_current_without_photoIds_is_a_first_photo_not_an_error() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget", photoIds: ["old-1"] }]
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", { productId: "SKU-1", name: "Widget" }, "update")
+        compare(InventoryStore.products[0].photoIds, [], "missing photoIds normalises to an empty list")
+        compare(InventoryStore.photoIdsFor("SKU-1"), [])
+        InventoryStore.products = []
+        InventoryStore._onMutationConflicted("inventory", "SKU-9", { productId: "SKU-9", name: "New" }, "update")
+        compare(InventoryStore.photoIdsFor("SKU-9"), [], "a product pushed back from the server with no photoIds is photo-ready")
+    }
+
+    function test_C31_hasProduct_true_for_a_loaded_row_false_otherwise() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        verify(InventoryStore.hasProduct("SKU-1"))
+        verify(!InventoryStore.hasProduct("SKU-2"))
+        verify(!InventoryStore.hasProduct(""))
+        verify(!InventoryStore.hasProduct(undefined))
+        InventoryStore.products = []
+        verify(!InventoryStore.hasProduct("SKU-1"))
+    }
+
+    function test_C32_a_throwing_photo_purge_never_blocks_the_conflict_reconcile() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        PhotoQueue.items = null   // PhotoQueue.items.filter throws inside the purge (it is wrapped in try/catch)
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
+        compare(InventoryStore.products.length, 0, "the local row is still removed")
+        PhotoQueue.items = []
+        PhotoQueue.clear()
+    }
 }
