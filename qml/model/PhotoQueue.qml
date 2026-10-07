@@ -228,14 +228,15 @@ QtObject {
         _drainTimer.restart()
     }
 
-    // Not unit-tested under qmltestrunner -- see the TESTABILITY NOTE at the top of this file.
-    // Mirrors Gateway._send's structure deliberately (the QTBUG-49896 status-loss workaround,
-    // 45s timeout, the auth-header/idToken-not-ready guard) so this doesn't invent a second style.
-    // true / false, or undefined when the store cannot answer (never discard on undefined).
+    // true / false / undefined (store cannot answer, or its product list is not fully loaded yet): see
+    // InventoryStore.hasProduct. PQL.shouldDiscardOnFailure discards only on a strict false.
     function _productExistsLocally(productId) {
         try { return InventoryStore.hasProduct(productId) } catch (e) { return undefined }
     }
 
+    // Not unit-tested under qmltestrunner -- see the TESTABILITY NOTE at the top of this file.
+    // Mirrors Gateway._send's structure deliberately (the QTBUG-49896 status-loss workaround,
+    // 45s timeout, the auth-header/idToken-not-ready guard) so this doesn't invent a second style.
     function _upload(item) {
         // Mark uploading first so a concurrent drainNow() (e.g. the backoff timer firing right as
         // AuthService.onIsOnlineChanged also fires) can't double-send the same item.
