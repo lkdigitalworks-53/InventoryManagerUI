@@ -93,3 +93,12 @@ function breakerWaitMs(state, now) {
 function shouldDiscardOnFailure(status, productExistsLocally) {
     return status === 404 && productExistsLocally === false
 }
+
+// PH4 (Taher 2026-10-07): is a product row present locally? Only a COMPLETE product list may answer "no".
+// InventoryStore pages 50 at a time, so a row missing from a partial list (first page only, a page fetch that
+// failed, a reset in flight) is UNKNOWN (undefined), never false. true = found; false = list complete and
+// absent; undefined = cannot tell. Strict `=== true` on both args so garbage can never produce a false.
+function productPresence(foundLocally, listComplete) {
+    if (foundLocally === true) return true
+    return listComplete === true ? false : undefined
+}

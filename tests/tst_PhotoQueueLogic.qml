@@ -262,4 +262,21 @@ TestCase {
             compare(PQL.shouldDiscardOnFailure(others[i], false), false, "status " + others[i])
         compare(PQL.classifyError(404), "terminal")
     }
+
+    function test_P1_P4_productPresence_only_a_complete_list_may_say_absent() {
+        compare(PQL.productPresence(true, true), true)
+        compare(PQL.productPresence(true, false), true)
+        compare(PQL.productPresence(false, true), false)
+        compare(PQL.productPresence(false, false), undefined)
+        compare(PQL.productPresence(false, undefined), undefined)
+        compare(PQL.productPresence(false, null), undefined)
+        compare(PQL.productPresence(undefined, true), false, "not === true counts as not found, list complete")
+        compare(PQL.productPresence(false, "true"), undefined, "a truthy non-boolean never counts as complete")
+    }
+
+    function test_P5_a_404_is_discarded_only_when_the_list_is_complete_and_the_row_absent() {
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, false)), false, "partial list: keep")
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, true)), true, "complete + absent: discard")
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(true, true)), false, "complete + present: keep")
+    }
 }

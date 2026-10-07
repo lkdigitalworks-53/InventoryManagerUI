@@ -6,6 +6,7 @@ import "../helper/RealisedMath.js" as RealisedMath
 import "../helper/ImportMath.js" as ImportMath
 import "../helper/DocLimits.js" as DocLimits
 import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
+import "../helper/PhotoQueueLogic.js" as PQL
 
 QtObject {
     id: root
@@ -30,6 +31,9 @@ QtObject {
     // and a fresh _resetAndFetch() runs immediately instead. Design: SKILLS.md
     // Skill 39's "residual trade-off" note.
     property bool _resetPending: false
+    // True once EVERY page is loaded (nothing more to fetch, no fetch or reset in flight). Only then can a
+    // row missing from `products` be called absent; before that the list is a partial 50-per-page view.
+    readonly property bool listComplete: !hasMore && !loadingMore && !_resetPending
     property var _cursor: null
     // BC2: product deletes sent but not yet acked: productId -> { name, sku, stock }. In memory
     // only (a relaunch forgets them on purpose, see _onMutationApplied).
@@ -222,6 +226,7 @@ QtObject {
 
     function clear() {
         products = []
+        hasMore = true   // nothing is loaded now, so hasProduct() must answer "unknown", not "absent"
     }
 
     // INVARIANT (added 2026-07-30, after a real bug found in OrdersStore's
@@ -1504,15 +1509,17 @@ QtObject {
         return null;
     }
 
+    // true = the row is in the local list; false = the list is complete and the row is not in it;
+    // undefined = cannot tell yet (partial list, or an empty/non-string id). PhotoQueue discards a photo
+    // on a server 404 only for `false` (PQL.shouldDiscardOnFailure), so an unknown answer never discards.
+    function hasProduct(productId) {
+        if (typeof productId !== "string" || productId === "") return undefined
+        return PQL.productPresence(getById(productId) !== null, listComplete)
+    }
+
     // Confirmed photo ids for a product, as a fresh array ([] for an unknown product or a doc with
     // no/invalid photoIds). EditProductDialog re-reads this on every revision so a photo that
     // finishes uploading while the dialog is open shows up without closing and reopening it.
-    // True when this product's row is in the local list (the list is paginated: false only means "not
-    // loaded here"; PhotoQueue uses it together with a server 404, see PQL.shouldDiscardOnFailure).
-    function hasProduct(productId) {
-        return products.some(function(p) { return p.productId === productId })
-    }
-
     function photoIdsFor(productId) {
         var p = getById(productId);
         return (p && Array.isArray(p.photoIds)) ? p.photoIds.slice() : [];

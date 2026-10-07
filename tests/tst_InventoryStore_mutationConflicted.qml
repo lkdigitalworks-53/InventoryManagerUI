@@ -26,6 +26,20 @@ TestCase {
         toastSpy.clear()
     }
 
+    // hasProduct() reads the paging flags (hasMore / loadingMore / _resetPending): put the singleton back to
+    // its defaults so no test leaks a "list complete" state into another file.
+    function cleanup() {
+        InventoryStore.hasMore = true
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = false
+    }
+
+    function _completeList() {
+        InventoryStore.hasMore = false
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = false
+    }
+
     function test_ignores_a_non_inventory_entity() {
         InventoryStore.products = [{ productId: "SKU-1", name: "Widget", stock: 5 }]
         InventoryStore._onMutationConflicted("order", "SKU-1", { productId: "SKU-1", name: "Renamed", stock: 9 }, "update")
@@ -168,14 +182,54 @@ TestCase {
         compare(InventoryStore.photoIdsFor("SKU-9"), [], "a product pushed back from the server with no photoIds is photo-ready")
     }
 
-    function test_C31_hasProduct_true_for_a_loaded_row_false_otherwise() {
+    function test_C31_hasProduct_true_for_a_loaded_row_false_only_when_the_list_is_complete() {
+        _completeList()
         InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
-        verify(InventoryStore.hasProduct("SKU-1"))
-        verify(!InventoryStore.hasProduct("SKU-2"))
-        verify(!InventoryStore.hasProduct(""))
-        verify(!InventoryStore.hasProduct(undefined))
+        compare(InventoryStore.hasProduct("SKU-1"), true)
+        compare(InventoryStore.hasProduct("SKU-2"), false, "complete list, row absent")
         InventoryStore.products = []
-        verify(!InventoryStore.hasProduct("SKU-1"))
+        compare(InventoryStore.hasProduct("SKU-1"), false, "complete empty list")
+    }
+
+    function test_C33_a_row_missing_from_a_PARTIAL_list_is_unknown_never_false() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]   // page 1 of N: hasMore still true
+        InventoryStore.hasMore = true
+        compare(InventoryStore.hasProduct("SKU-1"), true, "a loaded row is always true")
+        compare(InventoryStore.hasProduct("SKU-120"), undefined, "may live on a page that is not loaded yet")
+        compare(InventoryStore.listComplete, false)
+    }
+
+    function test_C34_each_in_flight_flag_alone_makes_the_answer_unknown() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        compare(InventoryStore.hasProduct("SKU-2"), false)
+        InventoryStore.loadingMore = true
+        compare(InventoryStore.hasProduct("SKU-2"), undefined, "a page fetch is in flight")
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = true
+        compare(InventoryStore.hasProduct("SKU-2"), undefined, "a reset is queued: the list is about to be replaced")
+        InventoryStore._resetPending = false
+        InventoryStore.hasMore = true
+        compare(InventoryStore.hasProduct("SKU-2"), undefined, "failed/unfinished paging leaves hasMore true")
+        compare(InventoryStore.hasProduct("SKU-1"), true)
+    }
+
+    function test_C35_an_empty_or_non_string_id_is_unknown() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        compare(InventoryStore.hasProduct(""), undefined)
+        compare(InventoryStore.hasProduct(undefined), undefined)
+        compare(InventoryStore.hasProduct(null), undefined)
+        compare(InventoryStore.hasProduct(42), undefined)
+    }
+
+    function test_C36_clear_makes_hasProduct_unknown_after_sign_out() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        InventoryStore.clear()
+        compare(InventoryStore.products.length, 0)
+        compare(InventoryStore.hasMore, true)
+        compare(InventoryStore.hasProduct("SKU-1"), undefined, "nothing loaded after clear(): unknown, not absent")
     }
 
     function test_C32_a_throwing_photo_purge_never_blocks_the_conflict_reconcile() {

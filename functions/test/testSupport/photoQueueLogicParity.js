@@ -81,6 +81,11 @@ function shouldDiscardOnFailure(status, productExistsLocally) {
   return status === 404 && productExistsLocally === false;
 }
 
+function productPresence(foundLocally, listComplete) {
+  if (foundLocally === true) return true;
+  return listComplete === true ? false : undefined;
+}
+
 module.exports = {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence,
 };

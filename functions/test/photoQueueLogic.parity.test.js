@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence,
 } = require('./testSupport/photoQueueLogicParity');
 
 test('classifyError: terminal codes', () => {
@@ -228,6 +228,53 @@ test('PH4 D5 MONKEY: 5 seeds x 200 random (status, exists) pairs match the one-l
       const status = statuses[rnd(statuses.length)];
       const e = exists[rnd(exists.length)];
       assert.equal(shouldDiscardOnFailure(status, e), status === 404 && e === false);
+    }
+  }
+});
+
+// ---- PH4 follow-up 2 (Taher 2026-10-07): "row gone" may only be answered from the FULL product list ----
+test('PH4 P1: row found -> true, whether or not the list is complete', () => {
+  assert.equal(productPresence(true, true), true);
+  assert.equal(productPresence(true, false), true);
+  assert.equal(productPresence(true, undefined), true);
+});
+test('PH4 P2: row not found AND list complete -> false (the only case that may discard)', () => {
+  assert.equal(productPresence(false, true), false);
+});
+test('PH4 P3: row not found in a PARTIAL list (first page of 50, failed page, reset in flight) -> undefined, never false', () => {
+  assert.equal(productPresence(false, false), undefined);
+  assert.equal(productPresence(false, undefined), undefined);
+  assert.equal(productPresence(false, null), undefined);
+});
+test('PH4 P4: garbage never yields false (strict === true on both args)', () => {
+  for (const f of [undefined, null, 0, 1, '', 'x', NaN]) for (const c of [1, 'true', {}, [], 0, '']) {
+    assert.notEqual(productPresence(f, c), false, `${String(f)}/${String(c)}`);
+  }
+  assert.equal(productPresence('true', true), false); // not === true -> treated as not found, list complete
+});
+test('PH4 P5 END-TO-END RULE: a 404 for a product sitting on page 3 of 3 is NOT discarded while only page 1 is loaded', () => {
+  const PAGE = 50, all = Array.from({ length: 130 }, (_, i) => 'SKU-' + i);
+  const target = 'SKU-120'; // lives on page 3
+  const decide = (loadedPages, hasMore) => {
+    const loaded = all.slice(0, loadedPages * PAGE);
+    return shouldDiscardOnFailure(404, productPresence(loaded.includes(target), !hasMore));
+  };
+  assert.equal(decide(1, true), false);  // only page 1 loaded: the old behaviour discarded here (the bug)
+  assert.equal(decide(2, true), false);
+  assert.equal(decide(3, false), false); // fully loaded and the row IS there -> keep terminal 404
+  const gone = (loadedPages, hasMore) => shouldDiscardOnFailure(404, productPresence(all.slice(0, loadedPages * PAGE).includes('SKU-999'), !hasMore));
+  assert.equal(gone(1, true), false);    // absent but list partial -> unknown -> keep
+  assert.equal(gone(3, false), true);    // absent and list complete -> discard
+});
+test('PH4 P6 MONKEY: 5 seeds x 300 random (found, complete) pairs match the truth table', () => {
+  for (let seed = 1; seed <= 5; seed++) {
+    let st = seed * 32452843;
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const vals = [true, false, undefined, null, 0, 1, '', 'x'];
+    for (let i = 0; i < 300; i++) {
+      const f = vals[rnd(vals.length)], c = vals[rnd(vals.length)];
+      const want = f === true ? true : (c === true ? false : undefined);
+      assert.equal(productPresence(f, c), want);
     }
   }
 });
