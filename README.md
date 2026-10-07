@@ -580,31 +580,7 @@ instead of a local-array max-scan, which wasn't safe under concurrent access. De
 
 See SKILLS Skill 36's 2026-08-08 section for the reusable lessons from this round.
 
-_Removed 2026-10-06 (each lesson lives in SKILLS.md, original text in git history): the 2026-08-06/10/12 concurrency fix notes (post-restart sync race, dual-trigger reset: Skills 36-39) and the 2026-08-29 bulk-import chunking and 2026-09-14 order-completion double-submit notes (Skills 57, 61). Find any skill with `grep -i keyword SKILLS-INDEX.md`._
-
-**Update 2026-08-11:** found immediately after the fix directly above, testing the same branch —
-complete an order, verify it in Firestore, close the app, reopen it, and return an item promptly:
-the return "succeeded" locally, but the Orders list total didn't reduce and order-level history
-looked incomplete. Root cause was different from 2026-08-10 despite the similar symptom:
-`OrdersStore.applyAdjustment`'s completed-order total trusts `TransactionStore.totalsForOrder`
-unconditionally, and `TransactionStore` re-fetches its entire transaction history from Firestore on
-every cold start, paginated, ordered ascending by document ID — and because transaction IDs are
-locally generated with an embedded, increasing timestamp, that means the NEWEST transactions
-(including a just-completed order's own sale) load LAST. Acting before that sync finished meant
-computing the ledger total against data that was missing its own base sale event. Verified this
-wasn't an arithmetic bug by Node-porting the actual allocation/ledger-sum logic (both are portable
-`.pragma library` JS) against three scenarios (simple, tax+discount+multi-line, sequential returns)
-— all correct given a complete ledger. Fixed by refusing completed-order adjustments while
-`TransactionStore.hasMore` is true (checked in `DataModel._tryAdjustOrder`, which both the normal
-return flow and the import-adjustment path route through, plus proactively in
-`OrderDetailDialog._save()` so the user finds out before filling out the whole return form) —
-scoped to that one action specifically (`grep -rn "totalsForOrder(" qml/` turns up exactly one
-caller), not a blanket "block the whole app while any store syncs," since order completion and
-everything else here don't read this ledger at all. Also added retry-with-backoff to
-`TransactionStore`'s sync — without it, a single failed page left `hasMore` stuck at `true` forever,
-which would have turned the new guard into a permanent lockout after one dropped request instead of
-a brief, correct wait. See SKILLS Skill 38 and `docs/superpowers/specs/
-2026-08-11-ledger-sync-race-CHECKPOINT.md` for the full investigation.
+_Removed 2026-10-06 (each lesson lives in SKILLS.md, original text in git history): the 2026-08-06/10/12 concurrency fix notes (post-restart sync race, dual-trigger reset: Skills 36-39), the 2026-08-29 bulk-import chunking, 2026-09-14 order-completion double-submit, 2026-08-11 ledger-sync, 2026-09-16 busy-guard retest, 2026-09-19 stuck-writes and 2026-09-25 deleted-staff notes (Skills 57, 61, 38, 66, 67, 70). Find any skill with `grep -i keyword SKILLS-INDEX.md`._
 
 **Update 2026-07-30:** `DataModel._tryAdjustOrder` (order returns/exchanges) now gets the same
 async-await treatment `_tryCompleteOrder` got — added-unit stock deductions are confirmed before
@@ -665,19 +641,6 @@ before closing — mirroring `OrderDetailDialog`'s PR #70 pattern. `orderCreatio
 correlation to which request failed and so isn't safe to gate a dialog's own `busy` reset on. See
 SKILLS Skill 65 and the tracker doc's F-2 entry.
 
-**Update 2026-09-16 (later, on-device retest):** Taher reported double-pressing still duplicated
-results in both `RestockDialog` (stock added twice) and `NewOrderDialog` with auto-approve on
-(order placed and completed twice). Investigated both guards layer by layer — button `enabled`
-binding, loading-state rendering, the underlying Store/Gateway call — and found no code-level
-defect in either; both are structurally identical to the pattern that fixed the original bug. Left
-open rather than guess-fixed: see `docs/superpowers/ASYNC-REENTRANCY-BUGS.md` C-4 (`RestockDialog`; later retested clean, no repro)
-and the note added under C-2/F-2 (`NewOrderDialog` — needs to confirm the retest ran against the
-fixed branch, not a stale build) for the full trace and the specific open question each one needs
-resolved before further code changes. `Gateway.recordDelta`'s delta-coalescing/callback-fan-out
-behavior, found while tracing `RestockDialog`, is recorded in SKILLS Skill 66 — not confirmed as
-the cause here, but real and worth knowing for any future `recordDelta` caller with non-idempotent
-callback side effects.
-
 **Update 2026-09-21 (staff delete button, plus two adjacent gaps found while tracing it):**
 `StaffPage` had the identical missing-row-button gap products and orders had before
 `feature/product-order-delete-ui` — every piece of plumbing (`deleteStaffClicked`, the confirm dialog,
@@ -691,18 +654,6 @@ specifically, since the client-side check alone was not a trust boundary. That l
 every other entity/action still has no server-side role check, tracked as its own `KNOWN-ISSUES.md` entry
 rather than fixed piecemeal here. See SKILLS Skill 68 and
 `docs/superpowers/specs/2026-09-21-staff-delete-ui-design.md`.
-
-**Update 2026-09-25 (deleted staff keep their name in history):** on-device testing of the staff delete button
-showed that deleting a staff member blanked their name from their orders (order detail, exported sheet, Sales
-Analysis) and that opening + saving such an order silently cleared its attribution. Deleting a staff member now
-writes a small `removed_staff` tombstone (`{staffId, name, removedAt}`) through the Gateway; the order picker,
-the orders export and the Sales Analysis "By staff" breakdown show `Name (removed)` for deleted members (so a
-removed "Ravi" and a newly-added "Ravi" never look or merge alike), and a deleted staff id is never re-issued.
-The `removed_staff` entity is owner/admin-only on the server. Test plan: section 5 of
-`docs/superpowers/test-plans/2026-09-21-staff-delete-ui-test-plan.md`; lesson: Skill 70 in `SKILLS.md`.
-**Deploy note:** this needs the Cloud Functions redeployed (`ENTITY_COLLECTIONS` + role check); until then the
-tombstone write is rejected (it retries with backoff and shows the stuck-write indicator; it does not block other
-writes) while the staff delete itself still works.
 
 **Update 2026-09-26 (Sales Analysis stops mislabeling a deleted product's history):** Purchased, Sold, Revenue
 and Profit's Realised sub-mode used to dump a deleted product's historical rows into "(uncategorised)" and a raw
@@ -719,18 +670,6 @@ server-side parity port (`functions/lib/`), which had the same bug and is a live
 was caught by the Node test suite actually failing, not by tracing — see SKILLS Skill 72. Design:
 `docs/superpowers/specs/2026-09-26-sales-analysis-deleted-product-labels-design.md`; test plan:
 `docs/superpowers/test-plans/2026-09-26-sales-analysis-deleted-product-labels-test-plan.md`.
-
-**Update 2026-09-19 (writes stuck behind a server-side failure):** `Gateway._send`, `_sendBatch` and
-`_sendDelta` retried any failure that wasn't a recognised terminal case forever, with backoff and no signal
-to anyone, while the stores had already applied the change locally (`DELETE-FEATURE-ROADMAP` item 1). The
-server can't help the client decide: every `applyMutation` exception comes back as `500 write-failed`. So
-`Gateway` now counts server-side failures (status 400 or above, except 401 and 409; offline never counts) per
-queued write in `qml/helper/StuckWrites.js`; the 5th failure (about 3 minutes with the current backoff) shows
-one toast and raises `Gateway.stuckCount`, which `Main.qml` republishes as `syncStuckCount` and the existing
-`GlassHeader` caption line shows as "N change(s) not syncing. Still retrying." until the write leaves the
-outbox. This only reports: retry, backoff and dropping are untouched, so local state can still diverge from
-the server and there is no in-app Retry/Discard yet. See SKILLS Skill 67 and
-`docs/superpowers/specs/2026-09-19-gateway-stuck-write-indicator-design.md`.
 
 **Update 2026-09-29 (stuck state survives a relaunch, part B slice S2a):** the stuck-write state was in memory only, so closing the app hid the header line and the dialog rows, and because the outbox keeps its 10-minute backoff the alarm could stay dark for 40+ minutes. `Gateway` now saves each write's failure count, stuck flag and rejected label on its queued outbox item, restores them at launch (`Gateway.resumeStuck`, header line back before any retry, no toast), and re-checks stuck writes once at launch instead of waiting out the backoff. Park / Discard are still to come (S2b, S3). See SKILLS Skill 88 and `docs/superpowers/test-plans/2026-09-29-stuck-state-persist-s2a-test-plan.md`.
 
