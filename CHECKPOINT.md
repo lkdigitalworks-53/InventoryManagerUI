@@ -1,21 +1,27 @@
-# CHECKPOINT — 2026-10-05 session: PR #129 final sweep (resume here)
+# CHECKPOINT — 2026-10-06 session: SKILLS-INDEX + safe doc trim (resume here)
 
-**Review branch:** `review/2026-10-05-pr129-final-sweep` = PR #129 head + merge of `origin/main` (doc conflicts only) + review fixes. PR targets PR #129's branch (`fix/2026-10-06-ci-junit-parser`), same stacked pattern as #101/#105/#112/#120/#125. After it merges into #129's branch, #129 is conflict-free: squash-merge #129.
+**Branch:** `chore/2026-10-06-skills-index-doc-trim` off `main` @ b455f72 (#129 and #130 merged). Docs/CI-tooling only. NOTHING IS DEPLOYED.
 **Commit identity:** `taher.lkdw@gmail.com`. Push with the PAT in the push URL only; never in a file / git config / memory.
-**Rules in force:** branch only, no app build/run, no Qt tools in the sandbox (CI is the signal), tests + test plan per change, docs updated, caveman mode. NOTHING IS DEPLOYED.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-06-pr128-final-sweep-CHECKPOINT.md`.
+**Design:** `docs/superpowers/specs/2026-10-06-skills-index-design.md` (D1-D5, vetoable in the PR).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-05-pr129-final-sweep-CHECKPOINT.md`.
+
+## Plan (tick as done)
+- [x] 1 generator `.github/scripts/skills-index.js` + tests (unit, edge, negative, monkey, repo-state)
+- [x] 2 rename older duplicate `Skill 89` -> `89b`; generate `SKILLS-INDEX.md`
+- [x] 3 AGENTS.md read-order rule; SKILLS.md overview note; README script list
+- [x] 4 trim: README Concurrency blocks that cite an existing Skill; dead refs; false Staff-delete status row
+- [x] 5 test plan + index row, Skill 106, roadmap/README rows
+- [~] 6 push, open PR, CI green, update memory
 
 ## Step log
-1. Cloned fresh, read memory, requesting-code-review + ponytail-audit skills.
-2. PR #129 facts: base `main` @ 9fd8889 (#128 already squash-merged), 8 commits, `mergeable_state: dirty`. Cause: branch still carries the pre-squash #128 commits, so 4 doc files conflict (CHECKPOINT, SKILLS, roadmap, test-plans README). Real diff vs main = 7 files.
-3. Review of `parse-junit.js` + tests: correct. Replayed real `node --test --test-reporter=junit` of `functions/` through both parsers: 585 testcases, new parser 585, old parser (main) 364. 52/52 script tests green before my change.
-4. Found (Minor): quadratic scan on truncated XML (320 KB of unterminated tags = 20 s). Single-quoted attribute with `>` undercounts (not fixed: neither generator emits it; documented). `decodeXmlEntities` exported, no other user.
-5. Merged `origin/main` into the review branch; kept branch side of all four conflicts (rule: keep branch CHECKPOINT; SKILLS 105 is the highest number, no renumber needed).
-6. Fix: tag body refuses raw `<` (node escapes it, verified) -> 2 ms. Unexport `decodeXmlEntities`. +3 hardening tests (script tests 55/55, `parse-junit.js` 100% line/branch; 2 of 3 new tests fail on the old parser, 1 is a guard).
-7. Docs: junit test plan (H1-H3, limits), Skill 105 rule 6, PH3b test plan DV-3 now lists the exact marker fields (createdAt MUST be a Timestamp, else the marker parks).
-8. ponytail-audit (whole repo, report only) is in the PR description.
+1. Cloned, branch from main, read brainstorming + ponytail skills, scanned SKILLS/AGENTS/README (no exact duplicate long lines; README "Concurrency" = 34 KB dated changelog; 8 dead-looking refs; duplicate `Skill 89`).
+2. Generator + 21 tests (100% cover, mutation check: 3 new tests fail with the duplicate rule off). Older duplicate `Skill 89` -> `89b`. Index: 107 skills, 11.5 KB vs 306 KB.
+3. README trim by rule (cites existing Skill, >=85% identifiers found there, >=7 identifiers): 5 of 25 blocks, 9,019 bytes. AGENTS: stale Staff-delete row fixed, dead path removed, rule 3 "Read order". SKILLS: overview note, dead path removed, Skill 106.
+4. Test plan + README index row. Script tests 76/76.
 
 ## NEXT
-1. Taher: merge the review PR into #129's branch, wait for CI, squash-merge #129. After merge the PR comment should show Functions 585 and a higher E2E count.
-2. Taher: deploy PH3b (all functions), create the alert, run test plan section 4 (DV-1..DV-9) on `dev1` only. Steps were given in chat; the source is test plan section 4 + `specs/2026-10-05-ph3b-alert-runbook.md`.
-3. After PH3b is proven: PH4 client, BC2 follow-ups, PH5.
+1. Taher: review the PR; veto D1-D5 if wanted. Merge when CI is green.
+2. Later (not done, medium confidence, listed in the PR): README blocks 770/825/601/797 (~4.6 KB, scores 0.80-0.83), AGENTS stale status sections, 69 archived CHECKPOINT files.
+3. PH3b: deploy + DV-1..DV-9 are still open (steps given in chat, test plan section 4).
+
+5. 2026-10-06 later: Taher said "trim readme then move to ph4". Stacked branch `chore/2026-10-06-readme-trim-2` (base = PR #131 branch) removes 4 more README blocks (5,509 B; README now 47.6 KB). Then PH4 brainstorming started (design gate: no code until Taher approves).

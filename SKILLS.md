@@ -4,6 +4,8 @@
 
 This file documents reusable component patterns, signal conventions, and domain-specific knowledge for the **BusinessManagement** App_UI Felgo QML project. Use these skills as reference when building or modifying features.
 
+**Reading this file:** do not read it end to end (~75k tokens). Start from `SKILLS-INDEX.md` (generated from the headings below), then open only the skills you need: `awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md`. Every skill heading must be `## Skill <n>: <title>` with a unique id (a letter suffix such as `89b` is allowed); after adding or renaming one run `node .github/scripts/skills-index.js --write`.
+
 ---
 
 ## Skill 1: Using CardKPI
@@ -1182,7 +1184,7 @@ the arithmetic against Firestore's actual limit.
 **Files**: `qml/model/{OutboxStore,Gateway,LockManager,OrdersStore,InventoryStore,StaffStore,
 SupplierStore,StockBatchStore}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`, `firestore.rules`,
 full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, review:
-`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`
+the 2026-08-06 code review (never committed)
 
 Four related but distinct correctness mechanisms, easy to conflate — know which one actually
 fixes which bug before reaching for any of them:
@@ -3217,7 +3219,7 @@ question that actually disambiguates rather than guessing — here, whether the 
 just-pushed fix or a build that predates it, which fully resolves the `NewOrderDialog` half of the
 report on its own.
 
-## Skill 89: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
+## Skill 89b: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
 
 **What happened**: on-device testing of the Tier C cascade-delete feature found a precisely
 reproducible bug: create a product with stock 10, sell 1 via a completed order, delete the
@@ -4144,3 +4146,13 @@ Rules:
 4. A regression test is only proven when it FAILS on the old code: run the new tests against `git show HEAD~:path` once (7 of 9 failed here), without ever touching the working tree with `git stash` (a `stash drop` lost the fix once; recovery was `git fsck --unreachable`).
 5. Job exit codes gate CI; the PR comment is only a report. Fix reports in their own stacked PR so the feature PR stays reviewable.
 6. A quote-aware tag regex must also refuse a raw `<` in the tag body: XML forbids it there, and without the ban every unterminated `<testcase` scans to end of input (quadratic: 320 KB of truncated tags took 20 s, 2 ms after). Prove a hardening test by timing it against the old code, and say which new tests were only guards (one of three here passed on both).
+
+## Skill 106: Give a big reference file a GENERATED index and test it, instead of a hand-written summary; trim docs only by a rule you can run
+
+Context (2026-10-06): `SKILLS.md` reached 306 KB (about 75k tokens) and was read in full at every session start on a token-limited plan.
+Rules:
+1. Build the index from the headings (`.github/scripts/skills-index.js`), never by hand: a hand-written line can drift, can hide an entry, and every new entry needs two edits. A generated file has neither failure.
+2. Make drift a failing test in a job that already runs on every PR (the script tests), with the fix command in the message. Do not add line numbers or sizes to the index: they change on every edit above them and turn parallel sessions into merge conflicts. Read one entry with `awk -v id=N '/^## Skill /{p=($3==id":")} p' SKILLS.md`.
+3. A generator that parses headings must fail on duplicate ids and on malformed headings (the file already had two `Skill 89`, found only when the generator ran) and must ignore headings inside code fences.
+4. Trim docs only by a rule that can be executed and repeated: cut a dated block only if it cites a skill that exists AND most of its backticked identifiers occur in that skill (5 of 25 README blocks passed at 85%). List what failed the rule as candidates, do not delete on judgement. Git history keeps the rest.
+5. A status row can be false: verify against the code (`StaffPage.qml` had the delete button the table said was missing) before copying a doc claim into a new doc.
