@@ -4167,3 +4167,12 @@ Rules:
 4. `test/felgo-dependent/` does NOT run in CI (only `qmltestrunner -input tests`). Do not plan automated cases for a dialog/page there. Cover what you can with Node source guards (case-sensitive token scan, C++ column counts) and put the rest on the device plan.
 5. A source guard needs its own self-test (CRLF, comments, allowed aliases like `PhotoUrl`, random junk) and a mutation check (re-add the thing, the guard must fail).
 6. Mutation checks: never restore with `git checkout <path>` while you have uncommitted work in that path; it reverts to HEAD and silently deletes your edit (happened here, re-applied). Copy to /tmp first, restore from the copy.
+
+## Skill 108: Verify a design "fact" by reading the code that owns it; a document has more than one creation path, and a shared reader may be positional
+
+Context (2026-10-08, PR #136 review): the PH5 design said "import is keyed by header text, so old exports keep importing". The C++ reader `readSheet` is positional (column N is labelled `kProductHeaders[N-1]`, the header row is never read), so removing a column shifts every later one. Two decisions were taken on that wrong fact. Separately, bulk import builds docs through `_normalizeRecord`, a second creation path that omitted `photoIds`, so imported products 409'd on their first edit (server `_deepEqual` compares key counts). The `_newProductDoc` comment said "check by hand"; nothing enforced it.
+Rules:
+1. A design "fact" that drives a decision gets read in the owning function before the decision, not copied from an earlier doc. Name the function and line in the fact.
+2. Before removing or reordering a spreadsheet column, check how the READER finds columns (position or header text) and whether any header check exists.
+3. Every code path that creates a CAS-compared document must have its key set pinned against `_newProductDoc` and `_clone()` by a test (`tst_InventoryStore_cloneSymmetry`). "Check by hand" comments are not a guard.
+4. When a decision is accepted on a known risk (here R1 = A), write the risk and the user rule into KNOWN-ISSUES in the same change.

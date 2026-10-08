@@ -115,3 +115,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 105: Count JUnit testcases, never tags by `[^>]*`; a test count that does not move when tests are added is a defect signal
 - 106: Give a big reference file a GENERATED index and test it, instead of a hand-written summary; trim docs only by a rule you can run
 - 107: Removing a field the client writes from a CAS-compared document 409s every stored doc that still has it; decide that on purpose
+- 108: Verify a design "fact" by reading the code that owns it; a document has more than one creation path, and a shared reader may be positional

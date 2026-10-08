@@ -250,8 +250,8 @@ QtObject {
     // This is a narrower fix than OrdersStore's _normalizeOrder (which also
     // folds in the update/bulk-import paths) — see review notes on
     // pr_taher_bug_fixes for the trade-off; _normalizeRecord (bulk import)
-    // still builds its own doc shape independently and must be checked by
-    // hand against this one and _clone() if either changes.
+    // still builds its own doc shape independently; its key set is pinned against this one
+    // by tst_InventoryStore_cloneSymmetry (PR #136 review).
     function _newProductDoc(id, name, sku, category, stock, minStock,
                              price, sellingPrice, taxable, taxPercent,
                              size, unit, description, supplierId) {
@@ -989,7 +989,10 @@ QtObject {
             minStock: parseInt(r.minStock) || 0,
             // Already resolved (existing id/name, or pre-minted-for-this-batch
             // name) by _upsertManySync before _normalizeRecord is called.
-            supplierId: r.supplierId || ""
+            supplierId: r.supplierId || "",
+            // Must exist at creation like _newProductDoc: _clone() always emits photoIds, and the
+            // server CAS compares key sets, so an imported doc without it 409s on its first edit.
+            photoIds: []
         };
     }
 

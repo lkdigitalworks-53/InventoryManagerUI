@@ -25,7 +25,7 @@
 | NOT touched | `AuthStore`, `AuthService`, `ProfilePage`, `functions/index.js:805` (`provisionMember`, user doc), `PhotoUrl.js` (name only: builds Storage download URLs, unrelated) | — |
 
 ## Facts that drive the questions (all verified in code)
-1. **Import is keyed by header text** (`r["Min Stock"]`, `r["Photo URL"]` ...); no required-column list or unknown-column check exists. A file that still has a "Photo URL" column imports fine whether or not the app knows the column.
+1. **CORRECTED in PR #136 review: import is POSITIONAL, not header-keyed.** `XlsxService.cpp` `readSheet` reads column N and labels it `kProductHeaders[N-1]`; the file's own header row is never read and there is no column-count or header check. The first version of this fact ("keyed by header text, so old exports keep importing") was wrong. After PH5 a pre-PH5 15-column file or template shifts: its Photo URL column is read as Supplier, Supplier as Size, Size as Taxable, Taxable as Tax %, and the old Tax % column is ignored. Q-P5-1 and Q-P5-2 were decided on the wrong premise; see the review note.
 2. **Export is keyed by position** (`doc.write(row, 11 ...)`, `setColumnWidth(11, ...)`): removing a column shifts columns 12-15 to 11-14 in both writer and widths. The template ("Notes" sheet) is a hand-written row list, separate from `kProductHeaders`.
 3. **Today `Photo URL` only reaches NEW rows.** The overwrite branch of `upsertMany` builds its own `fields` object without `photoUrl`, so the template text "Leave empty to keep the existing photo" is already false. A new imported row gets `photoUrl` = whatever URL was typed, and `InventoryPage` still renders it as the card avatar (the L241 fallback). After PH5 that value is dropped.
 4. **`_mergeRecord` has zero callers** (grep) and was flagged "leave alone" in 2026-07 and again by the 2026-10-07 audit decision (do not delete zero-reference functions). It still contains the `photoUrl` keys, which would break the PH5 acceptance ("no product `photoUrl` token").
@@ -52,7 +52,7 @@
 - Server: NO production change. One pin test (F42): `applyMutation` with `before` lacking the two keys vs a stored doc having them returns 409 (documents Q-P5-3 and fails loudly if someone later "fixes" it without deciding).
 
 ## Known limits (to write into KNOWN-ISSUES at implementation)
-Pre-PH5 tenants are not usable after PH5 (Q-P5-3 a). Historical `photo_change` ledger rows that hold URL strings still render (display reads before/after non-emptiness only). Spreadsheet exports from before PH5 contain a "Photo URL" column that import ignores (with the Q-P5-2 warning).
+Pre-PH5 tenants are not usable after PH5 (Q-P5-3 a). Historical `photo_change` ledger rows that hold URL strings still render (display reads before/after non-emptiness only). Spreadsheet exports from before PH5 contain a "Photo URL" column that import ignores (NOT harmless: columns shift, see Fact 1).
 
 ## Not building
 Data migration, server-side compat shim (unless Q-P5-3 = d), a column-position-stable export, removal of user-profile `photoUrl`, deletion of `_mergeRecord` (Q-P5-4 B), the 10 audit zero-reference functions.
@@ -61,4 +61,4 @@ Data migration, server-side compat shim (unless Q-P5-3 = d), a column-position-s
 `SKILLS.md` (new Skill: removing a client-side field from a CAS-compared document 409s every stored doc that has it; number assigned at rebase, #133 holds 107-108) + `SKILLS-INDEX.md` regenerate, `AGENTS.md` (file map: import/export columns, store functions removed), `README.md` (product import/export column list, Photo URL mentions), `KNOWN-ISSUES.md` (pre-PH5 tenants), `DELETE-FEATURE-ROADMAP.md` status, `docs/superpowers/test-plans/README.md` index row, test plan section statuses.
 
 ## Acceptance
-No product `photoUrl`/`photoUpdatedAt` token left in `qml/` or `src/` except (a) user-profile files, (b) `ImportMath.hasLegacyPhotoColumn` and its tests, (c) guard tests that assert absence. Export has 14 product columns with widths aligned. Old 15-column file imports with a warning and no error. Profile photo save/load unchanged (S09). CI green (QML, functions, rules, e2e, C++ build). Pin test F42 present.
+No product `photoUrl`/`photoUpdatedAt` token left in `qml/` or `src/` except (a) user-profile files, (b) tests and guards that assert absence (the helper `hasLegacyPhotoColumn` was dropped by Q-P5-2 = A). Export has 14 product columns with widths aligned. Profile photo save/load unchanged (S09). CI green (QML, functions, rules, e2e, C++ build). Pin test F42 present.
