@@ -32,6 +32,7 @@ TestCase {
         InventoryStore.hasMore = true
         InventoryStore.loadingMore = false
         InventoryStore._resetPending = false
+        PhotoQueue.items = []   // compare() aborts a test function, so C32's own restore of PhotoQueue.items can be skipped
     }
 
     function _completeList() {
@@ -238,7 +239,5 @@ TestCase {
         PhotoQueue.items = null   // PhotoQueue.items.filter throws inside the purge (it is wrapped in try/catch)
         InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
         compare(InventoryStore.products.length, 0, "the local row is still removed")
-        PhotoQueue.items = []
-        PhotoQueue.clear()
     }
 }

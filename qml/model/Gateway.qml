@@ -83,9 +83,13 @@ QtObject {
     // Component 3's client-side half (review finding C3, 2026-08-06): fired
     // when applyMutation's CAS check rejects a recordMutation because
     // someone else's write already landed for that record (`before` was
-    // stale). `current` is the server's actual current document (null only
-    // if the malformed/legacy edge case in _parseMutationConflict below
-    // ever fires, which it shouldn't for a real conflict response). Each
+    // stale). `current` is the server's actual current document, or null when
+    // the server row does not exist (applyMutation / operationLogic return
+    // `current: null` for a record deleted elsewhere; _parseMutationConflict
+    // below also maps a malformed body with no `current` to null, which a real
+    // conflict response never is). InventoryStore treats null as "row gone":
+    // it keeps the local row removed and discards that product's queued
+    // photos. Each
     // store that calls recordMutation should connect to this and patch its
     // own local array for `entityId` from `current` — the queued write is
     // already dropped (not retried) by the time this fires, see _send.
