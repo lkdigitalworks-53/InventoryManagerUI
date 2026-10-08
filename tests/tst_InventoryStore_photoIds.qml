@@ -28,7 +28,7 @@ TestCase {
     function _p(id, photoIds) {
         return { productId: id, name: "Widget " + id, sku: "S-" + id, category: "General",
                  stock: 5, minStock: 1, price: 10, sellingPrice: 12, taxable: false, taxPercent: 0,
-                 size: "", unit: "pcs", description: "", photoUrl: "", photoUpdatedAt: "",
+                 size: "", unit: "pcs", description: "",
                  photoIds: photoIds, supplierId: "" }
     }
 
@@ -204,5 +204,76 @@ TestCase {
         }
         compare(JSON.stringify(InventoryStore.photoIdsFor("P1")), JSON.stringify(expected.P1))
         compare(JSON.stringify(InventoryStore.photoIdsFor("P2")), JSON.stringify(expected.P2))
+    }
+
+    // ── PH5 (2026-10-08): legacy product photoUrl / photoUpdatedAt are gone ─────────────────
+    // Design: docs/superpowers/specs/2026-10-08-photos-ph5-legacy-removal-design.md. Server CAS
+    // compares whole documents, so a doc that already carries the two keys 409s once the client
+    // stops sending them (pinned server-side by functions F42); fresh tenants never get them.
+
+    function _hasLegacy(o) { return o.hasOwnProperty("photoUrl") || o.hasOwnProperty("photoUpdatedAt") }
+
+    function test_S01_normalize_does_not_create_the_legacy_keys() {
+        var arr = [{ productId: "P1" }, { product_id: "P2", currentStock: 3 }]
+        InventoryStore._normalizeProducts(arr)
+        for (var i = 0; i < arr.length; ++i) verify(!_hasLegacy(arr[i]), "doc #" + i)
+        verify(Array.isArray(arr[0].photoIds), "photoIds default still applied")
+    }
+
+    function test_S02_doc_carrying_the_legacy_keys_loads_and_clone_drops_them() {
+        var doc = _p("P1", ["a"])
+        doc.photoUrl = "file:///x.jpg"
+        doc.photoUpdatedAt = "2026-01-01T00:00:00Z"
+        var arr = [doc]
+        InventoryStore._normalizeProducts(arr)          // must not throw
+        InventoryStore.products = arr
+        var c = InventoryStore._clone()
+        compare(c.length, 1)
+        verify(!_hasLegacy(c[0]), "clone must not propagate the legacy keys")
+        compare(JSON.stringify(c[0].photoIds), '["a"]')
+    }
+
+    function test_S03_new_product_doc_and_clone_have_no_legacy_keys() {
+        var d = InventoryStore._newProductDoc("P9", "N", "S9", "General", 1, 1, 10, 12, false, 0, "", "pcs", "", "")
+        verify(!_hasLegacy(d), "new product doc")
+        InventoryStore.products = [d]
+        verify(!_hasLegacy(InventoryStore._clone()[0]), "clone of a new product doc")
+    }
+
+    function test_S11_legacy_functions_are_gone() {
+        compare(typeof InventoryStore.setPhoto, "undefined")
+        compare(typeof InventoryStore.clearLegacyPhotoUrl, "undefined")
+    }
+
+    function test_S13_import_new_row_with_a_stray_photoUrl_stores_no_legacy_key() {
+        InventoryStore.products = []
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        var records = [{ productId: "", _conflictPolicy: "skip", name: "Imported", sku: "IMP-1",
+                         category: "General", unit: "pcs", stock: 0, minStock: 1, price: 5,
+                         sellingPrice: 8, taxable: false, taxPercent: 0, size: "", supplierId: "",
+                         photoUrl: "http://example.com/a.jpg" }]
+        InventoryStore._upsertManySync(records, function() { return "PRD-777" }, function(r) { return "" },
+                                       function() { return "BAT-2026-901" }, counts)
+        compare(counts.added, 1)
+        compare(InventoryStore.products.length, 1)
+        verify(!_hasLegacy(InventoryStore.products[0]), "imported doc must not carry a legacy key")
+    }
+
+    function test_S14_regression_overwrite_never_touches_photoIds_or_legacy_keys() {
+        InventoryStore.products = [_p("P1", ["a", "b"])]
+        var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
+        var records = [{ productId: "P1", _conflictPolicy: "overwrite", name: "Renamed", sku: "S-P1",
+                         category: "General", unit: "pcs", stock: 7, minStock: 1, price: 10,
+                         sellingPrice: 12, taxable: false, taxPercent: 0, size: "", supplierId: "",
+                         photoUrl: "http://example.com/b.jpg" }]
+        InventoryStore._upsertManySync(records, function() { return "PRD-778" }, function(r) { return "" },
+                                       function() { return "BAT-2026-902" }, counts)
+        compare(counts.updated, 1)
+        var f = counts.updatedProducts[0].fields
+        compare(f.name, "Renamed")
+        compare(f.stock, 7)
+        verify(!f.hasOwnProperty("photoIds"), "overwrite must not write photoIds")
+        verify(!_hasLegacy(f), "overwrite must not write legacy keys")
+        compare(JSON.stringify(InventoryStore.photoIdsFor("P1")), '["a","b"]')
     }
 }

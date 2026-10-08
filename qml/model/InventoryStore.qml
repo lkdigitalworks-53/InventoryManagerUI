@@ -154,8 +154,6 @@ QtObject {
             if (p.taxable === undefined || p.taxable === null) p.taxable = false;
             if (p.taxPercent === undefined || p.taxPercent === null) p.taxPercent = 0;
             if (!p.size) p.size = "";
-            if (!p.photoUrl) p.photoUrl = "";
-            if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
             if (!Array.isArray(p.photoIds)) p.photoIds = [];
             if (!p.supplierId) p.supplierId = "";
         }
@@ -251,8 +249,6 @@ QtObject {
                       taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
                       size: p.size || "",
                       unit: p.unit, description: p.description,
-                      photoUrl: p.photoUrl || "",
-                      photoUpdatedAt: p.photoUpdatedAt || "",
                       photoIds: Array.isArray(p.photoIds) ? p.photoIds.slice() : [],
                       supplierId: p.supplierId || ""});
         }
@@ -268,8 +264,8 @@ QtObject {
     // This is a narrower fix than OrdersStore's _normalizeOrder (which also
     // folds in the update/bulk-import paths) — see review notes on
     // pr_taher_bug_fixes for the trade-off; _normalizeRecord (bulk import)
-    // still builds its own doc shape independently and must be checked by
-    // hand against this one and _clone() if either changes.
+    // still builds its own doc shape independently; its key set is pinned against this one
+    // by tst_InventoryStore_cloneSymmetry (PR #136 review).
     function _newProductDoc(id, name, sku, category, stock, minStock,
                              price, sellingPrice, taxable, taxPercent,
                              size, unit, description, supplierId) {
@@ -279,7 +275,7 @@ QtObject {
                  taxable: taxable, taxPercent: taxPercent,
                  size: size,
                  unit: unit, description: description || "",
-                 photoUrl: "", photoUpdatedAt: "", photoIds: [],
+                 photoIds: [],
                  supplierId: supplierId };
     }
 
@@ -674,31 +670,6 @@ QtObject {
         }
     }
 
-    // Persist a photo URL on a product. Per-doc PATCH bypasses the bulk-PUT
-    // path so the write is always atomic.
-    // KEPT for the legacy single-photo field only -- the multi-photo path below
-    // (applyPhotoIds) is what the new gallery uses. Nothing in this codebase
-    // calls setPhoto() anymore as of the 2026-09-21 photos feature (the only
-    // caller, EditProductDialog's old applyPhotoSource/clearPhotoSource, is
-    // replaced in this same feature), but it's left in place rather than
-    // deleted -- it's still a valid, correct way to write the legacy field,
-    // and removing working code that nothing currently exercises isn't this
-    // task's job.
-    function setPhoto(productId, photoUrl) {
-        var idx = findIndexById(productId);
-        if (idx < 0) return;
-        var arr = _clone();
-        var before = Object.assign({}, arr[idx]);
-        var prevUrl = arr[idx].photoUrl || "";
-        var newUrl = photoUrl || "";
-        arr[idx].photoUrl = newUrl;
-        arr[idx].photoUpdatedAt = new Date().toISOString();
-        products = arr;
-        if (prevUrl !== newUrl)
-            TransactionStore.recordPhotoChange(productId, arr[idx].name, prevUrl, newUrl);
-        Gateway.recordMutation("inventory", productId, "update", before, arr[idx]);
-    }
-
     // Update a product's photoIds LOCALLY after the server has already confirmed an upload or
     // removal. uploadProductPhoto/deleteProductPhoto (functions/index.js) write photoIds
     // server-side directly, NOT through Gateway.recordMutation/applyMutation -- neither fits an
@@ -722,23 +693,6 @@ QtObject {
             TransactionStore.recordPhotoChange(productId, arr[idx].name, "", changedPhotoId);
         else if (changeKind === "remove")
             TransactionStore.recordPhotoChange(productId, arr[idx].name, changedPhotoId, "");
-    }
-
-    // One-tap "migrate this photo" (design spec, Data model): called right after
-    // StorageService.addProductPhoto() queues the legacy photoUrl's file as a real upload. Clears
-    // the legacy field at QUEUE time, not upload-confirmed time -- safe because the gallery shows
-    // PhotoQueue's own persisted local copy (the same image) for the pending item in the meantime,
-    // so nothing visually disappears, and it avoids a second write once the upload actually lands.
-    function clearLegacyPhotoUrl(productId) {
-        var idx = findIndexById(productId);
-        if (idx < 0) return;
-        var arr = _clone();
-        var before = Object.assign({}, arr[idx]);
-        if (!arr[idx].photoUrl) return;
-        arr[idx].photoUrl = "";
-        arr[idx].photoUpdatedAt = "";
-        products = arr;
-        Gateway.recordMutation("inventory", productId, "update", before, arr[idx]);
     }
 
     // Bulk import / upsert. Records carry the same shape as products plus an
@@ -1047,11 +1001,12 @@ QtObject {
             size: r.size || "",
             stock: parseInt(r.stock) || 0,
             minStock: parseInt(r.minStock) || 0,
-            photoUrl: r.photoUrl || "",
-            photoUpdatedAt: r.photoUpdatedAt || "",
             // Already resolved (existing id/name, or pre-minted-for-this-batch
             // name) by _upsertManySync before _normalizeRecord is called.
-            supplierId: r.supplierId || ""
+            supplierId: r.supplierId || "",
+            // Must exist at creation like _newProductDoc: _clone() always emits photoIds, and the
+            // server CAS compares key sets, so an imported doc without it 409s on its first edit.
+            photoIds: []
         };
     }
 
@@ -1059,7 +1014,7 @@ QtObject {
         var merged = {};
         var keys = ["productId", "name", "sku", "category", "unit", "description",
                     "price", "sellingPrice", "taxable", "taxPercent",
-                    "stock", "minStock", "photoUrl", "photoUpdatedAt", "supplierId"];
+                    "stock", "minStock", "supplierId"];
         for (var i = 0; i < keys.length; ++i) {
             var k = keys[i];
             // Empty incoming values fall back to existing — empty cells in the
