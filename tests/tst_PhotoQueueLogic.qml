@@ -28,7 +28,7 @@ TestCase {
     // ── classifyError ───────────────────────────────────────────────────────
 
     function test_classifyError_terminal_codes() {
-        var codes = [400, 413, 404, 409]
+        var codes = [400, 413, 404, 409, 403] // 403 = PH4 item 1 (C01/C02)
         for (var i = 0; i < codes.length; ++i)
             compare(PQL.classifyError(codes[i]), "terminal", "status " + codes[i])
     }
@@ -220,5 +220,63 @@ TestCase {
                 verify(["open", "closed"].indexOf(s.status) !== -1)
             }
         }
+    }
+
+    // ── PH4 (client): 403 terminal, L1 breaker wait ──────────────
+
+    function test_C04_failed_403_goes_straight_to_failed_with_no_backoff() {
+        var r = PQL.reduceQueueItem({ photoId: "p1", state: "uploading", attempts: 0, nextAttemptAt: 0, lastError: null },
+                                    { type: "failed", status: 403 })
+        compare(r.state, "failed")
+        compare(r.lastError, 403)
+        compare(r.attempts, 1)
+        compare(r.nextAttemptAt, 0)
+    }
+
+    function test_C03_other_transient_codes_stay_transient_next_to_403() {
+        var codes = [401, 429, 500, 502, 503, 0]
+        for (var i = 0; i < codes.length; ++i)
+            compare(PQL.classifyError(codes[i]), "transient", "status " + codes[i])
+    }
+
+    function test_L1_breakerWaitMs_is_the_time_left_on_an_open_breaker() {
+        var open = { status: "open", consecutiveFailures: 5, cooldownUntil: 61000, cooldownMs: 60000 }
+        compare(PQL.breakerWaitMs(open, 1000), 60000)
+        compare(PQL.breakerWaitMs(open, 60999), 1)
+    }
+
+    function test_L1_breakerWaitMs_is_zero_when_closed_expired_or_at_the_boundary() {
+        compare(PQL.breakerWaitMs({ status: "closed", cooldownUntil: 99999 }, 1000), 0)
+        compare(PQL.breakerWaitMs({ status: "open", cooldownUntil: 5000 }, 5000), 0)
+        compare(PQL.breakerWaitMs({ status: "open", cooldownUntil: 5000 }, 9000), 0)
+        compare(PQL.breakerWaitMs({}, 1000), 0)
+    }
+
+    function test_D1_D4_shouldDiscardOnFailure_only_for_404_with_the_product_row_gone() {
+        compare(PQL.shouldDiscardOnFailure(404, false), true)
+        compare(PQL.shouldDiscardOnFailure(404, true), false)
+        compare(PQL.shouldDiscardOnFailure(404, undefined), false)
+        compare(PQL.shouldDiscardOnFailure(404, null), false)
+        var others = [0, 400, 401, 403, 409, 413, 429, 500, 503]
+        for (var i = 0; i < others.length; ++i)
+            compare(PQL.shouldDiscardOnFailure(others[i], false), false, "status " + others[i])
+        compare(PQL.classifyError(404), "terminal")
+    }
+
+    function test_P1_P4_productPresence_only_a_complete_list_may_say_absent() {
+        compare(PQL.productPresence(true, true), true)
+        compare(PQL.productPresence(true, false), true)
+        compare(PQL.productPresence(false, true), false)
+        compare(PQL.productPresence(false, false), undefined)
+        compare(PQL.productPresence(false, undefined), undefined)
+        compare(PQL.productPresence(false, null), undefined)
+        compare(PQL.productPresence(undefined, true), false, "not === true counts as not found, list complete")
+        compare(PQL.productPresence(false, "true"), undefined, "a truthy non-boolean never counts as complete")
+    }
+
+    function test_P5_a_404_is_discarded_only_when_the_list_is_complete_and_the_row_absent() {
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, false)), false, "partial list: keep")
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, true)), true, "complete + absent: discard")
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(true, true)), false, "complete + present: keep")
     }
 }

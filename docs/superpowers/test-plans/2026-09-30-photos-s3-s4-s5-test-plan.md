@@ -151,7 +151,10 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | E12 | MONKEY 30 random interleavings of create/upload/delete/recreate over 3 products; invariant: no Storage object belongs to a deleted product except the documented race | test/e2e/tst_ProductPhotosE2E.qml (extend; raw `E2EHelpers.postDirect`) |
 
 ## 5. Client QML (PH4) — 26 planned, CI only (no Qt in the sandbox)
-`tests/tst_PhotoQueueLogic.qml`, `tests/tst_StorageService*.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, gallery test. Status: planned, CI only.
+`tests/tst_PhotoQueueLogic.qml`, `tests/tst_InventoryStore_mutationConflicted.qml`, `tests/tst_InventoryStore_deleteProductCascade.qml`, gallery test.
+**Status 2026-10-06 (branch `feat/2026-10-06-photos-ph4-client`):** items 1, 4, 5 BUILT; **item 2 (`Qt.uuid` ids) DROPPED: CI run on the first push failed with `Property 'uuid' of object Qt is not a function`, so the old id scheme stays; item 3 shipped in #113 (C13-C21 already green); item 6 no change. WRITTEN: C01-C04, C22/C23 (pure part only), C26. NOT BUILT: C07-C12 (item 2 dropped). **Follow-up (Taher's answer to the Q13 question, 2026-10-06):** product row gone -> discard its queued photos. WRITTEN in `tst_InventoryStore_mutationConflicted.qml`: C27 (delete conflict, null current: that product's photos only), C28 (update conflict, null current), C29 (current present: photos kept), C30 (current without `photoIds` = first photo, normalised to `[]`, no error), C31 (`hasProduct`), C32 (a throwing purge never blocks the reconcile); in `tst_PhotoQueueLogic.qml` + Node parity (34/34): D1-D5 `shouldDiscardOnFailure` (404 and row gone locally -> discard; 404 with the row present keeps the terminal 404; unknown never discards; monkey). The wiring in `PhotoQueue._upload` (XHR) is one `if` and device-only. Node mirror run for real: `photoQueueLogic.parity.test.js` 29/29 (was 23). QML cases are CI-only. NOT written: C05/C06 (a failed 403 reuses the existing retry() and breaker paths, which no code in this PR changed; the breaker already counts every failure), C24/C25 (no gallery code changed).
+
+**Follow-up 2 (2026-10-07, Taher: "check for product in the FULL data only, not the first 50"):** `InventoryStore.hasProduct` answered `false` for any row missing from the loaded list, but the list is paged 50 at a time, so a row on page 2+ (or a page fetch that failed, or a reset in flight) was wrongly "gone" and a server 404 discarded a live photo. It is now three-state: `true` found, `false` ONLY when the list is complete (`!hasMore && !loadingMore && !_resetPending`), `undefined` otherwise (also for an empty / non-string id); `clear()` resets `hasMore` so a signed-out store is "unknown". Pure rule `PQL.productPresence(foundLocally, listComplete)`. WRITTEN: Node parity P1-P6 (40/40 in that file; whole functions suite 602/602 run for real): found always true, absent+complete false, absent+partial undefined, garbage never false, END-TO-END rule over a simulated 130-row / 3-page list (the old behaviour discarded at page 1), seeded monkey. QML (CI only): `tst_PhotoQueueLogic.qml` P1-P4, P5; `tst_InventoryStore_mutationConflicted.qml` C31 reworked, C33 (partial list = unknown), C34 (each in-flight flag alone = unknown), C35 (bad ids), C36 (`clear()`).
 
 | ID | Case | File |
 |---|---|---|
@@ -161,12 +164,12 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | C04 | reduceQueueItem failed 403 -> state failed on attempt 1, no backoff scheduled | tests/tst_PhotoQueueLogic.qml |
 | C05 | failed 403 then retry() -> enqueued again (Retry UI works) | tests/tst_PhotoQueueLogic.qml |
 | C06 | breaker still counts a 403 failure | tests/tst_PhotoQueueLogic.qml |
-| C07 | _nextPhotoId matches `^photo-[A-Za-z0-9_-]{36}$` | tests/tst_StorageServicePhotoId.qml (new) |
-| C08 | _nextPhotoId strips braces when Qt.uuid is stubbed with braces | tests/tst_StorageServicePhotoId.qml (new) |
-| C09 | _nextPhotoId length <= 64 | tests/tst_StorageServicePhotoId.qml (new) |
-| C10 | 1000 ids all unique | tests/tst_StorageServicePhotoId.qml (new) |
-| C11 | id passes a mirror of the server whitelist regex (parity test) | tests/tst_StorageServicePhotoId.qml (new) |
-| C12 | MONKEY stubbed Qt.uuid uppercase/odd canonical forms -> still whitelist-safe | tests/tst_StorageServicePhotoId.qml (new) |
+| C07 | _nextPhotoId matches `^photo-[A-Za-z0-9_-]{36}$` | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C08 | _nextPhotoId strips braces when Qt.uuid is stubbed with braces | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C09 | _nextPhotoId length <= 64 | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C10 | 1000 ids all unique | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C11 | id passes a mirror of the server whitelist regex (parity test) | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
+| C12 | MONKEY stubbed Qt.uuid uppercase/odd canonical forms -> still whitelist-safe | DROPPED 2026-10-06 (item 2): `Qt.uuid` is not a function on CI |
 | C13 | deleteProduct with 3 photoIds: zero removeProductPhoto calls | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C14 | deleteProduct: only THIS product's queued photos discarded, others remain | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C15 | deleteProduct: queue purge throws -> delete and batch cascade still complete | tests/tst_InventoryStore_deleteProductCascade.qml |
@@ -176,11 +179,11 @@ Status: planned, CI only. Needs the Storage emulator hook for E05.
 | C19 | delete then 409 conflict -> row restored, removeProductPhoto never called | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C20 | headless env, ImageProcessor undefined -> no throw | tests/tst_InventoryStore_deleteProductCascade.qml |
 | C21 | stock-batch cascade unaffected (existing cases still pass) | tests/tst_InventoryStore_deleteProductCascade.qml |
-| C22 | L1 (only if folded): breaker open -> timer armed once at cooldownUntil, not 250 ms | tests/tst_PhotoQueue.qml |
-| C23 | L1 (only if folded): after cooldown the queue drains | tests/tst_PhotoQueue.qml |
+| C22 | L1 (only if folded): breaker open -> timer armed once at cooldownUntil, not 250 ms | pure part `breakerWaitMs` in tests/tst_PhotoQueueLogic.qml + Node parity (WRITTEN); the timer itself is not unit-testable (see PhotoQueue TESTABILITY NOTE), device check below |
+| C23 | L1 (only if folded): after cooldown the queue drains | pure part `breakerWaitMs` in tests/tst_PhotoQueueLogic.qml + Node parity (WRITTEN); the timer itself is not unit-testable (see PhotoQueue TESTABILITY NOTE), device check below |
 | C24 | gallery remove fails with 403 -> removeFailed emitted with status text | tests/tst_PhotoGalleryLayout.qml, or a `test/felgo-dependent/` file if the gallery imports Felgo (decide at PH4) |
 | C25 | gallery remove ok -> applyPhotoIds called with remaining ids | tests/tst_PhotoGalleryLayout.qml, or a `test/felgo-dependent/` file if the gallery imports Felgo (decide at PH4) |
-| C26 | delete conflict with `current:null` -> local row removed, toast says already deleted (not "restored"); delete conflict with non-null current keeps the old toast | tests/tst_InventoryStore_deleteProductCascade.qml |
+| C26 | delete conflict with `current:null` -> local row removed, toast says already deleted (not "restored"); delete conflict with non-null current keeps the old toast | tests/tst_InventoryStore_mutationConflicted.qml (WRITTEN; has the Toast spy; +1 pin: update conflict with null current keeps its old toast) |
 
 ## 6. Client QML (PH5, legacy removal) — 12 planned, CI only
 
@@ -223,6 +226,7 @@ Remove role gate; skip preflight; write marker outside the txn; write marker on 
 - [x] Device A uploads a photo while device B deletes the SAME product (product with several photos): EXPECT either (i) delete commits: product gone on both, Storage prefix empty after the sweep; or (ii) delete 409s: product restored on B with ALL photos incl. A's new one, toast "Couldn't delete", Storage objects unchanged. FAIL = fewer photos than before. KNOWN in (ii): the product's batches are gone and Activity says deleted (KNOWN-ISSUES 2026-10-04). Repeat 3x, both orderings.
 
 ### Edge Cases
+- [ ] More than 50 products (e.g. 120; list pages in 50s): queue a photo for a product on page 2 or 3, kill the app, relaunch so the queue drains while the list is still paging. The tile must NOT disappear (no discard while the list is partial). Only a server 404 on a product that is absent from the FULLY loaded list may discard (PH4 follow-up 2).
 - [x] Device A edits the price while device B uploads a photo to the same product: A's save gets the conflict toast, row reverts to server state, A redoes the edit (accepted F5 behavior). Check whether an inventory-specific conflict toast actually shows (UNVERIFIED).
 - [x] Delete a product, recreate one with the same name within a minute: new product's photos unaffected.
 - [ ] Delete a product on device A that device B already deleted: A's row disappears and the toast says it was already deleted, not "restored" (Q13, PH4). NOT TESTABLE until PH4 (toast copy not built).

@@ -114,3 +114,5 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 104: An emulator e2e for a scheduled function runs the function in-process; refuse to start unless every emulator host is set
 - 105: Count JUnit testcases, never tags by `[^>]*`; a test count that does not move when tests are added is a defect signal
 - 106: Give a big reference file a GENERATED index and test it, instead of a hand-written summary; trim docs only by a rule you can run
+- 107: A design item marked UNVERIFIED becomes a test that fails loudly on CI (it did: `Qt.uuid` does not exist); a timer fix is split into a pure helper plus one QML line
+- 108: "Not in the loaded list" is not "not there": a paginated store may answer `false` only when the list is COMPLETE

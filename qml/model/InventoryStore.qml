@@ -6,6 +6,7 @@ import "../helper/RealisedMath.js" as RealisedMath
 import "../helper/ImportMath.js" as ImportMath
 import "../helper/DocLimits.js" as DocLimits
 import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
+import "../helper/PhotoQueueLogic.js" as PQL
 
 QtObject {
     id: root
@@ -30,6 +31,9 @@ QtObject {
     // and a fresh _resetAndFetch() runs immediately instead. Design: SKILLS.md
     // Skill 39's "residual trade-off" note.
     property bool _resetPending: false
+    // True once EVERY page is loaded (nothing more to fetch, no fetch or reset in flight). Only then can a
+    // row missing from `products` be called absent; before that the list is a partial 50-per-page view.
+    readonly property bool listComplete: !hasMore && !loadingMore && !_resetPending
     property var _cursor: null
     // BC2: product deletes sent but not yet acked: productId -> { name, sku, stock }. In memory
     // only (a relaunch forgets them on purpose, see _onMutationApplied).
@@ -99,14 +103,23 @@ QtObject {
             arr.splice(idx, 1)
         }
         products = arr
+        // Taher 2026-10-06: the server row is gone (`current` null) -> nothing can ever consume the photos still
+        // queued for this product, so discard them (and their local files). With a `current` the product still
+        // exists, so its queued photos stay (a missing `photoIds` there just means a first photo, see below).
+        if (!current) _purgeQueuedPhotos(entityId)
         // A rejected delete-conflict means the product still legitimately
         // exists (someone else edited it after this client's stale
         // `before`) and was just pushed back above — "your change didn't
         // save" would be confusing for what was actually a delete attempt.
         _dropPendingUpdateActivity(entityId, "")  // the edit never applied: no Activity entry
         if (action === "delete") {
-            _dropPendingDelete(entityId)  // never applied: no Activity entry, no photo purge
-            Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+            _dropPendingDelete(entityId)  // never applied: no Activity entry; the ack-time purge is skipped (the null-current case purges above)
+            // Q13 (PH4 item 5): `current` null = the server row is already gone (deleted on another device),
+            // so nothing was "restored" -- the local row stays removed above.
+            if (current)
+                Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+            else
+                Toast.show(qsTr("This product was already deleted elsewhere."))
         } else {
             Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
         }
@@ -213,6 +226,7 @@ QtObject {
 
     function clear() {
         products = []
+        hasMore = true   // nothing is loaded now, so hasProduct() must answer "unknown", not "absent"
     }
 
     // INVARIANT (added 2026-07-30, after a real bug found in OrdersStore's
@@ -1493,6 +1507,14 @@ QtObject {
         for (var i = 0; i < products.length; ++i)
             if (products[i].productId === productId) return products[i];
         return null;
+    }
+
+    // true = the row is in the local list; false = the list is complete and the row is not in it;
+    // undefined = cannot tell yet (partial list, or an empty/non-string id). PhotoQueue discards a photo
+    // on a server 404 only for `false` (PQL.shouldDiscardOnFailure), so an unknown answer never discards.
+    function hasProduct(productId) {
+        if (typeof productId !== "string" || productId === "") return undefined
+        return PQL.productPresence(getById(productId) !== null, listComplete)
     }
 
     // Confirmed photo ids for a product, as a fresh array ([] for an unknown product or a doc with

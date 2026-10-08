@@ -223,8 +223,15 @@ QtObject {
             if (due < 0 || wait < due) due = wait
         }
         if (due < 0) { _drainTimer.stop(); return }
+        due = Math.max(due, PQL.breakerWaitMs(_breaker, now))  // L1: sleep through an open breaker's cooldown, not 250 ms polls
         _drainTimer.interval = Math.max(250, due)
         _drainTimer.restart()
+    }
+
+    // true / false / undefined (store cannot answer, or its product list is not fully loaded yet): see
+    // InventoryStore.hasProduct. PQL.shouldDiscardOnFailure discards only on a strict false.
+    function _productExistsLocally(productId) {
+        try { return InventoryStore.hasProduct(productId) } catch (e) { return undefined }
     }
 
     // Not unit-tested under qmltestrunner -- see the TESTABILITY NOTE at the top of this file.
@@ -277,6 +284,11 @@ QtObject {
                 _breaker = PQL.breakerReducer(_breaker, { type: "success" })
                 photoUploaded(item.productId, item.photoId, parsed.photoIds || [])
             } else {
+                if (PQL.shouldDiscardOnFailure(effStatus, _productExistsLocally(item.productId))) {
+                    discard(item.photoId)   // 404 and the product row is gone locally too: nothing can consume it
+                    _reschedule()
+                    return
+                }
                 var next = PQL.reduceQueueItem(uploading, { type: "failed", status: effStatus })
                 _replaceItem(item.photoId, next)
                 _breaker = PQL.breakerReducer(_breaker, { type: "failure" })

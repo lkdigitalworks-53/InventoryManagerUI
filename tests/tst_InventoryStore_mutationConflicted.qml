@@ -26,6 +26,20 @@ TestCase {
         toastSpy.clear()
     }
 
+    // hasProduct() reads the paging flags (hasMore / loadingMore / _resetPending): put the singleton back to
+    // its defaults so no test leaks a "list complete" state into another file.
+    function cleanup() {
+        InventoryStore.hasMore = true
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = false
+    }
+
+    function _completeList() {
+        InventoryStore.hasMore = false
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = false
+    }
+
     function test_ignores_a_non_inventory_entity() {
         InventoryStore.products = [{ productId: "SKU-1", name: "Widget", stock: 5 }]
         InventoryStore._onMutationConflicted("order", "SKU-1", { productId: "SKU-1", name: "Renamed", stock: 9 }, "update")
@@ -95,5 +109,136 @@ TestCase {
         InventoryStore._onMutationConflicted("inventory", "SKU-9", null, "update")
         compare(InventoryStore.products.length, 1)
         compare(InventoryStore.products[0].productId, "SKU-1")
+    }
+
+    // Q13 / C26 (PH4 item 5): the server row is already gone -> nothing was "restored".
+    function test_C26_delete_conflict_with_null_current_says_already_deleted_not_restored() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
+        compare(InventoryStore.products.length, 0, "the local row stays removed")
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0], "This product was already deleted elsewhere.")
+    }
+
+    function test_C26_delete_conflict_with_undefined_current_and_an_unknown_row_still_says_already_deleted() {
+        InventoryStore.products = []
+        InventoryStore._onMutationConflicted("inventory", "SKU-404", undefined, "delete")
+        compare(InventoryStore.products.length, 0)
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0], "This product was already deleted elsewhere.")
+    }
+
+    function test_C26_update_conflict_with_null_current_keeps_the_update_worded_toast() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "update")
+        compare(toastSpy.count, 1)
+        compare(toastSpy.signalArguments[0][0],
+                "This product was updated elsewhere \u2014 your change didn't save. Refreshed to the latest version.")
+    }
+
+    // ---- Taher 2026-10-06: product row gone -> discard its queued photos; product still there -> keep them ----
+    function _queuePhoto(photoId, productId) {
+        return PhotoQueue.enqueue({ photoId: photoId, productId: productId, uid: "u-none", tenantId: "t-none",
+                                    mainFilePath: "/d/" + photoId + ".jpg", thumbFilePath: "/d/" + photoId + "_t.jpg" })
+    }
+    function _queuedIds() { return PhotoQueue.items.map(function(x) { return x.photoId }).sort() }
+
+    function test_C27_delete_conflict_with_null_current_discards_that_products_queued_photos_only() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }, { productId: "SKU-2", name: "Other" }]
+        _queuePhoto("p-a", "SKU-1"); _queuePhoto("p-b", "SKU-1"); _queuePhoto("p-c", "SKU-2")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
+        compare(_queuedIds(), ["p-c"], "SKU-1's photos are gone, SKU-2's survives")
+        PhotoQueue.clear()
+    }
+
+    function test_C28_update_conflict_with_null_current_also_discards_queued_photos() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        _queuePhoto("p-a", "SKU-1")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "update")
+        compare(PhotoQueue.pendingCount, 0)
+        PhotoQueue.clear()
+    }
+
+    function test_C29_conflict_WITH_a_current_keeps_the_queued_photos() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        _queuePhoto("p-a", "SKU-1")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", { productId: "SKU-1", name: "Widget v2" }, "delete")
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", { productId: "SKU-1", name: "Widget v3" }, "update")
+        compare(_queuedIds(), ["p-a"])
+        PhotoQueue.clear()
+    }
+
+    function test_C30_a_current_without_photoIds_is_a_first_photo_not_an_error() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget", photoIds: ["old-1"] }]
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", { productId: "SKU-1", name: "Widget" }, "update")
+        compare(InventoryStore.products[0].photoIds, [], "missing photoIds normalises to an empty list")
+        compare(InventoryStore.photoIdsFor("SKU-1"), [])
+        InventoryStore.products = []
+        InventoryStore._onMutationConflicted("inventory", "SKU-9", { productId: "SKU-9", name: "New" }, "update")
+        compare(InventoryStore.photoIdsFor("SKU-9"), [], "a product pushed back from the server with no photoIds is photo-ready")
+    }
+
+    function test_C31_hasProduct_true_for_a_loaded_row_false_only_when_the_list_is_complete() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        compare(InventoryStore.hasProduct("SKU-1"), true)
+        compare(InventoryStore.hasProduct("SKU-2"), false, "complete list, row absent")
+        InventoryStore.products = []
+        compare(InventoryStore.hasProduct("SKU-1"), false, "complete empty list")
+    }
+
+    function test_C33_a_row_missing_from_a_PARTIAL_list_is_unknown_never_false() {
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]   // page 1 of N: hasMore still true
+        InventoryStore.hasMore = true
+        compare(InventoryStore.hasProduct("SKU-1"), true, "a loaded row is always true")
+        compare(InventoryStore.hasProduct("SKU-120"), undefined, "may live on a page that is not loaded yet")
+        compare(InventoryStore.listComplete, false)
+    }
+
+    function test_C34_each_in_flight_flag_alone_makes_the_answer_unknown() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        compare(InventoryStore.hasProduct("SKU-2"), false)
+        InventoryStore.loadingMore = true
+        compare(InventoryStore.hasProduct("SKU-2"), undefined, "a page fetch is in flight")
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = true
+        compare(InventoryStore.hasProduct("SKU-2"), undefined, "a reset is queued: the list is about to be replaced")
+        InventoryStore._resetPending = false
+        InventoryStore.hasMore = true
+        compare(InventoryStore.hasProduct("SKU-2"), undefined, "failed/unfinished paging leaves hasMore true")
+        compare(InventoryStore.hasProduct("SKU-1"), true)
+    }
+
+    function test_C35_an_empty_or_non_string_id_is_unknown() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        compare(InventoryStore.hasProduct(""), undefined)
+        compare(InventoryStore.hasProduct(undefined), undefined)
+        compare(InventoryStore.hasProduct(null), undefined)
+        compare(InventoryStore.hasProduct(42), undefined)
+    }
+
+    function test_C36_clear_makes_hasProduct_unknown_after_sign_out() {
+        _completeList()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        InventoryStore.clear()
+        compare(InventoryStore.products.length, 0)
+        compare(InventoryStore.hasMore, true)
+        compare(InventoryStore.hasProduct("SKU-1"), undefined, "nothing loaded after clear(): unknown, not absent")
+    }
+
+    function test_C32_a_throwing_photo_purge_never_blocks_the_conflict_reconcile() {
+        PhotoQueue.clear()
+        InventoryStore.products = [{ productId: "SKU-1", name: "Widget" }]
+        PhotoQueue.items = null   // PhotoQueue.items.filter throws inside the purge (it is wrapped in try/catch)
+        InventoryStore._onMutationConflicted("inventory", "SKU-1", null, "delete")
+        compare(InventoryStore.products.length, 0, "the local row is still removed")
+        PhotoQueue.items = []
+        PhotoQueue.clear()
     }
 }

@@ -4156,3 +4156,24 @@ Rules:
 3. A generator that parses headings must fail on duplicate ids and on malformed headings (the file already had two `Skill 89`, found only when the generator ran) and must ignore headings inside code fences.
 4. Trim docs only by a rule that can be executed and repeated: cut a dated block only if it cites a skill that exists AND most of its backticked identifiers occur in that skill (5 of 25 README blocks passed at 85%). List what failed the rule as candidates, do not delete on judgement. Git history keeps the rest.
 5. A status row can be false: verify against the code (`StaffPage.qml` had the delete button the table said was missing) before copying a doc claim into a new doc.
+
+## Skill 107: A design item marked UNVERIFIED becomes a test that fails loudly on CI (it did: `Qt.uuid` does not exist); a timer fix is split into a pure helper plus one QML line
+
+Context (2026-10-06, PH4 client): the design said `Qt.uuid()` under headless `qmltestrunner` was UNVERIFIED, and the L1 breaker-cooldown fix lives in `PhotoQueue._reschedule` (a Timer, no unit tests by design).
+Rules:
+1. Do not stub an unverified platform call to keep CI green. Write the test against the REAL call so the first CI run answers the question. It answered: `Property 'uuid' of object Qt is not a function`. Had the code shipped, every photo add would have thrown on device. Result: item 2 dropped, old id scheme kept, nothing lost. A design decision that rests on an unverified API is a hypothesis, not a decision: say so in the PR.
+2. When a fix sits inside a Timer/XHR file that cannot be unit-tested, move the arithmetic into `PhotoQueueLogic.js` (`breakerWaitMs`), test it there and in the Node mirror, and leave exactly one line in the QML file. The design's "fold only if <= 3 lines" rule is met by the QML diff, not by the helper.
+3. `PhotoQueueLogic.js` has a hand-kept Node mirror (`functions/test/testSupport/photoQueueLogicParity.js`): every constant or function change goes into both, and the Node run is the only proof available in the sandbox (23 -> 29 cases here).
+4. A planned test file can be impossible (`tst_StorageServicePhotoId.qml`: `StorageService` needs the `ImageProcessor` context property). Say so in the plan; do not leave a planned file that can never load.
+5. Reading code for a small UI change can expose a gap the design did not list (the Q13 path skipped the queued-photo purge). Write it into the design and the PR as a question; do not widen the change without asking. Taher answered with a rule ("row gone -> discard; row present -> keep, a missing `photoIds` is a first photo"): before coding a rule like that, grep both ends (server `Array.isArray(product.photoIds)`, client `_normalizeProducts`) because half of it may already be true, then pin that half with a test instead of new code.
+6. A decision that depends on two facts (HTTP status and local row) belongs in a pure function with a strict truth table (`shouldDiscardOnFailure`, `=== false` so unknown never discards); the XHR file keeps one `if`.
+
+## Skill 108: "Not in the loaded list" is not "not there": a paginated store may answer `false` only when the list is COMPLETE
+
+Context (2026-10-07, PR #133): `InventoryStore.hasProduct()` returned `false` for any product missing from `products`. The store pages 50 at a time (`_pageSize`), so a row on page 2+, a failed page, or a reset in flight looked "gone", and `PhotoQueue` discarded a live queued photo on a server 404. Taher: "check the full data only, not the first 50".
+Rules:
+1. Any existence check over a paged/partial list is three-state: `true` (found), `false` (list COMPLETE and absent), `undefined` (cannot tell). Completeness is `!hasMore && !loadingMore && !_resetPending`; a failed page leaves `hasMore` true, so the answer stays "unknown" (the safe side).
+2. A destructive decision (discard, delete, purge) acts only on a strict `=== false`; `undefined` never acts. Keep the rule in a pure function (`PQL.productPresence`, `PQL.shouldDiscardOnFailure`) mirrored in Node, because the sandbox cannot run QML.
+3. `clear()` on sign-out must put the paging flags back (`hasMore = true`), otherwise an emptied store with `hasMore === false` looks like a complete list with no rows.
+4. Do not reach for "just load everything first" (extra Firestore reads for one 404): the three-state answer costs nothing and the photo stays as a failed tile with Retry/Discard.
+5. When the reviewer says a check was scoped wrong, grep every caller of the helper and every flag it should depend on before editing, and add an end-to-end rule test (here: a simulated 130-row, 3-page list) so the original wrong behaviour is the failing case.

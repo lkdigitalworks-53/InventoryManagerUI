@@ -5,7 +5,7 @@
 
 const BACKOFF_MS = [2000, 8000, 30000, 120000, 600000]; // identical to OutboxStore._backoffMs -- do not fork
 const ATTEMPT_CAP = 8;
-const TERMINAL_STATUS = { 400: true, 413: true, 404: true, 409: true };
+const TERMINAL_STATUS = { 400: true, 413: true, 404: true, 409: true, 403: true }; // 403: PH4 item 1
 const BREAKER_TRIP_AFTER = 5;
 const BREAKER_COOLDOWN_BASE_MS = 60000;
 const BREAKER_COOLDOWN_MAX_MS = 600000;
@@ -71,4 +71,21 @@ function isBreakerOpen(state, now) {
   return state.status === 'open' && t < state.cooldownUntil;
 }
 
-module.exports = { classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen };
+function breakerWaitMs(state, now) {
+  const t = typeof now === 'number' ? now : Date.now();
+  return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0;
+}
+
+
+function shouldDiscardOnFailure(status, productExistsLocally) {
+  return status === 404 && productExistsLocally === false;
+}
+
+function productPresence(foundLocally, listComplete) {
+  if (foundLocally === true) return true;
+  return listComplete === true ? false : undefined;
+}
+
+module.exports = {
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence,
+};
