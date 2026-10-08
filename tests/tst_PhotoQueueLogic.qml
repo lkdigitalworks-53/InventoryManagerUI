@@ -253,13 +253,14 @@ TestCase {
     }
 
     function test_D1_D4_shouldDiscardOnFailure_only_for_404_with_the_product_row_gone() {
-        compare(PQL.shouldDiscardOnFailure(404, false), true)
-        compare(PQL.shouldDiscardOnFailure(404, true), false)
-        compare(PQL.shouldDiscardOnFailure(404, undefined), false)
-        compare(PQL.shouldDiscardOnFailure(404, null), false)
+        var PNF = "product-not-found"
+        compare(PQL.shouldDiscardOnFailure(404, false, PNF), true)
+        compare(PQL.shouldDiscardOnFailure(404, true, PNF), false)
+        compare(PQL.shouldDiscardOnFailure(404, undefined, PNF), false)
+        compare(PQL.shouldDiscardOnFailure(404, null, PNF), false)
         var others = [0, 400, 401, 403, 409, 413, 429, 500, 503]
         for (var i = 0; i < others.length; ++i)
-            compare(PQL.shouldDiscardOnFailure(others[i], false), false, "status " + others[i])
+            compare(PQL.shouldDiscardOnFailure(others[i], false, PNF), false, "status " + others[i])
         compare(PQL.classifyError(404), "terminal")
     }
 
@@ -275,8 +276,34 @@ TestCase {
     }
 
     function test_P5_a_404_is_discarded_only_when_the_list_is_complete_and_the_row_absent() {
-        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, false)), false, "partial list: keep")
-        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, true)), true, "complete + absent: discard")
-        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(true, true)), false, "complete + present: keep")
+        var PNF = "product-not-found"
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, false), PNF), false, "partial list: keep")
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(false, true), PNF), true, "complete + absent: discard")
+        compare(PQL.shouldDiscardOnFailure(404, PQL.productPresence(true, true), PNF), false, "complete + present: keep")
+    }
+
+    // PH4 R1 (Taher 2026-10-08, option b): the 404 must carry the server's own body code.
+    function test_R1_a_404_without_the_server_code_never_discards() {
+        var codes = [undefined, null, "", "not-found", "conflict", "PRODUCT-NOT-FOUND", " product-not-found", 0]
+        for (var i = 0; i < codes.length; ++i)
+            compare(PQL.shouldDiscardOnFailure(404, false, codes[i]), false, "code " + codes[i])
+        compare(PQL.shouldDiscardOnFailure(404, false), false, "no code argument at all")
+        compare(PQL.PRODUCT_NOT_FOUND, "product-not-found")
+    }
+
+    function test_R2_errorCodeOf_reads_the_real_body_and_answers_empty_for_everything_else() {
+        compare(PQL.errorCodeOf('{"ok":false,"error":"product-not-found"}'), "product-not-found")
+        compare(PQL.errorCodeOf('{"ok":false,"error":"photo-limit"}'), "photo-limit")
+        var bad = [undefined, null, "", "null", "5", "[]", '[{"error":"product-not-found"}]', "{}", '{"error":null}', '{"error":5}',
+                   '{"error":{"code":"x"}}', "{", "<html><h1>404 Not Found</h1></html>", "Cannot POST /uploadProductPhoto"]
+        for (var i = 0; i < bad.length; ++i)
+            compare(PQL.errorCodeOf(bad[i]), "", "body " + bad[i])
+    }
+
+    function test_R3_an_html_404_from_a_bad_route_keeps_the_photo_the_real_body_discards_it() {
+        var complete_absent = PQL.productPresence(false, true)
+        compare(PQL.shouldDiscardOnFailure(404, complete_absent, PQL.errorCodeOf("<html>404</html>")), false)
+        compare(PQL.shouldDiscardOnFailure(404, complete_absent, PQL.errorCodeOf("")), false)
+        compare(PQL.shouldDiscardOnFailure(404, complete_absent, PQL.errorCodeOf('{"ok":false,"error":"product-not-found"}')), true)
     }
 }

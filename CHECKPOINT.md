@@ -1,17 +1,19 @@
-# CHECKPOINT — 2026-10-09 session: rebase PR #135 onto main (resume here)
+# CHECKPOINT — 2026-10-08 session 2: PH4 R1 (404 body check), stacked on PR #134 (resume here)
 
-**Branch:** `docs/2026-10-08-ph5-legacy-photourl-design` (PR #135). Carries 2 commits: design+test plan (fb2671e) and the PH5 implementation (#136, 674459e, previously stacked). Base `main` moved to b4d426a (#133 + #134 merged).
-**Commit identity:** `dextran52@gmail.com`. PAT only in the push command's extraHeader, never in a file or git config.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-09-pr135-rebase-prev-CHECKPOINT.md` (main's #134 rebase checkpoint). PH5's own checkpoints stay in `docs/superpowers/specs/2026-10-08-photos-ph5-design-CHECKPOINT.md` and `docs/superpowers/plans/2026-10-08-pr136-final-sweep-CHECKPOINT.md`.
+**Branch:** `feat/2026-10-08-photos-ph4-r1-404-body` (PR #138). REBASED 2026-10-09 onto `main` @ 38ac768 (#133, #134, #135 merged); 1 commit unique. NOTHING IS DEPLOYED, app not built or run.
+**Decision (Taher, 2026-10-08):** R1 option (b): a 404 discards a queued photo only if the body error is `product-not-found` AND the product is absent from the COMPLETE local list.
+**Commit identity:** `dextran52@gmail.com`. PAT only in the git extraHeader.
+**Previous checkpoints archived:** `docs/superpowers/specs/2026-10-08-pr134-rebase-prev-CHECKPOINT.md`, `docs/superpowers/specs/2026-10-09-pr138-rebase-prev-CHECKPOINT.md` (main's #135 rebase checkpoint).
 
 ## Plan (tick as done)
-- [x] 1 clone, branch `tmp` from origin PR #135 head (674459e), merge-base was 78fa742
-- [x] 2 `git rebase origin/main`: 2 commits replayed
-- [x] 3 commit 1 conflicts: `DELETE-FEATURE-ROADMAP.md` (kept main's PH4 paragraph, appended PH5 paragraph), `test-plans/README.md` (kept both rows)
-- [x] 4 commit 2 conflicts: `SKILLS.md`, `SKILLS-INDEX.md`, `KNOWN-ISSUES.md`, `test-plans/README.md` (kept main's rows, PH5 row replaces the older planned one). Main now holds Skill 107-109, so PH5's skills renumbered 107->110, 108->111; refs fixed in AGENTS.md and the PH5 docs; index regenerated (112 skills, `--check` ok)
-- [x] 5 no conflict markers left in the tree
-- [~] 6 force-push with lease pinned to old head 674459e; then wait for CI (QML tests and C++ build are CI-only)
-- [ ] 7 functions tests not re-run in the sandbox before the push (no node_modules); CI is the proof
+- [x] 1 confirm server body: `{ok:false,error:"product-not-found"}` (`functions/index.js` L1183/L1207, `photoCleanup.js` L78), covered by server tests
+- [x] 2 `PQL.errorCodeOf` + `shouldDiscardOnFailure(status, exists, errorCode)` (QML helper + Node mirror), one changed `if` in `PhotoQueue._upload`
+- [x] 3 tests: Node R1-1..R1-7 (46/46 parity, 608/608 functions), QML R1-R3 + D1-D4/P5 updated (CI only); mutation check: dropping the code check fails 4 tests
+- [x] 4 docs: test plan follow-up 3 + 4 device steps, KNOWN-ISSUES item 1 resolved, Skill 109 rule 5 note, review note R1 decided
+- [x] 5 pushed, stacked PR #138 opened on #134's branch
+- [x] 6 2026-10-09 rebase: `git rebase --onto origin/main e6a1d21` (#134 was squash-merged as b4d426a); only `CHECKPOINT.md` conflicted: kept this PR's, archived main's
+- [~] 7 force-push with lease pinned to old head e5b161d; re-run Node tests; wait for CI (QML tests are CI-only)
 
 ## NEXT
-Taher: read CI on #135, squash-merge when green. PH5 still needs: e2e E01-E03 (not written), device plan run, PR #138 (R1 404 body) is a separate stacked PR on #134 and may conflict in `SKILLS.md` numbering.
+Taher: read CI on #138, squash-merge when green. After: PH5 implementation (PR #136 content was folded into #135's branch; check what main holds), or PH3b deploy + DV-1..DV-9.
+Known gap: the `_upload` `if` wiring is device-only (see test plan R1 device steps).

@@ -229,7 +229,7 @@ QtObject {
     }
 
     // true / false / undefined (store cannot answer, or its product list is not fully loaded yet): see
-    // InventoryStore.hasProduct. PQL.shouldDiscardOnFailure discards only on a strict false.
+    // InventoryStore.hasProduct. PQL.shouldDiscardOnFailure discards only on a strict false AND a server body error "product-not-found".
     function _productExistsLocally(productId) {
         try { return InventoryStore.hasProduct(productId) } catch (e) { return undefined }
     }
@@ -284,8 +284,8 @@ QtObject {
                 _breaker = PQL.breakerReducer(_breaker, { type: "success" })
                 photoUploaded(item.productId, item.photoId, parsed.photoIds || [])
             } else {
-                if (PQL.shouldDiscardOnFailure(effStatus, _productExistsLocally(item.productId))) {
-                    discard(item.photoId)   // 404 and the product row is gone locally too: nothing can consume it
+                if (PQL.shouldDiscardOnFailure(effStatus, _productExistsLocally(item.productId), PQL.errorCodeOf(effResponseText))) {
+                    discard(item.photoId)   // server said product-not-found AND the row is gone locally: nothing can consume it
                     _reschedule()
                     return
                 }

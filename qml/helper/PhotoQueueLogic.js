@@ -90,8 +90,21 @@ function breakerWaitMs(state, now) {
 // parking an invisible `failed` item. If the row still exists locally (a first photo, a create not visible
 // yet, a delete elsewhere whose snapshot is pending) keep the existing terminal 404: failed + Retry/Discard.
 // Strict `=== false`: an unknown answer (undefined/null) never discards.
-function shouldDiscardOnFailure(status, productExistsLocally) {
-    return status === 404 && productExistsLocally === false
+// PH4 R1 (Taher 2026-10-08, option b): a bare 404 is not enough. A misrouted or undeployed endpoint answers
+// 404 too, and the discard deletes the local photo file for good. Only the server's own answer counts:
+// body `{error: "product-not-found"}` (see errorCodeOf). Callers that pass no code never discard.
+var PRODUCT_NOT_FOUND = "product-not-found"
+function shouldDiscardOnFailure(status, productExistsLocally, errorCode) {
+    return status === 404 && productExistsLocally === false && errorCode === PRODUCT_NOT_FOUND
+}
+
+// The `error` string of a JSON response body, or "" for anything else (HTML 404 page, empty body, non-JSON,
+// array, number, missing or non-string `error`). Never throws.
+function errorCodeOf(responseText) {
+    try {
+        var o = JSON.parse(responseText)
+        return (o && typeof o.error === "string") ? o.error : ""
+    } catch (e) { return "" }
 }
 
 // PH4 (Taher 2026-10-07): is a product row present locally? Only a COMPLETE product list may answer "no".

@@ -76,8 +76,16 @@ function breakerWaitMs(state, now) {
   return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0;
 }
 
-function shouldDiscardOnFailure(status, productExistsLocally) {
-  return status === 404 && productExistsLocally === false;
+const PRODUCT_NOT_FOUND = 'product-not-found';
+function shouldDiscardOnFailure(status, productExistsLocally, errorCode) {
+  return status === 404 && productExistsLocally === false && errorCode === PRODUCT_NOT_FOUND;
+}
+
+function errorCodeOf(responseText) {
+  try {
+    const o = JSON.parse(responseText);
+    return (o && typeof o.error === 'string') ? o.error : '';
+  } catch (e) { return ''; }
 }
 
 function productPresence(foundLocally, listComplete) {
@@ -86,5 +94,5 @@ function productPresence(foundLocally, listComplete) {
 }
 
 module.exports = {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence, errorCodeOf, PRODUCT_NOT_FOUND,
 };
