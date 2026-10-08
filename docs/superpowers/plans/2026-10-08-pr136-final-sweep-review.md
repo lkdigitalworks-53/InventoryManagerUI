@@ -2,7 +2,7 @@
 
 Skills used: superpowers:requesting-code-review, ponytail:ponytail-audit, qt-development-skills:qt-qml-review. Stacked on #136 (branch `review/2026-10-08-pr136-final-sweep`). Load assumed: one owner, dev tenants, a handful of imports/exports.
 
-**Verdict: With fixes.** The removal itself is complete and correct. One decision (R1) must be re-made because its premise was false; one adjacent bug (R2) is fixed here.
+**Verdict: With fixes.** The removal itself is complete and correct. R1 was re-decided knowingly (A, accepted risk, documented in KNOWN-ISSUES); adjacent bug R2 is fixed here.
 
 ## Strengths
 - grep of `qml/ src/ functions/ rules`: no product `photoUrl` token left; only user-profile `photoUrl` (AuthStore/AuthService/ProfilePage/`provisionMember`) remains, as designed.
@@ -10,7 +10,7 @@ Skills used: superpowers:requesting-code-review, ponytail:ponytail-audit, qt-dev
 - Guards G01-G11 have a self-test; F42/F42b pin the CAS consequence; Skill 107 + KNOWN-ISSUES written. Reproduced locally: functions suite 599/599. CI on `f479cbe`: 5/5 green. `SKILLS-INDEX.md` in sync (`skills-index.js --write` = no diff).
 - qml-review Phase 1 linter: 0 findings on added lines (PR adds one ternary and one empty function; everything else is deletion). Pre-existing `var`/`==` hits are untouched code.
 
-## R1 MUST DECIDE: import is positional, so Q-P5-2 "silent ignore" is silent column shift
+## R1 DECIDED A (accept; Taher 2026-10-08: no old templates, fresh install each time, export first then import later). Was: import is positional, so Q-P5-2 "silent ignore" is silent column shift
 - Where: `src/XlsxService.cpp` `readSheet` (reads column N, labels it `kProductHeaders[N-1]`, never reads the header row); design Fact 1 said "keyed by header text" (false, corrected in the spec).
 - Case: a pre-PH5 export or downloaded template has Photo URL in col 11. Imported by this build: URL text becomes Supplier, Supplier becomes Size, Size becomes Taxable, Taxable becomes Tax %, old Tax % dropped. The dialog resolves Supplier by name, so a URL can become a bogus supplier + opening batch.
 - Not caused by a bug in the diff; caused by Q-P5-1/Q-P5-2 being decided on a wrong fact. Taher's "dev only, fresh files" reasoning may still hold, but it must be chosen knowingly.
