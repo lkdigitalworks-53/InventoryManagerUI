@@ -4156,3 +4156,14 @@ Rules:
 3. A generator that parses headings must fail on duplicate ids and on malformed headings (the file already had two `Skill 89`, found only when the generator ran) and must ignore headings inside code fences.
 4. Trim docs only by a rule that can be executed and repeated: cut a dated block only if it cites a skill that exists AND most of its backticked identifiers occur in that skill (5 of 25 README blocks passed at 85%). List what failed the rule as candidates, do not delete on judgement. Git history keeps the rest.
 5. A status row can be false: verify against the code (`StaffPage.qml` had the delete button the table said was missing) before copying a doc claim into a new doc.
+
+## Skill 107: Removing a field the client writes from a CAS-compared document 409s every stored doc that still has it; decide that on purpose
+
+Context (2026-10-08, PH5 design): the server compares WHOLE documents (`gatewayLogic._deepEqual`, identical key sets). Product docs were all stored with `photoUrl:""` and `photoUpdatedAt:""`. Dropping the two keys from the client `_clone()` makes `before` two keys short of the stored doc: every update and delete of every pre-change product 409s, the 409 handler restores the row from the server, `_clone()` strips the keys again, and the next attempt 409s again, under a toast that says "restored". Fresh tenants are unaffected.
+Rules:
+1. Before removing or renaming a field the client writes, read the server's compare (`_deepEqual`) and ask whether stored docs still carry it. Whole-doc CAS means a removed field is a breaking change for old docs.
+2. Decide it explicitly: fresh tenants only (state it in the PR and KNOWN-ISSUES), server-side tolerance for the named keys, or a migration. Never leave it implicit.
+3. Pin the consequence with a server test (`F42`: `before` without the keys vs a stored doc with them -> 409, nothing written) so nobody "fixes" the comparator or re-adds the keys unnoticed.
+4. `test/felgo-dependent/` does NOT run in CI (only `qmltestrunner -input tests`). Do not plan automated cases for a dialog/page there. Cover what you can with Node source guards (case-sensitive token scan, C++ column counts) and put the rest on the device plan.
+5. A source guard needs its own self-test (CRLF, comments, allowed aliases like `PhotoUrl`, random junk) and a mutation check (re-add the thing, the guard must fail).
+6. Mutation checks: never restore with `git checkout <path>` while you have uncommitted work in that path; it reverts to HEAD and silently deletes your edit (happened here, re-applied). Copy to /tmp first, restore from the copy.

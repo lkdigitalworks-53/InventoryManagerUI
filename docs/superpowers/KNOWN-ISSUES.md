@@ -640,3 +640,6 @@ Code: S-A #126, S-B #127 (merged); e2e S-C (this branch). Found in the PR #126/#
 - **E2E cannot prove (DV-1..DV-9 on a real project do):** the no-index claim, cursor-without-`orderBy` on the real Admin SDK, structured-log field names in Cloud Logging, Cloud Scheduler location for `asia-south1`, `maxInstances` on a scheduled function, the alert policy.
 - **Deploy drift:** the P3 `update()` fix is in `recordMutation`'s shared module. Deploy ALL functions, not only the new one.
 - **Production blocker (Q-L):** the log-based alert (runbook `specs/2026-10-05-ph3b-alert-runbook.md`) must exist and DV-9 pass before production data relies on the sweeper.
+
+## Pre-PH5 tenants are unusable after PH5 (accepted, Taher 2026-10-08)
+PH5 removed the product `photoUrl`/`photoUpdatedAt` fields from the client. Server CAS compares whole documents, so any product doc created before PH5 (all carry `photoUrl:""`, `photoUpdatedAt:""`) 409s on every edit or delete. Dev environment only; every PR is tested on a new tenant. If an old tenant ever matters: either recreate it or add server-side tolerance for the two keys (design Q-P5-3 option d). Pinned by `functions/test/gatewayLogic.test.js` F42. Spreadsheet exports from before PH5 have a 15th "Photo URL" column; the importer ignores it silently.

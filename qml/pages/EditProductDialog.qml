@@ -11,8 +11,6 @@ import "../model"
 //   function openFor(id, startInEdit)
 //   property string productId
 //   property bool editMode
-//   property string photoUrl   -- legacy field only as of 2026-09-21 (see photoIds below);
-//                                  still set from the product doc on load, read-only from here on
 BottomSheet {
     id: root
 
@@ -28,7 +26,6 @@ BottomSheet {
 
     property string productId: ""
     property bool editMode: false
-    property string photoUrl: ""
     property var photoIds: []
 
     // photoIds above is a snapshot taken when the dialog opens (openFor); a photo confirmed by
@@ -144,7 +141,6 @@ BottomSheet {
             taxableCombo.currentIndex = p.taxable ? 1 : 0
             taxPercentField.text = (p.taxPercent !== undefined && p.taxPercent !== null) ? String(p.taxPercent) : "0"
             sizeField.text = p.size || ""
-            photoUrl = p.photoUrl || ""
             photoIds = Array.isArray(p.photoIds) ? p.photoIds : []
 
             var cats = CategoryStore.categories
@@ -214,10 +210,7 @@ BottomSheet {
         var result = StorageService.addProductPhoto(root.productId, url)
         if (!result.ok) errorLabel.text = "Photo: " + result.error
     }
-    function clearPhotoSource() {
-        InventoryStore.clearLegacyPhotoUrl(root.productId)
-        root.photoUrl = ""
-    }
+    function clearPhotoSource() { }  // contract only (Main.qml); no legacy single photo left to clear (PH5)
 
     function getSellingPrice(sellingPriceText, costPriceText, isMarkupSelected) {
         var v = parseFloat(sellingPriceText)
@@ -290,21 +283,6 @@ BottomSheet {
                 editable: root.editMode
                 onAddPhotoRequested: root.photoPickRequested(false)
                 onRemoveFailed: function(photoId, err) { errorLabel.text = "Remove photo: " + err }
-            }
-
-            // One-tap migration (design spec, Data model): a product whose only photo is still
-            // the legacy device-local field -- queues it as a real upload through the same path
-            // as any freshly picked photo, using the existing local file as the source.
-            GhostButton {
-                visible: root.editMode && root.photoIds.length === 0 && root.photoUrl.length > 0
-                Layout.preferredWidth: dp(220)
-                implicitHeight: dp(32)
-                text: "Sync old photo to the cloud"
-                onClicked: {
-                    var result = StorageService.addProductPhoto(root.productId, root.photoUrl)
-                    if (result.ok) InventoryStore.clearLegacyPhotoUrl(root.productId)
-                    else errorLabel.text = "Photo: " + result.error
-                }
             }
         }
 

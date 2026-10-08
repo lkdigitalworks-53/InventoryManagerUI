@@ -2,7 +2,7 @@
 
 **Branch (planned):** `feat/2026-10-08-photos-ph5-legacy-removal`. **Design:** `docs/superpowers/specs/2026-10-08-photos-ph5-legacy-removal-design.md` (decisions Q-P5-1..6 OPEN; this plan assumes the recommended defaults: A remove column, B import warning, a fresh tenants only, B edit `_mergeRecord`, A Node guards).
 **Supersedes section 6 of** `2026-09-30-photos-s3-s4-s5-test-plan.md` (its S-ids are mapped below; "decide at PH5" is decided here).
-**Written before implementation. NOTHING here has been run.** Design session: no code, no Qt toolchain (standing rule), Node suite not run. Every status is `planned`; the implementation PR replaces it with the CI result. Counts were counted by hand from the lists below (not generated): recount at implementation.
+**STATUS 2026-10-08 (implementation session, see "Implementation status" at the end). Originally written before implementation.** Original note: NOTHING here had been run. Design session: no code, no Qt toolchain (standing rule), Node suite not run. Every status is `planned`; the implementation PR replaces it with the CI result. Counts were counted by hand from the lists below (not generated): recount at implementation.
 **Environment:** dev only, new tenant per PR, no offline operation, no legacy product `photoUrl`.
 **Coverage bar (Taher):** 100% of new/changed code; happy + negative + edge + multi-scenario + monkey. Node cases run in the sandbox (`cd functions && npm ci && node --test`); QML, e2e, C++ build are CI-only. `test/felgo-dependent/*` is NOT run by CI (`checks.yml` runs `qmltestrunner -input tests`), so nothing that needs the dialog or page rendered can be an automated case: those are device cases.
 
@@ -98,3 +98,12 @@ S12: C++ `XlsxService` compiles on the CI build job (14 headers, shifted writes)
 ### Regression Tests (manual counterpart)
 - [ ] Delete a product: batches and photos gone (older cascade).
 - [ ] Bulk import still creates products with opening stock batches.
+
+## Implementation status (2026-10-08, branch `feat/2026-10-08-photos-ph5-legacy-removal`)
+Decisions: Q-P5-2 = silent ignore, so **section 2a (H01-H07) is DROPPED** (no helper, no warning). Automated total becomes 12 Node + 7 QML + 3 e2e + 1 build = 23 planned.
+- **Node, RUN in the sandbox:** G01-G05, G02b, G06-G11 in `functions/test/ph5LegacyPhotoUrl.guard.test.js`; F42 and F42b in `functions/test/gatewayLogic.test.js`. Two files: 71/71 pass. Whole functions suite: 599/599 pass (`cd functions && npm ci && node --test`).
+- **Mutation checks RUN:** extra `doc.write(row, 15, ...)` -> G07 failed; `// photoUrl` appended to `InventoryStore.qml` -> G01 failed; `photoUrl` renamed in `AuthStore.qml` -> G10 failed; comparator made lenient (crude: check disabled entirely) -> the CAS tests including conflict pins failed (F42 sensitivity itself was not isolated: it was not in the first five failures printed).
+- **QML WRITTEN, NOT RUN (CI only):** S01, S02, S03, S11, S13, S14 in `tests/tst_InventoryStore_photoIds.qml`; D1 in `tests/tst_InventoryStore_deleteProductCascade.qml` (replaces the legacy-photoUrl test).
+- **NOT written:** E01-E03 (emulator e2e; the pin is F42 on the server and S02/S13 on the client). Reason: scope/token budget this session; next session can add them in `test/e2e/`.
+- **C++ build (S12):** CI only, unrun.
+- Device plan (section 6) untouched, nothing ticked.

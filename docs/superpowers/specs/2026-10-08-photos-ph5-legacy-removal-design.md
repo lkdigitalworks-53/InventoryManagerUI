@@ -1,8 +1,16 @@
 # Photos PH5 — remove legacy PRODUCT `photoUrl` / `photoUpdatedAt` — design
 
-**Status:** design only, no code. Questions Q-P5-1..6 below are OPEN until Taher answers; each has a recommended default. Facts were read on `main` @ `78fa742` (PH4 PR #133 is NOT merged; line numbers will move).
+**Status 2026-10-08 (later): DECIDED and IMPLEMENTED on `feat/2026-10-08-photos-ph5-legacy-removal` (stacked on the design PR #135). See "Decisions taken" next.** Original status: design only; Q-P5-1..6 had recommended defaults. Facts were read on `main` @ `78fa742` (PH4 PR #133 is NOT merged; line numbers will move).
 **Parent design:** `2026-09-30-photos-s3-s4-design.md` (Q8 decided: PH5 = full removal, own slice, after PH3/PH4). **Test plan:** `test-plans/2026-10-08-photos-ph5-test-plan.md`. **Checkpoint:** `2026-10-08-photos-ph5-design-CHECKPOINT.md`.
 **Project facts (Taher):** dev env only, no legacy product `photoUrl`, new tenant per PR, app disabled offline. User-profile `photoUrl` (AuthStore, AuthService, ProfilePage, `provisionMember` in `functions/index.js`) is a different field and is NEVER touched.
+
+## Decisions taken (Taher, 2026-10-08)
+- **Q-P5-1 = A remove** the export column (14 columns).
+- **Q-P5-2 = A silent ignore** (CHANGED from my recommendation B). Taher: dev phase, no old import files exist, always fresh tenant and fresh export/import files. I accepted: the only cost is that someone importing a stale 15-column file gets no warning. Consequence: the `ImportMath.hasLegacyPhotoColumn` helper and tests H01-H07 are DROPPED; the dialog simply stops reading the column.
+- **Q-P5-3 = a** fresh tenants only, pin test F42, KNOWN-ISSUES entry (Taher: no old tenants).
+- **Q-P5-4 = B** edit only the two keys out of `_mergeRecord` (default); deleting dead code stays a separate cleanup.
+- **Q-P5-5 = A** Node source guards (default).
+- **Q-P5-6**: not answered; I applied the default (fresh branch, stacked on #135 so the design docs exist; rebase onto `main` after #133 and #135 merge, Skill 107 will need renumbering if #133 lands first with 107).
 
 ## Scope (every product `photoUrl` site found by grep on main)
 | File | Site | Action |

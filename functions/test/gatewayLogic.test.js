@@ -690,3 +690,26 @@ test("RES-G3 the reservation is an exact, case-sensitive PREFIX: lookalikes stay
         assert.equal(GatewayLogic.validateDeltaRequest(validDeltaBody({ requestId: id })).ok, true, id);
     }
 });
+
+// ── PH5 F42: removing a field client-side is a CAS conflict for docs that still store it ─────────
+// The server compares WHOLE documents (_deepEqual: identical key sets). Product docs written before
+// PH5 carry photoUrl:"" and photoUpdatedAt:""; the PH5 client no longer sends them in `before`, so
+// those docs 409 on every edit (accepted: fresh tenants only, Q-P5-3 a). This pins the consequence
+// so nobody "fixes" the comparator, or re-adds the keys, without making that decision deliberately.
+test("F42 applyMutation: before WITHOUT photoUrl/photoUpdatedAt vs a stored doc WITH them -> 409, nothing written", async () => {
+    const stored = { qty: 1, photoUrl: "", photoUpdatedAt: "" };
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": stored });
+    const result = await GatewayLogic.applyMutation(db, baseParams({ before: { qty: 1 } }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.conflict, true);
+    assert.deepEqual(result.current, stored);
+    assert.equal(db.writes.length, 0);
+});
+
+test("F42b applyMutation: before and stored doc BOTH without the legacy keys (fresh tenant) commits", async () => {
+    const db = makeFakeDbWithData({ "tenants/tenant-1/inventory/sku-1": { qty: 1 } });
+    const result = await GatewayLogic.applyMutation(db, baseParams());
+    assert.equal(result.ok, true);
+});
