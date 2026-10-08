@@ -76,7 +76,6 @@ function breakerWaitMs(state, now) {
   return isBreakerOpen(state, t) ? state.cooldownUntil - t : 0;
 }
 
-
 function shouldDiscardOnFailure(status, productExistsLocally) {
   return status === 404 && productExistsLocally === false;
 }

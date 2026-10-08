@@ -4177,3 +4177,14 @@ Rules:
 3. `clear()` on sign-out must put the paging flags back (`hasMore = true`), otherwise an emptied store with `hasMore === false` looks like a complete list with no rows.
 4. Do not reach for "just load everything first" (extra Firestore reads for one 404): the three-state answer costs nothing and the photo stays as a failed tile with Retry/Discard.
 5. When the reviewer says a check was scoped wrong, grep every caller of the helper and every flag it should depend on before editing, and add an end-to-end rule test (here: a simulated 130-row, 3-page list) so the original wrong behaviour is the failing case.
+
+## Skill 109: A review sweep checks that an inserted function did not orphan the comment above it, that a changed contract is stated where the contract lives, and that a test calls shipped code
+
+Context (2026-10-07, PR #133 final sweep): three Minor defects were all introduced by the same habit of adding a helper "next to where it is used".
+Rules:
+1. Inserting a function directly under a `//` block silently re-attaches that block to the new function. After adding a helper, re-read the 3 lines above its insertion point (`hasProduct` split `photoIdsFor`'s comment, `_productExistsLocally` split `_upload`'s). Put the helper above the comment block, not between it and its function.
+2. When a PR starts to rely on a value meaning something new (`current: null` = row gone), grep the producer AND the doc comment on the signal (`Gateway.mutationConflicted` still said null = malformed edge case). Server truth wins: `gatewayLogic.js` returns `current: currentSnap.exists ? data : null`. Update the comment in the same PR.
+3. A test that re-implements the formula inline (`Math.max(250, Math.max(0, breakerWaitMs(...)))`) never calls the shipped function and gives false assurance. Delete it; say plainly which lines stay device-only (`_reschedule` L1 line, the `_upload` discard `if`).
+4. A test that nulls a shared singleton property must restore it in `cleanup()`, not at the end of the test: `compare()` aborts the test function and skips the restore.
+5. A rule keyed on an HTTP status alone is only as safe as the status is unambiguous. 404 is also what a misrouted endpoint answers; when the action is destructive and unrecoverable (discard a local photo file), check the body (`error: "product-not-found"`) or accept the risk in KNOWN-ISSUES with the fix named.
+6. After a test is removed, grep every doc for the old count (`34/34`, `29/29`) and fix them; count with the runner, do not carry numbers forward.

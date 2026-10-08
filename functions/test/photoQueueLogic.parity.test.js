@@ -197,13 +197,6 @@ test('PH4 L1: with no explicit now it uses the clock', () => {
   const w = breakerWaitMs(open);
   assert.ok(w > 99000 && w <= 100000, String(w));
 });
-test('PH4 L1: _reschedule rule max(due, breakerWait) keeps the later of the two (a retry already later than the cooldown wins)', () => {
-  const open = { status: 'open', cooldownUntil: 10000 };
-  assert.equal(Math.max(250, Math.max(0, breakerWaitMs(open, 1000))), 9000);
-  assert.equal(Math.max(250, Math.max(30000, breakerWaitMs(open, 1000))), 30000);
-  assert.equal(Math.max(250, Math.max(0, breakerWaitMs({ status: 'closed' }, 1000))), 250);
-});
-
 // ---- PH4 follow-up: discard a queued photo on 404 only when the product row is gone locally too ----
 test('PH4 D1: 404 and product row gone locally -> discard', () => {
   assert.equal(shouldDiscardOnFailure(404, false), true);
