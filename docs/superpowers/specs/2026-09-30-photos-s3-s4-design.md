@@ -164,6 +164,7 @@ Test plan: `../test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md`.
 6. Standalone remove-photo button already surfaces failures via `removeFailed(photoId, err)` (`ProductPhotoGallery.qml` ~L76): no change.
 
 ## PH5 — remove legacy PRODUCT `photoUrl`/`photoUpdatedAt`
+**2026-10-08: detailed design, facts and open decisions Q-P5-1..6 moved to `2026-10-08-photos-ph5-legacy-removal-design.md` (supersedes the "decide remove-vs-blank then" note below). Test plan: `test-plans/2026-10-08-photos-ph5-test-plan.md`.**
 Remove: `InventoryStore.qml` normalize (L132-133), clone fields (L198-199, L226), `setPhoto` (L622-630, dead), clear-legacy helper (L663-674), upsert/import fields (L985-997); `EditProductDialog.qml` property, load, reset and the "Upload this photo" migration UI (L14/31/147/219/299-304); `InventoryPage.qml` thumbnail fallback (L241); `StorageService.qml` legacy comments (L12/37); `XlsxService.cpp` export column 11 "Photo URL" (L81) and `ImportPreviewDialog.qml` import "Photo URL" (L460/482); tests `tst_InventoryStore_deleteProductCascade.qml`, `tst_InventoryStore_photoIds.qml`, `test/felgo-dependent/tst_InventoryPage_deleteButton.qml`. **Must check before editing:** whether dropping export column 11 shifts later columns, and whether the import template/docs mention it (user-visible spreadsheet format change): decide remove-vs-blank then. **Never touch** AuthStore, AuthService, ProfilePage, `provisionMember`.
 
 ## Known limits (accepted, to be written into KNOWN-ISSUES / photo design spec at implementation)
