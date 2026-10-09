@@ -475,7 +475,9 @@ QtObject {
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
   identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
-  (native file read + XHR, untested at this level — see Testing & QA Agent). Uses the
+  (native file read + XHR, untested at this level — see Testing & QA Agent). Its failure tail is ONE
+  function, `_failUpload(item, uploading, status, responseText)` (non-2xx, timeout, unreadable file), which
+  holds the discard rule (404 + body `product-not-found` + row gone from the COMPLETE list, PH4 R1) and IS tested. Uses the
   property-binding-watcher pattern for `AuthService.isOnline`, NOT `Connections{}` (Skill 20/68 —
   `Connections{}` inside a `pragma Singleton QtObject` crashes the whole singleton chain).
 - `qml/model/StorageService.qml` — product-photo abstraction (`addProductPhoto`,
@@ -913,7 +915,9 @@ env.
   for real in this repo's Node tooling; these two QML files prove the actual QML copies load and
   agree, but only CI can run them.
 - `tests/tst_PhotoQueue.qml` (2026-09-21/25) — `PhotoQueue.qml`'s queue-management logic:
-  persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix. Does
+  persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix, plus
+  `_failUpload()` (PR #138 sweep: discard rule, retry/failed bookkeeping, monkey against a reference model;
+  needs `InventoryStore` paging flags restored in `cleanup()`). Does
   NOT cover `_upload()` (native + XHR) — see that file's own TESTABILITY NOTE. Two regression
   tests added during this feature's own review sweep for bugs the original tests didn't catch:
   `_load()` never having called `_reschedule()` (a photo queued last session would sit frozen

@@ -1,17 +1,26 @@
-# CHECKPOINT — 2026-10-09 session: rebase PR #135 onto main (resume here)
+# CHECKPOINT — 2026-10-09 PR #138 final sweep (resume here)
 
-**Branch:** `docs/2026-10-08-ph5-legacy-photourl-design` (PR #135). Carries 2 commits: design+test plan (fb2671e) and the PH5 implementation (#136, 674459e, previously stacked). Base `main` moved to b4d426a (#133 + #134 merged).
-**Commit identity:** `dextran52@gmail.com`. PAT only in the push command's extraHeader, never in a file or git config.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-09-pr135-rebase-prev-CHECKPOINT.md` (main's #134 rebase checkpoint). PH5's own checkpoints stay in `docs/superpowers/specs/2026-10-08-photos-ph5-design-CHECKPOINT.md` and `docs/superpowers/plans/2026-10-08-pr136-final-sweep-CHECKPOINT.md`.
+**Branch:** `feat/2026-10-08-photos-ph4-r1-404-body` (PR #138, base `main` @ 38ac768, CI green on aa8c22c: QML 1941, functions 622, e2e 87, rules 45). NOTHING IS DEPLOYED, app not built or run.
+**Commit identity:** `lkdwtaher@gmail.com`. PAT only in the push command, never in a file or git config. (The original PR commit aa8c22c was authored as `dextran52@gmail.com`; history is NOT rewritten.)
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-09-pr138-final-sweep-prev-CHECKPOINT.md` (the R1 build checkpoint).
+**Decision (Taher, 2026-10-08):** R1 option (b): a 404 discards a queued photo only if the body error is `product-not-found` AND the product is absent from the COMPLETE local list.
 
-## Plan (tick as done)
-- [x] 1 clone, branch `tmp` from origin PR #135 head (674459e), merge-base was 78fa742
-- [x] 2 `git rebase origin/main`: 2 commits replayed
-- [x] 3 commit 1 conflicts: `DELETE-FEATURE-ROADMAP.md` (kept main's PH4 paragraph, appended PH5 paragraph), `test-plans/README.md` (kept both rows)
-- [x] 4 commit 2 conflicts: `SKILLS.md`, `SKILLS-INDEX.md`, `KNOWN-ISSUES.md`, `test-plans/README.md` (kept main's rows, PH5 row replaces the older planned one). Main now holds Skill 107-109, so PH5's skills renumbered 107->110, 108->111; refs fixed in AGENTS.md and the PH5 docs; index regenerated (112 skills, `--check` ok)
-- [x] 5 no conflict markers left in the tree
-- [~] 6 force-push with lease pinned to old head 674459e; then wait for CI (QML tests and C++ build are CI-only)
-- [ ] 7 functions tests not re-run in the sandbox before the push (no node_modules); CI is the proof
+## Sweep passes (done)
+- [x] 1 ponytail-audit + qt-qml-review (linter on changed QML: only repo-wide `var` style noise) + independent code reviewer + 6-domain QML analysis. Report: `docs/superpowers/specs/2026-10-09-pr138-final-sweep-review.md`
+- [x] 2 verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (run in sandbox)
+
+## Fix plan (tick as done)
+- [x] F1 failure branch of `PhotoQueue._upload` x3 copies -> ONE `_failUpload(item, uploading, status, responseText)`; tests in `tests/tst_PhotoQueue.qml` (closes the only uncovered new line)
+- [x] F2 Node monkeys D5/P6/R1-7 never reached the discard region (low-bit LCG: 0 of 1000 hits; R1-7 never built a string `error`) -> high bits + positive-path counters
+- [x] F3 docs: "visible Retry/Discard" claim is false when the row is gone (invisible `failed` item until sign-out): fix wording in test plan, KNOWN-ISSUES, PQL comment; fix R1 device steps so they observe the queue, not tiles
+- [x] F4 stale: PQL + tst_PhotoQueueLogic + tst_PhotoQueue header counts (23/23 -> no number), CHECKPOINT counts (608 -> 622), roadmap status line for R1
+- [x] F5 pushed 1ba0050, CI green: QML 1953 (+12 FU01-FU12), functions 622, e2e 87, rules 45 = 2707/2707; mergeable clean. Sandbox verified (QML tests are CI-only). Sandbox verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (113 skills); mutation checks fail 5+5 Node tests
+
+## Open items found, NOT fixed here (scope; for Taher)
+- O1 invisible `failed` item (misrouted endpoint + product deleted elsewhere) stays until sign-out; option: purge failed items whose row is absent from a complete list (drops R1's second signal, needs your call)
+- O2 late 2xx after `PhotoQueue.clear()` (sign-out) emits `photoUploaded` under the next account; `applyPhotoIds` matches by productId only (needs an in-flight upload + sign-out + same productId)
+- O3 on timeout Qt may fire both `onreadystatechange` (DONE, status 0) and `ontimeout`: breaker counted twice (unverified, device check)
+- O4 body may not survive the QTBUG-49896 snapshot (fail-safe: no discard); `console.warn` added in F1 shows it on device
 
 ## NEXT
-Taher: read CI on #135, squash-merge when green. PH5 still needs: e2e E01-E03 (not written), device plan run, PR #138 (R1 404 body) is a separate stacked PR on #134 and may conflict in `SKILLS.md` numbering.
+Taher: squash-merge #138 (CI green on 1ba0050). Then decide O1-O3 (see review note), PH3b deploy + DV-1..DV-9, R1 + PH4 device steps, PH5 device plan + e2e E01-E03, atomic-operation work.

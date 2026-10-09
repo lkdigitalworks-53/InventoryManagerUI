@@ -1466,7 +1466,7 @@ QtObject {
 
     // true = the row is in the local list; false = the list is complete and the row is not in it;
     // undefined = cannot tell yet (partial list, or an empty/non-string id). PhotoQueue discards a photo
-    // on a server 404 only for `false` (PQL.shouldDiscardOnFailure), so an unknown answer never discards.
+    // on a server 404 with body `product-not-found` only for `false` (PQL.shouldDiscardOnFailure), so an unknown answer never discards.
     function hasProduct(productId) {
         if (typeof productId !== "string" || productId === "") return undefined
         return PQL.productPresence(getById(productId) !== null, listComplete)
