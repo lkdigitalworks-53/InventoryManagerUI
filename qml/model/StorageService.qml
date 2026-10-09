@@ -9,7 +9,7 @@ import "../helper/PhotoUrl.js" as PhotoUrl
 //
 // Rewritten 2026-09-21 for the Firebase-Storage-backed, multi-photo, cross-device-synced feature
 // (design spec: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md).
-// The OLD single-device model (useCloud toggle, a single photoUrl string, local-file-URL-as-source-
+// The OLD single-device model (useCloud toggle, a single legacy URL string, local-file-URL-as-source-
 // of-truth) is REPLACED here, not extended — it was never going to satisfy "sync across every
 // device" no matter how useCloud was flipped, since the whole premise was a file:// URL that only
 // resolves on the device that wrote it. _uploadToFirebase/_deleteFromFirebase's old stub bodies
@@ -33,9 +33,8 @@ QtObject {
     // PhotoQueue.photoUploaded/photoUploadFailed report the eventual outcome; the caller (the
     // photo gallery) shows a spinner on this photoId in the meantime by checking PhotoQueue.items.
     //
-    // Also used for the one-tap "migrate this photo" affordance (design spec, Data model): pass
-    // the product's existing legacy photoUrl as sourceUrl -- it's already a valid local file://
-    // URI, so no special-casing is needed here, only in the caller that offers the button.
+    // (The one-tap "migrate this photo" button that reused this with the old single-photo field
+    // was removed in PH5, 2026-10-08.)
     function addProductPhoto(productId, sourceUrl) {
         if (!productId || !sourceUrl)
             return { ok: false, error: "Missing productId or source", photoId: "" }

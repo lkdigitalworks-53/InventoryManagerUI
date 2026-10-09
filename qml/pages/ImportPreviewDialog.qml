@@ -457,7 +457,6 @@ BottomSheet {
                 sellingPrice: sell,
                 stock: parseInt(r["Stock"]) || 0,
                 minStock: parseInt(r["Min Stock"]) || 0,
-                photoUrl: (r["Photo URL"] || "").toString().trim(),
                 supplier: (r["Supplier"] || "").toString().trim(),
                 size: (r["Size"] || "").toString().trim(),
                 taxable: rowTaxable,
@@ -479,7 +478,7 @@ BottomSheet {
         // an issue instead — same "show it, don't guess" principle as every
         // other validation error here.
         var dupCompareFields = ["name", "sku", "category", "unit", "description", "price",
-                                "sellingPrice", "stock", "minStock", "photoUrl", "supplier",
+                                "sellingPrice", "stock", "minStock", "supplier",
                                 "size", "taxable", "taxPercent"]
         var dup = ImportMath.findDuplicateProductRows(ready, dupCompareFields)
         if (dup.dropIndexes.length > 0 || dup.conflicts.length > 0) {

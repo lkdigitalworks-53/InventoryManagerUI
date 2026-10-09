@@ -123,10 +123,10 @@ TestCase {
     }
 
     function test_deleteProduct_completes_despite_photo_cleanup_throwing() {
-        // As of the 2026-09-21 photos feature this specific fixture (no photoIds, no photoUrl)
+        // As of the 2026-09-21 photos feature this specific fixture (no photoIds)
         // no longer actually throws anywhere in the cascade -- every native-context-property call
-        // reachable from it (PhotoQueue.discard's ImageProcessor calls, and this function's own
-        // legacy-photoUrl ImageProcessor.removeLocalCopy call) is now guarded with
+        // reachable from it (PhotoQueue.discard's ImageProcessor calls, and the old legacy
+        // ImageProcessor.removeLocalCopy call, removed since) is now guarded with
         // `typeof ImageProcessor !== "undefined"`, and StorageService.removeProductPhoto's XHR
         // branch returns via callback rather than throwing when AuthStore.idToken is unset (the
         // default in this test environment). The try/catch stays in deleteProduct() as cheap
@@ -155,10 +155,9 @@ TestCase {
         compare(InventoryStore.products.length, 0)
     }
 
-    function test_deleteProduct_with_a_legacy_photoUrl_and_no_photoIds_still_completes() {
-        // A never-migrated product: photoIds is empty, photoUrl is set. The legacy local-file
-        // cleanup (ImageProcessor.removeLocalCopy) was removed with the photo loop; PH5 deletes
-        // photoUrl entirely. Delete must still complete.
+    function test_D1_deleteProduct_with_a_stray_legacy_photoUrl_key_still_completes() {
+        // PH5 removed the legacy product photoUrl from the client entirely. A row that still
+        // carries the key (loaded from a pre-PH5 doc) must delete without error.
         var p = _product("SKU-1")
         p.photoUrl = "file:///tmp/SKU-1.jpg"
         InventoryStore.products = [p]

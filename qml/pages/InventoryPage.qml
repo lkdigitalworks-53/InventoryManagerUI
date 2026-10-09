@@ -235,10 +235,8 @@ Item {
             AvatarBadge {
                 Layout.alignment: Qt.AlignVCenter
                 size: "lg"
-                imageSource: card.product
-                    ? (card.product.photoIds && card.product.photoIds.length > 0
-                        ? StorageService.photoDownloadUrl(card.product.productId, card.product.photoIds[0], true)
-                        : (card.product.photoUrl || ""))
+                imageSource: card.product && card.product.photoIds && card.product.photoIds.length > 0
+                    ? StorageService.photoDownloadUrl(card.product.productId, card.product.photoIds[0], true)
                     : ""
                 label: card.product && card.product.name && card.product.name.length > 0
                     ? card.product.name.charAt(0).toUpperCase() : "?"
