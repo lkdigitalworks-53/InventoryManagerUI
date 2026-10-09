@@ -14,7 +14,7 @@
 - [x] F2 Node monkeys D5/P6/R1-7 never reached the discard region (low-bit LCG: 0 of 1000 hits; R1-7 never built a string `error`) -> high bits + positive-path counters
 - [x] F3 docs: "visible Retry/Discard" claim is false when the row is gone (invisible `failed` item until sign-out): fix wording in test plan, KNOWN-ISSUES, PQL comment; fix R1 device steps so they observe the queue, not tiles
 - [x] F4 stale: PQL + tst_PhotoQueueLogic + tst_PhotoQueue header counts (23/23 -> no number), CHECKPOINT counts (608 -> 622), roadmap status line for R1
-- [~] F5 push, then poll CI (QML tests are CI-only). Sandbox verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (113 skills); mutation checks fail 5+5 Node tests
+- [x] F5 pushed 1ba0050, CI green: QML 1953 (+12 FU01-FU12), functions 622, e2e 87, rules 45 = 2707/2707; mergeable clean. Sandbox verified (QML tests are CI-only). Sandbox verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (113 skills); mutation checks fail 5+5 Node tests
 
 ## Open items found, NOT fixed here (scope; for Taher)
 - O1 invisible `failed` item (misrouted endpoint + product deleted elsewhere) stays until sign-out; option: purge failed items whose row is absent from a complete list (drops R1's second signal, needs your call)
@@ -23,4 +23,4 @@
 - O4 body may not survive the QTBUG-49896 snapshot (fail-safe: no discard); `console.warn` added in F1 shows it on device
 
 ## NEXT
-After F5: Taher reads CI on #138, squash-merges when green.
+Taher: squash-merge #138 (CI green on 1ba0050). Then decide O1-O3 (see review note), PH3b deploy + DV-1..DV-9, R1 + PH4 device steps, PH5 device plan + e2e E01-E03, atomic-operation work.
