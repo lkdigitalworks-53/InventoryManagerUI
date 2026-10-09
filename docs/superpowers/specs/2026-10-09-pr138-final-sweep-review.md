@@ -1,0 +1,25 @@
+# PR #138 final sweep (2026-10-09)
+
+Scope: PR #138 (`feat/2026-10-08-photos-ph4-r1-404-body`, PH4 R1: a queued photo is discarded on a 404 only when the body says `product-not-found` and the product row is gone from the COMPLETE local list). Base `main` @ 38ac768. Passes run: `ponytail-audit` rules over the changed and connected code, `qt-qml-review` (Python linter on the changed QML, plus a six-domain deep analysis by an independent reviewer), and a separate independent code reviewer working on a snapshot of the PR head. Qt tools are not available in the sandbox, so QML results are read from code; CI is the proof for QML.
+
+Verified by running (not carried forward): Node parity file 46/46, whole functions suite 622/622, CI-script tests 76/76, `skills-index.js --check` current. CI on the PR head before this sweep was green: QML 1941, functions 622, e2e 87, rules 45.
+
+## Findings and what was done
+
+| # | Finding | Severity | Disposition |
+|---|---|---|---|
+| 1 | The only new behaviour (`shouldDiscardOnFailure(..., errorCodeOf(...))`) sat in the XHR callback that no qmltestrunner test reaches. The failure tail existed in three copies (non-2xx, timeout, unreadable file). | Important | FIXED: one `PhotoQueue._failUpload(item, uploading, status, responseText)`; call-site equivalence checked (emit condition, call order, early return after discard, `_reschedule` inside the function). 12 QML tests FU01-FU12 in `tests/tst_PhotoQueue.qml`. |
+| 2 | Node monkeys never reached the discard case. D5: 0 of 1000 draws had 404 + code + row gone (low-bit LCG, 17 distinct triples). R1-7: no generated body had a string `error`, so "only the exact code discards" was never exercised. D5 passed with the code check removed. | Important | FIXED: high LCG bits, whole-body fragments, assertions that the generator reached the discard and kept cases. Mutation check: dropping the code check now fails 5 tests including both monkeys; dropping the row check fails 5. Same fix on P6 (now asserts all three answers are reached). |
+| 3 | The PR text, test plan and CHECKPOINT said a kept photo is "failed + Retry/Discard (visible)". When the row is gone there is no tile (`ProductPhotoGallery` lives in the product dialog, nothing listens to `photoUploadFailed`), so the item stays with its files until sign-out. The R1 device steps could not observe what they claimed. | Important | DOCS FIXED: KNOWN-ISSUES, test plan (Follow-up 3 correction, device steps rewritten to observe the queue and the log), PQL comment. NOT purged: see open item O1. |
+| 4 | The 404 body may not survive the QTBUG-49896 status snapshot (`_snap`); the discard then silently never fires (fail-safe). | Investigation | ADDED a `console.warn` in `_failUpload` for "404 without product-not-found" (first 80 chars of the body only) and a device step that checks the real endpoint discards. |
+| 5 | Stale numbers and identity: CHECKPOINT said 608/608 (real: 622), PQL header said 23/23 (real: 46), `tst_PhotoQueue.qml` header said 23/23, CHECKPOINT named `dextran52@gmail.com` as commit identity. | Minor | FIXED. History is not rewritten: the original PR commit aa8c22c keeps its author; new commits use `lkdwtaher@gmail.com`. |
+| 6 | `PQL.errorCodeOf` duplicates `StuckWrites.errorCodeOf` (same 4 lines, same semantics for strings). | Minor | KEPT on purpose: merging means a cross-module import in a `.pragma library` file and a second Node mirror dependency for 4 lines; both are pinned by their own tests. Revisit if a third copy appears. |
+| 7 | `shouldDiscardOnFailure` arguments are all evaluated on every non-2xx (a `getById` scan and a `JSON.parse` even for a 503). | Minor | KEPT: runs once per failed request, at most 8 per item; guarding with `status === 404` outside the pure function would duplicate its rule. |
+| 8 | `var` in the new test lines (linter JS-1) and `!==` false positives (JS-2) on unchanged `InventoryStore.hasProduct` lines. | Style | KEPT: repo-wide convention; no real hit on changed QML code. |
+
+## Open items, NOT fixed here (need a decision or a device)
+
+- **O1** An invisible `failed` item stays until sign-out (misrouted endpoint + product deleted elsewhere). Option: purge `failed` items whose row is absent from a complete list. Trade-off: that drops R1's second signal, so a local list glitch could lose a live photo. Taher decides.
+- **O2** A late 2xx after `PhotoQueue.clear()` (sign-out) emits `photoUploaded` under the next account, and `InventoryStore.applyPhotoIds` matches by `productId` only. Needs an in-flight upload, a sign-out, and the same productId in the next tenant. Pre-existing, not in this diff. Candidate fix: stamp uid/tenantId on the in-flight item and ignore callbacks that no longer match.
+- **O3** On a timeout Qt may fire both `onreadystatechange` (DONE, status 0) and `ontimeout`, counting the breaker twice and rescheduling twice. Unverified. Device or Qt-source check first.
+- **O4** The client string and the server literals (`functions/index.js` L1183, `functions/lib/photoCleanup.js` L78) share no source, so a server-side rename makes R1 inert (safe, no data loss). Server tests pin the string.

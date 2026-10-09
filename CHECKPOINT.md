@@ -10,11 +10,11 @@
 - [x] 2 verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (run in sandbox)
 
 ## Fix plan (tick as done)
-- [ ] F1 failure branch of `PhotoQueue._upload` x3 copies -> ONE `_failUpload(item, uploading, status, responseText)`; tests in `tests/tst_PhotoQueue.qml` (closes the only uncovered new line)
-- [ ] F2 Node monkeys D5/P6/R1-7 never reached the discard region (low-bit LCG: 0 of 1000 hits; R1-7 never built a string `error`) -> high bits + positive-path counters
-- [ ] F3 docs: "visible Retry/Discard" claim is false when the row is gone (invisible `failed` item until sign-out): fix wording in test plan, KNOWN-ISSUES, PQL comment; fix R1 device steps so they observe the queue, not tiles
-- [ ] F4 stale: PQL header counts (23/23), CHECKPOINT counts (608 -> 622), roadmap status line for R1
-- [ ] F5 push, then poll CI (QML tests are CI-only)
+- [x] F1 failure branch of `PhotoQueue._upload` x3 copies -> ONE `_failUpload(item, uploading, status, responseText)`; tests in `tests/tst_PhotoQueue.qml` (closes the only uncovered new line)
+- [x] F2 Node monkeys D5/P6/R1-7 never reached the discard region (low-bit LCG: 0 of 1000 hits; R1-7 never built a string `error`) -> high bits + positive-path counters
+- [x] F3 docs: "visible Retry/Discard" claim is false when the row is gone (invisible `failed` item until sign-out): fix wording in test plan, KNOWN-ISSUES, PQL comment; fix R1 device steps so they observe the queue, not tiles
+- [x] F4 stale: PQL + tst_PhotoQueueLogic + tst_PhotoQueue header counts (23/23 -> no number), CHECKPOINT counts (608 -> 622), roadmap status line for R1
+- [~] F5 push, then poll CI (QML tests are CI-only). Sandbox verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (113 skills); mutation checks fail 5+5 Node tests
 
 ## Open items found, NOT fixed here (scope; for Taher)
 - O1 invisible `failed` item (misrouted endpoint + product deleted elsewhere) stays until sign-out; option: purge failed items whose row is absent from a complete list (drops R1's second signal, needs your call)

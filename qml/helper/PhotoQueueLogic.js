@@ -4,8 +4,7 @@
 // No Qt/network/QSettings here -- everything testable stays in this file.
 // Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
 // A plain-Node mirror of this file lives at functions/test/testSupport/photoQueueLogicParity.js
-// and runs for real under node --test in this session (23/23, including two monkey tests, run
-// stably 5 times). Keep the two in sync by hand -- same convention as StuckWrites.js / Skill 67.
+// and runs for real under node --test (count it with the runner, never carry a number here). Keep the two in sync by hand -- same convention as StuckWrites.js / Skill 67.
 // tests/tst_PhotoQueueLogic.qml proves the QML copy loads and matches; CI is the proof for that one.
 
 var BACKOFF_MS = [2000, 8000, 30000, 120000, 600000] // identical to OutboxStore._backoffMs -- do not fork
@@ -93,6 +92,8 @@ function breakerWaitMs(state, now) {
 // PH4 R1 (Taher 2026-10-08, option b): a bare 404 is not enough. A misrouted or undeployed endpoint answers
 // 404 too, and the discard deletes the local photo file for good. Only the server's own answer counts:
 // body `{error: "product-not-found"}` (see errorCodeOf). Callers that pass no code never discard.
+// Known limit (KNOWN-ISSUES, PR #138 sweep): a 404 WITHOUT that body, for a product whose row is gone, parks a
+// `failed` item that NO tile shows (the gallery lives in the product dialog); it stays until sign-out.
 var PRODUCT_NOT_FOUND = "product-not-found"
 function shouldDiscardOnFailure(status, productExistsLocally, errorCode) {
     return status === 404 && productExistsLocally === false && errorCode === PRODUCT_NOT_FOUND

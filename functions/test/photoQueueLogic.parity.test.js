@@ -212,9 +212,10 @@ test('PH4 D4: only 404 discards: every other status with the row gone is left to
   for (const st of [0, 400, 401, 403, 409, 413, 429, 500, 503, '404']) assert.equal(shouldDiscardOnFailure(st, false, PRODUCT_NOT_FOUND), false, String(st));
 });
 test('PH4 D5 MONKEY: 5 seeds x 200 random (status, exists, code) triples match the one-line truth table', () => {
+  let discards = 0;
   for (let seed = 1; seed <= 5; seed++) {
     let st = seed * 15485863;
-    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n; };
     const statuses = [0, 200, 400, 401, 403, 404, 404, 409, 413, 429, 500, 503];
     const exists = [true, false, undefined, null];
     const codes = [PRODUCT_NOT_FOUND, 'conflict', '', undefined, null, 'PRODUCT-NOT-FOUND'];
@@ -222,9 +223,12 @@ test('PH4 D5 MONKEY: 5 seeds x 200 random (status, exists, code) triples match t
       const status = statuses[rnd(statuses.length)];
       const e = exists[rnd(exists.length)];
       const code = codes[rnd(codes.length)];
-      assert.equal(shouldDiscardOnFailure(status, e, code), status === 404 && e === false && code === PRODUCT_NOT_FOUND);
+      const want = status === 404 && e === false && code === PRODUCT_NOT_FOUND;
+      assert.equal(shouldDiscardOnFailure(status, e, code), want);
+      if (want) discards++;
     }
   }
+  assert.ok(discards > 0, 'the generator must reach the discard case (the old low-bit LCG never did)');
 });
 
 // ---- PH4 follow-up 2 (Taher 2026-10-07): "row gone" may only be answered from the FULL product list ----
@@ -262,16 +266,19 @@ test('PH4 P5 END-TO-END RULE: a 404 for a product sitting on page 3 of 3 is NOT 
   assert.equal(gone(3, false), true);    // absent and list complete -> discard
 });
 test('PH4 P6 MONKEY: 5 seeds x 300 random (found, complete) pairs match the truth table', () => {
+  const seen = new Set();
   for (let seed = 1; seed <= 5; seed++) {
     let st = seed * 32452843;
-    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n; };
     const vals = [true, false, undefined, null, 0, 1, '', 'x'];
     for (let i = 0; i < 300; i++) {
       const f = vals[rnd(vals.length)], c = vals[rnd(vals.length)];
       const want = f === true ? true : (c === true ? false : undefined);
       assert.equal(productPresence(f, c), want);
+      seen.add(String(want));
     }
   }
+  assert.deepEqual([...seen].sort(), ['false', 'true', 'undefined'], 'the generator must reach all three answers');
 });
 
 // ---- PH4 R1 (Taher 2026-10-08, option b): a 404 discards only when the server body says product-not-found ----
@@ -306,10 +313,12 @@ test('PH4 R1-6 END-TO-END RULE: an HTML 404 body from a bad route never discards
   assert.equal(decide('{"ok":false,"error":"product-not-found"}'), true);
 });
 test('PH4 R1-7 MONKEY: 5 seeds x 300 random bodies never throw and only the exact code discards', () => {
-  const frag = ['{', '}', '"error"', ':', '"product-not-found"', '"x"', ',', '[', ']', 'null', '5', ' ', '<', '>'];
+  const frag = ['{', '}', '"error"', ':', '"product-not-found"', '"x"', ',', '[', ']', 'null', '5', ' ', '<', '>',
+    '{"error":"product-not-found"}', '{"ok":false,"error":"x"}']; // the last two are whole bodies, so a string `error` is reachable
+  let discards = 0, keeps = 0;
   for (let seed = 1; seed <= 5; seed++) {
     let st = seed * 49979687;
-    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n; };
     for (let i = 0; i < 300; i++) {
       let body = ''; const n = rnd(9); for (let j = 0; j < n; j++) body += frag[rnd(frag.length)];
       let code; assert.doesNotThrow(() => { code = errorCodeOf(body); }, body);
@@ -318,6 +327,9 @@ test('PH4 R1-7 MONKEY: 5 seeds x 300 random bodies never throw and only the exac
       const want = (parsed && typeof parsed.error === 'string') ? parsed.error : '';
       assert.equal(code, want, body);
       assert.equal(shouldDiscardOnFailure(404, false, code), want === PRODUCT_NOT_FOUND);
+      if (want === PRODUCT_NOT_FOUND) discards++; else keeps++;
     }
   }
+  assert.ok(discards > 0, 'the generator must build at least one body that discards');
+  assert.ok(keeps > 0, 'the generator must build at least one body that keeps');
 });

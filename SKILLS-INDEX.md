@@ -119,3 +119,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 109: A review sweep checks that an inserted function did not orphan the comment above it, that a changed contract is stated where the contract lives, and that a test calls shipped code
 - 110: Removing a field the client writes from a CAS-compared document 409s every stored doc that still has it; decide that on purpose
 - 111: Verify a design "fact" by reading the code that owns it; a document has more than one creation path, and a shared reader may be positional
+- 112: A monkey test must prove its generator reaches the case it guards; copies of a failure tail are one function so the decision is testable

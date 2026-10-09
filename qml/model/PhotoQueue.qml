@@ -32,6 +32,7 @@ import "../helper/PhotoUrl.js" as PhotoUrl
 // touching Storage, the network, or a native file read, and IS unit-testable (tests/tst_PhotoQueue.qml).
 // _upload() itself (native file read + XHR) is not exercised under qmltestrunner, consistent with
 // Gateway._send's existing precedent -- CI's e2e suite (test/e2e/tst_ProductPhotosE2E.qml) is the real proof for that path.
+// Its failure tail is a separate function, _failUpload(item, uploading, status, responseText), and IS unit-tested.
 // The two ImageProcessor calls in discard() are guarded with `typeof ImageProcessor !== "undefined"`
 // so discard()'s queue-array removal (the part that matters for correctness and IS tested) stays
 // callable under qmltestrunner; the guard is a no-op difference on-device, where ImageProcessor is
@@ -234,7 +235,32 @@ QtObject {
         try { return InventoryStore.hasProduct(productId) } catch (e) { return undefined }
     }
 
-    // Not unit-tested under qmltestrunner -- see the TESTABILITY NOTE at the top of this file.
+    // The one failure tail of _upload(): a non-2xx answer, a timeout (status 0) and an unreadable local
+    // file (400) all end here, so the discard rule and the retry/failed bookkeeping exist once and ARE
+    // unit-tested (tests/tst_PhotoQueue.qml, no NativeFile or XHR needed). `uploading` is the in-flight
+    // copy of `item`; reduceQueueItem ignores it unless its state is still "uploading".
+    // Discard (item + local files, for good) only when the server said product-not-found AND the product
+    // row is gone from the COMPLETE local list (PH4 R1); anything else is kept and counted as a failure.
+    function _failUpload(item, uploading, status, responseText) {
+        var code = PQL.errorCodeOf(responseText)
+        if (PQL.shouldDiscardOnFailure(status, _productExistsLocally(item.productId), code)) {
+            discard(item.photoId)
+            _reschedule()
+            return
+        }
+        // Device signal for R1: a 404 without the server's own code keeps the photo (misrouted endpoint, or the
+        // body was lost by the QTBUG-49896 status snapshot). Never log the whole body (can be a full HTML page).
+        if (status === 404 && code !== PQL.PRODUCT_NOT_FOUND)
+            console.warn("[PhotoQueue] 404 without product-not-found, keeping photo:", item.photoId, String(responseText || "").slice(0, 80))
+        var next = PQL.reduceQueueItem(uploading, { type: "failed", status: status })
+        _replaceItem(item.photoId, next)
+        _breaker = PQL.breakerReducer(_breaker, { type: "failure" })
+        if (next && next.state === "failed") photoUploadFailed(item.productId, item.photoId, status)
+        _reschedule()
+    }
+
+    // Not unit-tested under qmltestrunner (native file read + XHR) -- see the TESTABILITY NOTE at the top
+    // of this file; its failure tail, _failUpload(), IS tested.
     // Mirrors Gateway._send's structure deliberately (the QTBUG-49896 status-loss workaround,
     // 45s timeout, the auth-header/idToken-not-ready guard) so this doesn't invent a second style.
     function _upload(item) {
@@ -259,11 +285,7 @@ QtObject {
             // queue item), so this should never happen in practice -- terminal, since retrying
             // into a missing file can never succeed.
             console.warn("[PhotoQueue] local file unreadable, giving up:", item.photoId, item.mainFilePath)
-            var missing = PQL.reduceQueueItem(uploading, { type: "failed", status: 400 })
-            _replaceItem(item.photoId, missing)
-            _breaker = PQL.breakerReducer(_breaker, { type: "failure" })
-            photoUploadFailed(item.productId, item.photoId, 400)
-            _reschedule()
+            _failUpload(item, uploading, 400, "")
             return
         }
 
@@ -283,26 +305,12 @@ QtObject {
                 _replaceItem(item.photoId, null)
                 _breaker = PQL.breakerReducer(_breaker, { type: "success" })
                 photoUploaded(item.productId, item.photoId, parsed.photoIds || [])
+                _reschedule()
             } else {
-                if (PQL.shouldDiscardOnFailure(effStatus, _productExistsLocally(item.productId), PQL.errorCodeOf(effResponseText))) {
-                    discard(item.photoId)   // server said product-not-found AND the row is gone locally: nothing can consume it
-                    _reschedule()
-                    return
-                }
-                var next = PQL.reduceQueueItem(uploading, { type: "failed", status: effStatus })
-                _replaceItem(item.photoId, next)
-                _breaker = PQL.breakerReducer(_breaker, { type: "failure" })
-                if (next && next.state === "failed") photoUploadFailed(item.productId, item.photoId, effStatus)
+                _failUpload(item, uploading, effStatus, effResponseText)
             }
-            _reschedule()
         }
-        xhr.ontimeout = function() {
-            var next = PQL.reduceQueueItem(uploading, { type: "failed", status: 0 })
-            _replaceItem(item.photoId, next)
-            _breaker = PQL.breakerReducer(_breaker, { type: "failure" })
-            if (next && next.state === "failed") photoUploadFailed(item.productId, item.photoId, 0)
-            _reschedule()
-        }
+        xhr.ontimeout = function() { _failUpload(item, uploading, 0, "") }
         xhr.open("POST", uploadUrl)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)

@@ -12,8 +12,9 @@ import "../qml/model"
 // StorageService.qml (the only other file that references them) has no tests, and same as
 // Gateway._send's real XHR being untested at this level (tst_Gateway.qml's own comment). The
 // classification/backoff/breaker logic those two functions delegate to is fully covered instead,
-// for real, by tests/tst_PhotoQueueLogic.qml and functions/test/photoQueueLogic.parity.test.js
-// (23/23, run for real, stable x5 including two monkey tests).
+// for real, by tests/tst_PhotoQueueLogic.qml and functions/test/photoQueueLogic.parity.test.js.
+// _failUpload() (the failure tail of _upload: discard rule, retry/failed bookkeeping, breaker, signal) is NOT
+// behind NativeFile/XHR, so it is covered here (section "_failUpload"). Only the XHR plumbing stays device-only.
 //
 // NOT RUN IN THIS SANDBOX -- no qmltestrunner toolchain available (standing instruction). Written
 // to this project's exact conventions (tst_OutboxStore.qml's import/init() pattern, tst_Gateway.qml's
@@ -21,7 +22,10 @@ import "../qml/model"
 TestCase {
     name: "PhotoQueue"
 
+    SignalSpy { id: failSpy; target: PhotoQueue; signalName: "photoUploadFailed" }
+
     function init() {
+        failSpy.clear()
         PhotoQueue.clear()
         AuthStore.idToken = ""
         AuthStore.isAuthenticated = false   // ensureFreshToken() must stay a no-op (no refresh XHR)
@@ -36,6 +40,11 @@ TestCase {
     // Never leak a live token into the next test's event-loop turn (PhotoQueue drains on token arrival).
     function cleanup() {
         AuthStore.idToken = ""
+        // _failUpload tests drive InventoryStore.hasProduct(): put the shared singleton back to its defaults.
+        InventoryStore.products = []
+        InventoryStore.hasMore = true
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = false
     }
 
     function _call(overrides) {
@@ -419,5 +428,159 @@ TestCase {
         var candidates = PhotoQueue.drainCandidates(Date.now())
         compare(candidates.length, 1)
         compare(candidates[0].photoId, "eligible")
+    }
+
+    // ── _failUpload: the failure tail of _upload (PH4 R1 discard rule + retry/failed bookkeeping) ──────────
+    // Driven directly: no NativeFile, no XHR. The discard needs ALL of: status 404, body error "product-not-found",
+    // and the product row absent from the COMPLETE local list. Anything else keeps the photo and counts a failure.
+
+    readonly property string pnfBody: '{"ok":false,"error":"product-not-found"}'
+
+    function _uploadingItem(state) {
+        var it = Object.assign({}, _call(), { requestId: "photo-1", state: state || "uploading",
+                                              attempts: 0, nextAttemptAt: 0, lastError: null })
+        PhotoQueue.items = [it]
+        return it
+    }
+    function _listComplete(rows) {
+        InventoryStore.products = rows
+        InventoryStore.hasMore = false
+        InventoryStore.loadingMore = false
+        InventoryStore._resetPending = false
+    }
+
+    function test_failUpload_404_with_the_server_code_and_the_row_gone_discards_the_photo() {
+        var it = _uploadingItem()
+        _listComplete([])
+        PhotoQueue._failUpload(it, it, 404, pnfBody)
+        compare(PhotoQueue.items.length, 0, "item removed")
+        compare(PhotoQueue.pendingCount, 0)
+        compare(failSpy.count, 0, "a discard is not a failure report")
+        compare(PhotoQueue._breaker.consecutiveFailures, 0, "a discard is not an endpoint failure")
+    }
+
+    function test_failUpload_an_html_404_keeps_the_photo_as_failed_even_when_the_row_is_gone() {
+        var it = _uploadingItem()
+        _listComplete([])
+        PhotoQueue._failUpload(it, it, 404, "<html><h1>404 Not Found</h1></html>")
+        compare(PhotoQueue.items.length, 1, "kept")
+        compare(PhotoQueue.items[0].state, "failed")
+        compare(PhotoQueue.items[0].attempts, 1)
+        compare(PhotoQueue.items[0].lastError, 404)
+        compare(failSpy.count, 1)
+        compare(failSpy.signalArguments[0][0], "prod-1")
+        compare(failSpy.signalArguments[0][1], "photo-1")
+        compare(failSpy.signalArguments[0][2], 404)
+        compare(PhotoQueue._breaker.consecutiveFailures, 1)
+    }
+
+    function test_failUpload_a_404_without_a_body_or_with_another_code_never_discards() {
+        var bodies = ["", undefined, null, "{}", '{"error":"photo-limit"}', '{"error":"PRODUCT-NOT-FOUND"}', "{", "[]"]
+        for (var i = 0; i < bodies.length; ++i) {
+            var it = _uploadingItem()
+            _listComplete([])
+            PhotoQueue._failUpload(it, it, 404, bodies[i])
+            compare(PhotoQueue.items.length, 1, "body " + bodies[i])
+            compare(PhotoQueue.items[0].state, "failed", "body " + bodies[i])
+        }
+    }
+
+    function test_failUpload_404_with_the_code_keeps_the_photo_while_the_row_still_exists_locally() {
+        var it = _uploadingItem()
+        _listComplete([{ productId: "prod-1" }])
+        PhotoQueue._failUpload(it, it, 404, pnfBody)
+        compare(PhotoQueue.items.length, 1)
+        compare(PhotoQueue.items[0].state, "failed")
+    }
+
+    function test_failUpload_404_with_the_code_keeps_the_photo_while_the_product_list_is_partial() {
+        var it = _uploadingItem()
+        InventoryStore.products = []
+        InventoryStore.hasMore = true   // page 2+ not loaded: the answer is "unknown", never "gone"
+        PhotoQueue._failUpload(it, it, 404, pnfBody)
+        compare(PhotoQueue.items.length, 1)
+        compare(PhotoQueue.items[0].state, "failed")
+    }
+
+    function test_failUpload_the_code_alone_is_not_enough_other_statuses_never_discard() {
+        var statuses = [0, 400, 401, 403, 409, 413, 429, 500, 503]
+        for (var i = 0; i < statuses.length; ++i) {
+            var it = _uploadingItem()
+            _listComplete([])
+            PhotoQueue._failUpload(it, it, statuses[i], pnfBody)
+            compare(PhotoQueue.items.length, 1, "status " + statuses[i])
+        }
+    }
+
+    function test_failUpload_a_transient_status_schedules_a_retry_and_stays_quiet() {
+        var it = _uploadingItem()
+        _listComplete([{ productId: "prod-1" }])
+        PhotoQueue._failUpload(it, it, 503, "")
+        compare(PhotoQueue.items[0].state, "retrying")
+        compare(PhotoQueue.items[0].attempts, 1)
+        verify(PhotoQueue.items[0].nextAttemptAt > Date.now(), "backoff in the future")
+        compare(failSpy.count, 0, "only a terminal failure is reported to the UI")
+        compare(PhotoQueue._breaker.consecutiveFailures, 1)
+    }
+
+    function test_failUpload_a_timeout_is_status_zero_and_retries() {
+        var it = _uploadingItem()
+        PhotoQueue._failUpload(it, it, 0, "")
+        compare(PhotoQueue.items[0].state, "retrying")
+        compare(failSpy.count, 0)
+    }
+
+    function test_failUpload_the_unreadable_file_status_400_fails_the_item_and_reports_it() {
+        var it = _uploadingItem()
+        PhotoQueue._failUpload(it, it, 400, "")
+        compare(PhotoQueue.items[0].state, "failed")
+        compare(failSpy.count, 1)
+        compare(failSpy.signalArguments[0][2], 400)
+    }
+
+    function test_failUpload_a_stale_report_for_an_item_that_is_not_uploading_changes_nothing() {
+        var it = _uploadingItem("enqueued")
+        PhotoQueue._failUpload(it, it, 409, "")
+        compare(PhotoQueue.items[0].state, "enqueued", "reduceQueueItem ignores a report for an item that is not in flight")
+        compare(PhotoQueue.items[0].attempts, 0)
+        compare(failSpy.count, 0)
+    }
+
+    function test_failUpload_a_late_report_for_an_item_that_is_already_gone_is_a_harmless_noop() {
+        var it = _uploadingItem()
+        PhotoQueue.items = []
+        _listComplete([])
+        PhotoQueue._failUpload(it, it, 404, pnfBody)   // discard of an unknown id
+        PhotoQueue._failUpload(it, it, 404, "")        // replace of an unknown id
+        compare(PhotoQueue.items.length, 0)
+    }
+
+    // MONKEY: 5 seeds x 200 random (status, body, row state); a one-line reference model decides the discard.
+    // High bits of the LCG: its low bits cycle with a tiny period and never reached 404 + code + row gone.
+    function test_failUpload_monkey_only_404_plus_code_plus_row_gone_discards() {
+        var statuses = [0, 200, 400, 401, 403, 404, 404, 409, 413, 429, 500, 503]
+        var bodies = [pnfBody, "", "<html>404</html>", '{"error":"photo-limit"}', "{", undefined]
+        var rows = ["gone", "present", "unknown"]
+        var discards = 0, keeps404 = 0
+        for (var seed = 1; seed <= 5; ++seed) {
+            var st = seed * 15485863
+            var rnd = function(n) { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n }
+            for (var i = 0; i < 200; ++i) {
+                var status = statuses[rnd(statuses.length)]
+                var body = bodies[rnd(bodies.length)]
+                var row = rows[rnd(rows.length)]
+                var it = _uploadingItem()
+                if (row === "gone") _listComplete([])
+                else if (row === "present") _listComplete([{ productId: "prod-1" }])
+                else { InventoryStore.products = []; InventoryStore.hasMore = true }
+                PhotoQueue._failUpload(it, it, status, body)
+                var want = status === 404 && body === pnfBody && row === "gone"
+                compare(PhotoQueue.items.length === 0, want, "status " + status + " body " + body + " row " + row)
+                if (want) discards++
+                else if (status === 404) keeps404++
+            }
+        }
+        verify(discards > 0, "the generator must reach the discard case")
+        verify(keeps404 > 0, "the generator must reach the kept 404 cases")
     }
 }

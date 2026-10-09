@@ -4208,3 +4208,13 @@ Rules:
 2. Before removing or reordering a spreadsheet column, check how the READER finds columns (position or header text) and whether any header check exists.
 3. Every code path that creates a CAS-compared document must have its key set pinned against `_newProductDoc` and `_clone()` by a test (`tst_InventoryStore_cloneSymmetry`). "Check by hand" comments are not a guard.
 4. When a decision is accepted on a known risk (here R1 = A), write the risk and the user rule into KNOWN-ISSUES in the same change.
+
+## Skill 112: A monkey test must prove its generator reaches the case it guards; copies of a failure tail are one function so the decision is testable
+
+Context (2026-10-09, PR #138 final sweep): the R1 discard rule (404 + body `product-not-found` + row gone) had a seeded monkey test that passed with the rule removed, and its decision sat in the one XHR callback no test can reach.
+Rules:
+1. A seeded monkey test asserts that its generator hit the interesting case at least once (`assert.ok(discards > 0)`). `(st * 1103515245 + 12345) & 0x7fffffff` then `st % n` uses the LCG's LOW bits, which cycle with a tiny period: 17 distinct triples in 1000 draws and 0 discards. Use `Math.floor(st / 65536) % n` (259 distinct, 6 discards).
+2. Run a mutation on the monkey on its own: remove one condition from the production expression and check that the MONKEY fails, not only the hand-written cases. The old D5 passed with the code check removed.
+3. When one function ends in the same failure tail in several places (non-2xx, timeout, unreadable file), make it ONE function that takes `(item, status, responseText)`. The rule then exists once and a qmltestrunner test can call it; only the native/XHR plumbing stays device-only. Check call-site equivalence first: emit condition, order of calls, early return, who calls `_reschedule`.
+4. A recovery path that leaves an item with no UI (`failed` for a product whose row is gone, no tile) is a decision: write it into KNOWN-ISSUES with the fix named, and log it so a device run can see it. A PR text that says "visible, Retry/Discard" for it is wrong.
+5. A review finding that adds a doc claim ("the counts", "device step") gets re-checked by running it: `node --test` count, SKILLS-INDEX `--check`, and a grep for every old number (`608`, `23/23`).

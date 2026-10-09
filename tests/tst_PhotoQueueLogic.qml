@@ -5,8 +5,8 @@ import "../qml/helper/PhotoQueueLogic.js" as PQL
 // Headless tests for the pure photo-queue classification, backoff, breaker and reducer logic.
 // Pure JS, no singletons. Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
 // A plain-Node mirror of this same logic runs for real under node --test
-// (functions/test/photoQueueLogic.parity.test.js, 23/23 including two monkey tests, run stably
-// 5 times in the authoring session) -- this file proves the QML copy stays in sync and loads
+// (functions/test/photoQueueLogic.parity.test.js; count it with the runner, never carry a number
+// here) -- this file proves the QML copy stays in sync and loads
 // correctly, verified by CI (qmltestrunner is not available in this sandbox).
 TestCase {
     name: "PhotoQueueLogic"
