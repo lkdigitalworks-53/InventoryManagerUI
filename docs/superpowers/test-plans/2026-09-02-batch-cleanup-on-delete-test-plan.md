@@ -1,5 +1,7 @@
 # Test plan — clean up stock batches and photo on product delete (Tier C)
 
+**2026-10-12: device steps ticked per Taher's report that batch cleanup device testing is complete.** Wholesale tick: individual step results were not itemised in the report, so a failed step would have to be raised by Taher.
+
 **Covers:** `InventoryStore.deleteProduct()` cascading to remove every batch for the deleted
 product (audit-preserved) and cleaning up the product photo; `InventoryStore._activeBatches()`,
 the shared filter that replaces four duplicated inline guards; `Main.qml`'s enhanced delete
@@ -58,11 +60,11 @@ pass on CI *is* the regression check.
 
 ## 2. Regression checklist
 
-- [ ] Restock and other existing `InventoryStore`/`StockBatchStore` flows unaffected — nothing
+- [x] Restock and other existing `InventoryStore`/`StockBatchStore` flows unaffected — nothing
       about receiving stock or FIFO consumption changed this pass.
-- [ ] Deleting a product with **zero** stock still shows the plain (non-enhanced) confirm
+- [x] Deleting a product with **zero** stock still shows the plain (non-enhanced) confirm
       message — the enhanced wording only appears when `remainingFor(productId) > 0`.
-- [ ] Deleting an order, or any other entity, unaffected — this pass only touched product delete.
+- [x] Deleting an order, or any other entity, unaffected — this pass only touched product delete.
 
 ## 3. On-device plan
 

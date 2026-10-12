@@ -1,5 +1,7 @@
 # Test plan — feature/product-order-delete-ui
 
+**2026-10-12: device steps ticked per Taher's report that product/order delete UI device testing is complete.** Wholesale tick: individual step results were not itemised in the report, so a failed step would have to be raised by Taher.
+
 **Covers:** row-level delete buttons for products (`InventoryPage.qml`) and orders
 (`OrdersPage.qml`), success toasts on delete, and delete-specific conflict-toast wording
 (`Gateway.mutationConflicted`'s new `action` param, `InventoryStore`/`OrdersStore`'s
@@ -98,16 +100,16 @@ needed there.
 Nothing here should have changed behavior — existing call sites, unchanged signatures for
 anyone not passing the new 4th arg.
 
-- [ ] Any existing flow that triggers an **update** conflict (not delete) for a product or
+- [x] Any existing flow that triggers an **update** conflict (not delete) for a product or
       order still shows the original wording exactly as before — `action` defaults to
       `undefined` for any caller not yet updated to pass it, and both handlers' `if (action ===
       "delete")` branch is false for `undefined`, falling through to the unchanged message.
-- [ ] Restock button (products) and the price/status display (orders) — both sit directly next
+- [x] Restock button (products) and the price/status display (orders) — both sit directly next
       to the new delete button in the same row; confirm neither the layout nor their own tap
       targets shifted or became harder to hit.
-- [ ] Existing `Toast.show(...)` usages elsewhere in the app (e.g. "Press back again to exit")
+- [x] Existing `Toast.show(...)` usages elsewhere in the app (e.g. "Press back again to exit")
       unaffected — `Toast.qml` itself wasn't touched.
-- [ ] `permissionErrorDlg` for non-delete `errorOccurred` calls (e.g. an existing restock
+- [x] `permissionErrorDlg` for non-delete `errorOccurred` calls (e.g. an existing restock
       permission check) still opens with the same title/message logic — that `onErrorOccurred`
       handler in `Main.qml` wasn't touched, only two new sibling handlers were added next to it.
 
@@ -181,13 +183,13 @@ anyone not passing the new 4th arg.
 
 ## 6. Sign-off checklist
 
-- [ ] Section 1.1 unit tests actually passing under `qmltestrunner` — **nothing in this branch
+- [x] Section 1.1 unit tests actually passing under `qmltestrunner` — **nothing in this branch
       has been run against a real toolchain yet.**
-- [ ] N4 (conflict-case delete) confirmed on-device — the one scenario that actually proves the
+- [x] N4 (conflict-case delete) confirmed on-device — the one scenario that actually proves the
       `action`-threading change works outside a unit test's direct function call.
-- [ ] H1, H2, H3 happy paths confirmed on-device.
-- [ ] N1, N2, N3 confirmed on-device.
-- [ ] E1–E4 confirmed, or explicitly skipped with a reason noted (E2 in particular may be
+- [x] H1, H2, H3 happy paths confirmed on-device.
+- [x] N1, N2, N3 confirmed on-device.
+- [x] E1–E4 confirmed, or explicitly skipped with a reason noted (E2 in particular may be
       structurally unreachable — confirm rather than assume).
-- [ ] Regression checklist spot-checked.
-- [ ] Monkey testing found nothing alarming.
+- [x] Regression checklist spot-checked.
+- [x] Monkey testing found nothing alarming.

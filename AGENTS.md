@@ -907,6 +907,13 @@ env.
     instead of Firestore's. `uploadProductPhoto`/`deleteProductPhoto` are separate Cloud Functions
     from `recordMutation` and get their own cold-start warm-up in `initTestCase()` — warming up one
     function does not warm up another.
+  - `tst_ProductLegacyPhotoUrlE2E.qml` (2026-10-12, PH5 E01-E03 + E03b): create/update/delete of a
+    fresh product through the real store -> gateway path (no `photoUrl`/`photoUpdatedAt` keys, no CAS
+    conflict) and a seeded pre-PH5 doc that DOES carry them 409s a client update (pins Q-P5-3 a; E03b is the
+    no-legacy-keys control). Seeding a raw doc uses `E2EHelpers.createEmulatorDoc` (admin REST createDocument,
+    `Authorization: Bearer owner`; value encoding `toFirestoreFields` is Node-tested in
+    `functions/test/e2eHelpers.firestoreFields.test.js`). `_clone()` drops keys it does not know, so the local
+    `before` lacks the legacy keys while the server `current` has them: that is what makes the 409.
 
 - `tests/tst_PhotoUrl.qml`, `tests/tst_PhotoQueueLogic.qml` (2026-09-21, product photos) — QML side
   of the `.pragma library` + Node-parity-mirror pair for the two new pure helpers (Skill 67's
@@ -917,7 +924,9 @@ env.
 - `tests/tst_PhotoQueue.qml` (2026-09-21/25) — `PhotoQueue.qml`'s queue-management logic:
   persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix, plus
   `_failUpload()` (PR #138 sweep: discard rule, retry/failed bookkeeping, monkey against a reference model;
-  needs `InventoryStore` paging flags restored in `cleanup()`). Does
+  needs `InventoryStore` paging flags restored in `cleanup()`), `_completeUpload()`, the in-flight guard (O2/O3: only the
+  first report of an attempt counts, none after `clear()`) and `purgeOrphanedFailures()` (O1). ORDER MATTERS in the O1 tests:
+  `InventoryStore.onListCompleteChanged` already runs the purge, so set the list complete BEFORE setting `PhotoQueue.items`. Does
   NOT cover `_upload()` (native + XHR) — see that file's own TESTABILITY NOTE. Two regression
   tests added during this feature's own review sweep for bugs the original tests didn't catch:
   `_load()` never having called `_reschedule()` (a photo queued last session would sit frozen

@@ -1,5 +1,7 @@
 # Test plan — park rejected writes (part B, S2b)
 
+**2026-10-12: device steps ticked per Taher's report that S2b device testing is complete.** Wholesale tick: individual step results were not itemised in the report, so a failed step would have to be raised by Taher.
+
 **Branch:** `feat/2026-09-30-s2b-park-terminal-writes` (off `main`). **Design:** `../specs/2026-09-30-s2b-park-terminal-writes-design.md`.
 **Status:** written with the code, before CI. **Nothing was built or run.** No Qt toolchain in the sandbox; CI is the QML signal.
 
@@ -27,25 +29,25 @@ A write that is stuck AND whose latest server answer was `write-rejected` is **p
 Setup: **dev/test** environment, **new tenant**. A rejection needs the server answer `write-rejected`; the known setups (suspended member -> 403, wrong `functionUrl` -> 404) give a NON-rejected stuck write, so use them for the "keeps retrying" cases. For a real rejection use a write the Cloud Function refuses as invalid (ask Claude for a current recipe before testing; none is verified yet). Online throughout.
 
 **Happy path**
-- [ ] Rejected write reaches 5 failures: toast says it is paused; header reads "rejected by the server. Tap to retry."; dialog row says "Paused until you tap Retry"; button says "Retry".
-- [ ] Watch for ~5 minutes: the row never flips to "Sending..." by itself (no auto-retry).
-- [ ] Tap Retry: "Sending...", then back to "Rejected... Paused" (re-parked after ONE attempt).
-- [ ] Fix the cause (server accepts), tap Retry: row and header line disappear, change lands on the server.
+- [x] Rejected write reaches 5 failures: toast says it is paused; header reads "rejected by the server. Tap to retry."; dialog row says "Paused until you tap Retry"; button says "Retry".
+- [x] Watch for ~5 minutes: the row never flips to "Sending..." by itself (no auto-retry).
+- [x] Tap Retry: "Sending...", then back to "Rejected... Paused" (re-parked after ONE attempt).
+- [x] Fix the cause (server accepts), tap Retry: row and header line disappear, change lands on the server.
 
 **Negative**
-- [ ] Outage-type stuck write (403 / 404 setup): stays "Not syncing. Still retrying.", button "Retry now", keeps retrying on the backoff.
-- [ ] Offline: caption is the offline message, not tappable; parked write stays parked when back online (no auto-send).
-- [ ] Sign out, sign in as another account: no parked rows.
+- [x] Outage-type stuck write (403 / 404 setup): stays "Not syncing. Still retrying.", button "Retry now", keeps retrying on the backoff.
+- [x] Offline: caption is the offline message, not tappable; parked write stays parked when back online (no auto-send).
+- [x] Sign out, sign in as another account: no parked rows.
 
 **Edge**
-- [ ] Force-close and reopen while parked: still parked at launch, no toast, not re-sent.
-- [ ] Edit the same record while parked: merges into the parked write, still parked, row unchanged until Retry; Retry sends the merged version.
-- [ ] Restock / second write for the same product while parked: waits (no send) until Retry.
-- [ ] Two parked writes: header says 2; Retry on one leaves the other parked.
-- [ ] Stuck (outage) write that later becomes rejected: parks without a second toast.
+- [x] Force-close and reopen while parked: still parked at launch, no toast, not re-sent.
+- [x] Edit the same record while parked: merges into the parked write, still parked, row unchanged until Retry; Retry sends the merged version.
+- [x] Restock / second write for the same product while parked: waits (no send) until Retry.
+- [x] Two parked writes: header says 2; Retry on one leaves the other parked.
+- [x] Stuck (outage) write that later becomes rejected: parks without a second toast.
 
 **Monkey**
-- [ ] Tap Retry repeatedly and rapidly on a parked row; rotate the device; toggle airplane mode; force-close mid-retry. No crash, no duplicate or lost write, header count equals dialog rows.
+- [x] Tap Retry repeatedly and rapidly on a parked row; rotate the device; toggle airplane mode; force-close mid-retry. No crash, no duplicate or lost write, header count equals dialog rows.
 
 ## 4. Regression watch
 `tst_OutboxStore` coalescing / in-flight / retryNow / wakeStuck, `tst_Gateway` stuckRows / retryStuck / relaunch cases, and `tst_StuckWrites` counting cases must stay green. Behaviour intentionally changed: rejected stuck writes no longer retry on their own.

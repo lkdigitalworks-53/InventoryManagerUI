@@ -1,26 +1,25 @@
-# CHECKPOINT — 2026-10-09 PR #138 final sweep (resume here)
+# CHECKPOINT — 2026-10-12 PR #138 sweep part 2 (resume here)
 
-**Branch:** `feat/2026-10-08-photos-ph4-r1-404-body` (PR #138, base `main` @ 38ac768, CI green on aa8c22c: QML 1941, functions 622, e2e 87, rules 45). NOTHING IS DEPLOYED, app not built or run.
-**Commit identity:** `lkdwtaher@gmail.com`. PAT only in the push command, never in a file or git config. (The original PR commit aa8c22c was authored as `dextran52@gmail.com`; history is NOT rewritten.)
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-09-pr138-final-sweep-prev-CHECKPOINT.md` (the R1 build checkpoint).
-**Decision (Taher, 2026-10-08):** R1 option (b): a 404 discards a queued photo only if the body error is `product-not-found` AND the product is absent from the COMPLETE local list.
+**Branch:** `feat/2026-10-08-photos-ph4-r1-404-body` (PR #138, base `main`). Last CI-green commit before this part: 1ba0050 (docs-only 6a5f643 on top). Part 2 is pushed as one commit; CI result: see the PR comment. NOTHING IS DEPLOYED, app not built or run.
+**Commit identity:** `lkdwtaher@gmail.com`. PAT only in the push command, never in a file or git config.
+**Previous checkpoint:** `docs/superpowers/specs/2026-10-09-pr138-final-sweep-prev-CHECKPOINT.md` (R1 build) and the sweep review note `docs/superpowers/specs/2026-10-09-pr138-final-sweep-review.md` (now includes part 2).
+**Decision (Taher, 2026-10-12):** fix O1, O2, O3 in PR #138 only; write PH5 e2e E01-E03; tick the reported device tests.
 
-## Sweep passes (done)
-- [x] 1 ponytail-audit + qt-qml-review (linter on changed QML: only repo-wide `var` style noise) + independent code reviewer + 6-domain QML analysis. Report: `docs/superpowers/specs/2026-10-09-pr138-final-sweep-review.md`
-- [x] 2 verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (run in sandbox)
+## Done in part 2
+- [x] O2/O3: `PhotoQueue._isInFlight` guard in `_failUpload` and new `_completeUpload` (`qml/model/PhotoQueue.qml`)
+- [x] O1: `PhotoQueue.purgeOrphanedFailures()` + `InventoryStore.onListCompleteChanged` trigger
+- [x] 18 QML tests in `tests/tst_PhotoQueue.qml` (FU13-FU30 in the test plan; CI only). Node harness of the shipped functions: 10 scenarios pass.
+- [x] PH5 e2e `test/e2e/tst_ProductLegacyPhotoUrlE2E.qml` (E01, E02, E03, E03b) + `E2EHelpers.createEmulatorDoc` + `functions/test/e2eHelpers.firestoreFields.test.js` (4 tests)
+- [x] Device tests ticked per Taher in the test plans: R1, PH4, PH3 server cascade, PH3b DV-1..DV-9, PH5, S3, S2b, batch cleanup, product/order delete UI
+- [x] Docs: sweep review, KNOWN-ISSUES, roadmap, README index, AGENTS, Skill 113 (114 skills, index regenerated)
+- [x] Sandbox verification: functions 626/626, skills index current, CI-script tests unchanged
 
-## Fix plan (tick as done)
-- [x] F1 failure branch of `PhotoQueue._upload` x3 copies -> ONE `_failUpload(item, uploading, status, responseText)`; tests in `tests/tst_PhotoQueue.qml` (closes the only uncovered new line)
-- [x] F2 Node monkeys D5/P6/R1-7 never reached the discard region (low-bit LCG: 0 of 1000 hits; R1-7 never built a string `error`) -> high bits + positive-path counters
-- [x] F3 docs: "visible Retry/Discard" claim is false when the row is gone (invisible `failed` item until sign-out): fix wording in test plan, KNOWN-ISSUES, PQL comment; fix R1 device steps so they observe the queue, not tiles
-- [x] F4 stale: PQL + tst_PhotoQueueLogic + tst_PhotoQueue header counts (23/23 -> no number), CHECKPOINT counts (608 -> 622), roadmap status line for R1
-- [x] F5 pushed 1ba0050, CI green: QML 1953 (+12 FU01-FU12), functions 622, e2e 87, rules 45 = 2707/2707; mergeable clean. Sandbox verified (QML tests are CI-only). Sandbox verified: Node parity 46/46, functions 622/622, CI-script tests 76/76, SKILLS-INDEX current (113 skills); mutation checks fail 5+5 Node tests
-
-## Open items found, NOT fixed here (scope; for Taher)
-- O1 invisible `failed` item (misrouted endpoint + product deleted elsewhere) stays until sign-out; option: purge failed items whose row is absent from a complete list (drops R1's second signal, needs your call)
-- O2 late 2xx after `PhotoQueue.clear()` (sign-out) emits `photoUploaded` under the next account; `applyPhotoIds` matches by productId only (needs an in-flight upload + sign-out + same productId)
-- O3 on timeout Qt may fire both `onreadystatechange` (DONE, status 0) and `ontimeout`: breaker counted twice (unverified, device check)
-- O4 body may not survive the QTBUG-49896 snapshot (fail-safe: no discard); `console.warn` added in F1 shows it on device
+## Honest caveats
+- QML tests and the e2e are CI-only: not run here. CI is the proof.
+- R1 "row gone" device step was run on the pre-O1 build. NEW unticked device steps: O1 re-check and O2 sign-out check (test plan `2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
+- O1 trade-off: the later purge uses the row-gone check alone (R1's body check governs only the immediate 404).
+- Device ticks are wholesale per Taher's report; step-level results were not itemised.
+- O4 stays open (a server rename of `product-not-found` makes R1 inert, safe).
 
 ## NEXT
-Taher: squash-merge #138 (CI green on 1ba0050). Then decide O1-O3 (see review note), PH3b deploy + DV-1..DV-9, R1 + PH4 device steps, PH5 device plan + e2e E01-E03, atomic-operation work.
+Taher: read the CI result on the PR, squash-merge #138. Then device re-check of O1/O2, then the atomic-operation work.

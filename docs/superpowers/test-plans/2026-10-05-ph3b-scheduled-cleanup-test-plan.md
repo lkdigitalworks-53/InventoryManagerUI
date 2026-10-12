@@ -1,5 +1,7 @@
 # Test plan — PH3b scheduled cleanup function (`pending_cleanup` sweeper)
 
+**2026-10-12: device steps ticked per Taher's report that the PH3b deploy and DV-1..DV-9 is complete.** Wholesale tick: individual step results were not itemised in the report, so a failed step would have to be raised by Taher.
+
 **Design:** `../specs/2026-09-30-photos-s3-s4-design.md`, section "PH3b — design v2" (review P1-P10, decisions Q-J / Q-K / Q-L).
 **Branches (planned):** `feat/2026-10-05-ph3b-sweeper-lib` (S-A), `feat/2026-10-05-ph3b-sweeper-binding` (S-B), `feat/2026-10-05-ph3b-sweeper-e2e-docs` (S-C).
 **Status:** **S-A implemented 2026-10-05** (branch `feat/2026-10-05-ph3b-sweeper-lib`): sections 1.1-1.5 are written and green in the sandbox, functions suite 560/560 (491 baseline + 69), `lib/photoCleanup.js` line/branch/function coverage 100% (`node --test --experimental-test-coverage test/photoCleanup.test.js test/cleanupSweep.test.js`). Sections 2-4 (functional, e2e, real project) NOT written yet (S-B, S-C). **S-B implemented 2026-10-05** (branch `feat/2026-10-05-ph3b-sweeper-binding`, stacked on S-A): section 2 written and green in the sandbox in `functions/test/index.handlers.cleanupScheduler.test.js` (19 cases: FS01-FS10 as planned plus FS02b, FS11, FS11b, FS12-FS17) and 6 new unit cases UT01-UT06 for the `timestampToMs` helper; functions suite 585/585 (560 + 25), `photoCleanup.js` still 100% line/branch/function; no uncovered line in the new `index.js` block. Mutation-checked: 5 deliberate binding bugs (set+merge, no cursor, no parked flag, run never throws, wrong database) each failed the suite. Sections 3-4 (e2e, real project) NOT written yet (S-C, Taher). Cases added beyond the plan during S-A: US14 (junk input), UR11b (park throws at the cap), UR14b (notDue count), UR16b (unparsable path), UR19 (monkey over `runCleanupSweep`), 4 small `runCleanupSweep` cases (junk sweep result, marker built from path id, garbage `listMarkers`, actor fields kept), 1 `readAllMarkers` defaults case. **Final sweep (same day) added US15, UR09b, UR17b and changed UR17/UR04** (see S1/S2 in the spec review ledger): a THROWN sweep now raises `PH3B_ALERT sweep-threw` instead of a silent WARNING, and a stored `prefix` that is not the rebuilt prefix is malformed at once. **Deviation from design v2:** `park(env, path, reason)` instead of `park(env, tenantId, productId, reason)` (a malformed marker may have no parsable path, the doc is addressed by its path; S-B binds `db.doc(path).update(...)`). Summary `parked` = already-parked + newly parked at the cap; `malformed` counted separately. Node cases run in the sandbox; the emulator e2e and the real-scheduler checks are CI / on-project only.
@@ -140,19 +142,19 @@ UNVERIFIED: that the Admin SDK in `test/e2e` and the one in `functions/` coexist
 Prerequisite: deploy everything (`firebase deploy --only functions`), accept the Cloud Scheduler API prompt, write the deploy into `CHECKPOINT.md`.
 
 ### 4.1 Happy path
-- [ ] DV-1 (the no-index claim): Logs Explorer shows a run of `cleanupPendingMarkers` with a summary line per env and NO `FAILED_PRECONDITION` / "requires an index".
-- [ ] DV-2: Cloud Scheduler console lists the job, schedule `every 10 minutes`, location acceptable.
-- [ ] DV-3: create a marker by hand in `dev1` (`tenants/<t>/pending_cleanup/PRD-DV1` with EXACTLY these fields: `productId` string `PRD-DV1`, `envPrefix` string `dev1`, `prefix` string `dev1/tenants/<t>/products/PRD-DV1/`, `createdAt` TYPE TIMESTAMP (a string or missing = malformed, it parks instead of sweeping) set at least 2 minutes in the past, `attempts` number 0, `lastError` null; no `parked` field, a Storage file under its prefix, one fake `stock_batches` doc with that `productId`): within ~12 min the marker, file and batch are gone and a `cascade~` audit entry exists.
+- [x] DV-1 (the no-index claim): Logs Explorer shows a run of `cleanupPendingMarkers` with a summary line per env and NO `FAILED_PRECONDITION` / "requires an index".
+- [x] DV-2: Cloud Scheduler console lists the job, schedule `every 10 minutes`, location acceptable.
+- [x] DV-3: create a marker by hand in `dev1` (`tenants/<t>/pending_cleanup/PRD-DV1` with EXACTLY these fields: `productId` string `PRD-DV1`, `envPrefix` string `dev1`, `prefix` string `dev1/tenants/<t>/products/PRD-DV1/`, `createdAt` TYPE TIMESTAMP (a string or missing = malformed, it parks instead of sweeping) set at least 2 minutes in the past, `attempts` number 0, `lastError` null; no `parked` field, a Storage file under its prefix, one fake `stock_batches` doc with that `productId`): within ~12 min the marker, file and batch are gone and a `cascade~` audit entry exists.
 
 ### 4.2 Negative
-- [ ] DV-4: marker with a wrong `prefix`: not swept, `attempts` rises each backoff, Storage untouched.
-- [ ] DV-5: marker with `attempts: 11` and a wrong prefix: parks on the next failed run (`parked: true`, doc kept), ERROR log visible; later runs do not touch it.
+- [x] DV-4: marker with a wrong `prefix`: not swept, `attempts` rises each backoff, Storage untouched.
+- [x] DV-5: marker with `attempts: 11` and a wrong prefix: parks on the next failed run (`parked: true`, doc kept), ERROR log visible; later runs do not touch it.
 
 ### 4.3 Edge cases
-- [ ] DV-6: delete a product on the app while the scheduler is running (handler sweep + scheduler overlap is unlikely to be forced by hand; just confirm no leftover marker and no zombie doc afterwards).
-- [ ] DV-7: marker for a product id that exists again: marker disappears, product and photos intact.
-- [ ] DV-9 (alert, the production-blocker gate): alert policy created per `../specs/2026-10-05-ph3b-alert-runbook.md`; plant a malformed marker in `dev1` (`envPrefix: "prd"`): within ~12 min it parks, an email AND a Google Cloud console mobile app push arrive, a second run does not re-notify inside the rate-limit window; delete the planted marker afterwards. Negative: a marker failing below the cap sends nothing.
-- [ ] DV-8: un-park (`parked` false, `attempts` 0) on a fixed marker: swept within two runs.
+- [x] DV-6: delete a product on the app while the scheduler is running (handler sweep + scheduler overlap is unlikely to be forced by hand; just confirm no leftover marker and no zombie doc afterwards).
+- [x] DV-7: marker for a product id that exists again: marker disappears, product and photos intact.
+- [x] DV-9 (alert, the production-blocker gate): alert policy created per `../specs/2026-10-05-ph3b-alert-runbook.md`; plant a malformed marker in `dev1` (`envPrefix: "prd"`): within ~12 min it parks, an email AND a Google Cloud console mobile app push arrive, a second run does not re-notify inside the rate-limit window; delete the planted marker afterwards. Negative: a marker failing below the cap sends nothing.
+- [x] DV-8: un-park (`parked` false, `attempts` 0) on a fixed marker: swept within two runs.
 
 ### 4.4 Affected areas
 | Area | Automated cover | Where to look on the project |

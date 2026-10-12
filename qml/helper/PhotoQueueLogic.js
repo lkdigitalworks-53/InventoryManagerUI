@@ -93,7 +93,8 @@ function breakerWaitMs(state, now) {
 // 404 too, and the discard deletes the local photo file for good. Only the server's own answer counts:
 // body `{error: "product-not-found"}` (see errorCodeOf). Callers that pass no code never discard.
 // Known limit (KNOWN-ISSUES, PR #138 sweep): a 404 WITHOUT that body, for a product whose row is gone, parks a
-// `failed` item that NO tile shows (the gallery lives in the product dialog); it stays until sign-out.
+// `failed` item that NO tile shows (the gallery lives in the product dialog). PR #138 sweep part 2 (O1):
+// PhotoQueue.purgeOrphanedFailures() removes it when the product list next becomes complete.
 var PRODUCT_NOT_FOUND = "product-not-found"
 function shouldDiscardOnFailure(status, productExistsLocally, errorCode) {
     return status === 404 && productExistsLocally === false && errorCode === PRODUCT_NOT_FOUND

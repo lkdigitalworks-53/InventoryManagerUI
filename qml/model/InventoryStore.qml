@@ -1464,6 +1464,14 @@ QtObject {
         return null;
     }
 
+    // PR #138 sweep, O1: the moment the product list becomes COMPLETE, drop `failed` queued photos whose product is
+    // gone (PhotoQueue.purgeOrphanedFailures judges only the signed-in identity's items). Never runs on a partial list.
+    onListCompleteChanged: {
+        if (!listComplete) return
+        try { PhotoQueue.purgeOrphanedFailures() }
+        catch (e) { console.warn("[InventoryStore] orphaned photo purge threw", e) }
+    }
+
     // true = the row is in the local list; false = the list is complete and the row is not in it;
     // undefined = cannot tell yet (partial list, or an empty/non-string id). PhotoQueue discards a photo
     // on a server 404 with body `product-not-found` only for `false` (PQL.shouldDiscardOnFailure), so an unknown answer never discards.

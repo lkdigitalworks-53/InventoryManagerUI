@@ -23,9 +23,11 @@ TestCase {
     name: "PhotoQueue"
 
     SignalSpy { id: failSpy; target: PhotoQueue; signalName: "photoUploadFailed" }
+    SignalSpy { id: uploadedSpy; target: PhotoQueue; signalName: "photoUploaded" }
 
     function init() {
         failSpy.clear()
+        uploadedSpy.clear()
         PhotoQueue.clear()
         AuthStore.idToken = ""
         AuthStore.isAuthenticated = false   // ensureFreshToken() must stay a no-op (no refresh XHR)
@@ -582,5 +584,204 @@ TestCase {
         }
         verify(discards > 0, "the generator must reach the discard case")
         verify(keeps404 > 0, "the generator must reach the kept 404 cases")
+    }
+
+    // ── in-flight guard (PR #138 sweep, O2 + O3): only the FIRST report for an attempt counts ──────────────────
+
+    function test_O3_a_timeout_that_fires_two_handlers_counts_once() {
+        var it = _uploadingItem()
+        PhotoQueue._failUpload(it, it, 0, "")   // onreadystatechange DONE with status 0
+        PhotoQueue._failUpload(it, it, 0, "")   // ontimeout
+        compare(PhotoQueue.items[0].state, "retrying")
+        compare(PhotoQueue.items[0].attempts, 1, "one attempt, not two")
+        compare(PhotoQueue._breaker.consecutiveFailures, 1, "the breaker counted the failure once")
+    }
+
+    function test_O3_a_terminal_failure_then_a_late_second_report_reports_once() {
+        var it = _uploadingItem()
+        PhotoQueue._failUpload(it, it, 409, "")
+        PhotoQueue._failUpload(it, it, 0, "")
+        compare(PhotoQueue.items[0].state, "failed")
+        compare(PhotoQueue.items[0].lastError, 409, "the late report did not overwrite the first")
+        compare(failSpy.count, 1)
+        compare(PhotoQueue._breaker.consecutiveFailures, 1)
+    }
+
+    function test_O2_a_failure_after_clear_changes_nothing() {
+        var it = _uploadingItem()
+        PhotoQueue.clear()   // sign-out while the upload is in flight
+        PhotoQueue._failUpload(it, it, 409, "")
+        compare(PhotoQueue.items.length, 0)
+        compare(failSpy.count, 0, "no failure report for an item that no longer exists")
+        compare(PhotoQueue._breaker.consecutiveFailures, 0)
+    }
+
+    function test_completeUpload_removes_the_item_resets_the_breaker_and_reports_the_photo_ids() {
+        var it = _uploadingItem()
+        PhotoQueue._breaker = ({ status: "closed", consecutiveFailures: 3, cooldownUntil: 0, cooldownMs: 60000, tripCount: 0 })
+        PhotoQueue._completeUpload(it, '{"ok":true,"photoIds":["a","photo-1"]}')
+        compare(PhotoQueue.items.length, 0)
+        compare(PhotoQueue._breaker.consecutiveFailures, 0)
+        compare(uploadedSpy.count, 1)
+        compare(uploadedSpy.signalArguments[0][0], "prod-1")
+        compare(uploadedSpy.signalArguments[0][1], "photo-1")
+        compare(uploadedSpy.signalArguments[0][2], ["a", "photo-1"])
+    }
+
+    function test_completeUpload_a_body_that_is_not_an_object_with_photoIds_confirms_with_an_empty_list() {
+        var bodies = ["", "null", "5", "[]", "{}", '{"photoIds":"x"}', '{"photoIds":null}', "<html>", undefined]
+        for (var i = 0; i < bodies.length; ++i) {
+            uploadedSpy.clear()
+            var it = _uploadingItem()
+            PhotoQueue._completeUpload(it, bodies[i])
+            compare(PhotoQueue.items.length, 0, "body " + bodies[i])
+            compare(uploadedSpy.count, 1, "body " + bodies[i])
+            compare(uploadedSpy.signalArguments[0][2], [], "body " + bodies[i])
+        }
+    }
+
+    function test_O2_a_success_after_clear_never_emits_photoUploaded() {
+        var it = _uploadingItem()
+        PhotoQueue.clear()   // sign-out while the upload is in flight; the next account may own the same productId
+        PhotoQueue._completeUpload(it, '{"photoIds":["photo-1"]}')
+        compare(uploadedSpy.count, 0)
+        compare(PhotoQueue.items.length, 0)
+    }
+
+    function test_completeUpload_a_second_report_for_the_same_attempt_is_ignored() {
+        var it = _uploadingItem()
+        PhotoQueue._completeUpload(it, '{"photoIds":["photo-1"]}')
+        PhotoQueue._completeUpload(it, '{"photoIds":["photo-1"]}')
+        compare(uploadedSpy.count, 1)
+    }
+
+    function test_completeUpload_ignores_an_item_that_is_not_in_flight() {
+        var it = _uploadingItem("enqueued")
+        PhotoQueue._completeUpload(it, '{"photoIds":["photo-1"]}')
+        compare(PhotoQueue.items.length, 1, "kept")
+        compare(PhotoQueue.items[0].state, "enqueued")
+        compare(uploadedSpy.count, 0)
+    }
+
+    // MONKEY: 5 seeds x 100 attempts, each with 1-4 random reports in random order; only the first counts.
+    function test_O2_O3_monkey_only_the_first_report_of_an_attempt_counts() {
+        var kinds = ["complete", "fail503", "fail409", "timeout", "clear", "discard"]
+        for (var seed = 1; seed <= 5; ++seed) {
+            var st = seed * 32452843
+            var rnd = function(n) { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n }
+            for (var i = 0; i < 100; ++i) {
+                init()
+                var it = _uploadingItem()
+                var n = 1 + rnd(4), first = ""
+                for (var j = 0; j < n; ++j) {
+                    var k = kinds[rnd(kinds.length)]
+                    if (j === 0) first = k
+                    if (k === "complete") PhotoQueue._completeUpload(it, '{"photoIds":["photo-1"]}')
+                    else if (k === "fail503") PhotoQueue._failUpload(it, it, 503, "")
+                    else if (k === "fail409") PhotoQueue._failUpload(it, it, 409, "")
+                    else if (k === "timeout") PhotoQueue._failUpload(it, it, 0, "")
+                    else if (k === "clear") PhotoQueue.clear()
+                    else PhotoQueue.discard("photo-1")
+                }
+                var why = "seed " + seed + " run " + i + " first=" + first
+                compare(uploadedSpy.count, first === "complete" ? 1 : 0, why)
+                compare(failSpy.count, first === "fail409" ? 1 : 0, why)
+                var counted = (first === "fail503" || first === "fail409" || first === "timeout") ? 1 : 0
+                compare(PhotoQueue._breaker.consecutiveFailures, counted, why)
+            }
+        }
+    }
+
+    // ── purgeOrphanedFailures (PR #138 sweep, O1) ────────────────────────────────────────────────────────
+
+    // ORDER MATTERS in the direct-call tests below: making the list complete fires InventoryStore.onListCompleteChanged,
+    // which already runs the purge. So `_listComplete(...)` comes BEFORE `PhotoQueue.items = [...]` there, and the
+    // trigger tests (`..._triggers_the_purge`, `..._completes_only_after...`) set the items first on purpose.
+    function _failedItem(photoId, productId, uid, tenantId, state) {
+        return Object.assign({}, _call({ photoId: photoId, productId: productId, uid: uid || "u1", tenantId: tenantId || "t1" }),
+                             { requestId: photoId, state: state || "failed", attempts: 1, nextAttemptAt: 0, lastError: 404 })
+    }
+    function _ids() { return PhotoQueue.items.map(function(x) { return x.photoId }).sort() }
+
+    function test_O1_a_failed_item_whose_product_is_gone_from_the_complete_list_is_purged() {
+        _listComplete([{ productId: "prod-other" }])
+        PhotoQueue.items = [_failedItem("gone", "prod-gone")]
+        compare(PhotoQueue.purgeOrphanedFailures(), 1)
+        compare(PhotoQueue.items.length, 0)
+        compare(PhotoQueue.pendingCount, 0)
+    }
+
+    function test_O1_a_failed_item_whose_product_still_exists_is_kept() {
+        _listComplete([{ productId: "prod-live" }])
+        PhotoQueue.items = [_failedItem("live", "prod-live")]
+        compare(PhotoQueue.purgeOrphanedFailures(), 0)
+        compare(_ids(), ["live"])
+    }
+
+    function test_O1_a_partial_list_never_purges() {
+        PhotoQueue.items = [_failedItem("maybe", "prod-on-page-3")]
+        InventoryStore.products = []
+        InventoryStore.hasMore = true
+        compare(PhotoQueue.purgeOrphanedFailures(), 0, "hasMore: pages are still to come")
+        InventoryStore.loadingMore = true     // set BEFORE hasMore=false, or the list would be briefly complete
+        InventoryStore.hasMore = false
+        compare(PhotoQueue.purgeOrphanedFailures(), 0, "a page fetch in flight")
+        InventoryStore._resetPending = true   // set BEFORE loadingMore=false, same reason
+        InventoryStore.loadingMore = false
+        compare(PhotoQueue.purgeOrphanedFailures(), 0, "a reset is queued")
+        compare(_ids(), ["maybe"])
+    }
+
+    function test_O1_only_failed_items_are_purged_enqueued_retrying_and_uploading_are_left_to_the_drain() {
+        _listComplete([])
+        PhotoQueue.items = [_failedItem("e", "prod-gone", "u1", "t1", "enqueued"),
+                            _failedItem("r", "prod-gone", "u1", "t1", "retrying"),
+                            _failedItem("u", "prod-gone", "u1", "t1", "uploading"),
+                            _failedItem("f", "prod-gone")]
+        compare(PhotoQueue.purgeOrphanedFailures(), 1)
+        compare(_ids(), ["e", "r", "u"])
+    }
+
+    function test_O1_another_identitys_failed_items_are_never_judged_by_this_identitys_list() {
+        _listComplete([])
+        PhotoQueue.items = [_failedItem("other-uid", "prod-x", "someone-else", "t1"),
+                            _failedItem("other-tenant", "prod-x", "u1", "t-else"),
+                            _failedItem("mine", "prod-x")]
+        compare(PhotoQueue.purgeOrphanedFailures(), 1)
+        compare(_ids(), ["other-tenant", "other-uid"])
+    }
+
+    function test_O1_a_broken_items_array_is_a_harmless_noop() {
+        _listComplete([])
+        PhotoQueue.items = null
+        compare(PhotoQueue.purgeOrphanedFailures(), 0)
+        PhotoQueue.items = [null, undefined]
+        compare(PhotoQueue.purgeOrphanedFailures(), 0)
+    }
+
+    function test_O1_the_product_list_becoming_complete_triggers_the_purge() {
+        PhotoQueue.items = [_failedItem("gone", "prod-gone"), _failedItem("live", "prod-live")]
+        InventoryStore.products = [{ productId: "prod-live" }]
+        InventoryStore.hasMore = false   // listComplete flips to true: InventoryStore.onListCompleteChanged runs the purge
+        compare(_ids(), ["live"])
+    }
+
+    function test_O1_a_list_that_completes_only_after_the_fetch_in_flight_ends_purges_then_not_before() {
+        PhotoQueue.items = [_failedItem("gone", "prod-gone")]
+        InventoryStore.products = []
+        InventoryStore.loadingMore = true
+        InventoryStore.hasMore = false
+        compare(_ids(), ["gone"], "still loading: nothing purged")
+        InventoryStore.loadingMore = false
+        compare(_ids(), [], "load finished and the list is complete: purged")
+    }
+
+    function test_O1_a_list_that_becomes_partial_again_never_purges() {
+        PhotoQueue.items = [_failedItem("gone", "prod-gone")]
+        _listComplete([{ productId: "prod-live" }])   // the flip to complete ran the purge: "gone" is absent
+        compare(_ids(), [])
+        PhotoQueue.items = [_failedItem("again", "prod-gone")]
+        InventoryStore.hasMore = true                 // a resync starts: unknown, so no purge
+        compare(_ids(), ["again"])
     }
 }
