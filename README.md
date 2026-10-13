@@ -677,7 +677,7 @@ was caught by the Node test suite actually failing, not by tracing — see SKILL
 now classified by `functions/lib/writeError.js` (`classifyWriteError`) into `write-rejected` (invalid-argument,
 not-found, already-exists, permission-denied, failed-precondition: retrying can never succeed), `write-unavailable`
 (deadline-exceeded, resource-exhausted, aborted, internal, unavailable) or `write-failed` (anything else). The HTTP
-status stays 500 on purpose: the delta and operation senders drop a write on any 4xx (SKILLS Skill 74). `Gateway`
+status stays 500 on purpose: the delta and operation senders drop a write on any 4xx (SKILLS Skill 84). `Gateway`
 reads `body.error` only to label: `StuckWrites` tracks the server's latest answer per write, `Gateway.stuckTerminalCount`
 feeds `syncStuckTerminalCount` in `Main.qml`, and `GlassHeader` shows "N change(s) rejected by the server. Still
 retrying." Retry, backoff and dropping are unchanged. Test plan:
@@ -724,7 +724,7 @@ stays 3; a completion queued offline (or whose await window elapses) still shows
 per Taher's call in the check-in. One addition beyond the original plan draft, also from that check-in:
 reopening an order while its completion is still open is now handled — `_reverseCompletedOrder` clears the
 open-completion bookkeeping so a deferred server answer for a superseded completion can't re-apply the
-original sale onto the reopened order. 16 new tests (`tests/tst_DataModel_completeOrderAtomic.qml`); the
+original sale onto the reopened order. 20 test functions (`tests/tst_DataModel_completeOrderAtomic.qml`, counted with grep; the last 3 added in the 2026-10-13 sweep pin the Discard-of-a-parked-completion fix, Skill 115); the
 existing `tst_DataModel_completeOrderReentrancy.qml` needed its "still in flight" test setup changed (not
 just re-verified) since the new code resolves synchronously in cases where the old per-XHR chain used to hang
 forever in this harness — see that file's header and SKILLS Skill 114. Written and pushed; CI result not yet

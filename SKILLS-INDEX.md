@@ -122,3 +122,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 112: A monkey test must prove its generator reaches the case it guards; copies of a failure tail are one function so the decision is testable
 - 113: An async callback acts only on the state it was started for; a store trigger that fires inside a test pre-empts direct calls
 - 114: Simulating a Gateway.recordOperation server answer in a test needs `OutboxStore.markSent()` too, not just `Gateway._finishOperation()` — or a re-plan under the same key silently coalesces into the first, already-rejected payload
+- 115: A new consumer of a channel must handle EVERY terminal result shape the channel can already produce, including the ones a later feature added

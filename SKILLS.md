@@ -4259,3 +4259,13 @@ one helper (`_answer()` in the new test file) rather than inlining both calls at
 answer's effects and only reveal itself on a re-plan's *second* request, which is exactly the kind of
 one-call-later bug this SKILLS.md file already has a name for (Skill 71, same shape, different layer: a
 convenience helper that looks complete for the single-shot case quietly isn't for the sequential one).
+
+## Skill 115: A new consumer of a channel must handle EVERY terminal result shape the channel can already produce, including the ones a later feature added
+
+Context (2026-10-13, PR #90 final sweep): `DataModel._onCompletionRejected` was written when `Gateway.recordOperation` could finish only as applied, conflict, floor rejection or timeout. S3 (merged later) added `Gateway.discardParked`, which finishes a parked operation with `{ ok:false, error:"discarded", discarded:true }` and NO `opIndex`. The S3 design said "an operation item can only be parked once C-3 lands" and stopped there. The C-3 wire-up fell into the generic rejection path: revert, then re-plan clamped and re-send. The user pressed Discard and the same sale was queued again; the server rejects it again, so Discard could never end. Git merged the branch cleanly and CI stayed green, because nothing exercised the combination.
+Rules:
+1. When a PR adds the FIRST production caller of an existing channel, grep the channel's code for every place that builds a terminal result (`_finishOperation(`, `{ ok: false`) and list each shape next to the consumer's branches. A shape with no branch is a bug.
+2. A feature built before its consumer existed (S3 before C-3) owes a note in the consumer's plan, not only in its own design. "Handled later" must name the branch that will handle it.
+3. A user-initiated terminal result (Discard) is not a server verdict. Never route it through repair-and-retry logic: undo what was shown, release guards, stop.
+4. Test the combination by feeding the producer's REAL result shape to the consumer (`_answer(key, { ok:false, error:"discarded", discarded:true })`), and assert "nothing was re-sent" by counting outbox items for that key (Skill 79).
+5. A clean `git merge` and green CI on a merged tree prove textual and existing-test health only. Re-read the merged function against what `main` changed around it.

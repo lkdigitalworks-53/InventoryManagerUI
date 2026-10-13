@@ -74,6 +74,8 @@ for network calls generally** — this item should not be scoped as a narrow pat
 `ASYNC-REENTRANCY-BUGS.md`'s still-unfixed C-1 and C-2 as well; whoever designs the fix for this
 should treat that as the actual scope question, not assume each gets its own independent patch.
 
+**Status 2026-10-13:** the client wire-up is PR #90 (CI green, not merged, `recordOperation` deploy not confirmed in any doc, not device-tested). Pending after it: Task 11 hint, Task 12 docs, Task 13 deploy + device; then the remaining non-atomic multi-write paths (C-1 `_tryAdjustOrder`, `completeImportedOrder`, `_reverseCompletedOrder`, restock) and the ledger kinds `created`, `purchase`, `photo_change`, `sale`, `return`, `price_adjust`.
+
 Deliberately not fixed this session — flagged for a dedicated session per explicit instruction, same
 as the timeout item above. The two are related (idempotency-safety is what would make it safe to
 eventually add the timeouts/retries the item above calls for) but are being tracked as separate

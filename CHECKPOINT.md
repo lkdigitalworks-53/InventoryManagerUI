@@ -17,9 +17,10 @@
 - [x] 3. Verified `DataModel.qml` auto-merge: parked/unsynced guard (PR #121) intact, runs before `_completingOrderIds` is set. CI on merge commit b95df35: QML, Functions, Rules, E2E ALL green
 - [x] 4. Reviewed new path vs Gateway/Outbox on main. FINDING F1 (must fix): S3 Discard of a parked `completeOrder` op -> `_onCompletionRejected` re-plans and re-sends the sale (no `discarded` branch). Fixed in `DataModel._onCompletionRejected` + 3 tests (`tst_DataModel_completeOrderAtomic.qml` 8b). Pushed, CI pending
 - [x] 5. (lint done: qt_qml_lint.py shows no new real findings vs main) Review tests (`tst_DataModel_completeOrderAtomic.qml`, reentrancy, E2E) against main's changed harness
-- [ ] 6. Delete-roadmap status table + atomic-ops pending table (written into review note)
-- [ ] 7. Fix findings, update docs (AGENTS/README/SKILLS/test plan/roadmaps), push
-- [ ] 8. Final: review note `docs/superpowers/plans/2026-10-13-pr90-final-sweep-review.md`, PR comment summary
+- [x] 6. Delete-roadmap + atomic-ops status written into `docs/superpowers/plans/2026-10-13-pr90-final-sweep-review.md`
+- [x] 7. F1 fixed (CI green on 1595d62); docs updated: Skill 115, test plan, tracker, roadmaps, AGENTS, README, stale Skill refs
+- [x] 8a. Review note written
+- [ ] 8b. PR comment + PR description refresh (API); then read CI on the docs commit
 
 ## NEXT (if interrupted)
 Start at the first unticked step. Read this file, then `git log --oneline -5`, then continue.
