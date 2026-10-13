@@ -1,25 +1,28 @@
-# CHECKPOINT — 2026-10-12 PR #138 sweep part 2 (resume here)
+# CHECKPOINT — 2026-10-13 PR #90 final sweep (resume here)
 
-**Branch:** `feat/2026-10-08-photos-ph4-r1-404-body` (PR #138, base `main`). Last CI-green commit before this part: 1ba0050 (docs-only 6a5f643 on top). Part 2 is pushed as one commit; CI result: see the PR comment. NOTHING IS DEPLOYED, app not built or run.
-**Commit identity:** `lkdwtaher@gmail.com`. PAT only in the push command, never in a file or git config.
-**Previous checkpoint:** `docs/superpowers/specs/2026-10-09-pr138-final-sweep-prev-CHECKPOINT.md` (R1 build) and the sweep review note `docs/superpowers/specs/2026-10-09-pr138-final-sweep-review.md` (now includes part 2).
-**Decision (Taher, 2026-10-12):** fix O1, O2, O3 in PR #138 only; write PH5 e2e E01-E03; tick the reported device tests.
+**Branch:** `feat/2026-09-26-complete-order-atomic` (PR #90, base `main`). Work is pushed to this SAME branch (Taher: "push directly in the same PR").
+**Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config.
+**Rules in force:** do not build/run the app; no Qt tools in the sandbox (CI is the proof); no merge to `main`; honest trade-offs, grill before deciding.
+**Skills used:** requesting-code-review, ponytail-audit (report format), qt-qml-review (phases; python linter needs `references/lint-scripts/` of the skill).
+**Archived previous checkpoint (PR #138 sweep part 2):** `docs/superpowers/specs/2026-10-12-pr138-sweep-part2-prev-CHECKPOINT.md`.
 
-## Done in part 2
-- [x] O2/O3: `PhotoQueue._isInFlight` guard in `_failUpload` and new `_completeUpload` (`qml/model/PhotoQueue.qml`)
-- [x] O1: `PhotoQueue.purgeOrphanedFailures()` + `InventoryStore.onListCompleteChanged` trigger
-- [x] 18 QML tests in `tests/tst_PhotoQueue.qml` (FU13-FU30 in the test plan; CI only). Node harness of the shipped functions: 10 scenarios pass.
-- [x] PH5 e2e `test/e2e/tst_ProductLegacyPhotoUrlE2E.qml` (E01, E02, E03, E03b) + `E2EHelpers.createEmulatorDoc` + `functions/test/e2eHelpers.firestoreFields.test.js` (4 tests)
-- [x] Device tests ticked per Taher in the test plans: R1, PH4, PH3 server cascade, PH3b DV-1..DV-9, PH5, S3, S2b, batch cleanup, product/order delete UI
-- [x] Docs: sweep review, KNOWN-ISSUES, roadmap, README index, AGENTS, Skill 113 (114 skills, index regenerated)
-- [x] Sandbox verification: functions 626/626, skills index current, CI-script tests unchanged
+## Facts established (verified by command, not memory)
+- PR #90 = plan Task 10 (`DataModel._tryCompleteOrder` -> one atomic `completeOrder` operation). Its base was `96c07bd`; `main` is 79 commits ahead. CI green on the old base (2026-09-27, 1429 tests).
+- `main` already has Tasks 1-9: `functions/lib/operationLogic.js`, `recordOperation` endpoint, `CompletionPlan.js`, `OperationKeys.js`, `SendPolicy.js`, `StuckWrites.js`, `OutboxStore` op items, `Gateway.recordOperation`, store hooks. `main` still has the OLD per-line FIFO + `deductStock` chain in `_tryCompleteOrder`. So #90 is the missing wire-up.
+- Trial merge: only docs conflict (AGENTS.md, CHECKPOINT.md, SKILLS.md). `DataModel.qml` and `test/e2e/tst_OrdersE2E.qml` auto-merged: textually clean, NOT yet proven semantically right (main added parked-write refusal PR #121 into `_tryCompleteOrder`).
 
-## Honest caveats
-- QML tests and the e2e are CI-only: not run here. CI is the proof.
-- R1 "row gone" device step was run on the pre-O1 build. NEW unticked device steps: O1 re-check and O2 sign-out check (test plan `2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
-- O1 trade-off: the later purge uses the row-gone check alone (R1's body check governs only the immediate 404).
-- Device ticks are wholesale per Taher's report; step-level results were not itemised.
-- O4 stays open (a server rename of `product-not-found` makes R1 inert, safe).
+## Steps
+- [x] 1. Cloned repo, read memory + 3 skills, mapped roadmaps
+- [x] 2. Merged `origin/main` into the PR branch (docs conflicts resolved: main side kept; branch Skill 74 renumbered to Skill 114 because main already owns 74..113; README ref fixed; `SKILLS-INDEX.md` regenerated, 115 skills)
+- [x] 3. Verified `DataModel.qml` auto-merge: parked/unsynced guard (PR #121) intact, runs before `_completingOrderIds` is set. CI on merge commit b95df35: QML, Functions, Rules, E2E ALL green
+- [x] 4. Reviewed new path vs Gateway/Outbox on main. FINDING F1 (must fix): S3 Discard of a parked `completeOrder` op -> `_onCompletionRejected` re-plans and re-sends the sale (no `discarded` branch). Fixed in `DataModel._onCompletionRejected` + 3 tests (`tst_DataModel_completeOrderAtomic.qml` 8b). Pushed, CI pending
+- [x] 5. (lint done: qt_qml_lint.py shows no new real findings vs main) Review tests (`tst_DataModel_completeOrderAtomic.qml`, reentrancy, E2E) against main's changed harness
+- [x] 6. Delete-roadmap + atomic-ops status written into `docs/superpowers/plans/2026-10-13-pr90-final-sweep-review.md`
+- [x] 7. F1 fixed (CI green on 1595d62); docs updated: Skill 115, test plan, tracker, roadmaps, AGENTS, README, stale Skill refs
+- [x] 8a. Review note written
+- [x] 8b. PR description refreshed, sweep comment posted, CI green on docs commit 0015b4f (all 4 jobs)
+
+## SESSION COMPLETE. D-1 (revert) and D-2 (merge #90 first) DECIDED 2026-10-13; Taher deploys `recordOperation`, then device test + squash-merge.
 
 ## NEXT
-Taher: read the CI result on the PR, squash-merge #138. Then device re-check of O1/O2, then the atomic-operation work.
+Nothing unfinished in this sweep. Next session (after #90 merges): (1) show the CAUSE of the error in the UI for a failed/discarded/parked completion (Taher's request), (2) Task 11 syncing hint, (3) C-1. New branch from updated `main`.

@@ -307,10 +307,10 @@ leaves no trace (no write, no audit entry, no marker), so the same key can be re
 Up to 200 ops per request (401 writes at most); `opType` is allowlisted (`completeOrder`). The
 `requestId` must be `{opType}:...` (no `/` or `~`, at most 200 characters) and every entity id must be a
 safe document id, so a bad id is a clean 400 rather than a write that fails and is retried forever;
-per-op audit entries are `{requestId}~{index}`, which can never equal a marker id. **No client
-calls it yet**: this is Phase 1 of the C-3 fix (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`,
-spec in `docs/superpowers/specs/`), and the function must be deployed to dev before the client phases
-ship. 37 new unit tests (`operationLogic.test.js` 23, `index.handlers.recordOperation.test.js` 14);
+per-op audit entries are `{requestId}~{index}`, which can never equal a marker id. Called from
+`DataModel._tryCompleteOrder` as of C-3 phase 3 Task 10 (`docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`,
+spec in `docs/superpowers/specs/`) — the function must be deployed to dev/prod for the client to reach it.
+37 new unit tests (`operationLogic.test.js` 23, `index.handlers.recordOperation.test.js` 14);
 `functions/` suite: 232 tests, all passing. `operationLogic.js` is 100% line/branch/function covered;
 `index.js` stays at 99.89% (the one pre-existing uncovered line, unchanged). Also
 `test/e2e/recordOperation.e2e.test.js` (10 tests, run in the E2E job after the QML tests): the same
@@ -677,7 +677,7 @@ was caught by the Node test suite actually failing, not by tracing — see SKILL
 now classified by `functions/lib/writeError.js` (`classifyWriteError`) into `write-rejected` (invalid-argument,
 not-found, already-exists, permission-denied, failed-precondition: retrying can never succeed), `write-unavailable`
 (deadline-exceeded, resource-exhausted, aborted, internal, unavailable) or `write-failed` (anything else). The HTTP
-status stays 500 on purpose: the delta and operation senders drop a write on any 4xx (SKILLS Skill 74). `Gateway`
+status stays 500 on purpose: the delta and operation senders drop a write on any 4xx (SKILLS Skill 84). `Gateway`
 reads `body.error` only to label: `StuckWrites` tracks the server's latest answer per write, `Gateway.stuckTerminalCount`
 feeds `syncStuckTerminalCount` in `Main.qml`, and `GlassHeader` shows "N change(s) rejected by the server. Still
 retrying." Retry, backoff and dropping are unchanged. Test plan:
@@ -714,8 +714,21 @@ new `completionEpoch` order field) / `applyRemoteOrder`, `TransactionStore.build
 `recordSaleFromOrder`, with a deterministic-id mode) / `addLocalEntries` / `removeLocalEntries`. 56 new tests.
 Found and fixed one real bug while extracting these: `OrdersStore._normalizeOrder` silently drops any field
 not in its literal, which would have quietly discarded `completionEpoch` on every order edit after the one
-that set it (SKILLS Skill 71). **`DataModel._tryCompleteOrder` still does not call any of this** — that's
-Task 10, flagged for a design check-in before it starts (see `CHECKPOINT.md`).
+that set it (SKILLS Skill 71).
+
+**Update 2026-09-26 (C-3 phase 3 Task 10, `DataModel._tryCompleteOrder` rewrite), after a design check-in
+with Taher:** `_tryCompleteOrder` now sends one atomic `completeOrder` operation instead of the old per-line
+FIFO-consume + deduct-stock chain (and its compensation logic — nothing left to compensate once the server
+transaction is atomic). Keeps its signature, guard, and `stockErrorMsg`/`out of stock` behaviour. `maxReplans`
+stays 3; a completion queued offline (or whose await window elapses) still shows as `completed` immediately,
+per Taher's call in the check-in. One addition beyond the original plan draft, also from that check-in:
+reopening an order while its completion is still open is now handled — `_reverseCompletedOrder` clears the
+open-completion bookkeeping so a deferred server answer for a superseded completion can't re-apply the
+original sale onto the reopened order. 20 test functions (`tests/tst_DataModel_completeOrderAtomic.qml`, counted with grep; the last 3 added in the 2026-10-13 sweep pin the Discard-of-a-parked-completion fix, Skill 115); the
+existing `tst_DataModel_completeOrderReentrancy.qml` needed its "still in flight" test setup changed (not
+just re-verified) since the new code resolves synchronously in cases where the old per-XHR chain used to hang
+forever in this harness — see that file's header and SKILLS Skill 114. Written and pushed; CI result not yet
+seen by this session (see `CHECKPOINT.md`).
 
 ---
 

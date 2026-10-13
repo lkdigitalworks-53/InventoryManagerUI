@@ -13,10 +13,9 @@ import "../qml/model"
 //
 // Root cause: _tryCompleteOrder's only "already completing" guard reads
 // OrdersStore.getById(orderId).status, but that field only flips to
-// "completed" at the very END of the async chain (inside
-// _afterAllDeltas), so a second call arriving before the first resolves
-// sees the SAME stale "pending" status and re-runs the entire stock
-// deduction + sale recording from scratch.
+// "completed" at the very END of the async chain, so a second call
+// arriving before the first resolves sees the SAME stale "pending" status
+// and re-runs the entire stock deduction + sale recording from scratch.
 //
 // Fix: an explicit _completingOrderIds in-flight set, set synchronously
 // at entry (before ANY async call) and cleared on every exit path --
@@ -29,34 +28,30 @@ import "../qml/model"
 // OrdersPage._approveAllPending(), which calls the same
 // _tryCompleteOrder engine with no re-entrancy guard of its own.
 //
-// GENUINELY RUN VIA CI (this repo's qml-tests job), not just hand-traced
-// -- and CI caught two real mistakes in earlier versions of this file:
+// UPDATED for the C-3 atomic-operation rewrite (Task 10, 2026-09-26; see
+// tst_DataModel_completeOrderAtomic.qml for the fuller suite around that
+// rewrite). The guard itself, and every assertion below, is unchanged --
+// only HOW a genuine "still in flight" window is produced changed, because
+// it stopped being true that a queued completion's callback simply never
+// resolves in this harness:
 //
-// 1. Tried to reassign StockBatchStore.consumeFifo to simulate a race --
-//    throws "Cannot assign to read-only property" at runtime. A QML
-//    `function` declaration compiles to a read-only invokable member, not
-//    a mutable JS property the way a plain object's method would be. See
-//    SKILLS Skill 62.
+// Before Task 10, deductStock's callback was wired directly to a real
+// XMLHttpRequest round trip (Gateway.qml's _sendDelta), which returns
+// immediately without ever calling back when AuthStore.idToken is empty --
+// so "offline" WAS "never resolves" in this harness, and that's what these
+// tests exploited for a genuine in-flight window.
 //
-// 2. Assumed _tryCompleteOrder's happy path resolves its callback
-//    SYNCHRONOUSLY, the way every other DataModel orchestration function
-//    in this test suite does (see tst_DataModel_adjustOrderSyncGuard.qml's
-//    header). It does NOT: deductStock's callback is wired directly to
-//    Gateway.recordDelta's own callback (InventoryStore.qml), which only
-//    fires once a REAL XMLHttpRequest round trip to the Cloud Function
-//    completes (Gateway.qml's _sendDelta) -- there is no local-apply
-//    shortcut the way _tryAdjustOrder's callback-LESS creditStockNoBatch/
-//    restoreFifo have. With AuthStore.idToken empty (this suite's
-//    "offline" convention), _sendDelta returns immediately without ever
-//    invoking the callback at all (see its `if (!AuthStore.idToken...)
-//    return` guard) -- so in THIS harness, with no live emulator, a
-//    genuine completion's callback simply never resolves. This isn't a
-//    bug to work around; it's exactly the real "still in flight" state
-//    the guard exists to protect against, and the tests below use it
-//    directly instead of manufacturing a fake one. See SKILLS Skill 63.
-//    The genuine happy-path (a real Cloud Function actually returning
-//    ok:true) is out of reach for plain `qmltestrunner` and belongs to
-//    the E2E/on-device layer -- see the test plan.
+// After Task 10, completion goes through Gateway.recordOperation, whose
+// callback fires SYNCHRONOUSLY unless BOTH AuthService.isOnline is true AND
+// awaitServer is requested (DataModel passes awaitServer: online) -- so the
+// old "AuthStore.idToken empty" setup now resolves the FIRST call
+// synchronously (queued) before a second call could ever race it; there is
+// no window left to test through that door. The genuine in-flight window
+// now exists only in the online+awaiting case, where recordOperation
+// registers a waiter (Gateway.qml's _addOperationWaiter) that does not
+// resolve until something calls Gateway._finishOperation for that key --
+// which these tests, deliberately, never do. See
+// tst_Gateway.qml's own recordOperation tests for the same technique.
 TestCase {
     name: "DataModel_completeOrderReentrancy"
 
@@ -72,12 +67,22 @@ TestCase {
         OutboxStore.clear()
         AuthStore.idToken = ""
         AuthStore._settings.sessionJson = ""
+        // Online + awaiting is what now produces a genuine in-flight window
+        // (see the header) -- recordOperation registers a waiter instead of
+        // resolving immediately, and nothing in this file ever answers it.
+        AuthService.isOnline = true
         dm.stockErrorMsg = ""
         // dm is constructed once for this whole TestCase (not per test),
-        // so its _completingOrderIds property survives across every test
-        // function unless explicitly reset here -- without this line,
-        // one test's guard state can silently leak into the next.
+        // so its _completingOrderIds/_openCompletions properties survive
+        // across every test function unless explicitly reset here --
+        // without this, one test's guard state can silently leak into the
+        // next.
         dm._completingOrderIds = ({})
+        dm._openCompletions = ({})
+    }
+
+    function cleanup() {
+        AuthService.isOnline = false
     }
 
     function _product() {
@@ -108,12 +113,14 @@ TestCase {
 
     // ── the core regression, using two REAL sequential calls ─────────────
     //
-    // The first call's own callback genuinely never resolves in this
-    // harness (see header) -- so by the time the second call is issued,
-    // right after, the first call's _completingOrderIds entry is still
-    // set exactly as it would be mid-network-round-trip in production.
-    // No monkey-patching or manual state seeding needed: this is the
-    // real code path, hitting the real (never-resolving-here) guard.
+    // The first call's own callback genuinely does not resolve within this
+    // test function (see header: online + awaitServer registers a waiter
+    // that only Gateway._finishOperation can resolve, and nothing here
+    // calls it) -- so by the time the second call is issued, right after,
+    // the first call's _completingOrderIds entry is still set exactly as
+    // it would be mid-network-round-trip in production. No monkey-patching
+    // or manual state seeding needed: this is the real code path, hitting
+    // the real (still-open-here) guard.
 
     function test_second_call_rejected_while_first_still_in_flight() {
         var firstResult = null
@@ -123,8 +130,8 @@ TestCase {
         dm._tryCompleteOrder("ORD-RACE-1", function(ok) { secondResult = ok })
 
         compare(firstResult, null,
-                "the first call's callback should not have resolved yet in this harness (no "
-                + "live Gateway backend) -- if this starts failing, Gateway's synchronous-vs-async "
+                "the first call's callback should not have resolved yet in this harness (an awaited "
+                + "operation with no answer) -- if this starts failing, Gateway's synchronous-vs-async "
                 + "behavior changed and this test needs revisiting, not just re-asserting")
         compare(secondResult, false, "the second call must be rejected while the first is still in flight")
         verify(dm.stockErrorMsg.length > 0, "must tell the caller why the reentrant attempt was rejected")
@@ -203,7 +210,7 @@ TestCase {
         var retryResult = null
         dm._tryCompleteOrder("ORD-RACE-1", function(ok) { retryResult = ok })
         compare(retryResult, null,
-                "the retry itself proceeds into the (here, never-resolving) Gateway round trip "
-                + "rather than being rejected by a leftover guard entry -- see header")
+                "the retry itself proceeds into the (here, awaited-but-never-answered) Gateway round "
+                + "trip rather than being rejected by a leftover guard entry -- see header")
     }
 }

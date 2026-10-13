@@ -294,6 +294,8 @@ Plan: `plans/2026-09-20-atomic-operation-outbox.md`. Test plan:
 `recordOperation` endpoint, is PR #78; #75 has merged). Still **not fixed** until the client phases land. C-1 (`_tryAdjustOrder`) becomes the second consumer of the mechanism,
 in its own spec.
 
+**Status 2026-10-13: implemented in PR #90 (plan Task 10), NOT merged, NOT deployed, NOT device-tested.** `main` already has Tasks 1-9; PR #90 is the wire-up of `DataModel._tryCompleteOrder`. CI is green on the merged tree (`1595d62`: QML 1993, Functions 626, Rules 45, E2E 93). Final sweep found and fixed one bug: a user Discard of a parked completion re-planned and re-sent the sale (SKILLS Skill 115). Stays listed here, not under Fixed, until: `recordOperation` is deployed, the PR is merged, and the on-device plan in `test-plans/2026-09-20-atomic-operation-outbox-test-plan.md` passes. Not yet built: plan Task 11 ("Saved, syncing" hint).
+
 ---
 
 ## Medium
