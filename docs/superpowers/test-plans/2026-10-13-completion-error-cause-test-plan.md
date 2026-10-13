@@ -60,3 +60,5 @@ Happy: complete online -> no toast. Negative: delete a product in the web/other 
 **Unreachable branch, documented:** `_completeAttempt`'s `callback === null` announce after a queued re-plan cannot fail the plan (clamped plans do not run out of stock and `too-many-ops` cannot appear on a re-plan), so only an explicit-null first call reaches it (F10d). The queued path is covered through the exhausted-re-plan branch (F10, F11).
 **Known behaviour left as is:** the exhausted-re-plan branch still sets the order to `out of stock` whatever the cause (Skill 116 rule 6); the plan's "order stays pending" holds for Discard and for a queued completion reverted by the server, not for that branch.
 **Device steps added (unticked):** section 5 above, plus: after a parked completion, the sheet row shows the customer name (not `B...` batch id) and the cause line; relaunch keeps the cause line.
+**CI round 1 (2026-10-13):** Functions 626, Rules 45, E2E 93 green; QML 2025/2026, the one failure was `tst_FailureCause::compile` (a variable named `long`, reserved in QML's JS parser; Skill 116 rule 7). Fixed in the next commit.
+

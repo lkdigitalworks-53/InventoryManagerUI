@@ -4280,4 +4280,5 @@ Rules:
 4. Cause text lives in one pure helper (`qml/helper/FailureCause.js`). Never assert a cause the server did not state: a 500 `write-rejected` carries only the class, so the text says "usually". Echo a server code only when it is a short plain token.
 5. A row label for a multi-op item must come from the op the person recognises (the order's customer), not from `ops[0]`.
 6. Not done here, on purpose: the exhausted-re-plan branch still flags the order `out of stock` whatever the cause (`conflict`, `not-found`). Revisit when Task 11 touches the status.
+7. QML's JS parser still rejects the old ES3 future-reserved words (`long`, `short`, `int`, `char`, `byte`, `float`, `double`, `final`, `native`...) as variable names; modern Node accepts them, so a Node shim run does NOT prove a `.qml` test compiles. CI showed it as `tst_X::compile — Expected token identifier`. Before pushing a new test file, grep it for `var (long|short|int|char|byte|float|double|final|native)\b`.
 

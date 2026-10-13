@@ -84,8 +84,8 @@ TestCase {
     function test_U08_a_hostile_name_is_trimmed_and_passed_through_as_text_only() {
         var r = FC.forRejection({ error: "insufficient-quantity" }, "  <b>Wid\u00e9get</b>\n  ")
         compare(r.text, "<b>Wid\u00e9get</b>: stock ran out before this order could complete")
-        var long = "N".repeat(5000)
-        compare(FC.forRejection({ error: "insufficient-quantity" }, long).text.length, 5000 + ": stock ran out before this order could complete".length)
+        var huge = "N".repeat(5000)
+        compare(FC.forRejection({ error: "insufficient-quantity" }, huge).text.length, 5000 + ": stock ran out before this order could complete".length)
     }
 
     // ── forWriteError ────────────────────────────────────────────────────
