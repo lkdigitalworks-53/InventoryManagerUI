@@ -34,7 +34,7 @@ Pending orders show an Approve button in the teal banner. After a tap there is n
 - [x] 2. Branch created, checkpoint written, pushed
 - [x] 3. Taher chose D1 = A (hold ~1.2s with success state). Defaults 1-6 not overridden.
 - [x] 4. Implemented (code, tests, test plan + index row, Skill 117, `SKILLS-INDEX.md` 118, README/AGENTS lines). Helper + page change + tests (unit, functional model, monkey) + test plan + docs/skills + SKILLS-INDEX regen (`node .github/scripts/skills-index.js --write`) + script suite
-- [~] 5. Push done; PR opened (see below). Push, open PR (REST: `gh api .../pulls`, GraphQL blocked), CI is the proof
+- [~] 5. Push done; PR #142 opened (https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/142), base main. Push, open PR (REST: `gh api .../pulls`, GraphQL blocked), CI is the proof
 
 ## Progress log
 - Built `qml/helper/BulkApproveProgress.js`, `OrdersPage.qml` wiring, `tests/tst_BulkApproveProgress.qml` (29 cases: unit, regression, functional stand-in, 2 monkey), `.github/scripts/__tests__/ordersPageApproveWiring.test.js` (18 cases, page source wiring guard).
