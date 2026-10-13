@@ -10,7 +10,7 @@
 - [x] 2. Picked next item = error-cause UI (Taher's own request in #90 D-1), then Task 11, then C-1
 - [x] 3. Traced causes in code: P1..P5 in the design (silent revert of a queued completion; stuck row shows a stock batch id; server keeps only the class of the 500 error)
 - [x] 4. Design doc + test plan + roadmap/test-plan index lines written
-- [x] 5. Committed and pushed, PR raised
+- [x] 5. Committed and pushed, PR #139 raised (design only, base `main`)
 - [ ] 6. Taher answers Q-EC-1..3
 
 ## NEXT
