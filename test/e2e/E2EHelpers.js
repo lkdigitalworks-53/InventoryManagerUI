@@ -222,3 +222,44 @@ function pollEmulatorStorageObjectAbsent(tc, emulatorStorageHost, bucket, object
         return lastStatus === 404
     }, timeoutMs, message + " (objectPath=" + objectPath + ")")
 }
+
+// ---- PH5 e2e (2026-10-12): seed a raw document as the emulator admin ------------------------------
+// Plain JS value -> Firestore REST typed value; the inverse of the _firestoreFieldsToPlain copies in the
+// e2e files. Integers become integerValue (a string, as the REST API wants), other numbers doubleValue.
+// `Math.floor(v) === v` instead of Number.isInteger: same result for finite numbers, no engine doubt.
+function toFirestoreValue(v) {
+    if (v === null || v === undefined) return { nullValue: null }
+    if (typeof v === "string") return { stringValue: v }
+    if (typeof v === "boolean") return { booleanValue: v }
+    if (typeof v === "number") return (Math.floor(v) === v) ? { integerValue: String(v) } : { doubleValue: v }
+    if (Array.isArray(v)) return { arrayValue: { values: v.map(toFirestoreValue) } }
+    return { mapValue: { fields: toFirestoreFields(v) } }
+}
+
+function toFirestoreFields(obj) {
+    var fields = {}
+    for (var key in obj) fields[key] = toFirestoreValue(obj[key])
+    return fields
+}
+
+// Creates `collectionPath/docId` with exactly the keys of `plain`, bypassing the Cloud Functions and the client
+// stores. The Firestore emulator treats `Authorization: Bearer owner` as an admin (security rules skipped), the
+// same trick tst_ProductPhotosE2E._pollMarker uses for reads. POST + `documentId` (createDocument) instead of
+// PATCH: QML's XMLHttpRequest is only known to handle GET/POST here. Returns the HTTP status; 200 = created,
+// 409 = the id already exists (the caller picks a fresh id per test).
+function createEmulatorDoc(tc, emulatorFirestoreHost, collectionPath, docId, plain, timeoutMs, message) {
+    var url = emulatorFirestoreHost
+        + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + collectionPath
+        + "?documentId=" + encodeURIComponent(docId)
+    var status = -1, text = "", done = false
+    var xhr = new XMLHttpRequest()
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.DONE) { status = xhr.status; text = xhr.responseText; done = true }
+    }
+    xhr.open("POST", url, true)
+    xhr.setRequestHeader("Content-Type", "application/json")
+    xhr.setRequestHeader("Authorization", "Bearer owner")
+    xhr.send(JSON.stringify({ fields: toFirestoreFields(plain) }))
+    tc.tryVerify(function() { return done }, timeoutMs, message)
+    return { status: status, text: text }
+}

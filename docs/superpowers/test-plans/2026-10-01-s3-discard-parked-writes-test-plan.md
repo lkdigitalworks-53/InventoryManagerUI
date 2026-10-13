@@ -1,5 +1,7 @@
 # Test plan — Discard a parked write + resync (part B, S3)
 
+**2026-10-12: device steps ticked per Taher's report that S3 device testing is complete.** Wholesale tick: individual step results were not itemised in the report, so a failed step would have to be raised by Taher.
+
 **Branch:** `feat/2026-10-01-s3-discard-parked-writes` (stacked on design PR #109 -> PR #106). **Design:** `../specs/2026-09-30-s3-discard-resync-design.md`.
 **Status:** written with the code, before CI. **Nothing was built or run.** No Qt toolchain in the sandbox; CI is the QML signal.
 
@@ -26,15 +28,15 @@ A parked (server-rejected) write gets an exit. The Discard button (rejected rows
 
 ### 3.0 Prerequisites (read first; added in the PR #110 final sweep)
 **Build / environment**
-- [ ] App built from this PR (or the review branch on top of it) and installed on an Android device. **dev or test environment only, never prd.**
-- [ ] `Gateway.mode` is `"gateway"` (the default). In `"direct"` mode Discard always refuses ("Could not discard...").
-- [ ] Cloud Functions of that environment are deployed and reachable (S3 changes no server code, but the write must reach `recordMutation`).
-- [ ] Device is online, screen kept on, battery saver off (it can pause timers).
+- [x] App built from this PR (or the review branch on top of it) and installed on an Android device. **dev or test environment only, never prd.**
+- [x] `Gateway.mode` is `"gateway"` (the default). In `"direct"` mode Discard always refuses ("Could not discard...").
+- [x] Cloud Functions of that environment are deployed and reachable (S3 changes no server code, but the write must reach `recordMutation`).
+- [x] Device is online, screen kept on, battery saver off (it can pause timers).
 
 **Account / data**
-- [ ] A **new tenant**, logged in as **owner**. At the start the header shows no "not syncing" / "rejected" line and the sheet says "Nothing is stuck right now." If anything is stuck, clear it first.
-- [ ] Seed at least 3 products (call them A, B, C), 1 supplier and 1 order. Write down A's name, description and stock.
-- [ ] Firestore console open on the environment's database (dev -> `dev1`, test -> `test`). Server truth lives at `tenants/{tenantId}/inventory/{productId}`; `tenantId` is in `users/{uid}.tenantId`. Compare the document before and after every Discard.
+- [x] A **new tenant**, logged in as **owner**. At the start the header shows no "not syncing" / "rejected" line and the sheet says "Nothing is stuck right now." If anything is stuck, clear it first.
+- [x] Seed at least 3 products (call them A, B, C), 1 supplier and 1 order. Write down A's name, description and stock.
+- [x] Firestore console open on the environment's database (dev -> `dev1`, test -> `test`). Server truth lives at `tenants/{tenantId}/inventory/{productId}`; `tenantId` is in `users/{uid}.tenantId`. Compare the document before and after every Discard.
 
 **Making a write get stuck (pick the recipe per case)**
 | Recipe | Gives | How | Expect in the sheet |
@@ -51,28 +53,28 @@ A parked (server-rejected) write gets an exit. The Discard button (rejected rows
 
 ### 3.1 Checks
 **Happy path**
-- [ ] Parked row shows Retry and Discard; tap Discard: confirm sheet with the warning text; tap Discard: toast "Change discarded", row and header line disappear, the record matches the server (edited value reverted / deleted record back / never-created record absent).
-- [ ] Cancel in the confirm: nothing changes, row still parked.
+- [x] Parked row shows Retry and Discard; tap Discard: confirm sheet with the warning text; tap Discard: toast "Change discarded", row and header line disappear, the record matches the server (edited value reverted / deleted record back / never-created record absent).
+- [x] Cancel in the confirm: nothing changes, row still parked.
 
 **Negative**
-- [ ] Outage-type stuck row (403 / 404 setup): only "Retry now", no Discard.
-- [ ] Airplane mode: Discard is disabled on a parked row; back online it enables.
-- [ ] Go offline WHILE the confirm is open, then confirm: toast "Could not discard...", write still parked.
-- [ ] Confirm Discard, then go offline at once (during the reload): the lists may stay empty or partial until you are back online and refresh (same behaviour as any failed sync, a reload clears the list first). Confirm they refill on reconnect or pull-to-refresh; report if they stay empty.
-- [ ] Tap Retry (in flight) then Discard: Discard disabled while "Sending...".
+- [x] Outage-type stuck row (403 / 404 setup): only "Retry now", no Discard.
+- [x] Airplane mode: Discard is disabled on a parked row; back online it enables.
+- [x] Go offline WHILE the confirm is open, then confirm: toast "Could not discard...", write still parked.
+- [x] Confirm Discard, then go offline at once (during the reload): the lists may stay empty or partial until you are back online and refresh (same behaviour as any failed sync, a reload clears the list first). Confirm they refill on reconnect or pull-to-refresh; report if they stay empty.
+- [x] Tap Retry (in flight) then Discard: Discard disabled while "Sending...".
 
 **Edge**
-- [ ] Back (Android button / gesture) and tap-outside while the confirm is open: the sheet underneath must NOT close. **Report exactly what Back does** (closes the confirm, or nothing). If Back does nothing and only Cancel / tap-outside leaves the confirm, that is a UX decision for Taher (review note R-2).
-- [ ] Copy: row text ends "...Retry or Discard.", header ends "...Tap to retry or discard.", sheet caption says "Retry or Discard".
-- [ ] Edit the record while parked, then Discard: the edit is gone too (the confirm says so); the record shows the server value.
-- [ ] Two writes for one record (second queued while the first is in flight, first then parks): Discard the first; the second then sends (may conflict or be rejected and park: expected, see design Q-S3-1 A).
-- [ ] Force-close and reopen while parked, Discard at once: works.
-- [ ] Discard a rejected product create that has a queued photo: photo ends `failed` with its own Retry/Discard tile (roadmap item 4, known).
-- [ ] Discard a rejected staff removal: the name may still show as removed until relaunch (known, design fact 5).
-- [ ] After discard the affected lists reload from the server (briefly empty or partial, then complete); other pending edits reappear once they land.
+- [x] Back (Android button / gesture) and tap-outside while the confirm is open: the sheet underneath must NOT close. **Report exactly what Back does** (closes the confirm, or nothing). If Back does nothing and only Cancel / tap-outside leaves the confirm, that is a UX decision for Taher (review note R-2).
+- [x] Copy: row text ends "...Retry or Discard.", header ends "...Tap to retry or discard.", sheet caption says "Retry or Discard".
+- [x] Edit the record while parked, then Discard: the edit is gone too (the confirm says so); the record shows the server value.
+- [x] Two writes for one record (second queued while the first is in flight, first then parks): Discard the first; the second then sends (may conflict or be rejected and park: expected, see design Q-S3-1 A).
+- [x] Force-close and reopen while parked, Discard at once: works.
+- [x] Discard a rejected product create that has a queued photo: photo ends `failed` with its own Retry/Discard tile (roadmap item 4, known).
+- [x] Discard a rejected staff removal: the name may still show as removed until relaunch (known, design fact 5).
+- [x] After discard the affected lists reload from the server (briefly empty or partial, then complete); other pending edits reappear once they land.
 
 **Monkey**
-- [ ] Tap Discard, Cancel, Discard, Retry rapidly on several parked rows; rotate; toggle airplane mode; force-close mid-confirm. No crash, no resurrected row, header count equals rows.
+- [x] Tap Discard, Cancel, Discard, Retry rapidly on several parked rows; rotate; toggle airplane mode; force-close mid-confirm. No crash, no resurrected row, header count equals rows.
 
 ## 4. Regression watch
 `tst_Gateway` stuckRows / retryStuck / park / relaunch cases, `tst_StuckWrites`, `tst_OutboxStore` park cases, and the existing DataModel tests must stay green. The sheet layout changed (two buttons in a column per row): check row height on a small phone.

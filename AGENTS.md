@@ -475,7 +475,9 @@ QtObject {
 - `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
   sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
   identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
-  (native file read + XHR, untested at this level — see Testing & QA Agent). Uses the
+  (native file read + XHR, untested at this level — see Testing & QA Agent). Its failure tail is ONE
+  function, `_failUpload(item, uploading, status, responseText)` (non-2xx, timeout, unreadable file), which
+  holds the discard rule (404 + body `product-not-found` + row gone from the COMPLETE list, PH4 R1) and IS tested. Uses the
   property-binding-watcher pattern for `AuthService.isOnline`, NOT `Connections{}` (Skill 20/68 —
   `Connections{}` inside a `pragma Singleton QtObject` crashes the whole singleton chain).
 - `qml/model/StorageService.qml` — product-photo abstraction (`addProductPhoto`,
@@ -905,6 +907,13 @@ env.
     instead of Firestore's. `uploadProductPhoto`/`deleteProductPhoto` are separate Cloud Functions
     from `recordMutation` and get their own cold-start warm-up in `initTestCase()` — warming up one
     function does not warm up another.
+  - `tst_ProductLegacyPhotoUrlE2E.qml` (2026-10-12, PH5 E01-E03 + E03b): create/update/delete of a
+    fresh product through the real store -> gateway path (no `photoUrl`/`photoUpdatedAt` keys, no CAS
+    conflict) and a seeded pre-PH5 doc that DOES carry them 409s a client update (pins Q-P5-3 a; E03b is the
+    no-legacy-keys control). Seeding a raw doc uses `E2EHelpers.createEmulatorDoc` (admin REST createDocument,
+    `Authorization: Bearer owner`; value encoding `toFirestoreFields` is Node-tested in
+    `functions/test/e2eHelpers.firestoreFields.test.js`). `_clone()` drops keys it does not know, so the local
+    `before` lacks the legacy keys while the server `current` has them: that is what makes the 409.
 
 - `tests/tst_PhotoUrl.qml`, `tests/tst_PhotoQueueLogic.qml` (2026-09-21, product photos) — QML side
   of the `.pragma library` + Node-parity-mirror pair for the two new pure helpers (Skill 67's
@@ -913,7 +922,11 @@ env.
   for real in this repo's Node tooling; these two QML files prove the actual QML copies load and
   agree, but only CI can run them.
 - `tests/tst_PhotoQueue.qml` (2026-09-21/25) — `PhotoQueue.qml`'s queue-management logic:
-  persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix. Does
+  persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix, plus
+  `_failUpload()` (PR #138 sweep: discard rule, retry/failed bookkeeping, monkey against a reference model;
+  needs `InventoryStore` paging flags restored in `cleanup()`), `_completeUpload()`, the in-flight guard (O2/O3: only the
+  first report of an attempt counts, none after `clear()`) and `purgeOrphanedFailures()` (O1). ORDER MATTERS in the O1 tests:
+  `InventoryStore.onListCompleteChanged` already runs the purge, so set the list complete BEFORE setting `PhotoQueue.items`. Does
   NOT cover `_upload()` (native + XHR) — see that file's own TESTABILITY NOTE. Two regression
   tests added during this feature's own review sweep for bugs the original tests didn't catch:
   `_load()` never having called `_reschedule()` (a photo queued last session would sit frozen

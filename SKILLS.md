@@ -4186,7 +4186,7 @@ Rules:
 2. When a PR starts to rely on a value meaning something new (`current: null` = row gone), grep the producer AND the doc comment on the signal (`Gateway.mutationConflicted` still said null = malformed edge case). Server truth wins: `gatewayLogic.js` returns `current: currentSnap.exists ? data : null`. Update the comment in the same PR.
 3. A test that re-implements the formula inline (`Math.max(250, Math.max(0, breakerWaitMs(...)))`) never calls the shipped function and gives false assurance. Delete it; say plainly which lines stay device-only (`_reschedule` L1 line, the `_upload` discard `if`).
 4. A test that nulls a shared singleton property must restore it in `cleanup()`, not at the end of the test: `compare()` aborts the test function and skips the restore.
-5. A rule keyed on an HTTP status alone is only as safe as the status is unambiguous. 404 is also what a misrouted endpoint answers; when the action is destructive and unrecoverable (discard a local photo file), check the body (`error: "product-not-found"`) or accept the risk in KNOWN-ISSUES with the fix named.
+5. A rule keyed on an HTTP status alone is only as safe as the status is unambiguous. 404 is also what a misrouted endpoint answers; when the action is destructive and unrecoverable (discard a local photo file), check the body (`error: "product-not-found"`) or accept the risk in KNOWN-ISSUES with the fix named. (Done in PH4 R1: `PQL.errorCodeOf` + a 3rd argument; a caller that forgets the argument never discards, so the new parameter fails safe.)
 6. After a test is removed, grep every doc for the old count (`34/34`, `29/29`) and fix them; count with the runner, do not carry numbers forward.
 
 ## Skill 110: Removing a field the client writes from a CAS-compared document 409s every stored doc that still has it; decide that on purpose
@@ -4208,3 +4208,24 @@ Rules:
 2. Before removing or reordering a spreadsheet column, check how the READER finds columns (position or header text) and whether any header check exists.
 3. Every code path that creates a CAS-compared document must have its key set pinned against `_newProductDoc` and `_clone()` by a test (`tst_InventoryStore_cloneSymmetry`). "Check by hand" comments are not a guard.
 4. When a decision is accepted on a known risk (here R1 = A), write the risk and the user rule into KNOWN-ISSUES in the same change.
+
+## Skill 112: A monkey test must prove its generator reaches the case it guards; copies of a failure tail are one function so the decision is testable
+
+Context (2026-10-09, PR #138 final sweep): the R1 discard rule (404 + body `product-not-found` + row gone) had a seeded monkey test that passed with the rule removed, and its decision sat in the one XHR callback no test can reach.
+Rules:
+1. A seeded monkey test asserts that its generator hit the interesting case at least once (`assert.ok(discards > 0)`). `(st * 1103515245 + 12345) & 0x7fffffff` then `st % n` uses the LCG's LOW bits, which cycle with a tiny period: 17 distinct triples in 1000 draws and 0 discards. Use `Math.floor(st / 65536) % n` (259 distinct, 6 discards).
+2. Run a mutation on the monkey on its own: remove one condition from the production expression and check that the MONKEY fails, not only the hand-written cases. The old D5 passed with the code check removed.
+3. When one function ends in the same failure tail in several places (non-2xx, timeout, unreadable file), make it ONE function that takes `(item, status, responseText)`. The rule then exists once and a qmltestrunner test can call it; only the native/XHR plumbing stays device-only. Check call-site equivalence first: emit condition, order of calls, early return, who calls `_reschedule`.
+4. A recovery path that leaves an item with no UI (`failed` for a product whose row is gone, no tile) is a decision: write it into KNOWN-ISSUES with the fix named, and log it so a device run can see it. A PR text that says "visible, Retry/Discard" for it is wrong.
+5. A review finding that adds a doc claim ("the counts", "device step") gets re-checked by running it: `node --test` count, SKILLS-INDEX `--check`, and a grep for every old number (`608`, `23/23`).
+
+## Skill 113: An async callback acts only on the state it was started for; a store trigger that fires inside a test pre-empts direct calls
+
+Context (2026-10-12, PR #138 sweep part 2): three open items shared one root. A late XHR report (a 2xx after `PhotoQueue.clear()` on sign-out, or a timeout where Qt fires both `onreadystatechange` and `ontimeout`) acted on an item that was no longer in flight: it emitted `photoUploaded` under the next account (O2) or counted the circuit breaker twice (O3). A `failed` item with no tile and no row stayed until sign-out (O1).
+Rules:
+1. Every callback of an async attempt starts with "is this attempt still the live one?" against the STORED item (`_isInFlight(photoId)`: the stored item exists and its state is still `uploading`), not against the closure's copy. The first report moves the item out of that state, so any second or late report is a no-op. One guard covers the double-fire, the late-after-clear and the late-after-discard cases.
+2. A success path gets the same guard and the same single function as the failure path (`_completeUpload` beside `_failUpload`). Parse the response body in a try/catch and fall back to an empty list: a 2xx with a junk body is still a confirmed upload.
+3. Run the logic under Node before trusting it: extract the shipped function text from the `.qml` into a `vm` context with stub singletons (`AuthStore`, `InventoryStore`, signal spies). It catches ordering mistakes QML tests can only show in CI. Compare arrays from a `vm` context through `JSON.stringify` (`assert.deepEqual` fails with "same structure but not reference-equal").
+4. A signal handler on a store (`InventoryStore.onListCompleteChanged` runs the purge) fires inside tests too. In a direct-call test set the state that makes the trigger fire FIRST (list complete), THEN the data the handler reads (`PhotoQueue.items`), or the handler runs the code under test before the test does. Set related flags in the order that never passes through a complete state (`loadingMore = true` before `hasMore = false`, `_resetPending = true` before `loadingMore = false`).
+5. Purging "an item nothing can consume" (O1) is a decision with a trade-off: it removes a safety signal (R1's second check). Gate it on the strongest available condition (complete list, same identity, `failed` only), log the count, and write the trade-off into KNOWN-ISSUES.
+6. Do not insert a new function between a comment and the function it describes (Skill 109): put it above the comment block.

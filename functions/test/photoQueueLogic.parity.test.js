@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence,
+  classifyError, nextBackoffMs, reduceQueueItem, breakerReducer, isBreakerOpen, breakerWaitMs, shouldDiscardOnFailure, productPresence, errorCodeOf, PRODUCT_NOT_FOUND,
 } = require('./testSupport/photoQueueLogicParity');
 
 test('classifyError: terminal codes', () => {
@@ -199,30 +199,36 @@ test('PH4 L1: with no explicit now it uses the clock', () => {
 });
 // ---- PH4 follow-up: discard a queued photo on 404 only when the product row is gone locally too ----
 test('PH4 D1: 404 and product row gone locally -> discard', () => {
-  assert.equal(shouldDiscardOnFailure(404, false), true);
+  assert.equal(shouldDiscardOnFailure(404, false, PRODUCT_NOT_FOUND), true);
 });
 test('PH4 D2: 404 but the product row exists locally (first photo, create not visible yet) -> keep the terminal 404 (failed + Retry/Discard)', () => {
-  assert.equal(shouldDiscardOnFailure(404, true), false);
+  assert.equal(shouldDiscardOnFailure(404, true, PRODUCT_NOT_FOUND), false);
   assert.equal(classifyError(404), 'terminal');
 });
 test('PH4 D3: an unknown answer (undefined/null/0/"") never discards', () => {
-  for (const v of [undefined, null, 0, '', NaN]) assert.equal(shouldDiscardOnFailure(404, v), false);
+  for (const v of [undefined, null, 0, '', NaN]) assert.equal(shouldDiscardOnFailure(404, v, PRODUCT_NOT_FOUND), false);
 });
 test('PH4 D4: only 404 discards: every other status with the row gone is left to the normal reducer', () => {
-  for (const st of [0, 400, 401, 403, 409, 413, 429, 500, 503, '404']) assert.equal(shouldDiscardOnFailure(st, false), false, String(st));
+  for (const st of [0, 400, 401, 403, 409, 413, 429, 500, 503, '404']) assert.equal(shouldDiscardOnFailure(st, false, PRODUCT_NOT_FOUND), false, String(st));
 });
-test('PH4 D5 MONKEY: 5 seeds x 200 random (status, exists) pairs match the one-line truth table', () => {
+test('PH4 D5 MONKEY: 5 seeds x 200 random (status, exists, code) triples match the one-line truth table', () => {
+  let discards = 0;
   for (let seed = 1; seed <= 5; seed++) {
     let st = seed * 15485863;
-    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n; };
     const statuses = [0, 200, 400, 401, 403, 404, 404, 409, 413, 429, 500, 503];
     const exists = [true, false, undefined, null];
+    const codes = [PRODUCT_NOT_FOUND, 'conflict', '', undefined, null, 'PRODUCT-NOT-FOUND'];
     for (let i = 0; i < 200; i++) {
       const status = statuses[rnd(statuses.length)];
       const e = exists[rnd(exists.length)];
-      assert.equal(shouldDiscardOnFailure(status, e), status === 404 && e === false);
+      const code = codes[rnd(codes.length)];
+      const want = status === 404 && e === false && code === PRODUCT_NOT_FOUND;
+      assert.equal(shouldDiscardOnFailure(status, e, code), want);
+      if (want) discards++;
     }
   }
+  assert.ok(discards > 0, 'the generator must reach the discard case (the old low-bit LCG never did)');
 });
 
 // ---- PH4 follow-up 2 (Taher 2026-10-07): "row gone" may only be answered from the FULL product list ----
@@ -250,24 +256,80 @@ test('PH4 P5 END-TO-END RULE: a 404 for a product sitting on page 3 of 3 is NOT 
   const target = 'SKU-120'; // lives on page 3
   const decide = (loadedPages, hasMore) => {
     const loaded = all.slice(0, loadedPages * PAGE);
-    return shouldDiscardOnFailure(404, productPresence(loaded.includes(target), !hasMore));
+    return shouldDiscardOnFailure(404, productPresence(loaded.includes(target), !hasMore), PRODUCT_NOT_FOUND);
   };
   assert.equal(decide(1, true), false);  // only page 1 loaded: the old behaviour discarded here (the bug)
   assert.equal(decide(2, true), false);
   assert.equal(decide(3, false), false); // fully loaded and the row IS there -> keep terminal 404
-  const gone = (loadedPages, hasMore) => shouldDiscardOnFailure(404, productPresence(all.slice(0, loadedPages * PAGE).includes('SKU-999'), !hasMore));
+  const gone = (loadedPages, hasMore) => shouldDiscardOnFailure(404, productPresence(all.slice(0, loadedPages * PAGE).includes('SKU-999'), !hasMore), PRODUCT_NOT_FOUND);
   assert.equal(gone(1, true), false);    // absent but list partial -> unknown -> keep
   assert.equal(gone(3, false), true);    // absent and list complete -> discard
 });
 test('PH4 P6 MONKEY: 5 seeds x 300 random (found, complete) pairs match the truth table', () => {
+  const seen = new Set();
   for (let seed = 1; seed <= 5; seed++) {
     let st = seed * 32452843;
-    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st % n; };
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n; };
     const vals = [true, false, undefined, null, 0, 1, '', 'x'];
     for (let i = 0; i < 300; i++) {
       const f = vals[rnd(vals.length)], c = vals[rnd(vals.length)];
       const want = f === true ? true : (c === true ? false : undefined);
       assert.equal(productPresence(f, c), want);
+      seen.add(String(want));
     }
   }
+  assert.deepEqual([...seen].sort(), ['false', 'true', 'undefined'], 'the generator must reach all three answers');
+});
+
+// ---- PH4 R1 (Taher 2026-10-08, option b): a 404 discards only when the server body says product-not-found ----
+test('PH4 R1-1: 404 + row gone + a 404 WITHOUT the server code (misrouted/undeployed endpoint) -> keep: failed + Retry/Discard', () => {
+  for (const code of [undefined, null, '', 'not-found', 'conflict', 'PRODUCT-NOT-FOUND', ' product-not-found', 'product-not-found ', 0, {}, []])
+    assert.equal(shouldDiscardOnFailure(404, false, code), false, JSON.stringify(code));
+});
+test('PH4 R1-2: a caller that passes no code (old two-arg call) never discards', () => {
+  assert.equal(shouldDiscardOnFailure(404, false), false);
+});
+test('PH4 R1-3: the code alone is not enough: wrong status or row present/unknown still keeps', () => {
+  assert.equal(shouldDiscardOnFailure(409, false, PRODUCT_NOT_FOUND), false);
+  assert.equal(shouldDiscardOnFailure(500, false, PRODUCT_NOT_FOUND), false);
+  assert.equal(shouldDiscardOnFailure(404, true, PRODUCT_NOT_FOUND), false);
+  assert.equal(shouldDiscardOnFailure(404, undefined, PRODUCT_NOT_FOUND), false);
+});
+test('PH4 R1-4: errorCodeOf reads the real server bodies', () => {
+  assert.equal(errorCodeOf('{"ok":false,"error":"product-not-found"}'), PRODUCT_NOT_FOUND); // functions/index.js send(res, 404, ...)
+  assert.equal(errorCodeOf('{"ok":false,"error":"photo-limit"}'), 'photo-limit');
+  assert.equal(errorCodeOf('{"error":"product-not-found","extra":1}'), PRODUCT_NOT_FOUND);
+});
+test('PH4 R1-5: errorCodeOf never throws and answers "" for anything that is not a JSON object with a string error', () => {
+  const bad = [undefined, null, '', ' ', 'null', 'true', '5', '"x"', '[]', '[{"error":"product-not-found"}]', '{}', '{"error":null}', '{"error":5}',
+    '{"error":{"code":"product-not-found"}}', '{', '{"error":"product-not-found"', '<html><h1>404 Not Found</h1></html>', 'Cannot POST /uploadProductPhoto', 5, {}, []];
+  for (const t of bad) assert.equal(errorCodeOf(t), '', JSON.stringify(t));
+});
+test('PH4 R1-6 END-TO-END RULE: an HTML 404 body from a bad route never discards, the real server body does (row gone + list complete)', () => {
+  const decide = (body) => shouldDiscardOnFailure(404, productPresence(false, true), errorCodeOf(body));
+  assert.equal(decide('<html><body>404 Not Found</body></html>'), false);
+  assert.equal(decide(''), false);
+  assert.equal(decide('{"error":"Function us-central1-uploadProductPhoto does not exist"}'), false); // Cloud Functions' own 404 shape-alike
+  assert.equal(decide('{"ok":false,"error":"product-not-found"}'), true);
+});
+test('PH4 R1-7 MONKEY: 5 seeds x 300 random bodies never throw and only the exact code discards', () => {
+  const frag = ['{', '}', '"error"', ':', '"product-not-found"', '"x"', ',', '[', ']', 'null', '5', ' ', '<', '>',
+    '{"error":"product-not-found"}', '{"ok":false,"error":"x"}']; // the last two are whole bodies, so a string `error` is reachable
+  let discards = 0, keeps = 0;
+  for (let seed = 1; seed <= 5; seed++) {
+    let st = seed * 49979687;
+    const rnd = (n) => { st = (st * 1103515245 + 12345) & 0x7fffffff; return Math.floor(st / 65536) % n; };
+    for (let i = 0; i < 300; i++) {
+      let body = ''; const n = rnd(9); for (let j = 0; j < n; j++) body += frag[rnd(frag.length)];
+      let code; assert.doesNotThrow(() => { code = errorCodeOf(body); }, body);
+      assert.equal(typeof code, 'string');
+      let parsed; try { parsed = JSON.parse(body); } catch (e) { parsed = undefined; }
+      const want = (parsed && typeof parsed.error === 'string') ? parsed.error : '';
+      assert.equal(code, want, body);
+      assert.equal(shouldDiscardOnFailure(404, false, code), want === PRODUCT_NOT_FOUND);
+      if (want === PRODUCT_NOT_FOUND) discards++; else keeps++;
+    }
+  }
+  assert.ok(discards > 0, 'the generator must build at least one body that discards');
+  assert.ok(keeps > 0, 'the generator must build at least one body that keeps');
 });
