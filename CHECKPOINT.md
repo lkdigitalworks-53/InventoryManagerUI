@@ -15,7 +15,9 @@
 - [x] 2. Picked S4 cleanup (only real open delete item); design not needed (docs only)
 - [x] 3. README block corrected, roadmap tail rewritten, Skill 116, `SKILLS-INDEX.md` regenerated (117), test plan + index row
 - [x] 4. Script suite 76/76, index current
-- [ ] 5. Commit, push, open PR (see git log / PR for result)
+- [x] 5. Committed 5414e50, pushed, PR #141 opened (base `main`). CI result: check the PR checks.
+
+## SESSION COMPLETE (docs only). Note: first push was 403 until `add_repo` put the repo in the session scope; then PAT push worked. `gh pr create` needs REST (`gh api .../pulls`), GraphQL is blocked.
 
 ## NEXT
 1. Taher: review the PR, tick the O1 and O2 device steps (`test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
