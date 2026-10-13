@@ -17,8 +17,10 @@
 - [x] 4. Script suite 76/76, index current
 - [x] 5. Committed 5414e50, pushed, PR #141 opened (base `main`). CI result: check the PR checks.
 
+- [x] 6. Taher: error-cause UI is another session; "complete the delete roadmap, I will merge". Done in the same PR: KNOWN-ISSUES statuses fixed (item 1 black hole RESOLVED, destroy-before-ack FIXED by BC1/BC2, PH3/PH3b deployed per Taher), roadmap marked COMPLETE. Only O1/O2 device steps remain (Taher's, not ticked by me).
+
 ## SESSION COMPLETE (docs only). Note: first push was 403 until `add_repo` put the repo in the session scope; then PAT push worked. `gh pr create` needs REST (`gh api .../pulls`), GraphQL is blocked.
 
 ## NEXT
-1. Taher: review the PR, tick the O1 and O2 device steps (`test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
-2. Atomic-operation work, one branch each from updated `main`: error-cause UI (a branch exists, check it first), Task 11 "Saved, syncing" hint, then C-1 `_tryAdjustOrder`.
+1. Taher: merge PR #141, tick the O1 and O2 device steps (`test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
+2. Atomic-operation work, one branch each from updated `main` (error-cause UI is a separate session): Task 11 "Saved, syncing" hint, then C-1 `_tryAdjustOrder`.

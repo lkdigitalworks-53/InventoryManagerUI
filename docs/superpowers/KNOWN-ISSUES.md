@@ -108,7 +108,7 @@ writeup.
 
 ---
 
-## Delete: `Gateway._send` terminal-failure black hole applies to deletes too
+## Delete: `Gateway._send` terminal-failure black hole applies to deletes too — RESOLVED 2026-10-13 (slices C, S1, S2a, S2b, S3 all merged)
 
 `feature/product-order-delete-ui` (2026-08-30) added the missing row-level UI for the
 already-implemented product/order delete logic. Tracing the full failure surface for that ticket
@@ -146,6 +146,8 @@ NOT as distinct statuses: the status stays 500 and the body `error` is `write-re
 `write-failed` (a 4xx would make the delta and operation senders drop the write, SKILLS Skill 74). The client labels
 stuck writes the server rejected ("N change(s) rejected by the server. Still retrying."). Still open: (B) park +
 Retry/Discard (Taher's Q2-Q4: re-pull on Discard, persisted parked flag, tappable caption -> dialog).
+
+**Update 2026-10-13: RESOLVED.** Every slice is on `main`: C error classification (#93), S1 Retry now and S2a persisted stuck flag (#97), S2b park rejected writes (#106), S3 Discard + resync (#110; #109 was its design). A rejected write is parked and listed, never dropped; the user chooses Retry or Discard (re-pull from Firestore). A delete behind a parked write is refused up front (PR #119 D2/D3). Roadmap item 1 closed in `DELETE-FEATURE-ROADMAP.md`.
 
 ---
 
@@ -543,7 +545,7 @@ the exact no-dispatcher setup.
 
 ---
 
-## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03, PH3b merged (not yet deployed), PH4 client BUILT 2026-10-06 (items 1, 4, 5; item 2 dropped, `Qt.uuid` missing; see the photos design)
+## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03, PH3b merged and deployed (Taher 2026-10-12), PH4 client BUILT 2026-10-06 (items 1, 4, 5; item 2 dropped, `Qt.uuid` missing; see the photos design)
 
 Built: owner/admin gate on both photo endpoints (the narrow gate from the 2026-09-30 update above), `pending_cleanup`
 marker written in the product-delete transaction, post-commit prefix sweep, F3 upload preflight (no orphan objects on
@@ -572,7 +574,7 @@ marker written in the product-delete transaction, post-commit prefix sweep, F3 u
 
 ---
 
-## Product delete is destroy-before-ack (found 2026-10-04, PR #113 device test) — photo part FIXED, batches/activity/queue NOT
+## Product delete is destroy-before-ack (found 2026-10-04, PR #113 device test) — FIXED: photos (PR #113 branch), batches (BC1 #118 server + BC2 #119 client), Activity and queued photos (BC2, ack-gated)
 
 **Symptom:** device A uploads a photo while device B deletes the product (9 photos). Result: product still listed, 3 photos shown,
 4 objects in Storage, Activity says deleted, batches gone.
@@ -598,7 +600,9 @@ batches are money data, so PH3b must not silently abandon a capped marker. (b) U
 `stock_batch` deletes; they answer 409 `current: null` after the sweep (harmless, no toast). (c) A direct token call by
 manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #118 review C1: the `cascade~` audit-id prefix is reserved (400 `invalid-request-id`); `recordMutation` / `recordDelta` still do NOT validate the rest of `requestId` / `entityId` (no `/` or length check, unlike `operationLogic.isSafeDocId`): pre-existing, flagged here, fix on its own branch.
 
-**Still open, same family (items 1-3 close with BC2; decide before PH4):**
+**Status 2026-10-13: items 1-3 CLOSED by BC2 (#119, merged).** `InventoryStore.deleteProduct` sends only the product delete; the server sweeps batches and photos after the commit, and the Activity entry and queued-photo purge wait for the ack (`_onMutationApplied`); a 409 or a discarded parked delete resyncs. Item 4 stays accepted. The text below is the original problem list.
+
+**Original list (items 1-3 closed with BC2):**
 1. Batch deletes are sent before the product delete is acked -> after a 409 the product has no stock batches. Options: (a) gate
    batch deletes on a Gateway "applied" signal (new ack plumbing, per-mutation); (b) one atomic `recordOperation` for product +
    batches (the delete roadmap item, larger, also removes the `photoIds` CAS problem); (c) accept for dev. (b) is correct, (a) is a patch.
@@ -628,7 +632,7 @@ manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #
 - **Open (found in PR #121 final sweep, 2026-10-05):** (a) the sale guard counts a queued CREATE and a queued edit made OFFLINE as "unsynced": an offline edit, or a product added offline, cannot be sold offline until it syncs (decision Q1 = Z, accepted; real cost for an offline-first counter). (b) Device-test cases 4.2, 4.3, 4.4, 4.10 of `2026-10-05-unsynced-edit-ledger-test-plan.md` forced a server rejection with a > 1 MiB description; the client cap now refuses that up front, so no verified on-device way to force a rejection exists. Pick one before testing.
 
 
-## PH3b scheduled sweeper: accepted limits (BUILT 2026-10-05/06, NOT DEPLOYED)
+## PH3b scheduled sweeper: accepted limits (BUILT 2026-10-05/06; deployed, DV-1..DV-9 reported done by Taher 2026-10-12)
 
 Code: S-A #126, S-B #127 (merged); e2e S-C (this branch). Found in the PR #126/#127 final sweeps; none changed in code on purpose.
 
