@@ -123,3 +123,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 113: An async callback acts only on the state it was started for; a store trigger that fires inside a test pre-empts direct calls
 - 114: Simulating a Gateway.recordOperation server answer in a test needs `OutboxStore.markSent()` too, not just `Gateway._finishOperation()` — or a re-plan under the same key silently coalesces into the first, already-rejected payload
 - 115: A new consumer of a channel must handle EVERY terminal result shape the channel can already produce, including the ones a later feature added
+- 116: A roadmap's "still open" list is a claim, not a fact; re-read each item in the code that owns it before you schedule it
