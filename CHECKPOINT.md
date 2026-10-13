@@ -1,26 +1,37 @@
-# CHECKPOINT — 2026-10-13 delete roadmap S4 cleanup (docs only)
+# CHECKPOINT — 2026-10-13 Orders "Approve all pending" button: pressed colour + progress bar
 
-**Branch:** `docs/2026-10-13-delete-roadmap-s4-cleanup` (base `main` 0716427). Commit identity `lkdwtaher@gmail.com`. PAT only in the push command.
-**Rules in force:** no build/run, no Qt tools in the sandbox (CI is the proof), branch + PR only, push without asking, honest trade-offs.
-**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-13-pr90-final-sweep-prev-CHECKPOINT.md`.
-**Skills used:** brainstorming, qt-qml, qt-ui-design, ponytail (no QML or UI touched).
+**Branch:** `feat/2026-10-13-approve-all-progress` (base `main` 73c4cf6). Commit identity `tsadmin@gmail.com`. PAT only in the push command, never in files or the remote URL.
+**Rules in force:** no build/run until Taher says so; no Qt tools in the sandbox (CI is the proof); branch + push without asking; honest trade-offs, grill before deciding; tests for every change (100% target) plus a test plan; keep scope short, remote branch always resumable by another account.
+**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-13-delete-roadmap-s4-cleanup-prev-CHECKPOINT.md`.
+**Skills used:** brainstorming (path: BOUNDED, design gate open), qt-qml, qt-ui-design, ponytail.
 
-## Facts established (verified by command)
-- `main` has PR #90 merged. Roadmap `DELETE-FEATURE-ROADMAP.md` open list: S4 cleanup, O1/O2 device re-checks, `ConfirmReturnSheet` lock gap, `StockBatchStore` FIFO on `recordMutation`.
-- Re-read in code: the lock gap and the FIFO item are ALREADY FIXED. So are three more items in the README "Still open" block (batch CAS, bulk-approve lock, partial multi-line completion). Proof table: `test-plans/2026-10-13-delete-roadmap-s4-cleanup-test-plan.md` section 2.
-- Another branch exists on origin today: `feat/2026-10-13-completion-error-cause` (+ a design branch). Not touched here.
+## Request (Taher)
+Pending orders show an Approve button in the teal banner. After a tap there is no visual sign it was pressed or is working. Want: pressed colour change + a simple progress bar for the completion. "Design in this session; if no design needed, implement."
+
+## Facts established (read in code, nothing run)
+- Button: `approveBtn` in `qml/pages/OrdersPage.qml` ~L196-214, `QQC.AbstractButton`, 80x32dp, background fixed `Qt.rgba(1,1,1,0.22)` -> no pressed/disabled look at all. `onClicked: _approveAllPending()`.
+- `_approveAllPending()` (~L467): sequential loop over `pending` + `processing` orders: `LockManager.acquire` -> `dataModel.tryCompleteOrder` -> next. Outcome lists `failed` / `lockedOut`, one error dialog at the end. NO busy flag, NO progress state.
+- BUG found while reading: double tap starts two concurrent loops. `DataModel._completingOrderIds` (L583/610) blocks the 2nd completion of the same order with `callback(false)`, so the 2nd loop lists those orders in `failed` and shows "Insufficient inventory" - WRONG message (data stays safe). A busy guard fixes it.
+- Banner `visible: canApprovePending && _scopedPendingCount() > 0`; the count reads `OrdersStore.orders` (reactive via `revision`), so each completed order lowers it and the banner disappears when the LAST order completes -> a progress bar inside the banner would vanish at 100% with no end state unless the banner is held open.
+- Minor, NOT in scope: the loop approves `pending`+`processing`, the banner counts only `pending`.
+- No reduced-motion setting exists in the project (grep). `Constants` has `durFast 160`, `durMed 240`, `success`, `textOnBrand`, `fsSmall`, `radiusPill`.
+- Page QML cannot be instantiated under qmltestrunner (Felgo import via Constants). Repo precedent: pure-JS helper + `tests/tst_*.qml` for logic, JS stand-in for page flow (`tst_NewOrderDialogSubmitGuard.qml`). So progress logic goes in a pure helper to be genuinely testable.
+- `origin/feat/2026-10-13-completion-error-cause` (other session) touches DataModel, not OrdersPage -> no conflict expected. This work will not touch DataModel.
+
+## Proposed design (BOUNDED path) - NOT yet approved
+1. New pure helper `qml/helper/BulkApproveProgress.js`: state `{phase: idle|running|done, total, done, failed, lockedOut}` + `start/step/finish` reducers. No QML, fully unit-testable.
+2. `OrdersPage.qml`: `_approving` + progress state; `if (_approving) return` first line of `_approveAllPending`; button `enabled: !_approving`.
+3. Button looks: idle white 22%; pressed white 38% (instant); running white 12% + label `done / total`; Accessible name + description.
+4. Progress bar: 3dp white-on-teal track along the banner bottom, inset by the corner radius (no `clip`), determinate, fill = done/total. Not `StockProgressBar` (its brand2/3 fill is invisible on a brand4/5 banner).
+5. Banner held open while running and ~1.2s after finish ("All approved" state) even though pending count hits 0; error dialog flow unchanged.
+6. No animation on the fill (no reduced-motion setting exists; steps are discrete).
+
+## Open decision (asked Taher)
+- D1 end state: (A) hold banner ~1.2s with success state [recommended], (B) banner vanishes at the end [zero extra code, 100% never seen, weak completion feedback].
 
 ## Steps
-- [x] 1. Cloned repo, read memory + 4 skills, read roadmap + KNOWN-ISSUES
-- [x] 2. Picked S4 cleanup (only real open delete item); design not needed (docs only)
-- [x] 3. README block corrected, roadmap tail rewritten, Skill 116, `SKILLS-INDEX.md` regenerated (117), test plan + index row
-- [x] 4. Script suite 76/76, index current
-- [x] 5. Committed 5414e50, pushed, PR #141 opened (base `main`). CI result: check the PR checks.
-
-- [x] 6. Taher: error-cause UI is another session; "complete the delete roadmap, I will merge". Done in the same PR: KNOWN-ISSUES statuses fixed (item 1 black hole RESOLVED, destroy-before-ack FIXED by BC1/BC2, PH3/PH3b deployed per Taher), roadmap marked COMPLETE. Only O1/O2 device steps remain (Taher's, not ticked by me).
-
-## SESSION COMPLETE (docs only). Note: first push was 403 until `add_repo` put the repo in the session scope; then PAT push worked. `gh pr create` needs REST (`gh api .../pulls`), GraphQL is blocked.
-
-## NEXT
-1. Taher: merge PR #141, tick the O1 and O2 device steps (`test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
-2. Atomic-operation work, one branch each from updated `main` (error-cause UI is a separate session): Task 11 "Saved, syncing" hint, then C-1 `_tryAdjustOrder`.
+- [x] 1. Cloned repo, read 4 skills, AGENTS conventions, skills 61/66, OrdersPage + DataModel guard
+- [x] 2. Branch created, checkpoint written, pushed
+- [ ] 3. Taher answers D1 (and may override defaults 1-6)
+- [ ] 4. Implement helper + page change + tests (unit, functional model, monkey) + test plan + docs/skills + SKILLS-INDEX regen (`node .github/scripts/skills-index.js --write`) + script suite
+- [ ] 5. Push, open PR (REST: `gh api .../pulls`, GraphQL blocked), CI is the proof
