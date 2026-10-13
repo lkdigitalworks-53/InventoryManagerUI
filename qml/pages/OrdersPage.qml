@@ -6,6 +6,7 @@ import "../components"
 import "../helper"
 import "../model"
 import "../helper/StaffScope.js" as StaffScope
+import "../helper/BulkApproveProgress.js" as BAP
 
 // Mobile-first orders feed. Glass header with filter/search icons, status
 // chip-scroller, swipe-friendly card list, FAB for new order.
@@ -28,6 +29,16 @@ Item {
     signal deleteOrderClicked(string orderId)
     signal exportRequested()
     signal importRequested()
+
+    // "Approve all pending" progress (see BulkApproveProgress.js). Replaced, never mutated.
+    property var _approveState: BAP.newState()
+    // Keeps the banner on screen briefly after the last order completes: the pending count
+    // hits 0 at that moment and would otherwise hide the banner before "All approved" is seen.
+    Timer {
+        id: approveHold
+        interval: 1200
+        onTriggered: root._approveState = BAP.newState()
+    }
     signal filtersRequested()
 
     property string _searchText: ""
@@ -167,7 +178,8 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                visible: root.canApprovePending && root._scopedPendingCount() > 0
+                visible: root.canApprovePending &&
+                    (root._scopedPendingCount() > 0 || root._approveState.phase !== "idle")
                 radius: dp(Constants.radius)
                 Layout.preferredHeight: dp(56)
                 gradient: Gradient {
@@ -197,10 +209,17 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     implicitWidth: dp(80); implicitHeight: dp(32)
                     padding: 0
+                    // Disabled while running and during the end hold: refuses a second tap, which
+                    // would start a second loop and report every order as a false "failed".
+                    enabled: BAP.canStart(root._approveState)
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Approve all pending orders")
                     contentItem: Item {
                         Text {
                             anchors.centerIn: parent
-                            text: qsTr("Approve")
+                            text: root._approveState.phase === "running"
+                                ? qsTr("%1 / %2").arg(root._approveState.done).arg(root._approveState.total)
+                                : (root._approveState.phase === "done" ? qsTr("Done") : qsTr("Approve"))
                             color: Constants.textOnBrand
                             font.pixelSize: sp(Constants.fsSmall)
                             font.bold: true
@@ -208,7 +227,8 @@ Item {
                     }
                     background: Rectangle {
                         radius: dp(Constants.radiusPill)
-                        color: Qt.rgba(1,1,1,0.22)
+                        color: !approveBtn.enabled ? Qt.rgba(1,1,1,0.12)
+                             : (approveBtn.pressed ? Qt.rgba(1,1,1,0.38) : Qt.rgba(1,1,1,0.22))
                     }
                     onClicked: _approveAllPending()
                 }
@@ -229,10 +249,33 @@ Item {
                     }
                     Text {
                         width: parent.width
-                        text: root._scopedPendingCount() + " orders waiting"
+                        text: root._approveSubtitle()
                         color: Qt.rgba(1,1,1,0.85)
                         font.pixelSize: sp(Constants.fsCaption)
                         elide: Text.ElideRight
+                    }
+                }
+                // Progress track along the bottom edge, inset by the corner radius so it needs no clip.
+                Rectangle {
+                    visible: root._approveState.phase !== "idle"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.leftMargin: dp(Constants.radius)
+                    anchors.rightMargin: dp(Constants.radius)
+                    anchors.bottomMargin: dp(Constants.space1)
+                    height: dp(3)
+                    radius: height / 2
+                    color: Qt.rgba(1,1,1,0.25)
+                    Accessible.role: Accessible.ProgressBar
+                    Accessible.name: qsTr("Approval progress")
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: parent.width * BAP.fraction(root._approveState)
+                        radius: parent.radius
+                        color: Constants.textOnBrand
                     }
                 }
             }
@@ -458,6 +501,16 @@ Item {
         return _countByStatus("pending")
     }
 
+    function _approveSubtitle() {
+        var st = root._approveState
+        if (st.phase === "running")
+            return qsTr("Approving… %1 of %2 done").arg(st.done).arg(st.total)
+        if (st.phase === "done")
+            return BAP.allOk(st) ? qsTr("All approved")
+                                 : qsTr("%1 of %2 approved").arg(BAP.approved(st)).arg(st.total)
+        return root._scopedPendingCount() + " orders waiting"
+    }
+
     // Sequential, not parallel, on purpose: these orders can share products,
     // and tryCompleteOrder is no longer synchronous (round 4 of the
     // async-write-sequencing design) — processing one at a time means each
@@ -465,12 +518,14 @@ Item {
     // starts, rather than firing N concurrent completions that could race
     // each other over the same inventory within this SAME bulk action.
     function _approveAllPending() {
+        if (!BAP.canStart(root._approveState)) return
         var scoped = _scopedOrders()
         var toApprove = []
         for (var i = 0; i < scoped.length; ++i) {
             if (scoped[i].status === "pending" || scoped[i].status === "processing")
                 toApprove.push(scoped[i].orderId)
         }
+        root._approveState = BAP.start(toApprove.length)
         var failed = []
         // review I2: this loop used to call tryCompleteOrder with zero
         // locking -- a concurrent edit via OrderDetailDialog (which DOES
@@ -483,6 +538,7 @@ Item {
         function _next() {
             if (idx >= toApprove.length) {
                 dataModel.syncOrdersModel()
+                if (root._approveState.phase === "done") approveHold.restart()
                 if (failed.length > 0 || lockedOut.length > 0) {
                     var parts = []
                     if (failed.length > 0)
@@ -507,12 +563,14 @@ Item {
             LockManager.acquire("order", orderId, function(result) {
                 if (!result.granted) {
                     lockedOut.push(orderId)
+                    root._approveState = BAP.step(root._approveState, "locked")
                     _next()
                     return
                 }
                 dataModel.tryCompleteOrder(orderId, function(success) {
                     LockManager.release("order", orderId)
                     if (!success) failed.push(orderId)
+                    root._approveState = BAP.step(root._approveState, success ? "ok" : "failed")
                     _next()
                 })
             })

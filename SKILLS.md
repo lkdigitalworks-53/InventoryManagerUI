@@ -4278,3 +4278,22 @@ Rules:
 2. When a fix lands, edit the "open" list that named it in the same PR (README block, roadmap, KNOWN-ISSUES). A fix recorded only in its own design note leaves the list wrong.
 3. A comment in the code that says "this claim in another doc is wrong" (the 2026-08-26 note in `StockBatchStore._onMutationConflicted`) is a sign the other doc was never fixed. Grep for what it contradicts.
 4. A docs-only cleanup still gets a test plan: list the claims it makes and the command that proved each one, with the output.
+
+## Skill 117: A bulk action needs its own busy state, and a banner that shows only while there is work left hides its own "done" state
+
+**Request (Taher, 2026-10-13)**: the Orders banner's Approve button gave no sign it was pressed or working. Wanted a pressed colour and a simple progress bar.
+
+**What reading `OrdersPage._approveAllPending` found** (no run, no device):
+1. No busy flag. A double tap started two loops. `DataModel._completingOrderIds` refused the second completion of each order with `callback(false)`, and the second loop listed those orders as `failed`, so the user saw "Insufficient inventory" for orders that were fine. Data was safe; the message was wrong. Same family as Skill 61, one layer up: the per-order guard held, the bulk caller had none.
+2. The banner is `visible` while `_scopedPendingCount() > 0`. Each completed order lowers that count, so the banner vanished the instant the last order finished. A progress bar inside it would never have shown 100% or a success text. Fix: keep the banner while the run state is not idle, and clear that state from a 1.2 s Timer.
+
+**What was built**: `qml/helper/BulkApproveProgress.js` (pure: `start`, `step`, `fraction`, `canStart`, ...), replaced not mutated, so QML bindings update. `canStart` doubles as the re-entrancy guard (first line of `_approveAllPending`) and as the button's `enabled`. Button colours: idle 22% white, pressed 38%, disabled 12%.
+
+**Testing constraint that shaped it**: `OrdersPage.qml` cannot load under `qmltestrunner` (Constants imports Felgo). Logic therefore lives in the helper (29 QML cases incl. a seeded monkey run) and the page wiring is pinned by a source-reading script test (`ordersPageApproveWiring.test.js`, one mutant per rule). The QML cases were also run in node against the helper with 12 hand-made mutants, all caught; one survived at first (`fraction` idle guard) because the tests never built an idle state with a non-zero total, and a new case was added. A surviving mutant is a missing test, not a lucky pass.
+
+**Rules**:
+1. Any bulk action that loops over async calls gets a busy flag checked in its first line; the trigger is disabled from the same state.
+2. If a banner's visibility depends on the work the action consumes, hold it open for the end state.
+3. When a page cannot be loaded in CI, move the logic to a pure helper and pin the wiring with a source-shape test that fails when a line is removed.
+4. Known limit (`shortcut:` in the helper): no watchdog; a callback that never fires leaves the button disabled until the page is rebuilt.
+5. Left alone on purpose: the loop approves `pending` and `processing`, the banner counts only `pending`.
