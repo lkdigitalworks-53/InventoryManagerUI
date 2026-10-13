@@ -17,7 +17,7 @@ namespace {
 // import. Keep in sync with the InventoryStore schema.
 const QStringList kProductHeaders = {
     "Product ID", "Name", "SKU", "Category", "Unit", "Description",
-    "Cost Price", "Selling Price", "Stock", "Min Stock", "Photo URL", "Supplier",
+    "Cost Price", "Selling Price", "Stock", "Min Stock", "Supplier",
     "Size", "Taxable", "Tax %"
 };
 
@@ -78,11 +78,10 @@ void writeProductsSheet(Document &doc, const QVariantList &products)
         doc.write(row, 8,  variantToNumber(p.value("sellingPrice")));
         doc.write(row, 9,  static_cast<int>(variantToNumber(p.value("stock"))));
         doc.write(row, 10, static_cast<int>(variantToNumber(p.value("minStock"))));
-        doc.write(row, 11, variantToString(p.value("photoUrl")));
-        doc.write(row, 12, variantToString(p.value("supplier")));
-        doc.write(row, 13, variantToString(p.value("size")));
-        doc.write(row, 14, p.value("taxable").toBool() ? QStringLiteral("Yes") : QStringLiteral("No"));
-        doc.write(row, 15, variantToNumber(p.value("taxPercent")));
+        doc.write(row, 11, variantToString(p.value("supplier")));
+        doc.write(row, 12, variantToString(p.value("size")));
+        doc.write(row, 13, p.value("taxable").toBool() ? QStringLiteral("Yes") : QStringLiteral("No"));
+        doc.write(row, 14, variantToNumber(p.value("taxPercent")));
     }
 
     // Reasonable column widths
@@ -96,11 +95,10 @@ void writeProductsSheet(Document &doc, const QVariantList &products)
     doc.setColumnWidth(8, 14);
     doc.setColumnWidth(9, 10);
     doc.setColumnWidth(10, 12);
-    doc.setColumnWidth(11, 32);
-    doc.setColumnWidth(12, 20);
-    doc.setColumnWidth(13, 14);
+    doc.setColumnWidth(11, 20);
+    doc.setColumnWidth(12, 14);
+    doc.setColumnWidth(13, 10);
     doc.setColumnWidth(14, 10);
-    doc.setColumnWidth(15, 10);
 }
 
 void writeOrdersSheet(Document &doc, const QVariantList &orders)
@@ -248,7 +246,6 @@ void writeReadmeSheet(Document &doc, const QString &kind)
             {"Selling Price *","yes","number", "What customers pay. Must be > 0 and ≥ Cost Price."},
             {"Stock",         "no",  "integer","Current stock on hand. Defaults to 0."},
             {"Min Stock *",   "yes", "integer","Reorder threshold."},
-            {"Photo URL",     "no",  "text",   "Public image URL. Leave empty to keep the existing photo."},
             {"Supplier",      "no",  "text",   "Supplier name. Creates an opening stock batch so by-supplier reports work."},
             {"Size",          "no",  "text",   "Optional — e.g. clothing size, volume, dimension."},
             {"Taxable",       "no",  "text",   "Yes/No. Defaults to No if blank or unrecognized."},

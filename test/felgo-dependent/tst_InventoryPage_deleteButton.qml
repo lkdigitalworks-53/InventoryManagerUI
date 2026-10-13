@@ -34,8 +34,7 @@ TestCase {
 
     function _product() {
         return { productId: "SKU-1", name: "Widget", sku: "W1", category: "",
-                 unit: "pc", price: 100, sellingPrice: 100, stock: 10, minStock: 2,
-                 photoUrl: "" }
+                 unit: "pc", price: 100, sellingPrice: 100, stock: 10, minStock: 2 }
     }
 
     function init() {

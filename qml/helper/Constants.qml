@@ -129,6 +129,7 @@ Item {
         "add":       IconType.plus,
         "remove":    IconType.minus,
         "close":     IconType.times,
+        "retry":     IconType.refresh,
         "check":     IconType.check,
         "edit":      IconType.pencil,
         "settings":  IconType.cog,

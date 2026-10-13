@@ -4,6 +4,9 @@ import "../components"
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/RealisedMath.js" as RealisedMath
 import "../helper/ImportMath.js" as ImportMath
+import "../helper/DocLimits.js" as DocLimits
+import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
+import "../helper/PhotoQueueLogic.js" as PQL
 
 QtObject {
     id: root
@@ -28,7 +31,13 @@ QtObject {
     // and a fresh _resetAndFetch() runs immediately instead. Design: SKILLS.md
     // Skill 39's "residual trade-off" note.
     property bool _resetPending: false
+    // True once EVERY page is loaded (nothing more to fetch, no fetch or reset in flight). Only then can a
+    // row missing from `products` be called absent; before that the list is a partial 50-per-page view.
+    readonly property bool listComplete: !hasMore && !loadingMore && !_resetPending
     property var _cursor: null
+    // BC2: product deletes sent but not yet acked: productId -> { name, sku, stock }. In memory
+    // only (a relaunch forgets them on purpose, see _onMutationApplied).
+    property var _pendingDeletes: ({})
 
     // Bumped whenever `products` is reassigned. Consumers (DashboardPage,
     // InventoryPage) bind a watcher property to this to trigger their own
@@ -47,6 +56,11 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        Gateway.mutationApplied.connect(_onMutationApplied)
+        OutboxStore.itemsChanged.connect(_refreshSyncStates)
+        _refreshSyncStates()
+        Gateway.writeAcked.connect(_onWriteAcked)
+        Gateway.parkedWriteDiscarded.connect(_onParkedWriteDiscarded)
         Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
     }
 
@@ -89,12 +103,23 @@ QtObject {
             arr.splice(idx, 1)
         }
         products = arr
+        // Taher 2026-10-06: the server row is gone (`current` null) -> nothing can ever consume the photos still
+        // queued for this product, so discard them (and their local files). With a `current` the product still
+        // exists, so its queued photos stay (a missing `photoIds` there just means a first photo, see below).
+        if (!current) _purgeQueuedPhotos(entityId)
         // A rejected delete-conflict means the product still legitimately
         // exists (someone else edited it after this client's stale
         // `before`) and was just pushed back above — "your change didn't
         // save" would be confusing for what was actually a delete attempt.
+        _dropPendingUpdateActivity(entityId, "")  // the edit never applied: no Activity entry
         if (action === "delete") {
-            Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+            _dropPendingDelete(entityId)  // never applied: no Activity entry; the ack-time purge is skipped (the null-current case purges above)
+            // Q13 (PH4 item 5): `current` null = the server row is already gone (deleted on another device),
+            // so nothing was "restored" -- the local row stays removed above.
+            if (current)
+                Toast.show(qsTr("Couldn't delete — this product was updated elsewhere. It's been restored with the latest version."))
+            else
+                Toast.show(qsTr("This product was already deleted elsewhere."))
         } else {
             Toast.show(qsTr("This product was updated elsewhere — your change didn't save. Refreshed to the latest version."))
         }
@@ -129,8 +154,7 @@ QtObject {
             if (p.taxable === undefined || p.taxable === null) p.taxable = false;
             if (p.taxPercent === undefined || p.taxPercent === null) p.taxPercent = 0;
             if (!p.size) p.size = "";
-            if (!p.photoUrl) p.photoUrl = "";
-            if (!p.photoUpdatedAt) p.photoUpdatedAt = "";
+            if (!Array.isArray(p.photoIds)) p.photoIds = [];
             if (!p.supplierId) p.supplierId = "";
         }
         return arr;
@@ -150,7 +174,8 @@ QtObject {
                 console.warn("[InventoryStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return;
             }
-            products = products.concat(_normalizeProducts(result.items));
+            // S4: lay still-queued (pending or parked) product edits over the server copy.
+            products = products.concat(_overlayUnsynced(_normalizeProducts(result.items)));
             hasMore = result.hasMore;
             _cursor = result.nextCursor;
             if (hasMore) {
@@ -160,15 +185,46 @@ QtObject {
                 // request.
                 _fetchFromFirebase();
             } else {
-                console.log("[InventoryStore] Synced", products.length, "products from Firestore (all pages)");
+                console.log("[InventoryStore] Synced", products.length, "products from Firestore (all pages),",
+                            products.filter(function(p) { return p.photoIds.length > 0 }).length, "with photoIds");
             }
         });
     }
 
     function syncFromFirebase() { _resetAndFetch(); }
 
+    // PR #122 S4. { productId: "pending" | "parked" } for products with an unsynced write,
+    // rebuilt whenever the outbox changes. Drives the "Not synced" / "Rejected" badge. Same rule
+    // as the sale guard (OutboxStore.unsyncedByEntity), so the two never disagree.
+    property var syncStates: ({})
+
+    function syncStateOf(productId) { return syncStates[productId] || "" }
+
+    function _refreshSyncStates() {
+        var next = UnsyncedOverlay.statesOf(OutboxStore.unsyncedByEntity("inventory"))
+        // Only publish a real change: this runs on EVERY outbox write (each sale delta).
+        if (JSON.stringify(next) !== JSON.stringify(syncStates)) syncStates = next
+    }
+
+    function _overlayUnsynced(arr) {
+        return UnsyncedOverlay.overlayAll(arr, OutboxStore.unsyncedByEntity("inventory"))
+    }
+
+    // PR #121 device obs 1 + PR #122: Firestore rejects a doc over 1 MiB, so refuse BEFORE
+    // anything is queued (nothing local changes, no ledger row, no retry loop).
+    readonly property string tooLargeMessage: "This product is too large to save (over 1 MiB). Shorten the description."
+
+    // "" = fits, otherwise the message to show. Used by the dialogs before they close and by
+    // updateProduct/addProduct as the last line of defence.
+    function updateRefusal(productId, fields) {
+        var idx = findIndexById(productId)
+        if (idx < 0) return ""
+        return DocLimits.exceedsDoc(Object.assign({}, products[idx], fields || {})) ? tooLargeMessage : ""
+    }
+
     function clear() {
         products = []
+        hasMore = true   // nothing is loaded now, so hasProduct() must answer "unknown", not "absent"
     }
 
     // INVARIANT (added 2026-07-30, after a real bug found in OrdersStore's
@@ -193,8 +249,7 @@ QtObject {
                       taxPercent: typeof p.taxPercent === "number" ? p.taxPercent : 0,
                       size: p.size || "",
                       unit: p.unit, description: p.description,
-                      photoUrl: p.photoUrl || "",
-                      photoUpdatedAt: p.photoUpdatedAt || "",
+                      photoIds: Array.isArray(p.photoIds) ? p.photoIds.slice() : [],
                       supplierId: p.supplierId || ""});
         }
         return a;
@@ -209,8 +264,8 @@ QtObject {
     // This is a narrower fix than OrdersStore's _normalizeOrder (which also
     // folds in the update/bulk-import paths) — see review notes on
     // pr_taher_bug_fixes for the trade-off; _normalizeRecord (bulk import)
-    // still builds its own doc shape independently and must be checked by
-    // hand against this one and _clone() if either changes.
+    // still builds its own doc shape independently; its key set is pinned against this one
+    // by tst_InventoryStore_cloneSymmetry (PR #136 review).
     function _newProductDoc(id, name, sku, category, stock, minStock,
                              price, sellingPrice, taxable, taxPercent,
                              size, unit, description, supplierId) {
@@ -220,7 +275,7 @@ QtObject {
                  taxable: taxable, taxPercent: taxPercent,
                  size: size,
                  unit: unit, description: description || "",
-                 photoUrl: "", photoUpdatedAt: "",
+                 photoIds: [],
                  supplierId: supplierId };
     }
 
@@ -489,6 +544,15 @@ QtObject {
     // to product cost `price` when not supplied — matches the previous
     // implicit assumption).
     function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size, callback) {
+        // Size check first, before a productId is minted or a supplier created. A draft doc with
+        // a placeholder id is enough: the id is a few bytes, the description is the whole risk.
+        var draft = _newProductDoc("PRD-0000000000", name, sku, category, stock, minStock, price,
+                                   (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price,
+                                   !!taxable, taxPercent || 0, size || "", unit, description, party || "")
+        if (DocLimits.exceedsDoc(draft)) {
+            if (callback) callback(false, "", tooLargeMessage)
+            return
+        }
         // Resolve supplier first (only actually async when `party` is a
         // brand-new name that needs a fresh supplierId minted — an existing
         // id/name resolves synchronously-fast via the callback), then mint
@@ -606,21 +670,29 @@ QtObject {
         }
     }
 
-    // Persist a photo URL on a product. Per-doc PATCH bypasses the bulk-PUT
-    // path so the write is always atomic.
-    function setPhoto(productId, photoUrl) {
+    // Update a product's photoIds LOCALLY after the server has already confirmed an upload or
+    // removal. uploadProductPhoto/deleteProductPhoto (functions/index.js) write photoIds
+    // server-side directly, NOT through Gateway.recordMutation/applyMutation -- neither fits an
+    // array-append/remove against a doc the handler itself reads (design spec, "Server" section) --
+    // so this function does NOT call Gateway.recordMutation either; it only keeps the local cache
+    // in sync so the UI doesn't wait for the next Firestore snapshot. Call on PhotoQueue.photoUploaded
+    // (changeKind "add") and on a successful StorageService.removeProductPhoto callback for a
+    // server-known photo (changeKind "remove"). Logs the same photo_change ledger entry setPhoto
+    // used to -- one entry per photo now, rather than one per whole-array change, since a product
+    // can have many photos (EditProductDialog.qml's "photo_change" case only checks
+    // before/after non-emptiness to pick "added"/"removed" wording, so a photoId standing in for
+    // the old URL string renders correctly unchanged).
+    function applyPhotoIds(productId, photoIds, changedPhotoId, changeKind) {
         var idx = findIndexById(productId);
         if (idx < 0) return;
         var arr = _clone();
-        var before = Object.assign({}, arr[idx]);
-        var prevUrl = arr[idx].photoUrl || "";
-        var newUrl = photoUrl || "";
-        arr[idx].photoUrl = newUrl;
-        arr[idx].photoUpdatedAt = new Date().toISOString();
+        arr[idx].photoIds = Array.isArray(photoIds) ? photoIds.slice() : [];
         products = arr;
-        if (prevUrl !== newUrl)
-            TransactionStore.recordPhotoChange(productId, arr[idx].name, prevUrl, newUrl);
-        Gateway.recordMutation("inventory", productId, "update", before, arr[idx]);
+        if (!changedPhotoId) return;
+        if (changeKind === "add")
+            TransactionStore.recordPhotoChange(productId, arr[idx].name, "", changedPhotoId);
+        else if (changeKind === "remove")
+            TransactionStore.recordPhotoChange(productId, arr[idx].name, changedPhotoId, "");
     }
 
     // Bulk import / upsert. Records carry the same shape as products plus an
@@ -929,11 +1001,12 @@ QtObject {
             size: r.size || "",
             stock: parseInt(r.stock) || 0,
             minStock: parseInt(r.minStock) || 0,
-            photoUrl: r.photoUrl || "",
-            photoUpdatedAt: r.photoUpdatedAt || "",
             // Already resolved (existing id/name, or pre-minted-for-this-batch
             // name) by _upsertManySync before _normalizeRecord is called.
-            supplierId: r.supplierId || ""
+            supplierId: r.supplierId || "",
+            // Must exist at creation like _newProductDoc: _clone() always emits photoIds, and the
+            // server CAS compares key sets, so an imported doc without it 409s on its first edit.
+            photoIds: []
         };
     }
 
@@ -941,7 +1014,7 @@ QtObject {
         var merged = {};
         var keys = ["productId", "name", "sku", "category", "unit", "description",
                     "price", "sellingPrice", "taxable", "taxPercent",
-                    "stock", "minStock", "photoUrl", "photoUpdatedAt", "supplierId"];
+                    "stock", "minStock", "supplierId"];
         for (var i = 0; i < keys.length; ++i) {
             var k = keys[i];
             // Empty incoming values fall back to existing — empty cells in the
@@ -994,7 +1067,23 @@ QtObject {
         return Math.round(((sp - cost) / cost) * 100);
     }
 
+    // D2/D3 (PR #119): a write for this product the server rejected is PARKED in the outbox
+    // until the user retries or discards it. A restock delta or a delete queued behind it
+    // cannot be sent: the restock dialog would hang and drift (batch written, stock not), the
+    // delete would hide the product locally and later 409 on a stale `before`. So both refuse
+    // up front with this message and write nothing.
+    readonly property string parkedWriteMessage: "Fix or discard the stuck change for this product first"
+    function hasParkedWrite(productId) { return OutboxStore.hasParkedForEntity("inventory", productId) }
+
+    // PR #121 follow-up (Taher, Q1 = Z): a product with ANY queued edit (retrying, in flight or
+    // parked) is not sold: this device and the server may disagree on its price/stock. Stock
+    // deltas from earlier sales do not count (OutboxStore.hasUnsyncedEditForEntity).
+    readonly property string unsyncedEditMessage: "This product has a change that hasn't synced yet. Wait for it to sync first"
+    function hasUnsyncedEdit(productId) { return OutboxStore.hasUnsyncedEditForEntity("inventory", productId) }
+
+    // Returns parkedWriteMessage when refused (nothing changed), otherwise undefined.
     function deleteProduct(productId) {
+        if (hasParkedWrite(productId)) return parkedWriteMessage
         var arr = _clone();
         var before = null
         var found = false
@@ -1005,48 +1094,109 @@ QtObject {
         if (!found) return
 
         Gateway.recordMutation("inventory", productId, "delete", before, null)
-        ActivityLog.record("product_deleted",
-                           "Product deleted: " + before.name,
-                           (before.sku ? before.sku + " · " : "") + "stock " + (before.stock || 0),
-                           productId)
 
-        // Cascade: remove every batch for this product too, not just the
-        // ones with qtyRemaining > 0 -- an already-exhausted batch has no
-        // ongoing value once its product is gone, and leaving some behind
-        // while removing others is a more confusing half-measure than
-        // removing all of them. Same fire-and-forget audit pattern
-        // StockBatchStore already uses for its own mutations -- the
-        // working doc goes, the audit_log entry stays. See spec doc:
-        // docs/superpowers/specs/2026-09-02-cleanup-batches-photo-on-product-delete.md
+        // BC2 (docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md): nothing
+        // below the product delete itself is destroyed or logged before the server acks it. The
+        // Activity entry and the queued-photo purge wait in _onMutationApplied; the batches are
+        // removed by the server sweep (BC1). Keep what that entry needs until then.
+        var pd = Object.assign({}, _pendingDeletes)
+        pd[productId] = { name: before.name, sku: before.sku, stock: before.stock }
+        _pendingDeletes = pd
+
+        // Local-only: hide the product's batches (open AND exhausted) so valuation and pickers
+        // show no ghosts. NOTHING is sent: a client batch delete ran before the ack and destroyed
+        // the cost layers of a product whose delete was then rejected (PR #118 device test,
+        // 2026-10-04). A 409 or a discarded parked delete restores them (DataModel resync).
         if (typeof StockBatchStore !== "undefined" && StockBatchStore && StockBatchStore.batches) {
-            var bs = StockBatchStore.batches
-            var keep = []
-            for (var bi = 0; bi < bs.length; ++bi) {
-                var b = bs[bi]
-                if (b.productId === productId) {
-                    Gateway.recordMutation("stock_batch", b.batchId, "delete", b, null)
-                } else {
-                    keep.push(b)
-                }
-            }
-            StockBatchStore.batches = keep
+            StockBatchStore.batches = StockBatchStore.batches.filter(function(b) { return b.productId !== productId })
         }
+    }
 
-        // Photo cleanup — best-effort, must never block or fail the delete
-        // above. Wrapped in try/catch deliberately: StorageService.
-        // deleteProductPhoto falls through to the native ImageProcessor
-        // singleton (registered only by the real app's main.cpp) when
-        // useCloud is false, which is undefined in a headless test
-        // environment — the same class of failure as the DataModel
-        // logic/dispatcher bug (Skill 58): an unguarded call throwing mid-
-        // function must never be able to abort work that already
-        // completed above it.
+    // BC2 (Q-BC-3 A): the server acked a recordMutation. Only a product delete we still remember
+    // acts; after a relaunch between click and ack the memory is gone, so the Activity entry and
+    // the photo purge are skipped (accepted: design R7, the server audit entry still exists).
+    // Activity entries for product edits wait for the server's ack (same idea as the ledger rows,
+    // which wait in the outbox via `dependsOn`). In-memory only, like _pendingDeletes: Activity is
+    // a feed, not books-of-account, so an app death between edit and ack loses the entry, not the
+    // ledger. { productId: [ { parentId, title, subtitle } ] }
+    property var _pendingUpdateActivity: ({})
+
+    function _queueUpdateActivity(productId, parentId, title, subtitle) {
+        var map = Object.assign({}, _pendingUpdateActivity)
+        var list = (map[productId] || []).slice()
+        list.push({ parentId: parentId, title: title, subtitle: subtitle })
+        map[productId] = list
+        _pendingUpdateActivity = map
+    }
+
+    // parentId "" = drop every pending entry for the product; otherwise only that edit's.
+    function _dropPendingUpdateActivity(productId, parentId) {
+        var list = _pendingUpdateActivity[productId]
+        if (!list) return []
+        var keep = []
+        var gone = []
+        for (var i = 0; i < list.length; ++i) {
+            if (parentId === "" || list[i].parentId === parentId) gone.push(list[i])
+            else keep.push(list[i])
+        }
+        var map = Object.assign({}, _pendingUpdateActivity)
+        if (keep.length > 0) map[productId] = keep
+        else delete map[productId]
+        _pendingUpdateActivity = map
+        return gone
+    }
+
+    function _onParkedWriteDiscarded(requestId, entities) {
+        var ids = Object.keys(_pendingUpdateActivity)
+        for (var i = 0; i < ids.length; ++i) _dropPendingUpdateActivity(ids[i], requestId)
+    }
+
+    function _onWriteAcked(requestId, entity, entityId, action) {
+        if (entity !== "inventory") return
+        // Any acked action except delete: an edit made while the product's own create was still
+        // queued merges INTO that create (OutboxStore.enqueue), so the ack says "create". A merged
+        // delete drops the entry silently: the product is gone, there is nothing to report.
+        var due = _dropPendingUpdateActivity(entityId, requestId)
+        if (action === "delete") return
+        for (var d = 0; d < due.length; ++d)
+            ActivityLog.record("product_updated", due[d].title, due[d].subtitle, entityId)
+    }
+
+    function _onMutationApplied(entity, entityId, action) {
+        if (entity !== "inventory" || action !== "delete") return
+        if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, entityId)) return
+        var info = _pendingDeletes[entityId]
+        _dropPendingDelete(entityId)
+        ActivityLog.record("product_deleted",
+                           "Product deleted: " + info.name,
+                           (info.sku ? info.sku + " · " : "") + "stock " + (info.stock || 0),
+                           entityId)
+        _purgeQueuedPhotos(entityId)
+    }
+
+    function _dropPendingDelete(productId) {
+        if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, productId)) return
+        var pd = Object.assign({}, _pendingDeletes)
+        delete pd[productId]
+        _pendingDeletes = pd
+    }
+
+    // Local photo cleanup after a committed delete. Best-effort, must never block or fail the
+    // caller. PhotoQueue.discard reaches the native ImageProcessor singleton (registered only by
+    // the real app's main.cpp), undefined in a headless test environment (same failure class as
+    // Skill 58), hence the guard. Photos still in PhotoQueue (any state) never reached photoIds:
+    // left alone they 404 once the delete lands, park as "failed" with no UI and keep their local
+    // files. discard() replaces PhotoQueue.items, so filter() first and iterate the snapshot.
+    // Confirmed photos are NOT removed here: the server sweeps the product's Storage prefix after
+    // a committed delete (PH3 `pending_cleanup`). A client-side deleteProductPhoto loop ran before
+    // the ack and wiped photos of a product that survived (PR #113 device test, 2026-10-04).
+    // Do not reintroduce it.
+    function _purgeQueuedPhotos(productId) {
         try {
-            StorageService.deleteProductPhoto(productId, function(ok, err) {
-                if (!ok) console.warn("[InventoryStore] deleteProductPhoto failed for", productId, err)
-            })
+            PhotoQueue.items.filter(function(q) { return q.productId === productId })
+                .forEach(function(q) { PhotoQueue.discard(q.photoId) })
         } catch (e) {
-            console.warn("[InventoryStore] deleteProductPhoto threw for", productId, e)
+            console.warn("[InventoryStore] queued-photo purge threw for", productId, e)
         }
     }
 
@@ -1062,6 +1212,9 @@ QtObject {
             if (arr[i].productId === productId) { current = arr[i]; break; }
         }
         if (!current) { if (callback) callback(false); return }
+        // D2: refuse before the supplier auto-promote and the batch write, so nothing drifts.
+        // callback(false, false, message): callers show `message` instead of "try again".
+        if (hasParkedWrite(productId)) { if (callback) callback(false, false, parkedWriteMessage); return }
 
         _resolveSupplierId(party, function(supplierId, supplierFailed) {
             var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
@@ -1241,9 +1394,12 @@ QtObject {
         return -1
     }
 
+    // Returns tooLargeMessage when refused (nothing changed), otherwise undefined.
     function updateProduct(productId, fields, reason) {
         var idx = findIndexById(productId)
         if (idx < 0) return
+        var refusal = updateRefusal(productId, fields)
+        if (refusal !== "") return refusal
         var arr = _clone()
         var prev = arr[idx]
         var p = arr[idx]
@@ -1286,23 +1442,49 @@ QtObject {
         if (fields.minStock     !== undefined) { _maybe("minStock", fields.minStock); p.minStock = fields.minStock }
         products = arr
         var reasonText = (reason || "").trim()
-        ActivityLog.record("product_updated",
-                           "Product updated: " + p.name,
-                           (p.sku ? p.sku + " · " : "") + "stock " + p.stock
-                               + (reasonText ? " · " + reasonText : ""),
-                           productId)
+        // Enqueue the edit FIRST: its stored requestId is what the ledger rows and the Activity
+        // entry wait for. "" (direct mode: no outbox) = nothing to wait for, record at once.
+        var parentId = Gateway.recordEdit("inventory", productId, "update", auditBefore, p)
+        var activityTitle = "Product updated: " + p.name
+        var activitySubtitle = (p.sku ? p.sku + " · " : "") + "stock " + p.stock
+                               + (reasonText ? " · " + reasonText : "")
+        if (parentId === "") ActivityLog.record("product_updated", activityTitle, activitySubtitle, productId)
+        else _queueUpdateActivity(productId, parentId, activityTitle, activitySubtitle)
         for (var ci = 0; ci < fieldChanges.length; ++ci) {
             var c = fieldChanges[ci]
-            TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText)
+            TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText, parentId)
         }
         if (stockChange)
-            TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText)
-        Gateway.recordMutation("inventory", productId, "update", auditBefore, p)
+            TransactionStore.recordStockAdjustment(productId, p.name, stockChange.before, stockChange.after, reasonText, parentId)
     }
 
     function getById(productId) {
         for (var i = 0; i < products.length; ++i)
             if (products[i].productId === productId) return products[i];
         return null;
+    }
+
+    // PR #138 sweep, O1: the moment the product list becomes COMPLETE, drop `failed` queued photos whose product is
+    // gone (PhotoQueue.purgeOrphanedFailures judges only the signed-in identity's items). Never runs on a partial list.
+    onListCompleteChanged: {
+        if (!listComplete) return
+        try { PhotoQueue.purgeOrphanedFailures() }
+        catch (e) { console.warn("[InventoryStore] orphaned photo purge threw", e) }
+    }
+
+    // true = the row is in the local list; false = the list is complete and the row is not in it;
+    // undefined = cannot tell yet (partial list, or an empty/non-string id). PhotoQueue discards a photo
+    // on a server 404 with body `product-not-found` only for `false` (PQL.shouldDiscardOnFailure), so an unknown answer never discards.
+    function hasProduct(productId) {
+        if (typeof productId !== "string" || productId === "") return undefined
+        return PQL.productPresence(getById(productId) !== null, listComplete)
+    }
+
+    // Confirmed photo ids for a product, as a fresh array ([] for an unknown product or a doc with
+    // no/invalid photoIds). EditProductDialog re-reads this on every revision so a photo that
+    // finishes uploading while the dialog is open shows up without closing and reopening it.
+    function photoIdsFor(productId) {
+        var p = getById(productId);
+        return (p && Array.isArray(p.photoIds)) ? p.photoIds.slice() : [];
     }
 }

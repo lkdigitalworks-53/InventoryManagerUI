@@ -17,6 +17,8 @@
 // that returns the same entryId.
 
 const functions = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
@@ -26,7 +28,10 @@ const CutoverLogic = require("./lib/cutoverLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
 const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
+const PhotoValidation = require("./lib/photoValidation");
+const PhotoCleanup = require("./lib/photoCleanup");
 const { send } = require("./lib/httpResponse");
+const { classifyWriteError } = require("./lib/writeError");
 
 admin.initializeApp();
 
@@ -48,6 +53,72 @@ const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 function scopedDb(env) {
     const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
     return getFirestore(admin.app(), databaseId);
+}
+
+// Product photos (2026-09-21). Storage object paths use {env}/tenants/{t}/products/{p}/{photoId}.jpg
+// -- "prd" spelled out, NOT Firestore's "(default)" database id -- so this is a second, separate
+// mapping from DATABASE_ID_FOR_ENV even though the keys are identical. The client (qml/helper/
+// PhotoUrl.js) must send/use this same "prd"/"test"/"dev1" form when it builds a download URL for
+// a photo this server wrote, or the two will disagree about where an object lives.
+// Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
+const STORAGE_ENV_PREFIX = { dev: "dev1", test: "test", prd: "prd" };
+function storageEnvPrefix(env) {
+    return STORAGE_ENV_PREFIX[env] || STORAGE_ENV_PREFIX.prd;
+}
+
+const PHOTO_BUCKET_NAME = "inventorymanager-48392.firebasestorage.app";
+const MAX_PHOTOS_PER_PRODUCT = 10;
+const MAIN_IMAGE_MAX_BYTES = 1_500_000;
+const THUMB_IMAGE_MAX_BYTES = 200_000;
+
+function photoStoragePath(envPrefix, tenantId, productId, photoId, thumb) {
+    return envPrefix + "/tenants/" + tenantId + "/products/" + productId + "/" +
+        photoId + (thumb ? "_t" : "") + ".jpg";
+}
+
+// PH3 + BC1 (design Q5, Q-BC-1 d): cleans up after a committed product delete -- the product's
+// stock_batches (with one audit entry each), then its Storage photo prefix -- and removes the
+// pending_cleanup marker. All the decisions live in PhotoCleanup.sweepMarker (pure, never throws);
+// this only binds it to Firestore/Storage. A failed sweep leaves the marker for the PH3b scheduler.
+async function sweepProductCleanup(db, tenantId, marker) {
+    const tenantRoot = "tenants/" + tenantId;
+    const markerRef = db.doc(tenantRoot + "/pending_cleanup/" + marker.productId);
+    const productRef = db.doc(tenantRoot + "/inventory/" + marker.productId);
+    const bucket = admin.storage().bucket(PHOTO_BUCKET_NAME);
+    return PhotoCleanup.sweepMarker({
+        productExists: async () => (await productRef.get()).exists,
+        sweepBatches: (productId, actor) => PhotoCleanup.sweepStockBatches({
+            listBatches: async (pid) => {
+                const snap = await db.collection(tenantRoot + "/stock_batches").where("productId", "==", pid).get();
+                return snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+            },
+            commitChunk: async (entries) => {
+                const wb = db.batch();
+                for (const e of entries) {
+                    wb.delete(db.doc(tenantRoot + "/stock_batches/" + e.batchId));
+                    wb.set(db.doc(tenantRoot + "/audit_log/" + e.auditId),
+                        Object.assign({}, e.audit, { serverTimestamp: FieldValue.serverTimestamp() }));
+                }
+                await wb.commit();
+            }
+        }, tenantId, productId, actor),
+        deleteFiles: (prefix) => bucket.deleteFiles({ prefix: prefix, force: true }),
+        deleteMarker: () => markerRef.delete(),
+        // update(), NOT set(..., {merge:true}) (PH3b review P3): set+merge on a marker that a
+        // concurrent sweeper already deleted would RE-CREATE it as {attempts, lastError} with no
+        // productId/prefix/envPrefix, a zombie that fails unsafe-sweep-prefix forever. update()
+        // rejects NOT_FOUND instead, which sweepMarker's failure path already swallows.
+        updateMarker: (patch) => markerRef.update(patch)
+    }, tenantId, marker);
+}
+
+// Photo endpoints: tenant id must be a safe path segment (it is concatenated into Storage paths and
+// comes from a users/{uid} doc) and the caller must be owner/admin. Returns null when allowed, else
+// the {status, error} to send. Runs before any inventory/audit read or Storage write.
+function photoAccessDenied(ctx) {
+    if (!PhotoValidation.isSafePathSegment(ctx.tenantId)) return { status: 403, error: "no-tenant-context" };
+    if (!PhotoCleanup.canManagePhotos(ctx.role)) return { status: 403, error: "role-not-allowed" };
+    return null;
 }
 
 async function deriveContext(db, uid) {
@@ -128,11 +199,30 @@ exports.recordMutation = functions.onRequest(
         // The removed_staff tombstone is only ever written as part of a staff
         // delete (StaffStore.deleteStaff), so it carries the same restriction:
         // otherwise a low-privilege token could burn staff ids or plant names.
+        // BC1 (Q-BC-8): a product delete now also destroys the product's stock batches (server
+        // sweep), so it carries the same owner/admin restriction as the client's
+        // DataModel.onDeleteProduct gate. Checked before the prefix build and any transaction:
+        // 403, zero writes, no marker, no sweep. stock_batch deletes stay ungated (restock / FIFO
+        // paths use them for non-owner roles).
         const isStaffDelete = validated.entity === "staff" && validated.action === "delete";
         const isStaffTombstone = validated.entity === "removed_staff";
-        if ((isStaffDelete || isStaffTombstone)
+        const isProductDelete = PhotoCleanup.isCascadeEntityDelete(validated.entity, validated.action);
+        if ((isStaffDelete || isStaffTombstone || isProductDelete)
                 && ctx.role !== "owner" && ctx.role !== "admin") {
             send(res, 403, { ok: false, error: "role-not-allowed" });
+            return;
+        }
+
+        // PH3: a product delete leaves a pending_cleanup marker (written in the same transaction)
+        // and sweeps the product's Storage prefix after the commit. The prefix is built here, from
+        // whitelisted segments only; an unsafe id must never reach a prefix delete.
+        const isCascade = isProductDelete;
+        const cascadeEnvPrefix = storageEnvPrefix(body.env);
+        const cascadePrefix = isCascade
+            ? PhotoCleanup.buildSweepPrefix(cascadeEnvPrefix, ctx.tenantId, validated.entityId)
+            : null;
+        if (isCascade && cascadePrefix === null) {
+            send(res, 400, { ok: false, error: "invalid-entity-id" });
             return;
         }
 
@@ -150,11 +240,13 @@ exports.recordMutation = functions.onRequest(
                 after: validated.after,
                 clientTimestamp: validated.clientTimestamp,
                 collection: validated.collection,
-                serverTimestamp: FieldValue.serverTimestamp()
+                serverTimestamp: FieldValue.serverTimestamp(),
+                cleanupPrefix: cascadePrefix,
+                cleanupEnvPrefix: cascadeEnvPrefix
             });
         } catch (e) {
             console.error("recordMutation write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -183,6 +275,23 @@ exports.recordMutation = functions.onRequest(
                 ok: false, error: "conflict", conflict: result.conflict === true, current: result.current
             });
             return;
+        }
+
+        // PH3 + BC1: committed product delete (not a CAS conflict, not an idempotent replay) -> sweep
+        // its batches and photos now, AWAITED (Cloud Functions CPU is throttled after the response).
+        // A failed sweep never fails the delete: the marker stays and the PH3b scheduler retries it.
+        // A replay deliberately does NOT re-sweep (Q-BC-9 = no): PH3b is the retry path.
+        if (cascadePrefix !== null && result && result.ok === true && !result.idempotentReplay) {
+            try {
+                const sweep = await sweepProductCleanup(db, ctx.tenantId, {
+                    productId: validated.entityId, envPrefix: cascadeEnvPrefix,
+                    prefix: cascadePrefix, attempts: 0,
+                    actorUid: actorUid, actorRole: ctx.role, requestId: validated.requestId
+                });
+                if (!sweep.ok) console.error("recordMutation: cleanup sweep failed, marker kept", sweep.error);
+            } catch (e) {
+                console.error("recordMutation: cleanup sweep threw, marker kept", e);
+            }
         }
 
         send(res, 200, { ok: true, entryId: validated.requestId });
@@ -248,7 +357,7 @@ exports.recordDelta = functions.onRequest(
             });
         } catch (e) {
             console.error("recordDelta write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -320,7 +429,7 @@ exports.recordOperation = functions.onRequest(
             });
         } catch (e) {
             console.error("recordOperation write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -525,7 +634,7 @@ exports.recordMutationsBatch = functions.onRequest(
             });
         } catch (e) {
             console.error("recordMutationsBatch write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -717,7 +826,7 @@ exports.provisionMember = functions.onRequest(
             });
         } catch (e) {
             console.error("provisionMember write failed", e);
-            send(res, 500, { ok: false, error: "write-failed" });
+            send(res, 500, { ok: false, error: classifyWriteError(e) });
             return;
         }
 
@@ -944,3 +1053,331 @@ exports.computeAnalysis = functions.onRequest(
         }
     });
 
+// Product photos (2026-09-21). Two handlers: uploadProductPhoto writes both Storage objects then
+// appends the id in one Firestore transaction; deleteProductPhoto removes the id and best-effort
+// deletes the objects. Neither goes through GatewayLogic.applyMutation -- that helper replaces a
+// whole working-tier doc from a client-supplied `after`, which doesn't fit an array-append/remove
+// against a doc this handler itself reads. The idempotency mechanism (audit_log/{requestId}) and
+// overall shape still mirror applyMutation deliberately.
+// Design: docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
+
+exports.uploadProductPhoto = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const productId = String(body.productId || "");
+        const photoId = String(body.photoId || "");
+        const requestId = String(body.requestId || photoId || "");
+        if (!productId || !photoId || !requestId || PhotoCleanup.isReservedAuditId(requestId)) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+        if (!PhotoValidation.isSafePathSegment(productId) || !PhotoValidation.isSafePathSegment(photoId)) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+        const denied = photoAccessDenied(ctx);
+        if (denied) {
+            send(res, denied.status, { ok: false, error: denied.error });
+            return;
+        }
+
+        const mainBuf = Buffer.from(String(body.imageBase64 || ""), "base64");
+        const thumbBuf = Buffer.from(String(body.thumbBase64 || ""), "base64");
+
+        const mainCheck = PhotoValidation.validateImage(mainBuf, { maxBytes: MAIN_IMAGE_MAX_BYTES });
+        if (!mainCheck.ok) {
+            send(res, mainCheck.code === "image-too-large" ? 413 : 400, { ok: false, error: mainCheck.code });
+            return;
+        }
+        const thumbCheck = PhotoValidation.validateImage(thumbBuf, { maxBytes: THUMB_IMAGE_MAX_BYTES });
+        if (!thumbCheck.ok) {
+            send(res, thumbCheck.code === "image-too-large" ? 413 : 400, { ok: false, error: thumbCheck.code });
+            return;
+        }
+
+        const tenantRoot = "tenants/" + ctx.tenantId;
+        const auditRef = db.doc(tenantRoot + "/audit_log/" + requestId);
+        const productRef = db.doc(tenantRoot + "/inventory/" + productId);
+
+        // Idempotency check up front, before touching Storage at all -- a retried call with the
+        // same requestId must not re-upload.
+        const existingAudit = await auditRef.get();
+        if (existingAudit.exists) {
+            const productSnap = await productRef.get();
+            const photoIds = productSnap.exists ? (productSnap.data().photoIds || []) : [];
+            send(res, 200, { ok: true, already: true, photoId: photoId, photoIds: photoIds });
+            return;
+        }
+
+        // F3 (PH3, design Q1): read the product BEFORE any Storage write, so a missing product (404)
+        // or a full gallery (409) never leaves orphan objects. The transaction below stays the final
+        // authority; the tiny race between this read and the Storage write is accepted (documented
+        // in the design: a product deleted in that window can leave one orphan pair).
+        const preflightSnap = await productRef.get();
+        const preflight = PhotoCleanup.evaluateUploadPreflight(
+            preflightSnap.exists ? (preflightSnap.data() || {}) : null, photoId, MAX_PHOTOS_PER_PRODUCT);
+        if (!preflight.ok) {
+            send(res, preflight.status, { ok: false, error: preflight.error });
+            return;
+        }
+
+        const envPrefix = storageEnvPrefix(body.env);
+        const mainPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, false);
+        const thumbPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, true);
+        const bucket = admin.storage().bucket(PHOTO_BUCKET_NAME);
+
+        try {
+            await bucket.file(mainPath).save(mainBuf, { contentType: "image/jpeg" });
+            await bucket.file(thumbPath).save(thumbBuf, { contentType: "image/jpeg" });
+        } catch (e) {
+            console.error("uploadProductPhoto: Storage write failed", e);
+            send(res, 500, { ok: false, error: "storage-write-failed" });
+            return;
+        }
+
+        // Storage writes above are outside this transaction -- Storage has no transactional join
+        // with Firestore. If this transaction throws after the writes above succeeded, the objects
+        // are orphaned but unreferenced (no id points at missing bytes, only the reverse) --
+        // accepted risk, see the design spec.
+        let txnResult;
+        try {
+            txnResult = await db.runTransaction(async (txn) => {
+                const existing = await txn.get(auditRef);
+                if (existing.exists) {
+                    const productSnap = await txn.get(productRef);
+                    const photoIds = productSnap.exists ? (productSnap.data().photoIds || []) : [];
+                    return { ok: true, already: true, photoIds: photoIds };
+                }
+
+                const productSnap = await txn.get(productRef);
+                if (!productSnap.exists) return { ok: false, status: 404, error: "product-not-found" };
+                const product = productSnap.data() || {};
+                const photoIds = Array.isArray(product.photoIds) ? product.photoIds.slice() : [];
+                if (photoIds.indexOf(photoId) === -1) {
+                    if (photoIds.length >= MAX_PHOTOS_PER_PRODUCT) {
+                        return { ok: false, status: 409, error: "photo-limit" };
+                    }
+                    photoIds.push(photoId);
+                }
+
+                txn.set(productRef, Object.assign({}, product, { photoIds: photoIds }), { merge: true });
+                txn.set(auditRef, {
+                    entryId: requestId, tenantId: ctx.tenantId, actorUid: actorUid, actorRole: ctx.role,
+                    action: "photo-upload", entity: "product-photo", entityId: productId,
+                    before: null, after: { photoId: photoId },
+                    serverTimestamp: FieldValue.serverTimestamp(),
+                    clientTimestamp: body.clientTimestamp || null, requestId: requestId
+                });
+                return { ok: true, photoIds: photoIds };
+            });
+        } catch (e) {
+            console.error("uploadProductPhoto write failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        if (txnResult && txnResult.ok === false) {
+            send(res, txnResult.status || 500, { ok: false, error: txnResult.error });
+            return;
+        }
+
+        send(res, 200, {
+            ok: true, already: !!txnResult.already, photoId: photoId, photoIds: txnResult.photoIds
+        });
+    });
+
+exports.deleteProductPhoto = functions.onRequest(
+    { region: "asia-south1", cors: true },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const token = GatewayLogic.parseBearerToken(req.get("Authorization"));
+        if (!token) {
+            send(res, 401, { ok: false, error: "missing-token" });
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(token);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+        const actorUid = decoded.uid;
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+
+        const productId = String(body.productId || "");
+        const photoId = String(body.photoId || "");
+        const requestId = String(body.requestId || (photoId ? "del-" + photoId : ""));
+        if (!productId || !photoId || !requestId || PhotoCleanup.isReservedAuditId(requestId)) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+        if (!PhotoValidation.isSafePathSegment(productId) || !PhotoValidation.isSafePathSegment(photoId)) {
+            send(res, 400, { ok: false, error: "invalid-request" });
+            return;
+        }
+
+        const ctx = await deriveContext(db, actorUid);
+        if (!ctx) {
+            send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+        const denied = photoAccessDenied(ctx);
+        if (denied) {
+            send(res, denied.status, { ok: false, error: denied.error });
+            return;
+        }
+
+        const tenantRoot = "tenants/" + ctx.tenantId;
+        const auditRef = db.doc(tenantRoot + "/audit_log/" + requestId);
+        const productRef = db.doc(tenantRoot + "/inventory/" + productId);
+
+        // Deliberately tolerant of a missing product doc, unlike uploadProductPhoto's 404 --
+        // the product-delete cascade (InventoryStore.deleteProduct) may call this either before
+        // or after the product's own delete mutation has landed, and Storage cleanup should
+        // proceed either way. Removing an id that's already absent from the array is a no-op,
+        // not an error, for the same "best-effort" reason.
+        let txnResult;
+        try {
+            txnResult = await db.runTransaction(async (txn) => {
+                const existing = await txn.get(auditRef);
+                if (existing.exists) return { ok: true, already: true };
+
+                const productSnap = await txn.get(productRef);
+                let photoIds = null;
+                if (productSnap.exists) {
+                    const product = productSnap.data() || {};
+                    photoIds = (Array.isArray(product.photoIds) ? product.photoIds : [])
+                        .filter((id) => id !== photoId);
+                    txn.set(productRef, Object.assign({}, product, { photoIds: photoIds }), { merge: true });
+                }
+                txn.set(auditRef, {
+                    entryId: requestId, tenantId: ctx.tenantId, actorUid: actorUid, actorRole: ctx.role,
+                    action: "photo-delete", entity: "product-photo", entityId: productId,
+                    before: { photoId: photoId }, after: null,
+                    serverTimestamp: FieldValue.serverTimestamp(),
+                    clientTimestamp: body.clientTimestamp || null, requestId: requestId
+                });
+                return { ok: true, photoIds: photoIds };
+            });
+        } catch (e) {
+            console.error("deleteProductPhoto write failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+
+        // Best-effort Storage cleanup -- errors are logged and swallowed. A leftover unreferenced
+        // object is a storage-cost issue, not a correctness one (design spec). Skipped entirely on
+        // an idempotent replay (txnResult.already) -- the first call already deleted these objects;
+        // deleting again is harmless to Storage itself but pointless work, and more importantly
+        // was firing on EVERY replay call with no bound, which a retried outbox item could do
+        // indefinitely (caught by the "idempotent retry ... no re-delete on replay" test below).
+        if (!txnResult.already) {
+            const envPrefix = storageEnvPrefix(body.env);
+            const mainPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, false);
+            const thumbPath = photoStoragePath(envPrefix, ctx.tenantId, productId, photoId, true);
+            const bucket = admin.storage().bucket(PHOTO_BUCKET_NAME);
+            try { await bucket.file(mainPath).delete(); } catch (e) { console.error("deleteProductPhoto: main object delete failed", e); }
+            try { await bucket.file(thumbPath).delete(); } catch (e) { console.error("deleteProductPhoto: thumb object delete failed", e); }
+        }
+
+        send(res, 200, { ok: true, already: !!txnResult.already, photoIds: txnResult.photoIds });
+    });
+
+// PH3b (design v2, S-B): scheduled drain of `pending_cleanup` markers whose handler sweep failed or
+// crashed. All decisions (due time, backoff, park at PARK_AT, budget, alert logs) live in
+// PhotoCleanup.runCleanupSweep (pure, unit-tested); this only binds it to the three databases, the
+// collection-group read, the shared sweep and the logger. No index: the collection-group read has
+// no filter and no orderBy (design Q-K), the due time is computed in code.
+const CLEANUP_ENVS = ["dev", "test", "prd"].map((name) => ({ name: name, envPrefix: storageEnvPrefix(name) }));
+
+// One env's whole marker collection group, paged (R1). `env` is {name, envPrefix}. Cursor = the
+// previous page's last snapshot; NO orderBy, so Firestore's default document-path order applies.
+async function listPendingMarkers(env) {
+    const db = scopedDb(env.name);
+    const read = await PhotoCleanup.readAllMarkers(async (cursor) => {
+        let q = db.collectionGroup("pending_cleanup").limit(PhotoCleanup.PAGE_SIZE);
+        if (cursor) q = q.startAfter(cursor);
+        return (await q.get()).docs;
+    });
+    return {
+        backlog: read.backlog,
+        entries: read.docs.map((d) => {
+            const data = d.data();
+            return { path: d.ref.path, data: data, createdAtMs: PhotoCleanup.timestampToMs(data.createdAt) };
+        })
+    };
+}
+
+// Parks a marker (kept, never deleted by code). The path came from a snapshot's ref, so it is a
+// real document path even for a malformed marker. Un-park runbook: AGENTS.md.
+async function parkPendingMarker(env, path, reason) {
+    await scopedDb(env.name).doc(path).update({
+        parked: true,
+        parkedAtMs: Date.now(),
+        lastError: String(reason).slice(0, PhotoCleanup.MAX_LAST_ERROR_CHARS)
+    });
+}
+
+// Structured log; `message` becomes jsonPayload.message, the field the PH3B_ALERT log filter matches.
+function cleanupLog(severity, obj) {
+    logger.write(Object.assign({ severity: severity }, obj));
+}
+
+exports.cleanupPendingMarkers = onSchedule(
+    { schedule: "every 10 minutes", region: "asia-south1", timeoutSeconds: 300, maxInstances: 1, retryCount: 0 },
+    async () => {
+        const out = await PhotoCleanup.runCleanupSweep({
+            envs: CLEANUP_ENVS,
+            listMarkers: listPendingMarkers,
+            sweep: (env, tenantId, marker) => sweepProductCleanup(scopedDb(env.name), tenantId, marker),
+            park: parkPendingMarker,
+            now: () => Date.now(),
+            log: cleanupLog
+        });
+        // Per-marker failures never throw (design Q-G): they are in the logs and the retry is the
+        // next run. Only an env-level failure (cannot read a database) fails the run, so Cloud
+        // Scheduler / Logging show it, after every other env has been processed.
+        if (out.envFailures > 0) {
+            throw new Error("PH3b cleanup: " + out.envFailures + " env(s) failed, see PH3B_ALERT logs");
+        }
+    }
+);

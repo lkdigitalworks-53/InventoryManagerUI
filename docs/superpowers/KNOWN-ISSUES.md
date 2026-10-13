@@ -5,6 +5,45 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
+
+**Found on-device (Taher, PR #97 test).** Member `status` set to suspended, then restock a product: toast "Could not
+restock", the stuck list showed one write. After setting the member active and tapping Retry now, the stock batch
+appeared but the product's `stock` in Firestore did not change. Batch and stock disagree.
+
+**Cause (code reading, plus Taher's two on-device confirmations: the toast, and `stock` unchanged in Firestore).**
+`InventoryStore.restock` sends two unrelated writes in parallel: `StockBatchStore.addBatch` (`Gateway.recordMutation`,
+sender `_send`) and `Gateway.recordDelta` (sender `_sendDelta`). A suspended member gets 403
+`{ok:false, error:"no-tenant-context"}` on both. `_send` retries any non-2xx that is not a CAS conflict, so the batch
+stays queued and stuck. `_classifyDeltaResponse` treats a 4xx with a well-formed `ok:false` body as a definitive
+rejection, so the delta is removed from the outbox and its callback gets the failure (which is the toast). Retry now
+then lands only the batch. Not caused by the stuck-writes dialog or state persistence (PR #97 / S2a); those only made it
+visible. Any 4xx on the delta produces the same batch-without-stock state, not just a suspended member.
+
+**Also lost in that path:** the ActivityLog "Restocked" entry and the purchase `TransactionStore` record, because they
+run inside the delta callback. That callback lives in memory (`Gateway._deltaCallbacks`), so even a delta that is only
+retried and then succeeds after a relaunch lands on the server without them.
+
+**Decision (Taher, 2026-09-30): make batch + stock delta ONE atomic operation** (`Gateway.recordOperation`, the C-3
+atomic outbox), so both land or neither does. Documented only; nothing built. Rejected for now: (A) retrying deltas on
+403, which fixes this one path but leaves the two writes independent and the callback loss unchanged.
+
+**Leads for whoever builds it** (not verified, open questions):
+- `functions/lib/operationLogic.js` has `OP_TYPES = ["completeOrder"]`; a `restock` opType needs server logic and a
+  deterministic `opKey` (`OperationKeys.js` has the pattern) so a re-run is exactly-once. This also bears on the
+  RestockDialog double-submit item (ASYNC-REENTRANCY-BUGS C-4).
+- The batch id comes from `StockBatchStore.nextBatchId`, a network mint that can itself fail (`_queuePendingMint`). Decide
+  whether the id is minted before the operation or by the server.
+- The ActivityLog / purchase record should follow the operation's applied signal, not an in-memory callback, or the
+  relaunch loss stays.
+- Supplier resolution (`_resolveSupplierId`) stays a separate step before the operation; its failure handling is unchanged.
+- Not checked: other places that pair `addBatch` with `recordDelta` (for example product create with opening stock) and
+  may have the same shape.
+
+**Until built:** to force a stuck write in device tests use a single-write action (edit a product name), not Restock.
+
+---
+
 ## Async re-entrancy / double-submit bug class — tracked separately, severity-ranked
 
 Found via the 2026-09-14 order-completion double-submit fix (PR #70): a whole *class* of bugs where
@@ -102,6 +141,12 @@ Retry/Discard, with Discard rolling back to the outbox item's `before`; (C) have
 Firestore error codes to distinct HTTP statuses (today every exception is `500 write-failed`) so the client
 can classify precisely instead of counting.
 
+**Update 2026-09-28 (part C landed, branch `fix/2026-09-28-gateway-write-error-classification`):** (C) is done, but
+NOT as distinct statuses: the status stays 500 and the body `error` is `write-rejected` / `write-unavailable` /
+`write-failed` (a 4xx would make the delta and operation senders drop the write, SKILLS Skill 74). The client labels
+stuck writes the server rejected ("N change(s) rejected by the server. Still retrying."). Still open: (B) park +
+Retry/Discard (Taher's Q2-Q4: re-pull on Discard, persisted parked flag, tappable caption -> dialog).
+
 ---
 
 ## Delete: staff delete has the identical missing-UI gap as products/orders had — RESOLVED 2026-09-21
@@ -165,6 +210,11 @@ piecemeal; each narrow fix duplicates logic that belongs in one place. Needs its
 probably a shared `authorize(ctx.role, entity, action)` check called once per handler, sourced from
 the same role/action rules `DataModel.qml`'s guards already encode client-side, so the two stay in
 sync by construction rather than by two people remembering to update both.
+
+**Update 2026-09-30 (photos design session):** the two product-photo endpoints (`uploadProductPhoto`,
+`deleteProductPhoto`) get a narrow owner/admin gate, mirroring `AuthStore.canManageInventory`. This is partial
+hardening only: a staff token can still edit or delete the product itself through `recordMutation`. When the general
+`authorize(ctx.role, entity, action)` check above is built, replace the photo gate with it instead of keeping two copies.
 
 ---
 
@@ -490,3 +540,116 @@ production code is unaffected; `Main.qml` always wires a real `Logic` instance a
 "function")` in both wrappers, rather than touching any of the 4 unrelated pre-existing test
 files. New regression test added to `tests/tst_DataModel_restoreFifoSafeGuards.qml` reproducing
 the exact no-dispatcher setup.
+
+---
+
+## Photos PH3: accepted limits of the server cascade — BUILT 2026-10-03, PH3b merged (not yet deployed), PH4 client BUILT 2026-10-06 (items 1, 4, 5; item 2 dropped, `Qt.uuid` missing; see the photos design)
+
+Built: owner/admin gate on both photo endpoints (the narrow gate from the 2026-09-30 update above), `pending_cleanup`
+marker written in the product-delete transaction, post-commit prefix sweep, F3 upload preflight (no orphan objects on
+404/409), strict id whitelist. Design: `specs/2026-09-30-photos-s3-s4-design.md`. Accepted, on purpose:
+
+1. **F5 (strict CAS includes `photoIds`).** An edit whose `before.photoIds` is stale (a photo was confirmed on the
+   server between edit and drain) gets 409 and the user's edit is parked. Pinned by F37-F39. Relaxing it needs the
+   server to preserve `photoIds` itself; not done.
+2. **Residual upload race.** A product deleted between the F3 preflight read and the Storage write can leave one orphan
+   object pair (the transaction then returns 404). Pinned by F10. The marker sweep does not catch it (the marker was
+   written before the upload). PH3b's scheduled sweeper is the intended fix.
+3. **Failed sweep is only retried by PH3b.** Until the scheduled function is DEPLOYED (built 2026-10-05, see "PH3b scheduled sweeper: accepted limits"), a sweep that fails (Storage outage)
+   leaves the marker with `attempts` and `lastError` and nothing re-drains it.
+4. **Batch/ops reject inventory deletes** (400 `cascade-delete-not-allowed`, whole request, zero writes): they cannot
+   write the marker without breaking their write-ceiling arithmetic. No client sends one today (bulk import is
+   create-only). Revisit when an atomic product delete is built.
+5. **Existing e2e `test_upload_rejects_a_productId_containing_a_path_traversal_slash`** still expects `invalid-request`;
+   the whitelist did not change that error code.
+6. **E2E helper vacuity (found 2026-10-03, PR #113 CI).** `E2EHelpers.pollEmulatorDoc` starts with `latest = null`, so a
+   `d === null` ("doc is absent") predicate passed on the first tick, before any response arrived. It hid a real failure:
+   the cascade test deleted from a client cache with no `photoIds` (photos were uploaded by direct POST), the server
+   returned 409 and the Gateway dropped the delete as stale (same family as item 1). Fixed for the photos tests via the new
+   optional `requireResponse` argument (absence checks must pass `true`). **Still vacuous, deliberately not touched in this
+   PR:** `tst_InventoryE2E.qml` (the product-delete check, ~line 262) and `tst_BulkImportChunkingE2E.qml` (~line 154). Making
+   `requireResponse` the default would make them honest but could turn them red; do it as its own small PR.
+
+---
+
+## Product delete is destroy-before-ack (found 2026-10-04, PR #113 device test) — photo part FIXED, batches/activity/queue NOT
+
+**Symptom:** device A uploads a photo while device B deletes the product (9 photos). Result: product still listed, 3 photos shown,
+4 objects in Storage, Activity says deleted, batches gone.
+
+**Root cause:** `InventoryStore.deleteProduct` starts irreversible side effects without waiting for the server's answer to the
+product delete. A's upload changes `photoIds`, B's CAS `before` is stale, the delete 409s and the product survives (the
+`_onMutationConflicted` restore is the "reappeared"). Meanwhile B had already sent one `deleteProductPhoto` per cached photo
+(PH4 item 3 of the design, not yet built in PH3-only PR #113), which removed ids and objects from the surviving product. The
+server upload path is NOT at fault: it 404s on a missing product.
+
+**Fixed (branch `fix/2026-10-04-pr113-upload-delete-race`):** removed the client photo loop; photos are removed only by the server
+sweep after a committed delete. Pinned by e2e `test_stale_delete_409_keeps_the_product_and_every_photo`.
+
+**BC1 (server) implemented 2026-10-05 (branch `feat/2026-10-05-bc1-server-batch-sweep`, not yet deployed):** after a committed
+product delete the server now also removes the product's `stock_batches` (queried server side by `productId`, chunks of 100,
+one `cascade~{productId}~{batchId}` audit entry per batch) before it sweeps the Storage prefix, driven by the same
+`pending_cleanup` marker. The marker now carries `actorUid`/`actorRole`/`requestId`. `recordMutation` gained an owner/admin gate
+on `inventory` delete (403 `role-not-allowed`). Items 1-3 below stay open until BC2 (client) lands AND BC1 is deployed.
+**PH3b review 2026-10-05 (design only, nothing changed in code):** `index.js` `updateMarker` uses `set(patch, {merge:true})`, which re-creates a marker another sweeper just deleted as a partial doc. Dormant today (one sweeper); it becomes real the moment PH3b runs beside the handler, so the PH3b slice S-B fixes it with `update()`. Do not deploy a scheduler without that fix.
+**PH3b second review 2026-10-05 (PR #125):** (R1, fixed in design) a single unordered `limit(500)` read would let parked markers starve new ones; now paged (`PAGE_SIZE` 200 x `MAX_PAGES` 10). (R2) PRODUCTION BLOCKER: the Cloud Monitoring alert on `PH3B_ALERT` logs must exist and pass test DV-9 before any production data (runbook `specs/2026-10-05-ph3b-alert-runbook.md`). Alerts reach email / Google Cloud console mobile app, not the Karobar app.
+**New limits created by BC1:** (a) a failed batch sweep leaves the marker and WAITS for PH3b (no replay re-sweep, Q-BC-9 = no);
+batches are money data, so PH3b must not silently abandon a capped marker. (b) Until BC2 ships, an old client still sends its own
+`stock_batch` deletes; they answer 409 `current: null` after the sweep (harmless, no toast). (c) A direct token call by
+manager/staff to delete a product now gets 403 (the UI never sends it). (d) PR #118 review C1: the `cascade~` audit-id prefix is reserved (400 `invalid-request-id`); `recordMutation` / `recordDelta` still do NOT validate the rest of `requestId` / `entityId` (no `/` or length check, unlike `operationLogic.isSafeDocId`): pre-existing, flagged here, fix on its own branch.
+
+**Still open, same family (items 1-3 close with BC2; decide before PH4):**
+1. Batch deletes are sent before the product delete is acked -> after a 409 the product has no stock batches. Options: (a) gate
+   batch deletes on a Gateway "applied" signal (new ack plumbing, per-mutation); (b) one atomic `recordOperation` for product +
+   batches (the delete roadmap item, larger, also removes the `photoIds` CAS problem); (c) accept for dev. (b) is correct, (a) is a patch.
+2. `ActivityLog.record("product_deleted")` is written locally at click time even when the delete is rejected.
+3. `PhotoQueue.discard` of this device's queued photos runs before the ack: a rejected delete loses the user's pending photos.
+4. A delete 409s on any concurrent `photoIds` change (F5 family); the user retries after the restored row appears.
+
+## PR #118 device test (2026-10-04): four observations. Root causes from CODE READ, not reproduced on a device
+
+**Setup:** add a product with a description over 1 MiB; edit it; wait 3 min; restock it; delete it.
+
+1. **Edit of a >1 MiB description is rejected 3 min later and the glass header shows the rejected list.** Not a new bug: the client has no size cap on `description` (nor on any text field) and the server write is refused (Firestore documents are capped at about 1 MiB; exact status/response UNVERIFIED), so the write is parked as a server rejection (S2b) and listed. Open: decision D1 (cap length client-side and server-side).
+2. **Restock confirm: dialog never closes, Confirm and Cancel dead, other fields still editable.** `RestockDialog.onPrimaryClicked` sets `busy = true` and clears it only in the callback of `InventoryStore.restock` -> `Gateway.recordDelta`. The parked edit from (1) HOLDS the key `inventory/{productId}` (`OutboxStore.dueItems`: a parked item claims its keys; later writes for the same record wait behind it), so the restock delta is never due, its callback never fires, `busy` stays true. Meanwhile `StockBatchStore.addBatch` runs in parallel on a different key and DOES land: **a batch exists but the product's stock was never incremented** (stock vs batch ledger drift). Open: decision D2.
+3. **Delete while the edit is parked: batches deleted, product and rejected list intact.** Same held key: the product delete waits behind the parked edit and is never sent, while the per-batch `stock_batch` deletes (other keys) go out at once. This is exactly the destroy-before-ack bug; BC2 (this branch) stops sending batch deletes, so nothing is destroyed on the server any more. New consequence (decision D3): the product vanishes from the local list while its delete sits behind the parked write; if the user then discards the parked edit, the delete goes out with the stale local `before` (which still contains the rejected edit) and answers 409, so the product returns (with its batches, after the resync) and the user must delete again.
+4. **Rejected list stays after the delete.** By design: a parked write is released only by Retry or Discard (S2b/S3), and a later delete of the same record does not touch it.
+
+**Status (updated 2026-10-04, PR #119):** (3) fixed in the batch part by BC2 (BC1 deployed per Taher). (1) **accepted as is** (D1: no size cap in the app). (2) and (3-consequence) **fixed by refusing up front** (D2, D3, commit `2362d9d`): restock and delete show "Fix or discard the stuck change for this product first" while the product has a parked write, and write nothing. **Order completion (2026-10-04, PR #121, decision B):** `_tryCompleteOrder` now refuses up front when a line's product has a parked write (same message; order stays `pending`; nothing consumed or queued). Cause (code read, repro = red-by-design E2E in `tst_OrdersE2E.qml`): the parked item claims `inventory/<id>` in `OutboxStore.dueItems`, so `deductStock`'s delta never sends, its callback never fires, `_completingOrderIds` stays set and FIFO batches drift from `product.stock`. Cost accepted by Taher: a counter sale is blocked until the parked edit is Retried or Discarded (advice was to bypass). **Still open (same hang, UNVERIFIED, not guarded):** `_tryAdjustOrder` (returns/exchanges: `deductStock`, `creditStockNoBatch`), `completeImportedOrder`, and the `creditStockNoBatch` failure-path credit inside `_afterAllDeltas`. A product with a parked write cannot be restocked, deleted or sold until the user Retries or Discards it (intended).
+
+
+## Unsynced product edit (PR #121 follow-up, 2026-10-05)
+- **Fixed in `feat/2026-10-05-unsynced-edit-ledger` (CI unverified):** a product edit's `field_change` / `stock_adjustment` rows and its Activity entry no longer register when the server rejects the edit; a sale is refused while the product has any queued edit.
+- **S4 done in PR #122 (CI unverified):** server reads overlay queued AND parked edits (changed fields only) and the product card / edit dialog show a "Not synced" / "Rejected" badge. A queued CREATE is not injected into a read after a relaunch (the product is missing from the list until the create syncs): roadmap.
+- **Open (roadmap, decision Q3):** `created`, `purchase`, `photo_change`, `sale`, `return`, `price_adjust` ledger rows still register before their parent write is acked (same bug as device observation 1). Needs `recordEdit` + `dependsOn` per call site.
+- **Open:** Activity `product_updated` for an edit is in-memory until the ack; an app death between edit and ack drops the entry (the ledger rows survive).
+- **Fixed in PR #122 (CI unverified):** a product doc over 1 MiB (`DocLimits`, estimate with a 4 KiB reserve) is refused before anything is queued; the dialogs pre-check. Gap: bulk import (`ImportPreviewDialog`, `recordMutations`) has no size check; an oversize row is still rejected by the server and removed by `_onBatchMutationFailedPermanently`.
+- **Verified by code read (PR #122):** every send path (single, batch, delta, operation) ends in `Gateway._reschedule()` after a conflict or permanent drop, so `pruneOrphans` runs. Not run.
+- **Open (found in PR #121 final sweep, 2026-10-05):** (a) the sale guard counts a queued CREATE and a queued edit made OFFLINE as "unsynced": an offline edit, or a product added offline, cannot be sold offline until it syncs (decision Q1 = Z, accepted; real cost for an offline-first counter). (b) Device-test cases 4.2, 4.3, 4.4, 4.10 of `2026-10-05-unsynced-edit-ledger-test-plan.md` forced a server rejection with a > 1 MiB description; the client cap now refuses that up front, so no verified on-device way to force a rejection exists. Pick one before testing.
+
+
+## PH3b scheduled sweeper: accepted limits (BUILT 2026-10-05/06, NOT DEPLOYED)
+
+Code: S-A #126, S-B #127 (merged); e2e S-C (this branch). Found in the PR #126/#127 final sweeps; none changed in code on purpose.
+
+- **M1 env order.** Envs run `dev`, `test`, `prd` and share ONE 240 s budget. Many slow dev/test sweeps in a single run could defer `prd` markers to the next run. Needs many slow sweeps at once; backoff caps retries at 30 min. One-line fix exists (`["prd","test","dev"]`, plus edits to ~17 order-sensitive test assertions). Decision: keep, reopen if `deferred` is ever non-zero for `prd` in the logs.
+- **M2 no per-sweep timeout.** One sweep started at ~239 s can reach the 300 s function timeout. Safe: every step is idempotent, `attempts` is not bumped, the next run retries.
+- **M3 parked markers are never deleted** and count toward `MAX_SCAN` (2000). Only an unrealistic number could hide new ones; ERROR `PH3B_ALERT backlog` fires first. Humans clear parked markers (un-park or delete).
+- **M4 false `park-failed` alert.** If `updateMarker` hits NOT_FOUND at attempt 11 (a concurrent sweeper deleted the marker) `park` also NOT_FOUNDs and raises a false alert. Needs 11 failures plus a race.
+- **M5 summary `parked`** counts already-parked + capped markers, not newly parked malformed ones (those are in `malformed`).
+- **E2E cannot prove (DV-1..DV-9 on a real project do):** the no-index claim, cursor-without-`orderBy` on the real Admin SDK, structured-log field names in Cloud Logging, Cloud Scheduler location for `asia-south1`, `maxInstances` on a scheduled function, the alert policy.
+- **Deploy drift:** the P3 `update()` fix is in `recordMutation`'s shared module. Deploy ALL functions, not only the new one.
+- **Production blocker (Q-L):** the log-based alert (runbook `specs/2026-10-05-ph3b-alert-runbook.md`) must exist and DV-9 pass before production data relies on the sweeper.
+
+## PR #133 review (2026-10-07): two accepted limits of "row gone -> discard queued photos"
+
+1. **RESOLVED 2026-10-08 (Taher chose option b, this PR): a 404 is no longer judged by status only.** The text below is the original limit, kept for the record; `PQL.shouldDiscardOnFailure` now also requires the body error `product-not-found` (`PQL.errorCodeOf`). The decision now lives in `PhotoQueue._failUpload` (unit-tested since the PR #138 sweep); only the XHR plumbing is device-only.
+   **Accepted limit introduced by R1 (PR #138 sweep):** a 404 WITHOUT the `product-not-found` body (misrouted/undeployed endpoint, or a body lost by the QTBUG-49896 status snapshot) for a product whose row is gone from the COMPLETE local list parks a `failed` queue item that no tile shows (`ProductPhotoGallery` only lives in the product dialog, nothing listens to `photoUploadFailed`). It kept its local files until sign-out (`PhotoQueue.clear()`). **FIXED 2026-10-12 (PR #138 sweep part 2, O1, Taher asked for it):** `PhotoQueue.purgeOrphanedFailures()` discards `failed` items of the signed-in identity whose row is absent, run by `InventoryStore.onListCompleteChanged` only when the list is complete (never during paging, a fetch in flight or a reset). Accepted trade-off: R1's body check still governs the immediate 404 answer, but the later purge relies on the row-gone check alone, so a bad local list that reports complete without a live product could lose a failed photo (its local file included). The log line `404 without product-not-found, keeping photo` and `[PhotoQueue] purged N failed photo(s) whose product is gone from the complete list` show it on device. Same sweep fixed O2 (a late 2xx or failure report after `PhotoQueue.clear()` could emit `photoUploaded` under the next account: both paths now require the item to still be `uploading`) and O3 (a timeout firing both `onreadystatechange` and `ontimeout` counted the breaker twice: same guard).
+   Original: **A 404 is judged by status only.** `PQL.shouldDiscardOnFailure(404, hasProduct === false)` never reads the response body. The server's real answer is `{error: "product-not-found"}` (`functions/lib/photoCleanup.js`, `functions/index.js`), but a misrouted or undeployed endpoint also answers 404. `InventoryStore` pages 50 rows at a time and the queue drains at startup, so a product that is queued but not yet loaded counts as "gone": the photo and its local file would be discarded and cannot be recovered. (That partial-list case was closed on 2026-10-07 by `listComplete`, PH4 follow-up 2; what R1 still protects against is a misrouted endpoint plus a row truly absent from the complete list.) Accepted while everything is dev state. Fix before production: also require the body error `product-not-found` (about 3 lines in `PhotoQueueLogic.js` plus the Node mirror and cases). Decision for Taher, see the review note.
+2. **`current: null` on a conflict means "row gone".** Server side that is exact (`gatewayLogic.js`: `currentSnap.exists ? data : null`). Client side `Gateway._parseMutationConflict` also maps a malformed 409 body with no `current` key to null, which would purge queued photos and show the "already deleted" toast. The server always sends the key, so only a proxy or hand-built response could trigger it. Gateway.qml's header comment now states the real contract.
+
+## Pre-PH5 tenants are unusable after PH5 (accepted, Taher 2026-10-08)
+PH5 removed the product `photoUrl`/`photoUpdatedAt` fields from the client. Server CAS compares whole documents, so any product doc created before PH5 (all carry `photoUrl:""`, `photoUpdatedAt:""`) 409s on every edit or delete. Dev environment only; every PR is tested on a new tenant. If an old tenant ever matters: either recreate it or add server-side tolerance for the two keys (design Q-P5-3 option d). Pinned by `functions/test/gatewayLogic.test.js` F42. Spreadsheet exports from before PH5 have a 15th "Photo URL" column; the importer ignores it silently.
+
+## Spreadsheet import is positional; a pre-PH5 15-column file or template imports shifted (accepted, Taher 2026-10-08)
+`XlsxService.cpp` `readSheet` reads column N and labels it `kProductHeaders[N-1]`; the file's header row is never read and there is no column-count check. After PH5 a file exported or a template downloaded BEFORE PH5 (Photo URL in column 11) imports with Supplier = the URL text (a bogus supplier is created on confirm), Size = Supplier, Taxable = Size, Tax % = Taxable, old Tax % ignored. No warning. Accepted: dev only, fresh install each time, always export first and import later from the same build. Rule for users: never import a file or template made by an older build. If this ever matters: header-row check in `readSheet` (rejects a mismatched file; also covers the orders and staff sheets that share it). Review PR #137, finding R1.

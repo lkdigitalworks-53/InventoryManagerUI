@@ -27,7 +27,24 @@ Retry/Discard for a stuck write, and server-side error classification. Details i
 **Status 2026-09-28: decided, next up.** Remaining scope is (C) server-side error classification, then (B) park +
 Retry/Discard. Taher chose **C first** (client still never drops), Discard = **re-pull from Firestore**, parked flag
 **persisted**, UI = **tappable header caption -> dialog**. Trace, trade-offs and decisions:
-`docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`. No code yet.
+`docs/superpowers/specs/2026-09-28-gateway-stuck-write-retry-discard-options.md`.
+
+**Status 2026-09-28 (later): part C implemented, PR pending review.** Taher chose option B for the signal: status stays
+500, body `error` = `write-rejected` / `write-unavailable` / `write-failed` (distinct 4xx would make the delta/operation
+senders drop the write, Skill 74). Client labels rejected stuck writes in the header caption; nothing dropped.
+Design: `docs/superpowers/specs/2026-09-28-gateway-write-error-classification-design.md`. **Next: (B) park +
+Retry/Discard.**
+
+**Status 2026-09-29: part B scoped, not built.** Four sequential slices (dialog + Retry-now, park + persist, Discard + resync,
+cleanup). Two corrections to earlier notes: Party / Category / OrderChannel never go through `Gateway`, so they are out of B;
+the existing `syncFromFirebase()` full resync is the Discard re-pull. Plan and open decisions:
+`docs/superpowers/specs/2026-09-29-gateway-park-retry-discard-plan.md`.
+
+**Status 2026-09-29 (later): part B slice S1 implemented, PR pending review.** Tappable header caption -> "Changes not
+syncing" sheet -> per-row Retry now (`OutboxStore.retryNow`, `Gateway.stuckRows/retryStuck`, `DescribeItem.js`). Retry
+keeps the stuck flag on purpose (design D1). Design: `docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`.
+**Decision P5 (2026-09-29): S2 also persists the stuck flag for non-terminal writes** (stuck state was lost on relaunch, seen on device).
+**S2a (persist stuck state, P5) merged via #97.** **S2b (park rejected writes) implemented on `feat/2026-09-30-s2b-park-terminal-writes`, CI pending** (Q-S2b-1 A state rule, Q-S2b-2 A parked blocks same-record writes). **Next: S3 (Discard + resync); ship S2b + S3 to `main` together.** **S3 implemented 2026-10-01 (`feat/2026-10-01-s3-discard-parked-writes`, CI pending; Taher chose A on Q-S3-1..5). Next: S4 cleanup, then merge #106 + S3 together:** **UPDATE 2026-10-04: #106, #109 and S3 (#110) are all merged to `main`; only S4 cleanup (docs, own PR) remains for item 1.** `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`.
 
 ## 2. Staff delete has no row-level button — MEDIUM
 
@@ -79,10 +96,22 @@ suite caught pre-merge, and two adjacent-but-out-of-scope findings: `KNOWN-ISSUE
 (`feature/2026-09-21-product-photos-firebase-storage`) works; Taher expects it to merge within days. Queued as the next
 priority after item 1's C and B, and pulled forward once that branch lands. It is an on-device check, not a build.
 
-`InventoryStore.deleteProduct()` calls `StorageService.deleteProductPhoto()`, guarded in a
-try/catch. Correct by code trace, but **not confirmed on-device** — no Storage plan is enabled
+`InventoryStore.deleteProduct()` calls `StorageService.removeProductPhoto()` per `photoIds` entry (renamed by the photos PR;
+this text said `deleteProductPhoto()`), guarded in a try/catch. Correct by code trace, but **not confirmed on-device** — no Storage plan is enabled
 in this environment right now, so there's nothing to actually verify against. Re-test once a
 Storage plan is active; until then this is a known verification gap, not a known bug.
+
+## 5. Product delete destroys batches, Activity entry and queued photos before the server acks — HIGH (data integrity)
+
+Found 2026-10-04 on the PR #113 device test. The photo part is fixed (client loop removed, server sweep after a committed delete).
+Still open: `InventoryStore.deleteProduct` sends the batch deletes, writes the Activity entry and discards queued photos at click
+time. A 409 on the product delete (any concurrent edit, incl. `photoIds`) then leaves a product with no stock batches.
+
+**Status 2026-10-05: design reviewed post-merge (2 High, 3 Medium findings, text fixed); Q-BC-1..7 DECIDED (Taher: defaults, option d); Q-BC-8 (server owner/admin gate: yes) and Q-BC-9 (replay re-sweep: no, PH3b covers it) DECIDED 2026-10-05; order BC1 -> PH3b -> PH4 rest.** Recommended: server removes the batches after the product
+delete commits, reusing the PH3 `pending_cleanup` marker (not the atomic `recordOperation` the earlier notes pointed at: 199-batch
+cap, client batch list may be incomplete, `recordOperation` has no production caller on `main`). Slices BC1 server, BC2 client.
+**BC1 (server) implemented 2026-10-05** on `feat/2026-10-05-bc1-server-batch-sweep` (491 functions tests green in-session after the PR #118 review fix, 483 before; CI green on the PR; NOT deployed). **BC2 (client) waits for BC1 merged AND deployed** (Q-BC-6).
+`docs/superpowers/specs/2026-10-04-product-delete-batch-cascade-design.md`; test plan `test-plans/2026-10-04-product-delete-batch-cascade-test-plan.md`.
 
 ## Closed, not pending — recorded here so it isn't re-raised
 
@@ -90,3 +119,10 @@ Storage plan is active; until then this is a known verification gap, not a known
   Dev environment only; Firestore gets cleared and re-verified from scratch each time, so there's
   no real backlog of pre-existing orphaned batches to backfill. Revisit only if this ever matters
   in a real environment with production data predating this fix.
+
+**PH4 client BUILT 2026-10-06 (403 terminal, L1 breaker wait, Q13 toast; uuid ids dropped, `Qt.uuid` is not available), awaiting CI/review; PH3b deploy + DV-1..DV-9 still open (DONE 2026-10-12, see the PH4 R1 paragraph below).** **Order after PR #122 (Taher, 2026-10-05): PH3b, then PH4, then the rest of the photos work (PH5), then the atomic-operation work (which also carries the remaining ledger kinds, see `plans/2026-09-20-atomic-operation-outbox.md`).** BC1 / BC2 are merged (#118, #119). **PH3b design v2 reviewed 2026-10-05** (v1 schema dropped: legacy markers invisible, index not deployable to dev1/test, `updateMarker` zombie race); ALL decisions taken 2026-10-05 (Q-J park at 12, Q-K no index, Q-L no alerting = production-publish blocker); ready for S-A. Test plan `test-plans/2026-10-05-ph3b-scheduled-cleanup-test-plan.md`.
+
+**PH5 design 2026-10-08 (branch `docs/2026-10-08-ph5-legacy-photourl-design`):** facts traced, Q-P5-1..6 asked with recommended defaults, NOT yet answered. Key finding: server CAS is whole-document (`_deepEqual`), so dropping `photoUrl`/`photoUpdatedAt` client-side 409s every pre-PH5 product (fresh tenants unaffected). `specs/2026-10-08-photos-ph5-legacy-removal-design.md`, `test-plans/2026-10-08-photos-ph5-test-plan.md`.
+**PH5 implemented 2026-10-08** on `feat/2026-10-08-photos-ph5-legacy-removal` (decisions: remove export column, silent ignore on import, fresh tenants only; CI pending). Next on the order: the atomic-operation work.
+
+**PH4 R1 (404 body check) 2026-10-08/09, PR #138 (`feat/2026-10-08-photos-ph4-r1-404-body`):** a queued photo is discarded on a 404 only when the body says `product-not-found` AND the row is gone from the COMPLETE local list. Final sweep 2026-10-09 (same branch): failure tail of `PhotoQueue._upload` is one tested function `_failUpload`; the invisible `failed` item (misrouted endpoint + row gone) is now purged at the next complete list load (O1), plus O2/O3 fixed (2026-10-12, KNOWN-ISSUES PR #133 item 1). **Device status 2026-10-12 (Taher reported done, ticked in the test plans):** R1, PH4, PH3 server cascade, PH3b deploy + DV-1..DV-9, PH5, S3, S2b, batch cleanup, product/order delete UI. **PH5 e2e E01-E03 (+E03b) written 2026-10-12** (`test/e2e/tst_ProductLegacyPhotoUrlE2E.qml`, CI is the proof). Still open: re-check of the O1 purge and the O2 sign-out case on device (R1 'row gone' was tested on the pre-O1 build), atomic-operation work.

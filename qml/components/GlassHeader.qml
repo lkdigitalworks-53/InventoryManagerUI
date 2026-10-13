@@ -81,12 +81,24 @@ Rectangle {
 
                 visible: !app.isOnline || _stuck || (root.subtitle.length > 0 && root.greeting.length === 0)
                 text: !app.isOnline ? qsTr("App is offline, no operation allowed.")
-                    : _stuck ? qsTr("%n change(s) not syncing. Still retrying.", "", app.syncStuckCount)
+                    : _stuck ? (app.syncStuckTerminalCount > 0
+                        ? qsTr("%n change(s) rejected by the server. Tap to retry or discard.", "", app.syncStuckTerminalCount)
+                        : qsTr("%n change(s) not syncing. Still retrying.", "", app.syncStuckCount))
                     : root.subtitle
                 font.pixelSize: sp(Constants.fsCaption)
+                font.underline: app.isOnline && _stuck
                 color: (!app.isOnline || _stuck) ? Constants.danger : Constants.textSecondary
                 elide: Text.ElideRight
                 Layout.fillWidth: true
+
+                // Tap the stuck-writes line to see which changes and retry them.
+                // Margins widen the touch target past the one-line caption.
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -dp(8)
+                    enabled: app.isOnline && parent._stuck
+                    onClicked: app.openStuckWrites()
+                }
             }
         }
 

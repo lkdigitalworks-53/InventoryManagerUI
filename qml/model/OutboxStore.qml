@@ -4,6 +4,7 @@ import QtCore
 
 import "../helper/SettingsPath.js" as SettingsPath
 import "../helper/SendPolicy.js" as SendPolicy
+import "../helper/StuckWrites.js" as StuckWrites
 
 // Durable outbox for compliance-gateway calls (P0). Every mutation routed
 // through Gateway is enqueued here FIRST (persisted to QSettings), then sent.
@@ -29,6 +30,17 @@ import "../helper/SendPolicy.js" as SendPolicy
 //   floors: {field: minValue}, clientTimestamp, enqueuedAt, attempts,
 //   nextAttemptAt } — distinguished from a plain item by having `deltas`
 // instead of `before`/`after`.
+// Any item may also carry the stuck-write state (P5, see StuckWrites.js):
+//   failures (server-side failure count), stuck: true, terminal: true
+// Absent = never failed that way; old saved items load without them.
+// S2b: an item that is stuck AND terminal is PARKED (StuckWrites.isParkedItem):
+// dueItems/nextDueInMs/wakeStuck skip it and it holds its keys, so later writes
+// for the same record wait behind it. Only retryNow() releases it.
+// Any item may carry `dependsOn: <requestId of another queued item>` (PR #121 follow-up):
+// a HELD item. dueItems/nextDueInMs never send it while dependsOn is set. markAcked(parent)
+// clears it (releases the dependents) in the same save that removes the parent; any other way
+// the parent leaves the queue (discard, conflict, permanent drop) orphans the dependents and
+// pruneOrphans() deletes them, so a ledger row is never sent for an edit the server never took.
 // dueItems/markSent/markFailed/nextDueInMs only key off requestId, so all
 // three shapes flow through them unchanged — only enqueue/enqueueBatch/
 // enqueueDelta differ, in how they build the item and (new this session)
@@ -84,6 +96,7 @@ QtObject {
             }
         }
         _refresh()
+        pruneOrphans()
     }
 
     function _save() {
@@ -169,9 +182,12 @@ QtObject {
         var nowMs = Date.now()
         var arr = items.slice()
 
-        for (var i = 0; i < arr.length; ++i) {
+        // A call that depends on another item is never merged into anything (it is a held
+        // ledger row with its own identity), and nothing merges into it (unique entityId).
+        for (var i = 0; !call.dependsOn && i < arr.length; ++i) {
             var candidate = arr[i]
             if (candidate.items || candidate.deltas || candidate.ops) continue // batches/deltas/operations aren't merge targets for a plain call
+            if (candidate.dependsOn) continue
             if (candidate.entity !== call.entity || candidate.entityId !== call.entityId) continue
             var key = _keyFor(call.entity, call.entityId)
             if (_inFlightKeys[key] === candidate.requestId) continue // this IS the dispatched one — don't touch it
@@ -196,6 +212,7 @@ QtObject {
             attempts: 0,
             nextAttemptAt: nowMs
         }
+        if (call.dependsOn) item.dependsOn = call.dependsOn
         arr.push(item)
         items = arr
         _save()
@@ -310,9 +327,16 @@ QtObject {
         // not both go out in the same drain, or they'd race each other.
         var claimed = {}
         for (var i = 0; i < items.length; ++i) {
+            var keys = _keysForItem(items[i])
+            if (StuckWrites.isParkedItem(items[i])) {
+                // Never sent, but its keys stay claimed: a later write for the same
+                // record must not pass it (Q-S2b-2 A).
+                for (var pk = 0; pk < keys.length; ++pk) claimed[keys[pk]] = true
+                continue
+            }
+            if (items[i].dependsOn) continue // held behind its parent edit (or orphaned, see pruneOrphans)
             if ((items[i].nextAttemptAt || 0) > nowMs) continue
             if (_isItemBlocked(items[i])) continue
-            var keys = _keysForItem(items[i])
             var clash = false
             for (var k = 0; k < keys.length; ++k) if (claimed[keys[k]]) { clash = true; break }
             if (clash) continue
@@ -324,13 +348,52 @@ QtObject {
 
     function hasPending() { return items.length > 0 }
 
+    // Is any queued outbox item (single, batch, or delta) still pending for
+    // this entity+entityId, in flight or not? Added for PhotoQueue.qml
+    // (2026-09-21 photos feature, Trap 1 in the design spec): a photo for a
+    // product created offline must wait until that product's own "create"
+    // mutation has actually landed server-side, or uploadProductPhoto would
+    // 404. Deliberately checks the WHOLE queue (not just dueItems()) — an
+    // item that's due-but-blocked or not-yet-due for this entity still means
+    // "not landed yet" just as much as one currently in flight.
+    function hasPendingForEntity(entity, entityId) {
+        var key = _keyFor(entity, entityId)
+        for (var i = 0; i < items.length; ++i) {
+            var keys = _keysForItem(items[i])
+            if (keys.indexOf(key) !== -1) return true
+        }
+        return false
+    }
+
+    // D2/D3 (PR #119): is a PARKED item (stuck + the server said "rejected", waiting for the
+    // user to Retry or Discard) queued for this entity+entityId, in a single, batch, delta or
+    // operation item? Same keying as hasPendingForEntity. Anything written for that record now
+    // would queue behind the park and cannot be sent until the user clears it.
+    function hasParkedForEntity(entity, entityId) {
+        var key = _keyFor(entity, entityId)
+        for (var i = 0; i < items.length; ++i) {
+            if (StuckWrites.isParkedItem(items[i]) && _keysForItem(items[i]).indexOf(key) !== -1) return true
+        }
+        return false
+    }
+
     // Soonest nextAttemptAt across all items, or -1 if empty. Gateway uses
     // this to schedule its drain timer without busy-polling.
     function nextDueInMs() {
         if (items.length === 0) return -1
         var nowMs = Date.now()
         var soonest = -1
+        var held = {} // keys held by a parked item: what waits behind it is not due
         for (var i = 0; i < items.length; ++i) {
+            var keys = _keysForItem(items[i])
+            var behind = false
+            for (var k = 0; k < keys.length; ++k) if (held[keys[k]]) behind = true
+            if (StuckWrites.isParkedItem(items[i])) {
+                for (var k2 = 0; k2 < keys.length; ++k2) held[keys[k2]] = true
+                continue
+            }
+            if (behind) continue
+            if (items[i].dependsOn) continue // held: not due until its parent is acked (no timer spin)
             var due = Math.max(0, (items[i].nextAttemptAt || 0) - nowMs)
             if (soonest < 0 || due < soonest) soonest = due
         }
@@ -343,6 +406,89 @@ QtObject {
             if (items[i].requestId !== requestId) arr.push(items[i])
         items = arr
         _save()
+    }
+
+    // The server ACKED `requestId`: remove it AND release every item held behind it
+    // (dependsOn cleared), in ONE items assignment and ONE _save(). Atomic on purpose: two
+    // saves would let a crash between them leave dependents whose parent is gone, which
+    // load-time pruneOrphans() would then delete (a silently lost ledger row).
+    function markAcked(requestId) {
+        var arr = []
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.requestId === requestId) continue
+            if (it.dependsOn === requestId) {
+                it = Object.assign({}, it)
+                delete it.dependsOn
+            }
+            arr.push(it)
+        }
+        items = arr
+        _save()
+    }
+
+    // Delete held items whose parent is no longer queued and was not acked (discarded,
+    // conflicted, permanently dropped, or signed out). Returns the dropped items so the
+    // caller can undo any optimistic local copy. Saves only when something was dropped.
+    function pruneOrphans() {
+        var live = {}
+        for (var i = 0; i < items.length; ++i) live[items[i].requestId] = true
+        var keep = []
+        var dropped = []
+        for (var j = 0; j < items.length; ++j) {
+            var it = items[j]
+            if (it.dependsOn && !live[it.dependsOn]) dropped.push(it)
+            else keep.push(it)
+        }
+        if (dropped.length === 0) return dropped
+        items = keep
+        _save()
+        return dropped
+    }
+
+    // Is a single-record WRITE (create/update/delete, not a stock delta, batch member or
+    // operation, and not a held ledger row) still queued for this entity+entityId, in flight
+    // or parked? The sale guard uses this: a queued edit means the server and this device
+    // may disagree about the record, so it must not be sold yet. Deltas are excluded on
+    // purpose: back-to-back sales of one product each queue a stock delta.
+    function hasUnsyncedEditForEntity(entity, entityId) {
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.deltas || it.items || it.ops || it.dependsOn) continue
+            if (it.entity === entity && it.entityId === entityId) return true
+        }
+        return false
+    }
+
+    // PR #122 S4: what is still unsynced for each record of `entity`, for the overlay and the
+    // "not synced" badge. -> { entityId: { state: "pending" | "parked", edit: item | null } }
+    //  - state "parked" if ANY item touching the record is parked (S2b: needs Retry/Discard),
+    //    else "pending" if a single-record write (create/update/delete) is queued. Same rule as
+    //    hasUnsyncedEditForEntity / hasParkedForEntity, so badge and sale guard never disagree.
+    //  - `edit` = the queued plain UPDATE for the record (parked or not), the only kind the
+    //    overlay replays; creates, deletes, deltas, batches, operations and held ledger rows
+    //    give a state but no edit (Q3 = product edit only; the rest is roadmap).
+    function unsyncedByEntity(entity) {
+        var out = {}
+        var prefix = entity + "/"
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.dependsOn) continue // held ledger row: its parent carries the state
+            var parked = StuckWrites.isParkedItem(it)
+            var isDeltaLike = !!(it.deltas || it.items || it.ops)
+            var keys = _keysForItem(it)
+            for (var k = 0; k < keys.length; ++k) {
+                if (keys[k].indexOf(prefix) !== 0) continue
+                var id = keys[k].substring(prefix.length)
+                var cur = out[id] || { state: "", edit: null }
+                if (parked) cur.state = "parked"
+                else if (!isDeltaLike && cur.state === "") cur.state = "pending"
+                if (!isDeltaLike && it.action === "update" && it.entity === entity && it.entityId === id)
+                    cur.edit = it
+                if (cur.state !== "") out[id] = cur
+            }
+        }
+        return out
     }
 
     // Bump attempts and push out nextAttemptAt per the backoff schedule.
@@ -361,6 +507,81 @@ QtObject {
         }
         items = arr
         _save()
+    }
+
+    // Persist one write's stuck state onto its queued item (StuckWrites.metaOf).
+    // Falsy fields are removed, not stored as false/0, so an item that never failed
+    // server-side stays byte-identical to what older builds saved. Saves only when
+    // something changed. Returns false when the id is not queued (it left the outbox).
+    function setStuckMeta(requestId, meta) {
+        var m = meta || {}
+        var failures = (typeof m.failures === "number" && m.failures > 0) ? Math.floor(m.failures) : 0
+        var arr = items.slice()
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].requestId !== requestId) continue
+            var next = Object.assign({}, arr[i])
+            if (failures > 0) next.failures = failures; else delete next.failures
+            if (m.stuck === true) next.stuck = true; else delete next.stuck
+            if (m.terminal === true) next.terminal = true; else delete next.terminal
+            if (JSON.stringify(next) === JSON.stringify(arr[i])) return true
+            arr[i] = next
+            items = arr
+            _save()
+            return true
+        }
+        return false
+    }
+
+    // Make every stuck, backed-off, not-in-flight item due now, once, WITHOUT
+    // resetting attempts: Gateway calls this at launch so a stale "not syncing"
+    // flag is re-checked immediately, and if the write still fails the next backoff
+    // is the long step it had already reached. (retryNow is the other one: fresh
+    // attempts, for a person's tap.) Returns how many items it moved.
+    function wakeStuck() {
+        var nowMs = Date.now()
+        var arr = items.slice()
+        var moved = 0
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].stuck !== true) continue
+            if (StuckWrites.isParkedItem(arr[i])) continue // parked waits for the user, not the launch
+            if ((arr[i].nextAttemptAt || 0) <= nowMs) continue
+            if (isInFlight(arr[i].requestId)) continue
+            arr[i] = Object.assign({}, arr[i], { nextAttemptAt: nowMs })
+            moved++
+        }
+        if (moved > 0) { items = arr; _save() }
+        return moved
+    }
+
+    // Is `requestId` the item currently dispatched (for any key it touches)?
+    function isInFlight(requestId) {
+        for (var k in _inFlightKeys)
+            if (_inFlightKeys[k] === requestId) return true
+        return false
+    }
+
+    // How many items are dispatched right now. Public and reactive, so a view can
+    // re-read isInFlight() when it changes without reaching for _inFlightKeys.
+    readonly property int inFlightCount: Object.keys(_inFlightKeys).length
+
+    // Make one queued item due immediately with a fresh backoff (attempts = 0, so
+    // a failed retry waits 2s again, not 10 min). Used by the stuck-writes
+    // dialog's "Retry now". Returns false, changing nothing, when the item is
+    // unknown or already in flight (it is being sent; a second send would only
+    // race it). Does NOT send: Gateway.drainNow() does.
+    function retryNow(requestId) {
+        if (isInFlight(requestId)) return false
+        var arr = items.slice()
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].requestId !== requestId) continue
+            var next = Object.assign({}, arr[i], { attempts: 0, nextAttemptAt: Date.now() })
+            delete next.terminal // S2b: releases a parked write; a new "rejected" answer re-parks it
+            arr[i] = next
+            items = arr
+            _save()
+            return true
+        }
+        return false
     }
 
     // Drop the whole queue. Used on sign-out so a pending tenant's writes

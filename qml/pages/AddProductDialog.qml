@@ -514,18 +514,24 @@ BottomSheet {
         InventoryStore.addProduct(nameField.text, skuField.text,
             categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
             taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */,
-            sizeField.text.trim(), function(ok, newId) {
+            sizeField.text.trim(), function(ok, newId, refusal) {
                 busy = false
                 if (!ok) {
-                    errorLabel.text = "Could not add product — try again"
+                    errorLabel.text = refusal ? refusal : "Could not add product — try again"
                     return
                 }
                 CategoryStore.setLastUsed(categoryCombo.currentText)
 
                 if (pendingPhotoSource && pendingPhotoSource.length > 0 && newId) {
-                    StorageService.uploadProductPhoto(newId, pendingPhotoSource, function(uploadOk, photoUrl) {
-                        if (uploadOk) InventoryStore.setPhoto(newId, photoUrl)
-                    })
+                    // addProductPhoto queues the upload and returns immediately (design spec) --
+                    // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
+                    // gallery, Main.qml) reports the outcome once the product's own create
+                    // mutation has landed (PhotoQueue's Trap 1 gate, via OutboxStore) and the
+                    // upload itself completes -- both are already async elsewhere, this is not a
+                    // new wait introduced here.
+                    var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
+                    if (!addResult.ok)
+                        console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
                 }
 
                 Toast.show("Product added")

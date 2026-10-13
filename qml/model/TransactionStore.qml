@@ -69,6 +69,26 @@ QtObject {
                             " entries.length =", entries.length )
         if (AuthStore.tenantId.length > 0)
             _resetAndFetch()
+        Gateway.heldWritesDropped.connect(_onHeldWritesDropped)
+    }
+
+    // The edit a ledger row waited on was discarded/conflicted/dropped, so the server never
+    // got that row: remove the optimistic local copy too (no ghost row until the next refetch).
+    function _onHeldWritesDropped(items) {
+        var ids = []
+        for (var i = 0; i < items.length; ++i)
+            if (items[i].entity === "transaction") ids.push(items[i].entityId)
+        removeLocal(ids)
+    }
+
+    function removeLocal(txIds) {
+        if (!txIds || txIds.length === 0) return
+        var gone = {}
+        for (var i = 0; i < txIds.length; ++i) gone[txIds[i]] = true
+        var kept = (entries || []).filter(function(e) { return !gone[e.txId] })
+        if (kept.length === (entries || []).length) return
+        entries = kept
+        revision++
     }
 
     function _resetAndFetch() {
@@ -176,7 +196,9 @@ QtObject {
     // batch companion once the whole set is built. See addBatch's identical
     // pattern in StockBatchStore.qml for why (bulk import otherwise fires
     // one individual write per row).
-    function _push(doc, deferWrite) {
+    // dependsOn: requestId of the outbox edit this row must wait for (Gateway.recordEdit);
+    // "" / undefined = send at once (every other kind).
+    function _push(doc, deferWrite, dependsOn) {
         var arr = (entries || []).slice()
         arr.unshift(doc)
         entries = arr
@@ -185,7 +207,7 @@ QtObject {
         // compliance gateway so each one lands with an immutable audit_log
         // entry. In "direct" mode (pre-deploy) the gateway writes the doc
         // exactly as before.
-        if (!deferWrite) Gateway.recordMutation("transaction", doc.txId, "create", null, doc)
+        if (!deferWrite) Gateway.recordMutation("transaction", doc.txId, "create", null, doc, dependsOn)
         return doc
     }
 
@@ -256,7 +278,7 @@ QtObject {
     // Single-field mutation. One row per changed field — keeps the product
     // history granular ("Selling: ₹100 → ₹150" stays a separate row from
     // "Description: old → new").
-    function recordFieldChange(productId, productName, field, before, after, reason) {
+    function recordFieldChange(productId, productName, field, before, after, reason, dependsOn) {
         if (!productId || !field) return
         var doc = {
             txId: _nextId("f"),
@@ -275,12 +297,12 @@ QtObject {
             orderId: "",
             reason: reason || ""
         }
-        _push(doc)
+        _push(doc, false, dependsOn)
     }
 
     // Direct stock edit through product details (distinct from restock).
     // before/after are absolute values; delta is the signed difference.
-    function recordStockAdjustment(productId, productName, before, after, reason) {
+    function recordStockAdjustment(productId, productName, before, after, reason, dependsOn) {
         if (!productId) return
         var b = parseInt(before) || 0
         var a = parseInt(after) || 0
@@ -302,7 +324,7 @@ QtObject {
             orderId: "",
             reason: reason || ""
         }
-        _push(doc)
+        _push(doc, false, dependsOn)
     }
 
     // Photo lifecycle event — beforeUrl/afterUrl can be empty strings.

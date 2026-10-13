@@ -76,4 +76,27 @@ TestCase {
         var cloned = InventoryStore._clone()[0]
         compare(Object.keys(cloned).length, Object.keys(doc).length)
     }
+
+    // PR #136 review: bulk import builds docs through _normalizeRecord, a SECOND creation path.
+    // It dropped photoIds, so every imported product 409'd on its first edit or delete.
+    function _imported() {
+        return InventoryStore._normalizeRecord({
+            productId: "PRD-002", name: "Imported", sku: "IMP-1", category: "General", unit: "pc",
+            description: "", price: 1, sellingPrice: 2, taxable: false, taxPercent: 0, size: "",
+            stock: 0, minStock: 0, supplierId: "" })
+    }
+
+    function test_normalizeRecord_keys_exactly_match_newProductDoc_keys() {
+        compare(JSON.stringify(Object.keys(_imported()).sort()),
+                JSON.stringify(Object.keys(_doc()).sort()),
+                "bulk-import docs must carry exactly the keys addProduct creates")
+    }
+
+    function test_imported_doc_clone_key_count_matches_stored_doc() {
+        var doc = _imported()
+        InventoryStore.products = [doc]
+        var cloned = InventoryStore._clone()[0]
+        compare(JSON.stringify(Object.keys(cloned).sort()), JSON.stringify(Object.keys(doc).sort()))
+        compare(JSON.stringify(cloned.photoIds), "[]")
+    }
 }

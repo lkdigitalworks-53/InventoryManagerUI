@@ -15,7 +15,7 @@ work against it).
 
 ## Session & Sandbox Conventions (established 2026-08-30)
 
-Two standing rules, written down once so they don't need repeating each session:
+Three standing rules, written down once so they don't need repeating each session:
 
 **1. Sandbox execution limits are not a reason to leave code unwritten.** A Cloud sandbox session
 can't build the actual Felgo/Qt app (Windows/Felgo toolchain, Taher's machine only) and can't run
@@ -47,6 +47,9 @@ say Claude pushes autonomously); the clarification is *why*: it's not just permi
 asking, it's a description of where verification actually happens — GitHub CI and Taher's own
 machine, not this chat.
 
+
+**3. Read order (token budget).** Do NOT read `SKILLS.md` in full: it is ~300 KB (~75k tokens). Read `SKILLS-INDEX.md` (~12 KB, generated), then read the FULL text of every skill whose title touches the task (`awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md`). Before touching an area (stores, gateway, outbox, photos, tests, CI) `grep -i <area> SKILLS-INDEX.md` and open every match; skipping a matching skill repeats a mistake that was already paid for. After adding or renaming a skill heading run `node .github/scripts/skills-index.js --write` (a script test fails the PR if the index is stale). Do not read `AGENTS.md` / `README.md` end to end either: use the section map (`grep -n '^## \|^### '`) and open the section you need.
+
 ---
 
 ## Current Feature Status
@@ -58,7 +61,7 @@ machine, not this chat.
 | Tenant workspace creation & member invitation | ✅ Done |
 | Orders CRUD + delete + auto-approve | ✅ Done — delete row-UI landed via `feature/product-order-delete-ui` (the backend logic pre-dated it; the button didn't exist until this branch — see Skill 58) |
 | Inventory CRUD + delete | ✅ Done — same as above, row-level delete button added via `feature/product-order-delete-ui` |
-| Staff CRUD + delete + credential provisioning | ⚠️ Delete logic + confirm-dialog wiring exist; row-level button still missing (identical gap to what Inventory/Orders had before `feature/product-order-delete-ui` — same fix, not yet done, see `docs/superpowers/KNOWN-ISSUES.md`). Credential-provisioning failures were completely silent (staff roster saved, but Team Members never got the person and nothing said why) — fixed 2026-09-27, see SKILLS.md Skill 72; underlying reason provisioning was failing for Taher's specific repro is still unconfirmed pending on-device retest. |
+| Staff CRUD + delete + credential provisioning | ✅ Delete done — row-level button added 2026-09-21 (see SKILLS Skill 68). Credential-provisioning failures were completely silent (staff roster saved, but Team Members never got the person and nothing said why) — fixed 2026-09-27, see SKILLS.md Skill 72; underlying reason provisioning was failing for Taher's specific repro is still unconfirmed pending on-device retest. |
 | Sales analytics from live completed orders | ✅ Done |
 | Analysis page — 6 view modes (Value/Purchased/Current/Revenue/Sold/Profit) | ✅ Done |
 | Analysis — by-category & by-supplier breakdown charts on every view | ✅ Done & device-verified |
@@ -437,8 +440,61 @@ QtObject {
 - `qml/model/AuthStore.qml`
 - `qml/model/FirebaseService.qml`
 - `qml/helper/PagingHelper.js` — pure cursor-pagination bookkeeping (SKILLS Skill 32)
-- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan)
+- `qml/helper/StuckWrites.js` — pure bookkeeping behind `Gateway.stuckCount`, the "N changes not syncing" header line (SKILLS Skill 67). Since 2026-09-21 it also understands `StuckWrites.TIMEOUT`, which counts only while `AuthService.isOnline` is true; `Gateway` does not report timeouts yet (wiring phase of the C-3 plan). Since 2026-09-28 it also tracks the server's latest `write-rejected` answer per write (`REJECTED`, `errorCodeOf`, `terminalCount`), published as `Gateway.stuckTerminalCount` for the `GlassHeader` caption; label only, never changes retry or dropping Since 2026-09-29 (P5, S2a) the state is mirrored onto each queued outbox item (`metaOf` -> `OutboxStore.setStuckMeta`: `failures`, `stuck`, `terminal`) and rebuilt at launch (`hydrate`, `Gateway.resumeStuck` from `Main.qml`, once per launch, no toast); `OutboxStore.wakeStuck` makes stuck items due once without resetting attempts (SKILLS Skill 88). Since 2026-09-30 (S2b) a stuck write whose latest answer was `write-rejected` is PARKED (`isParkedItem` = stuck && terminal, derived, not stored): `OutboxStore.dueItems` / `nextDueInMs` / `wakeStuck` skip it, it holds its record's keys so later same-record writes wait, and only `retryNow` / `Gateway.retryStuck` release it by clearing `terminal` (SKILLS Skill 89).
+- `qml/helper/DescribeItem.js` — pure `describe(outboxItem)` -> `{title, detail}` plain-language row label for the stuck-writes sheet (single / batch / delta / operation items; never throws). `qml/pages/StuckWritesSheet.qml` lists `Gateway.stuckRows()` with a per-row "Retry now" (`Gateway.retryStuck` -> `OutboxStore.retryNow`, which resets attempts and makes the item due; it does NOT clear the stuck flag, see design D1). Opened by tapping the `GlassHeader` stuck caption via `app.openStuckWrites()` in `Main.qml`; it is first in the back-button `dialogs` list. Design: `docs/superpowers/specs/2026-09-29-stuck-writes-dialog-retry-now-design.md`. Discard and park are later slices (S2/S3) of `2026-09-29-gateway-park-retry-discard-plan.md`
+- `functions/lib/writeError.js` — pure `classifyWriteError(e)`: Firestore/gRPC error code -> `write-rejected` / `write-unavailable` / `write-failed` body string for the five `write-failed` catch sites in `functions/index.js`. HTTP status stays 500 (SKILLS Skill 74)
 - `qml/helper/SendPolicy.js`, `qml/helper/OperationKeys.js`, `qml/helper/CompletionPlan.js` — pure helpers for the atomic order-completion operation (C-3, `docs/superpowers/plans/2026-09-20-atomic-operation-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. Called from `DataModel._tryCompleteOrder` as of Task 10 (2026-09-26)
+- `functions/lib/photoCleanup.js` (2026-10-03, photos PH3) — pure logic for the product-photo cascade, no Firebase
+  imports (Firestore/Storage are injected into `sweepMarker`): `canManagePhotos` (owner/admin, exact match),
+  `isCascadeEntityDelete` (inventory + delete), `buildSweepPrefix` (null unless env/tenant/product all pass
+  `isSafePathSegment`; always ends in `/` so `PRD-1` never sweeps `PRD-10`), `buildMarker`, `evaluateUploadPreflight`
+  (F3), `sweepMarker` (never throws; refuses unless the stored prefix equals the rebuilt one; re-checks the product is
+  still absent before deleting). `index.js` binds it: `photoAccessDenied` (role + safe tenant), `sweepProductCleanup` (was `sweepProductPhotos`),
+  and `recordMutation` passes `cleanupPrefix`/`cleanupEnvPrefix` to `GatewayLogic.applyMutation`, which writes
+  `pending_cleanup/{productId}` in the SAME transaction (after the CAS compare, so a 409 leaves no marker).
+  BC1 (2026-10-05): the marker also carries `actorUid`/`actorRole`/`requestId` (null when absent, read as `system`);
+  `sweepMarker` now needs a REQUIRED `deps.sweepBatches(productId, actor)` (bound in `index.js` `sweepProductCleanup`) and runs it after the exists-guard and BEFORE the Storage delete. `sweepStockBatches` deletes the
+  product's `stock_batches` in chunks of `SWEEP_CHUNK = 100` (one write batch per chunk: deletes + one audit entry each,
+  deterministic id `cascade~{productId}~{batchId}` so overlapping sweeps never duplicate the audit) and skips any doc whose own
+  `productId` differs. `recordMutation` gates `inventory` delete to owner/admin (403 `role-not-allowed`, before the prefix build). The `cascade~` audit-id prefix is RESERVED (`PhotoCleanup.isReservedAuditId`): every endpoint that uses a client `requestId` as an `audit_log` doc id must reject it (400).
+  PH3b (scheduled sweeper): slice S-A BUILT (2026-10-05: `parseMarkerPath`, `delayMs`, `selectDue`, `readAllMarkers`, `runCleanupSweep`, constants, `lastAttemptAtMs` stamp in `sweepMarker`; pure, 100% line/branch covered; `park(env, path, reason)` is addressed by PATH, not tenant+product; final sweep: a THROWN `sweep` logs ERROR `PH3B_ALERT sweep-threw` every run it persists (never parks), and a stored `prefix` that is not the rebuilt prefix is malformed `bad-prefix`, parked at once). S-B BUILT (2026-10-05, stacked on S-A): `index.js` `exports.cleanupPendingMarkers = onSchedule(every 10 minutes, asia-south1, 300 s, maxInstances 1, retryCount 0)`, `listPendingMarkers` (collection-group read through `readAllMarkers`, Timestamp -> ms via `timestampToMs`), `parkPendingMarker` (`doc(path).update({parked, parkedAtMs, lastError})`), `cleanupLog` (`firebase-functions/logger` `write`, so `message` is `jsonPayload.message`), and the P3 fix (`sweepProductCleanup.updateMarker` is `markerRef.update(patch)`, no longer `set(..., {merge:true})`). Functional tests `functions/test/index.handlers.cleanupScheduler.test.js` (the harness gained `update`, `collectionGroup`, per-database scans via `mockState.docDb`). S-C BUILT (2026-10-06, branch `feat/2026-10-06-ph3b-sweeper-e2e-docs`): `test/e2e/cleanupSweep.e2e.test.js` (E0-E6, emulator, runs `cleanupPendingMarkers.run({})` IN-PROCESS because the functions emulator has no clock; wired as a second `node --test` in the `checks.yml` e2e job; CI GREEN on its first run, run 37353249915, so E0 named databases, admin-major coexistence and the storage host all held in the emulator). NOTHING IS DEPLOYED: no scheduler exists on any project until Taher deploys ALL functions (the P3 fix is in `recordMutation`'s shared module). Design v2 in `docs/superpowers/specs/2026-09-30-photos-s3-s4-design.md` (no `nextAttemptAt`, no index; the v1 text in git history is wrong, see its review P1-P3). Marker read is paged (R1: `PAGE_SIZE` 200 x `MAX_PAGES` 10). A log-based Cloud Monitoring alert on `PH3B_ALERT` ERROR logs is REQUIRED before production data (Taher creates it, steps in `docs/superpowers/specs/2026-10-05-ph3b-alert-runbook.md`; it notifies by email + Google Cloud console mobile app, NOT inside Karobar). Un-park: set `parked` false and `attempts` 0 on the marker.
+  Runbook: a `pending_cleanup/{productId}` doc that stays = a failed sweep (`attempts`, `lastError`). Once `cleanupPendingMarkers`
+  is DEPLOYED (it is not yet) it retries every 10 min with backoff (10/20/30 min) and PARKS the marker at 12 failures
+  (`parked: true`, ERROR `PH3B_ALERT marker-parked`); a replayed delete still does NOT sweep. To un-park: fix the cause, then set
+  `parked` false and `attempts` 0 on the marker (next run sweeps it). Parked markers are never auto-deleted and count toward
+  `MAX_SCAN` (see KNOWN-ISSUES, PH3b limits). UNTIL IT IS DEPLOYED there is no automatic retry: check the product is really gone,
+  delete its `stock_batches` (query by `productId`) and Storage prefix by hand, then delete the marker.
+  `batchMutationLogic`/`operationLogic` reject an inventory delete outright. `pending_cleanup` is server-only in
+  `firestore.rules` (`isServerOnlyCollection`; a lone deny match block would NOT deny — see Skill 92).
+- BC2 (2026-10-04, client half of the product-delete cascade): `Gateway.mutationApplied(entity, entityId, action)` fires from
+  `_ackSingle` on a single `recordMutation` 2xx (not for batches, deltas, operations). `InventoryStore.deleteProduct` sends ONLY the
+  `inventory` delete; the product's batches are just hidden in `StockBatchStore.batches` (the server sweeps them, BC1); the Activity
+  entry and the queued-photo purge run in `_onMutationApplied` from the in-memory `_pendingDeletes` (dropped on a delete conflict;
+  a relaunch forgets it on purpose). `DataModel._storesToResync` adds `stock_batch` after `inventory`, and a delete conflict re-reads
+  batches. Never reintroduce a client `stock_batch` delete or a click-time Activity entry. Needs BC1 deployed (it is).
+  D2/D3 (PR #119): a parked write holds its record key, so `InventoryStore.restock` and `deleteProduct` refuse up front when
+  `OutboxStore.hasParkedForEntity("inventory", id)` (callback `(false, false, message)` / return value = `parkedWriteMessage`) and write
+  nothing; `DataModel` and `RestockDialog` show the message. Since 2026-10-04 (decision B, PR #121) `DataModel._tryCompleteOrder` refuses the same way (callback `false`, `stockErrorMsg` = "<product>: <parkedWriteMessage>", order stays `pending`, no FIFO, no delta, in-flight set untouched); returns/exchanges (`_tryAdjustOrder`), `completeImportedOrder` and the `creditStockNoBatch` failure path are NOT guarded (open). In E2E files declare
+  `DataModel { id: dm }`: it is not a singleton, so its Gateway `Connections` (resyncs) do not exist otherwise.
+- `qml/model/PhotoQueue.qml` — durable, resumable product-photo upload queue (2026-09-21 feature),
+  sibling to Gateway/OutboxStore, not an addition to either. `drainCandidates()` (gating: due time,
+  identity match, `OutboxStore.hasPendingForEntity`) is deliberately separate from `_upload()`
+  (native file read + XHR, untested at this level — see Testing & QA Agent). Its failure tail is ONE
+  function, `_failUpload(item, uploading, status, responseText)` (non-2xx, timeout, unreadable file), which
+  holds the discard rule (404 + body `product-not-found` + row gone from the COMPLETE list, PH4 R1) and IS tested. Uses the
+  property-binding-watcher pattern for `AuthService.isOnline`, NOT `Connections{}` (Skill 20/68 —
+  `Connections{}` inside a `pragma Singleton QtObject` crashes the whole singleton chain).
+- `qml/model/StorageService.qml` — product-photo abstraction (`addProductPhoto`,
+  `removeProductPhoto`, `photoDownloadUrl`). Rewritten, not extended, for the 2026-09-21 feature —
+  the old single-device `useCloud`/local-file-URL model is gone entirely.
+- `qml/helper/PhotoUrl.js`, `qml/helper/PhotoQueueLogic.js` — pure helpers for the photos feature
+  (URL building; classification/backoff/breaker/reducer), same `.pragma library` +
+  `functions/test/testSupport/*Parity.js` Node-mirror convention as `StuckWrites.js` (Skill 67) —
+  see `tests/tst_PhotoUrl.qml`/`tests/tst_PhotoQueueLogic.qml` for the QML side.
+- `qml/components/FailedTileOverlay.qml` + `qml/helper/FailedTileGeometry.js` — in-tile Retry/Discard for a failed photo upload (2026-09-29, PR #84 follow-up). Overlay only paints and forwards taps; hit-box geometry, scrim contrast and the none/busy/failed rule are pure and headless-tested in `tests/tst_FailedTileGeometry.qml` (SKILLS Skill 81). A failed tile keeps the normal 72dp footprint — do not reintroduce width/height growth in `ProductPhotoGallery.qml`.
+- `qml/helper/EnvConfig.js` — `storagePrefixForEnv(env)` added 2026-09-21, deliberately separate
+  from `databaseIdForEnv` (Storage paths spell `prd` literally where Firestore's database id is
+  `(default)`) even though both share the same `dev`→`dev1` mapping.peration-outbox.md`): send timeouts and retry jitter; deterministic operation keys and ids; the planner that turns a completion into the write list. **No callers yet**
 - `qml/model/qmldir`
 
 **Example Prompts**:
@@ -556,7 +612,7 @@ QtObject {
 Functions gateway, tax-identity fields, DPDP privacy, and retention. **Adjacent, not part of P0
 itself**: the gateway's concurrency-control layer (single-flight, locking, CAS, atomic deltas —
 `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, its 2026-08-06 review at
-`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`, its 2026-08-08 round-2
+the 2026-08-06 code review (never committed; its findings are in SKILLS Skill 36), its 2026-08-08 round-2
 closure of the remaining findings at `docs/superpowers/specs/2026-08-08-review-round2-design.md`,
 README's "Concurrency & Conflict Resolution", SKILLS Skill 36) lives in the same `functions/` files
 but is a correctness concern, not a compliance one — don't conflate the two when reasoning about
@@ -841,8 +897,58 @@ env.
     UI/dialog-level — that last one is Phase 2, gated on an unresolved Felgo headless-rendering
     question (do `dp()`/`sp()`/`Constants` resolve outside an `App{}` root), tracked separately
     from this test surface.
+  - `tst_ProductPhotosE2E.qml` (2026-09-21/25, product photos): a third scenario, added to the
+    same directory. Deliberately does NOT drive the real client upload path
+    (`StorageService.addProductPhoto`/`PhotoQueue`) — that needs `NativeFile.readFileBase64`/
+    `ImageProcessor.compressForUpload`, both root context properties undefined under
+    `qmltestrunner`, so no automated test anywhere in this repo can exercise it (on-device is the
+    only proof). Instead, raw-POSTs directly to the emulated `uploadProductPhoto`/
+    `deleteProductPhoto` functions (same bypass-the-client pattern `tst_InventoryE2E.qml`'s own
+    `recordMutation` diagnostic already uses), and verifies against BOTH the Firestore emulator
+    (`photoIds` on the product doc) and the Storage emulator (the actual object) independently —
+    two new `E2EHelpers.js` functions, `pollEmulatorStorageObject`/`pollEmulatorStorageObjectAbsent`,
+    mirror `pollEmulatorDoc`'s exact polling structure against the Storage emulator's REST API
+    instead of Firestore's. `uploadProductPhoto`/`deleteProductPhoto` are separate Cloud Functions
+    from `recordMutation` and get their own cold-start warm-up in `initTestCase()` — warming up one
+    function does not warm up another.
+  - `tst_ProductLegacyPhotoUrlE2E.qml` (2026-10-12, PH5 E01-E03 + E03b): create/update/delete of a
+    fresh product through the real store -> gateway path (no `photoUrl`/`photoUpdatedAt` keys, no CAS
+    conflict) and a seeded pre-PH5 doc that DOES carry them 409s a client update (pins Q-P5-3 a; E03b is the
+    no-legacy-keys control). Seeding a raw doc uses `E2EHelpers.createEmulatorDoc` (admin REST createDocument,
+    `Authorization: Bearer owner`; value encoding `toFirestoreFields` is Node-tested in
+    `functions/test/e2eHelpers.firestoreFields.test.js`). `_clone()` drops keys it does not know, so the local
+    `before` lacks the legacy keys while the server `current` has them: that is what makes the 409.
 
-**Example Prompts**:
+- `tests/tst_PhotoUrl.qml`, `tests/tst_PhotoQueueLogic.qml` (2026-09-21, product photos) — QML side
+  of the `.pragma library` + Node-parity-mirror pair for the two new pure helpers (Skill 67's
+  `StuckWrites.js` convention, extended). The Node mirrors
+  (`functions/test/photoUrl.parity.test.js`, `functions/test/photoQueueLogic.parity.test.js`) run
+  for real in this repo's Node tooling; these two QML files prove the actual QML copies load and
+  agree, but only CI can run them.
+- `tests/tst_PhotoQueue.qml` (2026-09-21/25) — `PhotoQueue.qml`'s queue-management logic:
+  persistence-across-relaunch, retry/discard, and `drainCandidates()`'s full gating matrix, plus
+  `_failUpload()` (PR #138 sweep: discard rule, retry/failed bookkeeping, monkey against a reference model;
+  needs `InventoryStore` paging flags restored in `cleanup()`), `_completeUpload()`, the in-flight guard (O2/O3: only the
+  first report of an attempt counts, none after `clear()`) and `purgeOrphanedFailures()` (O1). ORDER MATTERS in the O1 tests:
+  `InventoryStore.onListCompleteChanged` already runs the purge, so set the list complete BEFORE setting `PhotoQueue.items`. Does
+  NOT cover `_upload()` (native + XHR) — see that file's own TESTABILITY NOTE. Two regression
+  tests added during this feature's own review sweep for bugs the original tests didn't catch:
+  `_load()` never having called `_reschedule()` (a photo queued last session would sit frozen
+  forever — broke "survive app close" silently) and `drainNow()` never having called
+  `AuthService.ensureFreshToken()`. Final sweep (2026-09-29): load-time recovery of a persisted
+  `uploading` item, and drain-on-token-arrival (Skill 85). Token tests must reset `AuthStore.idToken`
+  in `cleanup()` and `PhotoQueue._breaker` in `init()` (shared singleton state, see Skill 86); `NativeFile` is undefined here, so a drain that reaches `_upload` leaves `enqueued`.
+- `tests/tst_InventoryStore_deleteProductCascade.qml` also covers the queued-photo purge on product
+  delete (all four states, unknown id, deterministic monkey).
+- `tests/tst_OutboxStore.qml` gained `hasPendingForEntity` coverage (2026-09-21, product photos) —
+  the gate for `PhotoQueue`'s Trap 1 (a photo for a product created offline must wait for that
+  product's own create mutation to land).
+- `qml/components/ProductPhotoGallery.qml` (2026-09-21) has NO `qmltestrunner` test, deliberately —
+  it `import`s `Felgo` (for `dp()`/`sp()`), which per this section's own note above about
+  `GlassHeader` means it cannot load under the "QML Tests" CI job at all. Same reasoning as
+  `StorageService.qml` having zero tests (it reaches `NativeFile`/`ImageProcessor`, also
+  undefined under `qmltestrunner`) — check this note before assuming a missing test file for
+  either is an oversight.
 - "Add tests for the new breakdown metric"
 - "Write a TestCase covering the week/month period windows"
 - "Add a parity fixture pair for a new RealisedMath scenario, in both functions/test/fixtures/ and
@@ -899,3 +1005,13 @@ env.
 4. **Pages & Dialogs Agent** → Surface required fields (HSN, GSTIN, movement reason, consent) and
    any privacy notice.
 5. Never edit historical ledger rows — relabels propagate by stable id, not by rewriting past rows.
+- **S3 Discard (2026-10-01, `feat/2026-10-01-s3-discard-parked-writes`):** `Gateway.discardParked(requestId)` (gateway mode, online, queued, `StuckWrites.isParkedItem`, not in flight) removes the item with `OutboxStore.markSent`, answers operation waiters and `recordDelta` callbacks with `{ok:false, error:"discarded"}`, emits `parkedWriteDiscarded(requestId, entities)` (`StuckWrites.entitiesOf`), `_reschedule()`. `DataModel._resyncForDiscard` re-reads each affected store once (`_resyncStoreByEntity`; `stock_movement` ignored). `StuckWritesSheet` shows Discard on rejected rows with a local `ConfirmDialog` and `busy: discardConfirm.opened`. SKILLS Skill 90. Design: `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`. Review sweep 2026-10-01 (branch `review/2026-10-01-pr110-final-sweep`): row / header copy now says "Retry or Discard"; recordDelta callbacks answered through one helper `Gateway._answerDeltaCallbacks`; test plan section 3.0 lists device prerequisites and the unverified `write-rejected` recipe (SKILLS Skill 91).
+
+
+- **Unsynced product edits (PR #121 follow-up, 2026-10-05):** `InventoryStore.updateProduct` enqueues the edit with `Gateway.recordEdit` (returns the STORED requestId); its `field_change` / `stock_adjustment` ledger rows are outbox items with `dependsOn` (held until `OutboxStore.markAcked`, deleted by `pruneOrphans` if the edit leaves unacked), and its Activity `product_updated` entry waits in `InventoryStore._pendingUpdateActivity` for `Gateway.writeAcked`. `DataModel._tryCompleteOrder` refuses a line whose product has ANY queued non-delta write (`OutboxStore.hasUnsyncedEditForEntity`, message `InventoryStore.unsyncedEditMessage`); parked keeps `parkedWriteMessage` and wins. Other ledger kinds still register at once (roadmap).  test plan `docs/superpowers/test-plans/2026-10-05-unsynced-edit-ledger-test-plan.md`. PR #122 S4 (done, CI unverified): `OutboxStore.unsyncedByEntity(entity)` -> `{id: {state: pending|parked, edit}}` feeds `UnsyncedOverlay.overlayAll` in `InventoryStore._fetchFromFirebase` (per page; replays only changed fields, parked edits too) and `InventoryStore.syncStates` (badge pills in `InventoryPage` ProductCard, note in `EditProductDialog`). `DocLimits` + `InventoryStore.updateRefusal` refuse a product doc over 1 MiB before anything is queued (`updateProduct` returns the message, `addProduct` callback 3rd arg, `DataModel` reports via `errorOccurred("inventory", ...)`, both dialogs pre-check). Other ledger kinds and queued CREATE overlay: roadmap (rolled into the atomic-operation work). SKILLS 100, 101;
+
+## Photos PH5 (2026-10-08): legacy product `photoUrl`/`photoUpdatedAt` removed
+- Removed: `InventoryStore.setPhoto`, `clearLegacyPhotoUrl`, the two fields in normalize/`_clone`/`_newProductDoc`/`_normalizeRecord`/`_mergeRecord`; `EditProductDialog` legacy property and "Sync old photo to the cloud" button (`clearPhotoSource()` stays as an empty contract stub for `Main.qml`); `InventoryPage` avatar fallback; `ImportPreviewDialog` "Photo URL" read.
+- `XlsxService.cpp` product export is 14 columns (Photo URL dropped, Supplier..Tax % are columns 11-14); template has 14 rows. Guarded by `functions/test/ph5LegacyPhotoUrl.guard.test.js` (G01-G11): when you add a product column change `kProductHeaders`, the `doc.write` list, the widths AND the template row together.
+- User-profile `photoUrl` (AuthStore/AuthService/ProfilePage) is a different field and must not be touched. See Skill 110, KNOWN-ISSUES "Pre-PH5 tenants".
+- PR #137 review: spreadsheet import is POSITIONAL (`readSheet`), see KNOWN-ISSUES "Spreadsheet import is positional" (accepted, A). `_normalizeRecord` now emits `photoIds: []`; its key set is pinned against `_newProductDoc` in `tst_InventoryStore_cloneSymmetry`. Skill 108.

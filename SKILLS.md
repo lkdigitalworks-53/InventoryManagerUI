@@ -4,6 +4,8 @@
 
 This file documents reusable component patterns, signal conventions, and domain-specific knowledge for the **BusinessManagement** App_UI Felgo QML project. Use these skills as reference when building or modifying features.
 
+**Reading this file:** do not read it end to end (~75k tokens). Start from `SKILLS-INDEX.md` (generated from the headings below), then open only the skills you need: `awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md`. Every skill heading must be `## Skill <n>: <title>` with a unique id (a letter suffix such as `89b` is allowed); after adding or renaming one run `node .github/scripts/skills-index.js --write`.
+
 ---
 
 ## Skill 1: Using CardKPI
@@ -1182,7 +1184,7 @@ the arithmetic against Firestore's actual limit.
 **Files**: `qml/model/{OutboxStore,Gateway,LockManager,OrdersStore,InventoryStore,StaffStore,
 SupplierStore,StockBatchStore}.qml`, `functions/lib/{gatewayLogic,lockLogic}.js`, `firestore.rules`,
 full design: `docs/superpowers/specs/2026-07-29-async-write-sequencing-design.md`, review:
-`docs/superpowers/specs/2026-08-06-async-write-sequencing-code-review.md`
+the 2026-08-06 code review (never committed)
 
 Four related but distinct correctness mechanisms, easy to conflate — know which one actually
 fixes which bug before reaching for any of them:
@@ -3217,7 +3219,7 @@ question that actually disambiguates rather than guessing — here, whether the 
 just-pushed fix or a build that predates it, which fully resolves the `NewOrderDialog` half of the
 report on its own.
 
-## Skill 66: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
+## Skill 89b: a client-side "optimistic timestamp bump" that the server-side delta path never actually sets — silently broke every CAS-protected delete of a previously-touched batch
 
 **What happened**: on-device testing of the Tier C cascade-delete feature found a precisely
 reproducible bug: create a product with stock 10, sell 1 via a completed order, delete the
@@ -3577,7 +3579,658 @@ lookup's contract needs an explicit existence signal (`null`/`undefined` vs. `""
 be written correctly — a map's `hasOwnProperty` gives this for free; a function usually doesn't, and needs its
 callers checked/updated everywhere it's constructed.
 
-## Skill 74: Simulating a Gateway.recordOperation server answer in a test needs `OutboxStore.markSent()` too, not just `Gateway._finishOperation()` — or a re-plan under the same key silently coalesces into the first, already-rejected payload
+---
+
+## Skill 74: Cross-system "atomicity" is a lie you tell precisely, not a property you achieve — and a `pragma Singleton QtObject` can't host `Connections{}` even when nothing else about it looks singleton-specific
+
+**Found while building the product-photos-in-Firebase-Storage feature, 2026-09-21/25** (design:
+`docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md`): Taher asked for
+"atomic upload and id creation." Firebase Storage and Firestore have no shared transaction — nothing
+makes this literally true. What's actually achievable: write the bytes first, then one Firestore
+transaction that both records the id and its idempotency marker, so an id is never visible without
+its bytes. The only failure mode left is an orphaned, unreferenced Storage object — a cost issue,
+not a correctness one. Stating this precisely in the design spec (not softening "atomic" into a
+vague promise, and not refusing the word either) mattered more than any specific implementation
+choice: it's the difference between a documented, bounded risk and a claim that turns out false the
+first time a Cloud Function crashes mid-request.
+
+**Two traps found by reading the existing code, not by writing new code and hoping**: (1) a photo
+for a product created offline can arrive at the server before that product's own create mutation
+has landed, since both go through the same outbox but independently — gated by a new
+`OutboxStore.hasPendingForEntity(entity, entityId)`, reusing the existing `_keysForItem`/`_keyFor`
+helpers rather than re-deriving the plain/batch/delta item-shape branching. (2) product ids are
+counter-minted per tenant, so the same id can exist in two tenants — a queued upload is bound to the
+`uid`/`tenantId` active when it was enqueued and only drains under that exact identity; the server
+independently rejects a mismatch. Neither trap is hypothetical hardening — both are direct
+consequences of structures (the outbox, the counter-minted id scheme) that already existed in this
+codebase before this feature, found by reading `OutboxStore.qml` and the tenant-provisioning code
+before writing `PhotoQueue.qml`, not discovered afterward by a bug report.
+
+**A `pragma Singleton QtObject` cannot host a `Connections{}` block, at all, regardless of how
+ordinary the code inside it looks** (Skill 20 already establishes this for `Timer{}`; this feature
+found the identical constraint applies to `Connections{}` too, and it is easy to miss because
+nothing about a `Connections{}` block *looks* like it should collide with singleton semantics the
+way an app-lifetime `Timer{}` obviously might). `PhotoQueue.qml`'s first draft used
+`Connections { target: AuthService; function onIsOnlineChanged() { ... } }` to watch online status —
+syntactically ordinary, and it would have crashed the entire singleton chain at runtime the moment
+`PhotoQueue.qml` loaded, breaking every screen in the app, not just photos. Caught by re-reading
+Skill 20 before writing the file, not by a test (nothing in this environment can run `qmltestrunner`
+to catch it empirically). Fixed with the property-binding-watcher pattern Skill 20 already
+prescribes for the `Timer{}` case: `property bool _onlineWatcher: AuthService.isOnline` +
+`on_OnlineWatcherChanged: { ... }`. **The generalizable check, not just the specific fix**: before
+adding ANY declarative child object (not just `Timer{}`) to a `pragma Singleton QtObject` root, ask
+whether it's a plain `QtObject`-derived non-visual type (safe) or anything else (not safe) — the
+unsafe category is broader than "things that obviously look like Timer."
+
+**Parity-test convention, extended**: `StuckWrites.js`'s technique (strip `.pragma library`, run the
+underlying logic through plain Node for a real pass) already existed for QML helper modules. This
+feature applied it three more times — `PhotoUrl.js`, `PhotoQueueLogic.js`, and (implicitly, via the
+existing `handlerHarness.js` mock extended with a Storage backend) the server handlers themselves —
+and in every case the *first* real test run against the parity copy caught something a purely
+"written, reviewed by eye" pass would have missed: a test's own off-by-one in `PhotoUrl.js`'s
+separator-count assertion; a reducer bug in `PhotoQueueLogic.js` where a stale `'failed'` event
+against an already-`failed` item kept incrementing `attempts` past the cap (found by a monkey test,
+not a hand-written case); and, via the extended `handlerHarness.js`, a Storage-cleanup call that ran
+on every idempotent replay of `deleteProductPhoto`, unbounded. **The pattern generalizes past QML**:
+wherever a piece of pure logic exists that a live network/native call would otherwise make
+untestable in this sandbox, strip it down to the smallest form that runs in plain Node and actually
+run it — "I traced through this by hand and it looks right" is not the same claim as "296/296,
+stable across 3 runs."
+
+**Review-sweep addendum (2026-09-25)**: running `qt-development-skills:qt-qml-review`'s deterministic
+linter against a large existing file's WHOLE content, rather than filtering to only the lines a
+given PR actually added, produces mostly noise on a codebase with an established style the generic
+linter doesn't know about (this project uses `var` everywhere, `property var` for list-shaped state,
+anchors dot-notation, and `Qt.createQmlObject` as the Skill-20 timer workaround — all correct real-
+existing-code precedent, none of them things a fresh PR should "fix" in isolation). Diff-filter
+first; a linter run against whole files will bury the one or two real findings (in this feature's
+case, missing `Image.sourceSize` on new thumbnail tiles) under 200+ true-for-generic-QML-but-false-
+for-this-codebase hits. Separately, that same review pass — done by hand, no subagent-dispatch tool
+available in this environment — found four real, independent bugs purely by grepping for whether a
+function this session had just written was actually CALLED anywhere: `PhotoQueue.clear()` existed
+for sign-out hygiene but was never wired into the sign-out handler; `AuthService.ensureFreshToken()`
+was documented as being called from `PhotoQueue.drainNow()` but never actually was; and
+`PhotoQueue._load()` (`Component.onCompleted` on every real app launch) never called
+`_reschedule()`, meaning a photo queued in a previous session would sit frozen forever unless
+something else happened to trigger a drain — silently breaking "survive app close," a requirement
+stated explicitly at the start of the session. **None of these were caught by the unit tests written
+alongside the original code, because the tests exercised the functions in isolation and never asked
+"is this actually wired to anything."** A grep for a new function's own call sites, done once near
+the end of a feature rather than assumed complete because it compiles and its own unit test passes,
+is cheap and catches a class of bug that no amount of testing the function in isolation will ever
+surface.
+
+---
+
+## Skill 75: A new E2E test file that calls Gateway only *indirectly* (through a store helper) can silently skip the emulator-URL override every sibling file has
+
+**Found:** `test/e2e/tst_ProductPhotosE2E.qml`'s first real CI run (2026-09-27, on the merge commit
+that also brought in PR #83/#87) -- 6 of 7 tests failed with "product doc never appeared" polling
+the Firestore emulator, all 6 being exactly the tests that call `_createProduct()`. The 7th test
+(no `_createProduct()` call) passed.
+
+**Root cause:** `_createProduct()` calls `InventoryStore.addProduct()`, which calls
+`Gateway.recordMutation()`. Every other E2E file that touches `Gateway` sets
+`Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"` in `init()` (and restores
+`realFunctionUrl` in `cleanup()`) — `tst_InventoryE2E.qml`, `tst_StaffStoreE2E.qml`,
+`tst_SupplierStoreE2E.qml`, `tst_StockBatchStoreE2E.qml`, `tst_OrdersE2E.qml`,
+`tst_OrdersStoreE2E.qml`, `tst_ReturnAfterMetadataEditE2E.qml`, `tst_BulkImportChunkingE2E.qml` (for
+its own batch URL). This file's `init()` only set `FirebaseService.emulatorHost` (for direct
+Firestore/Storage REST polling) and posted its own `uploadProductPhoto`/`deleteProductPhoto` calls
+straight at `emulatorFunctionsBase` — neither of which touches `Gateway` at all. The one Gateway
+call in the whole file was buried inside a store helper, easy to miss precisely because it isn't a
+literal `_postDirect(...)` line you can see and pattern-match against the file's own convention.
+Without the override, `Gateway.recordMutation` posted to the real production URL; nothing ever
+landed in the local Firestore emulator the test was polling, so the poll always timed out.
+
+**The generalizable check**: before writing a new E2E test file, grep the *store functions* it calls
+(not just its own direct `_postDirect` lines) for any `Gateway.record*` call, and set every
+`Gateway.*Url` property that path touches in `init()`/`cleanup()`, exactly matching whichever
+sibling file exercises the same store function already. A file can look complete — it warms up its
+own functions, sets the Firestore emulator host, follows every other convention correctly — and
+still silently talk to production because one call is one indirection away from the file's own
+visible network calls. The same class of bug bit this branch once already, one layer down:
+`PhotoQueue.uploadUrl`/`StorageService.deleteUrl` had to be made overridable in the first place
+(commit `80874f7`, this branch) before any test could point them at the emulator at all —
+overridable is necessary but not sufficient if a new test then forgets to actually override one.
+
+---
+
+## Skill 76: A new raw-XHR test helper needs the QTBUG-49896 snapshot too — and check the repo's own trail for a status-code symptom *before* theorizing
+
+**Found:** `test_upload_rejects_an_eleventh_photo` failed on three consecutive CI runs
+(2026-09-27). The third run's diagnostic `verify()` finally showed `got 0 -- response: ` — status 0,
+empty body — for the one call that should return **409**.
+
+**Root cause:** QTBUG-49896 (Skill 45): QML's `XMLHttpRequest` resets `xhr.status` to 0 at the
+readyState 3->4 transition for some responses; a 409 is the original bug report's own repro.
+`Gateway` (`_captureBeforeStatusIsLost`) and `PhotoQueue` already snapshot status/body at
+HEADERS_RECEIVED/LOADING and fall back to it. `test/e2e/E2EHelpers.js`'s `postDirect` — written for
+the photos e2e test's direct function calls — read `xhr.status` once at DONE, so it silently
+reported 0 for exactly the 409 the test was asserting on. **Production was never affected**
+(`PhotoQueue` had the workaround from the start); only the test helper was.
+
+**The mistake worth recording:** the first reading of "status 0" was "transient connection flake
+under a 11-call burst," and a retry-on-0 was written and pushed on that theory before checking
+whether this repo had ever seen `status 0` before. It had, at length (Skills 43-45, a 13-round
+investigation with this exact signature). The retry failed identically — deterministic, not
+transient — which is what finally sent the search into SKILLS.md. Skill 44's own lesson applied
+verbatim: an exact, mechanical symptom (status 0 on a specific status code) is cheap to grep the
+repo's own history for, and disproportionately likely to already have an answer. The retry was
+removed since its premise was wrong.
+
+**The check:** any new raw `XMLHttpRequest` in this codebase (test helper or production) that
+inspects `xhr.status` needs the HEADERS_RECEIVED/LOADING snapshot fallback. Grep for
+`new XMLHttpRequest` and confirm each site has it; `StorageService.deleteUrl`'s delete XHR still
+doesn't, harmlessly (any non-2xx already maps to `ok=false`, and only the error-message text says
+"status 0"), noted rather than changed.
+
+
+## Skill 77: A value crossing the C++/QML boundary needs ONE representation, and a "file gone" branch mapped to HTTP 400 disguises a local bug as a server bug
+
+**Found on-device, PR #84 (product photos), 2026-09-28.** Four symptoms (spinner forever, nothing in
+Storage, instant "failed", `Cannot open: file://file///C:/...`), two root causes. (1)
+`ImageProcessor.persistLocalCopy` returns `QUrl::fromLocalFile().toString()` (a `file:///` URL) but one
+consumer read it as a bare path (`NativeFile.readFileBase64` -> `QFile("file:///..")` never exists ->
+"file gone" -> terminal 400, XHR never sent) and another blindly prepended `"file://"`. (2)
+`PhotoQueue`'s one-shot drain timer fired while the item was still gated on its product's OutboxStore
+create, found nothing to do, and never re-armed.
+
+**Lessons.** (a) Tolerate both forms in every consumer through one tested, idempotent helper
+(`PhotoUrl.toLocalPath` / `toFileUrl`); items persisted by older builds keep the old form forever. (b)
+Report local failures as local (log line), not as an HTTP status that sends you to server logs. (c)
+Every gate in a drain function needs a wake-up on the thing it waits for (`OutboxStore.revision`); a
+timer that only fires "when due" cannot know a gate opened. (d) `RowLayout` vertically CENTERS children
+by default: once one tile can be taller (failed tile + button row), give every child
+`Layout.alignment: Qt.AlignTop`.
+
+**The check:** grep stored paths for `"file://" +`, and any `readFileBase64(` / `QFile(` fed from a
+stored value; for each gate in a drain function, name the event that re-runs it.
+
+
+## Skill 78: A delegate with `required property` loses the implicit `index`; a fixed-count RowLayout of user data must wrap; a dialog that copies store data goes stale; and when two surfaces share a helper, log the failure before theorising
+
+**Found on-device, PR #84 (product photos), 2026-09-28, second round.** (1) "Cover" showed on every photo tile:
+the delegate declared `required property string modelData` but read `index`. Once a delegate has any required
+property Qt no longer injects `index`/`modelData`, so `visible: index === 0` threw a ReferenceError, the binding
+never ran, and `visible` stayed at its default `true`. A failed binding does not fail loudly on screen — it just
+leaves the default. (2) The strip was a `RowLayout`: more than ~4 tiles ran off-screen, and the + tile with them.
+(3) `EditProductDialog.photoIds` was copied once in `openFor()`, so a photo confirmed while the dialog was open
+never appeared. (4) The Inventory list cover is still unproven (see the test plan) — the same URL helper feeds the
+gallery and the list, so the fix was diagnostics, not a guess.
+
+**Lessons.** (a) Declare `required property int index` (and `modelData`) together, always; grep every delegate that
+has one `required property` for a bare `index`/`modelData` read. (b) Any row whose length is user data needs `Flow`
+(or a `Flickable` with the trailing action pinned) — never `RowLayout`. Inside a `Flow`, size with `width`/`height`,
+not `Layout.*`. (c) A dialog that copies a store field on open must re-read on the store's `revision` signal, through
+a tested store function (`InventoryStore.photoIdsFor`). (d) Add `Image.onStatusChanged` Error logging before
+theorising about why an image doesn't render — it turns "no cover" into a URL you can open in a browser.
+
+**The check:** for every `delegate:` with a `required property`, confirm every `index`/`modelData` read in its body is
+declared; for every `RowLayout` fed by a `Repeater` over user data, name the maximum count and the overflow story;
+for every `property var x` assigned once in an `openFor()`, name the signal that refreshes it.
+
+
+## Skill 79: A test that asserts "nothing was enqueued" must name WHAT must not be enqueued — a ledger row is a legitimate second write
+
+**Found in CI, PR #84, 2026-09-28.** `test_applyPhotoIds_never_enqueues_a_gateway_mutation` asserted
+`OutboxStore.pendingCount === 0`, but `applyPhotoIds(..., "add")` also records a `photo_change` ledger row
+(`TransactionStore.recordPhotoChange` -> `Gateway.recordMutation("transaction", ...)`), so pendingCount is 1. The
+production code was right; the test's claim was too broad. It also cost a CI round because the test was written
+without tracing what the function calls.
+
+**Lesson.** Assert the specific entity (`OutboxStore.hasPendingForEntity("inventory", id)` false) plus the exact
+expected count of the intended side effect (1 ledger row; 0 when no `changedPhotoId`). Before writing a "never
+writes" test, grep the function body for every `Gateway.`/`TransactionStore.`/`ActivityLog.` call it reaches.
+
+**The check:** for each "nothing enqueued" assertion, list the side-effect calls of the function under test and
+confirm the asserted count equals the sum of the intended ones.
+
+## Skill 80: `clip: true` clips to the bounding box, not `radius` — a rounded-corner thumbnail needs a `MultiEffect` mask, not just `clip`
+
+**Found on-device, PR #84, 2026-09-29.** `ProductPhotoGallery.qml`'s tiles were `Rectangle { radius: ...; clip:
+true }` with a `PreserveAspectCrop` `Image` filling them — reported as "the photos goes out of the rectangle."
+`clip: true` only clips children to the item's axis-aligned bounding box; it does not use `radius` as a clip path.
+The `Image` is genuinely inside its parent's box the whole time — it just isn't rounded, so its square corners
+visually overlap the parent's rounded corners.
+
+**Fix.** `MultiEffect { source: <hidden Image>; maskEnabled: true; maskSource: <hidden Rectangle radius=N> }` (Qt
+6.5+, `QtQuick.Effects`). Both the source and the mask can be `visible: false` — Qt Quick still renders them to an
+offscreen texture for the effect; they don't need to be on-screen themselves. Factored into a small reusable
+`RoundedThumb.qml` since it's needed at 2+ call sites — the moment a rounded-image mask is needed twice, extract it
+rather than duplicating the source+mask+MultiEffect trio.
+
+**Not tested by this repo's CI.** `qmltestrunner`'s CI job can't load anything that imports Felgo, and this
+component only exists inside a Felgo-importing file — so a masking bug here is on-device-only, discovered by
+looking, not by a red test. Say so plainly in the checkpoint/test plan rather than implying automated coverage
+exists.
+
+**The check:** any `Rectangle { radius: N; clip: true }` with an `Image`/`Item` child that visually fills it is a
+rounded-corner *candidate*, not a proven one — check whether the child's own shape is masked to `radius`, not just
+clipped to the box, before trusting a "rounded" thumbnail to actually render rounded.
+
+## Skill 81: Rejecting a scrollable "+" tile once doesn't mean rejecting scrolling — pin the fixed action outside the Flickable, not instead of it
+
+**Found on-device, PR #84, 2026-09-29.** The 2026-09-28 round rejected a horizontal `Flickable` for the photo strip
+because it would hide the `+` tile until scrolled, and chose `Flow` instead (wraps to rows). That fixed the
+"hidden +" problem but reintroduced a different one: reflowing rows read as boxy and grew the dialog vertically as
+photos were added — the actual complaint this round responds to.
+
+**Resolution, not a reversal.** The two decisions aren't actually in tension: `RowLayout { ListView
+(Layout.fillWidth) ; + tile (Layout.preferredWidth, fixed) }` puts the fixed action OUTSIDE the scrollable region
+entirely, so it's allocated by the outer layout, not scrolled content — always reachable, same guarantee the
+2026-09-28 round wanted, while the photos themselves scroll instead of wrapping. Skill 76 already named this exact
+shape ("a `Flickable` with the trailing action pinned") as the alternative to `Flow`; this round is that alternative,
+built.
+
+**The check:** before switching a horizontal `Flow`/`RowLayout`/`Flickable` for user-data-length content, check
+whether a fixed action (an add button, a "done" affordance) needs to stay reachable regardless of scroll position —
+if so, it goes in a sibling outside the scrollable item's own model, not inside it.
+
+## Skill 82: `visible: false` is not enough to feed a `MultiEffect` source/mask — it needs `layer.enabled: true`
+
+**Found on-device, PR #84 round 5, 2026-09-29 — a regression I introduced in round 4 and had
+already flagged as unverified.** `RoundedThumb.qml` fed `MultiEffect.source`/`maskSource` from an
+`Image` and a `Rectangle`, both `visible: false`, on the assumption that Qt Quick still renders
+invisible items to a texture for effect sampling. It doesn't: `visible: false` means the item
+contributes no scenegraph render node at all, so there's nothing for the effect to sample — the
+masked output is blank/transparent. Everything else on the tile that WAS `visible: true` (the grey
+background, the cover/remove badges) rendered fine, which is exactly what made the bug look like
+"the photo is just missing" rather than "the whole tile is broken."
+
+**Fix:** add `layer.enabled: true` to the source and mask items. This forces Qt to render that item
+into an offscreen texture regardless of whether it's composited on-screen — the actual mechanism
+`MultiEffect`/`ShaderEffectSource`-style sampling needs. `visible: false` + `layer.enabled: true`
+together is the correct pattern for a hidden effect source; `visible: false` alone is not.
+
+**The check:** if a `MultiEffect`, `ShaderEffect`, or anything else sampling an `Item` as a texture
+source produces a blank/transparent result and the source item is `visible: false`, check for
+`layer.enabled: true` before looking anywhere else — this is the first thing to rule out, not the
+last.
+
+## Skill 83: A Felgo-importing component can't be loaded by `qmltestrunner` — put its geometry in a pure `.js` helper, and make the container hand it the width it was designed for
+
+**PR #84 follow-up, 2026-09-29 (failed-upload photo tile: in-tile Retry/Discard).** Two targets (36dp
+Retry, 28dp Discard) have to share a 72dp tile without overlapping. `FailedTileOverlay.qml` uses
+Felgo-provided `dp()/sp()/Icon`, so CI can't instantiate it (same limit as `ProductPhotoGallery.qml`).
+Instead of testing a mirror, the positions/sizes, the scrim-contrast claim and the none/busy/failed
+rule live in `qml/helper/FailedTileGeometry.js` (`.pragma library`) and the QML component only paints
+what the helper returns. Then "hit boxes never overlap, never leave the tile, meet the size floor, at
+every dp scale" is a real, headless assertion (`tests/tst_FailedTileGeometry.qml`), including a
+1000-case deterministic monkey test. A contrast claim is only worth writing down if a too-weak value
+fails it: the test asserts a 30% scrim is rejected.
+
+**Bug caught in review before it shipped:** the first wiring put `anchors.margins: dp(2)` on the
+`Loader` hosting the overlay, so the overlay saw a 68dp tile, and the helper (correctly) scaled every
+target down to 94%. Geometry that is designed against a specific container size must be given that
+size: inset only the decoration (the scrim, via `scrimInset`), never the item the geometry reads
+`width` from.
+
+**Also decided, not observed:** no creation-time entrance animation on the overlay. The gallery model is
+a JS array reassigned on every `PhotoQueue.revisionChanged`, which resets the `ListView` and recreates
+delegates, so `NumberAnimation on opacity` would replay on every unrelated queue change. Reasoned from
+the code; verify on device if an entrance animation is ever wanted (it would need per-photoId "already
+shown" state, not a delegate-local animation).
+
+**The check:** when a QML component can't be loaded headless, ask what inside it has a right/wrong
+answer (sizes, overlaps, thresholds, state mapping) and move exactly that into a pure helper before
+writing tests. And after wiring, re-derive the size the helper actually receives.
+## Skill 84: Don't encode a new failure class in the HTTP status when existing client paths already treat every 4xx as a final decision
+
+**Found while designing** `fix/2026-09-28-gateway-write-error-classification` (roadmap item 1, part C). The plan was
+"map terminal Firestore errors to 4xx, transient to 503". Tracing the client first showed `Gateway._classifyDeltaResponse`
+and `_sendOperation` treat any 4xx with an `ok:false` body as a definitive server decision: the write is removed from
+the outbox and its callback fires. A poison write answered 4xx would have been DROPPED, the opposite of the PR's own
+"client never drops" rule. The batch sender already had the safer pattern: `_classifyBatchMutationFailure` allowlists
+`body.error` strings and ignores status.
+
+**Fix:** status stays 500; the body carries `write-rejected` / `write-unavailable` / `write-failed`
+(`functions/lib/writeError.js`). Old clients see the same 500 and behave as before. The client reads `body.error` only
+to label (`StuckWrites.errorCodeOf`, `terminalCount`).
+
+**Generalize:** before changing what status a server endpoint returns, grep every client branch on `status >= 400` /
+`< 500` for that endpoint. A status is shared vocabulary; a new body string is not. Also: the Admin SDK bypasses
+security rules, so `permission-denied` is rare from Cloud Functions; do not build on it being common.
+
+## Skill 85: A state that is only true while a request is in flight must be repaired at load time — and "delete the parent" must reach the queue that points at it
+
+**PR #84 final sweep, 2026-09-29 (F1/F2/F4).** `PhotoQueue._upload` persists `state: "uploading"` *before*
+the XHR. That value only means something inside one process. Kill or suspend the app in that window and
+the next launch loads an item that no code path will ever pick up (drain and reschedule only take
+`enqueued`/`retrying`), and the UI offers no Retry/Discard because it isn't `failed`: an eternal spinner
+that still counts toward the 10-photo cap. Fix at the source, in `_load()`: `uploading` found on disk
+becomes `enqueued`, attempts unchanged (a crash is not a failed attempt). Safe to resend because the
+server dedupes by `requestId`. It must stay a load-time rule; in-session `uploading` still means "in
+flight, do not drain".
+
+Same sweep, same shape: `deleteProduct` cleaned confirmed `photoIds` but never the queue items that
+*point at* the product, so they later 404 (terminal) into a failed state with no UI. And `_upload`
+returned quietly on an empty `idToken` while nothing re-armed the drain when the token arrived; the fix
+is a property watcher (event-driven, empty token is not a trigger), not a retry timer, which would poll.
+
+**Known ceiling, not fixed:** an upload already in flight when the product is deleted can still land
+server-side; its Storage objects are orphaned until roadmap item 4 (server-side cleanup).
+
+**The check:** for every persisted state, ask "what does this mean after a restart?"; for every delete,
+grep who else holds the id (queues, outboxes, caches).
+
+
+## Skill 86: A property-change handler runs synchronously in the middle of the setter's function — and singleton state leaks between test files
+
+**PR #99 full-sweep review, 2026-09-30.** Two lessons from one review of the token watcher and its tests.
+
+1. `AuthStore.applyAuth` assigns `idToken` *then* `expiresAtEpochSec`. An `on_TokenWatcherChanged` handler
+   fires synchronously at the first assignment, so anything it calls sees the **new** token with the **old**
+   expiry. `drainNow()` → `AuthService.ensureFreshToken()` therefore judged the just-refreshed token
+   expired and fired a redundant second refresh (+ `_loadUserProfile`, `tokenRefreshed`). Not infinite (the
+   second pass sees the fresh expiry), but wasteful and a flicker risk. Fix at the consumer:
+   `drainNow(skipTokenRefresh)`; the token watcher passes `true` (a token that just arrived needs no
+   refresh). Timer and online triggers keep the refresh. **The check:** when a handler reacts to one field
+   of a multi-field update, ask what the *other* fields hold at that instant.
+2. `PhotoQueue._breaker` is singleton state shared by every test file in one `qmltestrunner` process. Under
+   `qmltestrunner` a drain that reaches `_upload()` ends in the "file unreadable" branch, which records a
+   breaker failure; 5 of those trip the breaker open for 60 s and every later drain returns early. Tests
+   that assert "the drain ran" then fail depending on file order. `init()` must reset `_breaker`.
+   **The check:** any test asserting a side effect of a singleton must reset *all* the singleton's gating
+   state in `init()`, not only its data.
+
+Also: a "monkey" test is only a monkey test if you prove the generator reaches every branch. The LCG in
+`tst_InventoryStore_deleteProductCascade` used `1103515245 * seed`, which exceeds 2^53 in JS doubles, lost
+its low bits, and `rnd(4)` returned 0 forever (only `"enqueued"` was ever exercised; verified in Node).
+Use `a*m < 2^53` (`1664525`, `1013904223`, `% 2^32`) and assert the generator hit every state.
+
+## Skill 87: "Retry now" on a write already flagged stuck must not clear the flag, or the only alarm goes dark right after the user asked about it
+
+**Found while designing** part B slice S1 (`feat/2026-09-29-stuck-writes-dialog-retry-now`). The plan said Retry should "drop
+the requestId from `StuckWrites` state". For a *parked* item that is right. For a write that is merely stuck (still
+auto-retrying), it hides the header line and the dialog row the moment the user taps Retry; if the server rejects it
+again the user sees nothing for ~3 minutes (5 more failures to re-tip). `StuckWrites.noteFailure` only reports the failure
+that hits `THRESHOLD` exactly, so keeping the flag also means no second toast.
+
+**Fix:** `Gateway.retryStuck` -> `OutboxStore.retryNow` (attempts 0, `nextAttemptAt` now) and leaves `stuck` / `terminal`
+alone; only leaving the outbox clears them (`_pruneStuck`). `retryNow` refuses an in-flight item.
+
+**Generalize:** a manual "retry" should reset the *schedule*, not the *evidence*. Clear a warning only when the thing it
+warns about is gone. Also: a test that feeds `noteFailure` a raw response body instead of the parsed error code passes
+the wrong type silently (found by running the pure-JS test bodies in Node; `errorCodeOf` does the parsing in `Gateway`).
+
+## Skill 88: A "stuck" flag that lives only in memory is forgotten on relaunch, and the persisted backoff makes the alarm stay dark far longer than the in-session ~3 minutes
+
+**Found on device** reviewing PR #97 (S1): after force-closing the app the dialog was empty. `StuckWrites` state was in-memory
+by design, but `OutboxStore` persists `attempts`, so a write that had already failed 5 times resumes at the **10-minute** backoff
+step, and the 5 new failures the counter then needs take roughly 40+ minutes (traced from `_backoffMs`, not run). A user who
+reopens the app every few minutes never sees the alarm for a permanently broken write.
+
+**Fix (P5, S2a):** mirror the evidence onto the queued item (`failures`, `stuck`, `terminal` via `OutboxStore.setStuckMeta`),
+rebuild it at launch (`StuckWrites.hydrate`, `Gateway.resumeStuck`, before the first drain), and make stuck items due **once**
+(`OutboxStore.wakeStuck`, attempts kept). Because the state rides on the outbox item it is pruned for free when the item leaves
+the outbox.
+
+**Generalize:** (1) if the retry *schedule* survives a restart, the alarm's *evidence* must survive with it, or the two disagree.
+(2) Repair impossible persisted combinations on load (`stuck` with a low count, count at threshold without `stuck`), or a bad
+save can hide the alarm or toast twice. (3) Load persisted state before anything can write to it (`_noteFailure` calls
+`resumeStuck` first), or an early failure overwrites what was about to be restored. (4) A relaunch is not a new event: no toast.
+
+## Skill 89: Derive "parked" from the evidence you already persist, and make the parked item hold its keys, or the drain timer spins and siblings overtake it
+
+**Context (S2b):** a stuck write the server *rejected* must stop auto-retrying until the user taps Retry. The tempting design
+is a stored `parked` flag plus `parkedAt`. But `stuck` and `terminal` were already persisted (Skill 88), so `stuck && terminal`
+*is* the answer (`StuckWrites.isParkedItem`): nothing to migrate, nothing that can disagree with its inputs, and Retry is just
+"forget `terminal`" (a new rejection re-parks after one attempt).
+
+**Two traps the skip-it fix misses:** (1) `dueItems` must *claim the parked item's keys* before skipping it, or a later write for
+the same record (queued while the first was in flight) is sent ahead of it and Retry then loses the CAS race. (2) `nextDueInMs`
+must ignore the parked item **and whatever waits behind it**, or a blocked sibling reports "due now" and the drain timer spins at
+its 250 ms floor forever.
+
+**Generalize:** (1) prefer a derived flag over a stored one when its inputs are already persisted. (2) "Skip" in a scheduler is
+three places, not one: what is handed out, when to wake next, and what the launch re-check wakes. (3) A state that stops a retry
+loop needs a release path in the same change, and the release must be able to fail back into the state without new bookkeeping.
+(4) Copy that promised "keeps retrying" is a bug the moment the behaviour changes; grep the strings.
+
+## Skill 90: Removing a queued write must answer everyone waiting on it, and its "is it still allowed" check must be made at execution time, from the persisted item
+
+**Context (S3 Discard):** dropping a parked write is one `markSent` plus a resync, but three things around it go wrong if you stop there.
+
+**Traps:** (1) A queued item can have callers waiting: `recordOperation` waiters AND `recordDelta` callbacks (several, when deltas coalesced). Removing the item silently leaves them hanging until relaunch; answer both with `{ok:false, error:"discarded"}` in the same change. (2) The button was drawn when the row was parked; by the time the confirm is accepted it may have been retried, sent, or the device offline. Re-check everything inside the Gateway function (mode, online, still queued, still parked, not in flight) and tell the user when it refuses. (3) Decide "parked" from the persisted item (`isParkedItem`), not the in-memory state: right after a relaunch the state has not been rebuilt yet and would wrongly refuse.
+
+**UI / tests:** a confirm that must sit over a `BottomSheet` should be local to the sheet (a global one is hidden by it), with `busy: confirm.opened` so Back / Close / tap-outside cannot close the sheet underneath. To test "this store was asked to re-read" without network, force `loadingMore = true`: `_resetAndFetch` then only sets `_resetPending`.
+
+**Generalize:** (1) every place that removes a queued item must ask "who is waiting on it?". (2) A destructive action re-validates at the moment of effect. (3) Merged edits share the parked item's requestId, so a discard removes them too: say so in the confirm copy.
+
+## Skill 91: Review a state change by grepping the words that describe the state, and by checking what an error recipe really throws
+
+**Context (PR #110 final sweep):** S3 added a second exit (Discard) to the parked state, but the row text still said "Paused until you tap Retry" and the header still said "Tap to retry". Same trap as Skill 89 (4), found again in review.
+
+**Traps:** (1) Adding an exit to a state makes every string that describes the state stale: grep the old wording across `qml/` and `docs/` in the same change. (2) A test recipe for a server error must produce a gRPC status code on the server. Errors the Admin SDK throws itself before the RPC (invalid document shape, nested arrays) carry no code, so `classifyWriteError` answers `write-failed`, not `write-rejected`; an oversize document is refused by the backend (INVALID_ARGUMENT) and does carry one. Reasoned from the code first, then observed on device: an oversize Description parks the row. (3) A helper named for one path (`_failDeltaCallbacks`) that a second path should reuse needs a neutral name first, then the old inline copy is deleted.
+
+**Generalize:** (1) new exit -> grep the state's copy. (2) A recipe is a claim: say "reasoned" or "observed". (3) Extract, rename neutrally, replace the duplicate in the same commit.
+
+## Skill 92: In Firestore rules a deny-all `match` block does not deny if a wildcard also matches; list server-only collections in the helper the wildcard consults
+
+**Context (photos PH3):** the new `pending_cleanup` markers must be writable only by the Cloud Function. The obvious change,
+`match /pending_cleanup/{id} { allow read, write: if false; }`, grants nothing and denies nothing: Firestore allows a request
+if ANY matching rule allows it, and `tenants/{t}/{collection}/{doc}` still matches and allows members. `locks` already had this
+bug once. The fix is to add the name to `isServerOnlyCollection`, which the wildcard rule checks.
+
+**Generalize:** (1) a new server-only collection means editing the exclusion list, then proving it with a rules test that
+a member AND the owner are both denied all four operations (R05). (2) Also pin that an ordinary wildcard collection still
+works (R08) so a too-broad exclusion is caught.
+
+## Skill 93: Never derive a prefix delete from a client-reachable id without a whitelist, a trailing slash, and a re-check
+
+**Context (photos PH3):** the product-delete sweep deletes everything under `{env}/tenants/{t}/products/{p}/`. Three ways it
+widens: an empty/odd product id (`.../products/` deletes every product's photos), a missing trailing slash (`PRD-1` also
+matches `PRD-10`), and a marker whose stored prefix was edited. So: ids pass `^[A-Za-z0-9_-]{1,64}$`; the prefix is built in one
+function that returns null otherwise; the sweep recomputes it from the doc path and refuses unless the stored one is identical;
+and it re-reads the product so a reused id is never swept.
+
+**Mutation-check trap:** when you scripted a mutation as a string replace, `replace(old, new, 1)` hit a doc COMMENT that quoted
+the same regex first, and the "mutation" survived because nothing changed. Anchor the pattern on the full code line, and
+treat any surviving mutation as a bug in the mutation until proven otherwise.
+
+## Skill 94: A design's "intermediate states are safe" claim is a hypothesis; the side effect lives where it is called, not where the fix is planned
+
+**Context (photos PH3, device bug 2026-10-04):** the design said building the server cascade (PH3) before the client change
+(PH4) keeps every intermediate state free of destroy-before-ack. False: the destructive call is the client's per-photo
+`deleteProductPhoto` loop inside `deleteProduct`, and PH3 does not touch it. With a concurrent upload the delete 409s, the product
+survives, and the loop had already stripped its photos.
+
+**Generalize:** (1) For any delete/cascade, list EVERY side effect `deleteProduct` fires and mark each as before-ack or after-ack;
+only after-ack ones are safe. Here: photos (fixed), batches, activity log, queue purge (still before-ack). (2) When slicing server
+vs client work, a slice order claim needs the destructive caller removed in the FIRST slice, or it is not a safety claim. (3) A
+CAS whose `before` is the whole record makes unrelated concurrent edits (a photo upload) reject a delete; expect 409 on every
+two-device test of a delete. (4) A test that asserts "nothing was destroyed" needs a wait after the 409 signal, or it passes
+before the forbidden calls land.
+
+## Skill 95: A money-data sweep needs a defence filter below the query, deterministic ids, and a test harness that can express "bad input"
+
+**Context (BC1, 2026-10-05):** server sweep deleting a deleted product's `stock_batches` (cost layers).
+
+**Generalize:** (1) Do not trust the query alone: the pure sweep skips any doc whose own `productId` differs, so a wrong or widened query cannot delete another product's batches (mutation "drop the filter" fails 2 tests; "wrong query value" 9). (2) Deterministic audit ids (`cascade~{productId}~{batchId}`) make two overlapping sweeps (handler + the future scheduler) and any retry idempotent without a lease. (3) One write batch per chunk of 100 docs holds the deletes AND their audits: a failed commit leaves neither. (4) Harness traps: `seedHappyPathAuth` maps role `""` to owner, so a "no role" test silently ran as owner until the role was forced on both the user and member docs; a test helper default (`productId || "PRD-5"`) turned an "empty productId" fixture into a valid one. When a negative test passes on the first try, check the fixture actually expressed the bad input. (5) A required dependency (`sweepBatches`) that is missing must fail the sweep loudly (marker kept), never skip money cleanup silently.
+
+## Skill 96: A server-minted id in a shared keyspace needs its namespace reserved against client-chosen ids
+
+**Context (PR #118 review, 2026-10-05):** BC1 wrote deterministic audit ids `cascade~{productId}~{batchId}` into `audit_log`, whose other ids are client-chosen `requestId`s that three endpoints accepted unvalidated.
+
+**Generalize:** (1) Determinism buys idempotency but also makes the id predictable: any client who can pick a doc id in the same collection can pre-claim it. Either the writer uses `create()` (and accepts a stuck retry) or the namespace is reserved and rejected at EVERY endpoint that accepts a client id for that collection. Reserving beats `create()` here: a poisoned id would otherwise block the money cleanup forever. (2) Find every endpoint by grepping the collection path (`audit_log/`), not by remembering which handlers you touched: the photo endpoints used `requestId` too and were not in the diff. (3) Keep the reservation in ONE helper next to the id builder (`isReservedAuditId` beside `buildCascadeAuditId`) and test the pair: every id the builder can produce is reserved. (4) A design note that says "the scheduler needs no extra code" is a claim about wiring: check where the required dependency is bound before writing it.
+
+## Skill 97: A per-record ordering rule (parked write holds its key) must be checked against every caller that AWAITS and every sibling entity the same action writes
+
+**Context (PR #118 device test, 2026-10-04; root cause from code read, not yet reproduced):** a rejected product edit is parked and holds `inventory/{id}`. A restock waited on a delta for that key (`busy` forever, dialog dead) while its batch write, on another key, went through (stock vs ledger drift); a delete queued behind it while the per-batch deletes went out at once.
+
+**Generalize:** (1) Holding one key back is safe only if nothing that waits on it has a UI waiting on the answer: every `callback`-style await (`recordDelta`) needs a path for "cannot be sent now", not just "sent" and "failed". (2) One user action that writes several keys is ordered per key, not per action: when one key is held, the others still move. Either refuse the whole action up front or make it one atomic write. (3) Decide it in one shared place (a `hasParkedFor(entity, id)` check) rather than per dialog; grep every awaiting caller before choosing. (4) A fix that removes the destructive sibling write (BC2) makes the state recoverable but not pleasant: say so and decide the UX (design D2/D3) instead of declaring done.
+
+## Skill 98: A behaviour that lives in a non-singleton model object (DataModel) does not exist in a test that never instantiates it
+
+**Context (PR #119 CI, 2026-10-04):** BC2's E2E "stale delete 409" failed with "did not bring the hidden batches back by re-read". The re-read is `DataModel`'s `Connections { target: Gateway }`, and `DataModel` is created by `Main.qml`, not a `pragma Singleton`. `tst_StockBatchStoreE2E.qml` never declared one, so the production behaviour under test simply was not wired. The product-restore half passed because `InventoryStore` IS a singleton, which made the failure look like a logic bug.
+
+**Generalize:** (1) Before debugging production code for a missing side effect in a test, check WHO wires it and whether the test creates that object (`qmldir` `singleton` vs a declared item). (2) When a feature adds a reaction in a non-singleton, add `DataModel { id: dm }` (or the owner) to every test file that asserts the reaction, and say why in a comment. (3) A half-passing sequence (first assertion green, second red) is a hint that two different owners are involved.
+
+## Skill 99: A "held key" ordering rule that blocks a write must be answered at the entry point of every flow that awaits it, before any side effect
+
+**Context (2026-10-04, PR #121):** a parked edit holds `inventory/<id>` in `OutboxStore.dueItems`. Order completion awaited a stock delta for that key, so the delta never went out, `deductStock`'s callback never fired, `_completingOrderIds[orderId]` stayed set and the FIFO deltas (other keys) drifted from `product.stock`. Restock and delete had been fixed the same way one PR earlier (Skill 97); completion was the next caller that awaits.
+
+**Generalize:** (1) Put the refusal at the TOP of the orchestration function, before the in-flight set is touched and before the first side effect, so a refusal has nothing to undo (a guard placed after FIFO consumption needs `restoreFifo` and credit-back paths of its own). (2) A refusal must answer through the same callback the flow already uses (`orderCompletionFailed` via `stockErrorMsg`), not a new channel, and must not change the record's status (the order stays `pending`, not "out of stock"). (3) After guarding one caller, grep every other caller of the same primitive (`deductStock`, `creditStockNoBatch`) and list the unguarded ones as open instead of assuming. (4) A red-by-design E2E commit first, then the fix, proves the bug on CI before the guard hides it.
+
+
+## Skill 100: A ledger row that belongs to an optimistic edit must be held in the OUTBOX until that edit is acked, and the dependency must name the STORED item
+
+Symptom (device, PR #121): an edit the server rejected (description > 1 MiB) still registered its `field_change` row, and a sale inside the ~3 min retry window sold at the unsynced price (or at the old one after a relaunch re-read Firestore).
+Rules learned, in order of how easy they are to get wrong:
+1. `Gateway.recordMutation` returns the NEW call's requestId, but `OutboxStore.enqueue` may MERGE the call into an older queued item that keeps ITS requestId. A dependent must hang off the stored item: use `Gateway.recordEdit`, which returns `stored.requestId`.
+2. `markSent` is used for ack, discard, conflict and permanent drop. Only the ack path may release dependents: `markAcked` removes the parent and clears `dependsOn` on its dependents in ONE `_save()` (two saves + a crash = dependents orphaned = lost ledger rows). Every other exit orphans them and `pruneOrphans` (from `Gateway._reschedule` and at load) deletes them.
+3. A held item must be invisible to `dueItems` AND `nextDueInMs`: held items are "due now", so a timer that only skips them in `dueItems` spins every 250 ms forever.
+4. Optimistic local ledger rows need an undo when the held row is dropped (`heldWritesDropped` -> `TransactionStore.removeLocal`), or a ghost row lives until the next refetch.
+5. "Any unsynced edit" for a sale guard must exclude stock DELTAS: back-to-back sales of one product each queue a delta and must not block each other.
+6. Do not change the arity of an existing signal (`mutationApplied`): QML throws on an emit with fewer arguments than declared and tests emit it by hand. Add a new signal (`writeAcked`) instead.
+S4 done in PR #122, see Skill 101.
+
+
+## Skill 101: Overlay a queued edit by replaying only the fields the user CHANGED, and derive the badge from the same function as the sale guard
+
+Context (PR #122): a relaunch inside the retry window re-read Firestore and showed the old price while the edit was still queued; and a > 1 MiB description was queued and retried for nothing.
+Rules:
+1. Replay the diff of the queued item's `before` vs `after` (`UnsyncedOverlay.changedFields`), never the whole `after`. `after` is the full doc as of edit time; replaying it undoes a stock change made since (a sale on another device). A merged item keeps the earliest `before` and the latest `after`, so the diff is the net change.
+2. Overlay each PAGE of a paged read (`_fetchFromFirebase` concatenates pages); overlaying only the first page or only `products` at the end misses rows or double-applies.
+3. Do NOT overlay in the conflict handler: a conflicted edit has already left the outbox, `current` from the server is the truth.
+4. Badge state, overlay input and sale guard must come from ONE outbox pass (`OutboxStore.unsyncedByEntity`) or they drift: batch members, operations and held ledger rows are excluded from "unsynced edit" but a PARKED one of any kind still marks the product parked. A monkey test compares the three.
+5. Publish `syncStates` only when it really changed: the outbox changes on every sale delta, and a bound `StatusPill` per product card re-evaluates on every assignment.
+6. Size caps: Firestore stores string bytes + 1, field name bytes + 1, number 8, boolean/null 1, + 32 per doc. Measure UTF-8 BYTES (Devanagari is 3 bytes per char, emoji 4), not characters, and keep a reserve (`DocLimits.RESERVE_BYTES`, 4 KiB) for the doc name and server-added fields. The cap is an estimate; the server stays the authority. Refuse before anything is queued, and pre-check in the dialog BEFORE it closes or the user loses the edit.
+7. QML has no `TextEncoder`; `DocLimits.utf8Bytes` counts surrogate pairs by hand.
+
+## Skill 102: Review a "decided" schedule design against the docs ALREADY in the database and the deploy plumbing before building it
+
+Context (PH3b review, 2026-10-05): the v1 design scheduled retries with a new `nextAttemptAt` field and a collection-group index. Reading `buildMarker`, `firebase.json` and the README found three defects before any code existed.
+Rules:
+1. A range filter on a field that old docs lack returns NONE of them. Before adding a schedule field, list which docs already exist in the wild (here: markers from #113 and BC1, exactly the failed ones the sweeper is for). Prefer a due time computed in code from fields every doc already has.
+2. Collection-group queries that filter or order need an index with collection-group scope; ones that do neither need none (Firebase docs). When the set is small by construction, read it all and filter in code instead of owning an index.
+3. This repo has three Firestore databases and `firebase.json` has one `firestore` entry with no `database` key: `firebase deploy --only firestore:indexes` reaches `(default)` only. The emulator does not prove an index exists, so CI would be green while `dev1`/`test` fail. Check the deploy path of ANY index or rules change per database.
+4. `docRef.set(patch, {merge: true})` on a doc another process just deleted re-creates it as a partial doc. When two actors can touch one doc (handler sweep + scheduler), use `update()` for patches and let NOT_FOUND mean "someone else finished".
+5. A due-time check against a fixed-cadence tick needs slack: the retry time is stamped seconds AFTER the tick, so a strict `now >= due` slips every wait by one whole tick (PH3b: ~300 min vs ~410 min to park). Add slack of about one sweep duration.
+6. A decision recorded as "ok to the advised defaults" binds only the text that was shown. When a later read finds the text wrong, reopen it explicitly (Q-E -> Q-K) instead of building to the old wording.
+7. A "read the first N rows" cap on a set that only ever GROWS (parked markers are never deleted) silently starves new rows once it fills; page the read or delete what is finished, and make the alert fire on the cap. Cost check: every row read each run x runs/day vs the free read quota.
+8. "Alert me" has two halves: the signal (an ERROR log with a stable marker string, only for conditions a human must act on; transient retries stay WARNING) and the channel (Cloud Monitoring -> email / Google Cloud console mobile app / Slack, never your own app without new push code). A sandbox with no cloud access cannot create the policy: ship a runbook + a planted-failure test (DV-9), not a claim that it exists.
+9. When a classifier splits records into groups, order the checks by what must NOT repeat. PH3b `selectDue` tests `parked === true` BEFORE the malformed checks: a malformed marker is parked once, and if the malformed check came first it would be re-parked and re-alerted every 10 minutes forever. Address a doc you act on by its PATH (`park(env, path, ...)`), not by ids parsed from it: the records that fail parsing are exactly the ones you must still be able to reach.
+10. A catch-all that logs at WARNING and returns without touching the retry counter is a silent infinite retry: the item never backs off and never reaches the park cap, and the alert filter (ERROR only) never sees it. Every path out of a retry loop must either advance the counter or raise the alert. Likewise, a failure that is deterministic from data that never changes (a stored prefix that cannot match its rebuilt value) belongs in the classifier, not behind N retries. Found in the final sweep of PH3b S-A (PR #126), not in the first review: re-read each `catch` against the counter and the alert filter together.
+
+## Skill 103: A test that passes on its first run proves nothing until a deliberate bug makes it fail; and a fake that merges N backends needs explicit per-query visibility
+
+Context (PH3b S-B, 2026-10-05): 25 new tests were green on the first run. Before trusting them, five bugs were injected into the binding one at a time (`set`+merge instead of `update`, no paging cursor, `parked` flag dropped, run never throws on an env failure, scan always on the wrong database) and each made the suite fail.
+Rules:
+1. After writing tests for new wiring, mutate the wiring (one line, one bug, run, restore with a saved copy) and confirm a test names the failure. A test that survives its mutation is decoration. Cheap in Node (a second per run); do it before the commit, not after review.
+2. When a harness fake collapses several backends into ONE store (here: three Firestore databases share `mockState.docs`), give every query that must be scoped an explicit visibility rule (`mockState.docDb[path]`, default = the backend every older test already uses) and say so in the harness header. Otherwise a three-database scan returns every doc three times and the tests assert on noise.
+3. To test "the failure time is stamped after the tick" the clock must move INSIDE the failing call (a hook on the fake delete), not between ticks. Stepping the clock only between ticks never exercises the slack and would pass with or without it.
+4. To test "a concurrent sweeper deleted the doc mid-flight", hook the step the loser is blocked on (the Storage delete) and delete the doc there; then assert both that no `set()` touched the path and that `update()` WAS attempted, so the test cannot pass by never reaching the write.
+5. A monkey test over a stateful job needs invariants, not expected values: protected data survives, parked docs byte-identical, no doc written by the wrong primitive, counters never exceed their cap, every destructive call targets a prefix that was seeded as sweepable. Seed the PRNG and run several seeds so a failure reproduces.
+
+## Skill 104: An emulator e2e for a scheduled function runs the function in-process; refuse to start unless every emulator host is set
+
+Context (PH3b S-C, 2026-10-06): the functions emulator has no clock, so a scheduler cannot be triggered by it. Written without an emulator in the sandbox; CI green on its first run (2026-10-05, run 37353249915), so rules 1-7 are verified.
+Rules:
+1. Call the exported `onSchedule` function's `.run({})` in the test process (`require("functions/index.js")`). That is the exact entry Cloud Scheduler calls; HTTP-invoking is impossible for it.
+2. A test that deletes Storage objects must `process.exit(1)` unless BOTH `FIRESTORE_EMULATOR_HOST` and `FIREBASE_STORAGE_EMULATOR_HOST` are set; one missing host silently targets the real bucket.
+3. The root and `functions/` packages may pin different `firebase-admin` majors (here 14 vs 12). Give the test its own named app (`initializeApp(opts, "name")`) and require shared singletons (the logger) with `require.resolve(x, {paths:[functionsDir]})`, or a spy attaches to the wrong module instance. Verify in the sandbox that the file at least loads (`node` with fake emulator hosts) before pushing.
+4. Spy on the log the code already emits (`logger.write`) to read the run summary instead of adding a test-only return value.
+5. Seed with the SAME builder production uses (`buildMarker`) and override fields, so a schema change breaks the test instead of drifting from it. Register every created doc/object for `afterEach` deletion, including docs the code under test creates (audit entries).
+6. Assert a count equality (`scanned == collection size`), not only "everything was swept": equality catches both a skipped and a repeated page.
+7. Before trusting E2E that cannot run locally, run what you can: `node --check`, bracket balance, the module-load check, the guard exit. Say plainly what is unverified.
+
+## Skill 105: Count JUnit testcases, never tags by `[^>]*`; a test count that does not move when tests are added is a defect signal
+
+Context (2026-10-06, found reviewing PR #128): the PR comment showed E2E 63 before AND after 7 tests were added, and Functions 370 where a local run gave 585 (open item O1 for weeks).
+Rules:
+1. node's JUnit reporter does NOT escape `>` in attribute values (`name="x -> 400"`). Match tags quote-aware (`(?:[^>"]|"[^"]*")*`), never `[^>]*`. A lazy variant is needed where `/>` must still end the tag.
+2. Count `<testcase>` over the whole document. Do not scope by `<testsuite>`: node emits none for flat `test()` calls, and a concatenated qmltestrunner file made the scan skip every bare testcase.
+3. When a number is "stable" after you add tests, or differs from a local run, stop and reproduce with the real tool output (`node --test --test-reporter=junit`) and feed it to the parser. Here it took ~10 lines and gave the exact answer (585 - 215 names with `>` = 370).
+4. A regression test is only proven when it FAILS on the old code: run the new tests against `git show HEAD~:path` once (7 of 9 failed here), without ever touching the working tree with `git stash` (a `stash drop` lost the fix once; recovery was `git fsck --unreachable`).
+5. Job exit codes gate CI; the PR comment is only a report. Fix reports in their own stacked PR so the feature PR stays reviewable.
+6. A quote-aware tag regex must also refuse a raw `<` in the tag body: XML forbids it there, and without the ban every unterminated `<testcase` scans to end of input (quadratic: 320 KB of truncated tags took 20 s, 2 ms after). Prove a hardening test by timing it against the old code, and say which new tests were only guards (one of three here passed on both).
+
+## Skill 106: Give a big reference file a GENERATED index and test it, instead of a hand-written summary; trim docs only by a rule you can run
+
+Context (2026-10-06): `SKILLS.md` reached 306 KB (about 75k tokens) and was read in full at every session start on a token-limited plan.
+Rules:
+1. Build the index from the headings (`.github/scripts/skills-index.js`), never by hand: a hand-written line can drift, can hide an entry, and every new entry needs two edits. A generated file has neither failure.
+2. Make drift a failing test in a job that already runs on every PR (the script tests), with the fix command in the message. Do not add line numbers or sizes to the index: they change on every edit above them and turn parallel sessions into merge conflicts. Read one entry with `awk -v id=N '/^## Skill /{p=($3==id":")} p' SKILLS.md`.
+3. A generator that parses headings must fail on duplicate ids and on malformed headings (the file already had two `Skill 89`, found only when the generator ran) and must ignore headings inside code fences.
+4. Trim docs only by a rule that can be executed and repeated: cut a dated block only if it cites a skill that exists AND most of its backticked identifiers occur in that skill (5 of 25 README blocks passed at 85%). List what failed the rule as candidates, do not delete on judgement. Git history keeps the rest.
+5. A status row can be false: verify against the code (`StaffPage.qml` had the delete button the table said was missing) before copying a doc claim into a new doc.
+
+## Skill 107: A design item marked UNVERIFIED becomes a test that fails loudly on CI (it did: `Qt.uuid` does not exist); a timer fix is split into a pure helper plus one QML line
+
+Context (2026-10-06, PH4 client): the design said `Qt.uuid()` under headless `qmltestrunner` was UNVERIFIED, and the L1 breaker-cooldown fix lives in `PhotoQueue._reschedule` (a Timer, no unit tests by design).
+Rules:
+1. Do not stub an unverified platform call to keep CI green. Write the test against the REAL call so the first CI run answers the question. It answered: `Property 'uuid' of object Qt is not a function`. Had the code shipped, every photo add would have thrown on device. Result: item 2 dropped, old id scheme kept, nothing lost. A design decision that rests on an unverified API is a hypothesis, not a decision: say so in the PR.
+2. When a fix sits inside a Timer/XHR file that cannot be unit-tested, move the arithmetic into `PhotoQueueLogic.js` (`breakerWaitMs`), test it there and in the Node mirror, and leave exactly one line in the QML file. The design's "fold only if <= 3 lines" rule is met by the QML diff, not by the helper.
+3. `PhotoQueueLogic.js` has a hand-kept Node mirror (`functions/test/testSupport/photoQueueLogicParity.js`): every constant or function change goes into both, and the Node run is the only proof available in the sandbox (23 -> 29 cases here).
+4. A planned test file can be impossible (`tst_StorageServicePhotoId.qml`: `StorageService` needs the `ImageProcessor` context property). Say so in the plan; do not leave a planned file that can never load.
+5. Reading code for a small UI change can expose a gap the design did not list (the Q13 path skipped the queued-photo purge). Write it into the design and the PR as a question; do not widen the change without asking. Taher answered with a rule ("row gone -> discard; row present -> keep, a missing `photoIds` is a first photo"): before coding a rule like that, grep both ends (server `Array.isArray(product.photoIds)`, client `_normalizeProducts`) because half of it may already be true, then pin that half with a test instead of new code.
+6. A decision that depends on two facts (HTTP status and local row) belongs in a pure function with a strict truth table (`shouldDiscardOnFailure`, `=== false` so unknown never discards); the XHR file keeps one `if`.
+
+## Skill 108: "Not in the loaded list" is not "not there": a paginated store may answer `false` only when the list is COMPLETE
+
+Context (2026-10-07, PR #133): `InventoryStore.hasProduct()` returned `false` for any product missing from `products`. The store pages 50 at a time (`_pageSize`), so a row on page 2+, a failed page, or a reset in flight looked "gone", and `PhotoQueue` discarded a live queued photo on a server 404. Taher: "check the full data only, not the first 50".
+Rules:
+1. Any existence check over a paged/partial list is three-state: `true` (found), `false` (list COMPLETE and absent), `undefined` (cannot tell). Completeness is `!hasMore && !loadingMore && !_resetPending`; a failed page leaves `hasMore` true, so the answer stays "unknown" (the safe side).
+2. A destructive decision (discard, delete, purge) acts only on a strict `=== false`; `undefined` never acts. Keep the rule in a pure function (`PQL.productPresence`, `PQL.shouldDiscardOnFailure`) mirrored in Node, because the sandbox cannot run QML.
+3. `clear()` on sign-out must put the paging flags back (`hasMore = true`), otherwise an emptied store with `hasMore === false` looks like a complete list with no rows.
+4. Do not reach for "just load everything first" (extra Firestore reads for one 404): the three-state answer costs nothing and the photo stays as a failed tile with Retry/Discard.
+5. When the reviewer says a check was scoped wrong, grep every caller of the helper and every flag it should depend on before editing, and add an end-to-end rule test (here: a simulated 130-row, 3-page list) so the original wrong behaviour is the failing case.
+
+## Skill 109: A review sweep checks that an inserted function did not orphan the comment above it, that a changed contract is stated where the contract lives, and that a test calls shipped code
+
+Context (2026-10-07, PR #133 final sweep): three Minor defects were all introduced by the same habit of adding a helper "next to where it is used".
+Rules:
+1. Inserting a function directly under a `//` block silently re-attaches that block to the new function. After adding a helper, re-read the 3 lines above its insertion point (`hasProduct` split `photoIdsFor`'s comment, `_productExistsLocally` split `_upload`'s). Put the helper above the comment block, not between it and its function.
+2. When a PR starts to rely on a value meaning something new (`current: null` = row gone), grep the producer AND the doc comment on the signal (`Gateway.mutationConflicted` still said null = malformed edge case). Server truth wins: `gatewayLogic.js` returns `current: currentSnap.exists ? data : null`. Update the comment in the same PR.
+3. A test that re-implements the formula inline (`Math.max(250, Math.max(0, breakerWaitMs(...)))`) never calls the shipped function and gives false assurance. Delete it; say plainly which lines stay device-only (`_reschedule` L1 line, the `_upload` discard `if`).
+4. A test that nulls a shared singleton property must restore it in `cleanup()`, not at the end of the test: `compare()` aborts the test function and skips the restore.
+5. A rule keyed on an HTTP status alone is only as safe as the status is unambiguous. 404 is also what a misrouted endpoint answers; when the action is destructive and unrecoverable (discard a local photo file), check the body (`error: "product-not-found"`) or accept the risk in KNOWN-ISSUES with the fix named. (Done in PH4 R1: `PQL.errorCodeOf` + a 3rd argument; a caller that forgets the argument never discards, so the new parameter fails safe.)
+6. After a test is removed, grep every doc for the old count (`34/34`, `29/29`) and fix them; count with the runner, do not carry numbers forward.
+
+## Skill 110: Removing a field the client writes from a CAS-compared document 409s every stored doc that still has it; decide that on purpose
+
+Context (2026-10-08, PH5 design): the server compares WHOLE documents (`gatewayLogic._deepEqual`, identical key sets). Product docs were all stored with `photoUrl:""` and `photoUpdatedAt:""`. Dropping the two keys from the client `_clone()` makes `before` two keys short of the stored doc: every update and delete of every pre-change product 409s, the 409 handler restores the row from the server, `_clone()` strips the keys again, and the next attempt 409s again, under a toast that says "restored". Fresh tenants are unaffected.
+Rules:
+1. Before removing or renaming a field the client writes, read the server's compare (`_deepEqual`) and ask whether stored docs still carry it. Whole-doc CAS means a removed field is a breaking change for old docs.
+2. Decide it explicitly: fresh tenants only (state it in the PR and KNOWN-ISSUES), server-side tolerance for the named keys, or a migration. Never leave it implicit.
+3. Pin the consequence with a server test (`F42`: `before` without the keys vs a stored doc with them -> 409, nothing written) so nobody "fixes" the comparator or re-adds the keys unnoticed.
+4. `test/felgo-dependent/` does NOT run in CI (only `qmltestrunner -input tests`). Do not plan automated cases for a dialog/page there. Cover what you can with Node source guards (case-sensitive token scan, C++ column counts) and put the rest on the device plan.
+5. A source guard needs its own self-test (CRLF, comments, allowed aliases like `PhotoUrl`, random junk) and a mutation check (re-add the thing, the guard must fail).
+6. Mutation checks: never restore with `git checkout <path>` while you have uncommitted work in that path; it reverts to HEAD and silently deletes your edit (happened here, re-applied). Copy to /tmp first, restore from the copy.
+
+## Skill 111: Verify a design "fact" by reading the code that owns it; a document has more than one creation path, and a shared reader may be positional
+
+Context (2026-10-08, PR #136 review): the PH5 design said "import is keyed by header text, so old exports keep importing". The C++ reader `readSheet` is positional (column N is labelled `kProductHeaders[N-1]`, the header row is never read), so removing a column shifts every later one. Two decisions were taken on that wrong fact. Separately, bulk import builds docs through `_normalizeRecord`, a second creation path that omitted `photoIds`, so imported products 409'd on their first edit (server `_deepEqual` compares key counts). The `_newProductDoc` comment said "check by hand"; nothing enforced it.
+Rules:
+1. A design "fact" that drives a decision gets read in the owning function before the decision, not copied from an earlier doc. Name the function and line in the fact.
+2. Before removing or reordering a spreadsheet column, check how the READER finds columns (position or header text) and whether any header check exists.
+3. Every code path that creates a CAS-compared document must have its key set pinned against `_newProductDoc` and `_clone()` by a test (`tst_InventoryStore_cloneSymmetry`). "Check by hand" comments are not a guard.
+4. When a decision is accepted on a known risk (here R1 = A), write the risk and the user rule into KNOWN-ISSUES in the same change.
+
+## Skill 112: A monkey test must prove its generator reaches the case it guards; copies of a failure tail are one function so the decision is testable
+
+Context (2026-10-09, PR #138 final sweep): the R1 discard rule (404 + body `product-not-found` + row gone) had a seeded monkey test that passed with the rule removed, and its decision sat in the one XHR callback no test can reach.
+Rules:
+1. A seeded monkey test asserts that its generator hit the interesting case at least once (`assert.ok(discards > 0)`). `(st * 1103515245 + 12345) & 0x7fffffff` then `st % n` uses the LCG's LOW bits, which cycle with a tiny period: 17 distinct triples in 1000 draws and 0 discards. Use `Math.floor(st / 65536) % n` (259 distinct, 6 discards).
+2. Run a mutation on the monkey on its own: remove one condition from the production expression and check that the MONKEY fails, not only the hand-written cases. The old D5 passed with the code check removed.
+3. When one function ends in the same failure tail in several places (non-2xx, timeout, unreadable file), make it ONE function that takes `(item, status, responseText)`. The rule then exists once and a qmltestrunner test can call it; only the native/XHR plumbing stays device-only. Check call-site equivalence first: emit condition, order of calls, early return, who calls `_reschedule`.
+4. A recovery path that leaves an item with no UI (`failed` for a product whose row is gone, no tile) is a decision: write it into KNOWN-ISSUES with the fix named, and log it so a device run can see it. A PR text that says "visible, Retry/Discard" for it is wrong.
+5. A review finding that adds a doc claim ("the counts", "device step") gets re-checked by running it: `node --test` count, SKILLS-INDEX `--check`, and a grep for every old number (`608`, `23/23`).
+
+## Skill 113: An async callback acts only on the state it was started for; a store trigger that fires inside a test pre-empts direct calls
+
+Context (2026-10-12, PR #138 sweep part 2): three open items shared one root. A late XHR report (a 2xx after `PhotoQueue.clear()` on sign-out, or a timeout where Qt fires both `onreadystatechange` and `ontimeout`) acted on an item that was no longer in flight: it emitted `photoUploaded` under the next account (O2) or counted the circuit breaker twice (O3). A `failed` item with no tile and no row stayed until sign-out (O1).
+Rules:
+1. Every callback of an async attempt starts with "is this attempt still the live one?" against the STORED item (`_isInFlight(photoId)`: the stored item exists and its state is still `uploading`), not against the closure's copy. The first report moves the item out of that state, so any second or late report is a no-op. One guard covers the double-fire, the late-after-clear and the late-after-discard cases.
+2. A success path gets the same guard and the same single function as the failure path (`_completeUpload` beside `_failUpload`). Parse the response body in a try/catch and fall back to an empty list: a 2xx with a junk body is still a confirmed upload.
+3. Run the logic under Node before trusting it: extract the shipped function text from the `.qml` into a `vm` context with stub singletons (`AuthStore`, `InventoryStore`, signal spies). It catches ordering mistakes QML tests can only show in CI. Compare arrays from a `vm` context through `JSON.stringify` (`assert.deepEqual` fails with "same structure but not reference-equal").
+4. A signal handler on a store (`InventoryStore.onListCompleteChanged` runs the purge) fires inside tests too. In a direct-call test set the state that makes the trigger fire FIRST (list complete), THEN the data the handler reads (`PhotoQueue.items`), or the handler runs the code under test before the test does. Set related flags in the order that never passes through a complete state (`loadingMore = true` before `hasMore = false`, `_resetPending = true` before `loadingMore = false`).
+5. Purging "an item nothing can consume" (O1) is a decision with a trade-off: it removes a safety signal (R1's second check). Gate it on the strongest available condition (complete list, same identity, `failed` only), log the count, and write the trade-off into KNOWN-ISSUES.
+6. Do not insert a new function between a comment and the function it describes (Skill 109): put it above the comment block.
+
+## Skill 114: Simulating a Gateway.recordOperation server answer in a test needs `OutboxStore.markSent()` too, not just `Gateway._finishOperation()` — or a re-plan under the same key silently coalesces into the first, already-rejected payload
 
 **Files**: `tests/tst_DataModel_completeOrderAtomic.qml` (new, C-3 Phase 3 Task 10) — found while writing the
 re-plan test cases (4, 5, 8, 10), before they had a chance to be flaky in CI, by re-reading `Gateway.qml`'s

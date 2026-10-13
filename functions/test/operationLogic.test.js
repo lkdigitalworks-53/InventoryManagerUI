@@ -372,3 +372,54 @@ test("applyOperation: a full 200-op operation stays under Firestore's write ceil
 test("opAuditId: derives stable per-op ids from the request id", () => {
     assert.equal(OperationLogic.opAuditId("completeOrder:o1:1", 3), "completeOrder:o1:1~3");
 });
+
+// ---------------------------------------------------- PH3 cascade-delete rejection + F5 pin
+function inventoryMutation(entityId, action, before, after) {
+    return { kind: "mutation", entity: "inventory", entityId, action, before, after };
+}
+
+test("F34 ops with an inventory delete -> 400 cascade-delete-not-allowed with opIndex", () => {
+    const v = OperationLogic.validateOperationRequest({
+        requestId: "completeOrder:o1:1", opType: "completeOrder",
+        ops: [
+            { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } },
+            inventoryMutation("PRD-1", "delete", { a: 1 }, null)
+        ]
+    });
+    assert.deepEqual(v, { ok: false, status: 400, error: "cascade-delete-not-allowed", opIndex: 1 });
+});
+
+test("F34b ops with the inventory delete FIRST reports opIndex 0 and validates nothing after it", () => {
+    const v = OperationLogic.validateOperationRequest({
+        requestId: "completeOrder:o1:1", opType: "completeOrder",
+        ops: [inventoryMutation("PRD-1", "delete", { a: 1 }, null), { kind: "bogus" }]
+    });
+    assert.equal(v.error, "cascade-delete-not-allowed");
+    assert.equal(v.opIndex, 0);
+});
+
+test("F35 ops: delta, inventory update/create and non-inventory deletes unaffected", () => {
+    const v = OperationLogic.validateOperationRequest({
+        requestId: "completeOrder:o1:1", opType: "completeOrder",
+        ops: [
+            { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 }, floors: { stock: 0 } },
+            inventoryMutation("PRD-1", "update", { a: 1 }, { a: 2 }),
+            inventoryMutation("PRD-2", "create", null, { a: 1 }),
+            { kind: "mutation", entity: "order", entityId: "o1", action: "delete", before: { a: 1 }, after: null },
+            { kind: "mutation", entity: "stock_batch", entityId: "b1", action: "delete", before: { a: 1 }, after: null }
+        ]
+    });
+    assert.equal(v.ok, true);
+    assert.equal(v.ops.length, 5);
+});
+
+test("F39 F5 pin (ops path): stale before.photoIds -> conflict with opIndex, nothing written", async () => {
+    const db = makeFakeDb({ [T + "inventory/PRD-1"]: { qty: 1, photoIds: ["photo-new"] } });
+    const op = Object.assign({ collection: "inventory" },
+        inventoryMutation("PRD-1", "update", { qty: 1, photoIds: [] }, { qty: 2, photoIds: [] }));
+    const result = await OperationLogic.applyOperation(db, params([op]));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 409);
+    assert.equal(result.opIndex, 0);
+    assert.equal(db.writes.length, 0);
+});

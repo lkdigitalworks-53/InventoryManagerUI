@@ -30,4 +30,12 @@ TestCase {
         compare(Env.databaseIdForStage("test"), "test")
         compare(Env.databaseIdForStage(""), "(default)")   // fail-safe → prd → default db
     }
+
+    // storagePrefixForEnv (2026-09-21 photos feature) -- deliberately separate from
+    // databaseIdForEnv since Storage paths spell prd out literally, not "(default)".
+    function test_env_maps_to_storage_prefix() {
+        compare(Env.storagePrefixForEnv("prd"), "prd")
+        compare(Env.storagePrefixForEnv("test"), "test")
+        compare(Env.storagePrefixForEnv("dev"), "dev1")   // same Firestore-id-length quirk as databaseIdForEnv
+    }
 }

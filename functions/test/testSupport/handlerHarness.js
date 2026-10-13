@@ -89,6 +89,48 @@ function installMocks() {
         zeroInventoryStockResult: 0,
         zeroInventoryStockError: null,
         runTransactionError: null, // provisionMember's db.runTransaction() failing
+        // admin.storage() mock for uploadProductPhoto/deleteProductPhoto (2026-09-21 photos
+        // feature). storageFiles: path -> Buffer (what was actually .save()'d), so a test can
+        // assert on real content, not just call count. storageSaveCalls/storageDeleteCalls:
+        // [{path, contentType?}] in call order. storageSaveError/storageDeleteError: when set,
+        // every bucket.file(...).save()/.delete() throws it (tests the write-failed and the
+        // best-effort-delete-swallows-errors paths without needing per-path granularity).
+        storageFiles: {},
+        storageSaveCalls: [],
+        storageDeleteCalls: [],
+        storageSaveError: null,
+        storageDeleteError: null,
+        // PH3 (2026-10-03). onStorageSave(path): optional hook run inside every bucket.file().save(),
+        // lets a test change Firestore state "between" the upload preflight and the transaction.
+        // storageDeleteFilesCalls: [{prefix, force}] for bucket.deleteFiles; storageDeleteFilesError
+        // makes it throw. docDeleteCalls/docDeleteError: DocumentReference.delete() (marker removal).
+        // applyMutationCalls: the params object recordMutation handed to GatewayLogic.applyMutation.
+        onStorageSave: null,
+        storageDeleteFilesCalls: [],
+        storageDeleteFilesError: null,
+        onStorageDeleteFiles: null, // PH3b: optional hook run inside every bucket.deleteFiles(), before the error check
+        docDeleteCalls: [],
+        docDeleteError: null,
+        applyMutationCalls: [],
+        // PH3b S-B (2026-10-05). docUpdateCalls: [{path, patch}] for DocumentReference.update();
+        // update() rejects NOT_FOUND (code 5) on a missing doc like the real SDK (the P3 regression
+        // relies on it); docUpdateError makes it throw. collectionGroupCalls: [{db, group, limit,
+        // afterPath}] one per executed query. collectionGroupErrors: {databaseId: Error} makes that
+        // database's collectionGroup().get() throw (env-level failure). docDb: {docPath: databaseId}
+        // says which database holds a doc for collectionGroup scans; a path NOT listed is treated
+        // as being in "test" (every other handler test uses env "test"). mockState.docs itself stays
+        // ONE store shared by all databases (doc()/collection() do not look at the database id).
+        docUpdateCalls: [],
+        docUpdateError: null,
+        collectionGroupCalls: [],
+        collectionGroupErrors: {},
+        docDb: {},
+        // BC1 (2026-10-05): db.batch() write batches used by the product-delete batch sweep.
+        // batchCommits: [[{type:"delete"|"set", path, data?}]] one entry per committed batch, in
+        // order. batchCommitError: when set, every wb.commit() throws it (nothing is applied).
+        batchCommits: [],
+        batchCommitError: null,
+        storageBucketError: null, // admin.storage().bucket() itself throwing (handler sweep catch path)
         // admin.auth() extensions needed by provisionMember. Same
         // "throw until configured" default as verifyIdToken above, so a
         // test that forgets to configure one fails loudly, not silently.
@@ -113,7 +155,20 @@ function installMocks() {
                 const data = mockState.docs[docPath];
                 return { exists: data !== undefined, data: () => data };
             },
-            set: async (data, opts) => _writeDoc(docPath, data, opts)
+            set: async (data, opts) => _writeDoc(docPath, data, opts),
+            update: async (patch) => {
+                mockState.docUpdateCalls.push({ path: docPath, patch: patch });
+                if (mockState.docUpdateError) throw mockState.docUpdateError;
+                if (mockState.docs[docPath] === undefined) {
+                    throw Object.assign(new Error("5 NOT_FOUND: No document to update: " + docPath), { code: 5 });
+                }
+                mockState.docs[docPath] = Object.assign({}, mockState.docs[docPath], patch);
+            },
+            delete: async () => {
+                mockState.docDeleteCalls.push(docPath);
+                if (mockState.docDeleteError) throw mockState.docDeleteError;
+                delete mockState.docs[docPath];
+            }
         };
     }
 
@@ -124,12 +179,21 @@ function installMocks() {
     function collectionQuery(collPath, state) {
         return {
             orderBy: () => collectionQuery(collPath, state),
+            // BC1: single-field equality filter only (what the batch sweep uses), applied to the
+            // mockState.collections array for this path.
+            where: (field, op, value) => {
+                if (op !== "==") throw new Error("harness where(): only == is supported");
+                return collectionQuery(collPath, Object.assign({}, state, { where: (state.where || []).concat([[field, value]]) }));
+            },
             limit: (n) => collectionQuery(collPath, Object.assign({}, state, { limit: n })),
             startAfter: (afterDoc) => collectionQuery(collPath, Object.assign({}, state, { afterId: afterDoc.id })),
             get: async () => {
                 mockState.collectionGetCalls.push(collPath);
                 if (mockState.collectionGetError) throw mockState.collectionGetError;
-                const all = mockState.collections[collPath] || [];
+                let all = mockState.collections[collPath] || [];
+                for (const w of (state.where || [])) {
+                    all = all.filter((d) => d.data && d.data[w[0]] === w[1]);
+                }
                 let startIdx = 0;
                 if (state.afterId !== undefined) {
                     const idx = all.findIndex((d) => d.id === state.afterId);
@@ -146,6 +210,39 @@ function installMocks() {
         };
     }
 
+    // Minimal collection-group query for PH3b's marker read: .limit(n) and .startAfter(snapshot)
+    // then .get(). Default order is document path (no orderBy, like the real default). Matches any
+    // doc whose parent collection id is `groupId`, at any depth, and scopes by docDb (see above).
+    function collectionGroupQuery(databaseId, groupId, state) {
+        return {
+            limit: (n) => collectionGroupQuery(databaseId, groupId, Object.assign({}, state, { limit: n })),
+            startAfter: (snap) => collectionGroupQuery(databaseId, groupId, Object.assign({}, state, { afterPath: snap.ref.path })),
+            get: async () => {
+                mockState.collectionGroupCalls.push({
+                    db: databaseId, group: groupId, limit: state.limit || null, afterPath: state.afterPath || null
+                });
+                const failure = mockState.collectionGroupErrors[databaseId];
+                if (failure) throw failure;
+                let paths = Object.keys(mockState.docs).filter((pth) => {
+                    const segs = pth.split("/");
+                    return segs.length >= 2 && segs[segs.length - 2] === groupId &&
+                        (mockState.docDb[pth] || "test") === databaseId;
+                }).sort();
+                if (state.afterPath !== undefined) paths = paths.filter((pth) => pth > state.afterPath);
+                const page = state.limit ? paths.slice(0, state.limit) : paths;
+                return {
+                    empty: page.length === 0,
+                    size: page.length,
+                    docs: page.map((pth) => ({
+                        id: pth.slice(pth.lastIndexOf("/") + 1),
+                        ref: { path: pth },
+                        data: () => mockState.docs[pth]
+                    }))
+                };
+            }
+        };
+    }
+
     require.cache[adminPath] = {
         id: adminPath, filename: adminPath, loaded: true,
         exports: {
@@ -156,6 +253,34 @@ function installMocks() {
                 getUserByEmail: (email) => mockState.getUserByEmail(email),
                 getUser: (uid) => mockState.getUser(uid),
                 createUser: (opts) => mockState.createUser(opts)
+            }),
+            storage: () => ({
+                bucket: () => {
+                    if (mockState.storageBucketError) throw mockState.storageBucketError;
+                    return {
+                    deleteFiles: async (opts) => {
+                        mockState.storageDeleteFilesCalls.push({ prefix: opts && opts.prefix, force: opts && opts.force });
+                        if (mockState.onStorageDeleteFiles) mockState.onStorageDeleteFiles(opts && opts.prefix);
+                        if (mockState.storageDeleteFilesError) throw mockState.storageDeleteFilesError;
+                        for (const key of Object.keys(mockState.storageFiles)) {
+                            if (opts && opts.prefix && key.startsWith(opts.prefix)) delete mockState.storageFiles[key];
+                        }
+                    },
+                    file: (filePath) => ({
+                        save: async (buf, opts) => {
+                            if (mockState.storageSaveError) throw mockState.storageSaveError;
+                            mockState.storageSaveCalls.push({ path: filePath, contentType: opts && opts.contentType });
+                            mockState.storageFiles[filePath] = buf;
+                            if (mockState.onStorageSave) mockState.onStorageSave(filePath);
+                        },
+                        delete: async () => {
+                            mockState.storageDeleteCalls.push({ path: filePath });
+                            if (mockState.storageDeleteError) throw mockState.storageDeleteError;
+                            delete mockState.storageFiles[filePath];
+                        }
+                    })
+                    };
+                }
             })
         }
     };
@@ -163,9 +288,31 @@ function installMocks() {
     require.cache[firestorePath] = {
         id: firestorePath, filename: firestorePath, loaded: true,
         exports: {
-            getFirestore: () => ({
+            getFirestore: (app, databaseId) => ({
                 doc: docRef,
                 collection: (collPath) => collectionQuery(collPath, {}),
+                collectionGroup: (groupId) => collectionGroupQuery(databaseId || "(default)", groupId, {}),
+                batch: () => {
+                    const ops = [];
+                    return {
+                        delete: (ref) => { ops.push({ type: "delete", path: ref.path }); },
+                        set: (ref, data) => { ops.push({ type: "set", path: ref.path, data: data }); },
+                        commit: async () => {
+                            if (mockState.batchCommitError) throw mockState.batchCommitError;
+                            mockState.batchCommits.push(ops.map((o) => Object.assign({}, o)));
+                            for (const o of ops) {
+                                if (o.type === "set") { _writeDoc(o.path, o.data); continue; }
+                                delete mockState.docs[o.path];
+                                const cut = o.path.lastIndexOf("/");
+                                const coll = o.path.slice(0, cut);
+                                const id = o.path.slice(cut + 1);
+                                if (mockState.collections[coll]) {
+                                    mockState.collections[coll] = mockState.collections[coll].filter((d) => d.id !== id);
+                                }
+                            }
+                        }
+                    };
+                },
                 // txn.get/txn.set/txn.delete delegate straight to the same
                 // synchronous mockState.docs store docRef() uses -- sufficient
                 // for provisionMember's single read-then-write transaction;
@@ -191,7 +338,10 @@ function installMocks() {
     require.cache[gatewayLogicPath] = {
         id: gatewayLogicPath, filename: gatewayLogicPath, loaded: true,
         exports: Object.assign({}, realGatewayLogic, {
-            applyMutation: async () => mockState.applyMutationResult,
+            applyMutation: async (db, params) => {
+                mockState.applyMutationCalls.push(params);
+                return mockState.applyMutationResult;
+            },
             applyDelta: async () => mockState.applyDeltaResult
         })
     };

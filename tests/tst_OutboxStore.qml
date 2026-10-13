@@ -463,4 +463,719 @@ TestCase {
         verify(low >= 1600 - 50 && low <= 1600 + 50, "attempt 1 at rand 0 is ~2000*0.8, got " + low)
         verify(high >= 9600 - 50 && high <= 9600, "attempt 2 at rand ~1 is ~8000*1.2, got " + high)
     }
+
+    // ── hasPendingForEntity (2026-09-21 photos feature, Trap 1) ─────────────
+    // A photo for a product created offline must wait until that product's
+    // own "create" mutation has landed, or the server's uploadProductPhoto
+    // would 404 (design spec, "Two traps found in the existing code").
+
+    function test_hasPendingForEntity_true_right_after_enqueue() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasPendingForEntity_false_once_the_item_is_sent() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        OutboxStore.markSent("r1")
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasPendingForEntity_false_for_an_unrelated_entityId() {
+        OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "create" })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-2"), false)
+    }
+
+    function test_hasPendingForEntity_false_for_the_same_entityId_under_a_different_entity() {
+        // "inventory"/prod-1 pending must not block a photo gate keyed on a
+        // different entity string that happens to share the same id value.
+        OutboxStore.enqueue({ requestId: "r1", entity: "stock_batch", entityId: "prod-1", action: "delete" })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasPendingForEntity_true_while_the_item_is_in_flight_not_just_when_merely_queued() {
+        var item = OutboxStore.enqueue({ requestId: "r1", entity: "inventory", entityId: "prod-1", action: "update" })
+        OutboxStore.markInFlight(item)
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasPendingForEntity_true_for_an_entityId_inside_a_pending_batch_item() {
+        OutboxStore.enqueueBatch({
+            requestId: "batch-1", entity: "inventory",
+            items: [{ entityId: "prod-1", action: "update" }, { entityId: "prod-2", action: "update" }]
+        })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-2"), true)
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-3"), false)
+    }
+
+    function test_hasPendingForEntity_true_for_a_pending_delta_item() {
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "prod-1", deltas: { qty: -1 } })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasPendingForEntity_false_on_an_empty_queue() {
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), false)
+    }
+
+
+    // ── retryNow / isInFlight / inFlightCount (stuck-writes dialog, S1) ─────
+
+    function _failedItem(id, entityId, n) {
+        OutboxStore.enqueue({ requestId: id, entity: "order", entityId: entityId, action: "update", after: { v: 1 } })
+        for (var i = 0; i < n; ++i) OutboxStore.markFailed(id)
+    }
+
+    function _find(id) {
+        return OutboxStore.items.filter(function(i) { return i.requestId === id })[0]
+    }
+
+    function test_retryNow_makes_a_backed_off_item_due_with_fresh_attempts() {
+        _failedItem("r1", "o1", 5)
+        verify(_find("r1").nextAttemptAt > Date.now(), "precondition: backed off")
+        compare(_find("r1").attempts, 5)
+        var before = Date.now()
+        compare(OutboxStore.retryNow("r1"), true)
+        compare(_find("r1").attempts, 0)
+        verify(_find("r1").nextAttemptAt >= before && _find("r1").nextAttemptAt <= Date.now())
+        compare(OutboxStore.dueItems().length, 1)
+        compare(OutboxStore.nextDueInMs(), 0)
+    }
+
+    function test_after_retryNow_the_next_failure_restarts_the_backoff_at_the_first_step() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.retryNow("r1")
+        var t0 = Date.now()
+        OutboxStore.markFailed("r1")
+        compare(_find("r1").attempts, 1)
+        var delay = _find("r1").nextAttemptAt - t0
+        verify(delay >= 1900 && delay <= 2100, "expected ~2s, got " + delay)
+    }
+
+    function test_retryNow_unknown_id_returns_false_and_changes_nothing() {
+        _failedItem("r1", "o1", 3)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.retryNow("nope"), false)
+        compare(OutboxStore.retryNow(""), false)
+        compare(OutboxStore.retryNow(undefined), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryNow_on_an_in_flight_item_is_a_no_op() {
+        _failedItem("r1", "o1", 3)
+        var item = _find("r1")
+        OutboxStore.markInFlight(item)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.retryNow("r1"), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_retryNow_works_again_once_the_item_is_no_longer_in_flight() {
+        _failedItem("r1", "o1", 3)
+        var item = _find("r1")
+        OutboxStore.markInFlight(item)
+        OutboxStore.clearInFlight(item)
+        compare(OutboxStore.retryNow("r1"), true)
+    }
+
+    function test_retryNow_touches_only_the_named_item() {
+        _failedItem("r1", "o1", 4)
+        _failedItem("r2", "o2", 4)
+        var other = JSON.stringify(_find("r2"))
+        OutboxStore.retryNow("r1")
+        compare(JSON.stringify(_find("r2")), other)
+    }
+
+    function test_retryNow_keeps_the_payload_and_identity() {
+        _failedItem("r1", "o1", 2)
+        var enq = _find("r1").enqueuedAt
+        OutboxStore.retryNow("r1")
+        var it = _find("r1")
+        compare(it.requestId, "r1")
+        compare(it.entityId, "o1")
+        compare(it.after.v, 1)
+        compare(it.enqueuedAt, enq)
+        compare(OutboxStore.pendingCount, 1)
+    }
+
+    function test_retryNow_works_for_batch_delta_and_operation_items() {
+        OutboxStore.enqueueBatch({ requestId: "b1", entity: "inventory", items: [{ entityId: "p1", action: "update" }] })
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "p2", deltas: { stock: -1 } })
+        OutboxStore.enqueueOperation({ requestId: "op1", opType: "completeOrder", ops: [{ entity: "order", entityId: "o9" }] })
+        var ids = ["b1", "d1", "op1"]
+        for (var i = 0; i < ids.length; ++i) {
+            OutboxStore.markFailed(ids[i]); OutboxStore.markFailed(ids[i])
+            compare(OutboxStore.retryNow(ids[i]), true, ids[i])
+            compare(_find(ids[i]).attempts, 0, ids[i])
+        }
+        compare(OutboxStore.dueItems().length, 3)
+    }
+
+    function test_retryNow_survives_a_simulated_relaunch() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.retryNow("r1")
+        OutboxStore._load()
+        compare(_find("r1").attempts, 0)
+        compare(OutboxStore.dueItems().length, 1)
+    }
+
+    function test_retryNow_bumps_revision_only_when_it_changes_something() {
+        _failedItem("r1", "o1", 2)
+        var rev = OutboxStore.revision
+        OutboxStore.retryNow("nope")
+        compare(OutboxStore.revision, rev)
+        OutboxStore.retryNow("r1")
+        verify(OutboxStore.revision > rev)
+    }
+
+    function test_isInFlight_and_inFlightCount_track_markInFlight_and_clearInFlight() {
+        _failedItem("r1", "o1", 1)
+        var item = _find("r1")
+        compare(OutboxStore.isInFlight("r1"), false)
+        compare(OutboxStore.inFlightCount, 0)
+        OutboxStore.markInFlight(item)
+        compare(OutboxStore.isInFlight("r1"), true)
+        compare(OutboxStore.inFlightCount, 1)
+        OutboxStore.clearInFlight(item)
+        compare(OutboxStore.isInFlight("r1"), false)
+        compare(OutboxStore.inFlightCount, 0)
+    }
+
+    function test_isInFlight_true_for_a_batch_via_any_of_its_keys() {
+        OutboxStore.enqueueBatch({ requestId: "b1", entity: "inventory", items: [{ entityId: "p1" }, { entityId: "p2" }] })
+        OutboxStore.markInFlight(_find("b1"))
+        compare(OutboxStore.isInFlight("b1"), true)
+        compare(OutboxStore.isInFlight("other"), false)
+    }
+
+    function test_clear_resets_in_flight_state() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.markInFlight(_find("r1"))
+        OutboxStore.clear()
+        compare(OutboxStore.isInFlight("r1"), false)
+        compare(OutboxStore.inFlightCount, 0)
+    }
+
+    function test_monkey_retryNow_never_breaks_queue_invariants() {
+        var s = 7
+        var rnd = function() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var entities = ["m1", "m2", "m3"]
+        for (var step = 0; step < 300; ++step) {
+            var r = rnd()
+            var n = OutboxStore.items.length
+            var it = n > 0 ? OutboxStore.items[Math.floor(rnd() * n)] : null
+            if (r < 0.3 || !it) {
+                // Unique requestId per call, as Gateway mints them.
+                var e = entities[Math.floor(rnd() * entities.length)]
+                OutboxStore.enqueue({ requestId: "req-" + step, entity: "order", entityId: e, action: "update", after: { s: step } })
+            }
+            else if (r < 0.5) OutboxStore.markFailed(it.requestId)
+            else if (r < 0.65) OutboxStore.markInFlight(it)
+            else if (r < 0.75) OutboxStore.clearInFlight(it)
+            else if (r < 0.9) {
+                var wasInFlight = OutboxStore.isInFlight(it.requestId)
+                compare(OutboxStore.retryNow(it.requestId), !wasInFlight, "step " + step)
+            }
+            else { OutboxStore.clearInFlight(it); OutboxStore.markSent(it.requestId) }
+            var seen = {}
+            for (var i = 0; i < OutboxStore.items.length; ++i) {
+                var q = OutboxStore.items[i]
+                verify(!seen[q.requestId], "duplicate id at step " + step)
+                seen[q.requestId] = true
+                verify(q.attempts >= 0, "attempts at step " + step)
+            }
+            compare(OutboxStore.pendingCount, OutboxStore.items.length, "step " + step)
+        }
+    }
+
+    // ── setStuckMeta / wakeStuck (P5: stuck state survives a relaunch) ───────
+
+    function _stuckMeta(failures, stuck, terminal) {
+        return { failures: failures, stuck: stuck, terminal: terminal }
+    }
+
+    function test_setStuckMeta_stores_the_three_fields_on_the_item() {
+        _failedItem("r1", "o1", 1)
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(6, true, true)), true)
+        compare(_find("r1").failures, 6)
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").terminal, true)
+    }
+
+    function test_setStuckMeta_survives_a_relaunch() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.items = []
+        OutboxStore._load() // re-read from Settings, as if the app had just started
+        compare(_find("r1").failures, 5)
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").terminal, true)
+        compare(_find("r1").attempts, 5, "attempts still persists next to it")
+    }
+
+    function test_setStuckMeta_omits_falsy_fields_so_an_untouched_item_is_unchanged() {
+        _failedItem("r1", "o1", 1)
+        var before = JSON.stringify(_find("r1"))
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(0, false, false)), true)
+        compare(JSON.stringify(_find("r1")), before)
+        compare(_find("r1").hasOwnProperty("failures"), false)
+        compare(_find("r1").hasOwnProperty("stuck"), false)
+        compare(_find("r1").hasOwnProperty("terminal"), false)
+    }
+
+    function test_setStuckMeta_removes_fields_that_are_no_longer_true() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.setStuckMeta("r1", _stuckMeta(6, true, false))
+        compare(_find("r1").terminal, undefined, "a later non-rejected answer clears the label")
+        compare(_find("r1").failures, 6)
+    }
+
+    function test_setStuckMeta_with_an_unchanged_value_does_not_save_again() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(3, false, false))
+        var rev = OutboxStore.revision
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(3, false, false)), true)
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_setStuckMeta_unknown_id_returns_false_and_changes_nothing() {
+        _failedItem("r1", "o1", 1)
+        var snapshot = JSON.stringify(OutboxStore.items)
+        var rev = OutboxStore.revision
+        compare(OutboxStore.setStuckMeta("nope", _stuckMeta(5, true, true)), false)
+        compare(OutboxStore.setStuckMeta("", _stuckMeta(5, true, true)), false)
+        compare(OutboxStore.setStuckMeta(undefined, _stuckMeta(5, true, true)), false)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_setStuckMeta_tolerates_a_missing_or_malformed_meta() {
+        _failedItem("r1", "o1", 1)
+        var before = JSON.stringify(_find("r1"))
+        compare(OutboxStore.setStuckMeta("r1", undefined), true)
+        compare(OutboxStore.setStuckMeta("r1", null), true)
+        compare(OutboxStore.setStuckMeta("r1", { failures: "9", stuck: "yes", terminal: 1 }), true)
+        compare(OutboxStore.setStuckMeta("r1", { failures: -2 }), true)
+        compare(JSON.stringify(_find("r1")), before)
+        OutboxStore.setStuckMeta("r1", { failures: 2.9 })
+        compare(_find("r1").failures, 2)
+    }
+
+    function test_setStuckMeta_touches_only_the_named_item() {
+        _failedItem("r1", "o1", 1)
+        _failedItem("r2", "o2", 1)
+        var other = JSON.stringify(_find("r2"))
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        compare(JSON.stringify(_find("r2")), other)
+        compare(OutboxStore.items.length, 2)
+    }
+
+    function test_stuck_fields_survive_markFailed_retryNow_and_a_coalesced_edit() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.markFailed("r1")
+        compare(_find("r1").stuck, true)
+        OutboxStore.retryNow("r1")
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").failures, 5)
+        compare(_find("r1").terminal, undefined, "S2b: retryNow releases a parked write")
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true)) // rejected again
+        OutboxStore.enqueue({ requestId: "r9", entity: "order", entityId: "o1", action: "update", after: { v: 2 } })
+        compare(OutboxStore.items.length, 1, "coalesced into the stuck item")
+        compare(_find("r1").stuck, true)
+        compare(_find("r1").terminal, true)
+        compare(_find("r1").after.v, 2)
+    }
+
+    function test_markSent_removes_the_stuck_state_with_the_item() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true))
+        OutboxStore.markSent("r1")
+        compare(OutboxStore.items.length, 0)
+        compare(OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, true)), false)
+    }
+
+    function test_wakeStuck_makes_a_backed_off_stuck_item_due_and_keeps_attempts() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        verify(_find("r1").nextAttemptAt > Date.now(), "precondition: backed off")
+        var before = Date.now()
+        compare(OutboxStore.wakeStuck(), 1)
+        verify(_find("r1").nextAttemptAt >= before && _find("r1").nextAttemptAt <= Date.now())
+        compare(_find("r1").attempts, 5, "attempts is NOT reset: a failed re-check keeps the long backoff")
+        compare(OutboxStore.dueItems().length, 1)
+    }
+
+    function test_after_wakeStuck_a_failed_recheck_waits_the_long_step_again() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.wakeStuck()
+        var t0 = Date.now()
+        OutboxStore.markFailed("r1")
+        var delay = _find("r1").nextAttemptAt - t0
+        verify(delay >= 480000, "expected the 10 min step (within jitter), got " + delay)
+    }
+
+    function test_wakeStuck_leaves_items_that_are_not_stuck_alone() {
+        _failedItem("r1", "o1", 3)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(3, false, false))
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_wakeStuck_skips_an_item_that_is_in_flight() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.markInFlight(_find("r1"))
+        var snapshot = JSON.stringify(OutboxStore.items)
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(JSON.stringify(OutboxStore.items), snapshot)
+    }
+
+    function test_wakeStuck_does_not_save_when_nothing_moves() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.wakeStuck()
+        var rev = OutboxStore.revision
+        compare(OutboxStore.wakeStuck(), 0, "second call: already due")
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_wakeStuck_on_an_empty_queue_is_zero() {
+        compare(OutboxStore.wakeStuck(), 0)
+    }
+
+    function test_wakeStuck_moves_only_the_stuck_ones_among_several() {
+        _failedItem("r1", "o1", 5)
+        _failedItem("r2", "o2", 5)
+        _failedItem("r3", "o3", 5)
+        OutboxStore.setStuckMeta("r1", _stuckMeta(5, true, false))
+        OutboxStore.setStuckMeta("r3", _stuckMeta(6, true, true))
+        compare(OutboxStore.wakeStuck(), 1, "r3 is stuck AND terminal = parked: not woken")
+        verify(_find("r2").nextAttemptAt > Date.now(), "r2 is not stuck: still backed off")
+        verify(_find("r3").nextAttemptAt > Date.now(), "r3 is parked: still backed off")
+        compare(OutboxStore.dueItems().length, 1)
+    }
+
+    // Monkey: random meta writes, marks and relaunches must never lose or duplicate
+    // an item, and must always leave stuck === true only on items that say so.
+    function test_monkey_stuck_meta_never_corrupts_the_queue() {
+        var s = 424242
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var ids = ["m1", "m2", "m3"]
+        for (var i = 0; i < ids.length; ++i) _failedItem(ids[i], "o" + i, 2)
+        var expected = { m1: false, m2: false, m3: false }
+        for (var step = 0; step < 300; ++step) {
+            var id = ids[Math.floor(rnd() * ids.length)]
+            var roll = rnd()
+            if (roll < 0.4) {
+                var st = rnd() < 0.5
+                OutboxStore.setStuckMeta(id, _stuckMeta(st ? 5 : 2, st, st && rnd() < 0.5))
+                expected[id] = st
+            } else if (roll < 0.6) {
+                OutboxStore.markFailed(id)
+            } else if (roll < 0.75) {
+                OutboxStore.wakeStuck()
+            } else if (roll < 0.9) {
+                OutboxStore.items = []
+                OutboxStore._load()
+            } else {
+                OutboxStore.retryNow(id)
+            }
+            compare(OutboxStore.items.length, 3, "step " + step)
+            compare(OutboxStore.pendingCount, 3, "step " + step)
+            for (var k = 0; k < ids.length; ++k)
+                compare(_find(ids[k]).stuck === true, expected[ids[k]], "step " + step + " " + ids[k])
+        }
+    }
+
+    // ── S2b: parked = stuck AND terminal (docs/superpowers/specs/2026-09-30-s2b-park-terminal-writes-design.md) ──
+
+    // A write that is due by the clock (attempts 0) and marked stuck + rejected.
+    function _parked(id, entityId) {
+        OutboxStore.enqueue({ requestId: id, entity: "order", entityId: entityId, action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta(id, _stuckMeta(5, true, true))
+    }
+    function _dueIds() { return OutboxStore.dueItems().map(function(i) { return i.requestId }) }
+
+    function test_a_parked_item_is_never_due_even_when_its_time_has_come() {
+        _parked("p1", "o1")
+        verify(_find("p1").nextAttemptAt <= Date.now(), "precondition: due by the clock")
+        compare(_dueIds().length, 0)
+    }
+
+    function test_a_stuck_item_that_is_not_rejected_is_still_due() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("s1", _stuckMeta(5, true, false))
+        compare(_dueIds().length, 1)
+    }
+
+    function test_a_rejected_item_below_the_stuck_threshold_is_not_parked() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("s1", _stuckMeta(2, false, true))
+        compare(_dueIds().length, 1)
+    }
+
+    function test_an_item_with_enough_failures_and_terminal_but_no_stuck_flag_is_parked() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.items = OutboxStore.items.map(function(i) { return Object.assign({}, i, { failures: 7, terminal: true }) })
+        compare(_dueIds().length, 0, "same repair as StuckWrites.hydrate")
+    }
+
+    function test_old_items_without_any_stuck_fields_are_not_parked() {
+        OutboxStore.enqueue({ requestId: "o", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        compare(_dueIds().length, 1)
+    }
+
+    function test_parked_is_skipped_but_unrelated_items_still_go_out() {
+        _parked("p1", "o1")
+        OutboxStore.enqueue({ requestId: "x1", entity: "order", entityId: "o2", action: "update", after: { v: 1 } })
+        compare(_dueIds().join(","), "x1")
+    }
+
+    function test_a_later_write_for_the_same_record_waits_behind_a_parked_one() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        compare(OutboxStore.items.length, 2, "delta is not coalesced into a plain item")
+        compare(_dueIds().length, 0, "Q-S2b-2 A: it may not pass the parked write")
+    }
+
+    function test_a_later_batch_touching_a_parked_record_waits_but_other_batches_go() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueBatch({ requestId: "b1", entity: "order", items: [{ entityId: "o1", action: "update", before: null, after: {} }] })
+        OutboxStore.enqueueBatch({ requestId: "b2", entity: "order", items: [{ entityId: "o9", action: "update", before: null, after: {} }] })
+        compare(_dueIds().join(","), "b2")
+    }
+
+    function test_a_write_queued_before_the_parked_one_is_not_held_by_it() {
+        OutboxStore.enqueueDelta({ requestId: "d0", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        _parked("p1", "o1")
+        compare(_dueIds().join(","), "d0", "queue order: only what comes AFTER a parked item waits")
+    }
+
+    function test_a_parked_item_holds_the_keys_of_every_entity_in_an_operation() {
+        OutboxStore.enqueueOperation({ requestId: "op1", ops: [
+            { entity: "order", entityId: "o1", action: "update", before: null, after: {} },
+            { entity: "inventory", entityId: "i1", action: "update", before: null, after: {} } ] })
+        OutboxStore.setStuckMeta("op1", _stuckMeta(5, true, true))
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "inventory", entityId: "i1", deltas: { stock: 1 }, floors: {} })
+        compare(_dueIds().length, 0)
+    }
+
+    function test_nextDueInMs_ignores_parked_items() {
+        _parked("p1", "o1")
+        compare(OutboxStore.nextDueInMs(), -1, "only a parked item left: the drain timer must stop")
+    }
+
+    function test_nextDueInMs_ignores_what_waits_behind_a_parked_item() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        compare(OutboxStore.nextDueInMs(), -1, "a blocked sibling must not spin the timer at 0")
+    }
+
+    function test_nextDueInMs_still_sees_the_other_items() {
+        _parked("p1", "o1")
+        _failedItem("x1", "o2", 3)
+        var due = OutboxStore.nextDueInMs()
+        verify(due > 0, "x1 is backed off, p1 is ignored: " + due)
+    }
+
+    function test_wakeStuck_does_not_wake_a_parked_item() {
+        _failedItem("p1", "o1", 5)
+        OutboxStore.setStuckMeta("p1", _stuckMeta(5, true, true))
+        var at = _find("p1").nextAttemptAt
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(_find("p1").nextAttemptAt, at)
+    }
+
+    function test_retryNow_releases_a_parked_item_and_keeps_it_stuck() {
+        _parked("p1", "o1")
+        compare(OutboxStore.retryNow("p1"), true)
+        compare(_find("p1").terminal, undefined)
+        compare(_find("p1").stuck, true)
+        compare(_find("p1").failures, 5)
+        compare(_find("p1").attempts, 0)
+        compare(_dueIds().join(","), "p1")
+    }
+
+    function test_a_released_item_that_is_rejected_again_parks_again() {
+        _parked("p1", "o1")
+        OutboxStore.retryNow("p1")
+        OutboxStore.setStuckMeta("p1", _stuckMeta(6, true, true))
+        compare(_dueIds().length, 0)
+    }
+
+    function test_retryNow_releases_the_siblings_behind_it_once_the_item_goes_out() {
+        _parked("p1", "o1")
+        OutboxStore.enqueueDelta({ requestId: "d1", entity: "order", entityId: "o1", deltas: { stock: -1 }, floors: {} })
+        OutboxStore.retryNow("p1")
+        compare(_dueIds().join(","), "p1", "released item first; the sibling is still held by the in-flight/claimed key")
+        OutboxStore.markSent("p1")
+        compare(_dueIds().join(","), "d1")
+    }
+
+    function test_retryNow_on_a_not_rejected_item_changes_no_stuck_field() {
+        OutboxStore.enqueue({ requestId: "s1", entity: "order", entityId: "o1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("s1", _stuckMeta(5, true, false))
+        OutboxStore.retryNow("s1")
+        compare(_find("s1").stuck, true)
+        compare(_find("s1").terminal, undefined)
+        compare(_find("s1").failures, 5)
+    }
+
+    function test_an_edit_to_a_parked_record_merges_into_it_and_stays_parked() {
+        _parked("p1", "o1")
+        OutboxStore.enqueue({ requestId: "r2", entity: "order", entityId: "o1", action: "update", after: { v: 2 } })
+        compare(OutboxStore.items.length, 1)
+        compare(_find("p1").after.v, 2)
+        compare(_dueIds().length, 0, "P3: stays parked until Retry")
+    }
+
+    function test_a_parked_item_is_still_pending_for_its_entity() {
+        _parked("p1", "o1")
+        compare(OutboxStore.hasPendingForEntity("order", "o1"), true, "photo gating keeps waiting")
+    }
+
+    function test_a_parked_item_stays_parked_across_a_relaunch() {
+        _parked("p1", "o1")
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(OutboxStore.items.length, 1)
+        compare(_find("p1").terminal, true)
+        compare(OutboxStore.wakeStuck(), 0)
+        compare(_dueIds().length, 0)
+    }
+
+    function test_an_unparked_item_is_due_again_after_a_relaunch_wake() {
+        _failedItem("s1", "o1", 5)
+        OutboxStore.setStuckMeta("s1", _stuckMeta(5, true, false))
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(OutboxStore.wakeStuck(), 1)
+        compare(_dueIds().join(","), "s1")
+    }
+
+    function test_clear_removes_parked_items() {
+        _parked("p1", "o1")
+        OutboxStore.clear()
+        compare(OutboxStore.items.length, 0)
+        compare(OutboxStore.nextDueInMs(), -1)
+    }
+
+    function test_a_single_parked_item_among_many_does_not_hide_the_rest() {
+        for (var i = 0; i < 25; ++i)
+            OutboxStore.enqueue({ requestId: "q" + i, entity: "order", entityId: "o" + i, action: "update", after: { v: i } })
+        OutboxStore.setStuckMeta("q7", _stuckMeta(5, true, true))
+        compare(_dueIds().length, 24)
+        compare(_dueIds().indexOf("q7"), -1)
+    }
+
+    // Monkey: whatever the order of meta writes, wakes, retries, edits and relaunches,
+    // a parked item (and anything behind it on its record) is never handed out, nothing
+    // is lost, and the timer only runs when something can actually go.
+    function test_monkey_parked_items_are_never_handed_out() {
+        var s = 31337
+        function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+        var ids = ["m1", "m2", "m3"]
+        for (var i = 0; i < ids.length; ++i)
+            OutboxStore.enqueue({ requestId: ids[i], entity: "order", entityId: "o" + i, action: "update", after: { v: i } })
+        for (var step = 0; step < 400; ++step) {
+            var id = ids[Math.floor(rnd() * ids.length)]
+            var roll = rnd()
+            if (roll < 0.3) OutboxStore.setStuckMeta(id, _stuckMeta(5, true, rnd() < 0.6))
+            else if (roll < 0.45) OutboxStore.markFailed(id)
+            else if (roll < 0.6) OutboxStore.wakeStuck()
+            else if (roll < 0.75) OutboxStore.retryNow(id)
+            else if (roll < 0.9) { OutboxStore.items = []; OutboxStore._load() }
+            else OutboxStore.enqueue({ requestId: "e" + step, entity: "order", entityId: "o" + Math.floor(rnd() * 3), action: "update", after: { v: step } })
+            var due = OutboxStore.dueItems()
+            var held = {}
+            var expected = []
+            for (var k = 0; k < OutboxStore.items.length; ++k) {
+                var it = OutboxStore.items[k]
+                var key = it.entity + "/" + it.entityId
+                if (it.stuck === true && it.terminal === true) { held[key] = true; continue }
+                if (held[key]) continue
+                if (it.nextAttemptAt <= Date.now()) expected.push(it.requestId)
+            }
+            compare(due.map(function(d) { return d.requestId }).join(","), expected.join(","), "step " + step)
+            compare(OutboxStore.nextDueInMs() < 0, !OutboxStore.items.some(function(x, idx) {
+                var kk = x.entity + "/" + x.entityId
+                if (x.stuck === true && x.terminal === true) return false
+                for (var j = 0; j < idx; ++j) {
+                    var y = OutboxStore.items[j]
+                    if (y.stuck === true && y.terminal === true && y.entity + "/" + y.entityId === kk) return false
+                }
+                return true
+            }), "timer state, step " + step)
+        }
+    }
+
+    // ── hasParkedForEntity (D2/D3, PR #119: restock/delete refuse behind a park) ──
+
+    function _park(id) { return OutboxStore.setStuckMeta(id, { failures: 5, stuck: true, terminal: true }) }
+
+    function test_hasParkedForEntity_true_for_a_parked_single_item() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasParkedForEntity_false_for_an_unparked_pending_item() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        compare(OutboxStore.hasPendingForEntity("inventory", "prod-1"), true)
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasParkedForEntity_false_for_stuck_but_not_terminal() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        OutboxStore.setStuckMeta("p1", { failures: 5, stuck: true, terminal: false })
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false, "stuck but still auto-retrying is not parked")
+    }
+
+    function test_hasParkedForEntity_false_for_another_id_or_another_entity() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-2"), false)
+        compare(OutboxStore.hasParkedForEntity("stock_batch", "prod-1"), false)
+        compare(OutboxStore.hasParkedForEntity("inventory", ""), false)
+    }
+
+    function test_hasParkedForEntity_sees_a_parked_delta_batch_and_operation_item() {
+        OutboxStore.enqueueDelta({ requestId: "pd", entity: "inventory", entityId: "prod-d", deltas: { stock: 1 } })
+        OutboxStore.enqueueBatch({ requestId: "pb", entity: "inventory", items: [{ entityId: "prod-b1", action: "update" }, { entityId: "prod-b2", action: "update" }] })
+        OutboxStore.enqueueOperation({ requestId: "po", opType: "x", ops: [{ entity: "inventory", entityId: "prod-o", action: "update" }] })
+        _park("pd"); _park("pb"); _park("po")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-d"), true, "delta")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-b1"), true, "batch member 1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-b2"), true, "batch member 2")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-o"), true, "operation op")
+    }
+
+    function test_hasParkedForEntity_false_once_the_parked_item_is_sent_or_dropped() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        OutboxStore.markSent("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
+    }
+
+    function test_hasParkedForEntity_survives_a_relaunch() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        _park("p1")
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasParkedForEntity_true_while_only_one_of_two_items_for_the_record_is_parked() {
+        OutboxStore.enqueue({ requestId: "p1", entity: "inventory", entityId: "prod-1", action: "update", after: { v: 1 } })
+        OutboxStore.enqueueDelta({ requestId: "p2", entity: "inventory", entityId: "prod-1", deltas: { stock: 2 } })
+        _park("p1")
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), true)
+    }
+
+    function test_hasParkedForEntity_false_on_an_empty_queue() {
+        compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
+    }
 }

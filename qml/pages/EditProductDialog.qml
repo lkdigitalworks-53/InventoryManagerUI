@@ -11,7 +11,6 @@ import "../model"
 //   function openFor(id, startInEdit)
 //   property string productId
 //   property bool editMode
-//   property string photoUrl
 BottomSheet {
     id: root
 
@@ -27,7 +26,17 @@ BottomSheet {
 
     property string productId: ""
     property bool editMode: false
-    property string photoUrl: ""
+    property var photoIds: []
+
+    // photoIds above is a snapshot taken when the dialog opens (openFor); a photo confirmed by
+    // PhotoQueue afterwards lands in InventoryStore only, so the gallery lost the queued tile and
+    // never gained the confirmed one until reopen (PR #84 device test, 2026-09-28).
+    Connections {
+        target: InventoryStore
+        function onRevisionChanged() {
+            if (root.productId.length > 0) root.photoIds = InventoryStore.photoIdsFor(root.productId)
+        }
+    }
 
     // Component 2 (async-write-sequencing design §4/§7.1). Acquired when
     // entering edit mode (either via the in-dialog "Edit" button or opening
@@ -82,8 +91,6 @@ BottomSheet {
         })
     }
 
-    property bool photoBusy: false
-
     // Supplier banner state — `_currentSupplierId` resolves to the most
     // recent purchase/created event's supplier; the display name is looked
     // up via SupplierStore so a supplier rename reflects everywhere without
@@ -134,7 +141,7 @@ BottomSheet {
             taxableCombo.currentIndex = p.taxable ? 1 : 0
             taxPercentField.text = (p.taxPercent !== undefined && p.taxPercent !== null) ? String(p.taxPercent) : "0"
             sizeField.text = p.size || ""
-            photoUrl = p.photoUrl || ""
+            photoIds = Array.isArray(p.photoIds) ? p.photoIds : []
 
             var cats = CategoryStore.categories
             var idx = 0
@@ -149,7 +156,6 @@ BottomSheet {
             unitCombo.currentIndex = ui
         }
         errorLabel.text = ""
-        photoBusy = false
         reasonField.text = ""
         // Supplier picker — refresh the model from SupplierStore and select
         // by id rather than by combobox string (the underlying list sorts
@@ -195,26 +201,16 @@ BottomSheet {
 
     // Photo-source result handlers — invoked by Main.qml after the shared,
     // App-root PhotoSourceSheet resolves (see photoPickRequested above).
+    // As of the 2026-09-21 photos feature this dialog always requests the sheet with
+    // hasExistingPhoto: false (see the gallery's addPhotoRequested wiring below), so the sheet
+    // never offers its own "Remove" option and clearPhotoSource() should never fire in normal
+    // operation -- removal is now per-photo, from ProductPhotoGallery's own (×) buttons. Kept
+    // defined (not deleted) for contract preservation and as defensive insurance.
     function applyPhotoSource(url) {
-        root.photoBusy = true
-        StorageService.uploadProductPhoto(root.productId, url, function(ok, photoUrlOut, err) {
-            root.photoBusy = false
-            if (ok) {
-                root.photoUrl = photoUrlOut
-                InventoryStore.setPhoto(root.productId, photoUrlOut)
-            } else {
-                errorLabel.text = "Photo: " + err
-            }
-        })
+        var result = StorageService.addProductPhoto(root.productId, url)
+        if (!result.ok) errorLabel.text = "Photo: " + result.error
     }
-    function clearPhotoSource() {
-        StorageService.deleteProductPhoto(root.productId, function(ok, err) {
-            if (ok) {
-                root.photoUrl = ""
-                InventoryStore.setPhoto(root.productId, "")
-            }
-        })
-    }
+    function clearPhotoSource() { }  // contract only (Main.qml); no legacy single photo left to clear (PH5)
 
     function getSellingPrice(sellingPriceText, costPriceText, isMarkupSelected) {
         var v = parseFloat(sellingPriceText)
@@ -257,71 +253,53 @@ BottomSheet {
             }
         }
 
-        // Photo block
-        RowLayout {
+        // Photo block (2026-09-21: multi-photo gallery, replaces the old single Image+Icon+
+        // BusyIndicator+GhostButton block -- see docs/superpowers/specs/
+        // 2026-09-21-product-photos-firebase-storage-design.md, "UI")
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: dp(Constants.space3)
+            spacing: dp(4)
 
-            Rectangle {
-                Layout.preferredWidth: dp(80)
-                Layout.preferredHeight: dp(80)
-                radius: dp(Constants.radius)
-                color: Constants.subtleBg
-                border.color: Constants.borderColor
-                border.width: 1
-                clip: true
-
-                Image {
-                    anchors.fill: parent
-                    anchors.margins: dp(2)
-                    source: root.photoUrl
-                    sourceSize.width: 160
-                    sourceSize.height: 160
-                    fillMode: Image.PreserveAspectCrop
-                    cache: true
-                    visible: root.photoUrl.length > 0
-                }
-                Icon {
-                    anchors.centerIn: parent
-                    name: "box"
-                    size: sp(32)
-                    color: Constants.textSecondary
-                    visible: root.photoUrl.length === 0
-                }
-                QQC.BusyIndicator {
-                    anchors.centerIn: parent
-                    running: root.photoBusy
-                    visible: root.photoBusy
-                }
+            Text {
+                text: "Product photos"
+                color: Constants.textPrimary
+                font.pixelSize: sp(Constants.fsBodyLg)
+                font.bold: true
             }
-
-            ColumnLayout {
+            Text {
+                text: root.photoIds.length > 0
+                    ? "Tap the + tile to add another photo, or × to remove one."
+                    : "Add a photo so customers recognise the product."
+                color: Constants.textSecondary
+                font.pixelSize: sp(Constants.fsCaption)
                 Layout.fillWidth: true
-                spacing: dp(4)
-
-                Text {
-                    text: "Product photo"
-                    color: Constants.textPrimary
-                    font.pixelSize: sp(Constants.fsBodyLg)
-                    font.bold: true
-                }
-                Text {
-                    text: root.photoUrl.length > 0
-                        ? "Tap “Change photo” to replace the current image."
-                        : "Add a photo so customers recognise the product."
-                    color: Constants.textSecondary
-                    font.pixelSize: sp(Constants.fsCaption)
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                }
-                GhostButton {
-                    Layout.preferredWidth: dp(160)
-                    implicitHeight: dp(36)
-                    text: root.photoUrl.length > 0 ? "Change photo" : "Add photo"
-                    enabled: root.editMode && !root.photoBusy
-                    onClicked: root.photoPickRequested(root.photoUrl.length > 0)
-                }
+                wrapMode: Text.Wrap
             }
+
+            ProductPhotoGallery {
+                Layout.fillWidth: true
+                productId: root.productId
+                photoIds: root.photoIds
+                editable: root.editMode
+                onAddPhotoRequested: root.photoPickRequested(false)
+                onRemoveFailed: function(photoId, err) { errorLabel.text = "Remove photo: " + err }
+            }
+        }
+
+        // PR #122 S4: a queued edit is shown here (the overlay re-applies it after a relaunch)
+        // but the server does not have it yet.
+        Text {
+            id: syncNote
+            objectName: "syncNote"
+            readonly property string syncState: InventoryStore.syncStates[root.productId] || ""
+            Layout.fillWidth: true
+            visible: syncState !== ""
+            wrapMode: Text.Wrap
+            color: syncState === "parked" ? Constants.danger : Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
+            text: syncState === "parked"
+                  ? qsTr("A change to this product was rejected by the server. Retry or discard it from the stuck changes list.")
+                  : qsTr("A change to this product hasn't synced yet. It can't be sold until it does.")
         }
 
         Text {
@@ -1094,7 +1072,7 @@ BottomSheet {
             errorLabel.text = errs.join(" · ")
             return
         }
-        productUpdateRequested(root.productId, {
+        var fields = {
             name: nameField.text.trim(),
             sku: skuField.text.trim(),
             category: categoryCombo.currentText,
@@ -1107,7 +1085,14 @@ BottomSheet {
             size: sizeField.text.trim(),
             stock: stk,
             minStock: ms
-        }, reasonField.text.trim())
+        }
+        // Over the Firestore 1 MiB doc limit: stay open so the edit is not lost, and say why.
+        var tooLarge = InventoryStore.updateRefusal(root.productId, fields)
+        if (tooLarge !== "") {
+            errorLabel.text = tooLarge
+            return
+        }
+        productUpdateRequested(root.productId, fields, reasonField.text.trim())
         errorLabel.text = ""
         LockManager.release("inventory", productId)
         editMode = false

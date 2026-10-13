@@ -235,7 +235,9 @@ Item {
             AvatarBadge {
                 Layout.alignment: Qt.AlignVCenter
                 size: "lg"
-                imageSource: card.product && card.product.photoUrl ? card.product.photoUrl : ""
+                imageSource: card.product && card.product.photoIds && card.product.photoIds.length > 0
+                    ? StorageService.photoDownloadUrl(card.product.productId, card.product.photoIds[0], true)
+                    : ""
                 label: card.product && card.product.name && card.product.name.length > 0
                     ? card.product.name.charAt(0).toUpperCase() : "?"
                 palette: card.product && card.product.stock <= card.product.minStock
@@ -300,6 +302,18 @@ Item {
                         visible: card.product && card.product.stock <= card.product.minStock
                         status: "low"
                         label: "Low"
+                    }
+
+                    // PR #122 S4: this product has a change that has not reached the server.
+                    // "Not synced" = queued / retrying; "Rejected" = parked, needs Retry or
+                    // Discard in the stuck-writes sheet. Same rule as the sale guard.
+                    StatusPill {
+                        objectName: "syncPill"
+                        readonly property string syncState: card.product
+                            ? (InventoryStore.syncStates[card.product.productId] || "") : ""
+                        visible: syncState !== ""
+                        status: syncState === "parked" ? "low" : "pending"
+                        label: syncState === "parked" ? qsTr("Rejected") : qsTr("Not synced")
                     }
 
                     Item { Layout.fillWidth: true }

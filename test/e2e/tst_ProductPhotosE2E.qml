@@ -1,0 +1,468 @@
+import QtQuick
+import QtTest
+import "../../qml/model"
+import "E2EHelpers.js" as E2EHelpers
+
+// E2E — product photos in Firebase Storage, against the real Firebase Local Emulator Suite
+// (Firestore + Auth + Functions + Storage). Design:
+// docs/superpowers/specs/2026-09-21-product-photos-firebase-storage-design.md
+// Test plan: docs/superpowers/test-plans/2026-09-21-product-photos-firebase-storage-test-plan.md
+//
+// WHAT THIS DOES NOT COVER, AND WHY: the client's real upload path is StorageService.
+// addProductPhoto -> NativeFile.toReadablePath/ImageProcessor.compressForUpload+persistLocalCopy
+// -> PhotoQueue.enqueue -> PhotoQueue._upload -> NativeFile.readFileBase64 -> XHR. NativeFile and
+// ImageProcessor are root context properties (main.cpp setContextProperty), not QML singletons --
+// undefined under qmltestrunner, same as every other place this feature (and StorageService
+// before it) hits this wall. There is no way to exercise that client-side path from any automated
+// test in this repository; a real device build is the only proof for it.
+//
+// What this DOES cover: the server side, end to end, exactly the way tst_InventoryE2E.qml's own
+// test_recordMutation_function_accepts_seeded_credentials diagnostic already bypasses Gateway/
+// OutboxStore with a raw POST to prove the function itself, independent of the client machinery
+// that would normally call it. Every test below POSTs directly to the emulated
+// uploadProductPhoto/deleteProductPhoto functions (E2EHelpers.postDirect, same helper, same
+// pattern) and verifies against both the Firestore emulator (photoIds on the product doc) and the
+// Storage emulator (the actual object), independently of each other and independently of any
+// client-side cache -- proving the real server code path, not just that the client's own
+// optimistic state looks right.
+//
+// NOT RUN IN THIS SANDBOX -- no network egress here to Firebase's emulator distribution, same as
+// every other file in this directory before its first real CI attempt.
+TestCase {
+    name: "ProductPhotosE2E"
+
+    readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
+    readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
+    readonly property string emulatorStorageHost: "http://127.0.0.1:9199"
+    readonly property string bucket: "inventorymanager-48392.firebasestorage.app"
+    readonly property string realUploadUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/uploadProductPhoto"
+    readonly property string realDeleteUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/deleteProductPhoto"
+    readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+
+    // 1x1 white-pixel JPEG, base64 -- small, real, and passes photoValidation's JPEG-magic-byte
+    // check without needing an actual asset file on disk (this directory's XHR file:// reads need
+    // QML_XHR_ALLOW_FILE_READ, already required for .fixture.json -- a literal constant here
+    // avoids adding a second file dependency for one tiny fixture image).
+    readonly property string tinyJpegBase64: "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+    readonly property string notJpegBase64: "AAECAw=="
+
+    property var fixture: null
+    readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
+
+    function _loadFixture() {
+        return E2EHelpers.loadFixture(this, fixtureUrl)
+    }
+    function _postDirect(url, payload, timeoutMs, timeoutMessage) {
+        return E2EHelpers.postDirect(this, url, payload, timeoutMs, timeoutMessage)
+    }
+    function _pollDoc(docPath, entityId, predicateFn, timeoutMs, message, requireResponse) {
+        return E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, docPath, entityId,
+                                           predicateFn, timeoutMs, message, requireResponse)
+    }
+    // pending_cleanup is server-only in firestore.rules: a member token reads 403, and pollEmulatorDoc
+    // maps any non-200 to null -- which made every "marker is gone" assertion pass vacuously. Read as
+    // the emulator admin instead ("owner" bypasses rules). Restores the member token afterwards.
+    function _pollMarker(productId, predicateFn, timeoutMs, message) {
+        var saved = fixture.idToken
+        fixture.idToken = "owner"
+        try {
+            return _pollDoc("tenants/" + fixture.tenantId + "/pending_cleanup/" + productId, productId,
+                            predicateFn, timeoutMs, message, true)
+        } finally {
+            fixture.idToken = saved
+        }
+    }
+    function _pollStorageObject(objectPath, timeoutMs, message) {
+        return E2EHelpers.pollEmulatorStorageObject(this, emulatorStorageHost, bucket,
+                                                      objectPath, timeoutMs, message)
+    }
+    function _pollStorageObjectAbsent(objectPath, timeoutMs, message) {
+        E2EHelpers.pollEmulatorStorageObjectAbsent(this, emulatorStorageHost, bucket,
+                                                     objectPath, timeoutMs, message)
+    }
+
+    function initTestCase() {
+        fixture = _loadFixture()
+
+        // Same construction-order fix tst_InventoryE2E.qml's initTestCase() documents at length:
+        // AuthService's Component.onCompleted calls AuthStore.loadSession() -> clear()
+        // unconditionally, the FIRST time AuthService is referenced at all. PhotoQueue.drainNow()
+        // now calls AuthService.ensureFreshToken() (added during this feature's own review sweep)
+        // -- if that turned out to be AuthService's first reference in a run, it would fire
+        // construction AFTER init() already set a real idToken, wiping it. This file doesn't
+        // currently call drainNow() itself (see the file header for why), but forces the same
+        // construction here anyway, defensively, since qmltestrunner does not guarantee ordering
+        // across files and a future addition to this file easily could call it.
+        AuthService.ensureFreshToken() // no-op (not authenticated yet); forces construction only
+
+        // uploadProductPhoto and deleteProductPhoto are separate Cloud Functions from
+        // recordMutation -- the emulator cold-starts each one independently, on its own first
+        // invocation (documented at length in tst_InventoryE2E.qml's initTestCase() for
+        // recordMutation specifically; the same mechanism applies here). Warming up
+        // recordMutation elsewhere in the suite does not warm these up. Pay both cold starts
+        // here, once, with real payloads against a product that doesn't exist -- doubles as an
+        // early smoke check that both functions are reachable and returning the expected shape,
+        // not just "some" response.
+        var warmupProductId = "warmup-product-" + Date.now()
+        var warmupPhotoId = "warmup-photo-" + Date.now()
+        var uploadResult = _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
+            env: "prd", productId: warmupProductId, photoId: warmupPhotoId, requestId: warmupPhotoId,
+            imageBase64: tinyJpegBase64, thumbBase64: tinyJpegBase64
+        }, 20000, "Cloud Functions emulator never responded to the uploadProductPhoto warm-up call")
+        compare(uploadResult.status, 404,
+                "uploadProductPhoto warm-up expected product-not-found (warmupProductId was never "
+                + "created on purpose) -- got: " + uploadResult.text)
+
+        var deleteResult = _postDirect(emulatorFunctionsBase + "/deleteProductPhoto", {
+            env: "prd", productId: warmupProductId, photoId: warmupPhotoId, requestId: "del-" + warmupPhotoId
+        }, 20000, "Cloud Functions emulator never responded to the deleteProductPhoto warm-up call")
+        compare(deleteResult.status, 200,
+                "deleteProductPhoto warm-up rejected -- response: " + deleteResult.text
+                + " (deleteProductPhoto tolerates a missing product doc by design, so this should "
+                + "always be 200, unlike the upload warm-up above)")
+    }
+
+    function init() {
+        fixture = _loadFixture()
+        FirebaseService.emulatorHost = emulatorFirestoreHost
+        // _createProduct() below goes through InventoryStore.addProduct() ->
+        // Gateway.recordMutation(), same as every sibling E2E file
+        // (tst_InventoryE2E.qml, tst_StaffStoreE2E.qml, etc.) -- without this
+        // override Gateway posts to the real production recordMutation
+        // Cloud Function instead of the local emulator, so the product doc
+        // this file polls for on the EMULATOR never actually appears there.
+        // Missed originally because this file's own direct
+        // uploadProductPhoto/deleteProductPhoto POSTs go straight to
+        // emulatorFunctionsBase already and don't go through Gateway at all
+        // -- only the setup helper does.
+        Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        AuthStore.idToken = fixture.idToken
+        AuthStore.uid = fixture.uid
+        AuthStore.tenantId = fixture.tenantId
+        InventoryStore.products = []
+    }
+
+    function cleanup() {
+        FirebaseService.emulatorHost = ""
+        Gateway.functionUrl = realFunctionUrl
+        AuthStore.idToken = ""
+        AuthStore.tenantId = ""
+    }
+
+    function _createProduct(name, sku) {
+        var createdId = "", done = false
+        InventoryStore.addProduct(
+            name, sku, "General", "", 100, "pc", 10, 2,
+            120, false, 0, fixture.supplierName, 80, "",
+            function(ok, id) { done = true; createdId = ok ? id : "" }
+        )
+        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        verify(createdId.length > 0, "addProduct did not return a productId")
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + createdId
+        _pollDoc(docPath, createdId, function(d) { return d !== null }, 5000,
+                 "product doc never appeared before the photo test could run")
+        return createdId
+    }
+
+    function _uploadPhoto(productId, photoId) {
+        return _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
+            env: "prd", productId: productId, photoId: photoId, requestId: photoId,
+            imageBase64: tinyJpegBase64, thumbBase64: tinyJpegBase64
+        }, 10000, "uploadProductPhoto never responded")
+    }
+
+    // ── uploadProductPhoto: the real server path, end to end ───────────────
+
+    function test_upload_writes_the_storage_objects_and_appends_photoIds() {
+        var productId = _createProduct("E2E Photo Widget", "SKU-E2E-PHOTO-1")
+        var photoId = "e2e-photo-" + Date.now()
+
+        var result = _uploadPhoto(productId, photoId)
+        compare(result.status, 200, "uploadProductPhoto rejected the request -- response: " + result.text)
+        var parsed = JSON.parse(result.text)
+        compare(parsed.photoIds.length, 1)
+        compare(parsed.photoIds[0], photoId)
+
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        var doc = _pollDoc(docPath, productId, function(d) {
+            return d !== null && d.fields.photoIds && d.fields.photoIds.arrayValue
+                && d.fields.photoIds.arrayValue.values
+                && d.fields.photoIds.arrayValue.values.length === 1
+        }, 5000, "photoIds never appeared on the product doc in the emulator")
+        compare(doc.fields.photoIds.arrayValue.values[0].stringValue, photoId)
+
+        var mainPath = "prd/tenants/" + fixture.tenantId + "/products/" + productId + "/" + photoId + ".jpg"
+        var thumbPath = "prd/tenants/" + fixture.tenantId + "/products/" + productId + "/" + photoId + "_t.jpg"
+        _pollStorageObject(mainPath, 5000, "main photo object never appeared in the Storage emulator")
+        _pollStorageObject(thumbPath, 5000, "thumbnail photo object never appeared in the Storage emulator")
+    }
+
+    function test_upload_is_idempotent_on_replay() {
+        var productId = _createProduct("E2E Photo Idempotent", "SKU-E2E-PHOTO-2")
+        var photoId = "e2e-photo-replay-" + Date.now()
+
+        var first = _uploadPhoto(productId, photoId)
+        compare(first.status, 200, "first upload rejected -- response: " + first.text)
+
+        var second = _uploadPhoto(productId, photoId)
+        compare(second.status, 200, "replay rejected -- response: " + second.text)
+        var parsedSecond = JSON.parse(second.text)
+        compare(parsedSecond.already, true, "a replay with the same requestId must report already:true")
+        compare(parsedSecond.photoIds.length, 1, "a replay must not duplicate the id")
+    }
+
+    function test_upload_rejects_a_non_jpeg_payload() {
+        var productId = _createProduct("E2E Photo Bad Image", "SKU-E2E-PHOTO-3")
+        var result = _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
+            env: "prd", productId: productId, photoId: "e2e-bad-" + Date.now(),
+            requestId: "e2e-bad-" + Date.now(),
+            imageBase64: notJpegBase64, thumbBase64: notJpegBase64
+        }, 10000, "uploadProductPhoto never responded to the bad-image request")
+        compare(result.status, 400)
+        compare(JSON.parse(result.text).error, "invalid-image")
+    }
+
+    function test_upload_rejects_a_productId_containing_a_path_traversal_slash() {
+        // Regression test for the path-traversal fix found in this feature's own review sweep
+        // (PhotoValidation.isSafePathSegment) -- proves the real deployed function rejects it,
+        // not just the mocked handlerHarness unit tests.
+        var result = _postDirect(emulatorFunctionsBase + "/uploadProductPhoto", {
+            env: "prd", productId: "../other-tenant/inventory/x", photoId: "e2e-traversal-" + Date.now(),
+            requestId: "e2e-traversal-" + Date.now(),
+            imageBase64: tinyJpegBase64, thumbBase64: tinyJpegBase64
+        }, 10000, "uploadProductPhoto never responded to the traversal-id request")
+        compare(result.status, 400)
+        compare(JSON.parse(result.text).error, "invalid-request")
+    }
+
+    function test_upload_rejects_an_eleventh_photo() {
+        var productId = _createProduct("E2E Photo Limit", "SKU-E2E-PHOTO-4")
+        for (var i = 0; i < 10; ++i) {
+            var r = _uploadPhoto(productId, "e2e-limit-" + i + "-" + Date.now())
+            compare(r.status, 200, "photo " + i + " of 10 was rejected -- response: " + r.text)
+        }
+        var eleventh = _uploadPhoto(productId, "e2e-limit-11th-" + Date.now())
+        // Diagnostic messages on both compares below -- if this test fails again, the CI comment
+        // should show which value was wrong instead of QtTest's bare "Compared values are not the
+        // same", which carried no detail on the 2026-09-27 failure this replaces.
+        verify(eleventh.status === 409,
+               "expected 409 (photo-limit) for the 11th photo, got " + eleventh.status
+               + " -- response: " + eleventh.text)
+        var parsedEleventh = JSON.parse(eleventh.text)
+        compare(parsedEleventh.error, "photo-limit",
+                "11th photo was rejected (status " + eleventh.status + ") but for the wrong reason -- "
+                + "full response: " + eleventh.text)
+    }
+
+    // ── deleteProductPhoto: the real server path, end to end ───────────────
+
+    function test_delete_removes_the_id_and_both_storage_objects() {
+        var productId = _createProduct("E2E Photo Delete", "SKU-E2E-PHOTO-5")
+        var photoId = "e2e-photo-delete-" + Date.now()
+        var uploadResult = _uploadPhoto(productId, photoId)
+        compare(uploadResult.status, 200, "setup upload failed -- response: " + uploadResult.text)
+
+        var mainPath = "prd/tenants/" + fixture.tenantId + "/products/" + productId + "/" + photoId + ".jpg"
+        var thumbPath = "prd/tenants/" + fixture.tenantId + "/products/" + productId + "/" + photoId + "_t.jpg"
+        _pollStorageObject(mainPath, 5000, "setup: main object never appeared before delete")
+
+        var deleteResult = _postDirect(emulatorFunctionsBase + "/deleteProductPhoto", {
+            env: "prd", productId: productId, photoId: photoId, requestId: "del-" + photoId
+        }, 10000, "deleteProductPhoto never responded")
+        compare(deleteResult.status, 200, "deleteProductPhoto rejected -- response: " + deleteResult.text)
+        compare(JSON.parse(deleteResult.text).photoIds.length, 0)
+
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        var doc = _pollDoc(docPath, productId, function(d) {
+            return d !== null && (!d.fields.photoIds || !d.fields.photoIds.arrayValue.values
+                || d.fields.photoIds.arrayValue.values.length === 0)
+        }, 5000, "photoIds never emptied on the product doc after delete")
+
+        _pollStorageObjectAbsent(mainPath, 5000, "main object was not actually deleted from Storage")
+        _pollStorageObjectAbsent(thumbPath, 5000, "thumbnail object was not actually deleted from Storage")
+    }
+
+    function test_delete_tolerates_removing_an_id_that_is_already_absent() {
+        var productId = _createProduct("E2E Photo Delete Noop", "SKU-E2E-PHOTO-6")
+        var result = _postDirect(emulatorFunctionsBase + "/deleteProductPhoto", {
+            env: "prd", productId: productId, photoId: "never-existed-" + Date.now(),
+            requestId: "del-never-existed-" + Date.now()
+        }, 10000, "deleteProductPhoto never responded to the no-such-id request")
+        compare(result.status, 200, "removing an absent id must be a no-op, not an error -- response: " + result.text)
+    }
+
+    // ── PH3 (2026-10-03): role gate, F3 preflight, product-delete cascade ──
+    // Test plan: docs/superpowers/test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md (E-cases).
+    // Staff = fixture.secondIdToken (seed.js mints it; member role "staff"). _postDirect sends
+    // fixture.idToken, and init() reloads the fixture before every test, so swapping it inside one
+    // test cannot leak into the next.
+
+    function _objectPath(productId, photoId, thumb) {
+        return "prd/tenants/" + fixture.tenantId + "/products/" + productId + "/" + photoId
+               + (thumb ? "_t.jpg" : ".jpg")
+    }
+
+    function test_staff_cannot_upload_a_photo() {
+        var productId = _createProduct("E2E Photo Staff Upload", "SKU-E2E-PHOTO-7")
+        fixture.idToken = fixture.secondIdToken
+        var photoId = "e2e-staff-up-" + Date.now()
+        var r = _uploadPhoto(productId, photoId)
+        compare(r.status, 403, "staff upload must be refused -- response: " + r.text)
+        compare(JSON.parse(r.text).error, "role-not-allowed")
+        _pollStorageObjectAbsent(_objectPath(productId, photoId, false), 3000, "staff 403 still wrote a Storage object")
+    }
+
+    function test_staff_cannot_delete_a_photo_and_the_photo_survives() {
+        var productId = _createProduct("E2E Photo Staff Delete", "SKU-E2E-PHOTO-8")
+        var photoId = "e2e-staff-del-" + Date.now()
+        compare(_uploadPhoto(productId, photoId).status, 200, "owner setup upload failed")
+        _pollStorageObject(_objectPath(productId, photoId, false), 5000, "setup object never appeared")
+        fixture.idToken = fixture.secondIdToken
+        var r = _postDirect(emulatorFunctionsBase + "/deleteProductPhoto", {
+            env: "prd", productId: productId, photoId: photoId, requestId: "del-" + photoId
+        }, 10000, "deleteProductPhoto never responded to the staff request")
+        compare(r.status, 403, "staff delete must be refused -- response: " + r.text)
+        compare(JSON.parse(r.text).error, "role-not-allowed")
+        _pollStorageObject(_objectPath(productId, photoId, false), 3000, "staff 403 deleted the photo anyway")
+    }
+
+    function test_upload_to_a_missing_product_is_404_and_writes_no_objects() {
+        var productId = "PRD-E2E-GHOST-" + Date.now()
+        var photoId = "e2e-ghost-" + Date.now()
+        var r = _uploadPhoto(productId, photoId)
+        compare(r.status, 404, "response: " + r.text)
+        compare(JSON.parse(r.text).error, "product-not-found")
+        _pollStorageObjectAbsent(_objectPath(productId, photoId, false), 3000, "404 left an orphan main object")
+        _pollStorageObjectAbsent(_objectPath(productId, photoId, true), 3000, "404 left an orphan thumbnail")
+    }
+
+    function test_rejected_eleventh_photo_leaves_no_storage_object() {
+        var productId = _createProduct("E2E Photo Limit NoOrphan", "SKU-E2E-PHOTO-9")
+        for (var i = 0; i < 10; ++i) {
+            compare(_uploadPhoto(productId, "e2e-noorph-" + i + "-" + Date.now()).status, 200, "photo " + i)
+        }
+        var eleventhId = "e2e-noorph-11th-" + Date.now()
+        compare(_uploadPhoto(productId, eleventhId).status, 409)
+        _pollStorageObjectAbsent(_objectPath(productId, eleventhId, false), 3000, "409 left an orphan main object")
+        _pollStorageObjectAbsent(_objectPath(productId, eleventhId, true), 3000, "409 left an orphan thumbnail")
+    }
+
+    function test_deleting_a_product_sweeps_its_photos_and_removes_the_marker() {
+        var productId = _createProduct("E2E Photo Cascade", "SKU-E2E-PHOTO-10")
+        var photoIds = ["e2e-cascade-a-" + Date.now(), "e2e-cascade-b-" + Date.now()]
+        for (var i = 0; i < photoIds.length; ++i) {
+            compare(_uploadPhoto(productId, photoIds[i]).status, 200, "setup upload " + i)
+            _pollStorageObject(_objectPath(productId, photoIds[i], false), 5000, "setup object " + i)
+        }
+        // A sibling product's photo must survive the prefix sweep.
+        var otherId = _createProduct("E2E Photo Cascade Sibling", "SKU-E2E-PHOTO-11")
+        var otherPhoto = "e2e-cascade-sibling-" + Date.now()
+        compare(_uploadPhoto(otherId, otherPhoto).status, 200, "sibling setup upload")
+        _pollStorageObject(_objectPath(otherId, otherPhoto, false), 5000, "sibling setup object")
+
+        // The photos above went in by direct POST, so the client's cached product has no photoIds while
+        // the server doc now does. deleteProduct sends the CACHED row as the CAS `before`; against the
+        // server's row it mismatches -> 409 -> Gateway drops the delete as stale (seen in CI as
+        // "dropping stale write ... PRD-010"). Pull the server state first, like a real device would.
+        InventoryStore.syncFromFirebase()
+        tryVerify(function() {
+            var ps = InventoryStore.products
+            for (var k = 0; k < ps.length; ++k) {
+                if (ps[k].productId === productId) return ps[k].photoIds.length === photoIds.length
+            }
+            return false
+        }, 15000, "client never synced the server's photoIds for " + productId)
+
+        InventoryStore.deleteProduct(productId)
+
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        _pollDoc(docPath, productId, function(d) { return d === null }, 10000, "product doc never deleted", true)
+        // Marker first, as the emulator admin: a sweep that failed leaves the marker with attempts/lastError,
+        // so on failure the message says WHY (the CI log is not always reachable).
+        var markerSeen = "unread"
+        var startedAt = Date.now()
+        _pollMarker(productId, function(d) {
+            markerSeen = JSON.stringify(d)
+            return d === null || (Date.now() - startedAt) > 8000
+        }, 12000, "marker poll")
+        verify(markerSeen === "null",
+               "sweep did not finish -- pending_cleanup marker still present: " + markerSeen)
+        for (var j = 0; j < photoIds.length; ++j) {
+            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], false), 10000,
+                                     "marker removed but main " + j + " still in Storage")
+            _pollStorageObjectAbsent(_objectPath(productId, photoIds[j], true), 10000,
+                                     "marker removed but thumb " + j + " still in Storage")
+        }
+        _pollStorageObject(_objectPath(otherId, otherPhoto, false), 3000, "sibling product's photo was swept by mistake")
+    }
+
+    // PR #113 device test (2026-10-04): device A uploads a photo while device B deletes the product.
+    // A's upload makes B's cached `before.photoIds` stale -> the delete's CAS 409s and the product
+    // survives. The old client loop in deleteProduct fired deleteProductPhoto per cached id BEFORE that
+    // ack, so a product that was never deleted lost its photos. Nothing may be destroyed on a 409.
+    function test_stale_delete_409_keeps_the_product_and_every_photo() {
+        var productId = _createProduct("E2E Photo Stale Delete", "SKU-E2E-PHOTO-14")
+        var t = Date.now()
+        var cached = ["e2e-stale-a-" + t, "e2e-stale-b-" + t]
+        for (var i = 0; i < cached.length; ++i) {
+            compare(_uploadPhoto(productId, cached[i]).status, 200, "setup upload " + i)
+            _pollStorageObject(_objectPath(productId, cached[i], false), 5000, "setup object " + i)
+        }
+        InventoryStore.syncFromFirebase()
+        tryVerify(function() {
+            var ps = InventoryStore.products
+            for (var k = 0; k < ps.length; ++k)
+                if (ps[k].productId === productId) return ps[k].photoIds.length === cached.length
+            return false
+        }, 15000, "client never synced the server's photoIds for " + productId)
+
+        // "Device A": uploads a third photo after this client's cache was taken.
+        var late = "e2e-stale-late-" + t
+        compare(_uploadPhoto(productId, late).status, 200, "late upload from the other device")
+        _pollStorageObject(_objectPath(productId, late, false), 5000, "late object")
+
+        InventoryStore.deleteProduct(productId)
+
+        // The 409 pushes the server row back into the cache (_onMutationConflicted).
+        tryVerify(function() {
+            var ps = InventoryStore.products
+            for (var k = 0; k < ps.length; ++k)
+                if (ps[k].productId === productId) return ps[k].photoIds.length === cached.length + 1
+            return false
+        }, 15000, "stale delete was not rejected, or the restored row lost photos")
+        wait(2000) // room for any (forbidden) fire-and-forget photo deletes to land
+
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + productId
+        var doc = _pollDoc(docPath, productId, function(d) { return d !== null }, 5000,
+                           "product doc must survive a rejected delete", true)
+        compare(doc.fields.photoIds.arrayValue.values.length, cached.length + 1,
+                "photoIds were destroyed by a delete that never committed")
+        var all = cached.concat([late])
+        for (var j = 0; j < all.length; ++j) {
+            _pollStorageObject(_objectPath(productId, all[j], false), 3000, "main " + j + " destroyed by a rejected delete")
+            _pollStorageObject(_objectPath(productId, all[j], true), 3000, "thumb " + j + " destroyed by a rejected delete")
+        }
+        _pollMarker(productId, function(d) { return d === null }, 5000, "a rejected delete must leave no cleanup marker")
+    }
+
+    function test_deleting_a_product_with_no_photos_leaves_no_marker() {
+        var productId = _createProduct("E2E Cascade NoPhotos", "SKU-E2E-PHOTO-12")
+        InventoryStore.deleteProduct(productId)
+        _pollDoc("tenants/" + fixture.tenantId + "/inventory/" + productId, productId,
+                 function(d) { return d === null }, 10000, "product doc never deleted", true)
+        _pollMarker(productId, function(d) { return d === null }, 10000,
+                    "marker left behind for a product that never had photos")
+    }
+
+    function test_batch_endpoint_rejects_an_inventory_delete_and_keeps_the_product() {
+        var productId = _createProduct("E2E Batch NoCascade", "SKU-E2E-PHOTO-13")
+        var r = _postDirect(emulatorFunctionsBase + "/recordMutationsBatch", {
+            env: "prd", entity: "inventory", requestId: "e2e-batch-del-" + Date.now(),
+            items: [{ entityId: productId, action: "delete", before: { name: "x" }, after: null, clientTimestamp: 1 }]
+        }, 10000, "recordMutationsBatch never responded")
+        compare(r.status, 400, "response: " + r.text)
+        compare(JSON.parse(r.text).error, "cascade-delete-not-allowed")
+        _pollDoc("tenants/" + fixture.tenantId + "/inventory/" + productId, productId,
+                 function(d) { return d !== null }, 3000, "batch rejection must leave the product in place")
+    }
+}

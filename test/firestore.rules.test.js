@@ -1,6 +1,7 @@
 "use strict";
 
 const test = require("node:test");
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
@@ -187,4 +188,75 @@ test("the wildcard match's server-only guard denies locks access even in isolati
     // own isServerOnlyCollection guard must still deny this on its own.
     await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/locks/doc1`), { holderUid: MEMBER_UID }));
     await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/locks/doc1`)));
+});
+
+// -- Server-only tier: pending_cleanup (PH3 photo cascade markers; test plan R01-R09, R11) -----------
+// Written and removed only by recordMutation (Admin SDK). `pending_cleanup` MUST be in
+// isServerOnlyCollection: a lone `match /pending_cleanup/{id} { allow ...: if false }` would NOT deny,
+// because Firestore allows a request if ANY matching rule allows it and the wildcard still would.
+const MARKER = { productId: "PRD-1", envPrefix: "dev1", prefix: "dev1/tenants/tenant-1/products/PRD-1/", attempts: 0, lastError: null };
+
+test("R01 pending_cleanup: a member cannot read a marker", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/pending_cleanup`, "PRD-1", MARKER);
+    await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+});
+
+test("R02 pending_cleanup: a member cannot create a marker", async () => {
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-9`), MARKER));
+});
+
+test("R03 pending_cleanup: a member cannot update a marker", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/pending_cleanup`, "PRD-1", MARKER);
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`), { attempts: 99 }, { merge: true }));
+});
+
+test("R04 pending_cleanup: a member cannot delete a marker", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/pending_cleanup`, "PRD-1", MARKER);
+    await assertFails(deleteDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+});
+
+test("R05 pending_cleanup: the owner is denied all four operations (no role bypass)", async () => {
+    // memberDb() IS the seeded owner (members/{MEMBER_UID}.role = owner).
+    await seedAsAdmin(`tenants/${TENANT}/pending_cleanup`, "PRD-1", MARKER);
+    await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-2`), MARKER));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`), { attempts: 1 }, { merge: true }));
+    await assertFails(deleteDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+});
+
+test("R06 pending_cleanup: unauthenticated is denied", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/pending_cleanup`, "PRD-1", MARKER);
+    await assertFails(getDoc(doc(anonDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+    await assertFails(setDoc(doc(anonDb(), `tenants/${TENANT}/pending_cleanup/PRD-2`), MARKER));
+    await assertFails(deleteDoc(doc(anonDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+});
+
+test("R07 pending_cleanup: a signed-in non-member (other tenant) is denied", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/pending_cleanup`, "PRD-1", MARKER);
+    await assertFails(getDoc(doc(outsiderDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+    await assertFails(setDoc(doc(outsiderDb(), `tenants/${TENANT}/pending_cleanup/PRD-2`), MARKER));
+    await assertFails(deleteDoc(doc(outsiderDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
+});
+
+test("R08 PIN: ordinary wildcard collections are unchanged (a member still reads and writes inventory)", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/inventory`, "PRD-1", { name: "Widget" });
+    await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/inventory/PRD-1`)));
+    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/inventory/PRD-2`), { name: "New" }));
+});
+
+test("R09 PIN: locks and audit_log are still denied to members", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/locks`, "order_ORD-1", { holderUid: MEMBER_UID });
+    await seedAsAdmin(`tenants/${TENANT}/audit_log`, "a1", { seed: true });
+    await assertFails(getDoc(doc(memberDb(), `tenants/${TENANT}/locks/order_ORD-1`)));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/audit_log/a1`), { tampered: true }));
+});
+
+test("R11 a forged marker attempt by a member leaves no marker behind", async () => {
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/pending_cleanup/PRD-7`), MARKER));
+    let exists = true;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const snap = await ctx.firestore().doc(`tenants/${TENANT}/pending_cleanup/PRD-7`).get();
+        exists = snap.exists;
+    });
+    assert.equal(exists, false);
 });

@@ -82,3 +82,14 @@ QString NativeFile::toReadablePath(const QUrl &uri)
     out.close();
     return outPath;
 }
+
+QString NativeFile::readFileBase64(const QString &path)
+{
+    QFile f(path);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly))
+        return {};
+
+    // toBase64() result is pure ASCII, so fromLatin1 is a safe, allocation-cheap
+    // conversion to QString (no need for fromUtf8's validation).
+    return QString::fromLatin1(f.readAll().toBase64());
+}

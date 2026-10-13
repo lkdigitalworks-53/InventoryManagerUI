@@ -24,6 +24,10 @@ App {
     // Queued writes stuck behind a server-side failure (Gateway.stuckCount).
     // GlassHeader reads it as app.syncStuckCount, the same way it reads app.isOnline.
     readonly property int syncStuckCount: Gateway.stuckCount
+    // Of those, the ones the server rejected outright (Gateway.stuckTerminalCount).
+    readonly property int syncStuckTerminalCount: Gateway.stuckTerminalCount
+    // GlassHeader's caption calls this when tapped.
+    function openStuckWrites() { stuckWritesSheet.open() }
 
     // Consume the Android Back event so it does NOT propagate to the OS (which
     // would background/exit the app). "AutoAccept" = mark the event accepted;
@@ -85,7 +89,7 @@ App {
         // read as undefined here, which is falsy, so they close exactly as
         // before — this only changes behavior for dialogs that actually
         // have something to guard.
-        var dialogs = [photoSourceSheet, addProductDlg, editProductDlg,
+        var dialogs = [stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
@@ -316,6 +320,9 @@ App {
             // Kick the one-shot FIFO backfill once the upstream stores have
             // had a beat to land their data. The check inside is idempotent.
             migrationKickoffTimer.restart()
+            // Restore the "not syncing" state of writes that were stuck before the
+            // app closed, and re-check them once (no-op after the first call).
+            Gateway.resumeStuck()
             // Flush any compliance-gateway writes that were queued offline /
             // before this tenant context was known (no-op in "direct" mode).
             Gateway.drainNow()
@@ -346,6 +353,11 @@ App {
             // never replay under the next account.
             Gateway.clear()
             LockManager.clear()
+            // Same reasoning as Gateway.clear() above, for pending photo uploads
+            // specifically (2026-09-21 photos feature) -- a real gap found during
+            // review: PhotoQueue.clear() existed but was never wired into sign-out,
+            // so a queued photo would have replayed under the next signed-in account.
+            PhotoQueue.clear()
             dataModel.ordersModel.clear()
             logic.authSignedOut()
         }
@@ -768,6 +780,7 @@ App {
     ConfirmDialog {
         id: confirmDlg
     }
+    StuckWritesSheet { id: stuckWritesSheet }
 
     StaffDetailDialog {
         id: staffDetailDlg
@@ -808,6 +821,24 @@ App {
         }
         onRemoveRequested: {
             if (_requester) _requester.clearPhotoSource()
+        }
+    }
+
+    // PhotoQueue reports upload/removal outcomes globally, not scoped to whichever dialog happens
+    // to be open (a queued photo can finish uploading after the user has already navigated away).
+    // Connections{} is safe HERE -- Main.qml's root is a regular Item/App-derived type, not a
+    // pragma Singleton QtObject (see PhotoQueue.qml and Skill 20 for why it can't live there
+    // instead). InventoryStore.applyPhotoIds is local-cache-only (the server already wrote
+    // photoIds directly -- design spec); this keeps the UI in sync without waiting for the next
+    // Firestore snapshot.
+    Connections {
+        target: PhotoQueue
+        function onPhotoUploaded(productId, photoId, photoIds) {
+            console.log("[PhotoQueue] upload confirmed", productId, photoId, "photoIds:", photoIds.length)
+            InventoryStore.applyPhotoIds(productId, photoIds, photoId, "add")
+        }
+        function onPhotoUploadFailed(productId, photoId, status) {
+            console.warn("[PhotoQueue] upload failed", productId, photoId, status)
         }
     }
     ImportPreviewDialog {

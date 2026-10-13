@@ -39,6 +39,7 @@ Rectangle {
         cache: true
         sourceSize.width: root._px * 2
         sourceSize.height: root._px * 2
+        onStatusChanged: if (status === Image.Error) console.warn("[AvatarBadge] image failed to load:", source)
     }
 
     Text {

@@ -54,7 +54,11 @@ function loadFixture(tc, fixtureUrl) {
 // Also checks tc.lastConflict on every tick and fails immediately with the
 // real conflict data if one appears for this docPath's entityId, rather
 // than waiting out the full timeout to report a generic message.
-function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicateFn, timeoutMs, message) {
+// `requireResponse` (optional, default false = historical behaviour): when true the predicate is not
+// evaluated until the first HTTP response has arrived. Without it `latest` starts as null, so any
+// "doc is absent" predicate (`d === null`) passes on the very first tryVerify tick, before a single
+// byte came back -- the check is vacuous. Absence checks MUST pass true.
+function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicateFn, timeoutMs, message, requireResponse) {
     var url = emulatorFirestoreHost
         + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + docPath
     var latest = null
@@ -104,6 +108,7 @@ function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicate
                 + ", server has: " + JSON.stringify(tc.lastConflict.current))
         }
         fire()
+        if (requireResponse === true && lastStatus === -1) return false
         return predicateFn(latest)
     }, timeoutMs, message + " (entityId=" + entityId + ", docPath=" + docPath + ")")
 
@@ -121,11 +126,22 @@ function pollEmulatorDoc(tc, emulatorFirestoreHost, docPath, entityId, predicate
 // interchangeable.
 function postDirect(tc, url, payload, timeoutMs, timeoutMessage) {
     var status = -1, text = "", done = false
+    // QTBUG-49896 workaround (same as Gateway._captureBeforeStatusIsLost / PhotoQueue -- see
+    // SKILLS.md Skill 45): QML's XMLHttpRequest can reset xhr.status to 0 at the readyState 3->4
+    // transition for some responses (a 409 is the original reporter's repro), so snapshot
+    // status/body at HEADERS_RECEIVED/LOADING and fall back to it at DONE. A genuine network
+    // failure never reaches HEADERS_RECEIVED, so it still reports 0 -- only the lost-status case
+    // is recovered. Added 2026-09-27 after test_upload_rejects_an_eleventh_photo's expected 409
+    // arrived here as status 0 on every CI run.
+    var snap = { status: 0, text: "" }
     var xhr = new XMLHttpRequest()
     xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {
+            if (xhr.status !== 0) { snap.status = xhr.status; snap.text = xhr.responseText }
+        }
         if (xhr.readyState === XMLHttpRequest.DONE) {
-            status = xhr.status
-            text = xhr.responseText
+            status = (xhr.status !== 0) ? xhr.status : snap.status
+            text = (xhr.status !== 0) ? xhr.responseText : snap.text
             done = true
         }
     }
@@ -134,5 +150,116 @@ function postDirect(tc, url, payload, timeoutMs, timeoutMessage) {
     xhr.setRequestHeader("Authorization", "Bearer " + tc.fixture.idToken)
     xhr.send(JSON.stringify(payload))
     tc.tryVerify(function() { return done }, timeoutMs, timeoutMessage)
+    return { status: status, text: text }
+}
+
+// Polls a raw REST GET against the Storage emulator (added 2026-09-25 for the
+// product-photos feature's e2e test) -- same reasoning as pollEmulatorDoc:
+// asserting via the client's own StorageService would only prove the
+// client's local state is self-consistent, not that an object actually
+// reached the emulated bucket. objectPath is the same unencoded
+// "{env}/tenants/.../{photoId}.jpg" shape PhotoUrl.js builds -- this
+// function does the %2F encoding itself, callers pass the raw path.
+// Returns the object's metadata JSON once GET returns 200, or null if the
+// timeout elapses while it's still 404 (object not written) -- a genuine
+// bug (upload silently failing) and "just needs another moment" both look
+// identical to a caller polling once, which is why this retries instead.
+function pollEmulatorStorageObject(tc, emulatorStorageHost, bucket, objectPath, timeoutMs, message) {
+    var encoded = objectPath.split("/").map(encodeURIComponent).join("%2F")
+    var url = emulatorStorageHost + "/v0/b/" + bucket + "/o/" + encoded
+    var latest = null
+    var inFlight = false
+
+    function fire() {
+        if (inFlight) return
+        inFlight = true
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                latest = (xhr.status === 200) ? JSON.parse(xhr.responseText) : null
+                inFlight = false
+            }
+        }
+        xhr.open("GET", url, true)
+        xhr.send()
+    }
+
+    tc.tryVerify(function() {
+        fire()
+        return latest !== null
+    }, timeoutMs, message + " (objectPath=" + objectPath + ")")
+
+    return latest
+}
+
+// Same as pollEmulatorStorageObject but polls for the object's ABSENCE --
+// used to verify deleteProductPhoto's best-effort Storage cleanup actually
+// removed the object, not just that the Firestore side (photoIds array)
+// updated. A 404 here means "gone"; tryVerify's predicate is the inverse of
+// pollEmulatorStorageObject's.
+function pollEmulatorStorageObjectAbsent(tc, emulatorStorageHost, bucket, objectPath, timeoutMs, message) {
+    var encoded = objectPath.split("/").map(encodeURIComponent).join("%2F")
+    var url = emulatorStorageHost + "/v0/b/" + bucket + "/o/" + encoded
+    var lastStatus = -1
+    var inFlight = false
+
+    function fire() {
+        if (inFlight) return
+        inFlight = true
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                lastStatus = xhr.status
+                inFlight = false
+            }
+        }
+        xhr.open("GET", url, true)
+        xhr.send()
+    }
+
+    tc.tryVerify(function() {
+        fire()
+        return lastStatus === 404
+    }, timeoutMs, message + " (objectPath=" + objectPath + ")")
+}
+
+// ---- PH5 e2e (2026-10-12): seed a raw document as the emulator admin ------------------------------
+// Plain JS value -> Firestore REST typed value; the inverse of the _firestoreFieldsToPlain copies in the
+// e2e files. Integers become integerValue (a string, as the REST API wants), other numbers doubleValue.
+// `Math.floor(v) === v` instead of Number.isInteger: same result for finite numbers, no engine doubt.
+function toFirestoreValue(v) {
+    if (v === null || v === undefined) return { nullValue: null }
+    if (typeof v === "string") return { stringValue: v }
+    if (typeof v === "boolean") return { booleanValue: v }
+    if (typeof v === "number") return (Math.floor(v) === v) ? { integerValue: String(v) } : { doubleValue: v }
+    if (Array.isArray(v)) return { arrayValue: { values: v.map(toFirestoreValue) } }
+    return { mapValue: { fields: toFirestoreFields(v) } }
+}
+
+function toFirestoreFields(obj) {
+    var fields = {}
+    for (var key in obj) fields[key] = toFirestoreValue(obj[key])
+    return fields
+}
+
+// Creates `collectionPath/docId` with exactly the keys of `plain`, bypassing the Cloud Functions and the client
+// stores. The Firestore emulator treats `Authorization: Bearer owner` as an admin (security rules skipped), the
+// same trick tst_ProductPhotosE2E._pollMarker uses for reads. POST + `documentId` (createDocument) instead of
+// PATCH: QML's XMLHttpRequest is only known to handle GET/POST here. Returns the HTTP status; 200 = created,
+// 409 = the id already exists (the caller picks a fresh id per test).
+function createEmulatorDoc(tc, emulatorFirestoreHost, collectionPath, docId, plain, timeoutMs, message) {
+    var url = emulatorFirestoreHost
+        + "/v1/projects/inventorymanager-48392/databases/(default)/documents/" + collectionPath
+        + "?documentId=" + encodeURIComponent(docId)
+    var status = -1, text = "", done = false
+    var xhr = new XMLHttpRequest()
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.DONE) { status = xhr.status; text = xhr.responseText; done = true }
+    }
+    xhr.open("POST", url, true)
+    xhr.setRequestHeader("Content-Type", "application/json")
+    xhr.setRequestHeader("Authorization", "Bearer owner")
+    xhr.send(JSON.stringify({ fields: toFirestoreFields(plain) }))
+    tc.tryVerify(function() { return done }, timeoutMs, message)
     return { status: status, text: text }
 }

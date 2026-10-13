@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import "../components"
 import "../helper/StuckWrites.js" as StuckWrites
+import "../helper/DescribeItem.js" as DescribeItem
 import "../helper/SendPolicy.js" as SendPolicy
 
 // Compliance gateway client (P0). Single entry point for every books-of-
@@ -82,9 +83,13 @@ QtObject {
     // Component 3's client-side half (review finding C3, 2026-08-06): fired
     // when applyMutation's CAS check rejects a recordMutation because
     // someone else's write already landed for that record (`before` was
-    // stale). `current` is the server's actual current document (null only
-    // if the malformed/legacy edge case in _parseMutationConflict below
-    // ever fires, which it shouldn't for a real conflict response). Each
+    // stale). `current` is the server's actual current document, or null when
+    // the server row does not exist (applyMutation / operationLogic return
+    // `current: null` for a record deleted elsewhere; _parseMutationConflict
+    // below also maps a malformed body with no `current` to null, which a real
+    // conflict response never is). InventoryStore treats null as "row gone":
+    // it keeps the local row removed and discards that product's queued
+    // photos. Each
     // store that calls recordMutation should connect to this and patch its
     // own local array for `entityId` from `current` — the queued write is
     // already dropped (not retried) by the time this fires, see _send.
@@ -98,6 +103,23 @@ QtObject {
     // param -- existing 3-arg listeners still connect fine, they just
     // don't see it.
     signal mutationConflicted(string entity, string entityId, var current, string action)
+
+    // BC2 (Q-BC-3 A): ONE recordMutation got a 2xx (applied, or an idempotent replay) and has
+    // left the outbox. Consumers filter on entity/action. Not fired for recordMutations
+    // batches, deltas or operations (no consumer needs them). Today: InventoryStore uses it to
+    // write the "product deleted" Activity entry and purge queued photos only AFTER the ack.
+    signal mutationApplied(string entity, string entityId, string action)
+
+    // Same moment as mutationApplied for ONE recordMutation/recordEdit 2xx, but carries the acked
+    // item's requestId (mutationApplied is 3-arg and emitted by tests, so it stays as is). Today:
+    // InventoryStore flushes the Activity entry of a product edit only after ITS edit is acked.
+    signal writeAcked(string requestId, string entity, string entityId, string action)
+
+    // Held ledger rows (OutboxStore `dependsOn`) deleted because the edit they waited on left
+    // the outbox WITHOUT a server ack (discarded, conflicted, permanently dropped). `items` are
+    // the dropped outbox items ({requestId, entity, entityId, dependsOn}); TransactionStore
+    // removes the matching optimistic local rows so no ghost row outlives the rejected edit.
+    signal heldWritesDropped(var items)
 
     // Fired when recordMutationsBatch rejects a chunk for a reason that can
     // never change on retry (see _classifyBatchMutationFailure below) —
@@ -115,6 +137,9 @@ QtObject {
     // survive a relaunch, these signals are how a caller recovers after one.
     signal operationApplied(string requestId, string opType, var results, bool replay)
     signal operationRejected(string requestId, string opType, var rejection)
+    // S3: a parked write was discarded by the user. `entities` = every entity it touched;
+    // DataModel re-reads those stores from Firestore (P2).
+    signal parkedWriteDiscarded(string requestId, var entities)
 
     property int inFlight: 0
 
@@ -131,7 +156,13 @@ QtObject {
     // GlassHeader shows a persistent "not syncing" line while it is above 0.
     // This only REPORTS: retry, backoff and dropping are decided elsewhere.
     property int stuckCount: 0
+    // How many of those the server answered "write-rejected" (poison write,
+    // not an outage). S2b: these are PARKED, not retried until the user taps
+    // Retry (StuckWrites.isParkedItem); the rest of the stuck writes keep retrying.
+    property int stuckTerminalCount: 0
     property var _stuckState: StuckWrites.newState()
+    // Has this launch already rebuilt _stuckState from the outbox? See resumeStuck().
+    property bool _stuckResumed: false
 
     // Pending recordDelta callbacks, keyed by outbox requestId — NOT
     // persisted (callbacks are JS functions, can't survive relaunch or
@@ -172,7 +203,7 @@ QtObject {
     // The one call every store makes. `after` is the full post-mutation doc
     // (or null for deletes); `before` is the pre-mutation snapshot (or null
     // for creates). Returns the requestId so callers can correlate if needed.
-    function recordMutation(entity, entityId, action, before, after) {
+    function recordMutation(entity, entityId, action, before, after, dependsOn) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordMutation: bad entity/id", entity, entityId)
@@ -192,10 +223,39 @@ QtObject {
             action: action,
             before: before === undefined ? null : before,
             after: after === undefined ? null : after,
-            clientTimestamp: new Date().toISOString()
+            clientTimestamp: new Date().toISOString(),
+            dependsOn: dependsOn || undefined
         })
         drainNow()
         return requestId
+    }
+
+    // recordMutation for an EDIT whose ledger rows must wait for the server's ack. Same enqueue,
+    // but returns the requestId of the item that is actually STORED: OutboxStore.enqueue may
+    // merge this call into an older not-in-flight item for the same record (which keeps ITS
+    // requestId), and a dependent must hang off the item that will really be sent. Returns ""
+    // in direct mode (no outbox, nothing to wait for) or on a bad entity/id.
+    function recordEdit(entity, entityId, action, before, after) {
+        var collection = _collectionFor(entity)
+        if (!collection || !entityId) {
+            console.warn("[Gateway] recordEdit: bad entity/id", entity, entityId)
+            return ""
+        }
+        if (mode === "direct") {
+            _writeDirect(collection, entityId, action, after)
+            return ""
+        }
+        var stored = OutboxStore.enqueue({
+            requestId: _nextRequestId(),
+            entity: entity,
+            entityId: entityId,
+            action: action,
+            before: before === undefined ? null : before,
+            after: after === undefined ? null : after,
+            clientTimestamp: new Date().toISOString()
+        })
+        drainNow()
+        return stored.requestId
     }
 
     // Atomic server-side delta (Component 4) — for quantity fields where two
@@ -481,13 +541,111 @@ QtObject {
     // write becomes stuck; the header line stays up until the count drops again.
     // `status` may be a real HTTP status or StuckWrites.TIMEOUT (D5): a timeout
     // only counts while the device believes it's online -- see StuckWrites.js.
-    function _noteFailure(item, status) {
+    // `body` (optional): the response text, for the server's error code.
+    function _noteFailure(item, status, body) {
+        // A failure must never overwrite persisted state it has not loaded yet.
+        resumeStuck()
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
-        if (!StuckWrites.noteFailure(_stuckState, item.requestId, status, online)) return
+        var tipped = StuckWrites.noteFailure(_stuckState, item.requestId, status, online, StuckWrites.errorCodeOf(body))
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
+        // P5: mirror onto the queued item so the state survives a relaunch.
+        OutboxStore.setStuckMeta(item.requestId, StuckWrites.metaOf(_stuckState, item.requestId))
+        if (!tipped) return
         var wasQuiet = stuckCount === 0
         stuckCount = StuckWrites.stuckCount(_stuckState)
         if (wasQuiet)
-            Toast.show(qsTr("Some changes aren't syncing. The app keeps retrying."))
+            Toast.show(StuckWrites.isParked(_stuckState, item.requestId)
+                ? qsTr("A change was rejected by the server and is paused. Tap the line at the top to retry.")
+                : qsTr("Some changes aren't syncing. The app keeps retrying."))
+    }
+
+    // Launch step (Main.qml, before the first drain), once per launch: rebuild the
+    // stuck state from the persisted outbox items so the header line and the dialog
+    // rows are back BEFORE any send is attempted, then make stuck items due once so
+    // a flag left over from before the app was closed is re-checked now, not after
+    // their 10-minute backoff. No toast: the person was already told. A failed
+    // re-check counts on top of the persisted count and never re-tips.
+    function resumeStuck() {
+        if (_stuckResumed) return
+        _stuckResumed = true
+        _stuckState = StuckWrites.hydrate(OutboxStore.items)
+        stuckCount = StuckWrites.stuckCount(_stuckState)
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
+        OutboxStore.wakeStuck()
+    }
+
+    // Rows for the stuck-writes dialog: every stuck write still queued, in queue
+    // order, as { requestId, title, detail, rejected, inFlight }. `rejected` = the
+    // server's latest answer was write-rejected = the write is PARKED (S2b). Reads live state on each call;
+    // views re-evaluate it off stuckCount, OutboxStore.revision and
+    // OutboxStore.inFlightCount.
+    function stuckRows() {
+        var rows = StuckWrites.rows(_stuckState, OutboxStore.items)
+        var out = []
+        for (var i = 0; i < rows.length; ++i) {
+            var d = DescribeItem.describe(rows[i].item)
+            out.push({
+                requestId: rows[i].requestId,
+                title: d.title,
+                detail: d.detail,
+                rejected: rows[i].terminal,
+                inFlight: OutboxStore.isInFlight(rows[i].requestId)
+            })
+        }
+        return out
+    }
+
+    // "Retry now" for one stuck write: due immediately, fresh backoff, sent by the
+    // drain below. Returns false for an id that is not stuck, not queued, or
+    // already in flight. It does NOT clear the stuck flag: if the server still
+    // fails it the header line must stay up (only leaving the outbox clears it,
+    // see _pruneStuck), and the flag is already set so nothing re-toasts.
+    // S2b: it DOES clear "rejected", which un-parks the write for one attempt; a
+    // fresh write-rejected answer re-parks it, anything else leaves it retrying.
+    function retryStuck(requestId) {
+        if (!StuckWrites.isStuck(_stuckState, requestId)) return false
+        if (!OutboxStore.retryNow(requestId)) return false
+        StuckWrites.clearTerminal(_stuckState, requestId)
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
+        drainNow()
+        return true
+    }
+
+    // S3 Discard: drops ONE parked (server-rejected) write for good and tells the
+    // stores to re-read (parkedWriteDiscarded). Checked again here, not trusted from
+    // the row the user tapped: gateway mode, online, still queued, still parked, not
+    // in flight; otherwise false and nothing changes. A later edit merged into the
+    // parked write is discarded with it (P3); writes queued behind it survive
+    // (Q-S3-1 A). Waiters on the item (operation or delta) are told { error: "discarded" }.
+    function discardParked(requestId) {
+        if (mode !== "gateway") return false
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        if (!online) return false
+        if (OutboxStore.isInFlight(requestId)) return false
+        var item = null
+        var queued = OutboxStore.items
+        for (var i = 0; i < queued.length; ++i)
+            if (queued[i].requestId === requestId) { item = queued[i]; break }
+        if (!item || !StuckWrites.isParkedItem(item)) return false
+
+        OutboxStore.markSent(requestId)
+        var gone = { ok: false, error: "discarded", discarded: true }
+        if (Array.isArray(item.ops)) _finishOperation(item, gone)
+        _answerDeltaCallbacks(requestId, gone)
+        parkedWriteDiscarded(requestId, StuckWrites.entitiesOf(item))
+        _reschedule()
+        return true
+    }
+
+    // Fires (once) and forgets the recordDelta callbacks registered for requestId
+    // with `result` (the server's terminal answer, or { error: "discarded" }).
+    function _answerDeltaCallbacks(requestId, result) {
+        var callbacks = _deltaCallbacks[requestId] || []
+        if (callbacks.length === 0) return
+        var map = Object.assign({}, _deltaCallbacks)
+        delete map[requestId]
+        _deltaCallbacks = map
+        for (var i = 0; i < callbacks.length; ++i) callbacks[i](result)
     }
 
     // Forgets anything that has left the outbox, however it left (sent,
@@ -497,9 +655,12 @@ QtObject {
         var queued = OutboxStore.items
         for (var i = 0; i < queued.length; ++i) live[queued[i].requestId] = true
         stuckCount = StuckWrites.prune(_stuckState, live)
+        stuckTerminalCount = StuckWrites.terminalCount(_stuckState)
     }
 
     function _reschedule() {
+        var droppedHeld = OutboxStore.pruneOrphans() // held ledger rows whose parent edit left unacked never go out
+        if (droppedHeld.length > 0) heldWritesDropped(droppedHeld)
         _pruneStuck()
         if (!_drainTimer) {
             _drainTimer = Qt.createQmlObject(
@@ -624,6 +785,13 @@ QtObject {
         }
     }
 
+    // 2xx for one recordMutation: drop it from the outbox, then tell listeners (BC2).
+    function _ackSingle(item) {
+        OutboxStore.markAcked(item.requestId) // also releases ledger rows held behind this edit
+        mutationApplied(item.entity, item.entityId, item.action)
+        writeAcked(item.requestId, item.entity, item.entityId, item.action)
+    }
+
     function _send(item) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             // Not signed in yet — leave queued; drain again after auth.
@@ -645,7 +813,7 @@ QtObject {
             var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
             var ok = effStatus >= 200 && effStatus < 300
             if (ok) {
-                OutboxStore.markSent(item.requestId)
+                _ackSingle(item)
             } else {
                 var conflict = _parseMutationConflict(effStatus, effResponseText)
                 if (conflict.isConflict) {
@@ -674,7 +842,7 @@ QtObject {
                     console.warn("[Gateway] recordMutation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                                  "statusText:", xhr.statusText, item.entity, item.entityId, effResponseText, "headers:", headersSeen)
                     OutboxStore.markFailed(item.requestId)
-                    _noteFailure(item, effStatus)
+                    _noteFailure(item, effStatus, effResponseText)
                 }
             }
             OutboxStore.clearInFlight(item)
@@ -801,7 +969,7 @@ QtObject {
                         console.warn("[Gateway] recordMutationsBatch failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                                      item.entity, item.items.length, effResponseText)
                         OutboxStore.markFailed(item.requestId)
-                        _noteFailure(item, effStatus)
+                        _noteFailure(item, effStatus, effResponseText)
                     }
                 }
             }
@@ -890,18 +1058,11 @@ QtObject {
                 console.warn("[Gateway] recordDelta failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                              item.entity, item.entityId, effResponseText)
                 OutboxStore.markFailed(item.requestId)
-                _noteFailure(item, effStatus)
+                _noteFailure(item, effStatus, effResponseText)
             }
             OutboxStore.clearInFlight(item)
 
-            if (classified.terminal) {
-                var callbacks = _deltaCallbacks[item.requestId] || []
-                var map = Object.assign({}, _deltaCallbacks)
-                delete map[item.requestId]
-                _deltaCallbacks = map
-                for (var i = 0; i < callbacks.length; ++i)
-                    callbacks[i](classified.result)
-            }
+            if (classified.terminal) _answerDeltaCallbacks(item.requestId, classified.result)
             _reschedule()
         }
         xhr.open("POST", deltaFunctionUrl)
@@ -955,7 +1116,7 @@ QtObject {
                 console.warn("[Gateway] recordOperation failed", "raw-status:", xhr.status, "effective-status:", effStatus,
                              item.requestId, item.opType, effResponseText)
                 OutboxStore.markFailed(item.requestId)
-                _noteFailure(item, effStatus)
+                _noteFailure(item, effStatus, effResponseText)
             }
             OutboxStore.clearInFlight(item)
 
@@ -1075,7 +1236,9 @@ QtObject {
         }
         _operationWaiters = ({})
         _stuckState = StuckWrites.newState()
+        _stuckResumed = false
         stuckCount = 0
+        stuckTerminalCount = 0
         if (_drainTimer) _drainTimer.stop()
     }
 }

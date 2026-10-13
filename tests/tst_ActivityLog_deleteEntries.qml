@@ -35,6 +35,9 @@ TestCase {
                                       unit: "pc", price: 100, sellingPrice: 100, stock: 7, minStock: 0 }]
 
         InventoryStore.deleteProduct("SKU-1")
+        // BC2: the entry is written when the server acks the delete, not at click time.
+        compare(ActivityLog.entries.length, 0, "nothing logged before the ack")
+        Gateway.mutationApplied("inventory", "SKU-1", "delete")
 
         compare(ActivityLog.entries.length, 1)
         compare(ActivityLog.entries[0].kind, "product_deleted")
