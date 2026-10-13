@@ -22,7 +22,7 @@
 - [x] 8a. Review note written
 - [x] 8b. PR description refreshed, sweep comment posted, CI green on docs commit 0015b4f (all 4 jobs)
 
-## SESSION COMPLETE. Awaiting Taher: D-1, D-2, deploy `recordOperation`, device test, squash-merge.
+## SESSION COMPLETE. D-1 (revert) and D-2 (merge #90 first) DECIDED 2026-10-13; Taher deploys `recordOperation`, then device test + squash-merge.
 
 ## NEXT
-Nothing unfinished in this sweep. Next session: Task 11 (syncing hint) or C-1, after Taher answers D-1/D-2.
+Nothing unfinished in this sweep. Next session (after #90 merges): (1) show the CAUSE of the error in the UI for a failed/discarded/parked completion (Taher's request), (2) Task 11 syncing hint, (3) C-1. New branch from updated `main`.

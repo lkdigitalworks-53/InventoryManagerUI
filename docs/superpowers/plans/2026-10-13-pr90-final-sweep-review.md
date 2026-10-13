@@ -36,5 +36,10 @@ PR #90 = plan Task 10 of `2026-09-20-atomic-operation-outbox.md`: `DataModel._tr
 - **D-1 Discard meaning** (chosen: revert). Alternative: resend. Trade-off: resend honours "the sale already happened" (D3) but contradicts the button and loops against a server that keeps rejecting; revert is predictable, but if the goods really were sold, the operator must re-approve the order.
 - **D-2 Merge order:** deploy `recordOperation`, merge #90, then device-test, vs build Task 11 first. Merging first is faster but ships a silent "syncing" state; Task 11 first delays the fix for the original double-consume bug.
 
+## Decisions taken (Taher, 2026-10-13)
+- **D-1:** Discard of a parked completion = revert to `pending` (as built). Follow-up for a NEXT session: show the cause of the error in the UI (the stuck-writes sheet / completion failure message), not only a generic message.
+- **D-2:** merge PR #90 first; Task 11 (syncing hint) and the error-cause UI come after.
+- **Deploy:** Taher deploys `recordOperation` himself before merging.
+
 ## Not checked
 Real `qmltestrunner` (CI only); Phase 2 of qt-qml-review (six agents) not run; no reviewer subagent; no device run; `functions/lib/operationLogic.js` and `CompletionPlan.js` not re-reviewed (Tasks 1-5, already merged); server role gating (finding 5).
