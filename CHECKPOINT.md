@@ -15,7 +15,7 @@
 - [x] 5. Tests: 48 written; pure-JS 142 green in a Node shim (29 new), 6 mutations caught; rest CI-only
 - [x] 6. Docs: Skill 116 (+ `SKILLS-INDEX.md` regenerated, 21/21 script tests), AGENTS, README, test plan status, roadmap line
 - [x] 7. Pushed, PR #140 raised (base = design branch of #139)
-- [ ] 8. Read CI result on #140 and fix
+- [x] 8. CI round 1: QML compile error (reserved word `long` in tst_FailureCause), fixed; round 2 ALL GREEN on 4b8d823 (QML, Functions, Rules, E2E)
 
 ## NEXT
-Read CI on the PR and fix. After #139 and this PR merge: Task 11 "Saved, syncing" hint (`DataModel.completionsSyncing`, caption in `OrderDetailDialog`), then C-1 (`_tryAdjustOrder` atomic). Open items: e2e for the cause (no recipe to force `write-rejected`); exhausted-re-plan branch still marks the order `out of stock` whatever the cause (Skill 116 rule 6); `recordOperation` deploy + device run are Taher's (Task 13).
+Merge #139, rebase #140 `--onto origin/main` and merge it. After that and this PR merge: Task 11 "Saved, syncing" hint (`DataModel.completionsSyncing`, caption in `OrderDetailDialog`), then C-1 (`_tryAdjustOrder` atomic). Open items: e2e for the cause (no recipe to force `write-rejected`); exhausted-re-plan branch still marks the order `out of stock` whatever the cause (Skill 116 rule 6); `recordOperation` deploy + device run are Taher's (Task 13).
