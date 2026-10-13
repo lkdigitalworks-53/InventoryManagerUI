@@ -2080,4 +2080,43 @@ TestCase {
             compare(args[0], q.entity); compare(args[1], q.entityId); compare(args[2], q.action)
         }
     }
+
+    // ── stuck-row cause (Q-EC-1 A client-only text, Q-EC-3 A persisted) ──────
+
+    function test_F06_stuckRows_cause_for_a_rejected_write_is_the_refused_text() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        var row = Gateway.stuckRows()[0]
+        verify(row.cause.indexOf("refused to save") >= 0, row.cause)
+        compare(row.rejected, true)
+    }
+
+    function test_F06b_stuckRows_cause_for_a_plain_500_names_the_status() {
+        _stuckWriteItem("o1")
+        compare(Gateway.stuckRows()[0].cause, "The server returned an error (HTTP 500)")
+    }
+
+    function test_F06c_stuckRows_cause_for_a_timeout_while_online() {
+        AuthService.isOnline = true
+        var item = _queueWrite("o1")
+        _failTimes(item, "timeout", 5)
+        compare(Gateway.stuckRows()[0].cause, "The server did not answer in time")
+    }
+
+    function test_F06d_the_cause_is_mirrored_onto_the_outbox_item_and_the_latest_answer_wins() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        compare(OutboxStore.items[0].lastError.code, "write-rejected")
+        _failTimes(item, 503, 1)
+        compare(OutboxStore.items[0].lastError.status, 503)
+        compare(OutboxStore.items[0].lastError.code, "")
+        compare(Gateway.stuckRows()[0].cause, "The server returned an error (HTTP 503)")
+    }
+
+    function test_F07_a_write_that_leaves_the_outbox_leaves_no_row_and_no_cause() {
+        var item = _queueWrite("o1")
+        _failWith(item, 500, _rejectedBody(), 5)
+        OutboxStore.markSent(item.requestId)
+        compare(Gateway.stuckRows().length, 0)
+    }
 }

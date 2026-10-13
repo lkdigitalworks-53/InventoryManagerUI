@@ -1,7 +1,7 @@
 # Test plan — cause of a failed / discarded / parked order completion
 
-**Branch (planned):** `feat/2026-10-13-completion-error-cause` (S1..S3). **Design:** `docs/superpowers/specs/2026-10-13-completion-error-cause-design.md` (decisions Q-EC-1..3 OPEN; this plan assumes the recommended defaults A/A/A).
-**STATUS 2026-10-13: written BEFORE implementation. NOTHING run.** Design session, no Qt toolchain (standing rule).
+**Branch:** `feat/2026-10-13-completion-error-cause` (S1..S3 in one PR, stacked on design PR #139). **Design:** `docs/superpowers/specs/2026-10-13-completion-error-cause-design.md` (decisions Q-EC-1 A, Q-EC-2 A, Q-EC-3 A taken by Taher 2026-10-13).
+**STATUS 2026-10-13 (implemented, same session): see "Implementation status" at the end. Originally written before implementation.**
 **Environment:** dev only, new tenant per PR. **Coverage bar (Taher):** 100% of new/changed code; happy + negative + edge + multi-scenario + monkey. Pure helper cases are Node-runnable in the sandbox (load `FailureCause.js` without its `.pragma` line); QML store/sheet/DataModel cases are CI-only (`tests/`).
 
 **Totals (planned):** unit 16 + functional 12 + rules 0 + e2e 2 + regression 4 = **34 automated**, plus the device plan.
@@ -50,3 +50,15 @@ R01 `insufficient-quantity` text unchanged (existing case 3). R02 case 5 bounded
 
 ## 5. On-device (after CI green, only when Taher asks to build)
 Happy: complete online -> no toast. Negative: delete a product in the web/other device, complete an order containing it offline, reconnect -> toast names the cause, order pending. Edge: very long customer name in the toast and in the sheet row (elide). Multi-scenario: two parked writes with different causes, each row shows its own. Relaunch: kill the app with a parked completion, reopen sheet, cause still there. Monkey: toggle airplane mode while completing 5 orders in a row; no duplicate toasts, guard released, no row stuck "being completed".
+
+
+## Implementation status (2026-10-13)
+**Built:** S1 `qml/helper/FailureCause.js`, S2 stuck path (`StuckWrites`, `OutboxStore.setStuckMeta`, `Gateway.stuckRows`, `StuckWritesSheet`, `DescribeItem`), S3 `DataModel` + `Logic.orderCompletionReverted` + `Main.qml` toast. Client-only, no server change, no deploy.
+**Actually written (48 automated):** unit `tests/tst_FailureCause.qml` 16 (U01..U16 re-numbered as in the file) / `tst_StuckWrites.qml` +10 (F01-F04d) / `tst_DescribeItem.qml` +3 (F08-F08c, replaces planned U13-U15, `orderLabel` lives in `DescribeItem`) / `tst_OutboxStore.qml` +5 (F05-F05e) / `tst_Gateway.qml` +5 (F06-F07) / `tst_DataModel_completeOrderAtomic.qml` +9 (F09, F09b, F10, F10b, F10c, F10d, F11 monkey, F12, F12b).
+**Genuinely RUN in the sandbox:** the three pure-JS files (`tst_FailureCause`, `tst_StuckWrites`, `tst_DescribeItem`) through a throw-away Node shim that evaluates the helper `.js` files and the test bodies: 142 cases green (113 before this change: 29 new, 0 regressed); 6 mutations all caught (drop the `lastError` write, drop prune, hydrate trusting input, ignore the order op, echo unsafe codes, loosen the status gate). `.github/scripts` skills-index tests 21/21. NOT run: `tst_OutboxStore`, `tst_Gateway`, `tst_DataModel_completeOrderAtomic` additions, the sheet row, the `Main.qml` toast (CI / device only).
+**Not written:** e2e E01/E02. No verified recipe forces a server `write-rejected` or a record deleted between plan and send in the emulator; a blind e2e would risk a red CI for the wrong reason. Open item, same as the #90 sweep's "no recipe to force write-rejected".
+**Unreachable branch, documented:** `_completeAttempt`'s `callback === null` announce after a queued re-plan cannot fail the plan (clamped plans do not run out of stock and `too-many-ops` cannot appear on a re-plan), so only an explicit-null first call reaches it (F10d). The queued path is covered through the exhausted-re-plan branch (F10, F11).
+**Known behaviour left as is:** the exhausted-re-plan branch still sets the order to `out of stock` whatever the cause (Skill 118 rule 6); the plan's "order stays pending" holds for Discard and for a queued completion reverted by the server, not for that branch.
+**Device steps added (unticked):** section 5 above, plus: after a parked completion, the sheet row shows the customer name (not `B...` batch id) and the cause line; relaunch keeps the cause line.
+**CI round 1 (2026-10-13):** Functions 626, Rules 45, E2E 93 green; QML 2025/2026, the one failure was `tst_FailureCause::compile` (a variable named `long`, reserved in QML's JS parser; Skill 116 rule 7). Fixed in the next commit.
+

@@ -1178,4 +1178,58 @@ TestCase {
     function test_hasParkedForEntity_false_on_an_empty_queue() {
         compare(OutboxStore.hasParkedForEntity("inventory", "prod-1"), false)
     }
+
+    // ── lastError persisted by setStuckMeta (Q-EC-3 A) ───────────────────────
+
+    function _metaWithCause(le) {
+        return { failures: 5, stuck: true, terminal: true, lastError: le }
+    }
+
+    function test_F05_setStuckMeta_stores_the_cause_and_it_survives_a_relaunch() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "write-rejected", status: 500 }))
+        compare(_find("r1").lastError.code, "write-rejected")
+        compare(_find("r1").lastError.status, 500)
+        OutboxStore.items = []
+        OutboxStore._load()
+        compare(_find("r1").lastError.code, "write-rejected")
+        compare(_find("r1").lastError.status, 500)
+    }
+
+    function test_F05b_a_timeout_status_is_stored() {
+        _failedItem("r1", "o1", 5)
+        OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "", status: "timeout" }))
+        compare(_find("r1").lastError.status, "timeout")
+    }
+
+    function test_F05c_missing_or_malformed_cause_is_removed_so_old_items_stay_byte_identical() {
+        _failedItem("r1", "o1", 1)
+        var before = JSON.stringify(_find("r1"))
+        OutboxStore.setStuckMeta("r1", { failures: 0, stuck: false, terminal: false })
+        compare(JSON.stringify(_find("r1")), before)
+        var bad = [null, undefined, "write-rejected", 5, { code: 7, status: 500 }, { code: "x", status: NaN },
+                   { code: "x", status: "weird" }, { code: "x" }, {}]
+        for (var i = 0; i < bad.length; ++i) {
+            OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "write-rejected", status: 500 }))
+            OutboxStore.setStuckMeta("r1", _metaWithCause(bad[i]))
+            compare(_find("r1").hasOwnProperty("lastError"), false, "bad input " + i)
+        }
+    }
+
+    function test_F05d_a_later_answer_replaces_the_cause_and_an_unchanged_one_does_not_save() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "write-failed", status: 500 }))
+        OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "write-rejected", status: 503 }))
+        compare(_find("r1").lastError.code, "write-rejected")
+        var rev = OutboxStore.revision
+        compare(OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "write-rejected", status: 503 })), true)
+        compare(OutboxStore.revision, rev)
+    }
+
+    function test_F05e_a_very_long_code_is_cut_and_an_unknown_id_returns_false() {
+        _failedItem("r1", "o1", 1)
+        OutboxStore.setStuckMeta("r1", _metaWithCause({ code: "c".repeat(500), status: 500 }))
+        compare(_find("r1").lastError.code.length, 60)
+        compare(OutboxStore.setStuckMeta("nope", _metaWithCause({ code: "x", status: 500 })), false)
+    }
 }

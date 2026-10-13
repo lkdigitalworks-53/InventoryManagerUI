@@ -4297,3 +4297,15 @@ Rules:
 3. When a page cannot be loaded in CI, move the logic to a pure helper and pin the wiring with a source-shape test that fails when a line is removed.
 4. Known limit (`shortcut:` in the helper): no watchdog; a callback that never fires leaves the button disabled until the page is rebuilt.
 5. Left alone on purpose: the loop approves `pending` and `processing`, the banner counts only `pending`.
+## Skill 118: An operation whose caller was already told "done" must announce its own failure, and a failure text must name a cause the code can actually know
+
+PR #90 sweep follow-up (2026-10-13). A completion queued offline calls `callback(true)` at once and later may be rejected for good. `_failCompletion` had nobody to tell: `callback` was already consumed, so the order silently flipped back to `pending`. Separately, the stuck sheet showed `ops[0].entityId` for a completion, which is a stock batch id, and `StuckWrites` kept only a boolean `terminal`, so the server's reason was thrown away on arrival.
+Rules:
+1. Every path that undoes something the user was already shown as done needs its own message channel (here `Logic.orderCompletionReverted` -> `Toast`), exactly one per finished completion, never one per re-plan attempt. Test with the real re-plan loop and a seeded monkey that counts signals.
+2. Distinguish "no callback" (`undefined`, old behaviour, silent) from "callback already answered" (`null`). Use `callback === null` only where that second meaning is certain, and pin both with tests.
+3. Keep the cause, not only the verdict: store `{code, status}` of the latest failing answer next to the stuck flag and persist it with the outbox item (`OutboxStore.setStuckMeta`). Validate it on every read (`StuckWrites.cleanLastError`): an old saved item simply has none.
+4. Cause text lives in one pure helper (`qml/helper/FailureCause.js`). Never assert a cause the server did not state: a 500 `write-rejected` carries only the class, so the text says "usually". Echo a server code only when it is a short plain token.
+5. A row label for a multi-op item must come from the op the person recognises (the order's customer), not from `ops[0]`.
+6. Not done here, on purpose: the exhausted-re-plan branch still flags the order `out of stock` whatever the cause (`conflict`, `not-found`). Revisit when Task 11 touches the status.
+7. QML's JS parser still rejects the old ES3 future-reserved words (`long`, `short`, `int`, `char`, `byte`, `float`, `double`, `final`, `native`...) as variable names; modern Node accepts them, so a Node shim run does NOT prove a `.qml` test compiles. CI showed it as `tst_X::compile — Expected token identifier`. Before pushing a new test file, grep it for `var (long|short|int|char|byte|float|double|final|native)\b`.
+

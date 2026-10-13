@@ -48,6 +48,8 @@ Item {
     signal orderUpdated(string orderId)
     signal orderDeleted(string orderId)
     signal orderCompletionFailed(string orderId, string errorMessage)
+    // A completion the caller was already told was done (queued) failed for good and was undone; message carries the cause.
+    signal orderCompletionReverted(string orderId, string message)
 
     // ── Inventory ─────────────────────────────────────────────────────────────
     signal addProduct(string name, string sku, string category, string description,

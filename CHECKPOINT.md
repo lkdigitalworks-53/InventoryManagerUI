@@ -1,17 +1,21 @@
-# CHECKPOINT — 2026-10-13 error-cause UI design (resume here)
+# CHECKPOINT — 2026-10-13 error-cause UI (resume here)
 
-**Branch:** `docs/2026-10-13-completion-error-cause-design` (design only, from `main` @ 0716427 = PR #90 merged). Implementation branch to use: `feat/2026-10-13-completion-error-cause`.
-**Commit identity:** `dextran52@gmail.com` (Taher, this session; the archived #90 checkpoint said another address). PAT only in the push command, never in a file or git config.
+**Branch:** `feat/2026-10-13-completion-error-cause`, stacked on design PR #139 (`docs/2026-10-13-completion-error-cause-design`). Main @ 0716427 (PR #90 merged).
+**Commit identity:** `dextran52@gmail.com`. PAT only in the push command, never in a file or git config.
 **Rules in force:** do not build/run the app; no Qt tools in the sandbox (CI is the proof); push without asking, Taher reviews in the PR; short scope (token budget); honest trade-offs, grill before deciding.
-**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-13-pr90-final-sweep-prev-CHECKPOINT.md`.
+**Archived previous checkpoints:** `docs/superpowers/specs/2026-10-13-pr90-final-sweep-prev-CHECKPOINT.md`.
+
+## Decisions (Taher, 2026-10-13): Q-EC-1 A client-only text, Q-EC-2 A one toast, Q-EC-3 A persist `lastError`
 
 ## Steps
-- [x] 1. Cloned repo, read memory, #90 sweep note, DELETE roadmap, plan Task 11
-- [x] 2. Picked next item = error-cause UI (Taher's own request in #90 D-1), then Task 11, then C-1
-- [x] 3. Traced causes in code: P1..P5 in the design (silent revert of a queued completion; stuck row shows a stock batch id; server keeps only the class of the 500 error)
-- [x] 4. Design doc + test plan + roadmap/test-plan index lines written
-- [x] 5. Committed and pushed, PR #139 raised (design only, base `main`)
-- [ ] 6. Taher answers Q-EC-1..3
+- [x] 1. Design PR #139 pushed (see design doc, test plan)
+- [x] 2. S1 `qml/helper/FailureCause.js` (+ `tests/tst_FailureCause.qml`, 16 cases)
+- [x] 3. S2 stuck path: `StuckWrites` lastError, `OutboxStore.setStuckMeta`, `Gateway.stuckRows().cause`, `StuckWritesSheet` cause line, `DescribeItem` order label
+- [x] 4. S3 `DataModel._failCompletion(announce)`, `Logic.orderCompletionReverted`, `Main.qml` Toast
+- [x] 5. Tests: 48 written; pure-JS 142 green in a Node shim (29 new), 6 mutations caught; rest CI-only
+- [x] 6. Docs: Skill 118 (+ `SKILLS-INDEX.md` regenerated, 21/21 script tests), AGENTS, README, test plan status, roadmap line
+- [x] 7. Pushed, PR #140 raised (base = design branch of #139)
+- [x] 8. CI round 1: QML compile error (reserved word `long` in tst_FailureCause), fixed; round 2 ALL GREEN on 4b8d823 (QML, Functions, Rules, E2E)
 
 ## NEXT
-Implement S1 (pure `FailureCause.js` + 16 Node-runnable cases), then S2, then S3, on `feat/2026-10-13-completion-error-cause`, with the recommended defaults A/A/A unless Taher says otherwise. README / AGENTS / SKILLS get updated at S2/S3 (new Skill only when code lands). Then Task 11, then C-1.
+Merge #139, rebase #140 `--onto origin/main` and merge it. After that and this PR merge: Task 11 "Saved, syncing" hint (`DataModel.completionsSyncing`, caption in `OrderDetailDialog`), then C-1 (`_tryAdjustOrder` atomic). Open items: e2e for the cause (no recipe to force `write-rejected`); exhausted-re-plan branch still marks the order `out of stock` whatever the cause (Skill 116 rule 6); `recordOperation` deploy + device run are Taher's (Task 13).

@@ -125,3 +125,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 115: A new consumer of a channel must handle EVERY terminal result shape the channel can already produce, including the ones a later feature added
 - 116: A roadmap's "still open" list is a claim, not a fact; re-read each item in the code that owns it before you schedule it
 - 117: A bulk action needs its own busy state, and a banner that shows only while there is work left hides its own "done" state
+- 118: An operation whose caller was already told "done" must announce its own failure, and a failure text must name a cause the code can actually know

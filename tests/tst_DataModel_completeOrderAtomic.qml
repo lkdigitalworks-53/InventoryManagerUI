@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../qml/model"
+import "../qml/logic"
 import "../qml/helper/SendPolicy.js" as SendPolicy
 
 // C-3 order-completion atomic rewrite (Task 10, 2026-09-26 plan). Design:
@@ -28,6 +29,9 @@ TestCase {
     name: "DataModel_completeOrderAtomic"
 
     DataModel { id: dm }
+    // Error-cause toast (Q-EC-2 A): only the tests that look at it wire this bus in.
+    Logic { id: testLogic }
+    SignalSpy { id: revertSpy; target: testLogic; signalName: "orderCompletionReverted" }
 
     function init() {
         OrdersStore.orders = [_pendingOrder()]
@@ -47,6 +51,8 @@ TestCase {
     }
 
     function cleanup() {
+        dm.dispatcher = null
+        revertSpy.clear()
         AuthService.isOnline = false
         Gateway.awaitTimeoutMs = SendPolicy.TIMEOUT_AWAIT_MS
     }
@@ -590,5 +596,134 @@ TestCase {
         ]))
         compare(InventoryStore.getById("SKU-1").stock, stockAfterReopen,
                 "the stale answer for the superseded completion must not touch stock (it would set 3)")
+    }
+
+    // ── 9. Error cause (Q-EC-1..3, 2026-10-13) ──────────────────────────
+    // Design: docs/superpowers/specs/2026-10-13-completion-error-cause-design.md
+
+    // F09 (P1): an awaiting caller whose re-plans run out is told WHY, in the message it
+    // already shows (stockErrorMsg), and gets no extra toast (it is not "gone").
+    function test_F09_exhausted_replans_message_names_the_cause_and_gives_no_toast() {
+        dm.dispatcher = testLogic
+        AuthService.isOnline = true
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        for (var i = 0; i <= dm.maxReplans; ++i)
+            _answer(_key(1), _rejection(0, { current: 0 }))
+        compare(result, false)
+        compare(dm.stockErrorMsg, "Could not complete this order: Another device changed this at the same time")
+        compare(revertSpy.count, 0, "the caller was waiting, so it is not announced twice")
+        verify(!dm._completingOrderIds["ORD-ATOMIC-1"])
+    }
+
+    function test_F09b_an_unknown_server_code_is_shown_as_a_safe_token_not_hidden() {
+        dm.dispatcher = testLogic
+        AuthService.isOnline = true
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        for (var i = 0; i <= dm.maxReplans; ++i)
+            _answer(_key(1), { ok: false, error: "brand-new-code", opIndex: 0 })
+        compare(result, false)
+        compare(dm.stockErrorMsg, "Could not complete this order: The server rejected this change (brand-new-code)")
+    }
+
+    // F10 + F11 (P2): shown as done while offline, then rejected for good. Before this change the
+    // order silently went back with no word at all. Now exactly ONE toast signal, only after the
+    // last attempt, naming the customer and the cause.
+    function test_F10_queued_then_failed_for_good_announces_once_with_the_cause() {
+        dm.dispatcher = testLogic
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        compare(result, true, "shown as done while offline")
+
+        for (var i = 0; i < dm.maxReplans; ++i) {
+            _answer(_key(1), _rejection(0, { current: 0 }))
+            compare(revertSpy.count, 0, "no toast while a re-plan is still out (answer " + i + ")")
+        }
+        _answer(_key(1), _rejection(0, { current: 0 }))
+
+        compare(revertSpy.count, 1, "exactly one toast for one failed completion")
+        compare(revertSpy.signalArguments[0][0], "ORD-ATOMIC-1")
+        compare(revertSpy.signalArguments[0][1],
+                "Order for Test Customer was not completed: Another device changed this at the same time")
+        verify(!dm._completingOrderIds["ORD-ATOMIC-1"], "guard released")
+        verify(!dm._openCompletions[_key(1)])
+    }
+
+    function test_F10b_without_a_dispatcher_the_announcement_is_a_safe_no_op() {
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        for (var i = 0; i <= dm.maxReplans; ++i)
+            _answer(_key(1), _rejection(0, { current: 0 }))
+        verify(!dm._completingOrderIds["ORD-ATOMIC-1"], "still finished cleanly with no bus to tell")
+        compare(revertSpy.count, 0)
+    }
+
+    function test_F10c_a_customerless_order_is_announced_by_its_id() {
+        dm.dispatcher = testLogic
+        var o = _pendingOrder()
+        o.customer = ""
+        OrdersStore.orders = [o]
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function() {})
+        for (var i = 0; i <= dm.maxReplans; ++i)
+            _answer(_key(1), _rejection(0, { current: 0 }))
+        compare(revertSpy.count, 1)
+        verify(revertSpy.signalArguments[0][1].indexOf("Order for ORD-ATOMIC-1 was not completed") === 0)
+    }
+
+    // The announce flag is "callback === null" (explicit null), so a caller that passed NO callback
+    // keeps the old behaviour (no toast), and an explicit-null caller is told.
+    function test_F10d_a_local_validation_failure_announces_only_for_an_explicit_null_callback() {
+        dm.dispatcher = testLogic
+        InventoryStore.products = [_product(0)]
+        dm._tryCompleteOrder("ORD-ATOMIC-1")
+        compare(revertSpy.count, 0, "no callback argument: unchanged behaviour")
+        OrdersStore.orders = [_pendingOrder()]
+        dm._completingOrderIds = ({})
+        dm._tryCompleteOrder("ORD-ATOMIC-1", null)
+        compare(revertSpy.count, 1)
+        compare(revertSpy.signalArguments[0][1], "Order for Test Customer was not completed: Widget: need 1, only 0 in stock")
+    }
+
+    // F12 (P5 regression): Discard keeps its own specific text and adds NO toast.
+    function test_F12_discard_of_a_queued_completion_gives_no_extra_toast() {
+        dm.dispatcher = testLogic
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        compare(result, true)
+        _answer(_key(1), _discarded)
+        compare(revertSpy.count, 0)
+        compare(OrdersStore.orders[0].status, "pending")
+    }
+
+    function test_F12b_a_late_server_conflict_that_finishes_the_order_gives_no_toast() {
+        dm.dispatcher = testLogic
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function() {})
+        var done = Object.assign({}, _pendingOrder(), { status: "completed", completionEpoch: 1 })
+        var orderOp = -1
+        for (var k = 0; k < _ops()[0].ops.length; ++k) if (_ops()[0].ops[k].entity === "order") orderOp = k
+        verify(orderOp >= 0, "the plan has an order op")
+        _answer(_key(1), { ok: false, error: "conflict", conflict: true, opIndex: orderOp, current: done })
+        compare(revertSpy.count, 0)
+    }
+
+    // Monkey: whatever the server says, a queued completion produces at most ONE toast and always
+    // releases its guard.
+    function test_F11_monkey_never_more_than_one_toast_per_completion() {
+        dm.dispatcher = testLogic
+        var seed = 4242
+        function rnd() { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296 }
+        var codes = ["conflict", "not-found", "insufficient-quantity", "weird", "", "invalid-entity-id"]
+        for (var run = 0; run < 60; ++run) {
+            init()
+            dm.dispatcher = testLogic
+            revertSpy.clear()
+            dm._tryCompleteOrder("ORD-ATOMIC-1", function() {})
+            for (var step = 0; step < 6 && _ops().length > 0; ++step) {
+                _answer(_key(1), { ok: false, error: codes[Math.floor(rnd() * codes.length)], opIndex: 0, current: 0 })
+            }
+            verify(revertSpy.count <= 1, "run " + run)
+            if (_ops().length === 0) verify(!dm._completingOrderIds["ORD-ATOMIC-1"], "run " + run)
+        }
     }
 }
