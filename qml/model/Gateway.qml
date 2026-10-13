@@ -3,6 +3,7 @@ import QtQuick
 import "../components"
 import "../helper/StuckWrites.js" as StuckWrites
 import "../helper/DescribeItem.js" as DescribeItem
+import "../helper/FailureCause.js" as FailureCause
 import "../helper/SendPolicy.js" as SendPolicy
 
 // Compliance gateway client (P0). Single entry point for every books-of-
@@ -575,7 +576,8 @@ QtObject {
     }
 
     // Rows for the stuck-writes dialog: every stuck write still queued, in queue
-    // order, as { requestId, title, detail, rejected, inFlight }. `rejected` = the
+    // order, as { requestId, title, detail, cause, rejected, inFlight }. `cause` = plain-language
+    // reason from the latest failing answer (FailureCause), "" when none is known. `rejected` = the
     // server's latest answer was write-rejected = the write is PARKED (S2b). Reads live state on each call;
     // views re-evaluate it off stuckCount, OutboxStore.revision and
     // OutboxStore.inFlightCount.
@@ -584,7 +586,9 @@ QtObject {
         var out = []
         for (var i = 0; i < rows.length; ++i) {
             var d = DescribeItem.describe(rows[i].item)
+            var le = rows[i].lastError
             out.push({
+                cause: le ? FailureCause.forWriteError(le.code, le.status).text : "",
                 requestId: rows[i].requestId,
                 title: d.title,
                 detail: d.detail,

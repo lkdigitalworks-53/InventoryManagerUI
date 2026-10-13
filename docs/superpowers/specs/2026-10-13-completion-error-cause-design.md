@@ -1,6 +1,6 @@
 # Design — show the CAUSE when an order completion fails, is discarded or is parked (2026-10-13)
 
-Follows PR #90 (atomic `completeOrder`, merged). Taher asked for this in the #90 sweep (D-1 follow-up). Status: **design, decisions Q-EC-1..3 OPEN**, no code.
+Follows PR #90 (atomic `completeOrder`, merged). Taher asked for this in the #90 sweep (D-1 follow-up). Status: **decided 2026-10-13: Q-EC-1 A, Q-EC-2 A, Q-EC-3 A (Taher); implemented the same day** on `feat/2026-10-13-completion-error-cause`.
 
 ## 1. Problem, traced in code (not assumed)
 | # | Path | What the user sees today | Cause available where |

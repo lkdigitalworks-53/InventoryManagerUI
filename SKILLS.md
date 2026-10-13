@@ -4269,3 +4269,15 @@ Rules:
 3. A user-initiated terminal result (Discard) is not a server verdict. Never route it through repair-and-retry logic: undo what was shown, release guards, stop.
 4. Test the combination by feeding the producer's REAL result shape to the consumer (`_answer(key, { ok:false, error:"discarded", discarded:true })`), and assert "nothing was re-sent" by counting outbox items for that key (Skill 79).
 5. A clean `git merge` and green CI on a merged tree prove textual and existing-test health only. Re-read the merged function against what `main` changed around it.
+
+## Skill 116: An operation whose caller was already told "done" must announce its own failure, and a failure text must name a cause the code can actually know
+
+PR #90 sweep follow-up (2026-10-13). A completion queued offline calls `callback(true)` at once and later may be rejected for good. `_failCompletion` had nobody to tell: `callback` was already consumed, so the order silently flipped back to `pending`. Separately, the stuck sheet showed `ops[0].entityId` for a completion, which is a stock batch id, and `StuckWrites` kept only a boolean `terminal`, so the server's reason was thrown away on arrival.
+Rules:
+1. Every path that undoes something the user was already shown as done needs its own message channel (here `Logic.orderCompletionReverted` -> `Toast`), exactly one per finished completion, never one per re-plan attempt. Test with the real re-plan loop and a seeded monkey that counts signals.
+2. Distinguish "no callback" (`undefined`, old behaviour, silent) from "callback already answered" (`null`). Use `callback === null` only where that second meaning is certain, and pin both with tests.
+3. Keep the cause, not only the verdict: store `{code, status}` of the latest failing answer next to the stuck flag and persist it with the outbox item (`OutboxStore.setStuckMeta`). Validate it on every read (`StuckWrites.cleanLastError`): an old saved item simply has none.
+4. Cause text lives in one pure helper (`qml/helper/FailureCause.js`). Never assert a cause the server did not state: a 500 `write-rejected` carries only the class, so the text says "usually". Echo a server code only when it is a short plain token.
+5. A row label for a multi-op item must come from the op the person recognises (the order's customer), not from `ops[0]`.
+6. Not done here, on purpose: the exhausted-re-plan branch still flags the order `out of stock` whatever the cause (`conflict`, `not-found`). Revisit when Task 11 touches the status.
+
