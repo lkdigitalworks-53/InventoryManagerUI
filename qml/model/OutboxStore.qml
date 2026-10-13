@@ -31,7 +31,8 @@ import "../helper/StuckWrites.js" as StuckWrites
 //   nextAttemptAt } — distinguished from a plain item by having `deltas`
 // instead of `before`/`after`.
 // Any item may also carry the stuck-write state (P5, see StuckWrites.js):
-//   failures (server-side failure count), stuck: true, terminal: true
+//   failures (server-side failure count), stuck: true, terminal: true,
+//   lastError: { code, status } (the latest failing answer, shown by the stuck sheet)
 // Absent = never failed that way; old saved items load without them.
 // S2b: an item that is stuck AND terminal is PARKED (StuckWrites.isParkedItem):
 // dueItems/nextDueInMs/wakeStuck skip it and it holds its keys, so later writes
