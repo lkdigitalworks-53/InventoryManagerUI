@@ -4269,3 +4269,12 @@ Rules:
 3. A user-initiated terminal result (Discard) is not a server verdict. Never route it through repair-and-retry logic: undo what was shown, release guards, stop.
 4. Test the combination by feeding the producer's REAL result shape to the consumer (`_answer(key, { ok:false, error:"discarded", discarded:true })`), and assert "nothing was re-sent" by counting outbox items for that key (Skill 79).
 5. A clean `git merge` and green CI on a merged tree prove textual and existing-test health only. Re-read the merged function against what `main` changed around it.
+
+## Skill 116: A roadmap's "still open" list is a claim, not a fact; re-read each item in the code that owns it before you schedule it
+
+Context (2026-10-13, S4 cleanup): the README and `DELETE-FEATURE-ROADMAP.md` still listed five items as open, some for 10 weeks. All five were already fixed: `StockBatchStore` FIFO on `recordDelta` (2026-08-26), CAS in `recordMutationsBatch`, a lock in bulk approve, `ConfirmReturnSheet` lock handoff, and the partial multi-line completion compensation. The fixes had updated their own design notes, but nobody had gone back to the list that named them. Picking from the list unchecked would have started a "fix" for code that was already right.
+Rules:
+1. Before picking a roadmap item, open the function the item names and read it. One grep (`grep -n recordMutation qml/model/StockBatchStore.qml`) is enough to settle most of them. Write the file and line in the status line you add.
+2. When a fix lands, edit the "open" list that named it in the same PR (README block, roadmap, KNOWN-ISSUES). A fix recorded only in its own design note leaves the list wrong.
+3. A comment in the code that says "this claim in another doc is wrong" (the 2026-08-26 note in `StockBatchStore._onMutationConflicted`) is a sign the other doc was never fixed. Grep for what it contradicts.
+4. A docs-only cleanup still gets a test plan: list the claims it makes and the command that proved each one, with the output.

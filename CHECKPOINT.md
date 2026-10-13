@@ -1,28 +1,22 @@
-# CHECKPOINT — 2026-10-13 PR #90 final sweep (resume here)
+# CHECKPOINT — 2026-10-13 delete roadmap S4 cleanup (docs only)
 
-**Branch:** `feat/2026-09-26-complete-order-atomic` (PR #90, base `main`). Work is pushed to this SAME branch (Taher: "push directly in the same PR").
-**Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config.
-**Rules in force:** do not build/run the app; no Qt tools in the sandbox (CI is the proof); no merge to `main`; honest trade-offs, grill before deciding.
-**Skills used:** requesting-code-review, ponytail-audit (report format), qt-qml-review (phases; python linter needs `references/lint-scripts/` of the skill).
-**Archived previous checkpoint (PR #138 sweep part 2):** `docs/superpowers/specs/2026-10-12-pr138-sweep-part2-prev-CHECKPOINT.md`.
+**Branch:** `docs/2026-10-13-delete-roadmap-s4-cleanup` (base `main` 0716427). Commit identity `lkdwtaher@gmail.com`. PAT only in the push command.
+**Rules in force:** no build/run, no Qt tools in the sandbox (CI is the proof), branch + PR only, push without asking, honest trade-offs.
+**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-13-pr90-final-sweep-prev-CHECKPOINT.md`.
+**Skills used:** brainstorming, qt-qml, qt-ui-design, ponytail (no QML or UI touched).
 
-## Facts established (verified by command, not memory)
-- PR #90 = plan Task 10 (`DataModel._tryCompleteOrder` -> one atomic `completeOrder` operation). Its base was `96c07bd`; `main` is 79 commits ahead. CI green on the old base (2026-09-27, 1429 tests).
-- `main` already has Tasks 1-9: `functions/lib/operationLogic.js`, `recordOperation` endpoint, `CompletionPlan.js`, `OperationKeys.js`, `SendPolicy.js`, `StuckWrites.js`, `OutboxStore` op items, `Gateway.recordOperation`, store hooks. `main` still has the OLD per-line FIFO + `deductStock` chain in `_tryCompleteOrder`. So #90 is the missing wire-up.
-- Trial merge: only docs conflict (AGENTS.md, CHECKPOINT.md, SKILLS.md). `DataModel.qml` and `test/e2e/tst_OrdersE2E.qml` auto-merged: textually clean, NOT yet proven semantically right (main added parked-write refusal PR #121 into `_tryCompleteOrder`).
+## Facts established (verified by command)
+- `main` has PR #90 merged. Roadmap `DELETE-FEATURE-ROADMAP.md` open list: S4 cleanup, O1/O2 device re-checks, `ConfirmReturnSheet` lock gap, `StockBatchStore` FIFO on `recordMutation`.
+- Re-read in code: the lock gap and the FIFO item are ALREADY FIXED. So are three more items in the README "Still open" block (batch CAS, bulk-approve lock, partial multi-line completion). Proof table: `test-plans/2026-10-13-delete-roadmap-s4-cleanup-test-plan.md` section 2.
+- Another branch exists on origin today: `feat/2026-10-13-completion-error-cause` (+ a design branch). Not touched here.
 
 ## Steps
-- [x] 1. Cloned repo, read memory + 3 skills, mapped roadmaps
-- [x] 2. Merged `origin/main` into the PR branch (docs conflicts resolved: main side kept; branch Skill 74 renumbered to Skill 114 because main already owns 74..113; README ref fixed; `SKILLS-INDEX.md` regenerated, 115 skills)
-- [x] 3. Verified `DataModel.qml` auto-merge: parked/unsynced guard (PR #121) intact, runs before `_completingOrderIds` is set. CI on merge commit b95df35: QML, Functions, Rules, E2E ALL green
-- [x] 4. Reviewed new path vs Gateway/Outbox on main. FINDING F1 (must fix): S3 Discard of a parked `completeOrder` op -> `_onCompletionRejected` re-plans and re-sends the sale (no `discarded` branch). Fixed in `DataModel._onCompletionRejected` + 3 tests (`tst_DataModel_completeOrderAtomic.qml` 8b). Pushed, CI pending
-- [x] 5. (lint done: qt_qml_lint.py shows no new real findings vs main) Review tests (`tst_DataModel_completeOrderAtomic.qml`, reentrancy, E2E) against main's changed harness
-- [x] 6. Delete-roadmap + atomic-ops status written into `docs/superpowers/plans/2026-10-13-pr90-final-sweep-review.md`
-- [x] 7. F1 fixed (CI green on 1595d62); docs updated: Skill 115, test plan, tracker, roadmaps, AGENTS, README, stale Skill refs
-- [x] 8a. Review note written
-- [x] 8b. PR description refreshed, sweep comment posted, CI green on docs commit 0015b4f (all 4 jobs)
-
-## SESSION COMPLETE. D-1 (revert) and D-2 (merge #90 first) DECIDED 2026-10-13; Taher deploys `recordOperation`, then device test + squash-merge.
+- [x] 1. Cloned repo, read memory + 4 skills, read roadmap + KNOWN-ISSUES
+- [x] 2. Picked S4 cleanup (only real open delete item); design not needed (docs only)
+- [x] 3. README block corrected, roadmap tail rewritten, Skill 116, `SKILLS-INDEX.md` regenerated (117), test plan + index row
+- [x] 4. Script suite 76/76, index current
+- [ ] 5. Commit, push, open PR (see git log / PR for result)
 
 ## NEXT
-Nothing unfinished in this sweep. Next session (after #90 merges): (1) show the CAUSE of the error in the UI for a failed/discarded/parked completion (Taher's request), (2) Task 11 syncing hint, (3) C-1. New branch from updated `main`.
+1. Taher: review the PR, tick the O1 and O2 device steps (`test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` section 9).
+2. Atomic-operation work, one branch each from updated `main`: error-cause UI (a branch exists, check it first), Task 11 "Saved, syncing" hint, then C-1 `_tryAdjustOrder`.

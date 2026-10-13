@@ -592,20 +592,12 @@ broader order-level side effects (refund amounts, price-adjustment ledger entrie
 back; full compensating-write rollback across the whole multi-step flow remains a separate
 initiative (§2 of the design doc), not something either fix round attempts.
 
-**Still open** (Important-severity, tracked in the 2026-08-06 review, not silently dropped):
-- `StockBatchStore.consumeFifo`/`topUpOldest`/`restoreFifo` still route through the old whole-record
-  `recordMutation`, not `recordDelta` — still exposed to the original concurrent-clobber bug for
-  the batch ledger specifically (unlike `InventoryStore`, which is now fully converted).
-- `recordMutationsBatch` (`functions/lib/batchMutationLogic.js`) has no CAS check at all — the CAS
-  guarantee isn't uniform across every write path in the app.
-- Bulk order approval never acquires a per-order lock.
-- `OrderDetailDialog`'s lock releases the instant the dialog closes, which is before
-  `ConfirmReturnSheet`'s confirmation step actually runs the adjustment — the lock doesn't span
-  that window. Flagged in the design doc, still not solved.
-- When one order line's stock delta succeeds and a sibling line's is rejected, the successful
-  line's delta stays applied even though the whole order reports failure — a partial-completion
-  gap found while fixing the FIFO rollback above, needing a compensating delta call, deliberately
-  left out of that fix's scope.
+**Resolved, list corrected 2026-10-13** (each item was re-read in the code that owns it; this block still called them open):
+- `StockBatchStore.consumeFifo` / `topUpOldest` / `restoreFifo` go through `Gateway.recordDelta` (the only `recordMutation` left in the store is the batch `create`). Fixed 2026-08-26.
+- `recordMutationsBatch` (`functions/lib/batchMutationLogic.js`) has a CAS check: it compares every item's `before` and returns 409 with all conflicts.
+- Bulk order approval locks each order (`OrdersPage._approveAllPending` calls `LockManager.acquire("order", ...)`).
+- `ConfirmReturnSheet` owns the order lock until it closes (`onClosed` releases; `OrderDetailDialog` hands the lock off).
+- A sibling-line stock failure no longer leaves the successful line applied: `_tryCompleteOrder` is one atomic operation (PR #90) and `_tryAdjustOrder`'s exchange path has its own compensation.
 
 **Also found and fixed 2026-07-30 (Taher's own testing, then confirmed via
 `/superpowers:systematic-debugging`):** two real bugs, more serious than either sounds in
