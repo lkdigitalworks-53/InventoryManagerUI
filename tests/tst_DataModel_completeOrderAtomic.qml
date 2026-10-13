@@ -297,6 +297,66 @@ TestCase {
         compare(InventoryStore.getById("SKU-1").stock, 0, "clamped at 0, not negative")
     }
 
+    // ── 8b. S3 Discard of a parked completion (PR #90 final sweep, 2026-10-13) ──
+    // Gateway.discardParked answers a parked operation with exactly this shape (no opIndex).
+    // Before the fix _onCompletionRejected treated it as a server rejection: it reverted, then
+    // RE-PLANNED and re-sent the same sale clamped, so a discard never ended.
+
+    readonly property var _discarded: ({ ok: false, error: "discarded", discarded: true })
+
+    function test_discarded_parked_completion_reverts_and_is_not_resent() {
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        compare(result, true, "shown as done while offline")
+        compare(InventoryStore.getById("SKU-1").stock, 4, "predicted state applied")
+        compare(TransactionStore.entries.length, 1, "predicted sale row shown")
+
+        _answer(_key(1), _discarded)
+
+        compare(OrdersStore.orders[0].status, "pending", "the discarded sale is undone")
+        compare(InventoryStore.getById("SKU-1").stock, 5)
+        compare(StockBatchStore.getById("B1").qtyRemaining, 5)
+        compare(TransactionStore.entries.length, 0, "predicted sale row removed")
+        compare(_ops().length, 0, "must NOT be re-planned and sent again")
+        verify(!dm._completingOrderIds["ORD-ATOMIC-1"], "guard released")
+        verify(!dm._openCompletions[_key(1)], "no longer open")
+
+        // The user can approve the order again afterwards (a fresh, normal completion).
+        var again = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { again = ok })
+        compare(again, true)
+        compare(_ops().length, 1, "one new request")
+        compare(OrdersStore.orders[0].status, "completed")
+    }
+
+    function test_discarded_while_a_caller_still_awaits_fails_that_caller() {
+        AuthService.isOnline = true
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        compare(result, null, "still awaiting the server")
+
+        _answer(_key(1), _discarded)
+
+        compare(result, false, "the caller is told it did not complete")
+        verify(dm.stockErrorMsg.length > 0, "with a message")
+        compare(OrdersStore.orders[0].status, "pending", "not marked out of stock: nothing ran out")
+        compare(_ops().length, 0, "not re-sent")
+        verify(!dm._completingOrderIds["ORD-ATOMIC-1"], "guard released")
+        verify(!dm._openCompletions[_key(1)])
+    }
+
+    function test_discarded_answer_for_an_already_reopened_order_is_a_noop() {
+        // _reverseCompletedOrder clears the open entry; the late discard must then change nothing.
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        compare(result, true)
+        delete dm._openCompletions[_key(1)]
+        var stockBefore = InventoryStore.getById("SKU-1").stock
+        _answer(_key(1), _discarded)
+        compare(InventoryStore.getById("SKU-1").stock, stockBefore, "nothing reverted twice")
+        compare(_ops().length, 0)
+    }
+
     // ── 9. Replay with different local state ────────────────────────────
 
     function test_idempotent_replay_reflects_servers_after_not_the_prediction() {

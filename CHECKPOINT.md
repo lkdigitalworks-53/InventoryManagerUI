@@ -14,9 +14,9 @@
 ## Steps
 - [x] 1. Cloned repo, read memory + 3 skills, mapped roadmaps
 - [x] 2. Merged `origin/main` into the PR branch (docs conflicts resolved: main side kept; branch Skill 74 renumbered to Skill 114 because main already owns 74..113; README ref fixed; `SKILLS-INDEX.md` regenerated, 115 skills)
-- [ ] 3. Verify `DataModel.qml` auto-merge: parked-write guard (PR #121) still present and runs BEFORE any side effect in the new completion path
-- [ ] 4. Review `_tryCompleteOrder` new path vs `CompletionPlan`, `Gateway.recordOperation`, `OutboxStore` as they are on main TODAY
-- [ ] 5. Review tests (`tst_DataModel_completeOrderAtomic.qml`, reentrancy, E2E) against main's changed harness
+- [x] 3. Verified `DataModel.qml` auto-merge: parked/unsynced guard (PR #121) intact, runs before `_completingOrderIds` is set. CI on merge commit b95df35: QML, Functions, Rules, E2E ALL green
+- [x] 4. Reviewed new path vs Gateway/Outbox on main. FINDING F1 (must fix): S3 Discard of a parked `completeOrder` op -> `_onCompletionRejected` re-plans and re-sends the sale (no `discarded` branch). Fixed in `DataModel._onCompletionRejected` + 3 tests (`tst_DataModel_completeOrderAtomic.qml` 8b). Pushed, CI pending
+- [x] 5. (lint done: qt_qml_lint.py shows no new real findings vs main) Review tests (`tst_DataModel_completeOrderAtomic.qml`, reentrancy, E2E) against main's changed harness
 - [ ] 6. Delete-roadmap status table + atomic-ops pending table (written into review note)
 - [ ] 7. Fix findings, update docs (AGENTS/README/SKILLS/test plan/roadmaps), push
 - [ ] 8. Final: review note `docs/superpowers/plans/2026-10-13-pr90-final-sweep-review.md`, PR comment summary

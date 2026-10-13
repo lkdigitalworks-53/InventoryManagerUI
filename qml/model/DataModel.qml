@@ -748,6 +748,22 @@ Item {
     function _onCompletionRejected(key, rejection) {
         var open = _openCompletions[key]
         if (!open) return
+        // S3 Discard (Gateway.discardParked answers { ok:false, error:"discarded", discarded:true },
+        // no opIndex). The user chose to throw this completion away: it is NOT a server verdict to
+        // repair and re-send (the generic path below would re-plan it clamped and queue the same
+        // sale again, which the server rejects again, so Discard would never end). Undo what was
+        // shown, release the guard, stop. The parkedWriteDiscarded resync re-reads the stores.
+        if (rejection.discarded === true) {
+            if (open.undo) { _revertPredicted(open.undo); open.undo = null }
+            delete _openCompletions[key]
+            if (open.callback) {
+                _failCompletion(open.orderId, qsTr("This order's completion was discarded, so it was not completed"), false, open.callback)
+            } else {
+                delete dataModel._completingOrderIds[open.orderId]
+                _updateOrderInModel(open.orderId)
+            }
+            return
+        }
         var op = open.plan.ops[rejection.opIndex]
         if (open.undo) { _revertPredicted(open.undo); open.undo = null }
         // Someone else already completed it: the operation's job is done.
