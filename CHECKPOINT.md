@@ -32,6 +32,11 @@ Pending orders show an Approve button in the teal banner. After a tap there is n
 ## Steps
 - [x] 1. Cloned repo, read 4 skills, AGENTS conventions, skills 61/66, OrdersPage + DataModel guard
 - [x] 2. Branch created, checkpoint written, pushed
-- [ ] 3. Taher answers D1 (and may override defaults 1-6)
-- [ ] 4. Implement helper + page change + tests (unit, functional model, monkey) + test plan + docs/skills + SKILLS-INDEX regen (`node .github/scripts/skills-index.js --write`) + script suite
+- [x] 3. Taher chose D1 = A (hold ~1.2s with success state). Defaults 1-6 not overridden.
+- [~] 4. (code + tests DONE and pushed; docs/test plan/skill/index still TODO) Implement helper + page change + tests (unit, functional model, monkey) + test plan + docs/skills + SKILLS-INDEX regen (`node .github/scripts/skills-index.js --write`) + script suite
 - [ ] 5. Push, open PR (REST: `gh api .../pulls`, GraphQL blocked), CI is the proof
+
+## Progress log
+- Built `qml/helper/BulkApproveProgress.js`, `OrdersPage.qml` wiring, `tests/tst_BulkApproveProgress.qml` (29 cases: unit, regression, functional stand-in, 2 monkey), `.github/scripts/__tests__/ordersPageApproveWiring.test.js` (18 cases, page source wiring guard).
+- Proof in sandbox: QML test body run in node against the helper 29/29; 12 hand-made mutants of the helper all caught; script suite 94/94 (`node --test .github/scripts/__tests__/*.test.js`). qmltestrunner NOT run (CI is the proof).
+- TODO next: test plan `docs/superpowers/test-plans/2026-10-13-approve-all-progress-test-plan.md` + index row; Skill 117 in SKILLS.md + `node .github/scripts/skills-index.js --write`; README/AGENTS one-liners; then PR via REST.
