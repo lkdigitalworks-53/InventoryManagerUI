@@ -20,7 +20,9 @@
 - [x] 6. Delete-roadmap + atomic-ops status written into `docs/superpowers/plans/2026-10-13-pr90-final-sweep-review.md`
 - [x] 7. F1 fixed (CI green on 1595d62); docs updated: Skill 115, test plan, tracker, roadmaps, AGENTS, README, stale Skill refs
 - [x] 8a. Review note written
-- [ ] 8b. PR comment + PR description refresh (API); then read CI on the docs commit
+- [x] 8b. PR description refreshed, sweep comment posted, CI green on docs commit 0015b4f (all 4 jobs)
 
-## NEXT (if interrupted)
-Start at the first unticked step. Read this file, then `git log --oneline -5`, then continue.
+## SESSION COMPLETE. Awaiting Taher: D-1, D-2, deploy `recordOperation`, device test, squash-merge.
+
+## NEXT
+Nothing unfinished in this sweep. Next session: Task 11 (syncing hint) or C-1, after Taher answers D-1/D-2.
