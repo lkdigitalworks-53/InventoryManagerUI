@@ -1,23 +1,18 @@
-# CHECKPOINT — 2026-10-14 PR #139 rebased onto main (resume here)
+# CHECKPOINT — 2026-10-14 PR #139 final-sweep review (resume here)
 
-**Branch:** `docs/2026-10-13-completion-error-cause-design` (PR #139, base `main`). PR #140 (`feat/2026-10-13-completion-error-cause`) was merged into it, so #139 now carries design + implementation. Rebased 2026-10-14 onto `main` @ d426773 (#141, #142 merged).
+**Branch:** `review/2026-10-14-pr139-final-sweep` (stacked PR, base = `docs/2026-10-13-completion-error-cause-design` = PR #139's branch @ 34d356f).
 **Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config.
 **Rules in force:** do not build/run the app; no Qt tools in the sandbox (CI is the proof); push without asking, Taher reviews in the PR; short scope (token budget); honest trade-offs, grill before deciding.
-**Archived previous checkpoints:** `docs/superpowers/specs/2026-10-13-pr90-final-sweep-prev-CHECKPOINT.md`.
-
-## Decisions (Taher, 2026-10-13): Q-EC-1 A client-only text, Q-EC-2 A one toast, Q-EC-3 A persist `lastError`
+**Skills used (Taher asked for all three):** `superpowers:requesting-code-review` (template code-reviewer.md; no subagent tool in chat, so the reviewer pass is done inline), `qt-development-skills:qt-qml-review` (Phase 1 linter run; qmllint absent; the 6 agent missions done inline), `ponytail:ponytail-audit` (scoped to the PR's files, output format = plain English, ranked, numbered).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-14-pr139-final-sweep-prev-CHECKPOINT.md`.
 
 ## Steps
-- [x] 1. Design PR #139 pushed (see design doc, test plan)
-- [x] 2. S1 `qml/helper/FailureCause.js` (+ `tests/tst_FailureCause.qml`, 16 cases)
-- [x] 3. S2 stuck path: `StuckWrites` lastError, `OutboxStore.setStuckMeta`, `Gateway.stuckRows().cause`, `StuckWritesSheet` cause line, `DescribeItem` order label
-- [x] 4. S3 `DataModel._failCompletion(announce)`, `Logic.orderCompletionReverted`, `Main.qml` Toast
-- [x] 5. Tests: 48 written; pure-JS 142 green in a Node shim (29 new), 6 mutations caught; rest CI-only
-- [x] 6. Docs: Skill 118 (+ `SKILLS-INDEX.md` regenerated, 21/21 script tests), AGENTS, README, test plan status, roadmap line
-- [x] 7. Pushed, PR #140 raised (base = design branch of #139), merged into #139's branch
-- [x] 8. CI round 1: QML compile error (reserved word `long` in tst_FailureCause), fixed; round 2 ALL GREEN on 4b8d823 (QML, Functions, Rules, E2E)
-- [x] 9. 2026-10-14 rebase of #139 onto main: conflicts in CHECKPOINT (branch kept; main's version archived on main as the s4-cleanup prev-CHECKPOINT), DELETE-FEATURE-ROADMAP (main block + Update line), test-plans/README (both rows), SKILLS (branch Skill 116 renumbered to 118, main has 116/117), SKILLS-INDEX regenerated (119 skills). Code files auto-merged clean; no QML/JS conflict. Script tests 94/94.
-- [ ] 10. Force-push with lease, fix PR #139 title/body, wait for CI on the new tip
+- [x] 1. Read memory, 3 skills, cloned repo, review branch cut from PR #139 tip
+- [x] 2. Scope: 24 files, +814/-55; QML/JS code = 9 prod files + 6 test files (qml/helper/FailureCause.js new)
+- [x] 3. QML linter (Phase 1): 561 raw hits on the touched files, 9 on ADDED lines, all `var` style (repo-wide convention) or ORD-1 noise that exists on main too -> 0 real lint findings
+- [ ] 4. Deep trace: DataModel completion paths, StuckWrites/OutboxStore/Gateway lastError flow, StuckWritesSheet, tests
+- [ ] 5. Write findings doc `docs/superpowers/specs/2026-10-14-pr139-final-sweep-review.md`, fix Must/Should items with tests, docs (Skill, SKILLS-INDEX, AGENTS, README)
+- [ ] 6. Push, open stacked PR, wait for CI
 
 ## NEXT
-CI on the rebased tip decides. If green: Taher reviews and squash-merges #139. After: Task 11 "Saved, syncing" hint (`DataModel.completionsSyncing`, caption in `OrderDetailDialog`), then C-1 (`_tryAdjustOrder` atomic).
+Do step 4 (read DataModel `_handleCompletionResult` + `wasQueued`, StuckWrites clear paths, tests) then step 5.
