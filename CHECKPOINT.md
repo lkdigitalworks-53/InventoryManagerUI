@@ -10,9 +10,10 @@
 - [x] 1. Read memory, 3 skills, cloned repo, review branch cut from PR #139 tip
 - [x] 2. Scope: 24 files, +814/-55; QML/JS code = 9 prod files + 6 test files (qml/helper/FailureCause.js new)
 - [x] 3. QML linter (Phase 1): 561 raw hits on the touched files, 9 on ADDED lines, all `var` style (repo-wide convention) or ORD-1 noise that exists on main too -> 0 real lint findings
-- [ ] 4. Deep trace: DataModel completion paths, StuckWrites/OutboxStore/Gateway lastError flow, StuckWritesSheet, tests
-- [ ] 5. Write findings doc `docs/superpowers/specs/2026-10-14-pr139-final-sweep-review.md`, fix Must/Should items with tests, docs (Skill, SKILLS-INDEX, AGENTS, README)
-- [ ] 6. Push, open stacked PR, wait for CI
+- [x] 4. Deep trace done (DataModel completion paths, lastError flow, sheet, tests)
+- [x] 5. Report `docs/superpowers/specs/2026-10-14-pr139-final-sweep-review.md`; fixes: OutboxStore uses `StuckWrites.cleanLastError`, DataModel stock text via `FailureCause`, test F13 (reachable `not found in inventory` announce), test plan corrected, Skill 119 + index (120 skills). Script tests 94/94. Node probe: cleanLastError equivalence 7/7.
+- [x] 6. Pushed; stacked PR opened (number in PR list)
+- [ ] 7. Wait for CI on the review tip (QML F13 + refactor are CI-only); Taher decides D-1 (out-of-stock status, recommend B)
 
 ## NEXT
-Do step 4 (read DataModel `_handleCompletionResult` + `wasQueued`, StuckWrites clear paths, tests) then step 5.
+CI on the review tip. If F13 or any QML test is red, fix it first (F13 assumes `InventoryStore.products = []` then `_answer(_key(1), _rejection(0,{current:0}))` yields one toast). Then merge the review PR into #139's branch, then squash-merge #139. After D-1 is decided: implement option in a new branch.

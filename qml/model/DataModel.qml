@@ -793,7 +793,7 @@ Item {
         var onStockOp = op && op.entity === "inventory"
         if (onStockOp && !wasQueued && rejection.error === "insufficient-quantity") {
             delete _openCompletions[key]
-            _failCompletion(open.orderId, (_nameForProduct(op.entityId) + ": stock ran out before this order could complete"), true, open.callback)
+            _failCompletion(open.orderId, FailureCause.forRejection(rejection, _nameForProduct(op.entityId)).text, true, open.callback)
             return
         }
         if (open.attempt >= maxReplans) {

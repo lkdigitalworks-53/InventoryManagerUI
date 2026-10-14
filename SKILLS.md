@@ -4309,3 +4309,12 @@ Rules:
 6. Not done here, on purpose: the exhausted-re-plan branch still flags the order `out of stock` whatever the cause (`conflict`, `not-found`). Revisit when Task 11 touches the status.
 7. QML's JS parser still rejects the old ES3 future-reserved words (`long`, `short`, `int`, `char`, `byte`, `float`, `double`, `final`, `native`...) as variable names; modern Node accepts them, so a Node shim run does NOT prove a `.qml` test compiles. CI showed it as `tst_X::compile — Expected token identifier`. Before pushing a new test file, grep it for `var (long|short|int|char|byte|float|double|final|native)\b`.
 
+
+## Skill 119: A doc that calls a branch "unreachable" must be proven against the callee's own error paths, and one validator must serve both the read and the save of a persisted field
+
+PR #139 final sweep (2026-10-14). The test plan called `_completeAttempt`'s `callback === null` announce "unreachable" because a clamped re-plan cannot run out of stock. It can fail another way: `CompletionPlan.build` checks `not found in inventory` BEFORE the clamp, so a product deleted locally between the queued completion and its re-plan reaches the branch (reason is still labelled `out-of-stock`). The branch had no test. Separately `OutboxStore.setStuckMeta` re-implemented `StuckWrites.cleanLastError`, which Skill 118 rule 3 says to use "on every read" (hydrate), so save and load could drift.
+Rules:
+1. Before writing "unreachable" or "cannot happen", open every `return { ok: false ... }` / `errors.push` of the callee and list the ones that survive the guard you rely on. Then either write the test or write down which input reaches it.
+2. A persisted field gets ONE cleaning function (`StuckWrites.cleanLastError`), called by hydrate AND by the store's save path. Never copy the shape check into the store.
+3. A message that exists in a pure helper (`FailureCause`) must not be re-typed in `DataModel`; call the helper so the wording changes in one place.
+4. A reason label can be a misnomer (`out-of-stock` for "product not found"). Do not branch UI status on it without checking every producer of that label.
