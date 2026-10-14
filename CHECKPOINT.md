@@ -1,19 +1,29 @@
-# CHECKPOINT — 2026-10-14 PR #139 final-sweep review (resume here)
+# CHECKPOINT — 2026-10-14 Task 11 "Saved, syncing" hint (stacked on PR #139)
 
-**Branch:** `review/2026-10-14-pr139-final-sweep` (stacked PR, base = `docs/2026-10-13-completion-error-cause-design` = PR #139's branch @ 34d356f).
-**Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config.
-**Rules in force:** do not build/run the app; no Qt tools in the sandbox (CI is the proof); push without asking, Taher reviews in the PR; short scope (token budget); honest trade-offs, grill before deciding.
-**Skills used (Taher asked for all three):** `superpowers:requesting-code-review` (template code-reviewer.md; no subagent tool in chat, so the reviewer pass is done inline), `qt-development-skills:qt-qml-review` (Phase 1 linter run; qmllint absent; the 6 agent missions done inline), `ponytail:ponytail-audit` (scoped to the PR's files, output format = plain English, ranked, numbered).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-14-pr139-final-sweep-prev-CHECKPOINT.md`.
+**Branch:** `feat/2026-10-14-task11-saved-syncing` (base = PR #139 branch `docs/2026-10-13-completion-error-cause-design` @ cbd3363). Commit identity `taher.lkdw@gmail.com`. PAT only in the push command, never in files or the remote URL.
+**Rules in force:** no build/run until Taher says so; no Qt tools in the sandbox (CI is the proof); branch + push without asking; honest trade-offs, grill before deciding; tests for every change (100% target) + a test plan; short scope, remote branch always resumable by another account.
+**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-14-pr139-prev-CHECKPOINT.md`.
+**Skills used:** brainstorming (BOUNDED path), qt-qml, ponytail.
+
+## Request (Taher)
+On top of PR #139: check E2E roadmap + delete roadmap, pick the next priority item, design it, implement if design ready, raise PR, show next steps.
+
+## What the roadmaps say (read, not re-derived)
+- Delete roadmap: COMPLETE 2026-10-13. Only device re-checks left (O1 purge, O2 sign-out; `test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` L266-267, Taher).
+- E2E roadmap C-3 atomic-operation arc, recorded order (PR #90 sweep, D-2): merge #90 -> error-cause UI (= PR #139, in review) -> **Task 11 "Saved, syncing" hint** -> Task 12 docs -> Task 13 deploy+device (Taher) -> C-1 `_tryAdjustOrder` etc.
+- Higher risk but bigger and needs decisions: restock as one atomic operation (KNOWN-ISSUES top entry, DECIDED 2026-09-30, not built).
+
+## Decision (mine, flagged to Taher)
+Pick Task 11: it is the recorded next step, design exists in the plan, fits one session. NOT the highest-risk item (restock is) - see PR body for why and the grill list.
 
 ## Steps
-- [x] 1. Read memory, 3 skills, cloned repo, review branch cut from PR #139 tip
-- [x] 2. Scope: 24 files, +814/-55; QML/JS code = 9 prod files + 6 test files (qml/helper/FailureCause.js new)
-- [x] 3. QML linter (Phase 1): 561 raw hits on the touched files, 9 on ADDED lines, all `var` style (repo-wide convention) or ORD-1 noise that exists on main too -> 0 real lint findings
-- [x] 4. Deep trace done (DataModel completion paths, lastError flow, sheet, tests)
-- [x] 5. Report `docs/superpowers/specs/2026-10-14-pr139-final-sweep-review.md`; fixes: OutboxStore uses `StuckWrites.cleanLastError`, DataModel stock text via `FailureCause`, test F13 (reachable `not found in inventory` announce), test plan corrected, Skill 119 + index (120 skills). Script tests 94/94. Node probe: cleanLastError equivalence 7/7.
-- [x] 6. Pushed; stacked PR opened (number in PR list)
-- [ ] 7. Wait for CI on the review tip (QML F13 + refactor are CI-only); Taher decides D-1 (out-of-stock status, recommend B)
+- [x] 1. Cloned, read memory/skills/roadmaps/plan Task 11, read DataModel completion state machine + OrderDetailDialog
+- [x] 2. Branch created from PR #139 head, checkpoint written
+- [ ] 3. Design spec `specs/2026-10-14-task11-saved-syncing-design.md`
+- [ ] 4. Implement DataModel (`syncingOrderIds`, `completionsSyncing`, `_closeOpen`, `_refreshSyncing`) + OrderDetailDialog caption
+- [ ] 5. Tests: `tests/tst_DataModel_completionsSyncing.qml`, node wiring guard
+- [ ] 6. Test plan + index row, Skill, SKILLS-INDEX regen, README/AGENTS lines, roadmap status lines
+- [ ] 7. Push, PR (base = PR #139 branch), CI read
 
-## NEXT
-CI on the review tip. If F13 or any QML test is red, fix it first (F13 assumes `InventoryStore.products = []` then `_answer(_key(1), _rejection(0,{current:0}))` yields one toast). Then merge the review PR into #139's branch, then squash-merge #139. After D-1 is decided: implement option in a new branch.
+## NEXT (for the next session / account)
+Read the PR checks first. QML tests are CI-only.
