@@ -707,6 +707,26 @@ TestCase {
         compare(revertSpy.count, 0)
     }
 
+    // F13 (PR #139 sweep, the branch the first test plan called unreachable): a queued completion is
+    // rejected, and before the re-plan runs the product has been deleted on this device (the other
+    // device's delete arrived). The clamped re-plan then fails LOCALLY with "not found in inventory"
+    // (CompletionPlan checks product existence before the clamp), with callback === null. Nobody is
+    // waiting, so exactly ONE toast must name the customer and the line, and the guard must be released.
+    function test_F13_queued_then_product_deleted_locally_announces_once_with_the_plan_error() {
+        dm.dispatcher = testLogic
+        var result = null
+        dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
+        compare(result, true, "shown as done while offline")
+        InventoryStore.products = []
+        _answer(_key(1), _rejection(0, { current: 0 }))
+        compare(revertSpy.count, 1, "exactly one toast")
+        compare(revertSpy.signalArguments[0][1],
+                "Order for Test Customer was not completed: Widget: not found in inventory")
+        verify(!dm._completingOrderIds["ORD-ATOMIC-1"], "guard released")
+        verify(!dm._openCompletions[_key(1)], "no open completion left")
+        compare(_ops().length, 0, "nothing re-sent")
+    }
+
     // Monkey: whatever the server says, a queued completion produces at most ONE toast and always
     // releases its guard.
     function test_F11_monkey_never_more_than_one_toast_per_completion() {

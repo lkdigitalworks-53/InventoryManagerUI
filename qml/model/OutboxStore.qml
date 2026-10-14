@@ -524,10 +524,8 @@ QtObject {
             if (failures > 0) next.failures = failures; else delete next.failures
             if (m.stuck === true) next.stuck = true; else delete next.stuck
             if (m.terminal === true) next.terminal = true; else delete next.terminal
-            var le = m.lastError
-            var leOk = le && typeof le === "object" && typeof le.code === "string"
-                && ((typeof le.status === "number" && isFinite(le.status)) || le.status === "timeout")
-            if (leOk) next.lastError = { code: le.code.slice(0, 60), status: le.status }; else delete next.lastError
+            var le = StuckWrites.cleanLastError(m.lastError)   // one validator for hydrate and save (Skill 118 rule 3)
+            if (le) next.lastError = le; else delete next.lastError
             if (JSON.stringify(next) === JSON.stringify(arr[i])) return true
             arr[i] = next
             items = arr
