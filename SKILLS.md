@@ -2330,6 +2330,8 @@ the same pass as the restructure — a wrong number copied three times isn't thr
 confirmations of it, it's one mistake with three symptoms. Recounting a real artifact (test
 functions in a file) is cheap; re-asserting a remembered number is not the same as checking it.
 
+**2026-10-15 addendum (PR #139 test-plan review): a test plan is a plan, not a diary, and on-device steps are a script.** Two rules, both from Taher's review of the completion-error-cause plan. (1) The plan holds *what is covered and how*, plus ONE short "Verification status" block (what was run, what is CI-only, what is not written). Implementation history, CI-round narratives and "planned vs written" arithmetic go to the PR description, `CHECKPOINT.md` or a Skill, otherwise the plan contradicts itself (that plan said 34, 49 and 48 in three places). Recount from the `function test_` declarations before writing a number. (2) On-device steps always carry: a prerequisites table (build, device, account and role, console access, settings, seed data, the reset between scenarios, how long to wait), numbered steps each written as *action -> expected outcome*, the exact on-screen strings quoted from the code, a **Record** marker where the code cannot say which of two correct outcomes will occur, and a "not testable on a device" list when no verified recipe exists. Before writing the expected result, trace what the recipe really produces in the code (here: an `inactive` member gives a 403 `no-tenant-context`, which is "stuck, retrying", not the "Rejected" row that a 500 `write-rejected` gives).
+
 ## Skill 50: Converting a sync id-minter to async without touching its bulk-import loop's actual shape
 
 **What happened**: `docs/superpowers/E2E-TESTING-ROADMAP.md` left `StockBatchStore._nextBatchId()`'s
@@ -4309,6 +4311,8 @@ Rules:
 6. Not done here, on purpose: the exhausted-re-plan branch still flags the order `out of stock` whatever the cause (`conflict`, `not-found`). Revisit when Task 11 touches the status.
 7. QML's JS parser still rejects the old ES3 future-reserved words (`long`, `short`, `int`, `char`, `byte`, `float`, `double`, `final`, `native`...) as variable names; modern Node accepts them, so a Node shim run does NOT prove a `.qml` test compiles. CI showed it as `tst_X::compile — Expected token identifier`. Before pushing a new test file, grep it for `var (long|short|int|char|byte|float|double|final|native)\b`.
 
+
+**2026-10-15 addendum (D-2):** a recipe's real server answer must be traced before the cause text is finalised. An `inactive` member answers 403 `no-tenant-context` on every endpoint, which is stuck-and-retrying (not parked) and showed only "HTTP 403". It now has its own hedged text in `FailureCause.forWriteError`; a 403 stays non-terminal on purpose, because re-activating the member makes the retry succeed.
 
 ## Skill 119: A doc that calls a branch "unreachable" must be proven against the callee's own error paths, and one validator must serve both the read and the save of a persisted field
 
