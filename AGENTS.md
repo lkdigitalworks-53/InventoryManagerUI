@@ -119,7 +119,7 @@ edit/delete; client forges identity & time). The fix:
 
 - **P0** Gateway + immutable `audit_log` (MCA 11(g), CGST 56(8)) — foundation, builds the gateway.
 - **P1** Stock-movement taxonomy: loss/theft/destroyed/write_off/free_sample/gift + opening/closing
-  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction.** Every stock change on `inventory`
+  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction. S1a implemented 2026-10-16 (server only; Taher deploys functions to dev, S1b next).** Every stock change on `inventory`
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
   closed to every client endpoint; batch cap 200 -> 150. Everything is DEV only (no prod data). Slices: S1a `recordDelta` +

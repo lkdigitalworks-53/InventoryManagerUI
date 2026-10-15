@@ -20,12 +20,18 @@ Baseline before any change: `cd functions && node --test` = 626 pass, 0 fail.
 ## Steps (tick as done)
 - [x] 1. Cloned, read master spec, P1 design, checkpoints, S1a plan; confirmed S1a not built. Skills loaded.
 - [x] 2. Branch + identity + `npm ci` + baseline 626/626. Old checkpoint archived.
-- [ ] 3. Task 1: `movementLogic.js` + `movementLogic.test.js` (red, green, commit)
-- [ ] 4. Task 2: `recordDelta` writes rows; close `stock_movement` entity (red, green, commit)
-- [ ] 5. Task 3: `recordDelta` handler pass-through (red, green, commit)
-- [ ] 6. Task 4: `recordOperation` writes rows + write budget (red, green, commit)
-- [ ] 7. Task 5: mutation spot-check, docs (README, AGENTS, test plan status), counts re-verified with `node --test`
-- [ ] 8. Push, open PR, wait for CI, hand to Taher (deploy functions to dev, on-device checklist)
+- [x] 3. Task 1 (2c60791): `movementLogic.js` + 24 tests. Red (module missing) then 24/24.
+- [x] 4. Task 2 (dc694c4): `recordDelta` writes rows, `stock_movement` closed, `recordMutation` rejects `movements`. Plan patch failed `git apply` (base drift), same edits applied by hand. 17 tests, red 11 fail then green. Suite 667.
+- [x] 5. Task 3 (00a9bd8): handler pass-through (`index.js` +1 line), harness captures `applyDelta` params (hand edit, line drift). 5 tests, 2 red then green. Suite 672.
+- [x] 6. Task 4 (2803e9d): `recordOperation` rows + write budget; `operationLogic.js` edited by hand (patch drift), test patch applied clean. 13 tests, 9 red then green. Suite 685.
+- [x] 7. Task 5: coverage `movementLogic.js` 100/100, `gatewayLogic.js` and `operationLogic.js` 100% line; 7 mutations caught (derive removed, `completeOrder` default, budget row term, `stock_movement` re-added, handler pass-through, mutation reject, sum check), files restored. README, AGENTS, test plan + its index row, S1b plan drift note updated. `SKILLS.md` untouched (no new lesson worth a numbered skill).
+- [ ] 8. Push branch, open PR, wait for CI (5 checks), hand to Taher.
+- [ ] 9. **Taher:** `firebase deploy --only functions` to dev, confirm unauthenticated `POST recordDelta` = `401 missing-token`, run the S1a on-device checklist in the test plan. Rows do not appear before the deploy (R3).
+- [ ] 10. **Next session (new branch off `main` after S1a merges):** S1b per `plans/2026-09-24-p1-server-side-stock-movements-s1b.md` (run `git apply --check` on each patch first, hand-edit on drift). S2 planning only after S1b's checklist passes.
+
+## Open items
+- No QML touched, so no QML CI delta expected; CI must still be green on this PR (functions tests + existing QML/E2E).
+- Compliance items still not started: P2 (HSN/GSTIN, client-only, could run in parallel), P3-P7.
 
 ## NEXT
-Step 3.
+Step 8: push and open the PR.
