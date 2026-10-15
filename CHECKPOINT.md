@@ -17,9 +17,10 @@ Taher's review of the test plan `docs/superpowers/test-plans/2026-10-13-completi
 ## Steps
 - [x] 1. Read plan, Skill 49, approve-all exemplar, FailureCause.js, Gateway/StuckWrites/DataModel diffs; traced what each recipe produces
 - [x] 2. Commit 1: replace on-device section with the full plan (prerequisites P1-P9, H/N/E/M/K steps with expected results, affected areas, regression cues, not-testable list)
-- [ ] 3. Commit 2: restructure the rest to Skill 49 (Unit, Functional, Regression, Monkey, Rules/E2E), counts recounted (49 = 16+10+3+5+5+10), "Implementation status" replaced by a short "Verification status", history moved out; README index row fixed (48 -> 49, no "planned"); Skill 49 addendum; script tests
-- [ ] 4. Push, then wait for CI
+- [x] 3. Commit 2 (done, script tests 94/94, skills index current): restructure the rest to Skill 49 (Unit, Functional, Regression, Monkey, Rules/E2E), counts recounted (49 = 16+10+3+5+5+10), "Implementation status" replaced by a short "Verification status", history moved out; README index row fixed (48 -> 49, no "planned"); Skill 49 addendum; script tests
+- [x] 4. Pushed commit 1 (7bb8238) and commit 2
+- [ ] 5. Wait for CI on the PR tip; Taher answers the open decisions below
 
 ## NEXT
-If step 3 is not done: restructure sections 1-5 of the plan per the list above, fix the README row, run the script tests under `.github/scripts`, push.
+Nothing left in this slice. CI is docs-only here (no code changed). Next, only if Taher asks: decide D-2 (clearer text for 403 `no-tenant-context`) and D-1.
 Open decision for Taher (not in this PR): map 403 `no-tenant-context` to a clearer sentence in `FailureCause.js` (+tests). Also D-1 from the earlier review (order status `out of stock` whatever the cause).
