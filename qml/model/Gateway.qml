@@ -621,6 +621,11 @@ QtObject {
     // in flight; otherwise false and nothing changes. A later edit merged into the
     // parked write is discarded with it (P3); writes queued behind it survive
     // (Q-S3-1 A). Waiters on the item (operation or delta) are told { error: "discarded" }.
+    // Task 11 (B): is this write PARKED (stuck AND server-rejected, waiting for Retry/Discard)? A parked
+    // write is not "syncing"; DataModel hides the order's caption for it. Read-only. The answer changes
+    // together with stuckTerminalCount, which is what DataModel listens to.
+    function isParkedKey(requestId) { return StuckWrites.isParked(_stuckState, requestId) }
+
     function discardParked(requestId) {
         if (mode !== "gateway") return false
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
