@@ -1011,3 +1011,56 @@ test("RES-H1 recordMutation / recordDelta: a requestId in the reserved cascade n
     assert.equal(mockState.batchCommits.length, 0);
     assert.equal(mockState.setCalls.length, 0);
 });
+// ── recordDelta: P1 stock movements ─────────────────────────────────────
+
+test("recordDelta: forwards validated movements to applyDelta", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.applyDeltaResult = { ok: true, after: { stock: 7 } };
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({
+        entity: "inventory", entityId: "p1", deltas: { stock: -3 },
+        movements: [{ kind: "loss", qty: -3, reason: " spoiled ", valueAtCost: 9, id: "forged" }]
+    }) }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(mockState.lastApplyDeltaParams.movements,
+        [{ kind: "loss", qty: -3, reason: "spoiled", valueAtCost: 9, derived: false }]);
+});
+
+test("recordDelta: without movements forwards an empty list (old clients unaffected)", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.applyDeltaResult = { ok: true, after: { qtyOnHand: 4 } };
+    await handlers.recordDelta(mockReq({ body: validDeltaBody() }), mockRes());
+    assert.deepEqual(mockState.lastApplyDeltaParams.movements, []);
+});
+
+test("recordDelta: invalid movement -> 400 with the specific error, applyDelta never called", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.lastApplyDeltaParams = null;
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({
+        entity: "inventory", entityId: "p1", deltas: { stock: -3 }, movements: [{ kind: "stolen", qty: -3 }]
+    }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "invalid-movement-kind");
+    assert.equal(mockState.lastApplyDeltaParams, null);
+});
+
+test("recordDelta: movement-qty-mismatch from applyDelta is forwarded as 409 with field/current", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.applyDeltaResult = { ok: false, status: 409, error: "movement-qty-mismatch", field: "stock", current: 0 };
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({
+        entity: "inventory", entityId: "p1", deltas: { stock: -3 }, movements: [{ kind: "loss", qty: -3 }]
+    }) }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(jsonBody(res).error, "movement-qty-mismatch");
+    assert.equal(jsonBody(res).current, 0);
+});
+
+test("recordDelta: the closed stock_movement entity -> 400 unsupported-entity", async () => {
+    seedHappyPathAuth(mockState);
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({ entity: "stock_movement", entityId: "m1", deltas: { qty: 1 } }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "unsupported-entity");
+});

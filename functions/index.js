@@ -351,6 +351,7 @@ exports.recordDelta = functions.onRequest(
                 deltas: validated.deltas,
                 floors: validated.floors,
                 clamps: validated.clamps,
+                movements: validated.movements,
                 clientTimestamp: validated.clientTimestamp,
                 collection: validated.collection,
                 serverTimestamp: FieldValue.serverTimestamp()
