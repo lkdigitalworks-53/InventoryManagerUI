@@ -2330,6 +2330,8 @@ the same pass as the restructure — a wrong number copied three times isn't thr
 confirmations of it, it's one mistake with three symptoms. Recounting a real artifact (test
 functions in a file) is cheap; re-asserting a remembered number is not the same as checking it.
 
+**2026-10-15 addendum (PR #139 test-plan review): a test plan is a plan, not a diary, and on-device steps are a script.** Two rules, both from Taher's review of the completion-error-cause plan. (1) The plan holds *what is covered and how*, plus ONE short "Verification status" block (what was run, what is CI-only, what is not written). Implementation history, CI-round narratives and "planned vs written" arithmetic go to the PR description, `CHECKPOINT.md` or a Skill, otherwise the plan contradicts itself (that plan said 34, 49 and 48 in three places). Recount from the `function test_` declarations before writing a number. (2) On-device steps always carry: a prerequisites table (build, device, account and role, console access, settings, seed data, the reset between scenarios, how long to wait), numbered steps each written as *action -> expected outcome*, the exact on-screen strings quoted from the code, a **Record** marker where the code cannot say which of two correct outcomes will occur, and a "not testable on a device" list when no verified recipe exists. Before writing the expected result, trace what the recipe really produces in the code (here: an `inactive` member gives a 403 `no-tenant-context`, which is "stuck, retrying", not the "Rejected" row that a 500 `write-rejected` gives).
+
 ## Skill 50: Converting a sync id-minter to async without touching its bulk-import loop's actual shape
 
 **What happened**: `docs/superpowers/E2E-TESTING-ROADMAP.md` left `StockBatchStore._nextBatchId()`'s
@@ -4297,3 +4299,26 @@ Rules:
 3. When a page cannot be loaded in CI, move the logic to a pure helper and pin the wiring with a source-shape test that fails when a line is removed.
 4. Known limit (`shortcut:` in the helper): no watchdog; a callback that never fires leaves the button disabled until the page is rebuilt.
 5. Left alone on purpose: the loop approves `pending` and `processing`, the banner counts only `pending`.
+## Skill 118: An operation whose caller was already told "done" must announce its own failure, and a failure text must name a cause the code can actually know
+
+PR #90 sweep follow-up (2026-10-13). A completion queued offline calls `callback(true)` at once and later may be rejected for good. `_failCompletion` had nobody to tell: `callback` was already consumed, so the order silently flipped back to `pending`. Separately, the stuck sheet showed `ops[0].entityId` for a completion, which is a stock batch id, and `StuckWrites` kept only a boolean `terminal`, so the server's reason was thrown away on arrival.
+Rules:
+1. Every path that undoes something the user was already shown as done needs its own message channel (here `Logic.orderCompletionReverted` -> `Toast`), exactly one per finished completion, never one per re-plan attempt. Test with the real re-plan loop and a seeded monkey that counts signals.
+2. Distinguish "no callback" (`undefined`, old behaviour, silent) from "callback already answered" (`null`). Use `callback === null` only where that second meaning is certain, and pin both with tests.
+3. Keep the cause, not only the verdict: store `{code, status}` of the latest failing answer next to the stuck flag and persist it with the outbox item (`OutboxStore.setStuckMeta`). Validate it on every read (`StuckWrites.cleanLastError`): an old saved item simply has none.
+4. Cause text lives in one pure helper (`qml/helper/FailureCause.js`). Never assert a cause the server did not state: a 500 `write-rejected` carries only the class, so the text says "usually". Echo a server code only when it is a short plain token.
+5. A row label for a multi-op item must come from the op the person recognises (the order's customer), not from `ops[0]`.
+6. Not done here, on purpose: the exhausted-re-plan branch still flags the order `out of stock` whatever the cause (`conflict`, `not-found`). Revisit when Task 11 touches the status.
+7. QML's JS parser still rejects the old ES3 future-reserved words (`long`, `short`, `int`, `char`, `byte`, `float`, `double`, `final`, `native`...) as variable names; modern Node accepts them, so a Node shim run does NOT prove a `.qml` test compiles. CI showed it as `tst_X::compile — Expected token identifier`. Before pushing a new test file, grep it for `var (long|short|int|char|byte|float|double|final|native)\b`.
+
+
+**2026-10-15 addendum (D-2):** a recipe's real server answer must be traced before the cause text is finalised. An `inactive` member answers 403 `no-tenant-context` on every endpoint, which is stuck-and-retrying (not parked) and showed only "HTTP 403". It now has its own hedged text in `FailureCause.forWriteError`; a 403 stays non-terminal on purpose, because re-activating the member makes the retry succeed.
+
+## Skill 119: A doc that calls a branch "unreachable" must be proven against the callee's own error paths, and one validator must serve both the read and the save of a persisted field
+
+PR #139 final sweep (2026-10-14). The test plan called `_completeAttempt`'s `callback === null` announce "unreachable" because a clamped re-plan cannot run out of stock. It can fail another way: `CompletionPlan.build` checks `not found in inventory` BEFORE the clamp, so a product deleted locally between the queued completion and its re-plan reaches the branch (reason is still labelled `out-of-stock`). The branch had no test. Separately `OutboxStore.setStuckMeta` re-implemented `StuckWrites.cleanLastError`, which Skill 118 rule 3 says to use "on every read" (hydrate), so save and load could drift.
+Rules:
+1. Before writing "unreachable" or "cannot happen", open every `return { ok: false ... }` / `errors.push` of the callee and list the ones that survive the guard you rely on. Then either write the test or write down which input reaches it.
+2. A persisted field gets ONE cleaning function (`StuckWrites.cleanLastError`), called by hydrate AND by the store's save path. Never copy the shape check into the store.
+3. A message that exists in a pure helper (`FailureCause`) must not be re-typed in `DataModel`; call the helper so the wording changes in one place.
+4. A reason label can be a misnomer (`out-of-stock` for "product not found"). Do not branch UI status on it without checking every producer of that label.

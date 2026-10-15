@@ -24,12 +24,15 @@
 var THRESHOLD = 5
 
 // state = { failures: { requestId: count }, stuck: { requestId: true },
-//           terminal: { requestId: true } }
+//           terminal: { requestId: true },
+//           lastError: { requestId: { code, status } } }
+// `lastError` = what the server's LATEST failing answer said (body `error` string, HTTP
+// status or "timeout"); it feeds FailureCause so the sheet can show a cause (Q-EC-3: persisted).
 // `terminal` = the server's LATEST answer for that write was "rejected" (see
 // REJECTED). S2b: a stuck write whose latest answer is "rejected" is PARKED
 // (see isParkedItem): no auto-retry until the user taps Retry. Parked is derived
 // (stuck && terminal), not a stored flag, so it cannot drift from its inputs.
-function newState() { return { failures: {}, stuck: {}, terminal: {} } }
+function newState() { return { failures: {}, stuck: {}, terminal: {}, lastError: {} } }
 
 // functions/lib/writeError.js: the server answers HTTP 500 either way, so the
 // body's `error` string is the only signal. Everything else (write-unavailable,
@@ -59,6 +62,7 @@ function isStuckStatus(status, online) {
 // over THRESHOLD, so the caller can react once per item.
 function noteFailure(state, requestId, status, online, errorCode) {
     if (!isStuckStatus(status, online)) return false
+    state.lastError[requestId] = { code: typeof errorCode === "string" ? errorCode : "", status: status }
     if (errorCode === REJECTED) state.terminal[requestId] = true
     else delete state.terminal[requestId]
     var n = (state.failures[requestId] || 0) + 1
@@ -85,6 +89,7 @@ function rows(state, items) {
         out.push({
             requestId: it.requestId,
             terminal: state.terminal[it.requestId] === true,
+            lastError: state.lastError[it.requestId] || null,
             item: it
         })
     }
@@ -142,17 +147,28 @@ function prune(state, liveIds) {
     for (id in state.stuck) if (!liveIds[id]) delete state.stuck[id]
     for (id in state.failures) if (!liveIds[id]) delete state.failures[id]
     for (id in state.terminal) if (!liveIds[id]) delete state.terminal[id]
+    for (id in state.lastError) if (!liveIds[id]) delete state.lastError[id]
     return stuckCount(state)
 }
 
 // Persisted shape of one write's stuck state, for OutboxStore.setStuckMeta:
-// { failures: n, stuck: bool, terminal: bool }. A write with no state is all zero/false.
+// { failures: n, stuck: bool, terminal: bool, lastError: {code,status}|null }. A write with no state is all zero/false/null.
 function metaOf(state, requestId) {
     return {
         failures: state.failures[requestId] || 0,
         stuck: state.stuck[requestId] === true,
-        terminal: state.terminal[requestId] === true
+        terminal: state.terminal[requestId] === true,
+        lastError: state.lastError[requestId] || null
     }
+}
+
+// A persisted or received lastError is only trusted when it has the exact shape
+// { code: string, status: finite number | "timeout" }; anything else is dropped.
+function cleanLastError(v) {
+    if (!v || typeof v !== "object") return null
+    var okStatus = (typeof v.status === "number" && isFinite(v.status)) || v.status === TIMEOUT
+    if (typeof v.code !== "string" || !okStatus) return null
+    return { code: v.code.slice(0, 60), status: v.status }
 }
 
 // Rebuilds the state from persisted outbox items (relaunch). Never throws: a
@@ -174,6 +190,8 @@ function hydrate(items) {
         }
         if (n > 0) state.failures[id] = n
         if (it.terminal === true) state.terminal[id] = true
+        var le = cleanLastError(it.lastError)
+        if (le) state.lastError[id] = le
     }
     return state
 }

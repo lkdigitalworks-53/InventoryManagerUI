@@ -31,7 +31,8 @@ import "../helper/StuckWrites.js" as StuckWrites
 //   nextAttemptAt } — distinguished from a plain item by having `deltas`
 // instead of `before`/`after`.
 // Any item may also carry the stuck-write state (P5, see StuckWrites.js):
-//   failures (server-side failure count), stuck: true, terminal: true
+//   failures (server-side failure count), stuck: true, terminal: true,
+//   lastError: { code, status } (the latest failing answer, shown by the stuck sheet)
 // Absent = never failed that way; old saved items load without them.
 // S2b: an item that is stuck AND terminal is PARKED (StuckWrites.isParkedItem):
 // dueItems/nextDueInMs/wakeStuck skip it and it holds its keys, so later writes
@@ -523,6 +524,8 @@ QtObject {
             if (failures > 0) next.failures = failures; else delete next.failures
             if (m.stuck === true) next.stuck = true; else delete next.stuck
             if (m.terminal === true) next.terminal = true; else delete next.terminal
+            var le = StuckWrites.cleanLastError(m.lastError)   // one validator for hydrate and save (Skill 118 rule 3)
+            if (le) next.lastError = le; else delete next.lastError
             if (JSON.stringify(next) === JSON.stringify(arr[i])) return true
             arr[i] = next
             items = arr

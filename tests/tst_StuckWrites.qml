@@ -933,4 +933,119 @@ TestCase {
             }
         }
     }
+
+    // ── lastError (Q-EC-3 A: the cause of the latest failing answer, persisted) ─────
+
+    function test_F01_noteFailure_records_the_code_and_status_of_the_latest_failure() {
+        var s = SW.newState()
+        SW.noteFailure(s, "a", 500, true, "write-unavailable")
+        compare(s.lastError.a.code, "write-unavailable")
+        compare(s.lastError.a.status, 500)
+        SW.noteFailure(s, "a", 503, true, "write-rejected")
+        compare(s.lastError.a.code, "write-rejected", "the latest answer replaces the earlier one")
+        compare(s.lastError.a.status, 503)
+    }
+
+    function test_F01b_a_timeout_is_recorded_only_while_online_and_a_missing_code_is_empty() {
+        var s = SW.newState()
+        SW.noteFailure(s, "t", SW.TIMEOUT, false)
+        compare(s.lastError.t, undefined, "offline timeout is not a counted failure")
+        SW.noteFailure(s, "t", SW.TIMEOUT, true)
+        compare(s.lastError.t.status, "timeout")
+        compare(s.lastError.t.code, "")
+        SW.noteFailure(s, "u", 500, true, 42)
+        compare(s.lastError.u.code, "", "a non-string code is stored as empty")
+    }
+
+    function test_F01c_failures_that_never_count_leave_no_cause() {
+        var s = SW.newState()
+        var ignored = [0, 200, 401, 409]
+        for (var i = 0; i < ignored.length; ++i) SW.noteFailure(s, "x", ignored[i], true, "write-rejected")
+        compare(s.lastError.x, undefined)
+    }
+
+    function test_F02_metaOf_reports_the_cause_or_null() {
+        var s = SW.newState()
+        compare(SW.metaOf(s, "nope").lastError, null)
+        SW.noteFailure(s, "a", 500, true, "write-rejected")
+        var m = SW.metaOf(s, "a")
+        compare(m.lastError.code, "write-rejected")
+        compare(m.lastError.status, 500)
+    }
+
+    function test_F03_hydrate_restores_a_valid_cause_and_ignores_malformed_ones() {
+        var items = [
+            { requestId: "ok", failures: 5, stuck: true, lastError: { code: "write-rejected", status: 500 } },
+            { requestId: "to", failures: 5, stuck: true, lastError: { code: "", status: "timeout" } },
+            { requestId: "b1", failures: 5, stuck: true, lastError: "write-rejected" },
+            { requestId: "b2", failures: 5, stuck: true, lastError: { code: 7, status: 500 } },
+            { requestId: "b3", failures: 5, stuck: true, lastError: { code: "x", status: NaN } },
+            { requestId: "b4", failures: 5, stuck: true, lastError: { code: "x", status: "weird" } },
+            { requestId: "b5", failures: 5, stuck: true, lastError: null },
+            { requestId: "old", failures: 5, stuck: true }
+        ]
+        var s = SW.hydrate(items)
+        compare(s.lastError.ok.code, "write-rejected")
+        compare(s.lastError.to.status, "timeout")
+        var bad = ["b1", "b2", "b3", "b4", "b5", "old"]
+        for (var i = 0; i < bad.length; ++i) compare(s.lastError[bad[i]], undefined, bad[i])
+        compare(SW.stuckCount(s), 8, "a bad cause never hides a stuck write")
+    }
+
+    function test_F03b_a_very_long_code_is_cut() {
+        var s = SW.hydrate([{ requestId: "l", failures: 5, stuck: true, lastError: { code: "c".repeat(500), status: 500 } }])
+        compare(s.lastError.l.code.length, 60)
+    }
+
+    function test_F04_prune_forgets_the_cause_with_the_write_and_rows_carry_it() {
+        var s = SW.newState()
+        for (var i = 0; i < SW.THRESHOLD; ++i) {
+            SW.noteFailure(s, "keep", 500, true, "write-rejected")
+            SW.noteFailure(s, "gone", 500, true, "write-failed")
+        }
+        var rows = SW.rows(s, [{ requestId: "keep" }, { requestId: "gone" }])
+        compare(rows[0].lastError.code, "write-rejected")
+        compare(rows[1].lastError.code, "write-failed")
+        SW.prune(s, { keep: true })
+        compare(s.lastError.gone, undefined)
+        compare(s.lastError.keep.code, "write-rejected")
+        compare(SW.rows(SW.newState(), [{ requestId: "z" }]).length, 0)
+    }
+
+    function test_F04b_a_stuck_row_without_a_known_cause_has_null() {
+        var s = SW.hydrate([{ requestId: "old", failures: 5, stuck: true }])
+        compare(SW.rows(s, [{ requestId: "old" }])[0].lastError, null)
+    }
+
+    function test_F04c_metaOf_then_hydrate_round_trips_the_cause() {
+        var s = SW.newState()
+        for (var i = 0; i < SW.THRESHOLD; ++i) SW.noteFailure(s, "r", 500, true, "write-rejected")
+        var m = SW.metaOf(s, "r")
+        var back = SW.hydrate([{ requestId: "r", failures: m.failures, stuck: m.stuck, terminal: m.terminal, lastError: m.lastError }])
+        compare(back.lastError.r.code, "write-rejected")
+        compare(back.lastError.r.status, 500)
+    }
+
+    function test_F04d_monkey_a_random_cause_never_breaks_stuck_bookkeeping() {
+        var rnd = _rng(99)
+        var codes = ["write-rejected", "write-unavailable", "write-failed", "", undefined, 3]
+        var statuses = [500, 503, 404, SW.TIMEOUT, 401, 409, 0]
+        for (var run = 0; run < 100; ++run) {
+            var s = SW.newState()
+            for (var step = 0; step < 30; ++step) {
+                var id = "w" + Math.floor(rnd() * 4)
+                SW.noteFailure(s, id, statuses[Math.floor(rnd() * statuses.length)], true, codes[Math.floor(rnd() * codes.length)])
+                var m = SW.metaOf(s, id)
+                if (m.lastError !== null) {
+                    verify(typeof m.lastError.code === "string")
+                    verify(SW.cleanLastError(m.lastError) !== null, "what we store is what we accept back")
+                }
+            }
+            var h = SW.hydrate(Object.keys(s.failures).map(function(k) {
+                var mm = SW.metaOf(s, k)
+                return { requestId: k, failures: mm.failures, stuck: mm.stuck, terminal: mm.terminal, lastError: mm.lastError }
+            }))
+            compare(SW.stuckCount(h), SW.stuckCount(s))
+        }
+    }
 }

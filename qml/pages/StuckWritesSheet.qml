@@ -102,6 +102,14 @@ BottomSheet {
                         }
                         Text {
                             Layout.fillWidth: true
+                            visible: row.modelData.cause.length > 0 && !row.modelData.inFlight
+                            text: row.modelData.cause
+                            color: Constants.textSecondary
+                            font.pixelSize: sp(Constants.fsCaption)
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            Layout.fillWidth: true
                             text: row.modelData.inFlight ? qsTr("Sending…")
                                 : row.modelData.rejected ? qsTr("Rejected by the server. Paused until you tap Retry or Discard.")
                                 : qsTr("Not syncing. Still retrying.")

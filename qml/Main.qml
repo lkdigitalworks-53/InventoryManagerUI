@@ -201,6 +201,10 @@ App {
             })
         }
 
+        function onOrderCompletionReverted(orderId, message) {
+            Toast.show(message)
+        }
+
         // Fires once StaffStore has actually minted+applied the new staffId
         // (addStaff is async — see _pendingStaffLogin above for why this
         // can't happen synchronously right after logic.addStaff(...)).

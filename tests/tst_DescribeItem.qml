@@ -179,4 +179,36 @@ TestCase {
             verify(typeof d.detail === "string", "iteration " + i)
         }
     }
+
+    // ── operation label: the ORDER op wins over a stock batch (Q-EC, 2026-10-13) ──
+
+    function test_F08_completion_detail_is_the_customer_not_the_first_stock_batch_id() {
+        var d = DI.describe({ opType: "completeOrder", ops: [
+            { entity: "stock_batch", entityId: "BATCH-77" },
+            { entity: "inventory", entityId: "p1" },
+            { entity: "order", entityId: "o9", after: { customer: "  Asha Traders " } }
+        ] })
+        compare(d.detail, "Asha Traders")
+    }
+
+    function test_F08b_falls_back_to_the_order_id_then_to_the_first_op() {
+        compare(DI.describe({ opType: "completeOrder", ops: [
+            { entity: "stock_batch", entityId: "BATCH-77" },
+            { entity: "order", entityId: "o9", after: { customer: "" } }
+        ] }).detail, "o9")
+        compare(DI.describe({ opType: "completeOrder", ops: [
+            { entity: "order", entityId: "o9", after: null }
+        ] }).detail, "o9")
+        compare(DI.describe({ opType: "mystery", ops: [{ entity: "inventory", entityId: "p1" }] }).detail, "p1")
+    }
+
+    function test_F08c_malformed_ops_never_throw_and_never_show_a_batch_id_as_a_customer() {
+        var shapes = [[null], [undefined, { entity: "order" }], [{ entity: "order", entityId: 5 }],
+                      [{ entity: "order", entityId: {} , after: { customer: {} } }], [1, "x", []]]
+        for (var i = 0; i < shapes.length; ++i) {
+            var d = DI.describe({ opType: "completeOrder", ops: shapes[i] })
+            verify(typeof d.detail === "string", "shape " + i)
+        }
+        compare(DI.describe({ opType: "completeOrder", ops: [{ entity: "order", entityId: 5 }] }).detail, "5")
+    }
 }

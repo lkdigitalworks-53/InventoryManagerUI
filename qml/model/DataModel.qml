@@ -4,6 +4,7 @@ import "../helper/OrderAdjust.js" as OrderAdjust
 import "../helper/OrderMath.js" as OrderMath
 import "../helper/CompletionPlan.js" as CompletionPlan
 import "../helper/OperationKeys.js" as OperationKeys
+import "../helper/FailureCause.js" as FailureCause
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataModel.qml  –  Orchestrator / single source of truth
@@ -693,7 +694,10 @@ Item {
         var epoch = OperationKeys.nextEpoch(o)
         var plan = CompletionPlan.build(_completionInput(o, epoch, clampStock), _completionHooks(orderId, epoch))
         if (!plan.ok) {
-            _failCompletion(orderId, plan.errors.join("\n"), plan.reason === "out-of-stock", callback)
+            // callback === null: the caller was already told "done" (a re-plan after a queued
+            // completion), so this failure must be announced here or nobody ever hears of it.
+            var planMsg = plan.errors.join("\n")
+            _failCompletion(orderId, planMsg, plan.reason === "out-of-stock", callback, callback === null ? planMsg : "")
             return
         }
         var open = { orderId: orderId, attempt: attempt, clampStock: clampStock, plan: plan, undo: null, callback: callback }
@@ -706,12 +710,25 @@ Item {
 
     // Terminal, local-validation-or-permanent failure: release the guard,
     // optionally flag the order `out of stock`, and tell the caller.
-    function _failCompletion(orderId, message, markOutOfStock, callback) {
+    // `announce` = the cause text to toast, or "" for none. Non-empty only when nobody is waiting for
+    // this answer any more (the caller was told "done" when the completion was queued), so the person
+    // is told once, with the cause (Q-EC-2 A).
+    function _failCompletion(orderId, message, markOutOfStock, callback, announce) {
         delete dataModel._completingOrderIds[orderId]
         if (markOutOfStock) OrdersStore.updateOrder(orderId, { status: "out of stock" })
         dataModel.stockErrorMsg = message
         _updateOrderInModel(orderId)
         if (callback) callback(false)
+        if (typeof announce === "string" && announce.length > 0) _announceReverted(orderId, announce)
+    }
+
+    // One toast signal per finished-and-failed completion whose caller already left. Guarded like
+    // stockRestorationSkipped above: headless tests run DataModel without a dispatcher.
+    function _announceReverted(orderId, cause) {
+        var o = OrdersStore.getById(orderId)
+        var who = (o && o.customer) ? o.customer : orderId
+        if (dispatcher && typeof dispatcher.orderCompletionReverted === "function")
+            dispatcher.orderCompletionReverted(orderId, qsTr("Order for %1 was not completed:").arg(who) + " " + cause)
     }
 
     // recordOperation's callback fires exactly once per _completeAttempt call
@@ -776,12 +793,14 @@ Item {
         var onStockOp = op && op.entity === "inventory"
         if (onStockOp && !wasQueued && rejection.error === "insufficient-quantity") {
             delete _openCompletions[key]
-            _failCompletion(open.orderId, (_nameForProduct(op.entityId) + ": stock ran out before this order could complete"), true, open.callback)
+            _failCompletion(open.orderId, FailureCause.forRejection(rejection, _nameForProduct(op.entityId)).text, true, open.callback)
             return
         }
         if (open.attempt >= maxReplans) {
             delete _openCompletions[key]
-            _failCompletion(open.orderId, "Could not complete this order — please try again", true, open.callback)
+            var failName = (op && op.entity === "inventory") ? _nameForProduct(op.entityId) : ""
+            var cause = FailureCause.forRejection(rejection, failName).text
+            _failCompletion(open.orderId, "Could not complete this order: " + cause, true, open.callback, wasQueued ? cause : "")
             return
         }
         _reconcileFromRejection(op, rejection)

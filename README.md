@@ -675,6 +675,13 @@ feeds `syncStuckTerminalCount` in `Main.qml`, and `GlassHeader` shows "N change(
 retrying." Retry, backoff and dropping are unchanged. Test plan:
 `docs/superpowers/test-plans/2026-09-28-gateway-write-error-classification-test-plan.md`.
 
+**Update 2026-10-13 (cause of a failed order completion):** the stuck-writes sheet now shows WHY a write is stuck
+(`FailureCause.forWriteError`, from the latest `{code, status}` that `StuckWrites` keeps and `OutboxStore` persists), and a
+completion that was shown as done while offline but later fails for good raises one toast naming the customer and the cause
+(`Logic.orderCompletionReverted`). Completion rows are labelled by customer, not by a stock batch id. Client-only: no server
+change, no deploy. Design: `docs/superpowers/specs/2026-10-13-completion-error-cause-design.md`; test plan:
+`docs/superpowers/test-plans/2026-10-13-completion-error-cause-test-plan.md`.
+
 **Update 2026-09-29 (stuck-writes dialog + Retry now, part B slice S1):** the `GlassHeader` stuck caption is now
 underlined and tappable while online. It opens `StuckWritesSheet` (`qml/pages/`), one row per stuck write
 (`Gateway.stuckRows()`, labels from `qml/helper/DescribeItem.js`) with a "Retry now" button. `Gateway.retryStuck`
