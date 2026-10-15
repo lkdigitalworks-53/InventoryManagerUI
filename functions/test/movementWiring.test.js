@@ -187,3 +187,145 @@ test("applyDelta: increasing kinds work (receipt +5)", async () => {
     assert.equal(r.ok, true);
     assert.equal(db.store[T + "inventory/p1"].stock, 6);
 });
+// ── operations ──────────────────────────────────────────────────────────────
+const RID = "completeOrder:o1:1";
+function opBody(ops) { return { requestId: RID, opType: "completeOrder", ops: ops, clientTimestamp: 7 }; }
+function deltaOp(id, stockDelta, movements) {
+    return { kind: "delta", entity: "inventory", entityId: id, deltas: { stock: stockDelta }, floors: { stock: 0 }, movements: movements };
+}
+function oParams(v) {
+    return { tenantId: "t1", actorUid: "u1", actorRole: "staff", requestId: v.requestId, opType: v.opType, ops: v.ops,
+             clientTimestamp: v.clientTimestamp, serverTimestamp: "TS" };
+}
+
+test("validateMutationRequest and a mutation op may not carry movements (server derives them)", () => {
+    const m = G.validateMutationRequest({ entity: "inventory", entityId: "p1", action: "update", requestId: "r", before: {}, after: {}, movements: [] });
+    assert.equal(m.error, "movements-not-supported");
+    const v = O.validateOperationRequest(opBody([{ kind: "mutation", entity: "order", entityId: "o1", action: "update",
+        before: {}, after: {}, movements: [] }]));
+    assert.equal(v.error, "movements-not-supported");
+    assert.equal(v.opIndex, 0);
+});
+
+test("validateOperationRequest: write budget = 2 per op + 1 marker + one movement row per inventory op", () => {
+    const inv = (n) => Array.from({ length: n }, (_, i) => deltaOp("p" + i, -1, undefined));
+    assert.equal(O.validateOperationRequest(opBody(inv(166))).ok, true);            // 332 + 1 + 166 = 499
+    const over = O.validateOperationRequest(opBody(inv(167)));                       // 334 + 1 + 167 = 502
+    assert.equal(over.ok, false);
+    assert.equal(over.error, "operation-too-large");
+});
+
+test("validateOperationRequest: explicit movements count toward the write budget", () => {
+    const two = [{ kind: "sale", qty: -1 }, { kind: "sale", qty: -1 }];
+    const ops = (n) => Array.from({ length: n }, (_, i) => deltaOp("p" + i, -2, two));
+    assert.equal(O.validateOperationRequest(opBody(ops(124))).ok, true);             // 4*124 + 1 = 497
+    const over = O.validateOperationRequest(opBody(ops(125)));                       // 4*125 + 1 = 501
+    assert.equal(over.error, "operation-too-large");
+});
+
+test("validateOperationRequest: a non-inventory op costs no movement row (200 stock_batch ops = 401 writes, ok)", () => {
+    const ops = Array.from({ length: 200 }, (_, i) => ({ kind: "delta", entity: "stock_batch", entityId: "b" + i, deltas: { qtyRemaining: -1 } }));
+    assert.equal(O.validateOperationRequest(opBody(ops)).ok, true);
+});
+
+test("validateOperationRequest: a bad movement reports the op index", () => {
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -1, [{ kind: "sale", qty: -1 }]), deltaOp("p2", -1, [{ kind: "x", qty: -1 }])]));
+    assert.equal(v.error, "invalid-movement-kind");
+    assert.equal(v.opIndex, 1);
+});
+
+test("applyOperation: writes a movement row per op movement, carrying the operation context", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 }, [T + "inventory/p2"]: { stock: 5 } });
+    const v = O.validateOperationRequest(opBody([
+        deltaOp("p1", -3, [{ kind: "sale", qty: -1, valueAtCost: 2 }, { kind: "sale", qty: -2, valueAtCost: 6 }]),
+        deltaOp("p2", -1, undefined)]));
+    const r = await O.applyOperation(db, oParams(v));
+    assert.equal(r.ok, true);
+    // op 0: two explicit rows; op 1: no movements sent, so one server-derived row.
+    assert.deepEqual(rowsOf(db).map((w) => w.path),
+        [T + "stock_movements/completeOrder:o1:1~0~m0", T + "stock_movements/completeOrder:o1:1~0~m1", T + "stock_movements/completeOrder:o1:1~1~m0"]);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~0~m0"].derived, false);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~1~m0"].derived, true);
+    const row = db.store[T + "stock_movements/completeOrder:o1:1~0~m1"];
+    assert.equal(row.productId, "p1");
+    assert.equal(row.operationId, RID);
+    assert.equal(row.opType, "completeOrder");
+    assert.equal(row.opIndex, 0);
+    assert.equal(row.actorRole, "staff");
+    assert.equal(db.store[T + "inventory/p1"].stock, 7);
+});
+
+test("applyOperation: a movement/stock mismatch on any op rejects the WHOLE operation, nothing written", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 }, [T + "inventory/p2"]: { stock: 5 } });
+    const v = O.validateOperationRequest(opBody([
+        deltaOp("p1", -3, [{ kind: "sale", qty: -3 }]),
+        deltaOp("p2", -2, [{ kind: "sale", qty: -1 }])]));
+    const r = await O.applyOperation(db, oParams(v));
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "movement-qty-mismatch");
+    assert.equal(r.opIndex, 1);
+    assert.equal(db.writes.length, 0);
+});
+
+test("applyOperation: replay of the same requestId writes no second set of rows", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -3, [{ kind: "sale", qty: -3 }])]));
+    await O.applyOperation(db, oParams(v));
+    const n = db.writes.length;
+    const again = await O.applyOperation(db, oParams(v));
+    assert.equal(again.idempotentReplay, true);
+    assert.equal(db.writes.length, n);
+});
+
+test("applyOperation: an inventory delta op with no movements derives a \"sale\" row for completeOrder", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -3, undefined)]));
+    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
+    const rows = rowsOf(db);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].data.kind, "sale");
+    assert.equal(rows[0].data.qty, -3);
+    assert.equal(rows[0].data.derived, true);
+    assert.equal(rows[0].data.opType, "completeOrder");
+});
+
+test("applyOperation: a derived default that contradicts the direction falls back to adjustment", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 } });
+    const v = O.validateOperationRequest(opBody([{ kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: 4 } }]));
+    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
+    assert.equal(rowsOf(db)[0].data.kind, "adjustment");
+});
+
+test("applyOperation: non-inventory delta ops and mutation ops write no movement rows", async () => {
+    const db = makeDb({ [T + "stock_batches/b1"]: { qtyRemaining: 5 }, [T + "orders/o1"]: { status: "pending" } });
+    const v = O.validateOperationRequest(opBody([
+        { kind: "delta", entity: "stock_batch", entityId: "b1", deltas: { qtyRemaining: -1 } },
+        { kind: "mutation", entity: "order", entityId: "o1", action: "update", before: { status: "pending" }, after: { status: "done" } }]));
+    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
+    assert.equal(rowsOf(db).length, 0);
+});
+
+test("applyOperation: the largest accepted operations stay within the Firestore write ceiling", async () => {
+    // 166 inventory ops (each derives a row): 166 docs + 166 audits + 166 rows + 1 marker = 499.
+    let docs = {}; let ops = [];
+    for (let i = 0; i < 166; i++) { docs[T + "inventory/p" + i] = { stock: 5 }; ops.push(deltaOp("p" + i, -1, undefined)); }
+    let db = makeDb(docs);
+    assert.equal((await O.applyOperation(db, oParams(O.validateOperationRequest(opBody(ops))))).ok, true);
+    assert.equal(db.writes.length, 499);
+    // 200 stock_batch ops: 401 writes, no rows.
+    docs = {}; ops = [];
+    for (let i = 0; i < 200; i++) { docs[T + "stock_batches/b" + i] = { qtyRemaining: 5 }; ops.push({ kind: "delta", entity: "stock_batch", entityId: "b" + i, deltas: { qtyRemaining: -1 } }); }
+    db = makeDb(docs);
+    assert.equal((await O.applyOperation(db, oParams(O.validateOperationRequest(opBody(ops))))).ok, true);
+    assert.equal(db.writes.length, 401);
+});
+
+test("applyOperation: movement on a later op carries THAT op's index in id and row", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10 }, [T + "inventory/p2"]: { stock: 5 } });
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -1, undefined), deltaOp("p2", -2, [{ kind: "loss", qty: -2 }])]));
+    assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
+    const row = db.store[T + "stock_movements/completeOrder:o1:1~1~m0"];
+    assert.ok(row);
+    assert.equal(row.opIndex, 1);
+    assert.equal(row.productId, "p2");
+});
