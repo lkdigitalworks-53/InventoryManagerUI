@@ -1,19 +1,25 @@
-# CHECKPOINT — 2026-10-14 PR #139 final-sweep review (resume here)
+# CHECKPOINT — 2026-10-15 PR #139 test-plan rewrite (resume here)
 
-**Branch:** `review/2026-10-14-pr139-final-sweep` (stacked PR, base = `docs/2026-10-13-completion-error-cause-design` = PR #139's branch @ 34d356f).
-**Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config.
+**Branch:** `docs/2026-10-13-completion-error-cause-design` (PR #139's own branch; Taher said push straight here).
+**Commit identity:** `dextran52@gmail.com`. PAT only in the push command, never in a file or git config.
 **Rules in force:** do not build/run the app; no Qt tools in the sandbox (CI is the proof); push without asking, Taher reviews in the PR; short scope (token budget); honest trade-offs, grill before deciding.
-**Skills used (Taher asked for all three):** `superpowers:requesting-code-review` (template code-reviewer.md; no subagent tool in chat, so the reviewer pass is done inline), `qt-development-skills:qt-qml-review` (Phase 1 linter run; qmllint absent; the 6 agent missions done inline), `ponytail:ponytail-audit` (scoped to the PR's files, output format = plain English, ranked, numbered).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-14-pr139-final-sweep-prev-CHECKPOINT.md`.
+**Skills used:** `superpowers:brainstorming` (review + options, Taher chose option A: full rewrite to Skill 49, two commits).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-15-test-plan-rewrite-prev-CHECKPOINT.md`.
+
+## Why
+Taher's review of the test plan `docs/superpowers/test-plans/2026-10-13-completion-error-cause-test-plan.md`: (1) an "Implementation status" block inside a test plan (stale counts: 34 planned / 49 written / README 48), (2) not Skill 49 shape, (3) on-device steps poor (no prerequisites, no numbered steps, no expected outcomes). New standing rule: on-device steps always have prerequisites, numbered actions, expected outcome per step.
+
+## Taher's device recipes (used in the plan)
+- Recipe A: set `tenants/<tenantId>/members/<uid>.status` to `inactive` in Firestore while the app is open -> server 403 `no-tenant-context` (stuck, retrying, NOT parked) -> cause text is the generic "The server returned an error (HTTP 403)".
+- Recipe B: delete the product doc in Firestore -> `not-found` text, or the local "<name>: not found in inventory".
+- No recipe forces a 500 `write-rejected` -> the Rejected row / Retry / Discard / "refused" wording stay unit/functional only (stated in the plan).
 
 ## Steps
-- [x] 1. Read memory, 3 skills, cloned repo, review branch cut from PR #139 tip
-- [x] 2. Scope: 24 files, +814/-55; QML/JS code = 9 prod files + 6 test files (qml/helper/FailureCause.js new)
-- [x] 3. QML linter (Phase 1): 561 raw hits on the touched files, 9 on ADDED lines, all `var` style (repo-wide convention) or ORD-1 noise that exists on main too -> 0 real lint findings
-- [x] 4. Deep trace done (DataModel completion paths, lastError flow, sheet, tests)
-- [x] 5. Report `docs/superpowers/specs/2026-10-14-pr139-final-sweep-review.md`; fixes: OutboxStore uses `StuckWrites.cleanLastError`, DataModel stock text via `FailureCause`, test F13 (reachable `not found in inventory` announce), test plan corrected, Skill 119 + index (120 skills). Script tests 94/94. Node probe: cleanLastError equivalence 7/7.
-- [x] 6. Pushed; stacked PR opened (number in PR list)
-- [ ] 7. Wait for CI on the review tip (QML F13 + refactor are CI-only); Taher decides D-1 (out-of-stock status, recommend B)
+- [x] 1. Read plan, Skill 49, approve-all exemplar, FailureCause.js, Gateway/StuckWrites/DataModel diffs; traced what each recipe produces
+- [x] 2. Commit 1: replace on-device section with the full plan (prerequisites P1-P9, H/N/E/M/K steps with expected results, affected areas, regression cues, not-testable list)
+- [ ] 3. Commit 2: restructure the rest to Skill 49 (Unit, Functional, Regression, Monkey, Rules/E2E), counts recounted (49 = 16+10+3+5+5+10), "Implementation status" replaced by a short "Verification status", history moved out; README index row fixed (48 -> 49, no "planned"); Skill 49 addendum; script tests
+- [ ] 4. Push, then wait for CI
 
 ## NEXT
-CI on the review tip. If F13 or any QML test is red, fix it first (F13 assumes `InventoryStore.products = []` then `_answer(_key(1), _rejection(0,{current:0}))` yields one toast). Then merge the review PR into #139's branch, then squash-merge #139. After D-1 is decided: implement option in a new branch.
+If step 3 is not done: restructure sections 1-5 of the plan per the list above, fix the README row, run the script tests under `.github/scripts`, push.
+Open decision for Taher (not in this PR): map 403 `no-tenant-context` to a clearer sentence in `FailureCause.js` (+tests). Also D-1 from the earlier review (order status `out of stock` whatever the cause).

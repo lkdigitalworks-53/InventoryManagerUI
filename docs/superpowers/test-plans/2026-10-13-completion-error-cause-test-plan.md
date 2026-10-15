@@ -48,8 +48,78 @@ E01 online completion that the server rejects (record deleted in the emulator be
 ## 4. Regression — 4
 R01 `insufficient-quantity` text unchanged (existing case 3). R02 case 5 bounded re-plans unchanged. R03 S3 Discard cases 17-19 unchanged. R04 stuck sheet strings for a non-completion stuck write unchanged.
 
-## 5. On-device (after CI green, only when Taher asks to build)
-Happy: complete online -> no toast. Negative: delete a product in the web/other device, complete an order containing it offline, reconnect -> toast names the cause, order pending. Edge: very long customer name in the toast and in the sheet row (elide). Multi-scenario: two parked writes with different causes, each row shows its own. Relaunch: kill the app with a parked completion, reopen sheet, cause still there. Monkey: toggle airplane mode while completing 5 orders in a row; no duplicate toasts, guard released, no row stuck "being completed".
+## 6. On-device test plan
+
+**Who runs it:** Taher, after CI is green on the PR tip and he decides to build (nothing here is run by Claude; the sandbox has no Qt and no device).
+**What it proves:** the cause text people see when an order completion fails or a write is stuck, on a real Android phone against the dev Firebase project. Everything else is covered in sections 1-5.
+**How to record:** tick the box per step. Where a step says **Record**, write what you actually saw in a PR comment; that is not a pass/fail, it settles a behaviour the code cannot tell us in advance.
+
+### Prerequisites (do all before step H1)
+| # | Prerequisite | Detail |
+|---|---|---|
+| P1 | Build | CI green on the PR tip. Taher builds and installs the app on one Android phone ("Device A"). Device A is online. |
+| P2 | Account | A **fresh test tenant** (new user + new tenant, as for every PR). On Device A log in as a **manager**, not the owner. Reason: you will flip this member's status to `inactive` in Firestore. Doing that to the owner would lock the tenant's owner out. |
+| P3 | Console | Firestore console for the dev project, open in a browser, signed in with edit rights. Note the `tenantId` and the manager's `uid` (document `tenants/<tenantId>/members/<uid>`, field `status`, normally `active`). |
+| P4 | Settings | Auto-approve is **OFF**, so new orders stay `pending` until you approve them. |
+| P5 | Products | Create `Cause Widget A`, `Cause Widget B`, `Cause Widget C`, each with stock **100** and enough price/batch data to sell. Write down the stock after creating. |
+| P6 | Orders | Create these orders, each with ONE line, status `pending`: **O1** customer `Alice Happy`, Widget A x1. **O2** `Bob Inactive`, Widget A x1. **O3** `Cara Deleted`, Widget B x1. **O4** `Dan Online Deleted`, Widget C x1. **O5** customer = an 80-character name (for example `Long Customer ` repeated until 80 characters, ending in an emoji), Widget A x1. **O6** customer left blank, Widget A x1. **O7..O11** `Monkey 1`..`Monkey 5`, Widget A x1 each. |
+| P7 | Console edits | Recipe A (server refuses): set `tenants/<tenantId>/members/<uid>.status` to `inactive`. Recipe B (record deleted elsewhere): delete the product's document in the console (find it by name in the tenant's inventory collection). |
+| P8 | Reset (between scenarios) | Set the member's `status` back to `active`. Wait until the red caption under the header is gone (each stuck write retries with backoff, so this can take a few minutes). If a row is still in the sheet after 10 minutes, open it and tap **Discard**, then confirm. Re-create any deleted product with the same name and stock. Re-create orders you need again. |
+| P9 | Timing | A write counts as stuck after its **5th** failed send, with backoff in between. Allow up to **10 minutes** for the red caption after Recipe A. If nothing appears after 10 minutes, mark the step FAIL and note the elapsed time. |
+
+### What Recipe A and Recipe B produce (read before testing)
+- **Recipe A** (member `inactive`): the server answers a queued completion with HTTP **403** `no-tenant-context`. A 403 is "stuck, still retrying", **not** "Rejected". The cause line is therefore the generic **"The server returned an error (HTTP 403)"**. The wording "The server refused to save this. Usually a permission change..." belongs to a 500 `write-rejected` and does **not** appear with this recipe.
+- **Recipe B** (product deleted): the server answers `not-found`, shown as **"A record this order needs was deleted on another device"**. If the phone has already learned the product is gone, the app stops earlier with **"<product name>: not found in inventory"** instead. Both are correct; you **Record** which one you got.
+
+### Happy path
+- [ ] **H1. Online completion, nothing wrong.** Open O1 (`Alice Happy`) and approve it. **Expected:** the order shows completed; no toast; no red caption under the header; Widget A stock is 1 lower than in P5.
+- [ ] **H2. Cause visible for a stuck completion (Recipe A).** App open on the Orders list, online. In the console set the manager's `status` to `inactive`. Approve O2 (`Bob Inactive`). **Expected, immediately:** the order shows completed (the write is queued). **Expected, after up to 10 minutes:** the header shows a red underlined line **"1 change(s) not syncing. Still retrying."** Tap it. A sheet titled **"Changes not syncing"** opens with the sentence "These changes are saved on this device. Rejected ones wait until you tap Retry or Discard; the rest keep retrying." The row shows: the customer name **Bob Inactive** (not a code that starts with `B` followed by digits or letters, which would be a stock batch id), the cause line **"The server returned an error (HTTP 403)"**, the status line **"Not syncing. Still retrying."**, and a **Retry now** button. There is no "Rejected by the server" text. **Record:** whether a Discard button is visible on this row, and whether the app kept working normally while the member was `inactive`.
+- [ ] **H3. Recovery clears the cause.** Set the member's `status` back to `active`. In the sheet tap **Retry now**. **Expected:** toast "Retrying…", then the row disappears, the red caption disappears, O2 stays completed, and Widget A stock is lower by **exactly 1** for O2 (not 2).
+
+### Negative
+- [ ] **N1. Product deleted, completion queued offline (Recipe B).** Turn airplane mode ON. Approve O3 (`Cara Deleted`): it shows completed locally. In the console delete `Cause Widget B`. Turn airplane mode OFF. **Expected:** exactly **one** toast that begins **"Order for Cara Deleted was not completed:"** and ends with either "A record this order needs was deleted on another device" or "Cause Widget B: not found in inventory". It does not repeat. O3 no longer shows as completed. **Record:** which ending you got, and O3's status afterwards (the code can leave it `out of stock`, whatever the cause: known, decision D-1 pending, so this is not a failure).
+- [ ] **N2. Product deleted, completion online (Recipe B).** Online, open O4 (`Dan Online Deleted`) on its detail screen. In the console delete `Cause Widget C`. Tap approve. **Expected:** a message appears once containing either "Cause Widget C: not found in inventory" or "Could not complete this order: A record this order needs was deleted on another device". O4 is not completed. The approve button works again afterwards (tap it once more: you get the message again, the screen is not frozen). **Record:** where the message appeared (toast, dialog or inline).
+- [ ] **N3. Retry while the cause still exists.** Redo H2 until the row is in the sheet, leave the member `inactive`, and tap **Retry now**. **Expected:** toast "Retrying…"; the row stays; the cause line still reads "The server returned an error (HTTP 403)" (not blank, not "undefined", not a different sentence); the header caption stays.
+- [ ] **N4. Offline is not a server cause.** Airplane mode ON, approve an order from the pending list (use O5 only if you do not need it for E1; otherwise re-create one). **Expected:** the order completes locally; the header shows "App is offline, no operation allowed."; if you open the sheet (after going online and back to this state) it says "Nothing is stuck right now." No row with a cause line appears for an offline wait.
+
+### Edge cases
+- [ ] **E1. Very long customer name (80 characters + emoji).** Approve O5 under Recipe A. **Expected:** the sheet row shows the name without overlapping the cause line (it wraps or elides); the header line is unaffected. Then under Recipe B (re-create O5 and Widget A first) the toast text is readable and does not crash. **Record:** whether the toast truncates the name.
+- [ ] **E2. Customer left blank.** Approve O6 under Recipe A. **Expected:** the sheet row detail shows the order id (not a stock batch id, not empty). Under Recipe B the toast reads "Order for <order id> was not completed: ...".
+- [ ] **E3. Cause survives an app relaunch.** With the H2 row in the sheet and the member still `inactive`, force-stop the app from Android settings, then reopen it online. **Expected:** the red caption returns (it may take one retry cycle); in the sheet the row still shows **Bob Inactive** and the cause **"The server returned an error (HTTP 403)"** without needing five new failures. **Record:** how long until the caption came back.
+- [ ] **E4. Large font and rotation.** Set the Android font size to the largest, rotate the phone, open the sheet with one stuck row. **Expected:** customer name, cause line and status line wrap without overlapping each other or the buttons.
+- [ ] **E5. Known gap I-001 (record only).** Airplane mode ON, approve one order whose product you then delete (Recipe B), force-stop the app, reopen it online. **Record:** is there any message, and what is the order's status? Today a completion queued before a restart has no open entry in memory, so no toast and no cause is expected. This is a known, out-of-scope gap, not a failure of this change.
+
+### Multi-scenario
+- [ ] **M1. Two different stuck writes at once (Recipe A).** Member `inactive`. Approve one order, then also edit the name of `Cause Widget A` (any other write). Wait for both to be stuck. **Expected:** the sheet lists two rows, each with its own title/detail; the completion row shows the customer name; both rows show a cause line (the edit's cause may use a different code, but with Recipe A both read "The server returned an error (HTTP 403)"); tapping **Retry now** on one row does not change the other row's text.
+- [ ] **M2. Five completions stuck together (Recipe A).** Member `inactive`. Approve O7..O11. **Expected:** after the 5th failed send each, the header reads "5 change(s) not syncing. Still retrying." and the sheet lists five rows, one per `Monkey n` customer, each with the cause line. Restore `status` to `active`, tap **Retry now** on each row. **Expected:** all rows clear; Widget A stock is lower by **exactly 5** in total (once per order).
+
+### Monkey
+- [ ] **K1.** With Recipe A active, approve O7..O11 as fast as you can, then for 2 minutes: toggle airplane mode on/off about 10 times, rotate the phone, send the app to the background and back, and open and close the sheet quickly. **Expected:** no crash; no order produces two toasts; no row is stuck on "Sending…" for good; no row has an empty customer name or empty cause line; the caption count equals the number of rows in the sheet. Then restore `active` and retry everything: all rows clear and stock is deducted once per order.
+- [ ] **K2.** Flip the member between `inactive` and `active` in the console five times, about 20 seconds apart, while you approve orders. **Expected:** every completion either goes through exactly once or ends up in the sheet with a cause; none is lost and none is applied twice (check Widget A stock against the number of completed orders).
+
+### Affected areas
+| File | Automated coverage | If not covered, check on the device |
+|---|---|---|
+| `qml/helper/FailureCause.js` (new) | 16 QML cases, run in Node | n/a |
+| `qml/helper/StuckWrites.js` (`lastError`) | 10 QML cases, run in Node | H2, E3 |
+| `qml/helper/DescribeItem.js` (customer label) | 3 QML cases, run in Node | H2, E2, M1 |
+| `qml/model/OutboxStore.qml` (`setStuckMeta` persists cause) | 5 QML cases, CI only | E3 |
+| `qml/model/Gateway.qml` (`stuckRows` cause) | 5 QML cases, CI only | H2, N3, M1 |
+| `qml/model/DataModel.qml` (completion failure text, one toast) | 10 QML cases, CI only | N1, N2, K2 |
+| `qml/Main.qml` (toast on `orderCompletionReverted`) | none (needs the full app) | N1, E1, E2 |
+| `qml/pages/StuckWritesSheet.qml` (cause line) | none (needs the full app) | H2, N3, E4, M1, M2 |
+| `qml/logic/Logic.qml` (signal) | none (declaration only) | N1 |
+
+### Regression: how you would notice it came back
+- A completion row shows a code that looks like a stock batch id instead of the customer: the order label fix was lost (H2, E2).
+- One failed completion gives two toasts, or none: the announce-once rule was lost (N1, K1).
+- The cause line is blank or shows "undefined": the cause is not persisted or not mapped (H2, E3).
+- After Retry the old cause is still shown when the answer changed: the "latest answer wins" rule was lost (N3).
+- A stuck row survives after the write finally succeeded: the cause cleanup was lost (H3, M2).
+
+### Not testable on a device (stated, not hidden)
+- The **"Rejected by the server"** row, its wording "The server refused to save this. Usually a permission change, invalid data, or a record deleted elsewhere", the **Retry** and **Discard** buttons on a rejected row, and the text "This order's completion was discarded..." need a server 500 `write-rejected`. Recipe A gives a 403 instead, and no verified recipe forces a `write-rejected`. These are covered by unit and functional cases only (U09, F06, F12), and no e2e exists for the same reason.
+- Open decision for Taher (not part of this PR): with Recipe A the person sees "The server returned an error (HTTP 403)", which does not say that their access was changed. A clearer sentence for `no-tenant-context` would need a change in `FailureCause.js` plus tests.
 
 
 ## Implementation status (2026-10-13)
