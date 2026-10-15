@@ -4332,7 +4332,8 @@ Rules:
 3. Show per-order state as a map keyed by id, not only a count: a global count cannot say whether THIS dialog's order is the one syncing.
 4. Test it against an independent recount of the raw bookkeeping (monkey, seeded), not against expected literals.
 5. Session-scoped on purpose: after a relaunch the stores show the server's state, so the hint disappears with the in-memory entry. Say so in the design; do not "fix" it by reading the outbox without also fixing the overlay gap.
-6. Not done here: orders-list chip, approve-all banner wording, NewOrderDialog. The exhausted-re-plan branch still flags `out of stock` whatever the cause (Skill 118 rule 6): this slice did not touch order status.
+6. A state shown as "in flight" must also ask the thing that can stop it: a parked write (`Gateway.isParkedKey`) is waiting for a person, so `_refreshSyncing` excludes it and re-runs on `stuckTerminalCountChanged`. Test the park -> Retry -> Discard cycle, not only the happy exits.
+7. Not done here: orders-list chip, approve-all banner wording, NewOrderDialog. The exhausted-re-plan branch still flags `out of stock` whatever the cause (Skill 118 rule 6): this slice did not touch order status.
 
 
 ## Skill 121: A stacked PR whose base is `main` but whose branch holds pre-squash commits will conflict AND can revert main

@@ -481,6 +481,8 @@ Item {
             var open = dataModel._openCompletions[requestId]
             if (opType === "completeOrder" && open && open.undo) dataModel._onCompletionRejected(requestId, rejection)
         }
+        // A write got parked, or Retry/Discard/prune un-parked one: the caption must follow.
+        function onStuckTerminalCountChanged() { dataModel._refreshSyncing() }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -605,7 +607,9 @@ Item {
     property var _openCompletions: ({})
 
     // Task 11 ("Saved, syncing"): orders whose completion is shown as done but not yet confirmed by
-    // the server (an _openCompletions entry with undo !== null). _openCompletions is a plain map QML
+    // the server (an _openCompletions entry with undo !== null) AND whose write is not parked (a parked
+    // write waits for Retry/Discard in the Stuck writes sheet; calling it "syncing" would contradict the
+    // header line). A write that is stuck but still retrying (not server-rejected) stays "syncing". _openCompletions is a plain map QML
     // cannot observe, so _refreshSyncing() assigns a NEW object each time; bindings then re-evaluate.
     // Session-scoped on purpose (design D-2): after a relaunch the order is shown as it is on the server.
     property var syncingOrderIds: ({})
@@ -616,7 +620,7 @@ Item {
         var n = 0
         for (var k in _openCompletions) {
             var open = _openCompletions[k]
-            if (open && open.undo && !ids[open.orderId]) { ids[open.orderId] = true; ++n }
+            if (open && open.undo && !Gateway.isParkedKey(k) && !ids[open.orderId]) { ids[open.orderId] = true; ++n }
         }
         syncingOrderIds = ids
         completionsSyncing = n

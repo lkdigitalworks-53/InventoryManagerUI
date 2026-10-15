@@ -15,6 +15,7 @@ TestCase {
     SignalSpy { id: countSpy; target: dm; signalName: "completionsSyncingChanged" }
 
     function init() {
+        Gateway.clear()   // also resets the stuck/parked bookkeeping between cases
         OrdersStore.orders = [_order("O1", 1), _order("O2", 1), _order("O3", 1)]
         InventoryStore.products = [_product()]
         StockBatchStore.batches = [_batch()]
@@ -68,7 +69,18 @@ TestCase {
     function _answer(key, result) {
         OutboxStore.markSent(key)
         Gateway._finishOperation({ requestId: key, opType: "completeOrder" }, result)
+        Gateway._pruneStuck()   // production runs this from _reschedule() once the item has left the outbox
     }
+    function _item(key) {
+        return OutboxStore.items.filter(function(i) { return i.requestId === key })[0]
+    }
+    // Server says "write-rejected" `n` times (>= StuckWrites.THRESHOLD parks it), like tst_Gateway drives it.
+    function _reject(key, n) {
+        var it = _item(key)
+        verify(it !== undefined, "queued item for " + key)
+        for (var i = 0; i < n; ++i) Gateway._noteFailure(it, 400, '{"error":"write-rejected"}')
+    }
+    function _park(key) { _reject(key, 5) }
     function _applied() {
         return { ok: true, idempotentReplay: false,
                  results: [{ entity: "inventory", entityId: "SKU-1", kind: "delta", after: { stock: 9 } }] }
@@ -86,7 +98,8 @@ TestCase {
         var out = {}
         for (var k in dm._openCompletions) {
             var o = dm._openCompletions[k]
-            if (o && o.undo) out[o.orderId] = true
+            var parked = Gateway._stuckState.stuck[k] === true && Gateway._stuckState.terminal[k] === true
+            if (o && o.undo && !parked) out[o.orderId] = true
         }
         return _idsOf(out)
     }
@@ -196,6 +209,67 @@ TestCase {
         _assertConsistent("after local failure")
     }
 
+    // ── parked writes (review of PR #144, finding 2, option B) ───────────
+
+    function test_parked_completion_is_not_syncing() {
+        _complete("O1")
+        compare(dm.completionsSyncing, 1)
+        _park(_key("O1"))
+        compare(Gateway.stuckTerminalCount, 1, "the gateway really parked it")
+        compare(dm.completionsSyncing, 0, "parked: waiting for Retry/Discard, not syncing")
+        verify(dm.syncingOrderIds["O1"] !== true)
+        verify(dm._openCompletions[_key("O1")], "the open completion is still tracked")
+        compare(OrdersStore.getById("O1").status, "completed", "still shown as done")
+        _assertConsistent("after park")
+    }
+
+    function test_retry_of_a_parked_completion_shows_the_hint_again() {
+        _complete("O1")
+        _park(_key("O1"))
+        compare(dm.completionsSyncing, 0)
+        verify(Gateway.retryStuck(_key("O1")), "retry accepted")
+        compare(dm.completionsSyncing, 1, "un-parked and retrying: syncing again")
+        verify(dm.syncingOrderIds["O1"] === true)
+        _assertConsistent("after retry")
+    }
+
+    function test_discard_of_a_parked_completion_ends_cleanly() {
+        _complete("O1")
+        _park(_key("O1"))
+        _answer(_key("O1"), _discarded())
+        compare(dm.completionsSyncing, 0)
+        compare(OrdersStore.getById("O1").status, "pending")
+        verify(!dm._openCompletions[_key("O1")])
+        _assertConsistent("after discard of parked")
+    }
+
+    function test_parking_one_order_hides_only_that_order() {
+        _complete("O1")
+        _complete("O2")
+        compare(dm.completionsSyncing, 2)
+        _park(_key("O1"))
+        compare(_idsOf(dm.syncingOrderIds).join(","), "O2")
+        compare(dm.completionsSyncing, 1)
+        _assertConsistent("after parking one")
+    }
+
+    function test_four_rejections_do_not_park_yet() {
+        _complete("O1")
+        _reject(_key("O1"), 4)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(dm.completionsSyncing, 1, "below the threshold the write is still just retrying")
+    }
+
+    function test_stuck_but_still_retrying_stays_syncing() {
+        // 5 outage-style failures (no write-rejected): stuck, NOT parked -> the app keeps retrying, so "syncing" is true.
+        _complete("O1")
+        var it = _item(_key("O1"))
+        for (var i = 0; i < 5; ++i) Gateway._noteFailure(it, 500, "")
+        compare(Gateway.stuckCount, 1)
+        compare(Gateway.stuckTerminalCount, 0)
+        compare(dm.completionsSyncing, 1)
+    }
+
     // ── functional ───────────────────────────────────────────────────────
 
     function test_two_orders_are_tracked_independently() {
@@ -277,14 +351,19 @@ TestCase {
                 var o = OrdersStore.getById(id)
                 var keys = []
                 for (var k in dm._openCompletions) keys.push(k)
-                if (act < 0.35) {
+                if (act < 0.30) {
                     if (o && o.status === "pending") _complete(id)
-                } else if (act < 0.55 && keys.length > 0) {
+                } else if (act < 0.45 && keys.length > 0) {
                     _answer(keys[Math.floor(rnd() * keys.length)], _applied())
-                } else if (act < 0.7 && keys.length > 0) {
+                } else if (act < 0.55 && keys.length > 0) {
                     _answer(keys[Math.floor(rnd() * keys.length)], _discarded())
-                } else if (act < 0.85 && keys.length > 0) {
+                } else if (act < 0.65 && keys.length > 0) {
                     _answer(keys[Math.floor(rnd() * keys.length)], { ok: false, error: "conflict", opIndex: 0, current: 9 })
+                } else if (act < 0.80 && keys.length > 0) {
+                    var pk = keys[Math.floor(rnd() * keys.length)]
+                    if (_item(pk) !== undefined) _park(pk)
+                } else if (act < 0.90 && keys.length > 0) {
+                    Gateway.retryStuck(keys[Math.floor(rnd() * keys.length)])
                 } else if (o && o.status === "completed") {
                     dm._reverseCompletedOrder(o)
                 }

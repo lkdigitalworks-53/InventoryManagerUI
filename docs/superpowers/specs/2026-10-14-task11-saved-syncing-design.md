@@ -33,6 +33,13 @@ exactly "shown as completed, server not confirmed". It is a plain `var` map, so 
   (Approve-all can leave 5 open). Map + count, one refresh function.
 - **D-4 No animation / spinner.** No reduced-motion setting exists in the project; static text is enough for a caption.
 
+- **D-5 Parked writes (decided 2026-10-15, option B, PR #144 review).** A write the server rejected and the Gateway parked
+  (`StuckWrites.isParked`: stuck AND terminal) waits for Retry/Discard; it is not syncing, and the header line already says so.
+  `_refreshSyncing` skips keys for which `Gateway.isParkedKey(k)` is true, and a `stuckTerminalCount` listener refreshes when a write
+  parks or is un-parked. Rejected: A keep the caption (two screens, two stories), C neutral wording (hides a real state behind vague text).
+  Known limit: stuck-but-retrying (outage) keeps the caption on purpose; the count is the only signal, so a park and an un-park in one
+  instant that cancel out cannot happen (every path changes it by one and refreshes).
+
 ## Honest value statement
 The window is only "queued, or >10 s without an answer". With a healthy connection the hint never shows. Value is real but
 modest; the higher-risk open item is restock as one atomic operation (KNOWN-ISSUES, decided 2026-09-30, unbuilt).

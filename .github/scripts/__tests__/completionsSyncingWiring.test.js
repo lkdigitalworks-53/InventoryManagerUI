@@ -35,6 +35,9 @@ function modelProblems(src) {
   if (!/syncingOrderIds = ids/.test(refresh)) out.push('refresh-assigns-new-object');
   if (!/completionsSyncing = n/.test(refresh)) out.push('refresh-assigns-count');
   if (!/open && open\.undo/.test(refresh)) out.push('refresh-counts-only-shown');
+  // Option B (PR #144 review): a parked write is not "syncing"; and the caption must follow Retry/park.
+  if (!/!Gateway\.isParkedKey\(k\)/.test(refresh)) out.push('refresh-excludes-parked');
+  if (!/function onStuckTerminalCountChanged\(\) \{ dataModel\._refreshSyncing\(\) \}/.test(src)) out.push('refresh-on-park-change');
   const close = bodyOf(src, '_closeOpen');
   if (!/delete _openCompletions\[key\]/.test(close) || !/_refreshSyncing\(\)/.test(close)) out.push('close-deletes-and-refreshes');
   // The only raw delete of an open completion is the one inside _closeOpen.
@@ -44,6 +47,12 @@ function modelProblems(src) {
   if (!/open\.undo = _applyPredicted\(open\.plan\); _refreshSyncing\(\)/.test(src)) out.push('refresh-after-show');
   // Reopen path must use the funnel.
   if (!/dataModel\._closeOpen\(openKey\)/.test(bodyOf(src, '_reverseCompletedOrder'))) out.push('reopen-uses-closeOpen');
+  return out;
+}
+
+function gatewayProblems(src) {
+  const out = [];
+  if (!/function isParkedKey\(requestId\) \{ return StuckWrites\.isParked\(_stuckState, requestId\) \}/.test(src)) out.push('isParkedKey-uses-isParked');
   return out;
 }
 
@@ -57,9 +66,14 @@ function dialogProblems(src) {
 
 const MODEL = read('qml', 'model', 'DataModel.qml');
 const DIALOG = read('qml', 'pages', 'OrderDetailDialog.qml');
+const GATEWAY = read('qml', 'model', 'Gateway.qml');
 
 test('DataModel: syncing state is wired and every close goes through _closeOpen', () => {
   assert.deepEqual(modelProblems(MODEL), []);
+});
+
+test('Gateway: isParkedKey answers "stuck AND server-rejected", nothing weaker', () => {
+  assert.deepEqual(gatewayProblems(GATEWAY), []);
 });
 
 test('OrderDetailDialog: caption is bound to this dialog\'s own order id', () => {
@@ -71,7 +85,9 @@ const modelMutants = {
   'raw delete added': (s) => s.replace('_closeOpen(openKey)', 'delete dataModel._openCompletions[openKey]'),
   'refresh dropped after show': (s) => s.replace('; _refreshSyncing() }', ' }'),
   'in-place mutation (no new object)': (s) => s.replace('syncingOrderIds = ids', 'syncingOrderIds[0] = ids'),
-  'counts every open entry': (s) => s.replace('if (open && open.undo && !ids', 'if (open && !ids'),
+  'counts every open entry': (s) => s.replace('if (open && open.undo && !Gateway', 'if (open && !Gateway'),
+  'parked not excluded': (s) => s.replace('!Gateway.isParkedKey(k) && ', ''),
+  'park listener removed': (s) => s.replace('onStuckTerminalCountChanged', 'onSomethingElse'),
   'close forgets refresh': (s) => s.replace('delete _openCompletions[key]\n        _refreshSyncing()', 'delete _openCompletions[key]'),
   'count property removed': (s) => s.replace('property int completionsSyncing: 0', ''),
 };
@@ -82,6 +98,12 @@ for (const [name, mutate] of Object.entries(modelMutants)) {
     assert.notDeepEqual(modelProblems(mutated), []);
   });
 }
+
+test('gateway mutant caught: isParkedKey weakened to isStuck', () => {
+  const mutated = GATEWAY.replace('return StuckWrites.isParked(_stuckState, requestId)', 'return StuckWrites.isStuck(_stuckState, requestId)');
+  assert.notEqual(mutated, GATEWAY);
+  assert.notDeepEqual(gatewayProblems(mutated), []);
+});
 
 const dialogMutants = {
   'bound to a global count': (s) => s.replace('dataModel.syncingOrderIds[dlg.orderId] === true', 'dataModel.completionsSyncing > 0'),
