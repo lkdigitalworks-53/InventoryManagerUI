@@ -76,6 +76,7 @@ function installMocks() {
         collectionGetError: null, // when set, every collection(...).get() throws this (computeAnalysis 500 path)
         applyMutationResult: null,
         applyDeltaResult: null,
+        lastApplyDeltaParams: null,
         applyMutationsBatchResult: null,
         applyOperationResult: null,
         acquireLockResult: null,
@@ -342,7 +343,7 @@ function installMocks() {
                 mockState.applyMutationCalls.push(params);
                 return mockState.applyMutationResult;
             },
-            applyDelta: async () => mockState.applyDeltaResult
+            applyDelta: async (db, params) => { mockState.lastApplyDeltaParams = params; return mockState.applyDeltaResult; }
         })
     };
     const realBatchMutationLogic = require(batchMutationLogicPath);
