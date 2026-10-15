@@ -39,3 +39,8 @@ Server fact: `classifyWriteError` keeps only the class (rejected/unavailable/fai
 - Re-plan loop: the toast must fire exactly once per finished completion (not once per attempt). Test with a monkey run.
 - Text must not claim a cause the code cannot know: P3 under option A says "usually", never asserts.
 - Strings are `qsTr`; no new colours or layout, same `Text` styles as the sheet today (qt-ui-design: no new component).
+
+## Addendum 2026-10-15: Q-EC-4 (decided by Taher: option A, in this PR)
+**Problem:** an `inactive` member makes every write endpoint answer HTTP 403 `no-tenant-context`. That is "stuck, retrying", not parked, and the cause line fell through to "The server returned an error (HTTP 403)", which does not tell the person their access changed.
+**Decision:** map `no-tenant-context` in `FailureCause.forWriteError` to "The server no longer accepts your access to this shop. Your account may have been changed or deactivated. Ask the shop owner" (kind `access`). Hedged with "may" because the same code also covers a missing user record or an account with no shop. Not changed: the 403 stays non-terminal (the member can be re-activated, so retrying is right). Tests: U14, U15, F06e.
+

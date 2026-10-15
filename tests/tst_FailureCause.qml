@@ -124,6 +124,25 @@ TestCase {
         }
     }
 
+    function test_U14_no_tenant_context_says_access_may_have_changed_and_never_asserts_one_cause() {
+        var r = FC.forWriteError("no-tenant-context", 403)
+        compare(r.kind, "access")
+        compare(r.text, "The server no longer accepts your access to this shop. Your account may have been changed or deactivated. Ask the shop owner")
+        verify(r.text.indexOf("may have been") >= 0, "must hedge: the code cannot know which cause")
+        verify(r.text.indexOf("403") < 0, "the status is not echoed when the code is known")
+    }
+
+    function test_U15_no_tenant_context_wins_over_status_is_trimmed_and_neighbours_are_unchanged() {
+        compare(FC.forWriteError(" no-tenant-context ", 500).kind, "access")
+        compare(FC.forWriteError("no-tenant-context", "timeout").kind, "access")
+        compare(FC.forWriteError("no-tenant-context", undefined).kind, "access")
+        // other 403 bodies (and a 403 with no body) keep the plain status text
+        compare(FC.forWriteError("not-authorized", 403).text, "The server returned an error (HTTP 403)")
+        compare(FC.forWriteError("", 403).text, "The server returned an error (HTTP 403)")
+        // a near-miss code is not the access text
+        compare(FC.forWriteError("no-tenant-context-x", 403).kind, "unknown")
+    }
+
     function test_U16_monkey_never_throws_and_text_is_never_empty() {
         var rnd = _rng(1337)
         var codes = ["write-rejected", "write-unavailable", "write-failed", "conflict", "not-found",

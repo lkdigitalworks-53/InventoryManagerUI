@@ -2096,6 +2096,14 @@ TestCase {
         compare(Gateway.stuckRows()[0].cause, "The server returned an error (HTTP 500)")
     }
 
+    function test_F06e_stuckRows_cause_for_a_403_no_tenant_context_says_access_changed_and_is_not_rejected() {
+        var item = _queueWrite("o1")
+        _failWith(item, 403, JSON.stringify({ ok: false, error: "no-tenant-context" }), 5)
+        var row = Gateway.stuckRows()[0]
+        verify(row.cause.indexOf("no longer accepts your access") >= 0, row.cause)
+        compare(row.rejected, false, "a 403 keeps retrying; only write-rejected parks")
+    }
+
     function test_F06c_stuckRows_cause_for_a_timeout_while_online() {
         AuthService.isOnline = true
         var item = _queueWrite("o1")

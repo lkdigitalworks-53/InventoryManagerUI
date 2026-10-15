@@ -4312,6 +4312,8 @@ Rules:
 7. QML's JS parser still rejects the old ES3 future-reserved words (`long`, `short`, `int`, `char`, `byte`, `float`, `double`, `final`, `native`...) as variable names; modern Node accepts them, so a Node shim run does NOT prove a `.qml` test compiles. CI showed it as `tst_X::compile — Expected token identifier`. Before pushing a new test file, grep it for `var (long|short|int|char|byte|float|double|final|native)\b`.
 
 
+**2026-10-15 addendum (D-2):** a recipe's real server answer must be traced before the cause text is finalised. An `inactive` member answers 403 `no-tenant-context` on every endpoint, which is stuck-and-retrying (not parked) and showed only "HTTP 403". It now has its own hedged text in `FailureCause.forWriteError`; a 403 stays non-terminal on purpose, because re-activating the member makes the retry succeed.
+
 ## Skill 119: A doc that calls a branch "unreachable" must be proven against the callee's own error paths, and one validator must serve both the read and the save of a persisted field
 
 PR #139 final sweep (2026-10-14). The test plan called `_completeAttempt`'s `callback === null` announce "unreachable" because a clamped re-plan cannot run out of stock. It can fail another way: `CompletionPlan.build` checks `not found in inventory` BEFORE the clamp, so a product deleted locally between the queued completion and its re-plan reaches the branch (reason is still labelled `out-of-stock`). The branch had no test. Separately `OutboxStore.setStuckMeta` re-implemented `StuckWrites.cleanLastError`, which Skill 118 rule 3 says to use "on every read" (hydrate), so save and load could drift.
