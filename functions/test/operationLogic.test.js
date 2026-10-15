@@ -90,7 +90,8 @@ test("validateOperationRequest: rejects bad envelopes with 400", () => {
 
 test("validateOperationRequest: MAX_OPS is exactly 200 (mirrored by Gateway.maxOperationOps)", () => {
     assert.equal(OperationLogic.MAX_OPS, 200);
-    const good = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 } };
+    // stock_batch ops write no movement row, so 200 of them fit the write budget (P1 spec D8).
+    const good = { kind: "delta", entity: "stock_batch", entityId: "b1", deltas: { qtyRemaining: -1 } };
     const v = OperationLogic.validateOperationRequest({
         requestId: "completeOrder:t", opType: "completeOrder", ops: new Array(200).fill(good) });
     assert.equal(v.ok, true);
@@ -185,8 +186,8 @@ test("applyOperation: applies deltas and a mutation atomically, one transaction,
     assert.deepEqual(byPath[T + "transactions/tx1"].data, { kind: "sale" });
     assert.deepEqual(byPath[T + "stock_batches/b1"].options, { merge: false });
 
-    // 4 working docs + 4 per-op audit entries + 1 marker.
-    assert.equal(db.writes.length, 9);
+    // 4 working docs + 4 per-op audit entries + 1 marker + 1 server-derived "sale" movement row (P1).
+    assert.equal(db.writes.length, 10);
     const marker = byPath[T + "audit_log/completeOrder:o1:1"];
     assert.equal(marker.data.action, "operation");
     assert.equal(marker.data.opCount, 4);
@@ -359,8 +360,8 @@ test("applyOperation: a full 200-op operation stays under Firestore's write ceil
     const docs = {};
     const ops = [];
     for (let i = 0; i < OperationLogic.MAX_OPS; i++) {
-        docs[T + "inventory/p" + i] = { stock: 5 };
-        ops.push(delta("inventory", "p" + i, { stock: -1 }, { stock: 0 }));
+        docs[T + "stock_batches/b" + i] = { qtyRemaining: 5 };
+        ops.push(delta("stock_batch", "b" + i, { qtyRemaining: -1 }, { qtyRemaining: 0 }));
     }
     const db = makeFakeDb(docs);
     const r = await OperationLogic.applyOperation(db, params(ops));
