@@ -596,6 +596,17 @@ BottomSheet {
                 model: ["pending", "processing", "completed"]
                 font.pixelSize: sp(Constants.fsBody)
             }
+            // Task 11: completion shown as done but not yet confirmed by the server. Quiet caption only.
+            Text {
+                id: syncingHint
+                Layout.fillWidth: true
+                visible: dataModel.syncingOrderIds[dlg.orderId] === true
+                text: qsTr("Saved. Syncing…")
+                color: Constants.textSecondary
+                font.pixelSize: sp(Constants.fsSmall)
+                Accessible.role: Accessible.StaticText
+                Accessible.name: qsTr("Saved. Syncing with the server")
+            }
         }
 
         // Order channel + staff (sold-by). Read-only fields would normally

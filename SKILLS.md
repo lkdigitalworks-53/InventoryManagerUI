@@ -4318,3 +4318,15 @@ Rules:
 2. A persisted field gets ONE cleaning function (`StuckWrites.cleanLastError`), called by hydrate AND by the store's save path. Never copy the shape check into the store.
 3. A message that exists in a pure helper (`FailureCause`) must not be re-typed in `DataModel`; call the helper so the wording changes in one place.
 4. A reason label can be a misnomer (`out-of-stock` for "product not found"). Do not branch UI status on it without checking every producer of that label.
+
+## Skill 120: Observable state over a plain map needs one funnel for every write, and a new object per change
+
+Task 11 (2026-10-14). `DataModel._openCompletions` is a plain `var` map: QML bindings cannot see it change, and it was edited at 7 scattered sites. The "Saved. Syncing…" caption needs to react, per order.
+Rules:
+1. To expose state kept in a plain map, derive it in ONE function (`_refreshSyncing`) that assigns a NEW object (and a count) to `property var` / `property int`. Mutating the old object in place does not notify.
+2. Route every close through one function (`_closeOpen`) and every "now shown" through one call, then pin that in a source test: the only raw `delete _openCompletions[` is inside `_closeOpen`. Do not rely on remembering the refresh at each site.
+3. Show per-order state as a map keyed by id, not only a count: a global count cannot say whether THIS dialog's order is the one syncing.
+4. Test it against an independent recount of the raw bookkeeping (monkey, seeded), not against expected literals.
+5. Session-scoped on purpose: after a relaunch the stores show the server's state, so the hint disappears with the in-memory entry. Say so in the design; do not "fix" it by reading the outbox without also fixing the overlay gap.
+6. Not done here: orders-list chip, approve-all banner wording, NewOrderDialog. The exhausted-re-plan branch still flags `out of stock` whatever the cause (Skill 118 rule 6): this slice did not touch order status.
+

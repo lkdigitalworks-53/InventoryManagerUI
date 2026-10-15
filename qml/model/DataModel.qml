@@ -604,6 +604,30 @@ Item {
     // order being reopened before either happens (_reverseCompletedOrder).
     property var _openCompletions: ({})
 
+    // Task 11 ("Saved, syncing"): orders whose completion is shown as done but not yet confirmed by
+    // the server (an _openCompletions entry with undo !== null). _openCompletions is a plain map QML
+    // cannot observe, so _refreshSyncing() assigns a NEW object each time; bindings then re-evaluate.
+    // Session-scoped on purpose (design D-2): after a relaunch the order is shown as it is on the server.
+    property var syncingOrderIds: ({})
+    property int completionsSyncing: 0
+
+    function _refreshSyncing() {
+        var ids = {}
+        var n = 0
+        for (var k in _openCompletions) {
+            var open = _openCompletions[k]
+            if (open && open.undo && !ids[open.orderId]) { ids[open.orderId] = true; ++n }
+        }
+        syncingOrderIds = ids
+        completionsSyncing = n
+    }
+
+    // The ONLY way an open completion is dropped, so the syncing state can never go stale.
+    function _closeOpen(key) {
+        delete _openCompletions[key]
+        _refreshSyncing()
+    }
+
     function _tryCompleteOrder(orderId, callback) {
         var o = OrdersStore.getById(orderId)
         if (!o) { if (callback) callback(false); return }
@@ -741,7 +765,7 @@ Item {
         if (!open) return // reopened (or otherwise superseded) before this answer arrived
         if (res.ok && !res.queued) { _settleApplied(key, res.results); return }
         if (res.ok || res.pending) {            // queued, offline, or the wait ran out: show it as done
-            if (!open.undo) open.undo = _applyPredicted(open.plan)
+            if (!open.undo) { open.undo = _applyPredicted(open.plan); _refreshSyncing() }
             _updateOrderInModel(open.orderId)
             if (open.callback) { var cb = open.callback; open.callback = null; cb(true) }
             return
@@ -756,7 +780,7 @@ Item {
         var open = _openCompletions[key]
         if (!open) return
         _reflectResults(results)
-        delete _openCompletions[key]
+        _closeOpen(key)
         delete dataModel._completingOrderIds[open.orderId]
         _updateOrderInModel(open.orderId)
         if (open.callback) { var cb = open.callback; open.callback = null; cb(true) }
@@ -772,7 +796,7 @@ Item {
         // shown, release the guard, stop. The parkedWriteDiscarded resync re-reads the stores.
         if (rejection.discarded === true) {
             if (open.undo) { _revertPredicted(open.undo); open.undo = null }
-            delete _openCompletions[key]
+            _closeOpen(key)
             if (open.callback) {
                 _failCompletion(open.orderId, qsTr("This order's completion was discarded, so it was not completed"), false, open.callback)
             } else {
@@ -792,19 +816,19 @@ Item {
         var wasQueued = open.callback === null      // the caller was already told "done"
         var onStockOp = op && op.entity === "inventory"
         if (onStockOp && !wasQueued && rejection.error === "insufficient-quantity") {
-            delete _openCompletions[key]
+            _closeOpen(key)
             _failCompletion(open.orderId, FailureCause.forRejection(rejection, _nameForProduct(op.entityId)).text, true, open.callback)
             return
         }
         if (open.attempt >= maxReplans) {
-            delete _openCompletions[key]
+            _closeOpen(key)
             var failName = (op && op.entity === "inventory") ? _nameForProduct(op.entityId) : ""
             var cause = FailureCause.forRejection(rejection, failName).text
             _failCompletion(open.orderId, "Could not complete this order: " + cause, true, open.callback, wasQueued ? cause : "")
             return
         }
         _reconcileFromRejection(op, rejection)
-        delete _openCompletions[key]
+        _closeOpen(key)
         // D3: a sale that already happened is applied anyway (clamp + repair batch).
         _completeAttempt(open.orderId, open.clampStock || wasQueued, open.attempt + 1, open.callback)
     }
@@ -1007,7 +1031,7 @@ Item {
         // original sale's stock delta onto an order that's since been
         // reopened (and possibly already re-completed under a new epoch).
         var openKey = _openCompletionKeyFor(o.orderId)
-        if (openKey) delete dataModel._openCompletions[openKey]
+        if (openKey) dataModel._closeOpen(openKey)
         delete dataModel._completingOrderIds[o.orderId]
         for (var i = 0; i < o.products.length; ++i) {
             var line = o.products[i]

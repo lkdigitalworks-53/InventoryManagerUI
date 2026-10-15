@@ -8,7 +8,7 @@ A cross-platform inventory and business management application built with **Felg
 
 | Module | Capabilities |
 |--------|-------------|
-| **Orders** | Create, view, approve, and track customer orders; stock-checked order completion; batch approval ("Approve all pending" banner: pressed colour, one run at a time, `done / total` progress bar and a short "All approved" hold; logic in `qml/helper/BulkApproveProgress.js`) |
+| **Orders** | Create, view, approve, and track customer orders; stock-checked order completion; batch approval ("Approve all pending" banner: pressed colour, one run at a time, `done / total` progress bar and a short "All approved" hold; logic in `qml/helper/BulkApproveProgress.js`); an order completion that is queued or unconfirmed shows a quiet "Saved. Syncing…" caption in the order dialog until the server answers |
 | **Inventory** | Product catalog, stock level tracking, low-stock alerts, restock workflows; multi-photo product gallery synced via Cloud Storage (see "Firebase Configuration" for `storage.rules`) |
 | **Sales** | Revenue analytics, order volume charts, top-selling products, cumulative sales metrics |
 | **Staff** | Team member management, department distribution, activity feed, leave tracking |
