@@ -3,7 +3,7 @@
 **Branch:** `feat/2026-10-14-task11-saved-syncing`, stacked on PR #139's branch (`docs/2026-10-13-completion-error-cause-design` @ cbd3363). **Design:** `specs/2026-10-14-task11-saved-syncing-design.md`; SKILLS Skill 120.
 **Covers:** `qml/model/DataModel.qml` (`syncingOrderIds`, `completionsSyncing`, `_refreshSyncing`, `_closeOpen`), `qml/pages/OrderDetailDialog.qml` (caption under Status).
 **Not covered:** pixels (caption look and position are device-only); orders-list chip, approve-all banner, NewOrderDialog (not built, design D-1).
-**Run status:** node guard `.github/scripts/__tests__/completionsSyncingWiring.test.js` run for real (11/11, 9 mutants caught; script suite 105/105). `tests/tst_DataModel_completionsSyncing.qml` (17 cases) is CI-only (no Qt in the sandbox, standing rule). Nothing built or run on a device.
+**Run status:** node guard `.github/scripts/__tests__/completionsSyncingWiring.test.js` run for real (11/11, 9 mutants caught; script suite 105/105). `tests/tst_DataModel_completionsSyncing.qml` (17 cases) is CI-only (no Qt in the sandbox, standing rule); CI ran it green on the pre-squash tree (QML 2094/2094) - re-confirm on the stacked review PR. Nothing built or run on a device.
 
 ## 1. Unit tests — `tests/tst_DataModel_completionsSyncing.qml`
 | Case | Proves |
@@ -51,6 +51,9 @@ Setup: owner login, a pending order with stock. Build/run is Taher's call. To ho
 3. Relaunch while queued: no caption after relaunch (design D-2: the order is shown as the server has it); header "not syncing" line still applies if stuck.
 4. TalkBack: caption read as "Saved. Syncing with the server".
 5. Font scale 200%: caption wraps, does not overlap the combo.
+
+- **Parked completion (review PR #144 finding 2).** Offline, complete an order, then make the write stick (rejected server-side until it parks in the Stuck writes sheet). Open the order: record what the caption says while the header says "not syncing". Expected today: caption still reads "Saved. Syncing…" (known, decision pending); after Discard the caption disappears and the order is pending.
+- **Log check (finding 4).** Open any order with the app log visible: no `ReferenceError: dataModel is not defined`.
 
 ### Affected areas
 | File | Automated coverage | If not covered, check on device |
