@@ -128,4 +128,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 118: An operation whose caller was already told "done" must announce its own failure, and a failure text must name a cause the code can actually know
 - 119: A doc that calls a branch "unreachable" must be proven against the callee's own error paths, and one validator must serve both the read and the save of a persisted field
 - 120: Observable state over a plain map needs one funnel for every write, and a new object per change
-- 121: A stacked PR whose base is main but whose branch holds pre-squash commits will conflict and can revert main; rebuild by cherry-pick + ours-merge
+- 121: A stacked PR whose base is `main` but whose branch holds pre-squash commits will conflict AND can revert main
