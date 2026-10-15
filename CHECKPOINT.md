@@ -19,11 +19,13 @@ Pick Task 11: it is the recorded next step, design exists in the plan, fits one 
 ## Steps
 - [x] 1. Cloned, read memory/skills/roadmaps/plan Task 11, read DataModel completion state machine + OrderDetailDialog
 - [x] 2. Branch created from PR #139 head, checkpoint written
-- [ ] 3. Design spec `specs/2026-10-14-task11-saved-syncing-design.md`
-- [ ] 4. Implement DataModel (`syncingOrderIds`, `completionsSyncing`, `_closeOpen`, `_refreshSyncing`) + OrderDetailDialog caption
-- [ ] 5. Tests: `tests/tst_DataModel_completionsSyncing.qml`, node wiring guard
-- [ ] 6. Test plan + index row, Skill, SKILLS-INDEX regen, README/AGENTS lines, roadmap status lines
+- [x] 3. Design spec `specs/2026-10-14-task11-saved-syncing-design.md`
+- [x] 4. Implement DataModel (`syncingOrderIds`, `completionsSyncing`, `_closeOpen`, `_refreshSyncing`) + OrderDetailDialog caption
+- [x] 5. Tests: `tests/tst_DataModel_completionsSyncing.qml`, node wiring guard
+- [x] 6. Test plan + index row, Skill, SKILLS-INDEX regen, README/AGENTS lines, roadmap status lines
 - [ ] 7. Push, PR (base = PR #139 branch), CI read
 
 ## NEXT (for the next session / account)
-Read the PR checks first. QML tests are CI-only.
+- 7 in progress: push + open PR (base = `docs/2026-10-13-completion-error-cause-design`), then read CI. QML tests are CI-only: if `qml-tests` fails, read the failing case first, do not guess.
+- Possible CI risk: `tst_DataModel_completionsSyncing.qml` was never run (no Qt). Suspects: `_answer` shape vs `Gateway._finishOperation`, `dm.maxReplans` name (used in the exhaustion case), `AuthStore._settings.sessionJson` reset copied from the atomic test.
+- Open for Taher: D-1 (surfaces), restock grill list (in PR body).
