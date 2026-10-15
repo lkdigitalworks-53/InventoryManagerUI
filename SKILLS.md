@@ -4334,3 +4334,11 @@ Rules:
 5. Session-scoped on purpose: after a relaunch the stores show the server's state, so the hint disappears with the in-memory entry. Say so in the design; do not "fix" it by reading the outbox without also fixing the overlay gap.
 6. Not done here: orders-list chip, approve-all banner wording, NewOrderDialog. The exhausted-re-plan branch still flags `out of stock` whatever the cause (Skill 118 rule 6): this slice did not touch order status.
 
+
+## Skill 121: A stacked PR whose base is `main` but whose branch holds pre-squash commits will conflict AND can revert main
+
+PR #144 review (2026-10-15). #139 was squash-merged; PR #144's branch still carried #139's individual commits, so GitHub showed "dirty", and the net diff vs main listed deletions of work that main already had.
+Rules:
+1. Before reviewing a stacked PR whose parent was squash-merged, compare `git diff --stat origin/main <branch>` with the PR's own commits (`git diff <parent-tip>..<branch>`). Extra deletions = pre-squash history.
+2. Never fix it by resolving conflicts toward the branch: that reverts main. Re-apply only the PR's own commits onto main (`git cherry-pick`), then join with `git merge -s ours --no-commit origin/main` + `git read-tree --reset -u <rebuilt tree>` so the PR gets main as an ancestor without a force-push.
+3. Verify the result: `git diff --stat origin/main HEAD` must list only the PR's files, and the earlier CI run no longer proves the new tree.

@@ -1,31 +1,22 @@
-# CHECKPOINT — 2026-10-14 Task 11 "Saved, syncing" hint (stacked on PR #139)
+# CHECKPOINT — 2026-10-15 review of PR #144 (Task 11 "Saved. Syncing…")
 
-**Branch:** `feat/2026-10-14-task11-saved-syncing` (base = PR #139 branch `docs/2026-10-13-completion-error-cause-design` @ cbd3363). Commit identity `taher.lkdw@gmail.com`. PAT only in the push command, never in files or the remote URL.
-**Rules in force:** no build/run until Taher says so; no Qt tools in the sandbox (CI is the proof); branch + push without asking; honest trade-offs, grill before deciding; tests for every change (100% target) + a test plan; short scope, remote branch always resumable by another account.
-**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-14-pr139-prev-CHECKPOINT.md`.
-**Skills used:** brainstorming (BOUNDED path), qt-qml, ponytail.
+**Branch:** `review/2026-10-15-pr144-final-sweep` (stacked PR, base = `feat/2026-10-14-task11-saved-syncing`). Commit identity `taher.lkdw@gmail.com`. PAT only in push commands.
+**Rules in force:** no build/run until Taher says so; no Qt tools in sandbox (CI is the proof); branch + push without asking; honest trade-offs, grill before deciding; short scope.
+**Archived previous checkpoint:** `docs/superpowers/specs/2026-10-15-pr144-sweep-prev-CHECKPOINT.md`.
+**Skills used:** requesting-code-review, ponytail-audit, qt-qml-review (Phase 1 lint only; qmllint/agents not available).
 
 ## Request (Taher)
-On top of PR #139: check E2E roadmap + delete roadmap, pick the next priority item, design it, implement if design ready, raise PR, show next steps.
-
-## What the roadmaps say (read, not re-derived)
-- Delete roadmap: COMPLETE 2026-10-13. Only device re-checks left (O1 purge, O2 sign-out; `test-plans/2026-09-30-photos-s3-s4-s5-test-plan.md` L266-267, Taher).
-- E2E roadmap C-3 atomic-operation arc, recorded order (PR #90 sweep, D-2): merge #90 -> error-cause UI (= PR #139, in review) -> **Task 11 "Saved, syncing" hint** -> Task 12 docs -> Task 13 deploy+device (Taher) -> C-1 `_tryAdjustOrder` etc.
-- Higher risk but bigger and needs decisions: restock as one atomic operation (KNOWN-ISSUES top entry, DECIDED 2026-09-30, not built).
-
-## Decision (mine, flagged to Taher)
-Pick Task 11: it is the recorded next step, design exists in the plan, fits one session. NOT the highest-risk item (restock is) - see PR body for why and the grill list.
+Deep, no-shortcuts review of PR #144 with all three skills, then he device-tests.
 
 ## Steps
-- [x] 1. Cloned, read memory/skills/roadmaps/plan Task 11, read DataModel completion state machine + OrderDetailDialog
-- [x] 2. Branch created from PR #139 head, checkpoint written
-- [x] 3. Design spec `specs/2026-10-14-task11-saved-syncing-design.md`
-- [x] 4. Implement DataModel (`syncingOrderIds`, `completionsSyncing`, `_closeOpen`, `_refreshSyncing`) + OrderDetailDialog caption
-- [x] 5. Tests: `tests/tst_DataModel_completionsSyncing.qml`, node wiring guard
-- [x] 6. Test plan + index row, Skill, SKILLS-INDEX regen, README/AGENTS lines, roadmap status lines
-- [ ] 7. Push, PR (base = PR #139 branch), CI read
+- [x] 1. Cloned, read memory + 3 skills, fetched PR #144 (7 commits, mergeable=dirty, CI green on stale tree)
+- [x] 2. Found PR carries pre-squash #139 commits; net diff vs main would revert main (finding 1)
+- [x] 3. Read DataModel completion state machine, dialog caption, 17 QML cases, node guard; ran lint + node guard (11/11)
+- [x] 4. Rebuilt tree = main + Task 11 (cherry-pick, CHECKPOINT conflict kept branch side) + ours-merge commit; diff vs main = 14 Task 11 files
+- [x] 5. Review note `specs/2026-10-15-pr144-final-sweep-review.md`, test-plan lines, Skill 121 + index
+- [ ] 6. Push branch, open stacked PR (base = PR #144 branch), confirm CI green on it
+- [ ] 7. Taher: decide finding 2 (A keep / B hide when parked / C reword), then merge stacked PR into #144 branch, device-test, merge #144
 
-## NEXT (for the next session / account)
-- 7 in progress: push + open PR (base = `docs/2026-10-13-completion-error-cause-design`), then read CI. QML tests are CI-only: if `qml-tests` fails, read the failing case first, do not guess.
-- Possible CI risk: `tst_DataModel_completionsSyncing.qml` was never run (no Qt). Suspects: `_answer` shape vs `Gateway._finishOperation`, `dm.maxReplans` name (used in the exhaustion case), `AuthStore._settings.sessionJson` reset copied from the atomic test.
-- Open for Taher: D-1 (surfaces), restock grill list (in PR body).
+## Open decisions
+- Finding 2: stuck/parked completion still shows "Saved. Syncing…". Recommendation B.
+- Findings 4/5: optional (inject `dataModelRef`; drop unused `completionsSyncing`).
