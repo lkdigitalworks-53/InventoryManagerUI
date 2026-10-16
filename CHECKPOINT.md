@@ -15,8 +15,11 @@ New `opType` (server deploy), new client flow, changes what a restock writes. Sp
 - [x] 7. Taher answered v1 questions, then **corrected me: server-side id minting inside the transaction was never rejected; he wants ALL calls (id create, CRUD, transaction, audit) in one atomic operation with one transaction id.** My v1 error: called it "the rejected option C" and overstated a counter race (client REST mint and server Admin txn on the same doc serialise safely).
 - [x] 8. Design v2: new `mint` op kind + `{{placeholder}}` substitution inside `applyOperation`; counters rolled back on rejection (gapless); replay returns minted ids; restock = first consumer; key created at tap; paper walk-through of create-product and order-create; import needs chunking (named limit)
 - [x] 9. Test plan v2 rewritten (server mint cases, restock, regression incl. `completeOrder` golden marker, monkeys, emulator e2e, device plan)
-- [ ] 10. **Taher: answer Q-A1 (generic mint vs per-opType server builders), Q-A2 (hide product while restock pending vs temp batch id), Q-A3 (ActivityLog in-op), Q-A4 (counter seed), Q-A5 (one PR per consumer, order) and approve spec v2.** Brainstorming gate: no plan before this.
-- [ ] 11. Next account after approval: writing-plans, then R1..R6 in the design, each own branch off `main`, after PR #146 merges.
+- [x] 10. Taher answered Q-A1..Q-A5 (generic mint; hide product while restock pending; activity in-op; server derives seed; one PR per consumer) and asked for a gap analysis of prior atomic work + a PR
+- [x] 11. Wrote `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` (what was built, 10 gaps G1-G10 with evidence, non-atomic path table, order of work). New finding G4: random-key op queued offline is lost on sign-out (outbox cleared) -> open Q-A6
+- [x] 12. Spec section 6 updated (answers recorded, Q-A6 open); test plan updated (R10, device 2b)
+- [ ] 13. PR opened for design review (link in the PR list on GitHub). **Taher: review PR, answer Q-A6, approve.** Brainstorming gate: plan only after approval.
+- [ ] 14. Next account after approval: writing-plans, then R1..R6 in the design, each own branch off `main`, after PR #146 merges.
 
 ## Resume here
-Read design v2 section 6 (open questions). Do not write the plan or product code until step 10 is answered.
+Read `ATOMIC-OPERATIONS-STATUS.md`, then design v2 section 6 (Q-A6 open). Do not write the plan or product code until the PR is approved and Q-A6 answered.

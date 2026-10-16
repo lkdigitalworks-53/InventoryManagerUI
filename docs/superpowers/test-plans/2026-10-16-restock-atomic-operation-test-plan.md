@@ -1,7 +1,7 @@
-# Test plan — Atomic operations with server-minted ids; restock first (v2, answers Q-A1..Q-A5 pending)
+# Test plan — Atomic operations with server-minted ids; restock first (v2, Q-A1..Q-A5 answered)
 
 Standard format (Skill 49). Design: `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md` (v2).
-Case ids assume the recommended answers (Q-A1 generic mint, Q-A2 no optimistic batch + hidden product, Q-A3 ActivityLog in-op, Q-A4 server seed). A different answer changes only cases marked `[Q-An]`.
+Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + hidden product, Q-A3 ActivityLog in-op, Q-A4 server seed). Cases marked `[Q-A6]` wait for that open question (sign-out with a queued restock).
 
 **Verification status (2026-10-16):** PLANNED. Nothing written, nothing run. No Qt tools in the sandbox: QML cases CI-only; `functions/` and pure-JS cases run in Node before push. Coverage target: 100% lines and branches on the new server code (`mint`, substitution, guards, counter registry, seed fallback), `RestockPlan.js`, `OperationKeys` additions.
 
@@ -41,7 +41,8 @@ Case ids assume the recommended answers (Q-A1 generic mint, Q-A2 no optimistic b
 - R06 parked write on the product still refuses before anything is queued (D2).
 - R07 `completeOrder` marker and result shapes unchanged (golden fixture captured before the engine change).
 - R08 `StockBatchStore.addBatch` + pending-mint queue still work for create/import.
-- R09 [Q-A2] product hidden from order pickers while its restock is pending; visible again after applied or Discard.
+- R10 [Q-A6] sign-out with an unapplied queued restock behaves as decided (default pick: sign-out blocked with the count; nothing cleared).
+- R09 product hidden from order pickers while its restock is pending; visible again after applied or Discard.
 
 ## 3. Functional tests
 
@@ -89,6 +90,7 @@ Prerequisites: P1 server with `mint` + `restock` deployed (`recordOperation` its
 ### Edge cases
 1. Airplane mode, restock by 3: dialog closes, product hidden from the new-order picker, stuck sheet shows one queued item; network on: stock 8, one batch, product visible again.
 2. Restock, kill the app, relaunch online: stock 8, one batch, one activity entry.
+2b. [Q-A6] Airplane mode, restock, try to sign out: blocked with "1 change not synced"; network on, it applies, sign-out works.
 3. Double tap Confirm: one restock.
 4. Cancel the dialog, reopen, restock: works, no stray batch or id burned.
 5. Two phones restock the same product at once: two batches, stock +q1+q2, ids distinct and consecutive.

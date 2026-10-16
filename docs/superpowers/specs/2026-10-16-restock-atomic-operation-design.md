@@ -1,6 +1,7 @@
 # Design — Atomic operations with server-minted ids; restock is the first consumer
 
-**Status:** v2, 2026-10-16. Supersedes v1 (client-minted batch id). Awaiting answers to Q-A1..Q-A5 (section 6) and spec approval. No product code written.
+**Status:** v2, 2026-10-16. Q-A1..Q-A5 answered by Taher (section 6); one new open question Q-A6. Spec goes to PR review; implementation plan is written only after the PR is approved. No product code written.
+**Prior art and gaps:** `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md`.
 **Branch:** `docs/2026-10-16-restock-atomic-operation-design`. **Path:** architectural.
 **Origin:** `KNOWN-ISSUES.md` first entry (restock decided 2026-09-30) and Taher's standing direction in `E2E-TESTING-ROADMAP.md` (2026-09-16): idempotency and atomicity for network calls generally.
 
@@ -51,17 +52,15 @@ Create product with opening stock: `mint` product `p`, `mint` stock_batch `b`, `
 
 Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no per-opType server shape check; D6 no "Saved. Syncing…" caption; D7 hard dependency on the server deploy, `recordOperation` already live and device-tested, no fallback to the two-write path. D1/D4 of v1 replaced by section 3 and "key at tap".
 
-### Open questions (grill)
+### Answered (Taher, 2026-10-16)
+- **Q-A1:** generic `mint` + `{{placeholder}}`, client builds the docs. (Server-authoritative builders not chosen.)
+- **Q-A2:** a queued restock has no optimistic batch; the product is hidden from the order picker until the restock applies or is discarded. Accepted cost: after an offline restock the product cannot be sold until sync.
+- **Q-A3:** `activity_log` entry is part of the transaction (needs `activity_log` on the server entity allowlist, a rules check, an id parameter on `ActivityLog.record`).
+- **Q-A4:** the server derives the counter seed from existing ids when the counter doc is missing; the client never sends a seed.
+- **Q-A5:** engine + restock first; then create-product, then order paths, then import (chunked); one PR each.
 
-**Q-A1. Engine shape.** (a) Generic `mint` + `{{placeholder}}` substitution, client still builds docs (**my pick**). Smallest, every future consumer reuses it, matches your "everything in one shot" direction. Cost: the client still defines doc shapes; the server validates them generically only (D5). (b) Per-opType server intent builders: client sends `{productId, qty, cost, supplier, reason}`, server builds every doc. Server is the single authority and a bad client cannot write odd docs. Cost: business rules and doc shapes ported to Node and kept in parity with the client's optimistic code, per opType, for every future consumer. Much more code. Choose (b) only if you want server-authoritative rules.
-
-**Q-A2. What does the app show before the ids exist (queued, offline)?** The client cannot create a local batch with a real id. (a) No optimistic batch; stock and batch appear when applied; the product is hidden from order pickers while a restock for it is pending, reusing the `hasPendingMint` pattern (**my pick**). Cost: after an offline restock the product cannot be sold until sync. (b) Temporary local batch id swapped on applied. Cost: an order completed in between consumes a batch id the server has not minted; its `completeOrder` op then references a batch that does not exist and is rejected. I do not recommend (b).
-
-**Q-A3. ActivityLog inside the transaction?** Needs `activity_log` added to the server entity allowlist (+ a check of `firestore.rules` for that path) and `ActivityLog.record` to accept an id. (a) Yes, entry id `act-{{batch}}`, written atomically (**my pick**, you said everything, and with the engine it is one more op). (b) No, keep it in the callback (v1 D3). Cost of (a): one allowlist line, one rules check, one small signature change. Which?
-
-**Q-A4. Counter seeding when the counter doc is missing:** server derives it from existing ids (**my pick**), or fail the operation and require the counter doc to exist (simpler, but a new tenant's first restock errors), or accept a client seed (rejected: trust boundary).
-
-**Q-A5. Scope and order.** I push back on one PR for "all CRUD": the engine is server-heavy and every consumer rewrites a working, device-tested path. Proposed order, one PR each, each device-tested before the next: (1) engine + restock, (2) create product with opening stock, (3) order create and the remaining non-atomic paths (`_tryAdjustOrder`, `completeImportedOrder`, `_reverseCompletedOrder`), (4) import with chunking. Agree, or do you want a different first consumer?
+### Open
+**Q-A6. A queued restock is lost on sign-out (gap G4).** `OutboxStore.clear()` drops queued items on sign-out so a pending write never replays under another account. `completeOrder` is safe because its key is derived from order + epoch (a re-run resends it). A restock key is random per tap, so a restock queued offline and then cleared by sign-out is gone while the UI said done. Options: (a) block sign-out while the outbox holds unapplied operations and say how many (**my pick**: the stuck-writes indicator already counts them, so it is a guard plus a message, and it keeps the "tap is durable" promise); (b) keep the current behaviour and say so in the restock toast; (c) derive the key from content (product + qty + cost + minute) so a re-run collides, which is fragile and can merge two deliberate restocks. This does not change the engine, so it does not block the PR; it must be answered before the restock consumer (R4) is built.
 
 ## 7. Build order for step (1) (each its own branch off `main`, after #146 merges)
 
@@ -78,7 +77,8 @@ Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no
 - Server engine change touches `operationLogic.js`, the file every operation goes through: replay, marker and budget must stay byte-compatible for `completeOrder`. Regression tests pin the existing marker and result shapes first (R2 step 1).
 - Two writers on the counter docs (server transaction, client REST mint for unmigrated paths). Safe by Firestore serialisation, but pin with an emulator test that interleaves both.
 - Counter format drift between client and server: parity fixtures.
-- Hidden product after offline restock (Q-A2a) is a user-visible cost.
+- Hidden product after offline restock (Q-A2) is a user-visible cost, accepted.
+- Sign-out drops a queued restock (Q-A6, G4) until answered.
 - #146 overlap: build after it merges.
 
 ## 9. Not in scope
