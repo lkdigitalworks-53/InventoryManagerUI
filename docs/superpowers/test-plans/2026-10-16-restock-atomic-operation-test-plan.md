@@ -1,7 +1,7 @@
-# Test plan — Restock as one atomic operation (design Q-RS-1..7 pending)
+# Test plan — Restock as one atomic operation (decisions D1-D7 recorded)
 
 Standard format (Skill 49). Design: `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md`.
-Case ids assume the recommended answers (batch id client-generated, purchase doc inside the operation, dialog-open restock id). A different answer changes only the cases marked `[Q-RS-n]`.
+Case ids follow Taher's recorded decisions D1-D7 (sequential minted batch id, online-only, purchase doc inside the operation, no open-time id, store in-flight guard, no ActivityLog durability).
 
 **Verification status (2026-10-16):** PLANNED. Nothing written, nothing run. No Qt tools in the sandbox: QML cases will be CI-only; pure-JS and `functions/` cases will be run in Node before push. Coverage target: every new function and branch, 100% lines on `RestockPlan.js`, `OperationKeys` additions and the new server path.
 
@@ -12,14 +12,14 @@ Case ids assume the recommended answers (batch id client-generated, purchase doc
 - U02 delta is `{stock:+qty}` with empty floors and clamps.
 - U03 batch doc carries productId, supplierId, qty (received and remaining), unit cost, note.
 - U04 purchase doc: kind `purchase`, quantity, unitCost, total = qty × cost, party, reason, category, orderId empty.
-- U05 same inputs and restock id give identical key, batch id, tx id (determinism).
-- U06 different restock id gives different key, batch id, tx id.
+- U05 same inputs and batch id give identical key and tx id (determinism).
+- U06 different batch id gives different key and tx id.
 - U07 `qty` default 10 when amount is 0 or missing (matches today's `amount || 10`).
 - U08 fractional qty kept exactly; unit cost 0 accepted; unit cost non-number falls back to product price.
 - U09 key matches `^restock:` and contains no `/` or `~` (server `isSafeDocId` rules).
 - U10 ids stay within the 200-character limit for the longest realistic product id.
 
-**`OperationKeys.js`**: U11 `restockKey`, U12 `restockBatchId` (prefix `BAT-RS-`), U13 `purchaseTxId` (prefix `tx-p-`). [Q-RS-1]
+**`OperationKeys.js`**: U11 `restockKey` (`restock:<batchId>`), U12 `purchaseTxId` (`tx-p-<batchId>`), U13 key and tx id for a batch id with unusual characters stay `isSafeDocId`-safe.
 
 **`functions/test/operationLogic.test.js`** (Node, run before push):
 - U14 `restock` accepted by `validateOperationRequest`; unknown opType still rejected.
@@ -36,8 +36,11 @@ Case ids assume the recommended answers (batch id client-generated, purchase doc
 
 - R01 (F1) delta rejected with 4xx: no batch exists afterwards, local state unchanged, no purchase record. `tests/tst_InventoryStore_restockAtomic.qml`.
 - R02 (F2) applied signal arrives with no live callback (simulated relaunch): local stock, batch, purchase and ActivityLog entry all appear once.
-- R03 (F3) offline restock needs no network mint: operation queued with a locally built batch id. [Q-RS-1]
-- R04 (F4) second submit with the same restock id sends nothing new and the server returns a replay; one batch, one stock increment.
+- R03 (F3, D1) mint fails or times out: restock refused with the connection text, **nothing** written, no pending-mint entry, no outbox item, in-flight guard released.
+- R04 (F4, D4) two `restock` calls for the same product in the same tick: second refused by the in-flight guard; one mint, one outbox item, one batch, one stock increment.
+- R04b resending the persisted outbox item (hang, relaunch) reuses the same `requestId`; server replays; one batch, one increment.
+- R04c guard released after enqueue: a second deliberate restock gets a new batch id and key and succeeds.
+- R04d guard released after mint failure, supplier failure and parked refusal.
 - R05 parked write on the product still refuses before anything is written (D2 kept).
 - R06 supplier auto-promote failure behaves as before (restock proceeds without supplier, `supplierFailed` true).
 - R07 pending-mint queue still works for `StockBatchStore.addBatch` callers other than restock (create, import).
@@ -52,15 +55,16 @@ Case ids assume the recommended answers (batch id client-generated, purchase doc
 - F06 Discard from the stuck sheet: nothing server-side, optimistic state undone, no ActivityLog entry.
 - F07 two different products restocked back to back: two independent operations, no key clash.
 - F08 same product restocked twice with different restock ids: two batches, stock +qty1 +qty2.
-- F09 ActivityLog entry text includes qty, new stock, supplier name, reason; deterministic id, replay does not duplicate. [Q-RS-3]
-- F10 `RestockDialog`: restock id created at open, reused on double tap, regenerated after a successful close. [Q-RS-4]
-- F11 `RestockDialog`: after a rejection and edit, resubmit reuses the same id and succeeds (server holds no trace of the rejected key).
+- F09 ActivityLog entry (written in the callback, D3) text includes qty, new stock, supplier name, reason; not written on rejection or Discard.
+- F10 `RestockDialog`: cancel before tap leaves no state anywhere (no mint, no outbox, no guard).
+- F11 `RestockDialog`: after a rejection the user edits and resubmits; a NEW batch id is minted (the rejected one is burned, D1b) and the restock succeeds.
+- F12 mint succeeds, then offline before the answer: queued path (F02), applied on reconnect, exactly one batch.
 
 ## 4. Monkey tests
 
 - M01 random sequence of restock, retry now, discard, go offline, go online, relaunch (reuse the `tst_OrdersE2E` monkey harness shape) for 200 steps; invariant after settle: for every product, sum of batch `qtyReceived` of restock batches equals total restocked stock, and purchase rows equal batch rows.
 - M02 random qty (0, negative, fractional, huge) and cost values: no exception, invalid values refused before any write.
-- M03 random double and triple taps at random delays around the await window: at most one batch per restock id.
+- M03 random double and triple taps at random delays around the mint and the await window: never two batches from one tap burst; every batch has exactly one stock increment.
 - M04 server Node monkey: random interleavings of the same requestId from two callers; exactly one marker, one batch.
 
 ## 5. Rules tests / E2E
@@ -73,7 +77,7 @@ Case ids assume the recommended answers (batch id client-generated, purchase doc
 
 ## On-device test plan
 
-Prerequisites: P1 `recordOperation` deployed with `restock` (Taher confirms), P2 two phones or one phone plus the Firebase console, P3 a product with stock 5 and a known supplier, P4 airplane mode available.
+Prerequisites: P1 `restock` opType deployed (`recordOperation` itself is deployed and device-tested per Taher), P2 two phones or one phone plus the Firebase console, P3 a product with stock 5 and a known supplier, P4 airplane mode available.
 
 ### Happy path
 1. Restock the product by 3 with supplier and reason. Expect: dialog closes, stock 8, one new batch of 3, one purchase row, one "Restocked" activity entry.
@@ -85,9 +89,11 @@ Prerequisites: P1 `recordOperation` deployed with `restock` (Taher confirms), P2
 3. Qty 0, negative, blank cost: refused in the dialog, nothing written.
 
 ### Edge cases
-1. Airplane mode, restock by 3: dialog closes, stuck sheet shows one queued operation; turn network on: stock 8 with one batch (not two).
+1. Airplane mode, restock by 3: refused with the connection text, stock still 5, no batch, nothing in the stuck sheet (D1).
+1b. Restock with network, drop airplane mode on right after tap: either lands (8) or queues and lands on reconnect; one batch either way.
 2. Restock, kill the app immediately, relaunch online: stock 8, one batch, one activity entry.
-3. Double tap Confirm: one restock only.
+3. Double tap Confirm: one restock only (watch the batch count).
+3b. Cancel the dialog, reopen, restock: works, no stray batch.
 4. Restock the same product twice in a row (3 then 4): stock 12, two batches.
 5. Large qty (100000) and fractional qty (2.5) if allowed by the dialog: stored exactly.
 
@@ -98,7 +104,7 @@ Prerequisites: P1 `recordOperation` deployed with `restock` (Taher confirms), P2
 | `RestockPlan.js`, `OperationKeys.js` | U01-U13 | n/a (pure) |
 | `StockBatchStore` hooks | U21-U22, R07 | Product history list (batches) |
 | `TransactionStore` hooks | U21-U22 | Transactions / Purchased analytics |
-| `ActivityLog` | F09 | Activity feed |
+| `ActivityLog` (call site only) | F09 | Activity feed |
 | `RestockDialog.qml` | F10-F11 (logic only; page not loadable headless) | Dialog taps, busy state |
 | `functions/lib/operationLogic.js` | U14-U20, E01-E03 | Firebase console |
 | `StockBatchStore.addBatch` (create, import) | R07 | Add product with opening stock, bulk import: still one batch each |

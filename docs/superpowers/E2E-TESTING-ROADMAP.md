@@ -76,7 +76,7 @@ should treat that as the actual scope question, not assume each gets its own ind
 
 **Status 2026-10-13:** the client wire-up is PR #90 (CI green, not merged, `recordOperation` deploy not confirmed in any doc, not device-tested). Pending after it: Task 11 hint, Task 12 docs, Task 13 deploy + device; then the remaining non-atomic multi-write paths (C-1 `_tryAdjustOrder`, `completeImportedOrder`, `_reverseCompletedOrder`, restock) and the ledger kinds `created`, `purchase`, `photo_change`, `sale`, `return`, `price_adjust`.
 **Update 2026-10-14:** Task 11 ("Saved. Syncing…" caption in `OrderDetailDialog`) is built on a PR stacked on #139 (`feat/2026-10-14-task11-saved-syncing`, dialog caption only; list chip and banner deferred, see its design D-1). Next by risk: restock as one atomic operation (KNOWN-ISSUES top entry, decided, unbuilt). Next by queue: Task 12 docs, Task 13 deploy + device (Taher).
-**Update 2026-10-16:** restock-as-one-operation designed (draft, awaiting Q-RS-1..7): `specs/2026-10-16-restock-atomic-operation-design.md`. Depends on PR #146 merging first.
+**Update 2026-10-16:** restock-as-one-operation designed (decisions D1-D7 recorded, awaiting spec approval): `specs/2026-10-16-restock-atomic-operation-design.md`. Depends on PR #146 merging first.
 
 Deliberately not fixed this session — flagged for a dedicated session per explicit instruction, same
 as the timeout item above. The two are related (idempotency-safety is what would make it safe to

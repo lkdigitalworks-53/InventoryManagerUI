@@ -17,8 +17,10 @@ New `opType` (server deploy), new client flow, changes what a restock writes. Sp
 - [x] 4. Wrote design `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md` (status DRAFT, 7 open questions Q-RS-1..7, each with options, trade-offs, my recommendation)
 - [x] 5. Wrote test plan `docs/superpowers/test-plans/2026-10-16-restock-atomic-operation-test-plan.md` (PLANNED, nothing written or run)
 - [x] 6. Docs: KNOWN-ISSUES status line, E2E roadmap line, test-plans README row, Skill 122, SKILLS-INDEX
-- [ ] 7. **Taher: answer Q-RS-1..7 in the design doc (or in chat). Approve the spec.**
-- [ ] 8. Next account: after approval, write the implementation plan (writing-plans skill), then build R1..R6 from the design's build order, each on its own branch off `main`, after #146 merges.
+- [x] 7. Taher answered Q-RS-1..7 in chat (D1-D7 in the design): keep sequential minted ids, online-only restock; purchase record inside the op; ActivityLog not audit; NO open-time id (store in-flight guard instead); skip server shape check; skip Syncing caption; `recordOperation` deployed + device-tested.
+- [x] 8. Design + test plan updated to D1-D7. Pushed back on two points (D1 gaps/offline cost, D4 double-tap now rests on a guard)
+- [ ] 9. **Taher: approve the updated spec (and confirm id gaps are acceptable).** Brainstorming gate: no plan before this.
+- [ ] 10. Next account: after approval, write the implementation plan (writing-plans skill), then build R1..R6 from the design's build order, each on its own branch off `main`, after #146 merges.
 
 ## Resume here
-Read the design doc's "Open questions" table first. Do not write product code until step 7 is answered.
+Read the design doc section 4 (decisions) first. Do not write the plan or product code until step 9 is answered.
