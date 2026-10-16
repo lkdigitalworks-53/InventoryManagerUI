@@ -1,116 +1,112 @@
-# Test plan — Restock as one atomic operation (decisions D1-D7 recorded)
+# Test plan — Atomic operations with server-minted ids; restock first (v2, answers Q-A1..Q-A5 pending)
 
-Standard format (Skill 49). Design: `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md`.
-Case ids follow Taher's recorded decisions D1-D7 (sequential minted batch id, online-only, purchase doc inside the operation, no open-time id, store in-flight guard, no ActivityLog durability).
+Standard format (Skill 49). Design: `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md` (v2).
+Case ids assume the recommended answers (Q-A1 generic mint, Q-A2 no optimistic batch + hidden product, Q-A3 ActivityLog in-op, Q-A4 server seed). A different answer changes only cases marked `[Q-An]`.
 
-**Verification status (2026-10-16):** PLANNED. Nothing written, nothing run. No Qt tools in the sandbox: QML cases will be CI-only; pure-JS and `functions/` cases will be run in Node before push. Coverage target: every new function and branch, 100% lines on `RestockPlan.js`, `OperationKeys` additions and the new server path.
+**Verification status (2026-10-16):** PLANNED. Nothing written, nothing run. No Qt tools in the sandbox: QML cases CI-only; `functions/` and pure-JS cases run in Node before push. Coverage target: 100% lines and branches on the new server code (`mint`, substitution, guards, counter registry, seed fallback), `RestockPlan.js`, `OperationKeys` additions.
 
 ## 1. Unit tests
 
-**`tests/tst_RestockPlan.qml` + Node mirror of the same body** (pure builder, no stores):
-- U01 builds exactly three ops in order: inventory delta, stock_batch create, transaction create.
-- U02 delta is `{stock:+qty}` with empty floors and clamps.
-- U03 batch doc carries productId, supplierId, qty (received and remaining), unit cost, note.
-- U04 purchase doc: kind `purchase`, quantity, unitCost, total = qty × cost, party, reason, category, orderId empty.
-- U05 same inputs and batch id give identical key and tx id (determinism).
-- U06 different batch id gives different key and tx id.
-- U07 `qty` default 10 when amount is 0 or missing (matches today's `amount || 10`).
-- U08 fractional qty kept exactly; unit cost 0 accepted; unit cost non-number falls back to product price.
-- U09 key matches `^restock:` and contains no `/` or `~` (server `isSafeDocId` rules).
-- U10 ids stay within the 200-character limit for the longest realistic product id.
+**Server `functions/test/operationMint.test.js` (Node):**
+- U01 `mint` binds a name; `{{name}}` in `entityId` is replaced.
+- U02 substitution inside an `after` string value, embedded (`tx-p-{{batch}}`) and whole-string.
+- U03 two mints (supplier, batch) bind independent names, ids sequential per counter.
+- U04 id format equals client format (parity fixture for `BAT-<year>-NNN` incl. 3-digit padding and >999, `SUP-NNN`).
+- U05 counter doc incremented by exactly 1 per mint, in the same transaction.
+- U06 counter missing: seed from max existing id for the prefix (none, one, many, other-year ids ignored); then doc created.
+- U07 rejected operation (any op fails) leaves the counter unchanged: no gap.
+- U08 replay of the same `requestId` returns the same minted ids from the marker and mints nothing.
+- U09 guards, each zero writes: unknown counter; placeholder before its mint; unbound name; bad name pattern; >5 mints; placeholder in `before`, `deltas` or a key; resulting id with `/`; duplicate bind name.
+- U10 write budget counts counter writes; operation at the ceiling accepted, one over rejected.
+- U11 `restock` opType accepted; requestId prefix `restock:` enforced; `completeOrder:` prefix on `restock` rejected.
+- U12 full restock op: stock, batch, supplier (when new), purchase doc, activity doc, audit rows, marker, `receipt` movement (after #146) all in one transaction.
+- U13 missing product: 404, no batch, no counter change.
 
-**`OperationKeys.js`**: U11 `restockKey` (`restock:<batchId>`), U12 `purchaseTxId` (`tx-p-<batchId>`), U13 key and tx id for a batch id with unusual characters stay `isSafeDocId`-safe.
-
-**`functions/test/operationLogic.test.js`** (Node, run before push):
-- U14 `restock` accepted by `validateOperationRequest`; unknown opType still rejected.
-- U15 requestId must start with `restock:`; `completeOrder:` prefix on a `restock` op rejected.
-- U16 applying the three ops writes stock, batch, transaction, 3 audit rows, 1 marker (and 1 `receipt` movement row once #146 is in).
-- U17 replay of the same requestId returns the first result and writes nothing.
-- U18 missing product gives 404 `not-found`, zero writes (batch and transaction not created).
-- U19 batch id already exists gives `conflict`, zero writes (stock not incremented).
-- U20 stock delta is applied to the current server value, not the client's stale one.
-
-**Store hooks** (reuse Task 9 `addLocalBatch`/`removeLocalBatch`, `addLocalEntries`/`removeLocalEntries`): U21 add then remove restores exact prior arrays; U22 add is idempotent for the same id.
+**Client pure `tests/tst_RestockPlan.qml` + Node mirror:**
+- U14 op order and shapes (mint, create, delta, create, create); no supplier ops when the supplier is known or empty.
+- U15 delta `{stock:+qty}`, empty floors/clamps; qty default 10 for 0/missing; fractional kept.
+- U16 batch doc fields (supplierId literal or `{{sup}}`), purchase doc fields (kind purchase, total = qty × cost, orderId empty).
+- U17 same inputs and key give identical ops (determinism); unit cost non-number falls back to product price.
+- U18 key matches `^restock:`, no `/` or `~`, within 200 chars.
+- U19 apply-from-results builds local batch, purchase, supplier, activity docs from the marker `results`; replay results identical.
 
 ## 2. Regression tests
 
-- R01 (F1) delta rejected with 4xx: no batch exists afterwards, local state unchanged, no purchase record. `tests/tst_InventoryStore_restockAtomic.qml`.
-- R02 (F2) applied signal arrives with no live callback (simulated relaunch): local stock, batch, purchase and ActivityLog entry all appear once.
-- R03 (F3, D1) mint fails or times out: restock refused with the connection text, **nothing** written, no pending-mint entry, no outbox item, in-flight guard released.
-- R04 (F4, D4) two `restock` calls for the same product in the same tick: second refused by the in-flight guard; one mint, one outbox item, one batch, one stock increment.
-- R04b resending the persisted outbox item (hang, relaunch) reuses the same `requestId`; server replays; one batch, one increment.
-- R04c guard released after enqueue: a second deliberate restock gets a new batch id and key and succeeds.
-- R04d guard released after mint failure, supplier failure and parked refusal.
-- R05 parked write on the product still refuses before anything is written (D2 kept).
-- R06 supplier auto-promote failure behaves as before (restock proceeds without supplier, `supplierFailed` true).
-- R07 pending-mint queue still works for `StockBatchStore.addBatch` callers other than restock (create, import).
+- R01 (the bug) delta rejected with 4xx: no batch, no purchase, no supplier, no counter movement, local state unchanged. `tests/tst_InventoryStore_restockAtomic.qml`.
+- R02 applied signal with no live callback (relaunch): local stock, batch, purchase, activity entry each appear once.
+- R03 offline tap: operation persisted with a request id and no ids; nothing minted; applied on reconnect with sequential ids.
+- R04 resend of the persisted item (hang, relaunch): same `requestId`, server replays, one batch, one increment.
+- R05 two `restock` calls, same product, same tick: second refused by the latch; one outbox item.
+- R05b latch released after enqueue (second deliberate restock gets its own key), after refusal, after failure.
+- R06 parked write on the product still refuses before anything is queued (D2).
+- R07 `completeOrder` marker and result shapes unchanged (golden fixture captured before the engine change).
+- R08 `StockBatchStore.addBatch` + pending-mint queue still work for create/import.
+- R09 [Q-A2] product hidden from order pickers while its restock is pending; visible again after applied or Discard.
 
 ## 3. Functional tests
 
-- F01 happy path online: await window met, `callback(true)`, stock equals server value.
-- F02 queued path (offline): `callback(true)` immediately, optimistic stock, undo data held.
-- F03 await window elapses: same as F02, later applied signal settles to server stock.
-- F04 rejected (`not-found`): undo optimistic state, `callback(false, ...)` with cause text.
-- F05 rejected (`no-tenant-context`, member suspended): same, text from `FailureCause`.
-- F06 Discard from the stuck sheet: nothing server-side, optimistic state undone, no ActivityLog entry.
-- F07 two different products restocked back to back: two independent operations, no key clash.
-- F08 same product restocked twice with different restock ids: two batches, stock +qty1 +qty2.
-- F09 ActivityLog entry (written in the callback, D3) text includes qty, new stock, supplier name, reason; not written on rejection or Discard.
-- F10 `RestockDialog`: cancel before tap leaves no state anywhere (no mint, no outbox, no guard).
-- F11 `RestockDialog`: after a rejection the user edits and resubmits; a NEW batch id is minted (the rejected one is burned, D1b) and the restock succeeds.
-- F12 mint succeeds, then offline before the answer: queued path (F02), applied on reconnect, exactly one batch.
+- F01 online happy path within the await window: callback(true), stock = server value, batch/purchase present with server-minted ids.
+- F02 queued (offline) path: callback(true), no local batch yet, picker hides product.
+- F03 await window elapses: same as F02, later applied settles state.
+- F04 rejected `not-found`: cause text, latch released, nothing local.
+- F05 rejected `no-tenant-context` (suspended member): access text; no counter burned (server test U07 pairs with this).
+- F06 Discard from the stuck sheet: nothing server-side, picker visible again, no activity entry.
+- F07 new supplier name: supplier, batch, purchase created with the minted supplier id in one operation; existing supplier name: no supplier ops.
+- F08 same product restocked twice: two batches, ids consecutive, stock +q1 +q2.
+- F09 [Q-A3] ActivityLog entry text (qty, new stock, supplier, reason), id `act-<batch>`, replay does not duplicate.
+- F10 cancel the dialog before tap: no state anywhere (no outbox item, no latch).
+- F11 reject, user edits, resubmits: new key, succeeds.
 
 ## 4. Monkey tests
 
-- M01 random sequence of restock, retry now, discard, go offline, go online, relaunch (reuse the `tst_OrdersE2E` monkey harness shape) for 200 steps; invariant after settle: for every product, sum of batch `qtyReceived` of restock batches equals total restocked stock, and purchase rows equal batch rows.
-- M02 random qty (0, negative, fractional, huge) and cost values: no exception, invalid values refused before any write.
-- M03 random double and triple taps at random delays around the mint and the await window: never two batches from one tap burst; every batch has exactly one stock increment.
-- M04 server Node monkey: random interleavings of the same requestId from two callers; exactly one marker, one batch.
+- M01 random restock / retry now / discard / offline / online / relaunch, 200 steps (shape of the `tst_OrdersE2E` monkey): after settle, per product sum of restock batch qty equals restocked stock, purchase rows equal batch rows, batch ids unique and gapless.
+- M02 random qty (0, negative, fractional, huge), cost, supplier strings (empty, long, unicode, `{{x}}`, `/`): refused or stored literally; never interpreted as a placeholder.
+- M03 random triple taps around the await window: one batch per tap burst.
+- M04 server Node: random interleavings of the same `requestId` from two callers and of two different requests: one marker per id, ids unique, counter equals count of applied mints.
 
 ## 5. Rules tests / E2E
 
-- E01 emulator: apply the operation, assert stock, batch and transaction docs and the audit marker in one snapshot (pattern of `functions/test/index.handlers.recordOperation.test.js`).
-- E02 emulator: second call with the same requestId, assert unchanged counts.
-- E03 emulator rules: a suspended member gets 403 and **no** doc changed (this is the on-device bug as a test).
-- E04 `firestore.rules`: no new client-writable path is introduced by this change (restock goes through the function, unchanged rules); assert by the existing rules suite staying green.
-- E05 `tst_OrdersE2E`-style QML e2e for restock is **not written** unless a recipe exists for the `recordOperation` path under `qmltestrunner`; state the decision in the verification block when built.
+- E01 emulator: apply a restock, one snapshot of stock, batch, transaction, activity, supplier, counters, audit marker.
+- E02 emulator: same `requestId` again, counts unchanged, same ids returned.
+- E03 emulator: suspended member gets 403, **no** doc and no counter changed.
+- E04 emulator: client REST mint and server mint interleaved on one counter doc, no duplicate id (the two-writer risk).
+- E05 `firestore.rules`: existing suite green; [Q-A3] `activity_log` rule reviewed and a test added if the path rules change.
+- E06 QML e2e for restock not written unless a `recordOperation` recipe exists under `qmltestrunner`; state the decision in the status block when built.
 
 ## On-device test plan
 
-Prerequisites: P1 `restock` opType deployed (`recordOperation` itself is deployed and device-tested per Taher), P2 two phones or one phone plus the Firebase console, P3 a product with stock 5 and a known supplier, P4 airplane mode available.
+Prerequisites: P1 server with `mint` + `restock` deployed (`recordOperation` itself is live and device-tested per Taher), P2 Firebase console open, P3 product with stock 5 and a known supplier, P4 airplane mode, P5 note the current highest `BAT-` number.
 
 ### Happy path
-1. Restock the product by 3 with supplier and reason. Expect: dialog closes, stock 8, one new batch of 3, one purchase row, one "Restocked" activity entry.
-2. Firebase console: `inventory/<id>.stock` = 8, `stock_batches` has the batch, `transactions` has `tx-p-…`, `audit_log` has one `restock:…` marker.
+1. Restock by 3, known supplier, reason. Expect: dialog closes, stock 8, one new batch numbered P5+1, one purchase row, one activity entry.
+2. Restock with a brand-new supplier name: supplier `SUP-` created, batch and purchase carry it; console shows one `restock:` marker with all docs.
 
 ### Negative
-1. Set the member `suspended` in the console, restock by 3. Expect: "Could not restock" with the access text, stock still 5, **no** new batch in the console (was: batch appeared on Retry now).
-2. Product with a parked edit (use a product-name edit): Restock refuses with "Fix or discard the stuck change for this product first".
-3. Qty 0, negative, blank cost: refused in the dialog, nothing written.
+1. Member `suspended`, restock: access text, stock 5, **no** batch, **no** new supplier, next successful restock gets number P5+1 (no gap).
+2. Product with a parked edit (edit a product name offline): refused with the stuck-change text.
+3. Qty 0, negative, blank cost: refused in the dialog.
 
 ### Edge cases
-1. Airplane mode, restock by 3: refused with the connection text, stock still 5, no batch, nothing in the stuck sheet (D1).
-1b. Restock with network, drop airplane mode on right after tap: either lands (8) or queues and lands on reconnect; one batch either way.
-2. Restock, kill the app immediately, relaunch online: stock 8, one batch, one activity entry.
-3. Double tap Confirm: one restock only (watch the batch count).
-3b. Cancel the dialog, reopen, restock: works, no stray batch.
-4. Restock the same product twice in a row (3 then 4): stock 12, two batches.
-5. Large qty (100000) and fractional qty (2.5) if allowed by the dialog: stored exactly.
+1. Airplane mode, restock by 3: dialog closes, product hidden from the new-order picker, stuck sheet shows one queued item; network on: stock 8, one batch, product visible again.
+2. Restock, kill the app, relaunch online: stock 8, one batch, one activity entry.
+3. Double tap Confirm: one restock.
+4. Cancel the dialog, reopen, restock: works, no stray batch or id burned.
+5. Two phones restock the same product at once: two batches, stock +q1+q2, ids distinct and consecutive.
+6. Supplier name `{{batch}}` or with `/`: stored as typed, not interpreted.
 
 ### Affected areas
 | File | Automated coverage | Where to look on-device |
 |---|---|---|
-| `InventoryStore.restock` | R01-R06, F01-F08 | Restock dialog, product list stock |
-| `RestockPlan.js`, `OperationKeys.js` | U01-U13 | n/a (pure) |
-| `StockBatchStore` hooks | U21-U22, R07 | Product history list (batches) |
-| `TransactionStore` hooks | U21-U22 | Transactions / Purchased analytics |
-| `ActivityLog` (call site only) | F09 | Activity feed |
-| `RestockDialog.qml` | F10-F11 (logic only; page not loadable headless) | Dialog taps, busy state |
-| `functions/lib/operationLogic.js` | U14-U20, E01-E03 | Firebase console |
-| `StockBatchStore.addBatch` (create, import) | R07 | Add product with opening stock, bulk import: still one batch each |
+| `functions/lib/operationLogic.js` (mint, substitution, guards, budget) | U01-U13, R07, M04, E01-E04 | Firebase console |
+| server counter registry | U04-U06, E04 | counters docs, batch/supplier numbers |
+| `InventoryStore.restock`, `RestockPlan.js`, `OperationKeys.js` | U14-U19, R01-R06, F01-F11 | Restock dialog, stock |
+| `StockBatchStore`, `TransactionStore`, `SupplierStore` apply-from-results | U19, R02 | batch history, transactions, suppliers |
+| `ActivityLog` (id param) | F09 | Activity feed |
+| Order pickers (pending-restock hide) | R09 | New order picker |
+| `StockBatchStore.addBatch`, pending-mint queue, `SupplierStore.addSupplier` | R08 | Add product with opening stock, import |
 
 ### Regression tests (run before merge)
-1. The suspended-member restock leaves **no** batch (the bug that started this).
-2. Create a product with opening stock: still works exactly as before.
-3. Bulk import with opening stock: still works exactly as before.
-4. Complete an order against a restocked product: FIFO consumes the restock batch, stock matches the batch sum.
+1. Suspended-member restock leaves no batch and no number gap (the bug that started this).
+2. Complete an order: marker and totals as before the engine change.
+3. Create a product with opening stock and bulk import: unchanged (still client-minted).
+4. Order completion against a restocked product: FIFO consumes the restock batch; stock equals batch sum.

@@ -130,3 +130,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 120: Observable state over a plain map needs one funnel for every write, and a new object per change
 - 121: A stacked PR whose base is `main` but whose branch holds pre-squash commits will conflict AND can revert main
 - 122: Before designing on a shared server file, list the open PRs that edit it
+- 123: Never record an option as "rejected" unless the person rejected it, and quote their words

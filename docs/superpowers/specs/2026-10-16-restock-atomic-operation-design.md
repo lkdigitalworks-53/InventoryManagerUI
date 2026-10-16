@@ -1,95 +1,85 @@
-# Design — Restock as one atomic, replay-safe operation
+# Design — Atomic operations with server-minted ids; restock is the first consumer
 
-**Status:** DECISIONS RECORDED 2026-10-16 (Taher answered Q-RS-1..7, section 4). Awaiting spec approval + one confirmation (D1 gaps). No product code written.
-**Date:** 2026-10-16. **Branch:** `docs/2026-10-16-restock-atomic-operation-design`.
-**Path:** architectural (new `opType` = server deploy, new client flow). Spec, then plan, then build.
-**Origin:** `docs/superpowers/KNOWN-ISSUES.md` first entry (decided 2026-09-30: "make batch + stock delta ONE atomic operation"). Roadmap: `E2E-TESTING-ROADMAP.md` item "Order completion can double-consume the FIFO ledger" (status lines 2026-10-13/14).
+**Status:** v2, 2026-10-16. Supersedes v1 (client-minted batch id). Awaiting answers to Q-A1..Q-A5 (section 6) and spec approval. No product code written.
+**Branch:** `docs/2026-10-16-restock-atomic-operation-design`. **Path:** architectural.
+**Origin:** `KNOWN-ISSUES.md` first entry (restock decided 2026-09-30) and Taher's standing direction in `E2E-TESTING-ROADMAP.md` (2026-09-16): idempotency and atomicity for network calls generally.
 
-## 1. Understanding (write-back, please correct)
+**Correction to v1 (my error):** v1 called server-side minting "the rejected option C". Nobody rejected it. Only "retry deltas on 403" was rejected. v1 also overstated the counter race: the client mint (`FirebaseService.mintCounterValue`) is a REST commit with an `updateTime` precondition on `counters/<name>`, the server would use an Admin transaction on the same doc; Firestore serialises both, so the loser retries. No collision. v1's D1 (client mint, online-only, id gaps) and D4's mint-at-tap are dropped.
 
-**Said by Taher:** restock must land batch + stock together or not at all (decision 2026-09-30). Idempotency and atomicity for network calls generally, not one-off patches (2026-09-16).
-**Assumed by me (check these):**
-- Success = after any failure, relaunch or retry, Firestore never shows a batch without its stock or stock without its batch, and the purchase record and ActivityLog entry exist exactly once.
-- Offline restock keeps working as today (queued, applied on reconnect).
-- This session is restock only. Product-create-with-opening-stock and bulk import have the same `addBatch` shape and are unchecked (KNOWN-ISSUES says so). They are a follow-up, not this scope.
+## 1. Understanding (please correct)
 
-## 2. What the code does today (read, not assumed)
+**Said by Taher:** one tap = one operation with ONE transaction id, covering every call: id creation, product/order create-update-delete, transaction record, audit. All of it atomic and idempotent.
+**Success:** after any failure, retry, double delivery or relaunch, either everything for that tap exists exactly once, or nothing does and nothing is burned (no id gaps from rejected operations). Offline taps queue and apply on reconnect.
+**Assumed:** this arc builds the engine plus restock, the first consumer. Other consumers (create product with opening stock, import, order create, adjust, reverse) follow one PR each (Q-A5).
 
-`InventoryStore.restock` (`qml/model/InventoryStore.qml:1207`):
-1. refuses if the product has a parked write (D2, keep);
-2. resolves supplier (`_resolveSupplierId`, may auto-create a supplier);
-3. `StockBatchStore.addBatch` — mints a batch id over the network (`nextBatchId`, 15 s timeout, failure goes to a durable pending-mint queue), then `Gateway.recordMutation("stock_batch", create)`;
-4. in parallel `Gateway.recordDelta("inventory", id, {stock:+qty})`;
-5. only in the delta's in-memory callback: local stock update, `ActivityLog.record`, `TransactionStore.recordPurchase`.
+## 2. Why today's pieces cannot do it
 
-Failure shapes this produces:
-| # | Failure | Result |
-|---|---|---|
-| F1 | delta gets a 4xx, batch is retried forever | batch without stock (the on-device bug) |
-| F2 | delta lands, relaunch before its callback | stock without ActivityLog or purchase record (callback is in memory) |
-| F3 | batch id mint fails | stock without batch until reconnect retry; product hidden from pickers meanwhile |
-| F4 | double tap or retry | two batches, two deltas (no shared key) |
+`recordOperation` is atomic and idempotent but takes **fully formed docs**. Anything whose id comes from a counter (batch `BAT-…`, supplier `SUP-…`, product, order) must be minted by a separate network call first. That call is not part of the transaction, so it can fail (timeout), be repeated (burned number) or be lost (`_pendingMints` queue exists only to patch this). Restock additionally resolves or creates a supplier (another mint plus a write) and writes ActivityLog by a direct client PUT (`activity_log/<id>`, not a gateway entity).
 
-The mechanism to fix this already exists and is merged: `Gateway.recordOperation(opType, ops, opKey, options, cb)` and server `applyOperation` (`functions/lib/operationLogic.js`): one Firestore transaction, `requestId` marker makes a retry a no-op, `operationApplied` / `operationRejected` signals fire even if the caller's callback died. It is generic (delta + mutation ops); only `OP_TYPES = ["completeOrder"]` is specific.
+## 3. Engine change: ids are minted inside the transaction
 
-## 3. Design (after Taher's answers)
+**New op kind `mint`** in `functions/lib/operationLogic.js`:
+`{ kind:"mint", counter:"stock_batch", bind:"batch" }`.
+- Server reads the counter doc, increments it, formats the id exactly like the client does (`BAT-<year>-NNN`, `SUP-NNN`), binds it to the name `batch`. The counter write is part of the same transaction, so a rejected operation rolls the counter back: **no gaps from rejections**.
+- Later ops reference it with `{{batch}}` in `entityId` and in string values of `after` (also embedded: `"tx-p-{{batch}}"`). Substitution is done server-side before validation of each op.
+- The marker's `results` record every minted id. A replay of the same `requestId` returns them and mints nothing. One `requestId` is the single transaction id; derived ids are `requestId~i` (audit rows), the minted ids (in results) and `tx-p-<batch>`.
+- Counter registry is a server allowlist mirroring client formats, pinned by a parity fixture test (the repo's existing parity pattern).
 
-**One operation, `opType: "restock"`, `requestId: "restock:<batchId>"`, three ops in one transaction:**
-1. `delta` `inventory/<productId>` `{ stock: +qty }` (no floor, no clamp), plus explicit `movements: [{kind:"receipt", qty, reason, valueAtCost}]` once #146 is in;
-2. `mutation create` `stock_batch/<batchId>` (batch id minted by the existing sequential counter, D1);
-3. `mutation create` `transaction/<txId>` with the purchase doc, `txId = "tx-p-" + batchId` (deterministic, same pattern as `OperationKeys.saleTxId`).
+**Guards (validation, all 400 and zero writes):** placeholder name matches `^[a-z][A-Za-z0-9]{0,15}$`; bound by an EARLIER `mint` op; at most 5 `mint` ops; substitution only in `entityId` and `after` string values (never `before`, `deltas`, keys); a resulting id passes `isSafeDocId`; unknown counter rejected.
+**Write budget:** each `mint` adds one counter write; update the budget formula (#146 has one: `2*ops+1+rowBudget` vs 500).
+**Counter missing (new tenant or new year):** server falls back to the max existing id for the prefix (one query, once) as the seed. The client sends no seed (a client-supplied seed is a trust-boundary hole). Detail verified in R1 (exact tenant-scoped counter path).
+**Compatibility:** additive. `completeOrder` and old clients send no `mint` ops and behave exactly as today. Deploy functions before the client.
 
-The key is derived from the minted batch id, so the id that is persisted in the outbox item IS the idempotency key: any retry, relaunch or resend of that outbox item sends the same `requestId` and the server replays the first result.
+## 4. Restock as the first consumer
 
-Server change: `"restock"` added to `OP_TYPES` plus tests. `recordOperation` itself is deployed and device-tested (Taher, 2026-10-16), so only this opType needs a deploy, and it must be deployed before the client ships.
+One tap creates `requestId = "restock:" + <device id>` **at tap** (same shape as `Gateway._nextRequestId`; durable once the outbox item is saved). Ops, one transaction:
+1. `mint` supplier `sup` (only when the user typed a new supplier name);
+2. `mutation create` `supplier/{{sup}}` (same condition);
+3. `mint` stock_batch `batch`;
+4. `mutation create` `stock_batch/{{batch}}` (supplierId = known id or `{{sup}}`);
+5. `delta` `inventory/<productId>` `{stock:+qty}`, with explicit `receipt` movement once #146 is in;
+6. `mutation create` `transaction/tx-p-{{batch}}` (purchase doc);
+7. `mutation create` `activity_log/act-{{batch}}` if Q-A3 = yes.
 
-**Client flow (`InventoryStore.restock`), in this order:**
-1. refuse if the product has a parked write (D2, kept);
-2. refuse if a restock for this product is already between tap and enqueue (new in-flight guard, D4);
-3. resolve supplier (unchanged, failure handling unchanged);
-4. mint the batch id (`StockBatchStore.nextBatchId`, 15 s timeout). **Mint fails: refuse with "Can't restock right now, check your connection" and write nothing** (D1: restock is online-only to start; no pending-mint queue entry);
-5. build the three docs with pure builders, `Gateway.recordOperation("restock", ops, key, { awaitServer: online }, cb)`. The moment the outbox item is persisted the tap is durable;
-6. applied: local stock from the server's `after.stock`, add batch + purchase docs locally, `ActivityLog.record` in the callback (D3);
-7. rejected or Discard: nothing was written server-side; undo optimistic state, show cause text;
-8. queued (await window elapsed, or connectivity lost after the mint): show as done, optimistic apply with undo (same pattern as completion `_applyPredicted`).
+Client `InventoryStore.restock`: keep the parked-write refusal (D2) and a synchronous per-product in-flight latch (enqueue is now synchronous, so the double-tap window is a single tick, not a network round trip); build ops with a pure `RestockPlan.build`; `Gateway.recordOperation("restock", ops, key, {awaitServer: online})`. Applied (callback or `operationApplied`, both carry minted ids in results): set stock from the server value, add the batch, purchase (and supplier, activity) docs locally from results. Rejected or Discard: nothing exists server-side, nothing to undo but the latch, show the cause text. **Removed:** `_resolveSupplierId`'s separate mint for restock, the parallel `addBatch` + `recordDelta`, the callback-gated writes. `addBatch`, `SupplierStore.addSupplier` and the pending-mint queue stay for their other callers until those get their own PR.
 
-**Removed:** the parallel `addBatch` + `recordDelta` pair in `restock` and the callback-gated purchase write. `addBatch` and the pending-mint queue stay for create-product and import.
+## 5. Generality check (paper walk-through, not built)
 
-**Interaction with PR #146 (open):** it changes `operationLogic.js` and defaults movement kind by opType (`completeOrder: "sale"`, else `adjustment`). Restock sends explicit `receipt` movements, so no second edit of that default map. Build after #146 merges.
+Create product with opening stock: `mint` product `p`, `mint` stock_batch `b`, `mutation create inventory/{{p}}`, `mutation create stock_batch/{{b}}`, `mutation create transaction/tx-c-{{p}}`. Order create: `mint` order, `mutation create order/{{order}}`. Both fit with no further engine change. Bulk import (hundreds of rows) does not: one operation caps at `MAX_OPS` (200) and the write ceiling, so import needs chunking with one `requestId` per chunk. That is a real limit of "everything in one shot" and is named, not hidden.
 
-## 4. Decisions (Taher, 2026-10-16) and the cost of each
+## 6. Decisions
 
-| # | Decision | What it costs (accepted knowingly) |
-|---|---|---|
-| D1 (Q-RS-1) | Keep sequential `BAT-YYYY-NNN` ids; mint before the operation; restock is online-only. | (a) A restock offline is refused. Before this, an offline restock queued the stock delta. Warehouse receiving on a weak connection is where you will feel it. (b) "Sequential" means increasing, **not gapless**: the counter is consumed at mint, so a restock the server then rejects (suspended member, product gone) or a mint that succeeds but never enqueues leaves a hole. Today already works this way. Gapless numbering needs the server to mint inside the transaction, which was the rejected option C. **Confirm gaps are acceptable.** |
-| D2 (Q-RS-2) | Purchase record is a third op inside the operation. | Server validates a `transaction` doc generically only. |
-| D3 (Q-RS-3) | ActivityLog is not audit level: written in the operation callback, may be lost if the app dies before the answer arrives. | `shortcut: ActivityLog entry is in-memory-callback only, upgrade if the feed becomes an audit trail.` No `ActivityLog.record` change. |
-| D4 (Q-RS-4) | No id created at dialog open. The id exists only after tap (the minted batch id). | See below. |
-| D5 (Q-RS-5) | No per-opType server shape check. | Same trust model as `completeOrder`; debt comment on the validator. |
-| D6 (Q-RS-6) | No "Saved. Syncing…" caption for restock. | An offline-then-queued restock looks like a landed one until sync (rare now, since the mint needs network). |
-| D7 (Q-RS-7) | Hard dependency, no fallback to the two-write path. `recordOperation` deployed and device-tested. | Deploy `restock` opType before the client. |
+Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no per-opType server shape check; D6 no "Saved. Syncing…" caption; D7 hard dependency on the server deploy, `recordOperation` already live and device-tested, no fallback to the two-write path. D1/D4 of v1 replaced by section 3 and "key at tap".
 
-**On D4, the honest answer to "what happens when the user cancels?":** with an id created at open, cancel only drops an in-memory value. Nothing is persisted and nothing reaches the server until tap, so cancel was harmless. I still accept the objection, because the real requirement is that **the tap is the durable event**, and with D1 the batch id is minted at the tap anyway, so it is the natural key. What an open-time id bought was double-tap protection, because a second tap reused the same id. Without it, two quick taps mint two ids and make two restocks. So the protection moves to the store: a per-product in-flight guard set synchronously at the start of `restock` and cleared when the outbox item is persisted or the attempt fails (the same pattern as `_completingOrderIds`), plus the dialog's existing `busy`. The guard window is only mint + enqueue; a deliberate second restock after that is legitimate and gets its own key. **Residual risk:** idempotency across a double tap now rests on that guard, not on the key. It must be pinned by a test that fires two `restock` calls in the same tick.
+### Open questions (grill)
 
-## 5. Build order (each its own branch off `main`, small PRs)
+**Q-A1. Engine shape.** (a) Generic `mint` + `{{placeholder}}` substitution, client still builds docs (**my pick**). Smallest, every future consumer reuses it, matches your "everything in one shot" direction. Cost: the client still defines doc shapes; the server validates them generically only (D5). (b) Per-opType server intent builders: client sends `{productId, qty, cost, supplier, reason}`, server builds every doc. Server is the single authority and a bad client cannot write odd docs. Cost: business rules and doc shapes ported to Node and kept in parity with the client's optimistic code, per opType, for every future consumer. Much more code. Choose (b) only if you want server-authoritative rules.
 
-| Step | What | Where |
-|---|---|---|
-| R1 | Pure builder `RestockPlan.build(batchId, ...)` (ops, key, tx id) | `qml/helper/RestockPlan.js`, `OperationKeys.restockKey/purchaseTxId` |
-| R2 | Server: `OP_TYPES += "restock"`, receipt movement, tests | `functions/lib/operationLogic.js`, `functions/test/` (after #146) |
-| R3 | Store hooks: apply-remote for batch and purchase docs (reuse `addLocalBatch`/`addLocalEntries`) | `StockBatchStore`, `TransactionStore` |
-| R4 | `InventoryStore.restock` rewrite: in-flight guard, mint-or-refuse, `recordOperation`, applied/rejected/queued handling, parked guard kept | `InventoryStore.qml` |
-| R5 | `RestockDialog`: refusal text for mint failure, busy handling, `FailureCause` texts | `RestockDialog.qml`, `FailureCause.js` |
-| R6 | Docs, device test | docs |
+**Q-A2. What does the app show before the ids exist (queued, offline)?** The client cannot create a local batch with a real id. (a) No optimistic batch; stock and batch appear when applied; the product is hidden from order pickers while a restock for it is pending, reusing the `hasPendingMint` pattern (**my pick**). Cost: after an offline restock the product cannot be sold until sync. (b) Temporary local batch id swapped on applied. Cost: an order completed in between consumes a batch id the server has not minted; its `completeOrder` op then references a batch that does not exist and is rejected. I do not recommend (b).
 
-## 6. Risks
-- **Online-only restock** (D1a) is a behaviour regression for weak-connection receiving. Revisit if it hurts.
-- **Id gaps** (D1b), see D1.
-- **Double tap rests on the in-flight guard** (D4). Test must prove it.
-- **Pending-mint queue** stays for create/import; restock no longer feeds it. Do not delete it.
-- **Local state on a queued operation:** copy completion's `_applyPredicted` + undo; do not invent a new pattern.
-- **Mint succeeded, enqueue never happened** (app killed between): a burned number and no restock; the user sees no restock and can retry. Acceptable, document it.
-- **`MAX_OPS`** is unverified in source comments; 3 ops is far below any plausible limit.
+**Q-A3. ActivityLog inside the transaction?** Needs `activity_log` added to the server entity allowlist (+ a check of `firestore.rules` for that path) and `ActivityLog.record` to accept an id. (a) Yes, entry id `act-{{batch}}`, written atomically (**my pick**, you said everything, and with the engine it is one more op). (b) No, keep it in the callback (v1 D3). Cost of (a): one allowlist line, one rules check, one small signature change. Which?
 
-## 7. Not in scope
-Create-product opening stock, bulk import, C-1 `_tryAdjustOrder`, `completeImportedOrder`, `_reverseCompletedOrder`; the other ledger kinds; per-opType server validation (Q-RS-5); request timeouts app-wide.
+**Q-A4. Counter seeding when the counter doc is missing:** server derives it from existing ids (**my pick**), or fail the operation and require the counter doc to exist (simpler, but a new tenant's first restock errors), or accept a client seed (rejected: trust boundary).
+
+**Q-A5. Scope and order.** I push back on one PR for "all CRUD": the engine is server-heavy and every consumer rewrites a working, device-tested path. Proposed order, one PR each, each device-tested before the next: (1) engine + restock, (2) create product with opening stock, (3) order create and the remaining non-atomic paths (`_tryAdjustOrder`, `completeImportedOrder`, `_reverseCompletedOrder`), (4) import with chunking. Agree, or do you want a different first consumer?
+
+## 7. Build order for step (1) (each its own branch off `main`, after #146 merges)
+
+| Step | What |
+|---|---|
+| R1 | Verify counter path, seed fallback, formats (`_batchIdPrefixForYear`, `SUP-`), `activity_log` rules. Parity fixtures. |
+| R2 | Server: `mint` kind, substitution, guards, budget, replay results, `restock` opType, tests (Node, run before push). |
+| R3 | `OperationKeys.restockKey`, `RestockPlan.build` (pure), local apply-from-results hooks (reuse Task 9 hooks). |
+| R4 | `InventoryStore.restock` rewrite, latch, pending-restock picker hide (Q-A2). |
+| R5 | `RestockDialog`, `FailureCause` texts, ActivityLog id param (Q-A3). |
+| R6 | Docs, device test. |
+
+## 8. Risks
+- Server engine change touches `operationLogic.js`, the file every operation goes through: replay, marker and budget must stay byte-compatible for `completeOrder`. Regression tests pin the existing marker and result shapes first (R2 step 1).
+- Two writers on the counter docs (server transaction, client REST mint for unmigrated paths). Safe by Firestore serialisation, but pin with an emulator test that interleaves both.
+- Counter format drift between client and server: parity fixtures.
+- Hidden product after offline restock (Q-A2a) is a user-visible cost.
+- #146 overlap: build after it merges.
+
+## 9. Not in scope
+Steps (2)-(4) of Q-A5; per-opType server shape validation (D5); app-wide request timeouts; removing the pending-mint queue (needed until all minting callers migrate).

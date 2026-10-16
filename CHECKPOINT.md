@@ -11,16 +11,12 @@ Next task on the atomic-operations roadmap after #144/#145: **restock as one ato
 New `opType` (server deploy), new client flow, changes what a restock writes. Spec first, approval, then plan. So this session writes the spec + test plan only, no product code.
 
 ## Steps
-- [x] 1. Loaded skills: brainstorming, qt-qml, qt-ui-design, ponytail
-- [x] 2. Cloned repo, read E2E roadmap, KNOWN-ISSUES entry, `InventoryStore.restock`, `StockBatchStore.addBatch/nextBatchId`, `Gateway.recordOperation`, `operationLogic.js`, `DataModel` completion flow
-- [x] 3. **Found PR #146 (P1 S1a, branch `feature/2026-10-16-p1-s1a-server-movements`) edits `operationLogic.js` and adds `DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" }`.** Restock must send explicit `receipt` movements or add a default. Build only after #146 merges.
-- [x] 4. Wrote design `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md` (status DRAFT, 7 open questions Q-RS-1..7, each with options, trade-offs, my recommendation)
-- [x] 5. Wrote test plan `docs/superpowers/test-plans/2026-10-16-restock-atomic-operation-test-plan.md` (PLANNED, nothing written or run)
-- [x] 6. Docs: KNOWN-ISSUES status line, E2E roadmap line, test-plans README row, Skill 122, SKILLS-INDEX
-- [x] 7. Taher answered Q-RS-1..7 in chat (D1-D7 in the design): keep sequential minted ids, online-only restock; purchase record inside the op; ActivityLog not audit; NO open-time id (store in-flight guard instead); skip server shape check; skip Syncing caption; `recordOperation` deployed + device-tested.
-- [x] 8. Design + test plan updated to D1-D7. Pushed back on two points (D1 gaps/offline cost, D4 double-tap now rests on a guard)
-- [ ] 9. **Taher: approve the updated spec (and confirm id gaps are acceptable).** Brainstorming gate: no plan before this.
-- [ ] 10. Next account: after approval, write the implementation plan (writing-plans skill), then build R1..R6 from the design's build order, each on its own branch off `main`, after #146 merges.
+- [x] 1-6. Skills loaded, repo read, design v1 + test plan v1 + docs pushed (see git log)
+- [x] 7. Taher answered v1 questions, then **corrected me: server-side id minting inside the transaction was never rejected; he wants ALL calls (id create, CRUD, transaction, audit) in one atomic operation with one transaction id.** My v1 error: called it "the rejected option C" and overstated a counter race (client REST mint and server Admin txn on the same doc serialise safely).
+- [x] 8. Design v2: new `mint` op kind + `{{placeholder}}` substitution inside `applyOperation`; counters rolled back on rejection (gapless); replay returns minted ids; restock = first consumer; key created at tap; paper walk-through of create-product and order-create; import needs chunking (named limit)
+- [x] 9. Test plan v2 rewritten (server mint cases, restock, regression incl. `completeOrder` golden marker, monkeys, emulator e2e, device plan)
+- [ ] 10. **Taher: answer Q-A1 (generic mint vs per-opType server builders), Q-A2 (hide product while restock pending vs temp batch id), Q-A3 (ActivityLog in-op), Q-A4 (counter seed), Q-A5 (one PR per consumer, order) and approve spec v2.** Brainstorming gate: no plan before this.
+- [ ] 11. Next account after approval: writing-plans, then R1..R6 in the design, each own branch off `main`, after PR #146 merges.
 
 ## Resume here
-Read the design doc section 4 (decisions) first. Do not write the plan or product code until step 9 is answered.
+Read design v2 section 6 (open questions). Do not write the plan or product code until step 10 is answered.
