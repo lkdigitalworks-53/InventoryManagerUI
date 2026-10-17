@@ -40,6 +40,8 @@ atomic outbox), so both land or neither does. Documented only; nothing built. Re
 - Not checked: other places that pair `addBatch` with `recordDelta` (for example product create with opening stock) and
   may have the same shape.
 
+**Design written 2026-10-16** (design v2 2026-10-16: ids minted inside the transaction, awaiting spec approval): `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md`; test plan `docs/superpowers/test-plans/2026-10-16-restock-atomic-operation-test-plan.md`. Still NOT BUILT. Build after PR #146 (it edits the same `operationLogic.js` and defaults movement kinds by opType, so a restock must be a `receipt`).
+
 **Until built:** to force a stuck write in device tests use a single-write action (edit a product name), not Restock.
 
 ---
