@@ -19,7 +19,8 @@ New `opType` (server deploy), new client flow, changes what a restock writes. Sp
 - [x] 11. Wrote `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` (what was built, 10 gaps G1-G10 with evidence, non-atomic path table, order of work). New finding G4: random-key op queued offline is lost on sign-out (outbox cleared) -> open Q-A6
 - [x] 12. Spec section 6 updated (answers recorded, Q-A6 open); test plan updated (R10, device 2b)
 - [x] 13. PR #147 opened for design review (https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/147).  Brainstorming gate: plan only after approval.
-- [ ] 14. **Taher: review PR #147, answer Q-A6, approve.** Then next account: writing-plans, then R1..R6 in the design, each own branch off `main`, after PR #146 merges.
+- [x] 14. Taher answered Q-A6: sign-out popup with brief operation details + consequences (warn-and-allow, not block). Spec 4b, test plan S series, status doc updated. Proposed as PR 0 before the engine (Q-A7).
+- [ ] 15. **Taher: confirm Q-A7 (guard first), review PR #147, approve.** Then next account: writing-plans, then R1..R6 in the design, each own branch off `main`, after PR #146 merges.
 
 ## Resume here
-Read `ATOMIC-OPERATIONS-STATUS.md`, then design v2 section 6 (Q-A6 open). Do not write the plan or product code until the PR is approved and Q-A6 answered.
+Read `ATOMIC-OPERATIONS-STATUS.md`, then design v2 section 6 (Q-A7 open). Do not write the plan or product code until PR #147 is approved and Q-A7 answered.

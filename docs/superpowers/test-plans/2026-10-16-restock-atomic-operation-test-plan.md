@@ -1,7 +1,7 @@
 # Test plan — Atomic operations with server-minted ids; restock first (v2, Q-A1..Q-A5 answered)
 
 Standard format (Skill 49). Design: `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md` (v2).
-Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + hidden product, Q-A3 ActivityLog in-op, Q-A4 server seed). Cases marked `[Q-A6]` wait for that open question (sign-out with a queued restock).
+Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + hidden product, Q-A3 ActivityLog in-op, Q-A4 server seed). Q-A6 is answered (sign-out warning popup); its cases are the `S` series below.
 
 **Verification status (2026-10-16):** PLANNED. Nothing written, nothing run. No Qt tools in the sandbox: QML cases CI-only; `functions/` and pure-JS cases run in Node before push. Coverage target: 100% lines and branches on the new server code (`mint`, substitution, guards, counter registry, seed fallback), `RestockPlan.js`, `OperationKeys` additions.
 
@@ -41,7 +41,7 @@ Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + h
 - R06 parked write on the product still refuses before anything is queued (D2).
 - R07 `completeOrder` marker and result shapes unchanged (golden fixture captured before the engine change).
 - R08 `StockBatchStore.addBatch` + pending-mint queue still work for create/import.
-- R10 [Q-A6] sign-out with an unapplied queued restock behaves as decided (default pick: sign-out blocked with the count; nothing cleared).
+- R10 sign-out with an unapplied queued restock goes through the guard; confirming discards it, cancelling keeps every outbox item.
 - R09 product hidden from order pickers while its restock is pending; visible again after applied or Discard.
 
 ## 3. Functional tests
@@ -74,6 +74,33 @@ Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + h
 - E05 `firestore.rules`: existing suite green; [Q-A3] `activity_log` rule reviewed and a test added if the path rules change.
 - E06 QML e2e for restock not written unless a `recordOperation` recipe exists under `qmltestrunner`; state the decision in the status block when built.
 
+## 6. Sign-out guard tests (S series, PR 0)
+
+**Unit (`tests/tst_SignOutGuard.qml` + Node mirror of the pure body):**
+- S01 no outbox and no photos: `build` returns `count 0`, no rows, no consequences.
+- S02 one queued mutation: 1 row (`DescribeItem` label), tag Waiting, consequence "enter this again", the generic "discards" and "local data cleared" lines present.
+- S03 in-flight item: tag Sending and the "may or may not have been saved" line; absent when nothing is in flight.
+- S04 parked item: tag Needs attention.
+- S05 `completeOrder` operation: consequence "order stays Pending, complete it again"; no "enter again" line for it alone.
+- S06 `restock` operation: label "Restock", "enter this again".
+- S07 photos pending: photo line present, photo count added to the total.
+- S08 6+ items: first 5 rows + "+ K more", count is the full total.
+- S09 mixed kinds: consequence lines deduplicated, stable order.
+- S10 malformed or unknown item (missing entity, empty ops): fallback label, never throws.
+- S11 count and rows computed from one snapshot of the lists (a list changing between reads cannot give count ≠ rows).
+
+**Functional:**
+- S12 tap Sign out with pending items: sheet shown, nothing cleared yet.
+- S13 Stay signed in: session, outbox, photo queue unchanged.
+- S14 Sign out and discard: outbox, in-flight keys, photo queue, ActivityLog cleared, `signedOut` emitted once.
+- S15 items drain while the sheet is open: on confirm the guard recomputes; with zero left it falls through to a plain sign-out.
+- S16 leave-workspace with pending items goes through the same sheet; cancelling leaves membership untouched.
+- S17 no pending items: today's plain confirm, unchanged.
+- S18 double tap on "Sign out and discard": one sign-out.
+- R-S1 grep gate: every caller of `AuthService.signOut` is behind the guard; test fails if a new caller appears (C++ callers checked once by hand and recorded here).
+
+**Monkey:** S19 random enqueue / ack / park / discard / open sheet / cancel / confirm for 200 steps: at no point does an outbox item disappear except through an ack, a Discard, or the confirmed sign-out.
+
 ## On-device test plan
 
 Prerequisites: P1 server with `mint` + `restock` deployed (`recordOperation` itself is live and device-tested per Taher), P2 Firebase console open, P3 product with stock 5 and a known supplier, P4 airplane mode, P5 note the current highest `BAT-` number.
@@ -87,10 +114,18 @@ Prerequisites: P1 server with `mint` + `restock` deployed (`recordOperation` its
 2. Product with a parked edit (edit a product name offline): refused with the stuck-change text.
 3. Qty 0, negative, blank cost: refused in the dialog.
 
+### Sign-out guard
+1. Airplane mode, restock by 3, Profile → Sign out: popup shows "Restock · 3 × …" Waiting, the consequences, two buttons. Stay signed in: back to the app, item still queued.
+2. Same, choose Sign out and discard: signed out; sign in again; stock unchanged, no batch, nothing syncs (as the popup said).
+3. Queue an edit, an order completion and a restock offline: popup lists all three with the right consequence lines; order completion line says the order stays Pending.
+4. Six queued items: five rows and "+ 1 more".
+5. Leave workspace with a queued item: same popup.
+6. Nothing queued: today's plain "Sign out?" confirm.
+
 ### Edge cases
 1. Airplane mode, restock by 3: dialog closes, product hidden from the new-order picker, stuck sheet shows one queued item; network on: stock 8, one batch, product visible again.
 2. Restock, kill the app, relaunch online: stock 8, one batch, one activity entry.
-2b. [Q-A6] Airplane mode, restock, try to sign out: blocked with "1 change not synced"; network on, it applies, sign-out works.
+2b. Airplane mode, restock, tap Sign out: popup lists "Restock · …" as Waiting with the consequences; Stay signed in; network on, it applies, sign-out then shows the plain confirm.
 3. Double tap Confirm: one restock.
 4. Cancel the dialog, reopen, restock: works, no stray batch or id burned.
 5. Two phones restock the same product at once: two batches, stock +q1+q2, ids distinct and consecutive.

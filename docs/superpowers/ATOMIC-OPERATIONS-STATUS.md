@@ -24,7 +24,7 @@ Written 2026-10-16 from a code read of `main` @ `6c6f358` (greps are reproducibl
 | G1 | **One opType only.** `OP_TYPES = ["completeOrder"]`. Every other multi-write action is still N independent calls. | `operationLogic.js`; section 3 | this arc, one consumer per PR |
 | G2 | **Ids are minted by separate client calls**, outside any transaction, for five counters (`products`, `suppliers`, `stockBatches-<year>`, `orders`, `staff`). A mint can time out, be repeated (burned number) or be lost; seeds come from the client's local max. | `FirebaseService.mintCounterValue/Batch`, 5 callers listed in section 3 | `mint` op (design v2) |
 | G3 | **ActivityLog is a direct client PUT** (`activity_log/<id>`), 13 call sites, not a gateway entity, lost if the app dies before the callback. | `ActivityLog._pushOneToFirebase` | `activity_log` entity in the operation (Q-A3 yes) |
-| G4 | **A random-key operation is lost on sign-out.** `OutboxStore.clear()` runs on sign-out on purpose. `completeOrder` survives that because its key is derived from order + epoch, so a re-run resends the same key. A restock key created at tap is random, so a queued restock cleared by sign-out is gone while the UI said done. | `OutboxStore.clear`, `LockManager` comment, `OperationKeys.completeOrderKey` | open: Q-A6 |
+| G4 | **A random-key operation is lost on sign-out.** `OutboxStore.clear()` runs on sign-out on purpose. `completeOrder` survives that because its key is derived from order + epoch, so a re-run resends the same key. A restock key created at tap is random, so a queued restock cleared by sign-out is gone while the UI said done. | `OutboxStore.clear`, `LockManager` comment, `OperationKeys.completeOrderKey` | sign-out warning popup (design 4b, Q-A6 answered); loss stays possible if the user chooses discard; per-account outbox is the real fix, deferred |
 | G5 | **Product delete cannot join an operation.** `cascade-delete-not-allowed` is enforced inside `validateOperationRequest` (the PH3 cleanup marker is not written by the transaction). | `operationLogic.js` | later PR; needs the marker in the transaction or a deliberate carve-out |
 | G6 | **Server limits unverified.** `MAX_OPS = 200` and the ~500-write ceiling (and whether `serverTimestamp()` counts extra) are marked unverified in the source. Bulk import can never be one operation. | source comment, BC1 review R3 | chunked operations (one `requestId` per chunk) |
 | G7 | **Optimistic state and undo exist only for completion** (`_applyPredicted`). Other paths mutate the local cache directly and rely on resync. | `DataModel._applyPredicted` | each consumer PR |
@@ -47,6 +47,7 @@ Written 2026-10-16 from a code read of `main` @ `6c6f358` (greps are reproducibl
 
 ## 4. Order of work
 
+0. Sign-out guard (gap G4): pure helper + sheet, independent of the engine. Proposed first (Q-A7).
 1. Engine (`mint`, placeholders, `activity_log` entity) + restock. Design: `specs/2026-10-16-restock-atomic-operation-design.md`.
 2. Add product with opening stock.
 3. New order, then `_tryAdjustOrder`, `completeImportedOrder`, `_reverseCompletedOrder`.
