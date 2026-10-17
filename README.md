@@ -327,6 +327,13 @@ edit, bulk import and delete cannot bypass the ledger. The `stock_movement` enti
 `docs/superpowers/plans/2026-09-24-p1-server-side-stock-movements-s1a.md` and `...-s1b.md`; test plan:
 `docs/superpowers/test-plans/2026-09-24-p1-stock-movements-test-plan.md`. Roadmap status is in `CHECKPOINT.md`.
 
+**Update 2026-10-16 (P1 slice S1a implemented, server only):** `functions/lib/movementLogic.js` (validate, derive, sum-check, row build) and its
+wiring: `recordDelta` and `recordOperation` delta ops now write a server-built `stock_movements` row in the same transaction (client `movements`
+must sum to the applied delta, else `409 movement-qty-mismatch`; no `movements` derives one `adjustment`, or `sale` inside `completeOrder`),
+operations obey a 500-write budget (`operation-too-large`), `recordMutation` rejects `movements`, and `stock_movement` is no longer a client
+entity. Nothing in QML changed. **Needs `firebase deploy --only functions` to dev before any row appears (R3).** Next: S1b (derived rows for
+`recordMutation`, batch, mutation ops; batch cap 150).
+
 ## Qt Skills Cheat Sheet
 
 This repository now includes local Copilot agents mapped from the Qt skills repo:
