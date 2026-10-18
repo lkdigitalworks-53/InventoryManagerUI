@@ -215,6 +215,28 @@ test("validateOperationRequest: write budget = 2 per op + 1 marker + one movemen
     assert.equal(over.error, "operation-too-large");
 });
 
+// Why the app never sees `operation-too-large` for an order (P1 S1b review, D-1 follow-up).
+// The only sender of operations is qml/helper/CompletionPlan.js. It sends at most MAX_OPS ops, and every
+// inventory op comes with the order op and at least one stock_batch op (FIFO or repair), so it sends at most
+// (MAX_OPS - 1) / 2 inventory ops. This pins that the server budget accepts that largest shape. If MAX_OPS or the
+// budget moves, this fails first, instead of the app showing a server rejection for a plain big order.
+test("write budget accepts the largest order the client planner can send, and refuses a shape it cannot", () => {
+    const batch = (i) => ({ kind: "delta", entity: "stock_batch", entityId: "b" + i, deltas: { qtyRemaining: -1 } });
+    const order = { kind: "mutation", entity: "order", entityId: "o1", action: "update", before: {}, after: {} };
+    const shape = (inv, batches) => [
+        ...Array.from({ length: inv }, (_, i) => deltaOp("p" + i, -1, undefined)),
+        ...Array.from({ length: batches }, (_, i) => batch(i)), order];
+    assert.equal(O.MAX_OPS, 200);
+    const maxInv = Math.floor((O.MAX_OPS - 1) / 2);
+    assert.equal(maxInv, 99);
+    assert.ok(2 * O.MAX_OPS + 1 + maxInv <= M.MAX_TXN_WRITES, "the budget formula holds for the planner's bound");
+    const ok = O.validateOperationRequest(opBody(shape(99, 100)));                   // 200 ops: 401 + 99 = 500
+    assert.equal(ok.ok, true, ok.error);
+    const over = O.validateOperationRequest(opBody(shape(100, 99)));                 // 200 ops: 401 + 100 = 501 (planner cannot build it)
+    assert.equal(over.error, "operation-too-large");
+    assert.equal(O.validateOperationRequest(opBody(shape(99, 101))).error, "operation-too-large");   // 201 ops: MAX_OPS
+});
+
 test("validateOperationRequest: explicit movements count toward the write budget", () => {
     const two = [{ kind: "sale", qty: -1 }, { kind: "sale", qty: -1 }];
     const ops = (n) => Array.from({ length: n }, (_, i) => deltaOp("p" + i, -2, two));

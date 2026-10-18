@@ -4343,3 +4343,14 @@ Rules:
 1. Before reviewing a stacked PR whose parent was squash-merged, compare `git diff --stat origin/main <branch>` with the PR's own commits (`git diff <parent-tip>..<branch>`). Extra deletions = pre-squash history.
 2. Never fix it by resolving conflicts toward the branch: that reverts main. Re-apply only the PR's own commits onto main (`git cherry-pick`), then join with `git merge -s ours --no-commit origin/main` + `git read-tree --reset -u <rebuilt tree>` so the PR gets main as an ancestor without a force-push.
 3. Verify the result: `git diff --stat origin/main HEAD` must list only the PR's files, and the earlier CI run no longer proves the new tree.
+
+
+## Skill 122: A server limit is only reachable through the senders that exist: derive the reachable range from the sender before writing a verification item, and pin the relation with both constants
+
+PR #149 review (2026-10-18). The test plan asked Taher to complete an order of 166+ lines and expect the server's `operation-too-large`. No app order can do that: `CompletionPlan.build` stops at `MAX_OPS` 200 ops (about 66 lines) with a local message first, and the server's 166 is the ceiling for inventory-only operations.
+Rules:
+1. Before a plan item says "trigger limit X", read the SENDER's own cap and shape (ops per line, fixed extra ops) and compute the largest request it can build. If that is below X, the item is wrong: write the local refusal as the expected result instead, and keep the server message as a Node-only pin (Skill 119 rule 1: list the callee's error paths that survive the guard).
+2. Pin the relation, not the two numbers: one test computes the sender's bound from the exported constants (`(MAX_OPS - 1) / 2` inventory ops) and asserts the server budget accepts it, plus the first shape beyond it is refused. Raising either constant then fails that test, not a person.
+3. An unverified external ceiling (here Firestore's per-commit write count) has to appear in EVERY path it governs. The import chunk (450 docs) was on the dev checklist; an about-60-line order (about 181 ops) was not, and it is the same question.
+4. "The public quotas page lists no write count limit" is evidence of a gap in the docs, not of no limit. Write it as "not documented", keep the conservative budget, and record the dev check as NOT YET RUN with the exact fallback (which constants move together).
+5. A latent handler defect behind an unreachable path (3 identical re-sends, then `out of stock` for a "too large" rejection) goes in KNOWN-ISSUES with its trigger, not into untestable QML.

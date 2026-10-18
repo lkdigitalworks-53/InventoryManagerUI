@@ -10,7 +10,9 @@
 //
 // MAX_BATCH_SIZE=150 keeps the transaction's write count (3 per item at most: one
 // working-doc write + one audit_log entry + one stock_movements row for inventory, P1)
-// at 450, safely under Firestore's ~500-writes-per-transaction ceiling. A caller needing more than 150 items
+// at 450, under the 500-writes-per-transaction ceiling the repo assumes (the public quotas page, checked
+// 2026-10-18, lists no write COUNT limit, so this is conservative; a 150-row import on dev still has to confirm it,
+// P1 test plan D-1; fallback = lower this, Gateway.maxBatchSize and their pins together). A caller needing more than 150 items
 // in one shot must split into multiple recordMutations calls; atomicity
 // then holds within each chunk, not across chunks - a documented trade-off,
 // not a hidden one.

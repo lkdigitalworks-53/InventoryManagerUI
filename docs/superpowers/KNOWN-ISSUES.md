@@ -5,6 +5,18 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## A server `operation-too-large` for an order completion is mishandled, but the app cannot reach it today — FOUND 2026-10-18 (PR #149 review), NOT BUILT
+
+**Question (Taher):** what happens when an order's lines hit the server's 166 cap and it answers `operation-too-large`?
+
+**Answer (code reading, plus the Node pin `movementWiring.test.js` "write budget accepts the largest order the client planner can send"):**
+- The app never gets there. `CompletionPlan.build` refuses more than `MAX_OPS` = 200 ops BEFORE sending (about 66 lines: batch op + stock op + sale op each, plus the order op). The person sees "This order is too large to complete in one step (N changes, limit 200)", the order stays `pending`, and nothing reaches the server (`tst_DataModel_completeOrderAtomic` case 12).
+- 166 is the server ceiling for an operation made only of inventory ops. A planner order has at least 2 ops per stock line plus the order op, so at most 99 inventory ops: 2 x 200 + 1 + 99 = 500 writes, inside the budget.
+
+**Latent defect, only if the two caps ever drift** (a changed `MAX_OPS`, or an older / foreign client): the 400 carries no `opIndex`, so `DataModel._onCompletionRejected` re-plans and re-sends the same oversized operation `maxReplans` (3) times, then calls `_failCompletion(..., markOutOfStock = true)`. The order is then flagged `out of stock`, which is the wrong reason (Skill 118 rule 6, the same misnomer), and the cause toast is right ("too large"). Fix when needed: treat `FailureCause` kind `limit` as terminal at once (no re-plan, no `out of stock`).
+
+**Why not built now:** unreachable with the current constants, and the Node pin fails first if either cap moves. Code for it would be untestable from the app and CI-only on the QML side.
+
 ## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
 
 **Found on-device (Taher, PR #97 test).** Member `status` set to suspended, then restock a product: toast "Could not
