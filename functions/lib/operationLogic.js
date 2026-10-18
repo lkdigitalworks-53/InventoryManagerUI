@@ -181,7 +181,11 @@ async function applyOperation(db, params) {
                     entry.exists = true;
                     entry.data = op.after || {};
                 }
-                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: [] });
+                // Inventory stock changes leave a server-derived ledger row (P1 D11); `before` is proven
+                // equal to the running state by the check above.
+                const movements = op.entity === "inventory"
+                    ? MovementLogic.deriveForMutation(op.action, op.before, op.action === "delete" ? null : (op.after || {})) : [];
+                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: movements });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "mutation",
                                after: op.action === "delete" ? null : (op.after || {}) });
             }

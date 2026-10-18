@@ -28,6 +28,18 @@ const ENTITY_COLLECTIONS = {
 
 const MovementLogic = require("./movementLogic");
 
+// D-2 (PR #146 review): ids of the single-record endpoints (recordMutation, recordDelta,
+// recordMutationsBatch) share a keyspace with recordOperation's `{requestId}~{i}` audit ids and
+// `...~m{j}` ledger rows, and writes use `set`, so a member could pick an id that later overwrites
+// another request's audit entry and ledger row. `~` and `/` are therefore never allowed in a
+// client id here (recordOperation ids legitimately carry `~`, so this is NOT in the shared
+// validators), and the length is capped. Applied by the three handlers / the batch validator.
+const MAX_REQUEST_ID_LENGTH = 200;
+function isClientRequestId(id) {
+    return typeof id === "string" && id.length > 0 && id.length <= MAX_REQUEST_ID_LENGTH
+        && id.indexOf("~") < 0 && id.indexOf("/") < 0;
+}
+
 const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];
 
 // Extracts the token from an "Authorization: Bearer <token>" header.
@@ -210,12 +222,28 @@ async function applyMutation(db, params) {
             return { ok: false, status: 409, conflict: true, current: current };
         }
 
+        // Inventory stock can only change through a transaction that also writes its ledger
+        // row (P1 spec D11): derive one from the stock before/after. `current` equals
+        // params.before here (the CAS above), so the row explains exactly this change.
+        const movements = params.entity === "inventory"
+            ? MovementLogic.deriveForMutation(params.action, current, params.after) : [];
+
         if (params.action === "delete") {
             txn.delete(workingRef);
         } else {
             txn.set(workingRef, params.after || {}, { merge: false });
         }
         if (marker) txn.set(markerRef, marker);
+        const rows = MovementLogic.buildRows(movements, {
+            baseId: params.requestId,
+            productId: params.entityId,
+            actorUid: params.actorUid,
+            actorRole: params.actorRole,
+            serverTimestamp: params.serverTimestamp,
+            clientTimestamp: params.clientTimestamp,
+            requestId: params.requestId
+        });
+        for (const row of rows) txn.set(db.doc("tenants/" + params.tenantId + "/stock_movements/" + row.id), row.data);
 
         txn.set(auditRef, {
             entryId: params.requestId,
@@ -314,5 +342,7 @@ module.exports = {
     validateDeltaRequest,
     applyMutation,
     applyDelta,
+    isClientRequestId,
+    MAX_REQUEST_ID_LENGTH,
     _deepEqual
 };

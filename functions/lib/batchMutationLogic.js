@@ -8,9 +8,9 @@
 // compliance property than N independent writes, at the cost of a
 // batch-size cap.
 //
-// MAX_BATCH_SIZE=200 keeps the transaction's write count (2 per item: one
-// working-doc write + one audit_log entry) at 400, safely under Firestore's
-// ~500-writes-per-transaction ceiling. A caller needing more than 200 items
+// MAX_BATCH_SIZE=150 keeps the transaction's write count (3 per item at most: one
+// working-doc write + one audit_log entry + one stock_movements row for inventory, P1)
+// at 450, safely under Firestore's ~500-writes-per-transaction ceiling. A caller needing more than 150 items
 // in one shot must split into multiple recordMutations calls; atomicity
 // then holds within each chunk, not across chunks - a documented trade-off,
 // not a hidden one.
@@ -18,8 +18,9 @@
 // Zero Firebase SDK dependency of its own — same dependency-injection
 // pattern as gatewayLogic.js / cutoverLogic.js.
 
-const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual } = require("./gatewayLogic");
+const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual, isClientRequestId } = require("./gatewayLogic");
 const { isCascadeEntityDelete, isReservedAuditId } = require("./photoCleanup");
+const MovementLogic = require("./movementLogic");
 
 // Mirrored client-side as Gateway.qml's `maxBatchSize` property (no shared
 // build-time constant between this Node runtime and the QML client — see
@@ -27,7 +28,7 @@ const { isCascadeEntityDelete, isReservedAuditId } = require("./photoCleanup");
 // file's own test below and tests/tst_Gateway.qml both pin the value they
 // each hold so a drift fails a test on both sides instead of failing silently
 // in production the way the original bug did.
-const MAX_BATCH_SIZE = 200;
+const MAX_BATCH_SIZE = 150;
 
 // Validates + normalizes a recordMutationsBatch request body. Returns
 // { ok: true, entity, collection, requestId, items: [...] } or
@@ -44,8 +45,12 @@ function validateBatchMutationRequest(body) {
     if (!requestId) {
         return { ok: false, status: 400, error: "missing-fields" };
     }
-    if (isReservedAuditId(requestId)) {
+    if (isReservedAuditId(requestId) || !isClientRequestId(requestId)) {
         return { ok: false, status: 400, error: "invalid-request-id" };
+    }
+    // Whole-record mutations never carry client movements: the server derives the rows (P1 D11).
+    if (body.movements !== undefined) {
+        return { ok: false, status: 400, error: "movements-not-supported" };
     }
     if (items.length === 0) {
         return { ok: false, status: 400, error: "empty-batch" };
@@ -63,6 +68,11 @@ function validateBatchMutationRequest(body) {
         }
         if (!entityId) {
             return { ok: false, status: 400, error: "missing-fields" };
+        }
+        // The batch audit and ledger ids are `<requestId>:<entityId>[~m0]`: a `/` or `~` in the
+        // entityId could forge another endpoint's id (D-2, same overwrite class as the requestId).
+        if (!isClientRequestId(entityId)) {
+            return { ok: false, status: 400, error: "invalid-entity-id" };
         }
         // PH3 (design Q11): a product delete must leave a pending_cleanup marker, which this batch
         // transaction deliberately does not write (it would break the 2-writes-per-item ceiling
@@ -138,6 +148,21 @@ async function applyMutationsBatch(db, params) {
                 txn.delete(r.workingRef);
             } else {
                 txn.set(r.workingRef, r.item.after || {}, { merge: false });
+            }
+            // Inventory stock changes leave a server-derived ledger row (P1 spec D11). The conflict
+            // check above proved the stored doc equals item.before, so before/after explain the change.
+            if (params.entity === "inventory") {
+                const rows = MovementLogic.buildRows(
+                    MovementLogic.deriveForMutation(r.item.action, r.item.before, r.item.after), {
+                        baseId: params.requestId + ":" + r.item.entityId,
+                        productId: r.item.entityId,
+                        actorUid: params.actorUid,
+                        actorRole: params.actorRole,
+                        serverTimestamp: params.serverTimestamp,
+                        clientTimestamp: r.item.clientTimestamp,
+                        requestId: params.requestId
+                    });
+                for (const row of rows) txn.set(db.doc(tenantRoot + "/stock_movements/" + row.id), row.data);
             }
 
             txn.set(r.auditRef, {

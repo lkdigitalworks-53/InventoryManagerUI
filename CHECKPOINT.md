@@ -1,38 +1,35 @@
-# CHECKPOINT — 2026-10-16 P1 slice S1a: server-side stock movements (resume here)
+# CHECKPOINT — 2026-10-18 P1 slice S1b: derived ledger rows for whole-record inventory mutations (resume here)
 
-**Branch:** `feature/2026-10-16-p1-s1a-server-movements`, cut from `main` @ `0f081f2`.
-**Commit identity:** `Taher <lkdwtaher@gmail.com>` (this account). PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs.
-**Skills used:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `qt-development-skills:qt-ui-design`, `ponytail:ponytail`. Caveman FULL.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-15-pr139-test-plan-rewrite-CHECKPOINT.md`.
+**Branch:** `feature/2026-10-18-p1-s1b-derived-mutations`, cut from `main` @ `f9e8fe4` (S1a, PR #146, merged).
+**Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs; caveman FULL.
+**Skills used:** `superpowers:brainstorming`, `qt-development-skills:qt-ui-design`, `qt-development-skills:qt-qml`, `ponytail:ponytail`. No UI in this slice (server + one QML constant), so no design step was needed.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-17-p1-s1a-prev-CHECKPOINT.md`.
 
 ## Why this item
-Compliance status vs master spec (`specs/2026-06-06-india-compliance-roadmap-design.md`), grep-verified on `main` @ `0f081f2`:
-P0 gateway + audit_log done. P1 design rev 2 + S1a/S1b plans merged (#85, #86) but **no code**: no `functions/lib/movementLogic.js`, no `movements` in `functions/index.js`.
-P2 (HSN/GSTIN), P3-P7: nothing in `qml/` or `functions/`. Next priority by Taher's own chain (P1 checkpoint step 19) = **implement S1a**.
-S1a is server-only (`functions/`), already scoped as one slice = one PR = one session, fully testable with `node --test` here. No QML, so no UI design needed in this slice (qt-ui-design / qt-qml apply from S2).
+Taher said "s2b". In the repo S2b = "park terminal writes" (2026-09-30), already merged. P1's S2 needs S1b deployed first, so this session read it as **P1 S1b** (next slice in the S1a checkpoint, step 10). Assumption flagged in the PR; if he meant something else, this branch is still the required predecessor of P1 S2.
 
-## Scope
-Plan: `docs/superpowers/plans/2026-09-24-p1-server-side-stock-movements-s1a.md` (5 tasks, code embedded). Spec: `specs/2026-09-24-p1-server-side-stock-movements-design.md` D1-D13.
-Plan base drift: PR #80 added `removed_staff` to `ENTITY_COLLECTIONS`, plan Task 2 patch may not `git apply`; hand-edit then. Base has moved a lot since (BC1/PH3 touched `gatewayLogic.js`/`index.js`): re-check every patch with `git apply --check`.
-Baseline before any change: `cd functions && node --test` = 626 pass, 0 fail.
+## Scope (one slice = one PR)
+Plan: `plans/2026-09-24-p1-server-side-stock-movements-s1b.md` (patches drifted, hand-applied; drift note added at the top of the plan). Plus D-2 from the PR #146 review (requestId guard), chosen by Taher for S1b.
 
-## Steps (tick as done)
-- [x] 1. Cloned, read master spec, P1 design, checkpoints, S1a plan; confirmed S1a not built. Skills loaded.
-- [x] 2. Branch + identity + `npm ci` + baseline 626/626. Old checkpoint archived.
-- [x] 3. Task 1 (2c60791): `movementLogic.js` + 24 tests. Red (module missing) then 24/24.
-- [x] 4. Task 2 (dc694c4): `recordDelta` writes rows, `stock_movement` closed, `recordMutation` rejects `movements`. Plan patch failed `git apply` (base drift), same edits applied by hand. 17 tests, red 11 fail then green. Suite 667.
-- [x] 5. Task 3 (00a9bd8): handler pass-through (`index.js` +1 line), harness captures `applyDelta` params (hand edit, line drift). 5 tests, 2 red then green. Suite 672.
-- [x] 6. Task 4 (2803e9d): `recordOperation` rows + write budget; `operationLogic.js` edited by hand (patch drift), test patch applied clean. 13 tests, 9 red then green. Suite 685.
-- [x] 7. Task 5: coverage `movementLogic.js` 100/100, `gatewayLogic.js` and `operationLogic.js` 100% line; 7 mutations caught (derive removed, `completeOrder` default, budget row term, `stock_movement` re-added, handler pass-through, mutation reject, sum check), files restored. README, AGENTS, test plan + its index row, S1b plan drift note updated. `SKILLS.md` untouched (no new lesson worth a numbered skill).
-- [x] 8a. Pushed (proxy needed `add_repo` with push access first; no PAT used) and opened **PR #146** (`gh pr create` is blocked, GraphQL; used `gh api .../pulls`).
-- [x] 8b. CI on PR tip cae6d34: 5/5 green (verified 2026-10-17 via check-runs API).
-- [ ] 9. **Taher:** `firebase deploy --only functions` to dev, confirm unauthenticated `POST recordDelta` = `401 missing-token`, run the S1a on-device checklist in the test plan. Rows do not appear before the deploy (R3).
-- [ ] 10. **Next session (new branch off `main` after S1a merges):** S1b per `plans/2026-09-24-p1-server-side-stock-movements-s1b.md` (run `git apply --check` on each patch first, hand-edit on drift). S2 planning only after S1b's checklist passes.
+## Steps
+- [x] 1. Cloned, read memory + S1a checkpoint + S1b plan + PR #146 review (D-1/D-2/D-3), branch cut.
+- [x] 2. Tests first: `functions/test/movementDerive.test.js` (32, strict fake in `test/testSupport/strictDb.js`), 22 red.
+- [x] 3. `movementLogic.stockOf` / `deriveForMutation`; `applyMutation`, `applyMutationsBatch`, operation mutation ops write the derived row after the CAS check; batch rejects `movements`; `MAX_BATCH_SIZE` 200 -> 150.
+- [x] 4. D-2: `gatewayLogic.isClientRequestId` (no `~`, no `/`, 1..200 chars); applied in the `recordMutation` and `recordDelta` handlers (`index.js`) and in the batch validator (requestId and entityId). Shared validators untouched on purpose (`recordOperation` passes `~` ids through them). `functions/test/requestIdGuard.test.js` (13).
+- [x] 5. Existing tests re-expected: `batchMutationLogic.test.js` (pin 150, F36b 150, RES-B1 probe id).
+- [x] 6. Server suite `cd functions && node --test` = **739/739**; 100% line on the 4 touched lib files; 11 mutations all caught, files restored.
+- [x] 7. Client mirror (CI only): `Gateway.maxBatchSize` 150; `tests/tst_Gateway.qml` pin + the 250-item split test (150 + 100: the plan missed this one), `tst_InventoryStore_upsertMany.qml` message, `tst_BulkImportChunkingE2E.qml` indices 149/150, `tst_OrdersStoreE2E.qml` message.
+- [x] 8. Docs: README, AGENTS.md, S1b plan drift note, P1 test plan (S1b rows to real numbers, D-2 + on-device items), test-plans index row.
+- [ ] 9. Push, open PR, read the 5 CI checks (verify via check-runs API, not by guessing).
+- [ ] 10. **Taher:** deploy functions to dev; run S1a + S1b on-device checklists in `test-plans/2026-09-24-p1-stock-movements-test-plan.md`. Especially the 150-row import (D-1: pessimistic write count 750, unverified).
+- [ ] 11. After that: plan **S2** in its own session (kind pickers, delete `direct` mode and `runCutover`, lock `inventory` in rules, rules test).
 
-## Open items
-- No QML touched, so no QML CI delta expected; CI must still be green on this PR (functions tests + existing QML/E2E).
-- Compliance items still not started: P2 (HSN/GSTIN, client-only, could run in parallel), P3-P7.
+## Open items / risks
+- **D-1 (unverified write ceiling):** a 150-item inventory batch is 450 docs; if each `serverTimestamp()` counts as an extra write it is 750 and the real call fails. Pinned in a test, settled only by the dev deploy check. Fallback: cap about 100 (server + `Gateway.maxBatchSize` + pins).
+- Ledger is still not complete for compliance until S2 locks the rules (R2): a member can still write `inventory` directly.
+- Role gate / `valueAtCost` upper bound (PR #146 review item 4): decide before production, not done here.
+- QML/E2E edits unverified until CI runs.
 
 ## NEXT
-Step 8b: check CI on PR #146 (S1a). If red, read the failing job first; functions suite is 685 locally.
+Step 9: push and read CI. If a QML test outside the edited ones fails on the old 200 cap, fix that test, not the constant.

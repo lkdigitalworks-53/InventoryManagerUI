@@ -430,8 +430,9 @@ QtObject {
     // retry an oversized batch forever. If the server's constant ever
     // changes, functions/test/batchMutationLogic.test.js pins its value and
     // tests/tst_Gateway.qml pins this one — a drift shows up as a test
-    // failure on both sides rather than silently.
-    readonly property int maxBatchSize: 200
+    // failure on both sides rather than silently. 150 (not 200) since P1 S1b:
+    // an inventory batch writes up to 3 docs per item (doc + audit + ledger row).
+    readonly property int maxBatchSize: 150
 
     // Pure/testable: split items into chunks of at most `size`. No-op
     // wrapper (single chunk) when items already fits.

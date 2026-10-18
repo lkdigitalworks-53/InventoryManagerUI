@@ -182,6 +182,11 @@ exports.recordMutation = functions.onRequest(
             send(res, validated.status, { ok: false, error: validated.error });
             return;
         }
+        // D-2: the shared validator also serves recordOperation (ids with `~`), so the guard lives here.
+        if (!GatewayLogic.isClientRequestId(validated.requestId)) {
+            send(res, 400, { ok: false, error: "invalid-request-id" });
+            return;
+        }
 
         const ctx = await deriveContext(db, actorUid);
         if (!ctx) {
@@ -330,6 +335,11 @@ exports.recordDelta = functions.onRequest(
         const validated = GatewayLogic.validateDeltaRequest(body);
         if (!validated.ok) {
             send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+        // D-2: the shared validator also serves recordOperation (ids with `~`), so the guard lives here.
+        if (!GatewayLogic.isClientRequestId(validated.requestId)) {
+            send(res, 400, { ok: false, error: "invalid-request-id" });
             return;
         }
 

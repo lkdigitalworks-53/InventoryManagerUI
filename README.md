@@ -334,6 +334,15 @@ operations obey a 500-write budget (`operation-too-large`), `recordMutation` rej
 entity. Nothing in QML changed. **Needs `firebase deploy --only functions` to dev before any row appears (R3).** Next: S1b (derived rows for
 `recordMutation`, batch, mutation ops; batch cap 150).
 
+**Update 2026-10-18 (P1 slice S1b implemented; server + client cap mirror):** `recordMutation`, `recordMutationsBatch` and `recordOperation`
+mutation ops on `inventory` now also write a server-derived `stock_movements` row (create -> `receipt`, update/delete -> `adjustment`, a delete
+counts as stock going to 0, no stock change = no row), in the same transaction, after the `before` conflict check. So every inventory write
+path leaves a ledger row; the rules still let a member write `inventory` directly until S2 (R2). `MAX_BATCH_SIZE` and `Gateway.maxBatchSize`
+are now 150 (inventory batch = 3 writes per item = 450). Review decision D-2 is in: `recordMutation`, `recordDelta` and `recordMutationsBatch`
+reject a requestId containing `~` or `/` or longer than 200 chars (and the batch rejects such an entityId) with `400 invalid-request-id` /
+`invalid-entity-id`, so none can forge a `recordOperation` audit or ledger id (those carry `~`). **Needs `firebase deploy --only functions`
+to dev.** Next: S1b on-device checklist, then S2 planning (kind pickers, delete `direct` mode, lock `inventory` in rules).
+
 ## Qt Skills Cheat Sheet
 
 This repository now includes local Copilot agents mapped from the Qt skills repo:
@@ -512,7 +521,7 @@ Two problems, fixed separately (full design: `docs/superpowers/specs/
   `Supplier`) now route through the compliance gateway (`Gateway.recordMutation`/`recordMutations`
   — see AGENTS.md §8, `SKILLS.md` Skill 35) instead of calling `FirebaseService` directly.
   `approveAllPending`'s bulk update specifically now uses `Gateway.recordMutations` (one atomic
-  transaction, capped at 200 items) — the old `FirebaseService.putMany()` call there is gone.
+  transaction, capped at 150 items since P1 S1b) — the old `FirebaseService.putMany()` call there is gone.
   Functionally live as of 2026-07-29 (`Gateway.mode` is `"gateway"`), and this is the current code
   path, not the one described just above. As of the async-write-sequencing design (below),
   `InventoryStore.deductStock`/`StockBatchStore`'s FIFO functions route through
