@@ -15,7 +15,11 @@ broken, where, why it was deferred, and leads for a future fix.
 
 **Latent defect, only if the two caps ever drift** (a changed `MAX_OPS`, or an older / foreign client): the 400 carries no `opIndex`, so `DataModel._onCompletionRejected` re-plans and re-sends the same oversized operation `maxReplans` (3) times, then calls `_failCompletion(..., markOutOfStock = true)`. The order is then flagged `out of stock`, which is the wrong reason (Skill 118 rule 6, the same misnomer), and the cause toast is right ("too large"). Fix when needed: treat `FailureCause` kind `limit` as terminal at once (no re-plan, no `out of stock`).
 
-**Why not built now:** unreachable with the current constants, and the Node pin fails first if either cap moves. Code for it would be untestable from the app and CI-only on the QML side.
+**Decision (Taher, 2026-10-19):** the app targets B2C retail counters, so the 200-op limit is accepted for now and the order is not completed in chunks (chunking would give up all-or-nothing completion and needs its own design). The refusal now tells the person what to do: "...Move some lines, or part of a line's quantity, to a second order, then complete both (N lines, M changes, limit 200)" (`CompletionPlan.js` via `FailureCause.js`, pinned in `tst_CompletionPlan`, `tst_FailureCause`, `tst_DataModel_completeOrderAtomic`).
+
+**Open risk (Taher: batches per product are unbounded):** the cap counts one op per stock BATCH consumed, not per line, so a product bought often in small lots can reach 200 ops with very few lines (one line over 199 batches = 202 ops). Splitting the quantity gets round it, but a busy shop will meet it. Leads when it hurts: merge exhausted / same-cost batches of one product, or consume at most N batches per line and book the rest as one repair batch (changes FIFO cost, needs a decision). Not built.
+
+**Why the server path is not reworked now:** unreachable with the current constants, and the Node pin fails first if either cap moves. Code for it would be untestable from the app and CI-only on the QML side.
 
 ## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
 

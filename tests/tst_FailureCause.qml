@@ -54,6 +54,7 @@ TestCase {
 
     function test_U04b_too_large_and_duplicate_request_id() {
         compare(FC.forRejection({ error: "operation-too-large" }, "").kind, "limit")
+        verify(FC.forRejection({ error: "operation-too-large" }, "").text.indexOf("second order") >= 0)
         compare(FC.forRejection({ error: "request-id-in-use" }, "").kind, "duplicate")
     }
 
