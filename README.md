@@ -341,7 +341,7 @@ path leaves a ledger row; the rules still let a member write `inventory` directl
 are now 150 (inventory batch = 3 writes per item = 450). Review decision D-2 is in: `recordMutation`, `recordDelta` and `recordMutationsBatch`
 reject a requestId containing `~` or `/` or longer than 200 chars (and the batch rejects such an entityId) with `400 invalid-request-id` /
 `invalid-entity-id`, so none can forge a `recordOperation` audit or ledger id (those carry `~`). **Needs `firebase deploy --only functions`
-to dev.** Next: S1b on-device checklist, then S2 planning (kind pickers, delete `direct` mode, lock `inventory` in rules).
+to dev.** Next: S1b on-device checklist, then S2 planning (kind pickers, delete `direct` mode, lock `inventory` in rules). S2 DRAFT design (split S2a-S2e, open questions): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`.
 
 ## Qt Skills Cheat Sheet
 
