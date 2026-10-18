@@ -4,6 +4,8 @@
 
 > **Base-drift note (2026-10-16, from the S1a implementation):** S1a is implemented on branch `feature/2026-10-16-p1-s1a-server-movements`. `main` had moved since the plan was verified (BC1/PH3 changed `gatewayLogic.js`, `operationLogic.js`, `index.js`, the handler harness), so `git apply --check` failed for 3 of S1a's 5 patches and those were hand-edited with the same content. Run `git apply --check` on every patch below before trusting it; if it fails, apply the same hunks by hand (a small Python replace that asserts exactly one match is safe). S1b builds on the S1a files as merged, not on the plan's text of them.
 
+> **Implemented 2026-10-18** on `feature/2026-10-18-p1-s1b-derived-mutations` (see `CHECKPOINT.md`). Drift found vs this text: the plan's patches did not apply (hand-edited, same content); Task 5 missed `tests/tst_Gateway.qml::test_recordMutations_splits_an_oversized_batch_into_multiple_outbox_entries` (250 items now split 150 + 100, not 200 + 50); the tests use the strict fake (`test/testSupport/strictDb.js`), which caught inputs the plan's forgiving fake accepted (`clientTimestamp: undefined`); review decision D-2 (requestId guard) was added as a task, plus the batch `entityId` guard.
+
 **Goal:** Close the ledger completeness gap: `recordMutation`, `recordMutationsBatch` and `recordOperation` mutation ops on `inventory` also write a server-derived `stock_movements` row whenever the stock changes (create -> `receipt`, update / delete -> `adjustment`), so product create, edit, bulk import and delete can no longer change stock without a ledger row.
 
 **Depends on:** S1a merged, deployed to dev and on-device checklist passed (`plans/2026-09-24-p1-server-side-stock-movements-s1a.md`).

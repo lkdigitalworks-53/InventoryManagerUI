@@ -14,7 +14,7 @@ import "E2EHelpers.js" as E2EHelpers
 // initTestCase() comment for why that matters here).
 //
 // Test 1 reproduces the ACTUAL reported bug: 250 rows, one call, verified
-// against the real emulator that BOTH resulting chunks (200 + 50) actually
+// against the real emulator that BOTH resulting chunks (150 + 100) actually
 // landed — before this fix, the whole 250-item call was rejected outright
 // and the client never even noticed. Test 2 proves the other half: a
 // request the server permanently rejects (not a size issue this time — an
@@ -110,7 +110,7 @@ TestCase {
         // silently. Checking the two chunk boundaries (last of chunk 1,
         // first of chunk 2) plus the very first and very last row is enough
         // to prove BOTH chunks actually committed, not just one.
-        var checkIndices = [0, 199, 200, 249]
+        var checkIndices = [0, 149, 150, 249]
         for (var c = 0; c < checkIndices.length; ++c) {
             var idx = checkIndices[c]
             var entityId = "e2e-chunk-" + runId + "-" + idx

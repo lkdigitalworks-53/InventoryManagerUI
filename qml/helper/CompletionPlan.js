@@ -1,5 +1,6 @@
 .pragma library
 .import "OperationKeys.js" as Keys
+.import "FailureCause.js" as FC
 
 // Pure planner for the atomic order-completion operation. Design:
 // docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md
@@ -119,8 +120,8 @@ function build(input, hooks) {
 
     if (ops.length > MAX_OPS)
         return { ok: false, reason: "too-many-ops",
-                 errors: ["This order is too large to complete in one step (" + ops.length
-                          + " changes, limit " + MAX_OPS + ")"] }
+                 errors: [FC.forRejection({ error: "operation-too-large" }, "").text + " (" + input.lines.length
+                          + (input.lines.length === 1 ? " line, " : " lines, ") + ops.length + " changes, limit " + MAX_OPS + ")"] }
 
     return { ok: true, key: Keys.completeOrderKey(input.orderId, input.epoch), opType: "completeOrder",
              ops: ops, lines: lines, orderAfter: upd.after, predicted: predicted }

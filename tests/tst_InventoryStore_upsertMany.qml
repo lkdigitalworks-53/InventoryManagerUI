@@ -444,7 +444,7 @@ TestCase {
         var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
         InventoryStore._upsertManySync(records, function() { return ids[callIdx++] }, _stubResolveSupplier(), _stubPullBatchId(), counts)
         compare(counts.added, 201)
-        compare(counts.chunked, true, "201 new rows must be flagged as chunked (>maxBatchSize=200)")
+        compare(counts.chunked, true, "201 new rows must be flagged as chunked (>maxBatchSize=150)")
     }
 
     // --- _onBatchMutationFailedPermanently: rollback + notify -------------

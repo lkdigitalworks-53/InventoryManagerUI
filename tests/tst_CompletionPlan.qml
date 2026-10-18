@@ -328,6 +328,27 @@ TestCase {
         compare(p.ok, false)
         compare(p.reason, "too-many-ops")
         verify(p.errors[0].indexOf("limit 200") >= 0)
+        // The person must be told what to DO, and the line count (not only the op count) is shown.
+        verify(p.errors[0].indexOf("to a second order, then complete both") >= 0, p.errors[0])
+        verify(p.errors[0].indexOf("(100 lines, 301 changes, limit 200)") >= 0, p.errors[0])
+    }
+
+    // Batches per product are unbounded (a product bought often leaves many small batches), so ONE line
+    // can hit the cap on its own: the advice must also cover "part of a line's quantity".
+    function test_a_single_line_over_many_batches_hits_the_cap_and_says_how_to_split() {
+        var many = []
+        for (var i = 0; i < 199; ++i) many.push(_batch("b" + i, 1, 1))
+        // 199 batch deltas + 1 stock delta + order + 1 sale = 202
+        var line = { line: {}, productId: "p1", name: "P1", qty: 199 }
+        var p = CP.build(_input({ lines: [line], stockByProduct: { p1: 500 }, batchesByProduct: { p1: many } }), _hooks(_calls()))
+        compare(p.ok, false)
+        compare(p.reason, "too-many-ops")
+        verify(p.errors[0].indexOf("part of a line's quantity") >= 0, p.errors[0])
+        verify(p.errors[0].indexOf("(1 line, 202 changes, limit 200)") >= 0, p.errors[0])
+        // the same sale in two halves (99 + 100 batches) fits
+        var half = CP.build(_input({ lines: [{ line: {}, productId: "p1", name: "P1", qty: 99 }], stockByProduct: { p1: 500 },
+                                     batchesByProduct: { p1: many } }), _hooks(_calls()))
+        compare(half.ok, true)
     }
 
     function test_exactly_200_ops_is_allowed() {

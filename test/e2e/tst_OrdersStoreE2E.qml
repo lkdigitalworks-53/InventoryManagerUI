@@ -233,7 +233,7 @@ TestCase {
 
         tryVerify(function() { return done }, 15000, "upsertMany callback never fired for 201 new orders")
         compare(received.added, 201)
-        compare(received.chunked, true, "201 new orders must be flagged as chunked (>Gateway.maxBatchSize=200)")
+        compare(received.chunked, true, "201 new orders must be flagged as chunked (>Gateway.maxBatchSize=150)")
     }
 
     function test_upsertMany_overwrite_policy_updates_envelope_fields_in_place() {

@@ -469,8 +469,8 @@ TestCase {
         dm._tryCompleteOrder("ORD-ATOMIC-1", function(ok) { result = ok })
 
         compare(result, false)
-        verify(dm.stockErrorMsg.indexOf("too large") >= 0 || dm.stockErrorMsg.indexOf("limit") >= 0,
-               "message carries the ops-limit reason: " + dm.stockErrorMsg)
+        verify(dm.stockErrorMsg.indexOf("too many items") >= 0 && dm.stockErrorMsg.indexOf("second order") >= 0,
+               "message names the reason and the way out: " + dm.stockErrorMsg)
         compare(OrdersStore.orders[0].status, "pending", "too-many-ops must NOT set out of stock")
         compare(_ops().length, 0)
         verify(!dm._completingOrderIds["ORD-ATOMIC-1"])

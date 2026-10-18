@@ -89,6 +89,19 @@ function deriveMovement(appliedDelta, defaultKind) {
     return [{ kind: kind, qty: appliedDelta, reason: "", valueAtCost: 0, derived: true }];
 }
 
+// The stock a working doc carries; anything absent or non-numeric counts as 0.
+function stockOf(doc) {
+    return (doc && typeof doc.stock === "number" && isFinite(doc.stock)) ? doc.stock : 0;
+}
+
+// Server-derived row for a whole-record inventory mutation, from the stock before
+// and after: create => receipt, update / delete / anything else => adjustment.
+// Delete counts as the stock going to 0 (whatever `after` carries). P1 spec D11.
+function deriveForMutation(action, before, after) {
+    const delta = (action === "delete" ? 0 : stockOf(after)) - stockOf(before);
+    return deriveMovement(delta, action === "create" ? "receipt" : "adjustment");
+}
+
 // One { id, data } per movement. ctx: { baseId, productId, actorUid, actorRole,
 // serverTimestamp, clientTimestamp, requestId, operationId?, opType?, opIndex? }.
 // `baseId` is the audit_log id of the write that carries the movements, so a
@@ -121,5 +134,5 @@ function buildRows(movements, ctx) {
 
 module.exports = {
     KIND_DIRECTION, MOVEMENT_KINDS, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_TXN_WRITES,
-    validateMovements, totalsMatch, deriveMovement, buildRows
+    validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
 };

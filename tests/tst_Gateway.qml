@@ -488,12 +488,12 @@ TestCase {
     function test_maxBatchSize_matches_the_servers_MAX_BATCH_SIZE() {
         // Same literal pinned from the other side in
         // functions/test/batchMutationLogic.test.js — see that test's
-        // comment for why both sides hardcode 200 rather than each other's
+        // comment for why both sides hardcode 150 rather than each other's
         // dynamic constant.
-        compare(Gateway.maxBatchSize, 200)
+        compare(Gateway.maxBatchSize, 150)
     }
 
-    // ── Regression: the exact reported bug — >200 rows must not be sent as
+    // ── Regression: the exact reported bug — >150 rows must not be sent as
     // one oversized outbox entry ──────────────────────────────────────────────
 
     function test_recordMutations_splits_an_oversized_batch_into_multiple_outbox_entries() {
@@ -508,9 +508,9 @@ TestCase {
         // This is the actual regression: before the fix, this was 1 entry of
         // 250 items, which the server unconditionally rejects — every retry,
         // forever, identically.
-        compare(OutboxStore.pendingCount, 2, "250 items at a 200 cap must produce 2 outbox entries, not 1")
-        compare(OutboxStore.items[0].items.length, 200)
-        compare(OutboxStore.items[1].items.length, 50)
+        compare(OutboxStore.pendingCount, 2, "250 items at a 150 cap must produce 2 outbox entries, not 1")
+        compare(OutboxStore.items[0].items.length, 150)
+        compare(OutboxStore.items[1].items.length, 100)
         verify(OutboxStore.items[0].items.length <= Gateway.maxBatchSize)
         verify(OutboxStore.items[1].items.length <= Gateway.maxBatchSize)
     }

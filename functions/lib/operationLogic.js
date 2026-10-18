@@ -23,7 +23,10 @@ const MovementLogic = require("./movementLogic");
 // 200 ops = up to 200 working-doc writes + 200 per-op audit entries + 1 marker
 // = 401 writes, against a Firestore per-transaction ceiling the repo assumes is ~500. That ceiling,
 // and whether serverTimestamp() counts as an extra write per doc (which would make it 601), are both
-// UNVERIFIED (BC1 design review R3): treat MAX_OPS as a latent question, not a proven bound. Mirrored
+// UNVERIFIED (BC1 design review R3): treat MAX_OPS as a latent question, not a proven bound. Doc check
+// 2026-10-18: the public Firestore quotas page lists no per-commit write COUNT (only 10 MiB request size, 270 s
+// transaction time, 500 field transforms per document), so 500 is kept as a conservative budget, not a known
+// limit; the real answer still comes from the dev deploy check (P1 test plan, D-1). Mirrored
 // client-side as Gateway.qml's `maxOperationOps` (no shared build-time constant
 // between this Node runtime and the QML client); both sides pin the value in a
 // test so drift fails a test instead of failing in production.
@@ -181,7 +184,11 @@ async function applyOperation(db, params) {
                     entry.exists = true;
                     entry.data = op.after || {};
                 }
-                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: [] });
+                // Inventory stock changes leave a server-derived ledger row (P1 D11); `before` is proven
+                // equal to the running state by the check above.
+                const movements = op.entity === "inventory"
+                    ? MovementLogic.deriveForMutation(op.action, op.before, op.action === "delete" ? null : (op.after || {})) : [];
+                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: movements });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "mutation",
                                after: op.action === "delete" ? null : (op.after || {}) });
             }

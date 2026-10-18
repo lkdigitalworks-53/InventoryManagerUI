@@ -82,7 +82,7 @@ machine, not this chat.
 | Cloud Functions env-awareness (all 4 functions resolve db per request) | ✅ Done — pending real deploy/emulator verification |
 | Paginated reads, all 6 growing stores (fixes silent truncation past Firestore's internal page-size threshold) | ✅ Done — pending qmltestrunner run |
 | Write-path fix (no more collection-wide bulk overwrite on a single mutation) | ✅ Done |
-| Bulk-import chunking (>200 rows split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 57 |
+| Bulk-import chunking (>150 rows since P1 S1b, was 200, split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 57 |
 | `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
 | SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
 | India compliance roadmap (design) | 📋 Approved — P0 substantially implemented, see below |
@@ -119,10 +119,10 @@ edit/delete; client forges identity & time). The fix:
 
 - **P0** Gateway + immutable `audit_log` (MCA 11(g), CGST 56(8)) — foundation, builds the gateway.
 - **P1** Stock-movement taxonomy: loss/theft/destroyed/write_off/free_sample/gift + opening/closing
-  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction. S1a implemented 2026-10-16 (server only; Taher deploys functions to dev, S1b next).** Every stock change on `inventory`
+  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction. S1a implemented 2026-10-16 (server only; merged as PR #146). S1b implemented 2026-10-18 (branch `feature/2026-10-18-p1-s1b-derived-mutations`: derived rows on `recordMutation`/batch/mutation ops, cap 150 server + `Gateway.maxBatchSize`, requestId guard D-2); Taher deploys functions to dev, runs the S1a + S1b checklists (D-1, the 150-row import and a ~60-line order, NOT YET RUN as of 2026-10-18; the app's planner stops an order at 200 ops, so the server's `operation-too-large` is not reachable by an order: KNOWN-ISSUES, SKILLS 122), then S2 is planned.** Every stock change on `inventory`
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
-  closed to every client endpoint; batch cap 200 -> 150. Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
+  closed to every client endpoint; batch cap 200 -> 150 (done in S1b). Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
   `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 kind pickers + delete `direct` mode and
   `runCutover` + lock `inventory` in rules, S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
   `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec

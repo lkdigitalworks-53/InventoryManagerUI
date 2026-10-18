@@ -33,7 +33,7 @@ function forRejection(rejection, name) {
     case "not-found":
         return { kind: "missing", text: "A record this order needs was deleted on another device" }
     case "operation-too-large":
-        return { kind: "limit", text: "This order is too large to complete in one step" }
+        return { kind: "limit", text: "This order has too many items to complete in one step. Move some lines, or part of a line's quantity, to a second order, then complete both" }
     case "request-id-in-use":
         return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
     case "missing-fields":
