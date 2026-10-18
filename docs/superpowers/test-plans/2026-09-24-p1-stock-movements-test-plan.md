@@ -1,6 +1,6 @@
 # Test plan — P1 stock movements as server-side atomic ledger rows (slices S1a and S1b: server)
 
-**Branches (planned):** S1a `feature/2026-09-25-p1-s1a-server-movements`, S1b `feature/2026-09-26-p1-s1b-derived-mutations` (names may differ). S2-S4 get their own sections when planned.
+**Branches:** S1a `feature/2026-10-16-p1-s1a-server-movements` (implemented), S1b (planned) `feature/2026-09-26-p1-s1b-derived-mutations`, S1b `feature/2026-09-26-p1-s1b-derived-mutations` (names may differ). S2-S4 get their own sections when planned.
 **Spec:** `docs/superpowers/specs/2026-09-24-p1-server-side-stock-movements-design.md` (rev 2) · **Plans:** `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`, `...-s1b.md`
 
 **What it does:** every stock change on `inventory` writes a server-built `stock_movements` row in the same transaction: the client's `movements` on `recordDelta` (validated, must sum to the applied
@@ -30,7 +30,9 @@ double-write, operations respect the 500-write ceiling, and `stock_movement` is 
 | operation mutation ops (S1b) | part 4 (4) | derived adjustment with operation context; no stock change derives none; stale `before` rejects whole operation; 166 inventory mutation ops = 499 writes | **Verified** (Node, sandbox) |
 | batch cap pin (S1b) | `batchMutationLogic.test.js` (1 changed) | pin moves 200 -> 150 | **Verified** (Node, sandbox) |
 
-**Totals (sandbox):** S1a: full suite 291/291 = 232 existing + 59 new. S1a + S1b: 313/313 = 232 existing + 81 new. 100% line coverage on `movementLogic.js`, `gatewayLogic.js`,
+**Verification status (S1a implementation, 2026-10-16):** `cd functions && node --test` = 685/685 = 626 existing on `main` @ `0f081f2` + 59 new (24 + 17 + 13 + 5); `movementLogic.js` 100% line and branch, `gatewayLogic.js` and `operationLogic.js` 100% line; 7 deliberate mutations all caught. CI result and the on-device checklist below: pending.
+**Review sweep addition (2026-10-17, PR #146 stacked review):** `functions/test/movementStrict.test.js`, 8 tests, suite = 693/693. Runs the S1a write paths against a STRICT Firestore fake (throws on an `undefined` field, an odd document path, a read after a write), the same product twice in one operation, and a pessimistic write count (each `serverTimestamp()` = +1). Mutation check: an injected `undefined` row field turns 6 of 8 red. The pessimistic test documents that the pinned 166-op maximum (499 writes) would exceed 500 IF transforms count; that Firestore behaviour is still unverified (see the review note).
+**Design-session numbers (older base):** S1a: full suite 291/291 = 232 existing + 59 new. S1a + S1b: 313/313 = 232 existing + 81 new. 100% line coverage on `movementLogic.js`, `gatewayLogic.js`,
 `operationLogic.js`, `batchMutationLogic.js` (branch: `movementLogic.js` 100%, the others carry pre-existing untested branches, none in new code). Implementation PRs: replace with the CI numbers.
 
 **Deliberate mutations, all caught (12, S1a + S1b):** derive skipped in `applyMutation`, batch and operation mutation ops; batch cap 151; delete ignoring the `delete` rule in `deriveForMutation`; create typed as `adjustment`;

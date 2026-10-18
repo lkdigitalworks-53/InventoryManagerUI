@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Base-drift note (2026-10-16, from the S1a implementation):** S1a is implemented on branch `feature/2026-10-16-p1-s1a-server-movements`. `main` had moved since the plan was verified (BC1/PH3 changed `gatewayLogic.js`, `operationLogic.js`, `index.js`, the handler harness), so `git apply --check` failed for 3 of S1a's 5 patches and those were hand-edited with the same content. Run `git apply --check` on every patch below before trusting it; if it fails, apply the same hunks by hand (a small Python replace that asserts exactly one match is safe). S1b builds on the S1a files as merged, not on the plan's text of them.
+
 **Goal:** Close the ledger completeness gap: `recordMutation`, `recordMutationsBatch` and `recordOperation` mutation ops on `inventory` also write a server-derived `stock_movements` row whenever the stock changes (create -> `receipt`, update / delete -> `adjustment`), so product create, edit, bulk import and delete can no longer change stock without a ledger row.
 
 **Depends on:** S1a merged, deployed to dev and on-device checklist passed (`plans/2026-09-24-p1-server-side-stock-movements-s1a.md`).
