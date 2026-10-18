@@ -1,6 +1,6 @@
-# CHECKPOINT — 2026-10-19 P1 S2 design session (resume here)
+# CHECKPOINT — 2026-10-19 P1 S2 design + S2b implementation (resume here)
 
-**Branch:** `docs/2026-10-19-p1-s2-design`, cut from `main` @ `fe9aa86` (PR #149 merged).
+**Branches:** `docs/2026-10-19-p1-s2-design` (design + checkpoint, off `main` @ `fe9aa86`), and `feat/2026-10-19-p1-s2b-delete-runcutover` stacked on it (S2b code). Open the PR for the feat branch against `main` only after the docs branch is merged, or against the docs branch (Skill 121: squash-merge of a parent makes a stacked PR conflict).
 **Commit identity:** `tsadmin@gmail.com` (this session's rule; earlier branches used other ids, left as is). PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
 **Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs and grill before decisions; tests + test plan for every code change; caveman FULL.
 **Skills used:** `brainstorming` (path: ARCHITECTURAL, hard gate: no code before approval), `qt-qml`, `qt-ui-design`, `ponytail`. No code this session.
@@ -14,14 +14,16 @@ S1b checklist (deploy + device test) is Taher's and in progress. Next item in th
 - [x] 2. Code audit (findings in the design doc section 1): direct mode only in `recordMutation`/`recordEdit`/`recordMutations`; `runCutover` has no client caller; no client writes `inventory` outside the Gateway; stock paths (`restock`, `deductStock`, `creditStockNoBatch`) all send plain deltas so the server derives `adjustment`; `OutboxStore.enqueueDelta` SUMS coalesced deltas, so `movements` must be concatenated (new trap).
 - [x] 3. Draft design `docs/superpowers/specs/2026-10-19-p1-s2-design.md`: split S2a-S2e, order, trade-offs, open questions Q1-Q5. README pointer added.
 - [x] 4. Committed and pushed (no PR opened: Taher reviews the branch).
-- [ ] 5. **Taher answers Q1-Q5** (asked in chat). Then update the design to rev 2 = approved.
-- [ ] 6. After approval, next session implements the FIRST slice only (proposal: S2b, server-only deletion), tests + test plan per slice.
+- [x] 5. Taher answered Q1-Q3 (all as recommended): wait for CA before pickers, S2b first, lock `inventory` only. Design bumped to rev 2.
+- [x] 6. **S2b implemented** on the feat branch: deleted `exports.runCutover`, `lib/cutoverLogic.js`, `test/cutoverLogic.test.js`, 9 handler tests, harness mock; added 1 guard test (2 mutants caught). `node --test` 740 -> 722, 0 fail. README, AGENTS.md, Skill 123 + index, test plan + test-plans index row.
+- [ ] 7. **Taher:** review the PR, deploy functions to dev (answer YES to the delete prompt for `runCutover`), run the on-device list in `test-plans/2026-10-19-p1-s2b-delete-runcutover-test-plan.md`. Still pending from before: S1a/S1b checklists.
+- [ ] 8. Next slice, own session: **S2a** (delete `direct` mode + client `runCutover`/`cutoverUrl`/`cutoverFinished`, drop `stock_movement` from `Gateway._collections`, rewrite the `tst_Gateway.qml` cases that force `"direct"`; CI is the only oracle). Then S2c (rules lock + rules test), then S2d (needs S1b deployed).
 
 ## Open items / risks
-- Q1-Q5 in the design doc section 3 are unanswered.
+- Q4 (damaged returns: `sales_return` vs `destroyed`) and Q5 (`valueAtCost` client-stated) stay open for S2e/S2d.
 - S2d/S2e must not ship before the S1b deploy + device checklist passes (R3).
 - S2a rewrites `tst_Gateway.qml` cases that force `"direct"`: CI is the only oracle.
 - Deleting the `runCutover` export does not delete the deployed function; Taher confirms the prompt on `firebase deploy`.
 
 ## NEXT
-Get answers to Q1-Q5, bump the design to rev 2, then implement S2b on a new branch off `main`.
+Taher reviews/merges the PR and deploys. Then S2a in a new session on a new branch off `main`.

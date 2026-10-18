@@ -18,7 +18,7 @@
 // not a hidden one.
 //
 // Zero Firebase SDK dependency of its own — same dependency-injection
-// pattern as gatewayLogic.js / cutoverLogic.js.
+// pattern as gatewayLogic.js.
 
 const { ENTITY_COLLECTIONS, ALLOWED_ACTIONS, _deepEqual, isClientRequestId } = require("./gatewayLogic");
 const { isCascadeEntityDelete, isReservedAuditId } = require("./photoCleanup");

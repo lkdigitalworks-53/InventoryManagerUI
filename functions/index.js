@@ -24,7 +24,6 @@ const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
-const CutoverLogic = require("./lib/cutoverLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
 const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
@@ -43,7 +42,7 @@ admin.initializeApp();
 // fail-safe EnvConfig.js itself uses. `db` is now resolved PER REQUEST from
 // the client-declared `env`, not a module-level global: every handler below
 // calls `scopedDb(body.env)` instead of closing over one shared instance,
-// closing the gap where recordMutation/provisionMember/runCutover always
+// closing the gap where recordMutation/provisionMember always
 // wrote to `(default)` regardless of which env the calling client was built
 // for (see README "Environments" / AGENTS SS8).
 // "dev" env resolves to Firestore database id "dev1" (not "dev" — Firestore
@@ -661,15 +660,6 @@ exports.recordMutationsBatch = functions.onRequest(
         send(res, 200, { ok: true, requestId: validated.requestId, count: validated.items.length });
     });
 
-// ── One-time fresh-start cutover (P0) ───────────────────────────────────────
-// Owner-only, irreversible. Wipes the three ledger collections AND zeroes
-// every product's stock, so the immutable regime begins from a clean slate
-// (the user re-counts and re-enters stock afterwards, and those entries become
-// the first genuine audit_log records). Writes a single "cutover" marker.
-//
-// Server-side because the ledger collections are locked read-only to clients —
-// only the Admin SDK can delete them.
-
 // ── Member provisioning (Admin SDK) ─────────────────────────────────────────
 // Adds a teammate to the caller's tenant, handling all three cases the client
 // cannot do itself:
@@ -842,62 +832,6 @@ exports.provisionMember = functions.onRequest(
         }
 
         send(res, 200, { ok: true, uid: uid, created: created });
-    });
-
-exports.runCutover = functions.onRequest(
-    { region: "asia-south1", cors: true },
-    async (req, res) => {
-        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
-        if (req.method !== "POST") {
-            send(res, 405, { ok: false, error: "method-not-allowed" });
-            return;
-        }
-
-        const authHeader = req.get("Authorization") || "";
-        const match = authHeader.match(/^Bearer\s+(.+)$/i);
-        if (!match) { send(res, 401, { ok: false, error: "missing-token" }); return; }
-
-        let decoded;
-        try {
-            decoded = await admin.auth().verifyIdToken(match[1]);
-        } catch (e) {
-            send(res, 401, { ok: false, error: "invalid-token" });
-            return;
-        }
-
-        const body = req.body || {};
-        const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
-
-        const validated = CutoverLogic.validateCutoverRequest(ctx, body);
-        if (!validated.ok) {
-            send(res, validated.status, { ok: false, error: validated.error });
-            return;
-        }
-
-        const root = "tenants/" + ctx.tenantId;
-        try {
-            await CutoverLogic.deleteCollection(db, root + "/transactions");
-            await CutoverLogic.deleteCollection(db, root + "/stock_batches");
-            await CutoverLogic.deleteCollection(db, root + "/stock_movements");
-            await CutoverLogic.zeroInventoryStock(db, root);
-
-            const markerId = "cutover-" + Date.now();
-            const marker = CutoverLogic.buildCutoverMarker({
-                markerId: markerId,
-                tenantId: ctx.tenantId,
-                actorUid: decoded.uid,
-                actorRole: ctx.role,
-                serverTimestamp: FieldValue.serverTimestamp(),
-                clientTimestamp: body.clientTimestamp || null
-            });
-            await db.doc(root + "/audit_log/" + markerId).set(marker);
-        } catch (e) {
-            send(res, 500, { ok: false, error: "cutover-failed" });
-            return;
-        }
-
-        send(res, 200, { ok: true });
     });
 
 // ── Analysis compute (Phase 2 of the scale-reads-writes-analytics design) ──

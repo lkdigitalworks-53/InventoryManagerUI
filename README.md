@@ -269,7 +269,7 @@ unreachable code (`canAssignRole`'s dead `else` branch, `send()`'s unreachable s
 catch), not new gaps.
 
 **Update 2026-09-01:** landed PR #49 — `index.js`'s `send()` response helper extracted to
-`functions/lib/httpResponse.js` (Skill 55, same pattern as `cutoverLogic.js`/`gatewayLogic.js`),
+`functions/lib/httpResponse.js` (Skill 55, same pattern as `gatewayLogic.js`),
 with direct unit coverage (`functions/test/httpResponse.test.js`, 4 tests) for the
 serialization-failure fallback that was previously only reachable via a live HTTPS round trip.
 `functions/` suite: 178 tests, all passing. `index.js` line coverage 99.32% → 99.88% — those lines
@@ -341,7 +341,7 @@ path leaves a ledger row; the rules still let a member write `inventory` directl
 are now 150 (inventory batch = 3 writes per item = 450). Review decision D-2 is in: `recordMutation`, `recordDelta` and `recordMutationsBatch`
 reject a requestId containing `~` or `/` or longer than 200 chars (and the batch rejects such an entityId) with `400 invalid-request-id` /
 `invalid-entity-id`, so none can forge a `recordOperation` audit or ledger id (those carry `~`). **Needs `firebase deploy --only functions`
-to dev.** Next: S1b on-device checklist, then S2 planning (kind pickers, delete `direct` mode, lock `inventory` in rules). S2 DRAFT design (split S2a-S2e, open questions): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`.
+to dev.** Next: S1b on-device checklist, then S2 planning (kind pickers, delete `direct` mode, lock `inventory` in rules). S2 design (split S2a-S2e, Q1-Q3 approved): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`. **S2b done (server `runCutover` + `cutoverLogic.js` deleted; the client `Gateway.runCutover` is dead code until S2a). `firebase deploy --only functions` will ask to delete the deployed `runCutover`: answer yes.**
 
 ## Qt Skills Cheat Sheet
 
@@ -456,8 +456,8 @@ On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
 > Confirmed via `gcloud firestore databases list --project=inventorymanager-48392`
 > that `(default)` is genuinely in `asia-south1` — not `asia-southeast1` as an
 > earlier version of this doc and `AGENTS.md` assumed. Cloud Functions
-> (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
-> `recordMutationsBatch`) are not yet deployed and have been reconfigured to
+> (`recordMutation`, `provisionMember`, `computeAnalysis`,
+> `recordMutationsBatch`; `runCutover` was deleted in P1 S2b) are not yet deployed and have been reconfigured to
 > also target `asia-south1`, so DB, Functions, and every named environment
 > database live in the same region — data never leaves India, and no
 > cross-region latency between Functions and
@@ -492,8 +492,8 @@ an `{env}` path prefix (`prd`/`test`/`dev1`, via `EnvConfig.storagePrefixForEnv`
 Configuration" above) to keep the three environments' objects from colliding in the one shared
 bucket; this is the reason that prefix exists, not an arbitrary choice.
 
-All 5 Cloud Functions (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
-`recordMutationsBatch`) resolve their Firestore database **per request** from a client-declared
+All Cloud Functions (`recordMutation`, `provisionMember`, `computeAnalysis`,
+`recordMutationsBatch`; `runCutover` deleted in P1 S2b) resolve their Firestore database **per request** from a client-declared
 `env` field (`scopedDb(env)` in `functions/index.js`), mirroring this exact resolution chain — see
 `SKILLS.md` Skill 33. This closes a real, confirmed gap: before this fix, every Cloud Function
 always read/wrote the `(default)` (prd) database regardless of which env the calling client was

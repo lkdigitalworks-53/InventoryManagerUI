@@ -123,8 +123,7 @@ edit/delete; client forges identity & time). The fix:
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
   closed to every client endpoint; batch cap 200 -> 150 (done in S1b). Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
-  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 kind pickers + delete `direct` mode and
-  `runCutover` + lock `inventory` in rules, S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
+  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done), S2a delete `direct` mode + client `runCutover`, S2c lock `inventory` in rules, S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
   `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec
   `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plans `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`
   and `...-s1b.md`.
@@ -168,8 +167,8 @@ collections and zeroes product stock).
   atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
   the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
   confirmed in a session — don't assume historical ledger/stock data was reset without checking.
-- CF-side gateway logic (`recordMutation`, `runCutover`, and the new batch endpoint
-  `recordMutationsBatch`) was extracted into `functions/lib/{gatewayLogic,cutoverLogic,
+- CF-side gateway logic (`recordMutation` and the batch endpoint
+  `recordMutationsBatch`; `runCutover`/`cutoverLogic.js` were deleted in P1 S2b) was extracted into `functions/lib/{gatewayLogic,
   batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no
   emulator needed; see Skill 35).
 - `recordOperation` (2026-09-21, logic in `functions/lib/operationLogic.js`) applies delta/mutation ops
@@ -689,7 +688,7 @@ to the gateway as of 2026-07-11), and the compliance design spec.
 
 **Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 8 Cloud
 Functions (`recordMutation`, `recordDelta`, `acquireLock`, `releaseLock`, `provisionMember`,
-`runCutover`, `computeAnalysis`, `recordMutationsBatch`) resolve their Firestore
+`computeAnalysis`, `recordMutationsBatch`; `runCutover` deleted in S2b) resolve their Firestore
 database **per request** via `scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33.
 `Gateway.qml`, `LockManager.qml`, and `AnalysisService.qml` inject `env: FirebaseService.environment`
 into every request body. This was confirmed as a real, already-live gap (not hypothetical) before being
@@ -706,7 +705,7 @@ env.
   Staff/Suppliers migration, batch-mutation capability, test-gap closure — full trail of what was
   found, decided, and done)
 - `functions/` — Cloud Functions project: `index.js` (thin request/response handlers), `lib/`
-  (`gatewayLogic.js`, `cutoverLogic.js`, `batchMutationLogic.js` — pure, dependency-injected core
+  (`gatewayLogic.js`, `batchMutationLogic.js` — pure, dependency-injected core
   logic; see Skill 35) plus `breakdownMath.js`/`realisedMath.js`/`orderMath.js` (ported pure math),
   `test/` (48 tests, `npm test` = `node --test`, no emulator needed), `package.json`
 - `test/firestore.rules.test.js` + root `package.json` — Firestore rules tests
@@ -844,7 +843,7 @@ env.
     an artifact of the file growing across separate passes chasing `recordMutation`'s own Skill 43
     regression rather than one symmetric pass. `index.js`'s CORS-tagged `send()` response helper is
     extracted to `functions/lib/httpResponse.js` (Skill 55, same zero-Firebase-SDK extraction
-    pattern as `cutoverLogic.js`/`gatewayLogic.js`), with its own `functions/test/httpResponse.test.js`
+    pattern as `gatewayLogic.js`), with its own `functions/test/httpResponse.test.js`
     directly covering the JSON.stringify-failure fallback added in PR #45 — previously reachable
     only through a live HTTPS round trip. Both share one harness,
     `functions/test/testSupport/handlerHarness.js`: install fakes into Node's `require.cache` (keyed

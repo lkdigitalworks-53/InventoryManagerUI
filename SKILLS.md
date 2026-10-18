@@ -4355,3 +4355,15 @@ Rules:
 4. "The public quotas page lists no write count limit" is evidence of a gap in the docs, not of no limit. Write it as "not documented", keep the conservative budget, and record the dev check as NOT YET RUN with the exact fallback (which constants move together).
 5. A cap that counts a per-ROW cost (one op per stock batch) is not a cap on what the person sees (lines). Say in the refusal both the unit they know and the way out ("move some lines, or part of a line's quantity, to a second order"); a "move lines" hint is wrong for a one-line order. Test the one-line-many-rows shape, not only many lines.
 6. A latent handler defect behind an unreachable path (3 identical re-sends, then `out of stock` for a "too large" rejection) goes in KNOWN-ISSUES with its trigger, not into untestable QML.
+
+
+## Skill 123: Deleting a Cloud Function: the deployed copy survives, the test harness may require the deleted file, and the old docs are history
+
+P1 S2b (2026-10-19), removing `runCutover` (export, `lib/cutoverLogic.js`, its tests). 740 -> 722 server tests (-10 pure-logic, -9 handler, +1 guard), 0 failures.
+Rules:
+1. Removing an `exports.x` from `functions/index.js` does not undeploy it. The next `firebase deploy --only functions` asks to delete it. Write that in the PR and README so the deploy prompt is not a surprise.
+2. `testSupport/handlerHarness.js` did `require.resolve` on the lib file and stubbed it in `require.cache`; deleting the file first would have failed EVERY handler test, not only the deleted endpoint's. Delete the mock first, then the file, then run the whole suite.
+3. Leave dated specs, plans and checkpoints alone (history). Update only present-tense docs (README, AGENTS.md) and say "deleted in <slice>" instead of rewriting.
+4. Use `git grep -I` to find references: plain `grep -r` over the repo hit a binary file and returned nothing.
+5. Pin the deletion with one test (`handlers.runCutover === undefined`, lib file absent) so a bad merge cannot bring back an irreversible wipe endpoint.
+
