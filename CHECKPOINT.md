@@ -21,7 +21,7 @@ Plan: `plans/2026-09-24-p1-server-side-stock-movements-s1b.md` (patches drifted,
 - [x] 6. Server suite `cd functions && node --test` = **739/739**; 100% line on the 4 touched lib files; 11 mutations all caught, files restored.
 - [x] 7. Client mirror (CI only): `Gateway.maxBatchSize` 150; `tests/tst_Gateway.qml` pin + the 250-item split test (150 + 100: the plan missed this one), `tst_InventoryStore_upsertMany.qml` message, `tst_BulkImportChunkingE2E.qml` indices 149/150, `tst_OrdersStoreE2E.qml` message.
 - [x] 8. Docs: README, AGENTS.md, S1b plan drift note, P1 test plan (S1b rows to real numbers, D-2 + on-device items), test-plans index row.
-- [ ] 9. Push, open PR, read the 5 CI checks (verify via check-runs API, not by guessing).
+- [x] 9. Pushed, **PR #149** opened. CI on `5ae38da` via check-runs API: 5/5 green (QML, E2E, Rules, Functions, PR comment). QML/E2E cap-mirror edits therefore verified by CI.
 - [ ] 10. **Taher:** deploy functions to dev; run S1a + S1b on-device checklists in `test-plans/2026-09-24-p1-stock-movements-test-plan.md`. Especially the 150-row import (D-1: pessimistic write count 750, unverified).
 - [ ] 11. After that: plan **S2** in its own session (kind pickers, delete `direct` mode and `runCutover`, lock `inventory` in rules, rules test).
 
@@ -29,7 +29,6 @@ Plan: `plans/2026-09-24-p1-server-side-stock-movements-s1b.md` (patches drifted,
 - **D-1 (unverified write ceiling):** a 150-item inventory batch is 450 docs; if each `serverTimestamp()` counts as an extra write it is 750 and the real call fails. Pinned in a test, settled only by the dev deploy check. Fallback: cap about 100 (server + `Gateway.maxBatchSize` + pins).
 - Ledger is still not complete for compliance until S2 locks the rules (R2): a member can still write `inventory` directly.
 - Role gate / `valueAtCost` upper bound (PR #146 review item 4): decide before production, not done here.
-- QML/E2E edits unverified until CI runs.
 
 ## NEXT
-Step 9: push and read CI. If a QML test outside the edited ones fails on the old 200 cap, fix that test, not the constant.
+Step 10 is Taher's: merge PR #149 after review, deploy functions to dev, run the S1a + S1b checklists (150-row import = D-1 check). Then plan S2 in a new session on a new branch off `main`.
