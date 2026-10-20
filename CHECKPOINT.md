@@ -1,9 +1,9 @@
-# CHECKPOINT — 2026-10-19 P1 S2 design + S2b implementation (resume here)
+# CHECKPOINT — 2026-10-21 P1 S2b: PR #151 deep review (resume here)
 
 **Branches:** `docs/2026-10-19-p1-s2-design` (design + checkpoint, off `main` @ `fe9aa86`), and `feat/2026-10-19-p1-s2b-delete-runcutover` stacked on it (S2b code). Open the PR for the feat branch against `main` only after the docs branch is merged, or against the docs branch (Skill 121: squash-merge of a parent makes a stacked PR conflict).
 **Commit identity:** `tsadmin@gmail.com` (this session's rule; earlier branches used other ids, left as is). PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
 **Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs and grill before decisions; tests + test plan for every code change; caveman FULL.
-**Skills used:** `brainstorming` (path: ARCHITECTURAL, hard gate: no code before approval), `qt-qml`, `qt-ui-design`, `ponytail`. No code this session.
+**Skills used:** `brainstorming` (path: ARCHITECTURAL, hard gate: no code before approval), `qt-qml`, `qt-ui-design`, `ponytail`. Review session 2026-10-21 (no app code changed): `requesting-code-review`, `ponytail`, `qt-qml-review`.
 **Previous checkpoint archived:** `docs/superpowers/specs/2026-10-18-p1-s1b-prev-CHECKPOINT.md`.
 
 ## Why this item
@@ -16,8 +16,18 @@ S1b checklist (deploy + device test) is Taher's and in progress. Next item in th
 - [x] 4. Committed and pushed (no PR opened: Taher reviews the branch).
 - [x] 5. Taher answered Q1-Q3 (all as recommended): wait for CA before pickers, S2b first, lock `inventory` only. Design bumped to rev 2.
 - [x] 6. **S2b implemented** on the feat branch: deleted `exports.runCutover`, `lib/cutoverLogic.js`, `test/cutoverLogic.test.js`, 9 handler tests, harness mock; added 1 guard test (2 mutants caught). `node --test` 740 -> 722, 0 fail. README, AGENTS.md, Skill 123 + index, test plan + test-plans index row.
-- [ ] 7. **Taher:** review the PR, deploy functions to dev (answer YES to the delete prompt for `runCutover`), run the on-device list in `test-plans/2026-10-19-p1-s2b-delete-runcutover-test-plan.md`. Still pending from before: S1a/S1b checklists.
+- [x] 7a. **Taher (2026-10-21):** S1a/S1b functions deployed to dev, on-device checklists done, all fine. Ticked in `test-plans/2026-09-24-p1-stock-movements-test-plan.md` (S1 gate R3 is now met: S2d may start after S2a/S2c).
+- [ ] 7b. **Taher:** merge PR #151, deploy functions to dev (answer YES to the delete prompt for `runCutover`), run the on-device list in `test-plans/2026-10-19-p1-s2b-delete-runcutover-test-plan.md`. NOT done: the 2026-10-21 deploy was of S1a/S1b from `main`, before #151, so `runCutover` is still live on dev.
+- [x] 9. PR #151 deep review 2026-10-21 (server diff read in full, CI 2964/2964 seen, `node --test` re-run locally 722/722, guard mutants 1+2 caught, merge clean, no revert of main). Verdict: no Critical, no Important. Minor findings M1-M5 below, none fixed yet (pending Taher decision).
 - [ ] 8. Next slice, own session: **S2a** (delete `direct` mode + client `runCutover`/`cutoverUrl`/`cutoverFinished`, drop `stock_movement` from `Gateway._collections`, rewrite the `tst_Gateway.qml` cases that force `"direct"`; CI is the only oracle). Then S2c (rules lock + rules test), then S2d (needs S1b deployed).
+
+## PR #151 review findings (all Minor, unfixed)
+- M1 `testSupport/handlerHarness.js` lines 85-88: `deleteCollectionResult/Error`, `zeroInventoryStockResult/Error` are dead (nothing reads them).
+- M2 S2b test plan says `git grep -n -i cutover -- functions` finds none; it finds 5 (comments + the guard test). Reword the claim.
+- M3 AGENTS.md ~689 says "All 8 Cloud Functions" next to a 7-name list; `index.js` has 11 exports now. Stale count, not caused by #151 but made visible by it.
+- M4 Guard pins the NAME `runCutover` and the lib file, not the capability: `exports.wipeLedger = ...` would pass (mutant 3 probe). Accepted: tests cannot pin intent.
+- M5 This checkpoint's old header said "No code this session": fixed here.
+- Left on purpose, tracked for S2a: `Gateway.qml` `cutoverUrl`, `cutoverFinished`, `runCutover()` (about 45 lines, no caller, no test) still point at the deleted endpoint. QML lint on that block: only pre-existing JS-1/JS-2 style hits, nothing in the PR diff (PR touches 0 QML lines).
 
 ## Open items / risks
 - Q4 (damaged returns: `sales_return` vs `destroyed`) and Q5 (`valueAtCost` client-stated) stay open for S2e/S2d.
