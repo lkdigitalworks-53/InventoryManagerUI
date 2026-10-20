@@ -12,7 +12,7 @@
 // Scope: recordMutation, recordDelta, recordMutationsBatch — the three
 // endpoints that share the "auth -> validate -> apply -> translate result
 // into an HTTP response" shape and the same response-contract risk.
-// acquireLock/releaseLock/provisionMember/runCutover/computeAnalysis are
+// acquireLock/releaseLock/provisionMember/computeAnalysis are
 // NOT covered here — a deliberate scope boundary, not an oversight (see
 // index.handlers.remaining.test.js, Skill 52). They share less of this
 // exact risk pattern and were covered separately.

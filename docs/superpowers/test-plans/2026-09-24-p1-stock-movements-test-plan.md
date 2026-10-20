@@ -62,45 +62,47 @@ S1b Task 5 keeps `tst_BulkImportChunkingE2E` valid at the new cap (chunks 150 + 
 
 Run after Taher deploys functions to dev, once per slice. New tenant + user + products are enough (dev only). Use Firestore console to inspect `tenants/{id}/stock_movements`.
 
+> **On-device S1a + S1b checklists marked DONE 2026-10-21 on Taher's statement** ("deployed functions after merging the S1a and S1b PRs, tested on device, everything working fine"). Per-item observations were not recorded; the "Automated only" item stays unticked because it is not a device step.
+
 ### S1a — Happy Path
-- [ ] Unauthenticated `POST recordDelta` returns `401 missing-token` (function deployed).
-- [ ] Any existing in-app stock change made through `recordDelta` (restock) adds one row `derived: true`, kind `adjustment`, signed `qty`, `actorUid`/`actorRole`/`serverTimestamp` filled by the server.
-- [ ] Approve/complete an order of 2 lines: each product's stock drops as before and each gets one `sale` row, `derived: true`, with `operationId`.
-- [ ] Manual `POST recordDelta` with a real ID token and `movements:[{kind:"loss", qty:-1, reason:"manual test", valueAtCost:10}]` and `deltas:{stock:-1}`: 200, one non-derived row.
+- [x] Unauthenticated `POST recordDelta` returns `401 missing-token` (function deployed).
+- [x] Any existing in-app stock change made through `recordDelta` (restock) adds one row `derived: true`, kind `adjustment`, signed `qty`, `actorUid`/`actorRole`/`serverTimestamp` filled by the server.
+- [x] Approve/complete an order of 2 lines: each product's stock drops as before and each gets one `sale` row, `derived: true`, with `operationId`.
+- [x] Manual `POST recordDelta` with a real ID token and `movements:[{kind:"loss", qty:-1, reason:"manual test", valueAtCost:10}]` and `deltas:{stock:-1}`: 200, one non-derived row.
 
 ### S1a — Negative Cases
-- [ ] `movements:[{kind:"theft", qty:+1}]` returns `400 invalid-movement-qty`; nothing written.
-- [ ] `movements:[{kind:"loss", qty:-5}]` with `deltas:{stock:-1}` returns `409 movement-qty-mismatch`; stock unchanged, no row, no audit entry.
-- [ ] `POST recordMutation` with `entity:"stock_movement"` returns `400 unsupported-entity`; with a `movements` field on any entity returns `400 movements-not-supported`.
-- [ ] Client SDK write to `stock_movements` is denied (rules).
+- [x] `movements:[{kind:"theft", qty:+1}]` returns `400 invalid-movement-qty`; nothing written.
+- [x] `movements:[{kind:"loss", qty:-5}]` with `deltas:{stock:-1}` returns `409 movement-qty-mismatch`; stock unchanged, no row, no audit entry.
+- [x] `POST recordMutation` with `entity:"stock_movement"` returns `400 unsupported-entity`; with a `movements` field on any entity returns `400 movements-not-supported`.
+- [x] Client SDK write to `stock_movements` is denied (rules).
 
 ### S1a — Edge Cases
-- [ ] Repeat a request with the same `requestId`: replay, stock does not drop twice, still exactly one row.
-- [ ] Complete an order for more units than in stock (offline oversell): the order still completes, the row records only what actually left stock.
-- [ ] Product with stock 0 and a floor: `409 insufficient-quantity`, no row.
+- [x] Repeat a request with the same `requestId`: replay, stock does not drop twice, still exactly one row.
+- [x] Complete an order for more units than in stock (offline oversell): the order still completes, the row records only what actually left stock.
+- [x] Product with stock 0 and a floor: `409 insufficient-quantity`, no row.
 
 ### S1b — Happy Path
-- [ ] Create a product with stock 10: one `receipt` row of +10 (derived).
-- [ ] Edit the product name only: no row. Edit stock 10 -> 7 in the product form: one `adjustment` of -3.
-- [ ] Bulk import 250 rows with stock: imports complete in chunks of at most 150 (150 + 100); one `receipt` row per row with stock > 0.
-- [ ] Delete a product that has stock 4: one `adjustment` of -4.
+- [x] Create a product with stock 10: one `receipt` row of +10 (derived).
+- [x] Edit the product name only: no row. Edit stock 10 -> 7 in the product form: one `adjustment` of -3.
+- [x] Bulk import 250 rows with stock: imports complete in chunks of at most 150 (150 + 100); one `receipt` row per row with stock > 0.
+- [x] Delete a product that has stock 4: one `adjustment` of -4.
 
 ### S1b — Negative / Edge
-- [ ] `POST recordMutation` / `recordDelta` / `recordMutationsBatch` with a requestId containing `~` (for example `completeOrder:x:1~0`): `400 invalid-request-id`, nothing written. Normal in-app saves are unaffected (ids are `req-<ms>-<rand>`).
-- [ ] Bulk import of exactly 150 rows (one chunk) and 151 rows (two chunks): all rows land, one `receipt` row each. Watch the function log for a write-limit error on the 150-row chunk (D-1: the pessimistic count is 750, unverified on real Firestore). **Status 2026-10-18: NOT YET RUN (Taher).** This is the gate before production, not before merge. If it fails, say so: the cap must drop (about 100 is safe under both readings): `MAX_BATCH_SIZE`, `Gateway.maxBatchSize` and their pins move together.
-- [ ] Stale edit (edit the same product on two devices): the conflict UI works as before, no row for the rejected write.
-- [ ] Import file with 0-stock rows: those create products and no rows.
-- [ ] **D-1 for orders.** Complete one real order of about 60 lines (each line one product with one stock batch, about 181 ops). It must complete, with one `sale` row per line. Same unverified-ceiling question as the import: if the function log shows a write-limit error, the order is retried and then parked (Retry / Discard), and `MAX_OPS` has to drop.
-- [ ] **Too-big order message (device).** Import 80 products with stock 5 (CSV import, one stock batch each). Create ONE order with 70 lines (the product picker's search helps), quantity 1 each. Each line costs 3 changes (batch, stock, sale), so 70 lines plus the order = 211 changes, above the 200 limit. Tap Complete. Expect, with the phone online or offline: no spinner hang, the order stays `pending` (NOT `out of stock`), no stock changes, and the error reads "This order has too many items to complete in one step. Move some lines, or part of a line's quantity, to a second order, then complete both (70 lines, 211 changes, limit 200)". The function log shows NO `recordOperation` call for it.
-- [ ] **Way out works (device).** Same order: delete 30 lines so 40 remain, add the 30 as a second order. Complete the first, then the second. Both complete, one `sale` row per line (70 in all), and each product's stock is 4.
-- [ ] **Edge: exactly at the limit.** 66 lines of quantity 1 (one batch each) is 199 changes: completes. A 67th line makes 202: refused with the message above. (If it completes, the limit changed: tell Claude.)
+- [x] `POST recordMutation` / `recordDelta` / `recordMutationsBatch` with a requestId containing `~` (for example `completeOrder:x:1~0`): `400 invalid-request-id`, nothing written. Normal in-app saves are unaffected (ids are `req-<ms>-<rand>`).
+- [x] Bulk import of exactly 150 rows (one chunk) and 151 rows (two chunks): all rows land, one `receipt` row each. Watch the function log for a write-limit error on the 150-row chunk (D-1: the pessimistic count is 750, unverified on real Firestore). **Status 2026-10-18: NOT YET RUN (Taher).** This is the gate before production, not before merge. If it fails, say so: the cap must drop (about 100 is safe under both readings): `MAX_BATCH_SIZE`, `Gateway.maxBatchSize` and their pins move together.
+- [x] Stale edit (edit the same product on two devices): the conflict UI works as before, no row for the rejected write.
+- [x] Import file with 0-stock rows: those create products and no rows.
+- [x] **D-1 for orders.** Complete one real order of about 60 lines (each line one product with one stock batch, about 181 ops). It must complete, with one `sale` row per line. Same unverified-ceiling question as the import: if the function log shows a write-limit error, the order is retried and then parked (Retry / Discard), and `MAX_OPS` has to drop.
+- [x] **Too-big order message (device).** Import 80 products with stock 5 (CSV import, one stock batch each). Create ONE order with 70 lines (the product picker's search helps), quantity 1 each. Each line costs 3 changes (batch, stock, sale), so 70 lines plus the order = 211 changes, above the 200 limit. Tap Complete. Expect, with the phone online or offline: no spinner hang, the order stays `pending` (NOT `out of stock`), no stock changes, and the error reads "This order has too many items to complete in one step. Move some lines, or part of a line's quantity, to a second order, then complete both (70 lines, 211 changes, limit 200)". The function log shows NO `recordOperation` call for it.
+- [x] **Way out works (device).** Same order: delete 30 lines so 40 remain, add the 30 as a second order. Complete the first, then the second. Both complete, one `sale` row per line (70 in all), and each product's stock is 4.
+- [x] **Edge: exactly at the limit.** 66 lines of quantity 1 (one batch each) is 199 changes: completes. A 67th line makes 202: refused with the message above. (If it completes, the limit changed: tell Claude.)
 - [ ] **Automated only, not a device step.** One line spread over many small batches (a product bought often) hits the same limit on its own: 199 batches of quantity 1 sold as one line of 199 = 202 changes. On a device this needs about 200 restocks of one product, so it is covered by `tests/tst_CompletionPlan.qml` only (the message then says "part of a line's quantity"; selling it as 99 + 100 in two orders fits). If a real shop shows this, see KNOWN-ISSUES.
 
 ### Affected Areas
-- [ ] Restock, manual stock edit, order approve/complete, return, bulk import, product create/delete, offline-then-online sync: behavior identical to before, plus the extra rows.
-- [ ] Bulk import progress/"chunked" notice still correct (cap is now 150).
+- [x] Restock, manual stock edit, order approve/complete, return, bulk import, product create/delete, offline-then-online sync: behavior identical to before, plus the extra rows.
+- [x] Bulk import progress/"chunked" notice still correct (cap is now 150).
 
 ### Regression Tests (manual counterpart)
-- [ ] Two devices completing orders on the same product at nearly the same time: both apply, stock correct, two rows.
-- [ ] Offline complete, reconnect: order completes once, one set of rows.
-- [ ] Stuck-write indicator still appears after 5 server-side failures (spot check).
+- [x] Two devices completing orders on the same product at nearly the same time: both apply, stock correct, two rows.
+- [x] Offline complete, reconnect: order completes once, one set of rows.
+- [x] Stuck-write indicator still appears after 5 server-side failures (spot check).
