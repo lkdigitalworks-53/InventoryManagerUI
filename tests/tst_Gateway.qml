@@ -91,7 +91,6 @@ TestCase {
         // bug the CF-side gatewayLogic.test.js tests caught twice already.
         compare(Gateway._collectionFor("inventory"), "inventory")
         compare(Gateway._collectionFor("stock_batch"), "stock_batches")
-        compare(Gateway._collectionFor("stock_movement"), "stock_movements")
         compare(Gateway._collectionFor("transaction"), "transactions")
         compare(Gateway._collectionFor("order"), "orders")
         compare(Gateway._collectionFor("staff"), "staff")
@@ -100,6 +99,29 @@ TestCase {
 
     function test_collectionFor_returns_empty_string_for_unknown_entity() {
         compare(Gateway._collectionFor("widget"), "")
+    }
+
+    // P1 S2a-1: the server builds stock_movements rows; the client must never
+    // be able to enqueue a write for one (server would reject it anyway).
+    function test_collectionFor_refuses_stock_movement() {
+        compare(Gateway._collectionFor("stock_movement"), "")
+    }
+
+    function test_stock_movement_is_refused_by_every_write_entry_point_without_touching_the_outbox() {
+        Gateway.mode = "gateway"
+        compare(Gateway.recordMutation("stock_movement", "m1", "create", null, { qty: 1 }), "")
+        compare(Gateway.recordEdit("stock_movement", "m1", "update", {}, { qty: 2 }), "")
+        compare(Gateway.recordMutations("stock_movement", [{ entityId: "m1", action: "create", before: null, after: {} }]), "")
+        compare(Gateway.recordDelta("stock_movement", "m1", { qty: 1 }, {}, {}, null), "")
+        compare(OutboxStore.pendingCount, 0, "a stock_movement write must never reach the outbox")
+    }
+
+    // P1 S2a-1: the irreversible tenant-wipe client call was deleted with its
+    // server endpoint (S2b). Pin the deletion so a bad merge cannot bring it back.
+    function test_client_cutover_api_is_gone() {
+        compare(typeof Gateway.runCutover, "undefined")
+        compare(typeof Gateway.cutoverUrl, "undefined")
+        compare(typeof Gateway.cutoverFinished, "undefined")
     }
 
     // ── gateway-mode enqueue (safe: no network — see header) ────────────────

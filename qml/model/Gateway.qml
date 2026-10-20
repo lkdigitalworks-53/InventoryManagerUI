@@ -70,16 +70,12 @@ QtObject {
     // side, since there is no shared build-time constant between this QML
     // client and that Node runtime.
     readonly property int maxOperationOps: 200
-    // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
-    property string cutoverUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover"
     // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
     // teammate to the caller's tenant — creates the Auth account for a new
     // staff member, or attaches an existing account, writing both users/{uid}
     // and the member doc server-side (the client can't write another user's
     // profile under the Firestore rules).
     property string provisionMemberUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/provisionMember"
-
-    signal cutoverFinished(bool ok, string error)
 
     // Component 3's client-side half (review finding C3, 2026-08-06): fired
     // when applyMutation's CAS check rejects a recordMutation because
@@ -181,11 +177,12 @@ QtObject {
     property var _operationWaiters: ({})
 
     // entity → working-tier collection. Mirrors ENTITY_COLLECTIONS in
-    // functions/index.js; the two MUST stay in sync.
+    // functions/index.js; the two MUST stay in sync. `stock_movement` is
+    // deliberately absent: the server builds those rows (P1 S1a), a client may
+    // never write one, so recordMutation("stock_movement", ...) refuses early.
     readonly property var _collections: ({
         "inventory": "inventory",
         "stock_batch": "stock_batches",
-        "stock_movement": "stock_movements",
         "transaction": "transactions",
         "order": "orders",
         "staff": "staff",
@@ -1142,47 +1139,6 @@ QtObject {
             opType: item.opType,
             ops: item.ops,
             clientTimestamp: item.clientTimestamp
-        }))
-    }
-
-    // ── Fresh-start cutover (owner-only, irreversible) ──────────────────────
-    // Calls the server to wipe the ledger collections + zero product stock.
-    // Emits cutoverFinished(ok, error). After success, callers should re-sync
-    // the stores (InventoryStore/StockBatchStore/TransactionStore.syncFromFirebase).
-    function runCutover() {
-        if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
-            cutoverFinished(false, qsTr("Not signed in"))
-            return
-        }
-        if (AuthStore.role !== "owner") {
-            cutoverFinished(false, qsTr("Only the workspace owner can run cutover"))
-            return
-        }
-        if (typeof AuthService !== "undefined" && AuthService)
-            AuthService.ensureFreshToken()
-
-        var xhr = new XMLHttpRequest()
-        var _snap = { status: 0, responseText: "", headers: "" }
-        xhr.onreadystatechange = function() {
-            _captureBeforeStatusIsLost(xhr, _snap)
-            if (xhr.readyState !== XMLHttpRequest.DONE) return
-            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
-            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
-            var ok = effStatus >= 200 && effStatus < 300
-            if (ok) {
-                cutoverFinished(true, "")
-            } else {
-                console.warn("[Gateway] cutover failed", "raw-status:", xhr.status, "effective-status:", effStatus, effResponseText)
-                cutoverFinished(false, "HTTP " + effStatus)
-            }
-        }
-        xhr.open("POST", cutoverUrl)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
-        xhr.send(JSON.stringify({
-            env: FirebaseService.environment,
-            confirm: "CUTOVER",
-            clientTimestamp: new Date().toISOString()
         }))
     }
 
