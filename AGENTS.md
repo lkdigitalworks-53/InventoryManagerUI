@@ -686,9 +686,10 @@ to the gateway as of 2026-07-11), and the compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
-**Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 8 Cloud
-Functions (`recordMutation`, `recordDelta`, `acquireLock`, `releaseLock`, `provisionMember`,
-`computeAnalysis`, `recordMutationsBatch`; `runCutover` deleted in S2b) resolve their Firestore
+**Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 11 Cloud
+Functions (`recordMutation`, `recordDelta`, `recordOperation`, `acquireLock`, `releaseLock`,
+`recordMutationsBatch`, `provisionMember`, `computeAnalysis`, `uploadProductPhoto`,
+`deleteProductPhoto`, `cleanupPendingMarkers`; `runCutover` deleted in S2b) resolve their Firestore
 database **per request** via `scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33.
 `Gateway.qml`, `LockManager.qml`, and `AnalysisService.qml` inject `env: FirebaseService.environment`
 into every request body. This was confirmed as a real, already-live gap (not hypothetical) before being

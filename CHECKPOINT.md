@@ -18,15 +18,16 @@ S1b checklist (deploy + device test) is Taher's and in progress. Next item in th
 - [x] 6. **S2b implemented** on the feat branch: deleted `exports.runCutover`, `lib/cutoverLogic.js`, `test/cutoverLogic.test.js`, 9 handler tests, harness mock; added 1 guard test (2 mutants caught). `node --test` 740 -> 722, 0 fail. README, AGENTS.md, Skill 123 + index, test plan + test-plans index row.
 - [x] 7a. **Taher (2026-10-21):** S1a/S1b functions deployed to dev, on-device checklists done, all fine. Ticked in `test-plans/2026-09-24-p1-stock-movements-test-plan.md` (S1 gate R3 is now met: S2d may start after S2a/S2c).
 - [ ] 7b. **Taher:** merge PR #151, deploy functions to dev (answer YES to the delete prompt for `runCutover`), run the on-device list in `test-plans/2026-10-19-p1-s2b-delete-runcutover-test-plan.md`. NOT done: the 2026-10-21 deploy was of S1a/S1b from `main`, before #151, so `runCutover` is still live on dev.
-- [x] 9. PR #151 deep review 2026-10-21 (server diff read in full, CI 2964/2964 seen, `node --test` re-run locally 722/722, guard mutants 1+2 caught, merge clean, no revert of main). Verdict: no Critical, no Important. Minor findings M1-M5 below, none fixed yet (pending Taher decision).
+- [x] 9. PR #151 deep review 2026-10-21 (server diff read in full, CI 2964/2964 seen, `node --test` re-run locally 722/722, guard mutants 1+2 caught, merge clean, no revert of main). Verdict: no Critical, no Important. Minor findings M1-M5 below.
+- [x] 10. 2026-10-21 Taher decisions: Q1 keep client `runCutover` for S2a; Q2 fix M1-M3 in PR #151 (done, below); Q3 no reset path, no prod yet (design Q6). `node --test` 722/722 after the fixes.
 - [ ] 8. Next slice, own session: **S2a** (delete `direct` mode + client `runCutover`/`cutoverUrl`/`cutoverFinished`, drop `stock_movement` from `Gateway._collections`, rewrite the `tst_Gateway.qml` cases that force `"direct"`; CI is the only oracle). Then S2c (rules lock + rules test), then S2d (needs S1b deployed).
 
-## PR #151 review findings (all Minor, unfixed)
-- M1 `testSupport/handlerHarness.js` lines 85-88: `deleteCollectionResult/Error`, `zeroInventoryStockResult/Error` are dead (nothing reads them).
-- M2 S2b test plan says `git grep -n -i cutover -- functions` finds none; it finds 5 (comments + the guard test). Reword the claim.
-- M3 AGENTS.md ~689 says "All 8 Cloud Functions" next to a 7-name list; `index.js` has 11 exports now. Stale count, not caused by #151 but made visible by it.
-- M4 Guard pins the NAME `runCutover` and the lib file, not the capability: `exports.wipeLedger = ...` would pass (mutant 3 probe). Accepted: tests cannot pin intent.
-- M5 This checkpoint's old header said "No code this session": fixed here.
+## PR #151 review findings (all Minor; M1-M3 FIXED 2026-10-21, M4 accepted)
+- M1 FIXED: `testSupport/handlerHarness.js` lines 85-88: `deleteCollectionResult/Error`, `zeroInventoryStockResult/Error` are dead (nothing reads them).
+- M2 FIXED: S2b test plan says `git grep -n -i cutover -- functions` finds none; it finds 5 (comments + the guard test). Reword the claim.
+- M3 FIXED: AGENTS.md ~689 now says "All 11 Cloud Functions" with the 11 names (checked: each export calls `scopedDb`).
+- M4 ACCEPTED: Guard pins the NAME `runCutover` and the lib file, not the capability: `exports.wipeLedger = ...` would pass (mutant 3 probe). Accepted: tests cannot pin intent.
+- M5 FIXED: This checkpoint's old header said "No code this session": fixed here.
 - Left on purpose, tracked for S2a: `Gateway.qml` `cutoverUrl`, `cutoverFinished`, `runCutover()` (about 45 lines, no caller, no test) still point at the deleted endpoint. QML lint on that block: only pre-existing JS-1/JS-2 style hits, nothing in the PR diff (PR touches 0 QML lines).
 
 ## Open items / risks

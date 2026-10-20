@@ -4366,4 +4366,5 @@ Rules:
 3. Leave dated specs, plans and checkpoints alone (history). Update only present-tense docs (README, AGENTS.md) and say "deleted in <slice>" instead of rewriting.
 4. Use `git grep -I` to find references: plain `grep -r` over the repo hit a binary file and returned nothing.
 5. Pin the deletion with one test (`handlers.runCutover === undefined`, lib file absent) so a bad merge cannot bring back an irreversible wipe endpoint.
+6. A "no reference left" claim in a test plan must be the pasted output of the grep on the final tree. The guard test and the "deleted in" comments are references too: write the expected hits, not "none". Also grep the harness for mock STATE fields of the deleted code (`xxxResult`/`xxxError`), not only its `require`s.
 

@@ -11,7 +11,7 @@
 | After the change | same | 722/722 (-10 cutoverLogic, -9 handler, +1 guard) |
 | Guard fails if the lib file returns | `touch lib/cutoverLogic.js`, run `index.handlers.remaining.test.js` | 1 fail (guard), restored |
 | Guard fails if the export returns | append `exports.runCutover = exports.recordMutation;`, run same file | 1 fail (guard), restored |
-| No server reference left | `git grep -n -i cutover -- functions` | none |
+| No server code reference left | `git grep -n -i cutover -- functions` | 5 lines, all in `index.handlers.remaining.test.js` (2 comments + the guard test); none in `index.js`, `lib/` or the harness. Dead `deleteCollection*`/`zeroInventoryStock*` mock fields removed from the harness in the PR review (nothing read them) |
 | Skills index current | `node .github/scripts/skills-index.js --write` | 124 skills |
 Coverage: pure deletion, so no new branch exists. Every remaining line is covered by the unchanged suites (the other 4 endpoints' handler tests all still pass with the harness change).
 

@@ -82,10 +82,6 @@ function installMocks() {
         releaseLockResult: { ok: true },
         releaseLockError: null,
         releaseLockCalls: [],
-        deleteCollectionResult: 0,
-        deleteCollectionError: null,
-        zeroInventoryStockResult: 0,
-        zeroInventoryStockError: null,
         runTransactionError: null, // provisionMember's db.runTransaction() failing
         // admin.storage() mock for uploadProductPhoto/deleteProductPhoto (2026-09-21 photos
         // feature). storageFiles: path -> Buffer (what was actually .save()'d), so a test can
