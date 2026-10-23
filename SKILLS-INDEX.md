@@ -131,3 +131,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 121: A stacked PR whose base is `main` but whose branch holds pre-squash commits will conflict AND can revert main
 - 122: A server limit is only reachable through the senders that exist: derive the reachable range from the sender before writing a verification item, and pin the relation with both constants
 - 123: Deleting a Cloud Function: the deployed copy survives, the test harness may require the deleted file, and the old docs are history
+- 124: Splitting a deletion slice: take the part with no test blast radius first, and pin a deleted client API with `typeof`

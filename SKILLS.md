@@ -4368,3 +4368,15 @@ Rules:
 5. Pin the deletion with one test (`handlers.runCutover === undefined`, lib file absent) so a bad merge cannot bring back an irreversible wipe endpoint.
 6. A "no reference left" claim in a test plan must be the pasted output of the grep on the final tree. The guard test and the "deleted in" comments are references too: write the expected hits, not "none". Also grep the harness for mock STATE fields of the deleted code (`xxxResult`/`xxxError`), not only its `require`s.
 
+
+## Skill 124: Splitting a deletion slice: take the part with no test blast radius first, and pin a deleted client API with `typeof`
+
+P1 S2a-1 (2026-10-21). S2a (delete `direct` mode + client `runCutover`) was split in two before any code: S2a-1 (dead `runCutover`, `cutoverUrl`, `cutoverFinished`, plus the `stock_movement` entity-map entry) and S2a-2 (`direct` mode, the `mode` property).
+Rules:
+1. Count the blast radius of removing a property before you pick the slice: `git grep -c "Gateway.mode" -- tests qml` found 79 uses in 22 files (18 `_prevMode` lines). Assigning a property that no longer exists on a singleton is a runtime error, so S2a-2 must touch every one of those files, and with no Qt in the sandbox CI is the only oracle. That is its own session.
+2. A dead block with no caller and no test (here `runCutover`, 45 lines) is the cheap half: grep the helpers it uses (`_captureBeforeStatusIsLost` still has 5 other users, so it stays) and delete it first.
+3. Pin a deleted client API with `compare(typeof Gateway.x, "undefined")`, one line per removed name. Reading an absent member of a QtObject singleton should give `undefined` for properties, functions and signals alike, so one pin style fits all three; this was NOT run locally (no Qt), CI confirms it.
+4. A client-side entity map that is wider than the server's lets a caller enqueue a write the server can only reject. Narrow it to the server's list and test the four per-entity entry points (`recordMutation`, `recordEdit`, `recordMutations`, `recordDelta`) return `""` with the outbox empty. `recordOperation` carries entities inside its ops and is gated by the server only (`unsupported-entity` per op): say so in the test comment instead of writing "every entry point". The entity check runs before the mode check, but the test still sets `gateway` on purpose: a regression must land in the outbox (no token, no network), never in direct mode's `_writeDirect` (real Firestore).
+5. `DataModel._resyncStoreByEntity` has no `stock_movement` key and never had one; only a comment named it. Keep the generic "unknown entity is ignored" tests, drop any test-side ignore list for an entity that left `Gateway._collections` (it is dead code), and fix the comment.
+6. A "the test asserts every X" claim needs the count from the source: `_collections` has 7 entities and the test asserted 6 (`removed_staff` was never checked). Count with grep on both sides before writing the claim.
+7. A deployed function deleted by hand in the console is gone for `firebase deploy` too: remove every "deploy will ask to delete it, answer yes" sentence and give a `curl` that must print `404`.

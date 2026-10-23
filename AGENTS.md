@@ -123,7 +123,7 @@ edit/delete; client forges identity & time). The fix:
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
   closed to every client endpoint; batch cap 200 -> 150 (done in S1b). Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
-  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done), S2a delete `direct` mode + client `runCutover`, S2c lock `inventory` in rules, S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
+  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done; deployed copy deleted by hand in the console 2026-10-23), S2a-1 client `runCutover`/`cutoverUrl`/`cutoverFinished` + `stock_movement` client mapping deleted (done, `feat/2026-10-21-p1-s2a1-client-cutover-delete`), S2a-2 delete `direct` mode + the `mode` property (79 uses in 22 test/QML files), S2c lock `inventory` in rules, S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
   `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec
   `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plans `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`
   and `...-s1b.md`.
@@ -714,7 +714,7 @@ env.
   "node --test test/"`)
 - `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — QML tests for the client-side gateway
   bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`). **Every XHR call site
-  in `Gateway.qml` (`_send`, `_sendBatch`, `_sendDelta`, `runCutover`, `provisionMember`) works
+  in `Gateway.qml` (`_send`, `_sendBatch`, `_sendDelta`, `_sendOperation`, `provisionMember`; `runCutover` deleted in S2a-1) works
   around [QTBUG-49896](https://bugreports.qt.io/browse/QTBUG-49896) via
   `_captureBeforeStatusIsLost()`** — QML's `XMLHttpRequest` can lose `xhr.status` (reset to 0) at
   the readyState 3->4 transition for non-2xx responses. Unresolved upstream, no fix version. If you

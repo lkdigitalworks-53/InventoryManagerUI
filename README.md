@@ -341,7 +341,7 @@ path leaves a ledger row; the rules still let a member write `inventory` directl
 are now 150 (inventory batch = 3 writes per item = 450). Review decision D-2 is in: `recordMutation`, `recordDelta` and `recordMutationsBatch`
 reject a requestId containing `~` or `/` or longer than 200 chars (and the batch rejects such an entityId) with `400 invalid-request-id` /
 `invalid-entity-id`, so none can forge a `recordOperation` audit or ledger id (those carry `~`). **Needs `firebase deploy --only functions`
-to dev.** S1a/S1b on-device checklists done 2026-10-21 (Taher). Next: S2 (kind pickers, delete `direct` mode, lock `inventory` in rules). S2 design (split S2a-S2e, Q1-Q3 approved): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`. **S2b done (server `runCutover` + `cutoverLogic.js` deleted; the client `Gateway.runCutover` is dead code until S2a). `firebase deploy --only functions` will ask to delete the deployed `runCutover`: answer yes.**
+to dev.** S1a/S1b on-device checklists done 2026-10-21 (Taher). Next: S2 (kind pickers, delete `direct` mode, lock `inventory` in rules). S2 design (split S2a-S2e, Q1-Q3 approved): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`. **S2b done (server `runCutover` + `cutoverLogic.js` deleted; the client `Gateway.runCutover` was deleted in S2a-1 on `feat/2026-10-21-p1-s2a1-client-cutover-delete`; `direct` mode goes in S2a-2). The deployed `runCutover` was deleted by hand in the Firebase console on 2026-10-23 (Taher), so `firebase deploy --only functions` will not ask about it; check with a POST to the old URL, expect `404`.**
 
 ## Qt Skills Cheat Sheet
 
