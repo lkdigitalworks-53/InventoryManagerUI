@@ -95,6 +95,7 @@ TestCase {
         compare(Gateway._collectionFor("order"), "orders")
         compare(Gateway._collectionFor("staff"), "staff")
         compare(Gateway._collectionFor("supplier"), "suppliers")
+        compare(Gateway._collectionFor("removed_staff"), "removed_staff")
     }
 
     function test_collectionFor_returns_empty_string_for_unknown_entity() {
@@ -107,7 +108,12 @@ TestCase {
         compare(Gateway._collectionFor("stock_movement"), "")
     }
 
-    function test_stock_movement_is_refused_by_every_write_entry_point_without_touching_the_outbox() {
+    // Four per-entity entry points. recordOperation is NOT gated here on purpose: its ops are built
+    // by in-app builders and the server rejects an unknown entity per op (unsupported-entity,
+    // functions/test/operationLogic.test.js + movementWiring.test.js). "gateway" is set on purpose:
+    // if the entry were ever re-opened the write must land in the outbox (safe, no token in tests),
+    // never in direct mode's _writeDirect (real Firestore).
+    function test_stock_movement_is_refused_by_the_four_per_entity_write_entry_points_without_touching_the_outbox() {
         Gateway.mode = "gateway"
         compare(Gateway.recordMutation("stock_movement", "m1", "create", null, { qty: 1 }), "")
         compare(Gateway.recordEdit("stock_movement", "m1", "update", {}, { qty: 2 }), "")
