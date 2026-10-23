@@ -69,11 +69,10 @@ TestCase {
         compare(dm._storesToResync([null, 5, {}]), [])
     }
 
-    // Keeps DataModel in step with Gateway: a new entity must be mapped or knowingly ignored.
-    function test_every_gateway_entity_is_mapped_or_explicitly_ignored() {
-        var ignored = { "stock_movement": true }
+    // Keeps DataModel in step with Gateway: every entity Gateway can write must map to a store
+    // (stock_movement left Gateway._collections in P1 S2a-1, so nothing is ignored any more).
+    function test_every_gateway_entity_is_mapped() {
         for (var entity in Gateway._collections) {
-            if (ignored[entity]) continue
             verify(dm._storesToResync([entity]).length >= 1, "unmapped Gateway entity: " + entity)
         }
     }

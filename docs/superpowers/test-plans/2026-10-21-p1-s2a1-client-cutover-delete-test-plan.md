@@ -7,20 +7,24 @@
 ## 1. Unit / functional
 | Check | Where | Result |
 |---|---|---|
-| QML tests | CI job `qml-tests` (`qmltestrunner -input tests -platform offscreen`). NOT run in the sandbox (no Qt, standing rule) | pending CI |
+| QML tests | CI job `qml-tests` (`qmltestrunner -input tests -platform offscreen`). NOT run in the sandbox (no Qt, standing rule) | CI green on `3755713`: 2107/2107 (PR #151 had 2104, so the 3 new cases ran). Re-check after the review-sweep commit |
 | Server suite unchanged | `cd functions && node --test` | 722/722 (run 2026-10-21, Node 22, after `npm ci`; server untouched) |
 | Skills index current | `node .github/scripts/skills-index.js --write` | 125 skills |
 
 New QML cases (all in `tst_Gateway.qml`):
 - **Negative:** `test_collectionFor_refuses_stock_movement` (`""`).
-- **Negative / multi-path:** `test_stock_movement_is_refused_by_every_write_entry_point_without_touching_the_outbox` (`recordMutation`, `recordEdit`, `recordMutations`, `recordDelta` all return `""`, outbox stays empty).
+- **Negative / multi-path:** `test_stock_movement_is_refused_by_the_four_per_entity_write_entry_points_without_touching_the_outbox` (`recordMutation`, `recordEdit`, `recordMutations`, `recordDelta` all return `""`, outbox stays empty). `recordOperation` is not gated on the client by design; the server rejects `stock_movement` per op (`unsupported-entity`, pinned in `operationLogic.test.js` + `movementWiring.test.js`).
 - **Regression pin:** `test_client_cutover_api_is_gone` (`typeof Gateway.runCutover/cutoverUrl/cutoverFinished === "undefined"`).
-- **Happy path kept:** `test_collectionFor_covers_every_registered_entity` still asserts the 6 real entities; the unknown-entity case still returns `""`.
-Coverage: deletion only; no new branch. The deleted block had no caller and no test. `_captureBeforeStatusIsLost` is still used by 6 other senders.
+- **Happy path kept:** `test_collectionFor_covers_every_registered_entity` now asserts all 7 registered entities (review sweep added `removed_staff`, which was untested); the unknown-entity case still returns `""`.
+- **Review sweep 2026-10-23:** `tst_DataModel_discardResync` lost a dead `ignored = {stock_movement}` branch (test renamed `test_every_gateway_entity_is_mapped`); `DataModel.qml` comment corrected. No new test functions, one new assertion.
+Coverage: deletion only; no new branch. The deleted block had no caller and no test. `_captureBeforeStatusIsLost` is still used by 5 other senders (`_send`, `_sendBatch`, `_sendDelta`, `_sendOperation`, `provisionMember`; 6 on `main` with `runCutover`).
 Mutation check to run in CI review: put `"stock_movement": "stock_movements"` back, the two stock_movement cases must fail; put `function runCutover() {}` back, the pin must fail.
 
 ## 2. Rules / e2e
-None changed. `firestore.rules` is untouched (S2c). The emulator e2e job is the regression signal.
+None changed. `firestore.rules` already has `allow write: if false` on `stock_movements`, so the client narrowing is defence in depth. `firestore.rules` is untouched (S2c). The emulator e2e job is the regression signal.
+
+## Deployed `runCutover` (Taher, 2026-10-23)
+Taher deleted the deployed `runCutover` by hand in the Firebase console (the terminal delete command failed). `firebase deploy --only functions` will therefore NOT ask to delete it. Verify: `curl -s -o /dev/null -w "%{http_code}\n" -X POST https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover` must print `404`. Not checked by the reviewer (sandbox has no route to `cloudfunctions.net`).
 
 ## On-device test plan (Taher, after merge, app build only; no functions deploy needed)
 - **Happy path:** sign in, add a product, restock it, complete an order, edit an order, add staff. All work as before.
