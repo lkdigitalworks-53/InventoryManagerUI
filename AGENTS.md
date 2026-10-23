@@ -123,7 +123,7 @@ edit/delete; client forges identity & time). The fix:
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
   closed to every client endpoint; batch cap 200 -> 150 (done in S1b). Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
-  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done; deployed copy deleted by hand in the console 2026-10-23), S2a-1 client `runCutover`/`cutoverUrl`/`cutoverFinished` + `stock_movement` client mapping deleted (done, `feat/2026-10-21-p1-s2a1-client-cutover-delete`), S2a-2 delete `direct` mode + the `mode` property (79 uses in 22 test/QML files), S2c lock `inventory` in rules, S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
+  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done; deployed copy deleted by hand in the console 2026-10-23), S2a-1 client `runCutover`/`cutoverUrl`/`cutoverFinished` + `stock_movement` client mapping deleted (done, `feat/2026-10-21-p1-s2a1-client-cutover-delete`), S2a-2 `direct` mode + the `mode` property deleted (done, `feat/2026-10-23-p1-s2a2-delete-direct-mode`; 89 uses in 32 files, Skill 125), S2c lock `inventory` in rules, S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
   `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec
   `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plans `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`
   and `...-s1b.md`.
@@ -158,7 +158,7 @@ collections and zeroes product stock).
 `Gateway.recordMutation` / `Gateway.recordMutations` (batch — new this session, see Skill 35 below)
 — zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. Status:
 
-- **`Gateway.mode` now defaults to `"gateway"`** (flipped 2026-07-29, commit `649046d`). Cloud
+- **Every write goes through the gateway** (`Gateway.mode` flipped to `"gateway"` 2026-07-29, commit `649046d`; the property and `direct` mode were deleted in P1 S2a-2). Cloud
   Functions and the locked Firestore rules are deployed and confirmed working (per Taher) —
   `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry.
   `recordMutation` also has one narrow, entity/action-specific server-side role check

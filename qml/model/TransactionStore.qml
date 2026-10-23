@@ -205,8 +205,7 @@ QtObject {
         revision++
         // Transactions are append-only ledger rows — route through the
         // compliance gateway so each one lands with an immutable audit_log
-        // entry. In "direct" mode (pre-deploy) the gateway writes the doc
-        // exactly as before.
+        // entry.
         if (!deferWrite) Gateway.recordMutation("transaction", doc.txId, "create", null, doc, dependsOn)
         return doc
     }

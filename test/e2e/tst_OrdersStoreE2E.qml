@@ -72,7 +72,6 @@ TestCase {
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
         Gateway.batchFunctionUrl = emulatorFunctionsBase + "/recordMutationsBatch"
         Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
-        Gateway.mode = "gateway"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]

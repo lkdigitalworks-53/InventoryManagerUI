@@ -14,11 +14,8 @@ import "../qml/model"
 TestCase {
     name: "InventoryStore_updateProductAfterAck"
 
-    property string _prevMode: ""
 
     function init() {
-        _prevMode = Gateway.mode
-        Gateway.mode = "gateway"
         AuthStore.idToken = ""
         OutboxStore.clear()
         ActivityLog.clear()
@@ -28,7 +25,7 @@ TestCase {
         InventoryStore.products = [InventoryStore._newProductDoc(
             "PRD-001", "Widget", "SKU-1", "General", 10, 2, 100, 120, false, 0, "", "pc", "A widget", "SUP-001")]
     }
-    function cleanup() { OutboxStore.clear(); ActivityLog.clear(); Gateway.mode = _prevMode }
+    function cleanup() { OutboxStore.clear(); ActivityLog.clear() }
 
     function _editItem() { return OutboxStore.items.filter(function(i) { return i.entity === "inventory" })[0] }
     function _txItems() { return OutboxStore.items.filter(function(i) { return i.entity === "transaction" }) }

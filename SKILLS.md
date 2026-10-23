@@ -4380,3 +4380,14 @@ Rules:
 5. `DataModel._resyncStoreByEntity` has no `stock_movement` key and never had one; only a comment named it. Keep the generic "unknown entity is ignored" tests, drop any test-side ignore list for an entity that left `Gateway._collections` (it is dead code), and fix the comment.
 6. A "the test asserts every X" claim needs the count from the source: `_collections` has 7 entities and the test asserted 6 (`removed_staff` was never checked). Count with grep on both sides before writing the claim.
 7. A deployed function deleted by hand in the console is gone for `firebase deploy` too: remove every "deploy will ask to delete it, answer yes" sentence and give a `curl` that must print `404`.
+
+## Skill 125: Deleting a global test knob: count the blast radius over the WHOLE repo, and find who lived off the leak
+
+P1 S2a-2 (2026-10-23). `Gateway.mode` was deleted; 89 uses in 32 files, not the 79 / 22 written into Skill 124 and the CHECKPOINT recipe.
+Rules:
+1. Count a symbol's uses with `git grep -c SYMBOL -- . ':!*.md'` on `main`, never with a hand-picked folder list. The old count looked in `tests` and `qml` and missed the 9 files under `test/e2e` (singular `test`).
+2. A singleton knob forced in one test file's `init()` and never restored leaks into every later file: qmltestrunner is one process and runs files in name order. Here `tst_Gateway.init()` left `mode = "direct"`, and 21 files re-forced `"gateway"` to cope. After deleting the knob, list the files that run AFTER the forcing file, write through the changed code and never set it themselves: `ls tests/tst_*.qml | sort | awk '$0 > "tests/tst_Gateway.qml"'` plus a grep for the store write calls. Six matched, two really enqueue, so those two got `OutboxStore.clear()` in `cleanup()`.
+3. A test whose only premise is the deleted branch is deleted, not rewritten (`..._requires_gateway_mode` x3, the direct chunking test). Keep one pin instead: `compare(typeof Gateway.mode, "undefined")`.
+4. Test names that carry the knob (`..._in_gateway_mode_...`) rot into lies once it is gone: rename them in the same change and grep the docs for the old names.
+5. The check that makes the remaining tests safe is the `!AuthStore.idToken` guard in `_send*` plus `init()` clearing the token and the on-disk session. Keep both; the file header says so.
+6. State the CI number you expect before pushing (here 2107 - 4 deleted + 1 pin = 2104), so a surprise is visible.

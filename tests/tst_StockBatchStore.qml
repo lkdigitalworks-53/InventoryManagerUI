@@ -30,6 +30,9 @@ TestCase {
         StockBatchStore.revision = 0
     }
 
+    // addBatch* now enqueue (no direct mode): keep the outbox clean for the next file.
+    function cleanup() { OutboxStore.clear() }
+
     // ── _batchIdPrefixForYear ────────────────────────────────────────────
 
     function test_batchIdPrefixForYear_formats_as_BAT_dash_year_dash() {

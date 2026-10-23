@@ -18,7 +18,6 @@ TestCase {
         TransactionStore.entries = []
         TransactionStore.revision = 0
         InventoryStore.products = []
-        Gateway.mode = "gateway"
         OutboxStore.clear()
         AuthStore.idToken = ""
         AuthStore._settings.sessionJson = ""

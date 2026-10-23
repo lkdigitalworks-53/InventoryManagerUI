@@ -31,7 +31,8 @@ TestCase {
     name: "InventoryStore_upsertMany"
 
     function init() { InventoryStore.products = [] }
-    function cleanup() { InventoryStore.products = [] }
+    // upsertMany now enqueues (no direct mode): keep the outbox clean for the next file.
+    function cleanup() { InventoryStore.products = []; OutboxStore.clear() }
 
     function _neverExists(name) { return false }
 

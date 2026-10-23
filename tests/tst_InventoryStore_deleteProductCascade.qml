@@ -34,11 +34,8 @@ import "../qml/model"
 TestCase {
     name: "InventoryStore_deleteProductCascade"
 
-    property string _prevMode: ""
 
     function init() {
-        _prevMode = Gateway.mode
-        Gateway.mode = "gateway"      // recordMutation enqueues (no network without an idToken)
         OutboxStore.clear()
         ActivityLog.clear()
         InventoryStore._pendingDeletes = ({})
@@ -49,7 +46,6 @@ TestCase {
 
     function cleanup() {
         OutboxStore.clear()
-        Gateway.mode = _prevMode
     }
 
     // The server's 2xx for the product delete (Gateway fires this from _ackSingle).

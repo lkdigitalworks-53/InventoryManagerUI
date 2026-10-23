@@ -22,7 +22,6 @@ TestCase {
     function init() {
         StaffStore.staff = []
         StaffStore.removedNames = ({})
-        Gateway.mode = "gateway"
         OutboxStore.clear()
         toastSpy.clear()
     }

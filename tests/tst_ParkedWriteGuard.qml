@@ -19,12 +19,9 @@ TestCase {
     SignalSpy { id: delSpy;     target: testLogic; signalName: "productDeleted" }
     SignalSpy { id: restockSpy; target: testLogic; signalName: "productRestocked" }
 
-    property string _prevMode: ""
     property var _cb: null
 
     function init() {
-        _prevMode = Gateway.mode
-        Gateway.mode = "gateway"
         OutboxStore.clear()
         ActivityLog.clear()
         InventoryStore._pendingDeletes = ({})
@@ -35,7 +32,7 @@ TestCase {
         errorSpy.clear(); delSpy.clear(); restockSpy.clear()
     }
 
-    function cleanup() { OutboxStore.clear(); Gateway.mode = _prevMode }
+    function cleanup() { OutboxStore.clear() }
 
     function _product(id) {
         return { productId: id, name: "Widget " + id, category: "Widgets", sku: "", unit: "pc",

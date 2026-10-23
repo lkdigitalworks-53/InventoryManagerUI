@@ -18,11 +18,8 @@ TestCase {
     DataModel { id: dm; dispatcher: testLogic }
     SignalSpy { id: failSpy; target: testLogic; signalName: "orderCompletionFailed" }
 
-    property string _prevMode: ""
 
     function init() {
-        _prevMode = Gateway.mode
-        Gateway.mode = "gateway"
         OutboxStore.clear()
         AuthStore.idToken = ""
         AuthStore._settings.sessionJson = ""
@@ -42,7 +39,7 @@ TestCase {
         failSpy.clear()
     }
 
-    function cleanup() { OutboxStore.clear(); Gateway.mode = _prevMode }
+    function cleanup() { OutboxStore.clear() }
 
     function _product(id) {
         return { productId: id, name: "Widget " + id, category: "", description: "", unit: "pc",
