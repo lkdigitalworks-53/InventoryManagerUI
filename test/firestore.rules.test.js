@@ -9,15 +9,16 @@ const {
     assertFails,
     assertSucceeds
 } = require("@firebase/rules-unit-testing");
-const { doc, getDoc, setDoc, deleteDoc } = require("firebase/firestore");
+const { doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc } = require("firebase/firestore");
 
 // Firestore security-rules tests for the P0 compliance gateway lockdown.
 // Spec requirement (docs/superpowers/specs/2026-06-06-P0-compliance-gateway-
 // design.md §6): "a client write to any ledger collection is denied; read
 // as member is allowed." Extended here to also cover the working-tier
-// collections (inventory/orders/staff/suppliers), since the same ruleset
-// governs both and a regression in the member/non-member boundary is just
-// as serious as a ledger-lockdown regression.
+// collections (orders/staff/suppliers) and the gateway-write-only inventory
+// tier (P1 S2c), since the same ruleset governs all of them and a regression
+// in the member/non-member boundary is just as serious as a ledger-lockdown
+// regression.
 //
 // NOT RUN IN THIS SANDBOX — no network egress here to Firebase's emulator
 // distribution (only npm/GitHub/PyPI/crates domains are allowlisted).
@@ -89,6 +90,22 @@ async function seedAsAdmin(collectionPath, docId, data) {
     });
 }
 
+// Reads a document with the rules off, so a test can prove a denied write left the stored data untouched.
+async function readAsAdmin(docPath) {
+    let data = null;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const snap = await ctx.firestore().doc(docPath).get();
+        data = snap.exists ? snap.data() : null;
+    });
+    return data;
+}
+
+// A signed-in member of TENANT with the given role (beforeEach only seeds the owner).
+async function dbAs(uid, role) {
+    await seedAsAdmin(`tenants/${TENANT}/members`, uid, { uid, role, status: "active" });
+    return testEnv.authenticatedContext(uid).firestore();
+}
+
 // ── Ledger tier: read yes (member), write always no (everyone) ─────────────
 
 const LEDGER_COLLECTIONS = ["audit_log", "transactions", "stock_batches", "stock_movements"];
@@ -117,7 +134,8 @@ for (const collection of LEDGER_COLLECTIONS) {
 
 // ── Working tier: member can read/write, non-member/anon cannot ────────────
 
-const WORKING_COLLECTIONS = ["inventory", "orders", "staff", "suppliers"];
+// inventory is NOT here any more: since S2c it is gateway-write-only (own section below).
+const WORKING_COLLECTIONS = ["orders", "staff", "suppliers"];
 
 for (const collection of WORKING_COLLECTIONS) {
     test(`working/${collection}: a member can create, update, and delete`, async () => {
@@ -137,6 +155,67 @@ for (const collection of WORKING_COLLECTIONS) {
         await assertFails(setDoc(doc(anonDb(), `tenants/${TENANT}/${collection}/doc1`), { x: 1 }));
     });
 }
+
+// ── Gateway-write-only tier: inventory (P1 S2c) ────────────────────────────
+// Members read products for display; only the gateway Cloud Functions (Admin SDK, rules skipped) write
+// them. A lone `match /inventory/{id} { allow write: if false }` would not deny (the wildcard would
+// still allow), so isGatewayWriteOnlyCollection + the wildcard's write guard is what these tests pin.
+
+const INVENTORY = `tenants/${TENANT}/inventory`;
+const MEMBER_ROLES = ["owner", "admin", "manager", "staff"];
+
+test("S2c inventory: a member can read one product and list the collection", async () => {
+    await seedAsAdmin(INVENTORY, "PRD-1", { name: "Widget", stock: 5 });
+    await assertSucceeds(getDoc(doc(memberDb(), `${INVENTORY}/PRD-1`)));
+    await assertSucceeds(getDocs(collection(memberDb(), INVENTORY)));
+});
+
+test("S2c inventory: a member cannot create, overwrite, update or delete a product, and the stored data is untouched", async () => {
+    await seedAsAdmin(INVENTORY, "PRD-1", { name: "Widget", stock: 5 });
+    const db = memberDb();
+    await assertFails(setDoc(doc(db, `${INVENTORY}/PRD-2`), { name: "New" }));
+    await assertFails(setDoc(doc(db, `${INVENTORY}/PRD-1`), { name: "Tampered", stock: 999 }));
+    await assertFails(updateDoc(doc(db, `${INVENTORY}/PRD-1`), { stock: 999 }));
+    await assertFails(deleteDoc(doc(db, `${INVENTORY}/PRD-1`)));
+    assert.deepEqual(await readAsAdmin(`${INVENTORY}/PRD-1`), { name: "Widget", stock: 5 });
+    assert.equal(await readAsAdmin(`${INVENTORY}/PRD-2`), null);
+});
+
+for (const role of MEMBER_ROLES) {
+    test(`S2c inventory: a ${role} can read but never write it (no role bypasses the lock)`, async () => {
+        const db = await dbAs(`uid-${role}`, role);
+        await seedAsAdmin(INVENTORY, "PRD-1", { name: "Widget" });
+        await assertSucceeds(getDoc(doc(db, `${INVENTORY}/PRD-1`)));
+        await assertFails(setDoc(doc(db, `${INVENTORY}/PRD-9`), { name: "x" }));
+        await assertFails(updateDoc(doc(db, `${INVENTORY}/PRD-1`), { name: "y" }));
+        await assertFails(deleteDoc(doc(db, `${INVENTORY}/PRD-1`)));
+    });
+}
+
+test("S2c inventory: a signed-in non-member can neither read nor write it", async () => {
+    await seedAsAdmin(INVENTORY, "PRD-1", { name: "Widget" });
+    await assertFails(getDoc(doc(outsiderDb(), `${INVENTORY}/PRD-1`)));
+    await assertFails(getDocs(collection(outsiderDb(), INVENTORY)));
+    await assertFails(setDoc(doc(outsiderDb(), `${INVENTORY}/PRD-1`), { tampered: true }));
+    await assertFails(deleteDoc(doc(outsiderDb(), `${INVENTORY}/PRD-1`)));
+});
+
+test("S2c inventory: an unauthenticated request can neither read nor write it", async () => {
+    await seedAsAdmin(INVENTORY, "PRD-1", { name: "Widget" });
+    await assertFails(getDoc(doc(anonDb(), `${INVENTORY}/PRD-1`)));
+    await assertFails(setDoc(doc(anonDb(), `${INVENTORY}/PRD-1`), { x: 1 }));
+    await assertFails(deleteDoc(doc(anonDb(), `${INVENTORY}/PRD-1`)));
+});
+
+test("S2c inventory: a sub-collection under a product is denied by default (no rule matches it)", async () => {
+    await assertFails(setDoc(doc(memberDb(), `${INVENTORY}/PRD-1/notes/n1`), { text: "x" }));
+});
+
+test("S2c PIN: the lock is by exact collection name; a look-alike name is still an ordinary working collection", async () => {
+    // Documents the limit instead of leaving it to be assumed. Nothing in the app uses these names.
+    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/inventory_archive/x1`), { name: "x" }));
+    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/Inventory/x1`), { name: "x" }));
+});
 
 // ── The ledger guard on the generic wildcard specifically ──────────────────
 // Belt-and-suspenders: even without the explicit per-collection `write: if
@@ -238,10 +317,14 @@ test("R07 pending_cleanup: a signed-in non-member (other tenant) is denied", asy
     await assertFails(deleteDoc(doc(outsiderDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
 });
 
-test("R08 PIN: ordinary wildcard collections are unchanged (a member still reads and writes inventory)", async () => {
+test("R08 PIN: ordinary wildcard collections are unchanged (a member still reads inventory, and still reads and writes orders)", async () => {
+    // Re-pointed in S2c: inventory writes are now denied (see the S2c tests above), so the write half of this pin
+    // moved to orders. The read half still proves the wildcard did not get too broad an exclusion.
     await seedAsAdmin(`tenants/${TENANT}/inventory`, "PRD-1", { name: "Widget" });
+    await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 10 });
     await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/inventory/PRD-1`)));
-    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/inventory/PRD-2`), { name: "New" }));
+    await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/orders/ORD-1`)));
+    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/orders/ORD-2`), { total: 20 }));
 });
 
 test("R09 PIN: locks and audit_log are still denied to members", async () => {
