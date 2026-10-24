@@ -343,3 +343,42 @@ test("R11 a forged marker attempt by a member leaves no marker behind", async ()
     });
     assert.equal(exists, false);
 });
+
+
+// ── PROBE (PR #156 review, DO NOT MERGE) ───────────────────────────────────
+// Each test asserts the SECURE behaviour. A failing probe proves a hole in the CURRENT rules.
+// PROBE-4 is a control: it must pass, or the probe setup itself is wrong.
+const MEMBERS = `tenants/${TENANT}/members`;
+
+test("PROBE-1 members: a staff member cannot promote itself to owner", async () => {
+    const db = await dbAs("uid-staff", "staff");
+    await assertFails(setDoc(doc(db, `${MEMBERS}/uid-staff`), { uid: "uid-staff", role: "owner", status: "active" }));
+});
+
+test("PROBE-2 members: a staff member cannot create a membership for another uid", async () => {
+    const db = await dbAs("uid-staff", "staff");
+    await assertFails(setDoc(doc(db, `${MEMBERS}/uid-evil`), { uid: "uid-evil", role: "owner", status: "active" }));
+});
+
+test("PROBE-3 members: a staff member cannot delete the owner's membership", async () => {
+    const db = await dbAs("uid-staff", "staff");
+    await assertFails(deleteDoc(doc(db, `${MEMBERS}/${MEMBER_UID}`)));
+});
+
+test("PROBE-4 CONTROL: the owner can change a staff member's role to manager", async () => {
+    await dbAs("uid-staff", "staff");
+    await assertSucceeds(updateDoc(doc(memberDb(), `${MEMBERS}/uid-staff`), { role: "manager" }));
+});
+
+test("PROBE-5 suspended: a suspended member cannot read inventory", async () => {
+    await seedAsAdmin(MEMBERS, "uid-susp", { uid: "uid-susp", role: "staff", status: "suspended" });
+    await seedAsAdmin(INVENTORY, "PRD-1", { name: "Widget" });
+    const db = testEnv.authenticatedContext("uid-susp").firestore();
+    await assertFails(getDoc(doc(db, `${INVENTORY}/PRD-1`)));
+});
+
+test("PROBE-6 suspended: a suspended member cannot write orders", async () => {
+    await seedAsAdmin(MEMBERS, "uid-susp", { uid: "uid-susp", role: "staff", status: "suspended" });
+    const db = testEnv.authenticatedContext("uid-susp").firestore();
+    await assertFails(setDoc(doc(db, `tenants/${TENANT}/orders/ORD-X`), { total: 1 }));
+});
