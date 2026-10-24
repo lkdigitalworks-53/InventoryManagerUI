@@ -121,23 +121,31 @@ function photoAccessDenied(ctx) {
 }
 
 async function deriveContext(db, uid) {
-    // Tenant + role come from the server's own records, not the client.
+    // Membership is the ONLY authority for tenant, role and status. users/{uid} is a client-owned
+    // pointer (firestore.rules lets a user write any field of their own doc), so it may name a
+    // tenant but must never grant anything: no member doc -> no context, and the role comes from
+    // the member doc alone. Before S2f-1 a missing member doc fell back to users/{uid}.role, so any
+    // signed-in account could write {tenantId: <victim>, role: "owner"} to its own doc and act as
+    // that tenant's owner, and a removed member whose users doc survived kept full gateway access.
+    // The status check mirrors firestore.rules' isActiveMember(): a missing status counts as
+    // active (legacy docs), any other value than "active" is refused.
     const userSnap = await db.doc("users/" + uid).get();
     if (!userSnap.exists) return null;
     const user = userSnap.data() || {};
     const tenantId = user.tenantId || "";
     if (!tenantId) return null;
+    // The tenant id becomes a document path below; a "/" in it would walk to another document.
+    if (!PhotoValidation.isSafePathSegment(tenantId)) return null;
 
-    let role = user.role || "";
-    let actorName = user.name || user.displayName || "";
     const memberSnap = await db.doc(
         "tenants/" + tenantId + "/members/" + uid).get();
-    if (memberSnap.exists) {
-        const member = memberSnap.data() || {};
-        role = member.role || role;
-        actorName = member.name || actorName;
-        if (member.status && member.status !== "active") return null;
-    }
+    if (!memberSnap.exists) return null;
+    const member = memberSnap.data() || {};
+    if (member.status && member.status !== "active") return null;
+    const role = member.role || "";
+    // Display only (audit rows also carry actorUid): the member's own name wins, the users doc name
+    // is a cosmetic fallback.
+    const actorName = member.name || user.name || user.displayName || "";
     // Tenant display name — preferred from the tenant doc, falling back to
     // whatever the user doc cached. Used when stamping new member/user docs.
     let tenantName = user.tenantName || "";

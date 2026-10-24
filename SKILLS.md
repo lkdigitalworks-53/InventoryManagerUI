@@ -4417,3 +4417,17 @@ Rules:
 4. CI check-run annotations do NOT name failed tests and job logs are blocked from the sandbox. The `ci-status-comment` on the PR does list each failed test name. Poll that comment, it appears after the slowest job.
 5. `isMember` is `exists()` only. The gateway (`deriveContext`) also requires `status` active, tolerating a missing `status`. Two gates for one question will drift: when fixing rules, mirror the gateway's tolerance for legacy docs without `status`, or you lock out old members.
 6. A server-side role gate is only a trust boundary if the same data cannot be written directly. `staff` delete, `removed_staff` create and product delete are gated owner/admin in `functions/index.js`; until the collection is locked in rules (and `members` is safe) any member can skip the gate.
+
+## Skill 128: Authorization must come from the one record the user cannot write: gateway trusts the member doc, never `users/{uid}`
+
+S2f-1 (2026-10-24). `deriveContext` (the gateway's identity step for 10 endpoints) read tenant and role from `users/{uid}`, which the rules let every user write field by field, and kept that role when the member doc was missing. Any signed-in account could claim `{tenantId: <victim>, role: "owner"}`; a removed member whose users doc survived kept full access (the client cannot delete another user's users doc). Found while designing the F2 fix, not from a report.
+Rules:
+1. For every authorization decision, ask: which document does it read, and who can write that document? If the user can write it, it is a claim, not a fact. Tenant, role and status come from the member doc, which only owner/admin (rules) or the Admin SDK can write.
+2. The same question is decided in up to three places (rules, gateway, client). Audit all of them when fixing one; a fix in the rules alone left the gateway open (Skill 127 rule 5 predicted the drift, this is the proof).
+3. A "legacy fallback" in an auth path is an attack surface. With no production data (design decision D10) delete it instead of keeping it for compatibility.
+4. Fail closed on every missing piece: no member doc, empty role, unknown status, unsafe tenant id. One tolerance is allowed and written down: a missing `status` counts as active, in the gateway AND the rules, until a backfill (S2f-6).
+5. Test a shared choke point once per caller: a table (handler x scenario) in one file plus a guard test that counts the call sites in the source (`await deriveContext(` count equals the table size), so a new endpoint cannot skip it. A control row per handler (a real owner is not refused) keeps the table from passing because every body is invalid.
+6. The harness hid the hole: `seedHappyPathAuth` always created a member doc, so no test ever reached the fallback. Seeds that only build the legitimate shape prove nothing about the illegitimate one. Add the bad shapes (users doc only, member of another tenant, suspended, role empty) to the seed vocabulary.
+7. Prove it red first (handler probe in `/tmp`, then the committed test against the old code: 40 of 88 failed), then run mutants of the fix (drop each guard, restore the fallback): all four were caught.
+8. A real-Firestore e2e for the same rule mutates the SEEDED member doc and restores it in a `finally`; later suites share the identity.
+9. Do not "fix" it by locking `users/{uid}` fields: onboarding and leave-workspace write them from the client on purpose. The server not trusting them is the boundary.
