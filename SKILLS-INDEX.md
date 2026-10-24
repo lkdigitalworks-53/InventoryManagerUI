@@ -133,3 +133,5 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 123: Deleting a Cloud Function: the deployed copy survives, the test harness may require the deleted file, and the old docs are history
 - 124: Splitting a deletion slice: take the part with no test blast radius first, and pin a deleted client API with `typeof`
 - 125: Deleting a global test knob: count the blast radius over the WHOLE repo, and find who lived off the leak
+- 126: Locking a Firestore collection for clients: name it in the wildcard's guard, audit writers by auth level, and re-point the pins
+- 127: Firestore rules: two `match` blocks on one path are OR-ed, so audit every explicit block against the wildcard, and prove a suspected hole with a probe PR

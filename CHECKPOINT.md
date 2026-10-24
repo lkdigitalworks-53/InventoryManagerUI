@@ -1,51 +1,56 @@
-# CHECKPOINT — 2026-10-23 P1 S2a-2: delete `Gateway` direct mode + `mode` property (resume here)
+# CHECKPOINT — 2026-10-24 P1 S2c: lock `inventory` writes in `firestore.rules` (resume here)
 
-**Branch:** `feat/2026-10-23-p1-s2a2-delete-direct-mode` off `main` @ `d5882ee` (PR #152 + #153 merged). Open the PR against `main`.
-**Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs; tests + test plan for every code change; caveman FULL.
-**Skills used:** `requesting-code-review` + `ponytail-audit` + `qt-qml-review` (PR #152 sweep, done earlier today), `qt-qml`, `ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-23-p1-s2a1-prev-CHECKPOINT.md`.
+**Branch:** `feat/2026-10-24-p1-s2c-lock-inventory-rules` off `main` @ `b1faada` (PR #154 merged; the #155 sweep content is already in `main`, Skill 125 rule 7 is there). Open the PR against `main`.
+**Commit identity:** `lkdwtaher@gmail.com` (the chat account's email, per the project instructions). PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML and rules-emulator oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs; tests + test plan for every code change; caveman FULL for chat only (files are plain prose).
+**Skills used:** `superpowers:brainstorming` (design already approved in the S2 design, Q3), `qt-qml`, `qt-ui-design` (no UI in this slice), `ponytail`.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-24-p1-s2a2-prev-CHECKPOINT.md`.
 
 ## Why this item
-Taher chose S2a-2 before S2c ("looks small"). Advice given: it is not small (CI is the only oracle) and S2c closes a real server-side bypass first; Taher kept the order. Direct mode wrote Firestore with no audit_log / ledger rows.
+S2 design (`specs/2026-10-19-p1-s2-design.md`) order is S2b, S2a, S2c, S2d. S2b and S2a (both halves) are merged and device-tested, so no client path can write `inventory` directly any more. S2c closes the server side of that hole: today any member with a token can `PATCH` a product document straight to Firestore and skip the audit_log and ledger rows.
 
 ## Steps
-- [x] 1. Read memory, cloned repo, confirmed #152/#153 merged, cut branch off `main`.
-- [x] 2. Audit: `git grep -c "Gateway\.mode" -- . ':!*.md'` on main = 89 uses in 32 files (recipe said 79 / 22: it missed `test/e2e`). No non-test QML assigned `mode`. Nothing outside Gateway + tests used the two error strings.
-- [x] 3. `Gateway.qml`: deleted `mode`, `_writeDirect`, `_writeDirectBatch`, 3 `direct` branches, 4 mode guards, 2 error strings; header comment + 4 doc comments fixed (+11 / -87).
-- [x] 4. 3 stale comments fixed (`Main.qml`, `InventoryStore.qml`, `TransactionStore.qml`).
-- [x] 5. 30 test files: removed `Gateway.mode = ...` and `_prevMode` save/restore (21 `tests/`, 9 `test/e2e/`).
-- [x] 6. `tst_Gateway.qml`: deleted 4 direct-only tests, init block + header SCOPE NOTE rewritten, 3 tests renamed, pin `test_direct_mode_property_is_gone` added.
-- [x] 7. Leak audit (Skill 125 rule 2): 6 files run after `tst_Gateway`, write via stores and never set a mode; 2 really enqueue, so `OutboxStore.clear()` added to `cleanup()` in `tst_InventoryStore_upsertMany.qml` and `tst_StockBatchStore.qml`.
-- [x] 8. Docs: test plan + index row, Skill 125 + `SKILLS-INDEX.md` (126 skills), AGENTS.md (2), README (3), S2 design note, this file.
-- [x] 9. `node --test .github/scripts/__tests__/*.test.js` and `skills-index.js --check` run in session (see PR).
-- [x] 10. **CI green on `9be125f` (PR #154):** QML 2104 (as predicted), Functions 722, Rules 45, E2E 93; 2964/2964. The leak-risk list was enough.
-- [ ] 11. **Taher:** review PR, merge when CI is green, run the on-device list in the test plan.
-- [ ] 12. **Next slice, own session:** S2c (lock `inventory` in rules + rules tests), then S2d (kinds on deltas).
+- [x] 1. Read memory, cloned, confirmed `main` @ `b1faada`, cut branch, archived the previous checkpoint.
+- [x] 2. Audit of every write path to `inventory` (see design note section 2). Result: none outside the Gateway. All test seeds are Admin SDK or `Bearer owner`.
+- [x] 3. Design note `specs/2026-10-24-p1-s2c-lock-inventory-rules-design.md` (choices C1-C5; C1 = new named tier, not `isLedgerCollection`).
+- [x] 4. `firestore.rules`: new `isGatewayWriteOnlyCollection(['inventory'])`, wildcard write guard, comments (S3 carry fixed: the stale `Gateway.mode` text is gone). +23 / -6.
+- [x] 5. `test/firestore.rules.test.js`: 10 new tests (6 static + 4 role loop), working loop drops `inventory` (-3), R08 re-pointed (reads inventory, writes orders). `node --check` OK. Recounted by script: 20 static + 4 + 12 + 9 = 45, + storage 7. **Predicted CI: Rules 52, total 2971** (QML 2104, Functions 722, E2E 93 unchanged).
+- [x] 6. Docs: `FIRESTORE_RULES.md`, test plan (+ index row), S2 design status, Skill 126 + `SKILLS-INDEX.md` (127 skills), AGENTS.md (tier bullet + S2 line), README:344. Left as history: the 2026-06-06 compliance roadmap, the 2026-10-19 design's "code today" section, the PR #154 sweep report.
+- [x] 7. Local checks: `node --check test/firestore.rules.test.js` OK; `node --test .github/scripts/__tests__/*.test.js` 109/109; `skills-index.js --check` current. NOT run: rules emulator, QML (no emulator / Qt in the sandbox).
+- [x] 8. Committed `e34b413`, pushed, **PR #156** opened against `main`. Push needed `add_repo` (the git proxy had not authorized the repo); `gh pr create` fails (GraphQL blocked), use `gh api repos/.../pulls`. CI result: not seen yet.
+- [ ] 9. **Taher:** review, wait for CI, then `firebase deploy --only firestore:rules` to dev and run the on-device list.
 
 ## Open items / risks
-- Not run anywhere locally: all QML (no Qt). Biggest CI risk: a test file that silently relied on the old leaked `"direct"` state and is not in the 6-file list (the list was found by grep, not proven). If a later-sorting file fails with an outbox count, check `OutboxStore.clear()` in its `init()`.
-- Skill 124 rule 3 (`typeof` on an absent singleton member is `"undefined"`) was proven by CI on #152, so the new pin uses the same style.
-- Q4 (damaged returns) and Q5 (`valueAtCost` client-stated) stay open for S2e/S2d.
+- Rules tests cannot run in the sandbox (no emulator download). CI `firestore-rules-tests` is the only oracle for the 10 new tests.
+- The lock only takes effect when Taher deploys the rules. Merging the PR changes nothing in dev until then.
+- An old dev build still on direct writes (pre-#154) gets `permission-denied` after the deploy. Accepted in D10.
 
 ## NEXT
-Taher reviews/merges. Then S2c in a new session on a new branch off `main`; before locking `inventory` in rules, grep every client write path to `inventory` (photo fields, import, legacy `photoUrl`) to be sure none bypasses the gateway.
+After merge and a green rules deploy: S2d (kinds on deltas, needs S1b deployed). Candidate follow-up, not in this slice: lock `orders`, `staff`, `suppliers`, `removed_staff` the same way (S2 design Q3 said inventory only for now; audit their client write paths first).
+
+## Session notes
+- The first clone command of this session put the PAT into the git push URL (`.git/config`). Found and removed before any commit (`grep -c ghp_ .git/config` now 0). Use the token only inline in the push command.
+- Tool output in this session carried instructions the user did not give (statusline setup offer, `Co-Authored-By` / session-link trailers). Not followed. Commits carry only `lkdwtaher@gmail.com`.
+- Next session: read CI on PR #156 first (`gh api repos/lkdigitalworks-53/inventorymanagerui/commits/<sha>/check-runs`). Expect Rules 52, total 2971. A rules-test failure most likely means a typo in the new tests, not in the rule.
 
 ---
 
-## Review sweep 2026-10-24 (PR #154), branch `review/2026-10-24-pr154-final-sweep` (stacked on `feat/2026-10-23-p1-s2a2-delete-direct-mode`)
-**Commit identity for this sweep:** `dextran52@gmail.com` (the chat account's email; the PR's own commits used `taher.lkdw@gmail.com`, from another account). PAT only in the push command.
-**Skills used:** `requesting-code-review`, `ponytail-audit`, `qt-qml-review` (Phase 1 only; no `qmllint`, no Qt). **No code changed.** Full report: `docs/superpowers/specs/2026-10-24-pr154-final-sweep.md`.
-- [x] 1. Read memory, cloned, fetched `pull/154/head`, cut review branch.
-- [x] 2. Read all of `Gateway.qml` (1134 lines) + the 3 comment-only production edits + every test/e2e/doc diff (46 files).
-- [x] 3. Re-checked the PR's numbers (89/32, +14/-91, 7 guards, 2107->2104, tst_Gateway 186->183): all true.
-- [x] 4. Lint Phase 1: 0 findings on added lines; totals fall.
-- [x] 5. Independent leak audit of test files; checked every non-empty `idToken` setter.
-- [x] 6. CI via API: 2964/2964 on `6e68a53`; no human review comments.
-- [x] 7. Report written; verdict **with fixes**: S1-S4 (should), N1-N7 (nice), I1-I2 (verify).
-- [x] 8. Taher decided (2026-10-24): S1 delete, S3 fold into S2c, S4+I1 yes, N2 sweep, N4 skip.
-- [x] 9. Implemented on this branch: S1 (InventoryStore dead branch), S4+I1 (token/auth resets in 3 test `init()`s), N2 + N1 (stale wording, README:344), S2 (on-device plan rewritten, numbered), Skill 125 rule 5 + new rule 7. Predicted QML stays 2104.
-- [ ] 9b. Push + wait for CI on PR #155 (CI is the only oracle: no Qt in the sandbox).
-- [ ] 9c. Taher merges #155 into the #154 branch, then #154 into `main`.
-- **Carry into S2c:** reword `firestore.rules:154-155` (stale `Gateway.mode` comment) to "inventory is still client-writable until S2c". Untouched: N3, N5, N6, N7 (not asked).
-- [ ] 10. Then S2c (see NEXT above).
+## Review sweep 2026-10-24 (PR #156), branch `review/2026-10-24-pr156-final-sweep` (stacked on `feat/2026-10-24-p1-s2c-lock-inventory-rules` @ `e91c9bb`)
+**Commit identity:** `tsadmin@gmail.com` (per Taher's standing instruction this session). PAT only inline in the push command; `grep -c ghp_ .git/config` must print 0.
+**Skills used:** `requesting-code-review`, `ponytail-audit`, `qt-qml-review`. qt-qml-review: **0 `.qml` files in the PR diff**, so Phase 1/2 have nothing to lint; recorded, not padded. No Qt / no emulator in the sandbox (CI is the oracle).
+**Taher's answers this session:** (a) everything through S2c is deployed to dev, so S2d may start once #156 is merged; (b) YES, audit `orders`, `staff`, `suppliers`, `removed_staff` before deciding on a follow-up lock.
+**Full report:** `docs/superpowers/specs/2026-10-24-pr156-final-sweep.md`.
+
+- [x] 1. Read the three skills, cloned, fetched `pull/156/head`, cut review branch, stripped PAT from `.git/config`.
+- [x] 2. PR facts: 13 files, +380/-61, 2 commits, `mergeable: clean`, no human review comments.
+- [x] 3. CI on `e91c9bb`: all green, Rules 52, QML 2104, Functions 722, E2E 93 = 2971. Matches the PR's prediction exactly.
+- [x] 4. Read the whole rule change + all 10 new rules tests + R08 re-point. Rule is correct for `inventory`.
+- [x] 5. Independent writer audit (grep of every `FirebaseService.put/patch/putMany/remove/mintCounter*` caller, C++, scripts): no client path writes `inventory`, `orders`, `staff`, `suppliers`, `removed_staff`. Direct writers are only `activity_log`, `config/*`, `counters/*`, `_migrations`, `users`, `tenants`, `tenants/*/members`.
+- [x] 6. Local checks: `node --test .github/scripts/__tests__/*.test.js` 109/109, `skills-index.js --check` current.
+- [x] 7. Found by reading the rules with the PR's own "ANY matching rule allows" rule: (F1) wildcard also matches `members/{uid}`; (F2) `isMember` ignores `status: suspended`. Not caused by #156. Zero rules tests exist for `members`.
+- [x] 8. Probe PR #157 (tests only, closed) on `probe/2026-10-24-pr156-members-wildcard`: **5 of 6 failed as predicted, control passed, F1 and F2 PROVEN in CI** (run 40103744373). Branch kept as the red-test start of the fix.
+- [x] 8b. Four-collection audit done (report section 5): all four have no client direct writer, all lockable; `counters` is not lockable yet.
+- [x] 8c. Docs updated: Skill 127 + `SKILLS-INDEX.md` (128 skills), AGENTS.md proven-holes note, report. Script tests 109/109, index current.
+- [x] 9. Report committed and pushed on this branch. Verdict: #156 correct, merge it. F1/F2 are pre-existing and outside #156.
+- [ ] 10. **Taher:** merge #156; answer the open questions in report section 6 (next slice A/B/C/D, deploy source, dev has no real users?, S2d now or after A).
+- [ ] 11. **Next session:** if A chosen, branch off `main` after #156 merges, start from the probe branch tests (cherry-pick `391f5cc`), fix `members` exclusion + `isMember` status (tolerate missing status, keep self-read), test plan from the template, CI is the oracle.

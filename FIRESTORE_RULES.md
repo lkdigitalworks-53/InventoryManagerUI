@@ -16,6 +16,8 @@ Use these rules to enforce the same member-management constraints that the app n
 - **Ledger tier is immutable (P0):** `audit_log`, `transactions`, `stock_batches`,
   `stock_movements` are **read-only to all clients** — only the compliance gateway
   Cloud Function (Admin SDK) writes them. This is what satisfies MCA Rule 11(g).
+- **`inventory` is gateway-write-only (P1 S2c):** members can read products, but every create,
+  update and delete goes through the gateway Cloud Functions so the ledger rows are always written.
 
 ## Example Rules
 
@@ -135,10 +137,16 @@ service cloud.firestore {
       function isLedgerCollection(name) {
         return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
       }
+      // Gateway-write-only (S2c): read for members, never written by a client. It has to be
+      // excluded in the fallback's write guard; a lone deny block would not deny.
+      function isGatewayWriteOnlyCollection(name) {
+        return name in ['inventory'];
+      }
       match /{collection}/{docId} {
         allow read: if isMember(tenantId);
         allow create, update, delete: if isMember(tenantId)
-                                      && !isLedgerCollection(collection);
+                                      && !isLedgerCollection(collection)
+                                      && !isGatewayWriteOnlyCollection(collection);
       }
     }
   }

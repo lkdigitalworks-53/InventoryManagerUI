@@ -64,6 +64,20 @@ service cloud.firestore {
       return name in ['locks', 'pending_cleanup'];
     }
 
+    // Gateway-write-only tier (P1 S2c): clients may READ these for display but
+    // may never create, update or delete. Every write goes through the gateway
+    // Cloud Functions (recordMutation / recordDelta / recordOperation, Admin
+    // SDK), which is what writes the audit_log and stock ledger rows; a direct
+    // client write would change stock with no ledger trail. Same trap as the
+    // two tiers above: a lone `match /inventory/{id} { allow write: if false }`
+    // would NOT deny, because the wildcard below still allows and Firestore
+    // grants a request if ANY matching rule allows it. The name must be listed
+    // HERE so the wildcard's write guard excludes it. Reads stay on the
+    // wildcard. Exact collection names only.
+    function isGatewayWriteOnlyCollection(name) {
+      return name in ['inventory'];
+    }
+
     // users/{uid}
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
@@ -149,16 +163,19 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
-      // Working-tier domain collections (orders, inventory, sales, staff,
-      // suppliers, ...). Inventory/stock writes will route through the
-      // gateway once P0 cutover flips Gateway.mode to "gateway"; until then
-      // clients write directly. The explicit ledger guard keeps a ledger
-      // collection from ever matching this writable fallback; the
-      // server-only guard does the same for both read and write.
+      // Working-tier domain collections (orders, sales, staff, suppliers,
+      // ...). inventory is gateway-write-only since S2c: members read it,
+      // only the gateway writes it. orders, staff, suppliers and
+      // removed_staff are still client-writable here; locking them is a
+      // separate follow-up. The ledger guard keeps a ledger collection from
+      // ever matching this writable fallback, the gateway-write-only guard
+      // does the same for inventory, and the server-only guard does it for
+      // both read and write.
       match /{collection}/{docId} {
         allow read: if isMember(tenantId) && !isServerOnlyCollection(collection);
         allow create, update, delete: if isMember(tenantId)
                                       && !isLedgerCollection(collection)
+                                      && !isGatewayWriteOnlyCollection(collection)
                                       && !isServerOnlyCollection(collection);
       }
     }

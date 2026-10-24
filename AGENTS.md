@@ -109,9 +109,16 @@ edit/delete; client forges identity & time). The fix:
 - **Ledger tier (immutable, server-owned):** `audit_log` (new), `transactions`, `stock_batches`,
   `stock_movements` (new), plus mutation snapshots. Firestore rules = **read-only to clients**;
   the *only* writer is a Cloud Function (Admin SDK). **Append-only — no update, no delete.**
-- **Working tier (client-writable, as today):** live `inventory`, `orders`, `staff`, `suppliers`
-  the UI edits. Every mutation calls the gateway, which writes the doc **and** appends a ledger
-  entry in one transaction.
+- **Working tier:** live `inventory`, `orders`, `staff`, `suppliers` the UI edits. Every mutation
+  calls the gateway, which writes the doc **and** appends a ledger entry in one transaction.
+  Since P1 S2c `inventory` is **gateway-write-only** in `firestore.rules` (members read it, only the
+  Cloud Functions write it; `isGatewayWriteOnlyCollection`, Skill 126). `orders`, `staff`, `suppliers`
+  and `removed_staff` are still client-writable at the rules level; locking them is a separate follow-up.
+  **Proven holes in the current rules (PR #156 sweep, probe PR #157, CI 2026-10-24, Skill 127):**
+  (1) the fallback also matches `members/{uid}`, so any member, even `staff`, can write a membership
+  doc (promote itself to owner, add a uid, delete the owner); (2) `isMember` ignores `status`, so a
+  `suspended` member keeps direct Firestore read and wildcard write. Not fixed yet. Do not describe
+  the rules as sound or the owner/admin gates as enforced until both are closed.
 
 `TransactionStore` / `StockBatchStore` become **read models** over the ledger tier (not writers).
 
@@ -123,7 +130,7 @@ edit/delete; client forges identity & time). The fix:
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
   closed to every client endpoint; batch cap 200 -> 150 (done in S1b). Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
-  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done; deployed copy deleted by hand in the console 2026-10-23), S2a-1 client `runCutover`/`cutoverUrl`/`cutoverFinished` + `stock_movement` client mapping deleted (done, `feat/2026-10-21-p1-s2a1-client-cutover-delete`), S2a-2 `direct` mode + the `mode` property deleted (done, `feat/2026-10-23-p1-s2a2-delete-direct-mode`; 89 uses in 32 files, Skill 125), S2c lock `inventory` in rules, S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
+  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done; deployed copy deleted by hand in the console 2026-10-23), S2a-1 client `runCutover`/`cutoverUrl`/`cutoverFinished` + `stock_movement` client mapping deleted (done, `feat/2026-10-21-p1-s2a1-client-cutover-delete`), S2a-2 `direct` mode + the `mode` property deleted (done, `feat/2026-10-23-p1-s2a2-delete-direct-mode`; 89 uses in 32 files, Skill 125), S2c lock `inventory` in rules (done, `feat/2026-10-24-p1-s2c-lock-inventory-rules`: `isGatewayWriteOnlyCollection` + wildcard write guard, Rules tests 45 -> 52, takes effect on `firebase deploy --only firestore:rules`, Skill 126), S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
   `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec
   `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plans `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`
   and `...-s1b.md`.
