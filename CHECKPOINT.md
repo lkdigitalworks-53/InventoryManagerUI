@@ -30,3 +30,22 @@ Taher chose S2a-2 before S2c ("looks small"). Advice given: it is not small (CI 
 
 ## NEXT
 Taher reviews/merges. Then S2c in a new session on a new branch off `main`; before locking `inventory` in rules, grep every client write path to `inventory` (photo fields, import, legacy `photoUrl`) to be sure none bypasses the gateway.
+
+---
+
+## Review sweep 2026-10-24 (PR #154), branch `review/2026-10-24-pr154-final-sweep` (stacked on `feat/2026-10-23-p1-s2a2-delete-direct-mode`)
+**Commit identity for this sweep:** `dextran52@gmail.com` (the chat account's email; the PR's own commits used `taher.lkdw@gmail.com`, from another account). PAT only in the push command.
+**Skills used:** `requesting-code-review`, `ponytail-audit`, `qt-qml-review` (Phase 1 only; no `qmllint`, no Qt). **No code changed.** Full report: `docs/superpowers/specs/2026-10-24-pr154-final-sweep.md`.
+- [x] 1. Read memory, cloned, fetched `pull/154/head`, cut review branch.
+- [x] 2. Read all of `Gateway.qml` (1134 lines) + the 3 comment-only production edits + every test/e2e/doc diff (46 files).
+- [x] 3. Re-checked the PR's numbers (89/32, +14/-91, 7 guards, 2107->2104, tst_Gateway 186->183): all true.
+- [x] 4. Lint Phase 1: 0 findings on added lines; totals fall.
+- [x] 5. Independent leak audit of test files; checked every non-empty `idToken` setter.
+- [x] 6. CI via API: 2964/2964 on `6e68a53`; no human review comments.
+- [x] 7. Report written; verdict **with fixes**: S1-S4 (should), N1-N7 (nice), I1-I2 (verify).
+- [x] 8. Taher decided (2026-10-24): S1 delete, S3 fold into S2c, S4+I1 yes, N2 sweep, N4 skip.
+- [x] 9. Implemented on this branch: S1 (InventoryStore dead branch), S4+I1 (token/auth resets in 3 test `init()`s), N2 + N1 (stale wording, README:344), S2 (on-device plan rewritten, numbered), Skill 125 rule 5 + new rule 7. Predicted QML stays 2104.
+- [ ] 9b. Push + wait for CI on PR #155 (CI is the only oracle: no Qt in the sandbox).
+- [ ] 9c. Taher merges #155 into the #154 branch, then #154 into `main`.
+- **Carry into S2c:** reword `firestore.rules:154-155` (stale `Gateway.mode` comment) to "inventory is still client-writable until S2c". Untouched: N3, N5, N6, N7 (not asked).
+- [ ] 10. Then S2c (see NEXT above).

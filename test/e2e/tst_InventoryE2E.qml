@@ -6,7 +6,7 @@ import "E2EHelpers.js" as E2EHelpers
 // Phase 1 E2E pilot — Inventory CRUD driven service-level (no UI) against
 // the real Firebase Local Emulator Suite (Firestore + Auth + Functions).
 // Real code path: InventoryStore.addProduct/updateProduct/deleteProduct ->
-// Gateway.recordMutation ("gateway" mode, the real production default) ->
+// Gateway.recordMutation ->
 // POST to the emulated recordMutation Cloud Function -> Admin SDK write to
 // the emulated Firestore -> response back to the client. Verified
 // independently via a raw REST GET against the Firestore emulator, not

@@ -11,7 +11,7 @@ import "../qml/logic"
 //    edit (PR #121 device obs 3) without resurrecting stale stock.
 //  - updateRefusal / updateProduct / addProduct refuse a doc over 1 MiB BEFORE anything is queued
 //    (PR #121 device obs 1), and DataModel surfaces the refusal and skips its side effects.
-// Harness: gateway mode, offline. NOT RUN IN THIS SANDBOX: CI runs it.
+// Harness: offline (no idToken). NOT RUN IN THIS SANDBOX: CI runs it.
 TestCase {
     name: "InventoryStore_overlayAndCap"
 
