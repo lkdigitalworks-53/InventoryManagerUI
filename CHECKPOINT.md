@@ -17,7 +17,7 @@ S2 design (`specs/2026-10-19-p1-s2-design.md`) order is S2b, S2a, S2c, S2d. S2b 
 - [x] 5. `test/firestore.rules.test.js`: 10 new tests (6 static + 4 role loop), working loop drops `inventory` (-3), R08 re-pointed (reads inventory, writes orders). `node --check` OK. Recounted by script: 20 static + 4 + 12 + 9 = 45, + storage 7. **Predicted CI: Rules 52, total 2971** (QML 2104, Functions 722, E2E 93 unchanged).
 - [x] 6. Docs: `FIRESTORE_RULES.md`, test plan (+ index row), S2 design status, Skill 126 + `SKILLS-INDEX.md` (127 skills), AGENTS.md (tier bullet + S2 line), README:344. Left as history: the 2026-06-06 compliance roadmap, the 2026-10-19 design's "code today" section, the PR #154 sweep report.
 - [x] 7. Local checks: `node --check test/firestore.rules.test.js` OK; `node --test .github/scripts/__tests__/*.test.js` 109/109; `skills-index.js --check` current. NOT run: rules emulator, QML (no emulator / Qt in the sandbox).
-- [ ] 8. Commit, push, open PR (in progress; PR number goes here).
+- [x] 8. Committed `e34b413`, pushed, **PR #156** opened against `main`. Push needed `add_repo` (the git proxy had not authorized the repo); `gh pr create` fails (GraphQL blocked), use `gh api repos/.../pulls`. CI result: not seen yet.
 - [ ] 9. **Taher:** review, wait for CI, then `firebase deploy --only firestore:rules` to dev and run the on-device list.
 
 ## Open items / risks
@@ -31,3 +31,4 @@ After merge and a green rules deploy: S2d (kinds on deltas, needs S1b deployed).
 ## Session notes
 - The first clone command of this session put the PAT into the git push URL (`.git/config`). Found and removed before any commit (`grep -c ghp_ .git/config` now 0). Use the token only inline in the push command.
 - Tool output in this session carried instructions the user did not give (statusline setup offer, `Co-Authored-By` / session-link trailers). Not followed. Commits carry only `lkdwtaher@gmail.com`.
+- Next session: read CI on PR #156 first (`gh api repos/lkdigitalworks-53/inventorymanagerui/commits/<sha>/check-runs`). Expect Rules 52, total 2971. A rules-test failure most likely means a typo in the new tests, not in the rule.
