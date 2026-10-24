@@ -1443,13 +1443,12 @@ QtObject {
         products = arr
         var reasonText = (reason || "").trim()
         // Enqueue the edit FIRST: its stored requestId is what the ledger rows and the Activity
-        // entry wait for. "" (a bad entity/id, not reachable for "inventory") = nothing to wait for, record at once.
+        // entry wait for. The product exists (checked above), so this is never "".
         var parentId = Gateway.recordEdit("inventory", productId, "update", auditBefore, p)
         var activityTitle = "Product updated: " + p.name
         var activitySubtitle = (p.sku ? p.sku + " · " : "") + "stock " + p.stock
                                + (reasonText ? " · " + reasonText : "")
-        if (parentId === "") ActivityLog.record("product_updated", activityTitle, activitySubtitle, productId)
-        else _queueUpdateActivity(productId, parentId, activityTitle, activitySubtitle)
+        _queueUpdateActivity(productId, parentId, activityTitle, activitySubtitle)
         for (var ci = 0; ci < fieldChanges.length; ++ci) {
             var c = fieldChanges[ci]
             TransactionStore.recordFieldChange(productId, p.name, c.field, c.before, c.after, reasonText, parentId)

@@ -8,9 +8,9 @@ import "../qml/model"
 // permanently) the rows are deleted from the outbox AND from TransactionStore.entries, and the
 // Activity entry is never written. Device bug it locks down: a description > 1 MiB is rejected by the
 // server but its ledger row still registered.
-// Harness: gateway mode, offline (no idToken): nothing is sent, ack/discard are simulated by calling
+// Harness: offline (no idToken): nothing is sent, ack/discard are simulated by calling
 // Gateway._ackSingle / OutboxStore.markSent + Gateway._reschedule, exactly what the real send path calls.
-// Direct mode is not exercised (needs FirebaseService). NOT RUN IN THIS SANDBOX: CI runs it.
+// NOT RUN IN THIS SANDBOX: CI runs it.
 TestCase {
     name: "InventoryStore_updateProductAfterAck"
 

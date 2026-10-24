@@ -43,6 +43,9 @@ Taher reviews/merges. Then S2c in a new session on a new branch off `main`; befo
 - [x] 5. Independent leak audit of test files; checked every non-empty `idToken` setter.
 - [x] 6. CI via API: 2964/2964 on `6e68a53`; no human review comments.
 - [x] 7. Report written; verdict **with fixes**: S1-S4 (should), N1-N7 (nice), I1-I2 (verify).
-- [ ] 8. **Taher decides which of S1-S4 / N1-N7 / I1 to fix** (questions in the chat reply). Nothing implemented yet.
-- [ ] 9. After the decision: implement on THIS branch, extend the S2a-2 test plan (S2 text), CI, then Taher merges the sweep PR into the feature branch, then #154 into `main`.
+- [x] 8. Taher decided (2026-10-24): S1 delete, S3 fold into S2c, S4+I1 yes, N2 sweep, N4 skip.
+- [x] 9. Implemented on this branch: S1 (InventoryStore dead branch), S4+I1 (token/auth resets in 3 test `init()`s), N2 + N1 (stale wording, README:344), S2 (on-device plan rewritten, numbered), Skill 125 rule 5 + new rule 7. Predicted QML stays 2104.
+- [ ] 9b. Push + wait for CI on PR #155 (CI is the only oracle: no Qt in the sandbox).
+- [ ] 9c. Taher merges #155 into the #154 branch, then #154 into `main`.
+- **Carry into S2c:** reword `firestore.rules:154-155` (stale `Gateway.mode` comment) to "inventory is still client-writable until S2c". Untouched: N3, N5, N6, N7 (not asked).
 - [ ] 10. Then S2c (see NEXT above).

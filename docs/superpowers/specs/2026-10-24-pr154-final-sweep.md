@@ -66,3 +66,17 @@
 
 ## What this PR does NOT change (so nobody reads more into it)
 Firestore rules still let any member write `inventory` directly; `FirebaseService.put/remove` still exist for non-gateway collections. The real server-side bypass closes in S2c, not here.
+
+## Decisions (Taher, 2026-10-24) and what was done on this branch
+| Item | Decision | Done |
+|---|---|---|
+| S1 | Delete the dead branch | Yes: `InventoryStore.qml` always calls `_queueUpdateActivity`; comment now says the id is never `""` |
+| S2 | (not asked; Taher's standing 2026-10-15 rule) | Yes: on-device plan rewritten as numbered steps with expected results, prerequisites P1-P5, H/N/E/R/M |
+| S3 | Fold into S2c | Not touched. Carry into S2c: reword `firestore.rules:154-155` to "inventory is still client-writable until S2c" |
+| S4 + I1 | Yes | Yes: `init()` of `tst_StockBatchStore`, `tst_InventoryStore_upsertMany`, `tst_Gateway` blank token / `isAuthenticated` / disk session |
+| N1 | (small, same class as N2) | Yes: README line 344 |
+| N2 | Sweep it | Yes: `tst_Gateway` (2 headings), `overlayAndCap`, `updateProductAfterAck` (2), `tst_OutboxStore`, `tst_InventoryE2E`, `AGENTS.md:1012`. Remaining "no direct mode" mentions are intentional explanations |
+| N4 | Skip | Skipped |
+| N3, N5, N6, N7, I2 | Not asked | Not touched. I2 is noted in Skill 125 rule 5 |
+| Skills | | Skill 125 rule 5 extended, rule 7 added |
+Predicted QML count stays **2104** (no test added or removed). Nothing was run: no Qt in the sandbox, CI is the oracle.

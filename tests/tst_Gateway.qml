@@ -56,6 +56,9 @@ TestCase {
         // there, loadSession() silently overwrites the line above with
         // it, right before _send checks it. Clear the disk copy too.
         AuthStore._settings.sessionJson = ""
+        // drainNow() now always runs AuthService.ensureFreshToken(); a leaked authenticated singleton
+        // with a near expiry would fire a real refresh XHR (tst_PhotoQueue guards the same way).
+        AuthStore.isAuthenticated = false
         // D5 (docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md):
         // a timeout only counts toward the stuck indicator while the device
         // believes it's online. Default true, same as every real device most of
@@ -64,7 +67,7 @@ TestCase {
         AuthService.isOnline = true
     }
 
-    // ── mode + collection mapping ────────────────────────────────────────────
+    // ── collection mapping ────────────────────────────────────────────────
 
     function test_collectionFor_covers_every_registered_entity() {
         // One entry per store this session (+ the two pre-existing ledger-
@@ -114,7 +117,7 @@ TestCase {
         compare(typeof Gateway.mode, "undefined")
     }
 
-    // ── gateway-mode enqueue (safe: no network — see header) ────────────────
+    // ── enqueue (safe: no network — see header) ──────────────────────────
 
     function test_recordMutation_enqueues_and_does_not_write_directly() {
         var requestId = Gateway.recordMutation("order", "o1", "update", { status: "pending" }, { status: "approved" })
