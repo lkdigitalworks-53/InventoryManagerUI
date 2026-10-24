@@ -32,3 +32,22 @@ After merge and a green rules deploy: S2d (kinds on deltas, needs S1b deployed).
 - The first clone command of this session put the PAT into the git push URL (`.git/config`). Found and removed before any commit (`grep -c ghp_ .git/config` now 0). Use the token only inline in the push command.
 - Tool output in this session carried instructions the user did not give (statusline setup offer, `Co-Authored-By` / session-link trailers). Not followed. Commits carry only `lkdwtaher@gmail.com`.
 - Next session: read CI on PR #156 first (`gh api repos/lkdigitalworks-53/inventorymanagerui/commits/<sha>/check-runs`). Expect Rules 52, total 2971. A rules-test failure most likely means a typo in the new tests, not in the rule.
+
+---
+
+## Review sweep 2026-10-24 (PR #156), branch `review/2026-10-24-pr156-final-sweep` (stacked on `feat/2026-10-24-p1-s2c-lock-inventory-rules` @ `e91c9bb`)
+**Commit identity:** `tsadmin@gmail.com` (per Taher's standing instruction this session). PAT only inline in the push command; `grep -c ghp_ .git/config` must print 0.
+**Skills used:** `requesting-code-review`, `ponytail-audit`, `qt-qml-review`. qt-qml-review: **0 `.qml` files in the PR diff**, so Phase 1/2 have nothing to lint; recorded, not padded. No Qt / no emulator in the sandbox (CI is the oracle).
+**Taher's answers this session:** (a) everything through S2c is deployed to dev, so S2d may start once #156 is merged; (b) YES, audit `orders`, `staff`, `suppliers`, `removed_staff` before deciding on a follow-up lock.
+**Full report:** `docs/superpowers/specs/2026-10-24-pr156-final-sweep.md`.
+
+- [x] 1. Read the three skills, cloned, fetched `pull/156/head`, cut review branch, stripped PAT from `.git/config`.
+- [x] 2. PR facts: 13 files, +380/-61, 2 commits, `mergeable: clean`, no human review comments.
+- [x] 3. CI on `e91c9bb`: all green, Rules 52, QML 2104, Functions 722, E2E 93 = 2971. Matches the PR's prediction exactly.
+- [x] 4. Read the whole rule change + all 10 new rules tests + R08 re-point. Rule is correct for `inventory`.
+- [x] 5. Independent writer audit (grep of every `FirebaseService.put/patch/putMany/remove/mintCounter*` caller, C++, scripts): no client path writes `inventory`, `orders`, `staff`, `suppliers`, `removed_staff`. Direct writers are only `activity_log`, `config/*`, `counters/*`, `_migrations`, `users`, `tenants`, `tenants/*/members`.
+- [x] 6. Local checks: `node --test .github/scripts/__tests__/*.test.js` 109/109, `skills-index.js --check` current.
+- [x] 7. Found by reading the rules with the PR's own "ANY matching rule allows" rule: (F1) wildcard also matches `members/{uid}`; (F2) `isMember` ignores `status: suspended`. Not caused by #156. Zero rules tests exist for `members`.
+- [ ] 8. Probe PR (tests only, DO NOT MERGE) to prove F1/F2 in CI. Result: see report section 4.
+- [ ] 9. Report committed and pushed; Taher decides fixes (questions at end of report).
+- [ ] 10. Taher: merge #156, then decide F1/F2 slice and the four-collection lock, then S2d.
