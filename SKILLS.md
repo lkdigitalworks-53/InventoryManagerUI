@@ -4406,3 +4406,14 @@ Rules:
 6. Cover the matrix, not one user: every role (`owner`, `admin`, `manager`, `staff`) must be denied (a loop of tests), plus non-member, anonymous, a sub-collection (denied by default) and a look-alike collection name (exact-name pin, documents the limit).
 7. The sandbox cannot run the emulator. Recount the tests with a script and state the CI number before pushing (45 - 3 + 10 = 52 rules tests, 2971 in total).
 8. Merging does not change dev: the lock starts at `firebase deploy --only firestore:rules`. Rollback is a one-line revert plus the same command; there is no data to migrate. Say both in the PR.
+
+## Skill 127: Firestore rules: two `match` blocks on one path are OR-ed, so audit every explicit block against the wildcard, and prove a suspected hole with a probe PR
+
+PR #156 sweep (2026-10-24). The repo's own comments already say "Firestore grants a request if ANY matching rule allows it". The same rule applied to `members` was missed: `match /members/{uid}` and the fallback `match /{collection}/{docId}` both match `tenants/T/members/U`, and the fallback allowed any member to write it. A staff token could promote itself to owner. It sat in the file with zero tests.
+Rules:
+1. For every explicit `match` inside the tenant block, ask: does the fallback also match this path, and does it allow what the explicit block denies? If yes, the explicit block is decoration. Exclude the name in the fallback's guard (same trick as Skill 126), or replace the fallback with an allow-list.
+2. A rules file with no test for a block has no proof that block works. List the explicit blocks, then list the tests per block. Zero tests = finding.
+3. Do not report a rules hole from reading alone when CI can prove it. Push a probe branch off the PR with tests that assert the SECURE behaviour plus one control that must pass, open a draft PR against the PR's branch, read the result, close it. Red = proven. Control red = the probe is wrong. Keep the probe branch: its red tests are the first tests of the fix.
+4. CI check-run annotations do NOT name failed tests and job logs are blocked from the sandbox. The `ci-status-comment` on the PR does list each failed test name. Poll that comment, it appears after the slowest job.
+5. `isMember` is `exists()` only. The gateway (`deriveContext`) also requires `status` active, tolerating a missing `status`. Two gates for one question will drift: when fixing rules, mirror the gateway's tolerance for legacy docs without `status`, or you lock out old members.
+6. A server-side role gate is only a trust boundary if the same data cannot be written directly. `staff` delete, `removed_staff` create and product delete are gated owner/admin in `functions/index.js`; until the collection is locked in rules (and `members` is safe) any member can skip the gate.

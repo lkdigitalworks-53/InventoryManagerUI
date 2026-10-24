@@ -48,6 +48,9 @@ After merge and a green rules deploy: S2d (kinds on deltas, needs S1b deployed).
 - [x] 5. Independent writer audit (grep of every `FirebaseService.put/patch/putMany/remove/mintCounter*` caller, C++, scripts): no client path writes `inventory`, `orders`, `staff`, `suppliers`, `removed_staff`. Direct writers are only `activity_log`, `config/*`, `counters/*`, `_migrations`, `users`, `tenants`, `tenants/*/members`.
 - [x] 6. Local checks: `node --test .github/scripts/__tests__/*.test.js` 109/109, `skills-index.js --check` current.
 - [x] 7. Found by reading the rules with the PR's own "ANY matching rule allows" rule: (F1) wildcard also matches `members/{uid}`; (F2) `isMember` ignores `status: suspended`. Not caused by #156. Zero rules tests exist for `members`.
-- [ ] 8. Probe PR (tests only, DO NOT MERGE) to prove F1/F2 in CI. Result: see report section 4.
-- [ ] 9. Report committed and pushed; Taher decides fixes (questions at end of report).
-- [ ] 10. Taher: merge #156, then decide F1/F2 slice and the four-collection lock, then S2d.
+- [x] 8. Probe PR #157 (tests only, closed) on `probe/2026-10-24-pr156-members-wildcard`: **5 of 6 failed as predicted, control passed, F1 and F2 PROVEN in CI** (run 40103744373). Branch kept as the red-test start of the fix.
+- [x] 8b. Four-collection audit done (report section 5): all four have no client direct writer, all lockable; `counters` is not lockable yet.
+- [x] 8c. Docs updated: Skill 127 + `SKILLS-INDEX.md` (128 skills), AGENTS.md proven-holes note, report. Script tests 109/109, index current.
+- [x] 9. Report committed and pushed on this branch. Verdict: #156 correct, merge it. F1/F2 are pre-existing and outside #156.
+- [ ] 10. **Taher:** merge #156; answer the open questions in report section 6 (next slice A/B/C/D, deploy source, dev has no real users?, S2d now or after A).
+- [ ] 11. **Next session:** if A chosen, branch off `main` after #156 merges, start from the probe branch tests (cherry-pick `391f5cc`), fix `members` exclusion + `isMember` status (tolerate missing status, keep self-read), test plan from the template, CI is the oracle.
