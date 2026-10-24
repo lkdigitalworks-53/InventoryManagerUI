@@ -30,3 +30,19 @@ Taher chose S2a-2 before S2c ("looks small"). Advice given: it is not small (CI 
 
 ## NEXT
 Taher reviews/merges. Then S2c in a new session on a new branch off `main`; before locking `inventory` in rules, grep every client write path to `inventory` (photo fields, import, legacy `photoUrl`) to be sure none bypasses the gateway.
+
+---
+
+## Review sweep 2026-10-24 (PR #154), branch `review/2026-10-24-pr154-final-sweep` (stacked on `feat/2026-10-23-p1-s2a2-delete-direct-mode`)
+**Commit identity for this sweep:** `dextran52@gmail.com` (the chat account's email; the PR's own commits used `taher.lkdw@gmail.com`, from another account). PAT only in the push command.
+**Skills used:** `requesting-code-review`, `ponytail-audit`, `qt-qml-review` (Phase 1 only; no `qmllint`, no Qt). **No code changed.** Full report: `docs/superpowers/specs/2026-10-24-pr154-final-sweep.md`.
+- [x] 1. Read memory, cloned, fetched `pull/154/head`, cut review branch.
+- [x] 2. Read all of `Gateway.qml` (1134 lines) + the 3 comment-only production edits + every test/e2e/doc diff (46 files).
+- [x] 3. Re-checked the PR's numbers (89/32, +14/-91, 7 guards, 2107->2104, tst_Gateway 186->183): all true.
+- [x] 4. Lint Phase 1: 0 findings on added lines; totals fall.
+- [x] 5. Independent leak audit of test files; checked every non-empty `idToken` setter.
+- [x] 6. CI via API: 2964/2964 on `6e68a53`; no human review comments.
+- [x] 7. Report written; verdict **with fixes**: S1-S4 (should), N1-N7 (nice), I1-I2 (verify).
+- [ ] 8. **Taher decides which of S1-S4 / N1-N7 / I1 to fix** (questions in the chat reply). Nothing implemented yet.
+- [ ] 9. After the decision: implement on THIS branch, extend the S2a-2 test plan (S2 text), CI, then Taher merges the sweep PR into the feature branch, then #154 into `main`.
+- [ ] 10. Then S2c (see NEXT above).
