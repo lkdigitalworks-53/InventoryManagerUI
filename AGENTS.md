@@ -114,6 +114,11 @@ edit/delete; client forges identity & time). The fix:
   Since P1 S2c `inventory` is **gateway-write-only** in `firestore.rules` (members read it, only the
   Cloud Functions write it; `isGatewayWriteOnlyCollection`, Skill 126). `orders`, `staff`, `suppliers`
   and `removed_staff` are still client-writable at the rules level; locking them is a separate follow-up.
+  **Proven holes in the current rules (PR #156 sweep, probe PR #157, CI 2026-10-24, Skill 127):**
+  (1) the fallback also matches `members/{uid}`, so any member, even `staff`, can write a membership
+  doc (promote itself to owner, add a uid, delete the owner); (2) `isMember` ignores `status`, so a
+  `suspended` member keeps direct Firestore read and wildcard write. Not fixed yet. Do not describe
+  the rules as sound or the owner/admin gates as enforced until both are closed.
 
 `TransactionStore` / `StockBatchStore` become **read models** over the ledger tier (not writers).
 
