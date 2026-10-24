@@ -19,7 +19,7 @@ Taher chose S2a-2 before S2c ("looks small"). Advice given: it is not small (CI 
 - [x] 7. Leak audit (Skill 125 rule 2): 6 files run after `tst_Gateway`, write via stores and never set a mode; 2 really enqueue, so `OutboxStore.clear()` added to `cleanup()` in `tst_InventoryStore_upsertMany.qml` and `tst_StockBatchStore.qml`.
 - [x] 8. Docs: test plan + index row, Skill 125 + `SKILLS-INDEX.md` (126 skills), AGENTS.md (2), README (3), S2 design note, this file.
 - [x] 9. `node --test .github/scripts/__tests__/*.test.js` and `skills-index.js --check` run in session (see PR).
-- [ ] 10. **CI:** expect QML 2104 (2107 - 4 + 1), Functions 722, Rules 45, E2E 93. Any other number: read the diff of test counts first.
+- [x] 10. **CI green on `9be125f` (PR #154):** QML 2104 (as predicted), Functions 722, Rules 45, E2E 93; 2964/2964. The leak-risk list was enough.
 - [ ] 11. **Taher:** review PR, merge when CI is green, run the on-device list in the test plan.
 - [ ] 12. **Next slice, own session:** S2c (lock `inventory` in rules + rules tests), then S2d (kinds on deltas).
 
