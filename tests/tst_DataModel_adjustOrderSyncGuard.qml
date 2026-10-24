@@ -55,7 +55,6 @@ TestCase {
             receivedDate: "2026-08-01T00:00:00.000Z", poId: "", note: "",
             createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z"
         }]
-        Gateway.mode = "gateway"
         OutboxStore.clear()
         AuthStore.idToken = ""
         AuthStore._settings.sessionJson = "" // see tst_Gateway.qml header / CHECKPOINT.md 2026-08-18 for why

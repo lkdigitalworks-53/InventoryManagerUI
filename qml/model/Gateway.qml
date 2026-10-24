@@ -10,17 +10,11 @@ import "../helper/SendPolicy.js" as SendPolicy
 // account mutation in P0 scope (inventory + stock). Stores call
 // `recordMutation(...)` instead of writing Firestore directly.
 //
-// Two modes:
-//   "direct"  — Writes the working-tier doc via FirebaseService, exactly as
-//               the stores did before P0. No ledger entry. Behaviour-
-//               preserving fallback for when the Cloud Function/locked
-//               rules aren't deployed (e.g. a fresh `dev`/`test` env).
-//   "gateway" — DEFAULT since 649046d (Cloud Function + locked rules are
-//               live in production). Enqueues the call in the durable
-//               OutboxStore and POSTs it to the recordMutation Cloud
-//               Function (Bearer idToken), which atomically writes the
-//               working doc + an immutable audit_log entry. Failed/offline
-//               calls stay queued and retry w/ backoff.
+// Every write is enqueued in the durable OutboxStore and POSTed to the
+// recordMutation Cloud Function (Bearer idToken), which atomically writes the
+// working doc + an immutable audit_log entry. Failed/offline calls stay queued
+// and retry w/ backoff. There is no direct-to-Firestore mode any more (P1 S2a-2):
+// it bypassed the audit log and the ledger rows.
 //
 // Single-flight-per-record (Component 1, async-write-sequencing design §3):
 // drainNow() marks every due item in-flight (OutboxStore.markInFlight)
@@ -35,10 +29,6 @@ import "../helper/SendPolicy.js" as SendPolicy
 // before proceeding. Everything else stays fire-and-forget by design.
 QtObject {
     id: root
-
-    // "gateway" in production (649046d). "direct" remains available as a
-    // manual fallback for envs without the Cloud Function/locked rules.
-    property string mode: "gateway"
 
     // Member/staff credential provisioning needs the Admin-SDK Cloud Function
     // (provisionMember) — it CANNOT fall back to a direct client write, because
@@ -209,11 +199,6 @@ QtObject {
         }
         var requestId = _nextRequestId()
 
-        if (mode === "direct") {
-            _writeDirect(collection, entityId, action, after)
-            return requestId
-        }
-
         OutboxStore.enqueue({
             requestId: requestId,
             entity: entity,
@@ -232,15 +217,11 @@ QtObject {
     // but returns the requestId of the item that is actually STORED: OutboxStore.enqueue may
     // merge this call into an older not-in-flight item for the same record (which keeps ITS
     // requestId), and a dependent must hang off the item that will really be sent. Returns ""
-    // in direct mode (no outbox, nothing to wait for) or on a bad entity/id.
+    // on a bad entity/id.
     function recordEdit(entity, entityId, action, before, after) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordEdit: bad entity/id", entity, entityId)
-            return ""
-        }
-        if (mode === "direct") {
-            _writeDirect(collection, entityId, action, after)
             return ""
         }
         var stored = OutboxStore.enqueue({
@@ -261,9 +242,8 @@ QtObject {
     // Unlike every other Gateway call, this is NOT fire-and-forget: callback
     // fires once the real outcome is known — success, or a definitive
     // rejection (insufficient-quantity) — following the same shape as
-    // provisionMember's callback. Requires gateway mode; delta semantics
-    // need server-side read-then-write, which "direct" mode has no way to
-    // do (it's just a client-side FirebaseService.put of an absolute value).
+    // provisionMember's callback. Delta semantics need a server-side
+    // read-then-write, so there is no client-side equivalent.
     // If two recordDelta calls for the same record coalesce into one held
     // outbox item (OutboxStore.enqueueDelta), BOTH callbacks fire with that
     // item's single outcome — see _deltaCallbacks above.
@@ -282,11 +262,6 @@ QtObject {
         if (!collection || !entityId) {
             console.warn("[Gateway] recordDelta: bad entity/id", entity, entityId)
             if (callback) callback({ ok: false, error: "bad-request" })
-            return ""
-        }
-        if (mode !== "gateway") {
-            console.warn("[Gateway] recordDelta: requires gateway mode, got", mode)
-            if (callback) callback({ ok: false, error: "delta-requires-gateway-mode" })
             return ""
         }
         var requestId = _nextRequestId()
@@ -328,13 +303,8 @@ QtObject {
     //     window ended; the item is still queued and will resolve in the
     //     background (operationApplied/operationRejected fires later)
     //   { ok: false, error, opIndex, field, current, conflict } -- rejected
-    //   { ok: false, error: "bad-request" | "operation-requires-gateway-mode" }
+    //   { ok: false, error: "bad-request" }
     function recordOperation(opType, ops, opKey, options, callback) {
-        if (mode !== "gateway") {
-            console.warn("[Gateway] recordOperation: requires gateway mode, got", mode)
-            if (callback) callback({ ok: false, error: "operation-requires-gateway-mode" })
-            return ""
-        }
         if (!opKey || !Array.isArray(ops) || ops.length === 0 || ops.length > maxOperationOps) {
             console.warn("[Gateway] recordOperation: bad request", opKey, ops && ops.length)
             if (callback) callback({ ok: false, error: "bad-request" })
@@ -407,19 +377,6 @@ QtObject {
 
 
 
-    function _writeDirect(collection, entityId, action, after) {
-        var path = collection + "/" + entityId
-        if (action === "delete") {
-            FirebaseService.remove(path, function(ok) {
-                if (!ok) console.warn("[Gateway:direct] delete failed", path)
-            })
-            return
-        }
-        FirebaseService.put(path, after || {}, function(ok) {
-            if (!ok) console.warn("[Gateway:direct] write failed", path)
-        })
-    }
-
     // Server-side recordMutationsBatch (functions/lib/batchMutationLogic.js)
     // hard-rejects any single call over MAX_BATCH_SIZE items with a 400
     // ("batch-too-large") that can never succeed on retry. Mirrored here so
@@ -470,11 +427,6 @@ QtObject {
             })
         }
 
-        if (mode === "direct") {
-            _writeDirectBatch(collection, normalized)
-            return requestId
-        }
-
         var chunks = _chunkItems(normalized, maxBatchSize)
         for (var c = 0; c < chunks.length; ++c) {
             OutboxStore.enqueueBatch({
@@ -488,39 +440,12 @@ QtObject {
         return requestId
     }
 
-    // direct-mode fallback for recordMutations — preserves today's single
-    // putMany-per-batch performance for creates/updates; deletes (which
-    // putMany has no form for) go one call each, same as _writeDirect.
-    function _writeDirectBatch(collection, items) {
-        var docsById = {}
-        var deleteIds = []
-        for (var i = 0; i < items.length; ++i) {
-            var it = items[i]
-            if (it.action === "delete") {
-                deleteIds.push(it.entityId)
-            } else {
-                docsById[it.entityId] = it.after || {}
-            }
-        }
-        if (Object.keys(docsById).length > 0) {
-            FirebaseService.putMany(collection, docsById, function(ok) {
-                if (!ok) console.warn("[Gateway:direct] batch write failed", collection)
-            })
-        }
-        for (var j = 0; j < deleteIds.length; ++j) {
-            FirebaseService.remove(collection + "/" + deleteIds[j], function(ok) {
-                if (!ok) console.warn("[Gateway:direct] batch delete failed", collection, deleteIds[j])
-            })
-        }
-    }
-
-    // ── gateway mode (post-deploy) ──────────────────────────────────────────
+    // ── sending ──────────────────────────────────────────
 
     // Send every due outbox item, then reschedule the retry timer for the
     // next-due item. Safe to call repeatedly (start, connectivity regain,
     // timer tick, after each enqueue).
     function drainNow() {
-        if (mode !== "gateway") return
         if (typeof AuthService !== "undefined" && AuthService)
             AuthService.ensureFreshToken()
 
@@ -615,7 +540,7 @@ QtObject {
 
     // S3 Discard: drops ONE parked (server-rejected) write for good and tells the
     // stores to re-read (parkedWriteDiscarded). Checked again here, not trusted from
-    // the row the user tapped: gateway mode, online, still queued, still parked, not
+    // the row the user tapped: online, still queued, still parked, not
     // in flight; otherwise false and nothing changes. A later edit merged into the
     // parked write is discarded with it (P3); writes queued behind it survive
     // (Q-S3-1 A). Waiters on the item (operation or delta) are told { error: "discarded" }.
@@ -625,7 +550,6 @@ QtObject {
     function isParkedKey(requestId) { return StuckWrites.isParked(_stuckState, requestId) }
 
     function discardParked(requestId) {
-        if (mode !== "gateway") return false
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
         if (!online) return false
         if (OutboxStore.isInFlight(requestId)) return false

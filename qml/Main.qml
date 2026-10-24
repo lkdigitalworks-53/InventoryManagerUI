@@ -328,7 +328,7 @@ App {
             // app closed, and re-check them once (no-op after the first call).
             Gateway.resumeStuck()
             // Flush any compliance-gateway writes that were queued offline /
-            // before this tenant context was known (no-op in "direct" mode).
+            // before this tenant context was known.
             Gateway.drainNow()
             logic.loadData()
             inviteMemberDlg.errorMessage = ""

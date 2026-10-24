@@ -1,46 +1,51 @@
-# CHECKPOINT — 2026-10-21 P1 S2a-1: delete client `runCutover` + `stock_movement` client mapping (resume here)
+# CHECKPOINT — 2026-10-23 P1 S2a-2: delete `Gateway` direct mode + `mode` property (resume here)
 
-**Branch:** `feat/2026-10-21-p1-s2a1-client-cutover-delete` off `main` @ `773c4ef` (PR #151 merged). Open the PR against `main`.
+**Branch:** `feat/2026-10-23-p1-s2a2-delete-direct-mode` off `main` @ `d5882ee` (PR #152 + #153 merged). Open the PR against `main`.
 **Commit identity:** `taher.lkdw@gmail.com`. PAT only in the push command, never in a file or git config; after push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs and grill before decisions; tests + test plan for every code change; caveman FULL.
-**Skills used:** `brainstorming` (design already approved: S2 rev 2, so no new design; only a scope split), `qt-qml`, `qt-ui-design` (no UI touched), `ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-21-p1-s2b-prev-CHECKPOINT.md`.
+**Rules in force:** do not build/run the app; no Qt in the sandbox (CI is the QML oracle); push without asking, Taher reviews in the PR; short scope (token budget, multi-account hand-off); honest trade-offs; tests + test plan for every code change; caveman FULL.
+**Skills used:** `requesting-code-review` + `ponytail-audit` + `qt-qml-review` (PR #152 sweep, done earlier today), `qt-qml`, `ponytail`.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-23-p1-s2a1-prev-CHECKPOINT.md`.
 
 ## Why this item
-PR #151 (S2b) merged. Next per the design: S2a. Split in two (Skill 124): the `mode` property has 79 uses in 22 files, so removing `direct` mode is a CI-only-oracle session of its own.
+Taher chose S2a-2 before S2c ("looks small"). Advice given: it is not small (CI is the only oracle) and S2c closes a real server-side bypass first; Taher kept the order. Direct mode wrote Firestore with no audit_log / ledger rows.
 
 ## Steps
-- [x] 1. Read memory, cloned repo, read old checkpoint + S2 design, cut branch.
-- [x] 2. Audit: `runCutover`/`cutoverUrl`/`cutoverFinished` have no caller; `_captureBeforeStatusIsLost` still has 5 users (kept; 6 on `main` incl. `runCutover`); `DataModel` has no `stock_movement` string in code, only a comment (fixed in the review sweep).
-- [x] 3. `Gateway.qml`: deleted `runCutover()`, `cutoverUrl`, `cutoverFinished`; removed `stock_movement` from `_collections` (comment says why).
-- [x] 4. `tst_Gateway.qml`: removed 1 stale assertion, added 3 test functions (stock_movement refused by 4 entry points, `collectionFor` refuses it, cutover API pin).
-- [x] 5. Docs: test plan + index row, Skill 124 + `SKILLS-INDEX.md`, AGENTS.md (2 spots), README, design doc note, this checkpoint.
-- [x] 6. `cd functions && npm ci && npm test`: 722/722 (server untouched; first run showed 509/7 fail only because `node_modules` was missing).
-- [ ] 7. **Taher:** review PR, wait for CI (`qml-tests` is the only proof for the QML edits), merge, run the on-device list in the test plan.
-- [ ] 8. **Next slice, own session: S2a-2** (recipe below), then S2c (rules lock + rules test), then S2d.
-
-## Review sweep 2026-10-23 (stacked PR on this branch: `review/2026-10-23-pr152-final-sweep`)
-Skills: `requesting-code-review`, `ponytail-audit`, `qt-qml-review` (lint run; `qmllint` not available; no Qt in sandbox).
-Verdict: no Must-fix. CI green on `3755713` (QML 2107 = 2104 + 3 new, Functions 722, Rules 45, E2E 93). Lint: 0 hits on PR-changed lines (477 pre-existing, house `var` style).
-- [x] R1 `test_collectionFor_covers_every_registered_entity` asserted 6 of 7 entities: added `removed_staff`.
-- [x] R2 dead `ignored = {stock_movement}` branch in `tst_DataModel_discardResync.qml` deleted (test renamed).
-- [x] R3 test name said "every write entry point": `recordOperation` is server-gated only; renamed + comment (why `gateway` mode is set).
-- [x] R4 docs said `_captureBeforeStatusIsLost` has 6 users: it is 5 (test plan, Skill 124, this file).
-- [x] R5 docs claimed a `stock_movement` string in `DataModel._storesToResync`: it was only a comment; comment fixed, Skill 124 rule 5 rewritten, rules 6-7 added.
-- [x] R6 README said deploy will ask to delete `runCutover`: Taher deleted it by hand in the console 2026-10-23; README, AGENTS, test plan updated, `curl` check added (expect 404).
-- [ ] R7 **Taher:** run the `curl` in the test plan (sandbox cannot reach `cloudfunctions.net`).
-- [ ] R8 **Taher:** merge the review PR into `feat/2026-10-21-p1-s2a1-client-cutover-delete`, wait for CI, merge #152. `CHECKPOINT.md` conflicts: keep the branch version.
-
-## S2a-2 recipe (for the next account)
-1. `Gateway.qml`: delete `property string mode`, the two `if (mode === "direct")` blocks in `recordMutation`/`recordEdit`, the one in `recordMutations`, `_writeDirect`, `_writeDirectBatch`; the 4 `mode !== "gateway"` guards (recordDelta, recordOperation, drainNow ~523, discardParked ~628) go away with their error strings `delta-requires-gateway-mode` / `operation-requires-gateway-mode` (check callers of those strings first: `git grep -n "requires-gateway-mode"`). Fix the header comment and the 2 stale comments (`TransactionStore.qml:208`, `Main.qml:331`).
-2. Tests: `git grep -n "Gateway.mode" -- tests qml` (79 uses, 22 files). Delete every `Gateway.mode = "gateway"` and the `_prevMode` save/restore (18 lines). In `tst_Gateway.qml` delete `test_recordDelta_requires_gateway_mode`, `test_recordOperation_requires_gateway_mode`, `test_discardParked_refuses_outside_gateway_mode`, `test_recordMutations_direct_mode_is_unaffected_by_chunking`, the `init()` line 62 and its long comment, and rewrite the header SCOPE NOTE. Add a pin `typeof Gateway.mode === "undefined"`.
-3. Danger: in `init()` the forced `"direct"` also kept tests off the network. Without it `drainNow()` runs; the guard that protects is `!AuthStore.idToken` in `_send*` (see the test header). Keep `AuthStore.idToken = ""` in `init()`. Check FirebaseService writes: after this slice nothing in `tst_Gateway` may reach `FirebaseService.put`.
-4. Run `node --test` (unchanged), push, CI is the only oracle.
+- [x] 1. Read memory, cloned repo, confirmed #152/#153 merged, cut branch off `main`.
+- [x] 2. Audit: `git grep -c "Gateway\.mode" -- . ':!*.md'` on main = 89 uses in 32 files (recipe said 79 / 22: it missed `test/e2e`). No non-test QML assigned `mode`. Nothing outside Gateway + tests used the two error strings.
+- [x] 3. `Gateway.qml`: deleted `mode`, `_writeDirect`, `_writeDirectBatch`, 3 `direct` branches, 4 mode guards, 2 error strings; header comment + 4 doc comments fixed (+11 / -87).
+- [x] 4. 3 stale comments fixed (`Main.qml`, `InventoryStore.qml`, `TransactionStore.qml`).
+- [x] 5. 30 test files: removed `Gateway.mode = ...` and `_prevMode` save/restore (21 `tests/`, 9 `test/e2e/`).
+- [x] 6. `tst_Gateway.qml`: deleted 4 direct-only tests, init block + header SCOPE NOTE rewritten, 3 tests renamed, pin `test_direct_mode_property_is_gone` added.
+- [x] 7. Leak audit (Skill 125 rule 2): 6 files run after `tst_Gateway`, write via stores and never set a mode; 2 really enqueue, so `OutboxStore.clear()` added to `cleanup()` in `tst_InventoryStore_upsertMany.qml` and `tst_StockBatchStore.qml`.
+- [x] 8. Docs: test plan + index row, Skill 125 + `SKILLS-INDEX.md` (126 skills), AGENTS.md (2), README (3), S2 design note, this file.
+- [x] 9. `node --test .github/scripts/__tests__/*.test.js` and `skills-index.js --check` run in session (see PR).
+- [x] 10. **CI green on `9be125f` (PR #154):** QML 2104 (as predicted), Functions 722, Rules 45, E2E 93; 2964/2964. The leak-risk list was enough.
+- [ ] 11. **Taher:** review PR, merge when CI is green, run the on-device list in the test plan.
+- [ ] 12. **Next slice, own session:** S2c (lock `inventory` in rules + rules tests), then S2d (kinds on deltas).
 
 ## Open items / risks
+- Not run anywhere locally: all QML (no Qt). Biggest CI risk: a test file that silently relied on the old leaked `"direct"` state and is not in the 6-file list (the list was found by grep, not proven). If a later-sorting file fails with an outbox count, check `OutboxStore.clear()` in its `init()`.
+- Skill 124 rule 3 (`typeof` on an absent singleton member is `"undefined"`) was proven by CI on #152, so the new pin uses the same style.
 - Q4 (damaged returns) and Q5 (`valueAtCost` client-stated) stay open for S2e/S2d.
-- S2d/S2e wait for S1b deployed (met: Taher 2026-10-21).
-- Skill 124 rule 3 (`typeof` on an absent singleton member gives `"undefined"`) is untested locally; if CI fails `test_client_cutover_api_is_gone`, replace with `verify(!("runCutover" in Gateway))`-style or drop the pin.
 
 ## NEXT
-Taher reviews/merges. Then S2a-2 in a new session on a new branch off `main`.
+Taher reviews/merges. Then S2c in a new session on a new branch off `main`; before locking `inventory` in rules, grep every client write path to `inventory` (photo fields, import, legacy `photoUrl`) to be sure none bypasses the gateway.
+
+---
+
+## Review sweep 2026-10-24 (PR #154), branch `review/2026-10-24-pr154-final-sweep` (stacked on `feat/2026-10-23-p1-s2a2-delete-direct-mode`)
+**Commit identity for this sweep:** `dextran52@gmail.com` (the chat account's email; the PR's own commits used `taher.lkdw@gmail.com`, from another account). PAT only in the push command.
+**Skills used:** `requesting-code-review`, `ponytail-audit`, `qt-qml-review` (Phase 1 only; no `qmllint`, no Qt). **No code changed.** Full report: `docs/superpowers/specs/2026-10-24-pr154-final-sweep.md`.
+- [x] 1. Read memory, cloned, fetched `pull/154/head`, cut review branch.
+- [x] 2. Read all of `Gateway.qml` (1134 lines) + the 3 comment-only production edits + every test/e2e/doc diff (46 files).
+- [x] 3. Re-checked the PR's numbers (89/32, +14/-91, 7 guards, 2107->2104, tst_Gateway 186->183): all true.
+- [x] 4. Lint Phase 1: 0 findings on added lines; totals fall.
+- [x] 5. Independent leak audit of test files; checked every non-empty `idToken` setter.
+- [x] 6. CI via API: 2964/2964 on `6e68a53`; no human review comments.
+- [x] 7. Report written; verdict **with fixes**: S1-S4 (should), N1-N7 (nice), I1-I2 (verify).
+- [x] 8. Taher decided (2026-10-24): S1 delete, S3 fold into S2c, S4+I1 yes, N2 sweep, N4 skip.
+- [x] 9. Implemented on this branch: S1 (InventoryStore dead branch), S4+I1 (token/auth resets in 3 test `init()`s), N2 + N1 (stale wording, README:344), S2 (on-device plan rewritten, numbered), Skill 125 rule 5 + new rule 7. Predicted QML stays 2104.
+- [ ] 9b. Push + wait for CI on PR #155 (CI is the only oracle: no Qt in the sandbox).
+- [ ] 9c. Taher merges #155 into the #154 branch, then #154 into `main`.
+- **Carry into S2c:** reword `firestore.rules:154-155` (stale `Gateway.mode` comment) to "inventory is still client-writable until S2c". Untouched: N3, N5, N6, N7 (not asked).
+- [ ] 10. Then S2c (see NEXT above).

@@ -26,9 +26,17 @@ TestCase {
     name: "StockBatchStore"
 
     function init() {
+        // This file enqueues for real: keep the _send guard closed (an earlier file could leak a
+        // token, and the default functionUrl is PRODUCTION) and drop the disk copy AuthService reloads.
+        AuthStore.idToken = ""
+        AuthStore.isAuthenticated = false
+        AuthStore._settings.sessionJson = ""
         StockBatchStore.batches = []
         StockBatchStore.revision = 0
     }
+
+    // addBatch* now enqueue (no direct mode): keep the outbox clean for the next file.
+    function cleanup() { OutboxStore.clear() }
 
     // ── _batchIdPrefixForYear ────────────────────────────────────────────
 

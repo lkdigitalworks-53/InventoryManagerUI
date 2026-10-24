@@ -53,7 +53,6 @@ TestCase {
                                             // test here seeds its ledger directly, never pages it.
         InventoryStore.products = []
         StockBatchStore.batches = []
-        Gateway.mode = "gateway"   // enqueue into OutboxStore instead of a real network call
         OutboxStore.clear()
         AuthStore.idToken = ""    // keeps Gateway._send's guard closed — no real network
         dm.stockErrorMsg = ""

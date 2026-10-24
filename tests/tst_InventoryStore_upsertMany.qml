@@ -30,8 +30,16 @@ import "../qml/helper/ImportMath.js" as ImportMath
 TestCase {
     name: "InventoryStore_upsertMany"
 
-    function init() { InventoryStore.products = [] }
-    function cleanup() { InventoryStore.products = [] }
+    function init() {
+        // This file enqueues for real: keep the _send guard closed (an earlier file could leak a
+        // token, and the default functionUrl is PRODUCTION) and drop the disk copy AuthService reloads.
+        AuthStore.idToken = ""
+        AuthStore.isAuthenticated = false
+        AuthStore._settings.sessionJson = ""
+        InventoryStore.products = []
+    }
+    // upsertMany now enqueues (no direct mode): keep the outbox clean for the next file.
+    function cleanup() { InventoryStore.products = []; OutboxStore.clear() }
 
     function _neverExists(name) { return false }
 

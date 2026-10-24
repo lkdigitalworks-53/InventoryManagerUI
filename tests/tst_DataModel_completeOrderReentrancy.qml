@@ -63,7 +63,6 @@ TestCase {
         StockBatchStore.batches = [_batch()]
         TransactionStore.entries = []
         TransactionStore.revision = 0
-        Gateway.mode = "gateway"
         OutboxStore.clear()
         AuthStore.idToken = ""
         AuthStore._settings.sessionJson = ""

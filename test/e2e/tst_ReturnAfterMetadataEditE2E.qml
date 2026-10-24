@@ -15,7 +15,7 @@ import "E2EHelpers.js" as E2EHelpers
 // Real code path this exercises that tst_OrdersE2E.qml never touched:
 //   OrderDetailDialog._save()'s fix (OrderAdjust.reconcileConsumptionOnSave)
 //   -> OrdersStore.updateOrder's full products replace -> a REAL
-//   Gateway.recordMutation POST to the emulator (Gateway.mode="gateway" +
+//   Gateway.recordMutation POST to the emulator (the outbox path +
 //   a real fixture.idToken here, unlike tests/tst_OrderMetadataEditPreserves
 //   Consumption.qml's local-only equivalent, which deliberately keeps
 //   AuthStore.idToken empty to guarantee no network call) -> then
@@ -119,7 +119,6 @@ TestCase {
         // so completion is queued + shown as done, and the outbox drain delivers it to the
         // emulator; the polls below wait for the emulator's own doc.
         Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
-        Gateway.mode = "gateway" // the real production default — see Gateway.qml
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]

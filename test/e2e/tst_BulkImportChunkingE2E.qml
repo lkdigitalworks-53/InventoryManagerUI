@@ -73,7 +73,6 @@ TestCase {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.batchFunctionUrl = emulatorFunctionsBase + "/recordMutationsBatch"
-        Gateway.mode = "gateway" // the real production default — see Gateway.qml
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         InventoryStore.products = []

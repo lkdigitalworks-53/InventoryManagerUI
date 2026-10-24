@@ -171,7 +171,7 @@ Top-level collections (all tenant-scoped under `tenants/{tenantId}/...`):
 - `stock_batches/` – FIFO stock batches
 - `audit_log/` – compliance gateway's append-only mutation ledger, server-written only
   (`Gateway.recordMutation`/`recordMutations`/`recordDelta` → Cloud Functions). All 5 working-tier
-  stores route through it, and it's live — `Gateway.mode` is `"gateway"` (flipped 2026-07-29). See
+  stores route through it, and it's live — every write goes through it (the `direct` fallback mode was deleted in P1 S2a-2). See
   AGENTS.md §8's "P0 implementation status."
 - `locks/` – short-lived pessimistic locks (Component 2 of the async-write-sequencing design,
   below), server-written only. Not part of P0's compliance scope — a concurrency-control aid, not
@@ -341,7 +341,7 @@ path leaves a ledger row; the rules still let a member write `inventory` directl
 are now 150 (inventory batch = 3 writes per item = 450). Review decision D-2 is in: `recordMutation`, `recordDelta` and `recordMutationsBatch`
 reject a requestId containing `~` or `/` or longer than 200 chars (and the batch rejects such an entityId) with `400 invalid-request-id` /
 `invalid-entity-id`, so none can forge a `recordOperation` audit or ledger id (those carry `~`). **Needs `firebase deploy --only functions`
-to dev.** S1a/S1b on-device checklists done 2026-10-21 (Taher). Next: S2 (kind pickers, delete `direct` mode, lock `inventory` in rules). S2 design (split S2a-S2e, Q1-Q3 approved): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`. **S2b done (server `runCutover` + `cutoverLogic.js` deleted; the client `Gateway.runCutover` was deleted in S2a-1 on `feat/2026-10-21-p1-s2a1-client-cutover-delete`; `direct` mode goes in S2a-2). The deployed `runCutover` was deleted by hand in the Firebase console on 2026-10-23 (Taher), so `firebase deploy --only functions` will not ask about it; check with a POST to the old URL, expect `404`.**
+to dev.** S1a/S1b on-device checklists done 2026-10-21 (Taher). S2a-2 done (`direct` mode + `Gateway.mode` deleted, on `feat/2026-10-23-p1-s2a2-delete-direct-mode`). Next: S2c (lock `inventory` in rules), S2d, S2e. S2 design (split S2a-S2e, Q1-Q3 approved): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`. **S2b done (server `runCutover` + `cutoverLogic.js` deleted; the client `Gateway.runCutover` was deleted in S2a-1 on `feat/2026-10-21-p1-s2a1-client-cutover-delete`; `direct` mode was deleted in S2a-2). The deployed `runCutover` was deleted by hand in the Firebase console on 2026-10-23 (Taher), so `firebase deploy --only functions` will not ask about it; check with a POST to the old URL, expect `404`.**
 
 ## Qt Skills Cheat Sheet
 
@@ -522,7 +522,7 @@ Two problems, fixed separately (full design: `docs/superpowers/specs/
   — see AGENTS.md §8, `SKILLS.md` Skill 35) instead of calling `FirebaseService` directly.
   `approveAllPending`'s bulk update specifically now uses `Gateway.recordMutations` (one atomic
   transaction, capped at 150 items since P1 S1b) — the old `FirebaseService.putMany()` call there is gone.
-  Functionally live as of 2026-07-29 (`Gateway.mode` is `"gateway"`), and this is the current code
+  Functionally live as of 2026-07-29 (the only mode; `direct` was deleted in P1 S2a-2), and this is the current code
   path, not the one described just above. As of the async-write-sequencing design (below),
   `InventoryStore.deductStock`/`StockBatchStore`'s FIFO functions route through
   `Gateway.recordDelta` instead — an atomic server-side delta, not a client-computed absolute value

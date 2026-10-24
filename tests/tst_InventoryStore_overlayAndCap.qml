@@ -11,7 +11,7 @@ import "../qml/logic"
 //    edit (PR #121 device obs 3) without resurrecting stale stock.
 //  - updateRefusal / updateProduct / addProduct refuse a doc over 1 MiB BEFORE anything is queued
 //    (PR #121 device obs 1), and DataModel surfaces the refusal and skips its side effects.
-// Harness: gateway mode, offline. NOT RUN IN THIS SANDBOX: CI runs it.
+// Harness: offline (no idToken). NOT RUN IN THIS SANDBOX: CI runs it.
 TestCase {
     name: "InventoryStore_overlayAndCap"
 
@@ -21,7 +21,6 @@ TestCase {
     SignalSpy { id: updSpy; target: testLogic; signalName: "productUpdated" }
     SignalSpy { id: statesSpy; target: InventoryStore; signalName: "syncStatesChanged" }
 
-    property string _prevMode: ""
     property string _prevRole: ""
 
     function _rep(ch, n) { var s = ""; for (var i = 0; i < n; ++i) s += ch; return s }
@@ -37,9 +36,7 @@ TestCase {
     function _serverPage(price, stock) { return InventoryStore._normalizeProducts([_doc("P1", price, stock)]) }
 
     function init() {
-        _prevMode = Gateway.mode
         _prevRole = AuthStore.role
-        Gateway.mode = "gateway"
         AuthStore.idToken = ""
         AuthStore.role = "owner"
         OutboxStore.clear()
@@ -52,7 +49,7 @@ TestCase {
         StockBatchStore.batches = []
         errSpy.clear(); updSpy.clear(); statesSpy.clear()
     }
-    function cleanup() { OutboxStore.clear(); ActivityLog.clear(); Gateway.mode = _prevMode; AuthStore.role = _prevRole }
+    function cleanup() { OutboxStore.clear(); ActivityLog.clear(); AuthStore.role = _prevRole }
 
     // ── syncStates / badge ───────────────────────────────────────────────
 
