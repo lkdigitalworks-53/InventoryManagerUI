@@ -86,6 +86,7 @@ machine, not this chat.
 | `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
 | SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
 | India compliance roadmap (design) | 📋 Approved — P0 substantially implemented, see below |
+| Login as non-owner roles (staff/admin/manager) + multi-user cross-actor tests | 📋 PENDING — DRAFT design `docs/superpowers/specs/2026-10-25-multi-role-login-design.md` (decisions open, resume after compliance); `Gateway.provisioningAvailable` is still `false`, so no second login can be created from the app; see `docs/superpowers/KNOWN-ISSUES.md` ("No way to log in as staff") |
 
 ---
 
