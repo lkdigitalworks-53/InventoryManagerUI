@@ -14,21 +14,41 @@ service cloud.firestore {
       return memberDoc(tenantId, request.auth.uid).data.role;
     }
 
+    // An owner or admin must also be an ACTIVE member: a suspended admin keeps no admin powers.
     function isOwner(tenantId) {
-      return isSignedIn() && myRole(tenantId) == 'owner';
+      return isMember(tenantId) && myRole(tenantId) == 'owner';
     }
 
     function isAdmin(tenantId) {
-      return isSignedIn() && myRole(tenantId) == 'admin';
+      return isMember(tenantId) && myRole(tenantId) == 'admin';
     }
 
     function isOwnerOrAdmin(tenantId) {
       return isOwner(tenantId) || isAdmin(tenantId);
     }
 
+    // True only when the member doc says status == 'active'. No legacy tolerance (S2f-6): every member
+    // doc is created with a status and dev has no legacy data. The gateway (functions/index.js
+    // deriveContext) applies the same rule and the two must not drift (Skills 127, 128). A missing
+    // status makes this expression error, which denies.
+    function memberStatusIsActive(tenantId, uid) {
+      return memberDoc(tenantId, uid).data.status == 'active';
+    }
+
+    // "Member" means ACTIVE member everywhere in this file (S2f-2). Before, it was exists() only, so a
+    // suspended member kept direct Firestore read and write access that the gateway already refused.
     function isMember(tenantId) {
       return isSignedIn()
-        && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
+        && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid))
+        && memberStatusIsActive(tenantId, request.auth.uid);
+    }
+
+    // Which roles an actor may hand out. Mirrors canAssignRole in functions/index.js and
+    // AuthService._canAssignRole: an owner assigns admin/manager/staff, an admin assigns
+    // manager/staff, nobody assigns owner (the only owner is the one the tenant bootstrap creates).
+    function canAssignRole(tenantId, role) {
+      return (isOwner(tenantId) && role in ['admin', 'manager', 'staff'])
+        || (isAdmin(tenantId) && role in ['manager', 'staff']);
     }
 
     function roleIsValid(role) {
@@ -78,6 +98,16 @@ service cloud.firestore {
       return name in ['inventory'];
     }
 
+    // Access-control tier (S2f-2): collections whose documents decide who may do what. They have their
+    // own explicit match block below, and Firestore ORs every matching rule, so the wildcard at the
+    // bottom would otherwise let ANY member write them (a staff token could promote itself to owner,
+    // proven by probe PR #157). Naming a collection HERE removes it from the wildcard's write guard,
+    // so the explicit block is the only thing that decides. Reads stay on the explicit block.
+    // Exact collection names only.
+    function isAccessControlCollection(name) {
+      return name in ['members'];
+    }
+
     // users/{uid}
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
@@ -98,10 +128,14 @@ service cloud.firestore {
 
       // tenants/{tenantId}/members/{uid}
       match /members/{uid} {
-        allow read: if isMember(tenantId);
+        // Active members read the roster. A member may always read ITS OWN doc, even when suspended
+        // or inactive, so the app can learn why it was locked out instead of failing blind.
+        // The own-doc check goes FIRST: when the member doc has no status, isMember errors, and a
+        // true left operand settles the `||` without depending on how an error operand is treated.
+        allow read: if (isSignedIn() && request.auth.uid == uid)
+                    || isMember(tenantId);
 
-        allow create: if isOwnerOrAdmin(tenantId)
-                      && roleIsValid(request.resource.data.role)
+        allow create: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
                       && request.resource.data.uid == uid;
 
@@ -114,21 +148,16 @@ service cloud.firestore {
                       && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerId == request.auth.uid
                       && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
 
-        allow update: if isOwnerOrAdmin(tenantId)
-                      && roleIsValid(request.resource.data.role)
+        // An existing owner doc is never modified; the new role must be one the actor may assign.
+        allow update: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
-                      && resource.data.role != 'owner'
-                      && (
-                        isOwner(tenantId)
-                        || (isAdmin(tenantId)
-                            && request.resource.data.role in ['manager', 'staff'])
-                      );
+                      && resource.data.role != 'owner';
 
         allow delete: if isOwnerOrAdmin(tenantId)
                       && resource.data.role != 'owner'
                       && uid != request.auth.uid;
 
-        // VOLUNTARY LEAVE: a member may remove their OWN membership. The owner
+        // VOLUNTARY LEAVE: a member may remove their OWN membership (also when suspended). The owner
         // cannot self-leave (would orphan the workspace) — that's blocked by
         // the role check, matching leaveCurrentTenant()'s client guard.
         allow delete: if isSignedIn()
@@ -167,7 +196,8 @@ service cloud.firestore {
       // ...). inventory is gateway-write-only since S2c: members read it,
       // only the gateway writes it. orders, staff, suppliers and
       // removed_staff are still client-writable here; locking them is a
-      // separate follow-up. The ledger guard keeps a ledger collection from
+      // separate follow-up (S2f-4). The access-control guard keeps `members` out of the writable
+      // fallback (S2f-2). The ledger guard keeps a ledger collection from
       // ever matching this writable fallback, the gateway-write-only guard
       // does the same for inventory, and the server-only guard does it for
       // both read and write.
@@ -176,6 +206,7 @@ service cloud.firestore {
         allow create, update, delete: if isMember(tenantId)
                                       && !isLedgerCollection(collection)
                                       && !isGatewayWriteOnlyCollection(collection)
+                                      && !isAccessControlCollection(collection)
                                       && !isServerOnlyCollection(collection);
       }
     }

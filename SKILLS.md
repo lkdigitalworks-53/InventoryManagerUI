@@ -4434,3 +4434,14 @@ Rules:
 10. Allow-list the role at the identity step. Comparing a role to `"owner"` only refuses an unknown role on the endpoints that compare; endpoints with no role check let `""`, `"viewer"`, `"Owner"`, a number or an object in at staff level (sweep of PR #159, probe P1: 6 of 10 endpoints). Keep the set equal to the rules' `roleIsValid`, and test every endpoint class (gated and ungated), not one example. A claim in a PR ("empty role = no privilege") needs that table.
 11. Log every refusal once with a reason code (`no-user-doc`, `no-tenant`, `unsafe-tenant`, `no-member`, `not-active`, `invalid-role`) and cap the self-writable tenant id in the log line (64 chars). The HTTP answer stays one code until the client can word each cause (S2f-3). A silent refusal hides exactly the attack the gate exists for.
 12. Read only what the endpoint uses. The tenant display name was read on every request and used by `provisionMember` alone; it moved there, and a test records the document reads to keep it there.
+
+## Skill 129: Access-control collections: name them in the wildcard's guard, make "member" mean active member, and write the missing tests before touching the rules
+
+S2f-2 (2026-10-24). `members` had an explicit, careful block and a wildcard that also matched it; Firestore ORs matching rules, so the careful block protected nothing (F1). `isMember` was `exists()` only, so suspending a member changed nothing in Firestore (F2). No test existed for `users`, `tenants` or `members`.
+Rules:
+1. Any collection with its own `match` block that decides access (members) is excluded from the wildcard write guard by name (`isAccessControlCollection`). Next step is an allow-list (S2f-5) so this list cannot be forgotten.
+2. `isMember` means ACTIVE member everywhere; `isOwner` and `isAdmin` build on it, so a suspended admin loses admin powers. Only `status == 'active'` passes (no legacy tolerance when there is no legacy data); the gateway applies the same test.
+3. Put the self-read check first in an `||` (`own doc || isMember`): when the member doc lacks a status, `isMember` errors, and a true left operand does not depend on how an error operand behaves.
+4. Mirror the role-assignment policy in the rules (`canAssignRole`), or the rules are the loosest of the three enforcers (rules, gateway, client). Writing the test matrix is what exposed it (F9).
+5. Pin on purpose what you cannot fix: `users/{uid}` stays self-writable (onboarding, leave), with a test that says so and points at the server-side rule that makes it safe.
+6. A rules test file for a block with zero tests starts from the probe tests of the review, then the role x status x operation matrix, then one monkey test.

@@ -26,14 +26,5 @@ See the design doc section "Slices". Not started: S2f-3 (client wording), S2f-4 
 - PR #159 CI: QML/Functions/Rules green; E2E 1 failure = my test used a recordOperation requestId without the `completeOrder:` prefix (400 before auth). Fixed. Real E2E baseline was 86, not 93.
 - PR-A now strict: member.status must equal `active`; actorName from member doc (F8). Functions 811/811.
 - NEXT: push PR-A fix, stack PR-B (rules F1/F2 + canAssignRole + strict status + tests), then S2f-4+5 (allow-list wildcard, locks 4 collections), S2f-3 (client wording), S2f-6 counters.
-
-## Update 2026-10-25 (session 3, sweep fixes applied on this PR; working branch `work/pr159-sweep-fixes`, pushed to this branch)
-Decisions from Taher: Q1 role allow-list yes (gateway here; rules mirror goes to PR #160), Q2 `provisionMember` owner-demotion/un-suspend = its own slice, Q3 log now / distinct client codes later (S2f-3), Q4 remove redundant lines, Q5 delete dead `photoAccessDenied` check.
-- [x] `deriveContext`: role allow-list (`VALID_ROLES`), one `logger.warn` per refusal (uid + reason, tenant id capped at 64), redundant `exists` return removed, tenant doc read moved into `provisionMember` (name from tenant doc only; no users-doc fallback), `photoAccessDenied` dead tenant check removed.
-- [x] Tests: `membershipAuthority` 89 -> 113 (role table x10 handlers, valid-role controls, tenantId types, logging, lean reads, tenantName source, seeded fuzz replacing the fixed "monkey"); BC-H01 updated. `npm test` 835/835; against `main`'s old `deriveContext` 56 of 113 red; mutants caught (see test plan "Sweep additions").
-- [x] Docs: Skill 127 rule 5, Skill 128 rules 4/7 + new 10-12 (no new Skill number, so #160/#161 do not renumber), test plan sections (CI count lines 46/53 left for #161, which rewrites them), AGENTS line.
-- [x] CI on head `d1a7f9a`: 3087/3087 (QML 2104, Functions 835, Rules 52, E2E 96). Test plan CI lines, `test-plans/README.md` row and the PR body now carry the observed numbers.
-- [ ] Mirror the role allow-list in `firestore.rules` `isMember`/`memberStatusIsActive` on PR #160 (rules tests, CI only).
-- [ ] Rebase #160 and #161 onto the new #159 head (docs conflicts expected: SKILLS.md, CHECKPOINT.md, AGENTS.md, test plan).
-- [ ] Own slice: `provisionMember` must refuse changing an `owner` member doc and decide what re-provisioning a `suspended` member does (sweep finding 6).
-- Not done on purpose: finding 9 (plain-text 500 on a Firestore blip), 11 (tenant-id charset check of dev data), 12 (client role default, S2f-3).
+- [x] PR-B built (branch `fix/2026-10-24-s2f2-members-rules`, stacked on #159): rules + 31 tests (CI-only; predicted Rules 83, total 3087), test plan, Skill 129. Pushed; CI result pending.
+- NEXT: read CI on PR-B and fix; then S2f-4+5 (PR-C: allow-list wildcard, locks staff/removed_staff/orders/suppliers), S2f-3 client wording (PR-D), S2f-6 counters.

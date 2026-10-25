@@ -1,6 +1,6 @@
 # S2f: authorization hardening (design)
 
-**Date:** 2026-10-24. **Status:** S2f-1 implemented (PR-A), S2f-2 implemented (PR-B, stacked), S2f-3 to S2f-6 designed, not started.
+**Date:** 2026-10-24. **Status:** S2f-1 PR #159, S2f-2 PR-B (stacked); the rest see section 3.
 **Parent:** `2026-10-19-p1-s2-design.md` (S2c locked `inventory`), `2026-10-24-pr156-final-sweep.md` (found F1, F2).
 **Decisions marked "default" were taken by the author so the work could proceed in one session. Taher can veto any of them in the PR; each is cheap to reverse.**
 
@@ -15,6 +15,7 @@
 | F5 | `orders`, `suppliers` writable directly: a direct write skips `audit_log`; `orders` carry money fields. | rules | same | Medium |
 | F6 | No test existed for the `users`, `tenants`, `members` rule blocks. | `test/firestore.rules.test.js` | zero tests | Medium |
 | F7 | `activity_log` (client-writable UX feed) sits next to `audit_log` (compliance). `counters/*` client-writable (can burn ids, cannot overwrite). | rules | audit | Low, document |
+| F9 | Rules let an owner mint a second owner and an admin mint admins/owners (create and update), against the server and client policy. | `firestore.rules` members block | read during S2f-2 test writing | Medium |
 | F8 | `actorName` in audit rows can fall back to the self-writable `users.name`. The uid is always recorded beside it. | `deriveContext` | read | Low, kept, documented |
 
 F3 is the reason this is more than the two items the sweep named. It was found by reading `deriveContext` while designing the F2 fix, which is the rule of Skill 127 applied one layer down: **a rule is only as strong as the weakest place that decides the same question.** Three places decide "is this person allowed in this tenant, and as what?": the Firestore rules, the gateway, and the client. Only the first two are boundaries.
@@ -41,6 +42,8 @@ F3 is the reason this is more than the two items the sweep named. It was found b
 **Why this order.** F3 and F1 are privilege escalations: do them first, smallest diffs, nothing else rides along. S2f-1 is verifiable end to end in the sandbox (Node), so it goes first; S2f-2 can only be proved by CI, so it goes second and stacked. S2f-4 is a behaviour change that needs a device pass, so it is its own slice. S2f-5 is the better end state but touches every collection, so it waits for the evidence S2f-4 produces.
 
 ## 4. Decisions, trade-offs, default taken
+
+**D8. Align the members rules with the role policy (F9).** Done in S2f-2: `canAssignRole` (owner: admin/manager/staff; admin: manager/staff; nobody: owner). Cost: a client flow that assigns owner would break; none exists (`AuthService._canAssignRole` and the server both refuse it). Not done: an admin can still edit an existing peer admin's doc (to manager/staff); kept to avoid changing Team Members behaviour.
 
 **D1. How to fix F3.**
 - (a) Require the member doc in `deriveContext`; role from it only. *Default.* About 10 changed lines, one choke point for 10 handlers, closes F3 and the removed-member case.

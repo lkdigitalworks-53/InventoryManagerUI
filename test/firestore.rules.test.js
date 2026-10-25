@@ -343,3 +343,238 @@ test("R11 a forged marker attempt by a member leaves no marker behind", async ()
     });
     assert.equal(exists, false);
 });
+
+// ═══ S2f-2 (2026-10-24): access-control tier: users, tenants, members ═════════════════════════════
+// Findings F1 (any member could rewrite `members`, probe PR #157), F2 (a suspended member kept direct
+// access), plus role assignment aligned with the server and client policy (owner assigns admin/manager/
+// staff, admin assigns manager/staff, nobody assigns owner). Status is strict: only 'active' passes.
+
+const mPath = (uid) => `tenants/${TENANT}/members/${uid}`;
+const mRef = (db, uid) => doc(db, mPath(uid));
+const ROSTER_ROLES = ["owner", "admin", "manager", "staff"];
+
+async function dbWith(uid, role, status) {
+    const data = { uid, role };
+    if (status !== undefined) data.status = status;
+    await seedAsAdmin(`tenants/${TENANT}/members`, uid, data);
+    return testEnv.authenticatedContext(uid).firestore();
+}
+
+// ---- F1: members cannot be rewritten through the wildcard ----
+for (const role of ["staff", "manager"]) {
+    test(`F1 ${role}: cannot promote itself to owner or admin (setDoc and updateDoc), doc unchanged`, async () => {
+        const db = await dbAs("actor", role);
+        await assertFails(setDoc(mRef(db, "actor"), { uid: "actor", role: "owner", status: "active" }));
+        await assertFails(setDoc(mRef(db, "actor"), { uid: "actor", role: "admin", status: "active" }));
+        await assertFails(updateDoc(mRef(db, "actor"), { role: "owner" }));
+        assert.equal((await readAsAdmin(mPath("actor"))).role, role);
+    });
+
+    test(`F1 ${role}: cannot create a member doc for anyone (owner/admin accomplice), cannot edit or delete others`, async () => {
+        const db = await dbAs("actor", role);
+        await seedAsAdmin(`tenants/${TENANT}/members`, "victim", { uid: "victim", role: "staff", status: "active" });
+        await assertFails(setDoc(mRef(db, "accomplice"), { uid: "accomplice", role: "owner", status: "active" }));
+        await assertFails(setDoc(mRef(db, "accomplice"), { uid: "accomplice", role: "staff", status: "active" }));
+        await assertFails(updateDoc(mRef(db, "victim"), { role: "owner" }));
+        await assertFails(updateDoc(mRef(db, "victim"), { status: "suspended" }));
+        await assertFails(deleteDoc(mRef(db, "victim")));
+        await assertFails(deleteDoc(mRef(db, MEMBER_UID)));
+        assert.equal(await readAsAdmin(mPath("accomplice")), null);
+        assert.equal((await readAsAdmin(mPath("victim"))).role, "staff");
+        assert.equal((await readAsAdmin(mPath(MEMBER_UID))).role, "owner");
+    });
+}
+
+test("F1 admin: cannot make itself owner, cannot touch the owner doc, cannot create admin or owner members", async () => {
+    const db = await dbAs("adm", "admin");
+    await assertFails(updateDoc(mRef(db, "adm"), { role: "owner" }));
+    await assertFails(updateDoc(mRef(db, MEMBER_UID), { role: "staff" }));
+    await assertFails(deleteDoc(mRef(db, MEMBER_UID)));
+    await assertFails(setDoc(mRef(db, "n1"), { uid: "n1", role: "owner", status: "active" }));
+    await assertFails(setDoc(mRef(db, "n2"), { uid: "n2", role: "admin", status: "active" }));
+    assert.equal((await readAsAdmin(mPath("adm"))).role, "admin");
+    assert.equal((await readAsAdmin(mPath(MEMBER_UID))).role, "owner");
+});
+
+test("F1 the wildcard no longer opens members: reads of the roster still work for an active member", async () => {
+    const db = await dbAs("st", "staff");
+    await assertSucceeds(getDoc(mRef(db, MEMBER_UID)));
+    await assertSucceeds(getDocs(collection(db, `tenants/${TENANT}/members`)));
+});
+
+// ---- role assignment matrix (policy: Skill 128, canAssignRole) ----
+test("assign: owner creates and updates admin / manager / staff", async () => {
+    for (const role of ["admin", "manager", "staff"]) {
+        await assertSucceeds(setDoc(mRef(memberDb(), "n-" + role), { uid: "n-" + role, role, status: "active" }));
+    }
+    await assertSucceeds(setDoc(mRef(memberDb(), "n-staff"), { uid: "n-staff", role: "manager", status: "active" }));
+    await assertSucceeds(setDoc(mRef(memberDb(), "n-staff"), { uid: "n-staff", role: "manager", status: "suspended" }));
+    await assertSucceeds(setDoc(mRef(memberDb(), "n-staff"), { uid: "n-staff", role: "manager", status: "active" }));
+});
+
+test("assign: nobody assigns owner (create or update), even the owner; unknown roles and statuses fail", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/members`, "s1", { uid: "s1", role: "staff", status: "active" });
+    await assertFails(setDoc(mRef(memberDb(), "n-owner"), { uid: "n-owner", role: "owner", status: "active" }));
+    await assertFails(setDoc(mRef(memberDb(), "s1"), { uid: "s1", role: "owner", status: "active" }));
+    await assertFails(setDoc(mRef(memberDb(), "s1"), { uid: "s1", role: "superuser", status: "active" }));
+    await assertFails(setDoc(mRef(memberDb(), "s1"), { uid: "s1", role: "staff", status: "banned" }));
+    await assertFails(setDoc(mRef(memberDb(), "s1"), { uid: "s1", role: "staff", status: "inactive" }));
+    await assertFails(setDoc(mRef(memberDb(), "s1"), { uid: "s1", role: "staff" }));
+    await assertFails(setDoc(mRef(memberDb(), "n-bad"), { uid: "someone-else", role: "staff", status: "active" }));
+    assert.equal((await readAsAdmin(mPath("s1"))).role, "staff");
+});
+
+test("assign: an existing owner doc is never modified, not even by the owner itself", async () => {
+    await assertFails(setDoc(mRef(memberDb(), MEMBER_UID), { uid: MEMBER_UID, role: "staff", status: "active" }));
+    await assertFails(updateDoc(mRef(memberDb(), MEMBER_UID), { status: "suspended" }));
+    assert.deepEqual(await readAsAdmin(mPath(MEMBER_UID)), { uid: MEMBER_UID, role: "owner", status: "active" });
+});
+
+test("assign: admin manages manager/staff (create, promote to manager, suspend) but not admin or owner roles", async () => {
+    const db = await dbAs("adm", "admin");
+    await assertSucceeds(setDoc(mRef(db, "m1"), { uid: "m1", role: "staff", status: "active" }));
+    await assertSucceeds(setDoc(mRef(db, "m1"), { uid: "m1", role: "manager", status: "active" }));
+    await assertSucceeds(setDoc(mRef(db, "m1"), { uid: "m1", role: "manager", status: "suspended" }));
+    await assertFails(setDoc(mRef(db, "m1"), { uid: "m1", role: "admin", status: "active" }));
+});
+
+// ---- delete / leave ----
+test("delete: owner and admin remove staff; nobody removes the owner; nobody removes themselves via the admin path", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/members`, "s1", { uid: "s1", role: "staff", status: "active" });
+    await seedAsAdmin(`tenants/${TENANT}/members`, "s2", { uid: "s2", role: "staff", status: "active" });
+    const adm = await dbAs("adm", "admin");
+    await assertSucceeds(deleteDoc(mRef(adm, "s1")));
+    await assertSucceeds(deleteDoc(mRef(memberDb(), "s2")));
+    await assertFails(deleteDoc(mRef(adm, MEMBER_UID)));
+    await assertFails(deleteDoc(mRef(memberDb(), MEMBER_UID)));
+});
+
+test("leave: a staff member (active or suspended) can remove its own membership, the owner cannot", async () => {
+    const st = await dbWith("st1", "staff", "active");
+    await assertSucceeds(deleteDoc(mRef(st, "st1")));
+    const su = await dbWith("st2", "staff", "suspended");
+    await assertSucceeds(deleteDoc(mRef(su, "st2")));
+    await assertFails(deleteDoc(mRef(memberDb(), MEMBER_UID)));
+});
+
+// ---- F2: suspended / status-less members lose direct access, strictly ----
+for (const status of ["suspended", undefined]) {
+    const label = status === undefined ? "missing status" : status;
+    for (const role of ROSTER_ROLES) {
+        test(`F2 ${role} with ${label}: no read, no write on tenant data, roster or tenant doc`, async () => {
+            const db = await dbWith("sx", role, status);
+            await seedAsAdmin(`tenants/${TENANT}/inventory`, "PRD-1", { name: "W" });
+            await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 1 });
+            await assertFails(getDoc(doc(db, `tenants/${TENANT}/inventory/PRD-1`)));
+            await assertFails(getDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`)));
+            await assertFails(setDoc(doc(db, `tenants/${TENANT}/orders/ORD-2`), { total: 2 }));
+            await assertFails(setDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`), { total: 99 }));
+            await assertFails(deleteDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`)));
+            await assertFails(getDoc(doc(db, `tenants/${TENANT}`)));
+            await assertFails(getDoc(mRef(db, MEMBER_UID)));
+            await assertFails(getDocs(collection(db, `tenants/${TENANT}/members`)));
+            assert.equal((await readAsAdmin(`tenants/${TENANT}/orders/ORD-1`)).total, 1);
+        });
+    }
+
+    test(`F2 ${label}: a locked-out admin or owner keeps no management power`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/members`, "s1", { uid: "s1", role: "staff", status: "active" });
+        for (const role of ["admin", "owner"]) {
+            const db = await dbWith("sx", role, status);
+            await assertFails(setDoc(mRef(db, "s1"), { uid: "s1", role: "manager", status: "active" }));
+            await assertFails(setDoc(mRef(db, "n1"), { uid: "n1", role: "staff", status: "active" }));
+            await assertFails(deleteDoc(mRef(db, "s1")));
+            await assertFails(updateDoc(doc(db, `tenants/${TENANT}`), { name: "Hijacked" }));
+        }
+        assert.equal((await readAsAdmin(mPath("s1"))).role, "staff");
+        assert.equal((await readAsAdmin(`tenants/${TENANT}`)).name, "Test Co");
+    });
+
+    test(`F2 ${label}: the member can still read ITS OWN member doc (the app learns why it is locked out), nobody else's`, async () => {
+        const db = await dbWith("sx", "staff", status);
+        await assertSucceeds(getDoc(mRef(db, "sx")));
+        await assertFails(getDoc(mRef(db, MEMBER_UID)));
+    });
+}
+
+test("F2 control: re-activating the member restores access at once (no caching across requests)", async () => {
+    const su = await dbWith("sx", "staff", "suspended");
+    await assertFails(getDoc(doc(su, `tenants/${TENANT}/orders/ORD-1`)));
+    await assertSucceeds(setDoc(mRef(memberDb(), "sx"), { uid: "sx", role: "staff", status: "active" }));
+    const st = testEnv.authenticatedContext("sx").firestore();
+    await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 1 });
+    await assertSucceeds(getDoc(doc(st, `tenants/${TENANT}/orders/ORD-1`)));
+});
+
+test("F2 outsider and anonymous: the self-read exception does not apply to other uids or to signed-out callers", async () => {
+    await assertFails(getDoc(mRef(outsiderDb(), MEMBER_UID)));
+    await assertFails(getDoc(mRef(anonDb(), MEMBER_UID)));
+    await assertFails(setDoc(mRef(anonDb(), "x"), { uid: "x", role: "owner", status: "active" }));
+});
+
+// ---- bootstrap: tenant + own owner membership ----
+test("bootstrap: a new user creates a tenant and its own owner membership, once", async () => {
+    const db = testEnv.authenticatedContext("newbie").firestore();
+    await assertSucceeds(setDoc(doc(db, "tenants/t-new"), { ownerId: "newbie", name: "New Co" }));
+    await assertSucceeds(setDoc(doc(db, "tenants/t-new/members/newbie"), { uid: "newbie", role: "owner", status: "active" }));
+    await assertSucceeds(getDoc(doc(db, "tenants/t-new")));
+    // already exists now: a second bootstrap is an update of an owner doc, which is denied
+    await assertFails(setDoc(doc(db, "tenants/t-new/members/newbie"), { uid: "newbie", role: "owner", status: "active" }));
+});
+
+test("bootstrap negatives: someone else's tenant, role admin, status suspended, other uid, tenant ownerId mismatch", async () => {
+    const db = testEnv.authenticatedContext("newbie").firestore();
+    await assertFails(setDoc(doc(db, `tenants/${TENANT}/members/newbie`), { uid: "newbie", role: "owner", status: "active" }));
+    await assertSucceeds(setDoc(doc(db, "tenants/t-new"), { ownerId: "newbie", name: "New Co" }));
+    await assertFails(setDoc(doc(db, "tenants/t-new/members/newbie"), { uid: "newbie", role: "admin", status: "active" }));
+    await assertFails(setDoc(doc(db, "tenants/t-new/members/newbie"), { uid: "newbie", role: "owner", status: "suspended" }));
+    await assertFails(setDoc(doc(db, "tenants/t-new/members/other"), { uid: "other", role: "owner", status: "active" }));
+    await assertFails(setDoc(doc(db, "tenants/t-bad"), { ownerId: "someone-else", name: "X" }));
+    await assertFails(setDoc(doc(db, "tenants/t-bad2"), { ownerId: "newbie", name: 5 }));
+});
+
+// ---- tenants ----
+test("tenants: active members read, outsiders and anon do not; only an active owner updates or deletes", async () => {
+    await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}`)));
+    await assertFails(getDoc(doc(outsiderDb(), `tenants/${TENANT}`)));
+    await assertFails(getDoc(doc(anonDb(), `tenants/${TENANT}`)));
+    const adm = await dbAs("adm", "admin");
+    const st = await dbAs("st", "staff");
+    await assertFails(updateDoc(doc(adm, `tenants/${TENANT}`), { name: "A" }));
+    await assertFails(updateDoc(doc(st, `tenants/${TENANT}`), { name: "S" }));
+    await assertFails(deleteDoc(doc(st, `tenants/${TENANT}`)));
+    await assertSucceeds(updateDoc(doc(memberDb(), `tenants/${TENANT}`), { name: "Renamed" }));
+});
+
+// ---- users ----
+// PIN: a user can write ANY field of its own users doc (onboarding and leave-workspace need it). That is why
+// the gateway must never read tenant/role from it (functions/index.js deriveContext, S2f-1, Skill 128).
+test("users: own doc readable and writable (pinned, incl. tenantId/role); other users' docs and deletes are denied", async () => {
+    const db = testEnv.authenticatedContext("u1").firestore();
+    await assertSucceeds(setDoc(doc(db, "users/u1"), { uid: "u1", tenantId: TENANT, role: "owner" }));
+    await assertSucceeds(getDoc(doc(db, "users/u1")));
+    await assertFails(getDoc(doc(db, "users/u2")));
+    await assertFails(setDoc(doc(db, "users/u2"), { uid: "u2" }));
+    await assertFails(deleteDoc(doc(db, "users/u1")));
+    await assertFails(getDoc(doc(anonDb(), "users/u1")));
+    await assertFails(setDoc(doc(anonDb(), "users/u1"), { uid: "u1" }));
+    // the pinned claim buys nothing in Firestore: a users doc naming TENANT does not make u1 a member
+    await assertFails(getDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`)));
+});
+
+// ---- cross-cutting monkey: every role x status x collection x op never reaches members or tenant doc ----
+test("monkey: no non-owner member in any status can change the owner doc or the tenant doc, in any order", async () => {
+    const attackers = [];
+    for (const role of ["admin", "manager", "staff"]) for (const status of ["active", "suspended", undefined]) attackers.push([role, status]);
+    for (let pass = 0; pass < 2; pass++) {
+        for (const [role, status] of attackers.slice().reverse()) {
+            const db = await dbWith("mk", role, status);
+            await setDoc(mRef(db, MEMBER_UID), { uid: MEMBER_UID, role: "staff", status: "active" }).then(() => assert.fail("owner doc overwritten"), () => {});
+            await deleteDoc(mRef(db, MEMBER_UID)).then(() => assert.fail("owner doc deleted"), () => {});
+            await updateDoc(doc(db, `tenants/${TENANT}`), { ownerId: "mk" }).then(() => assert.fail("tenant hijacked"), () => {});
+            await setDoc(mRef(db, "mk"), { uid: "mk", role: "owner", status: "active" }).then(() => assert.fail("self-promoted"), () => {});
+        }
+    }
+    assert.deepEqual(await readAsAdmin(mPath(MEMBER_UID)), { uid: MEMBER_UID, role: "owner", status: "active" });
+    assert.equal((await readAsAdmin(`tenants/${TENANT}`)).ownerId, MEMBER_UID);
+});
