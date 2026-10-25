@@ -116,8 +116,8 @@ edit/delete; client forges identity & time). The fix:
   and `removed_staff` are still client-writable at the rules level; locking them is a separate follow-up.
   **Authorization holes (PR #156 sweep, probe PR #157, S2f design `specs/2026-10-24-s2f-authz-hardening-design.md`, Skills 127-128):**
   (F3, fixed in S2f-1, PR-A) the gateway used to trust the self-writable `users/{uid}` doc: tenant, role and
-  status now come from the member doc only (`deriveContext`: no member doc, empty role, non-active
-  status or unsafe tenant id = 403 `no-tenant-context`); (F1) the fallback also matches `members/{uid}`,
+  status now come from the member doc only (`deriveContext`: no member doc, a role outside owner/admin/manager/staff, non-active
+  status or unsafe tenant id = 403 `no-tenant-context`, each refusal logged with a reason code); (F1) the fallback also matches `members/{uid}`,
   so any member, even `staff`, can write a membership doc; (F2) `isMember` ignores `status`. F1 and F2
   are fixed in S2f-2 (PR-B, stacked on A) once merged and deployed. `staff`/`removed_staff` role gates
   are still bypassable by a direct write until S2f-4. Do not describe the rules as sound or the
