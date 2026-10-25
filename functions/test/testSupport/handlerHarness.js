@@ -130,7 +130,14 @@ function installMocks() {
         // test that forgets to configure one fails loudly, not silently.
         getUserByEmail: async () => { throw Object.assign(new Error("no such user"), { code: "auth/user-not-found" }); },
         getUser: async () => { throw Object.assign(new Error("no such user"), { code: "auth/user-not-found" }); },
-        createUser: async () => { throw new Error("mockState.createUser not configured for this test"); }
+        createUser: async () => { throw new Error("mockState.createUser not configured for this test"); },
+        // S2f-1 (2026-10-25): deriveContext logs one structured warning per refusal. The stub below
+        // captures them here ([{msg, ...fields}]) so tests can assert the reason and the CI log stays
+        // quiet. Tests that care clear it themselves (mockState.logWarnings.length = 0).
+        logWarnings: []
+    };
+    require(resolveFromFunctionsRoot("firebase-functions/logger")).warn = (msg, data) => {
+        mockState.logWarnings.push(Object.assign({ msg: msg }, data));
     };
 
     function _writeDoc(docPath, data, opts) {

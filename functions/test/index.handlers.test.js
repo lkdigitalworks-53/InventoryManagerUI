@@ -722,13 +722,15 @@ test("F28 id reuse: product recreated before the sweep runs -> marker dropped, p
     assert.equal(Object.keys(mockState.storageFiles).length, 3, "new product's photos intact");
 });
 
-test("BC-H01 F30 replaced: staff / manager / empty role inventory delete -> 403 role-not-allowed (Q-BC-8), zero writes, nothing swept", async () => {
+test("BC-H01 F30 replaced: staff / manager / empty / unknown role inventory delete -> 403 (role-not-allowed, or no-tenant-context for a role outside the allowed set, S2f-1), zero writes, nothing swept", async () => {
     for (const role of ["staff", "manager", "", "OWNER", "viewer"]) {
         cascadeReset({ role: role });
         const res = mockRes();
         await handlers.recordMutation(mockReq({ body: deleteBody() }), res);
         assert.equal(res.statusCode, 403, JSON.stringify(role));
-        assert.equal(jsonBody(res).error, "role-not-allowed");
+        // a valid lower role reaches the delete gate; a role that is not owner/admin/manager/staff is
+        // refused earlier, at the identity step
+        assert.equal(jsonBody(res).error, (role === "staff" || role === "manager") ? "role-not-allowed" : "no-tenant-context", JSON.stringify(role));
         assert.equal(mockState.applyMutationCalls.length, 0, "gate runs before any transaction");
         assert.equal(mockState.batchCommits.length, 0);
         assert.equal(mockState.storageDeleteFilesCalls.length, 0);
