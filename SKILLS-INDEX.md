@@ -137,3 +137,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 127: Firestore rules: two `match` blocks on one path are OR-ed, so audit every explicit block against the wildcard, and prove a suspected hole with a probe PR
 - 128: Authorization must come from the one record the user cannot write: gateway trusts the member doc, never `users/{uid}`
 - 129: Access-control collections: name them in the wildcard's guard, make "member" mean active member, and write the missing tests before touching the rules
+- 130: Make the wildcard's write guard an allow-list; a blacklist of locked names fails open every time a name is forgotten

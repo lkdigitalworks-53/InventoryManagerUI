@@ -28,6 +28,8 @@ See the design doc section "Slices". Not started: S2f-3 (client wording), S2f-4 
 - NEXT: push PR-A fix, stack PR-B (rules F1/F2 + canAssignRole + strict status + tests), then S2f-4+5 (allow-list wildcard, locks 4 collections), S2f-3 (client wording), S2f-6 counters.
 - [x] PR-B built (branch `fix/2026-10-24-s2f2-members-rules`, stacked on #159): rules + 31 tests (CI-only; predicted Rules 83, total 3087), test plan, Skill 129. Pushed; CI result pending.
 - NEXT: read CI on PR-B and fix; then S2f-4+5 (PR-C: allow-list wildcard, locks staff/removed_staff/orders/suppliers), S2f-3 client wording (PR-D), S2f-6 counters.
+- [x] PR-C built (branch `fix/2026-10-24-s2f4-default-deny-writes`, stacked on #160): allow-list wildcard, locks orders/staff/suppliers/removed_staff; rules tests re-pointed (-9 +18, predicted Rules 92, total 3096), test plan, Skill 130. Pushed; CI pending.
+- NEXT: read CI on #159/#160/PR-C and fix; S2f-3 client wording (PR-D); S2f-6 server-side counters (PR-E, big: needs design).
 
 ## Update 2026-10-25 (session 3, restored: the #160 rebase kept the branch version of this file and dropped it)
 Decisions from Taher on the PR #159 sweep: Q1 role allow-list yes (gateway in #159; rules mirror = this sweep, D9), Q2 `provisionMember` owner-demotion / un-suspend = its own slice (NOT started, see `specs/2026-10-25-pr159-final-sweep.md` finding 6), Q3 log now / distinct client codes later (S2f-3), Q4 remove redundant lines, Q5 delete dead `photoAccessDenied` check. #159 merged as `fe1409f`. Not done on purpose: finding 9 (plain-text 500 on a Firestore blip), 11 (tenant-id charset), 12 (client role default, S2f-3).

@@ -4450,3 +4450,14 @@ Rules:
 9. An unresolved policy question gets a test labelled `PIN <decision id>` that records today's behaviour, so changing it is a deliberate edit (admin vs peer admin was pinned, then decided as a hierarchy, D-1 b: the pin became a matrix).
 10. One policy, three enforcers, one table: when the rules, the gateway and the client helper (`MemberPolicy.js`) decide the same question, put the SAME actor x target table in the rules test and in the QML helper test, and name each enforcer in the comment of the other two. Judge hierarchy by the target's CURRENT role (`resource.data.role`), not only by the role being written, or an admin can still demote or remove a peer.
 11. Count from CI, never from remembered baselines: the first plan said 3087 (stale Functions 811 and E2E 89); CI said 3118.
+
+## Skill 130: Make the wildcard's write guard an allow-list; a blacklist of locked names fails open every time a name is forgotten
+
+S2f-4 + S2f-5 (2026-10-24). The wildcard `match /{collection}/{docId}` carried a growing `!isX(collection)` chain. Firestore grants a request if ANY matching rule allows it, so each explicit block next to the wildcard was a latent hole: S2c needed the inventory name added, F1 was `members`, and `orders`, `staff`, `suppliers`, `removed_staff` stayed writable, bypassing the gateway's role gates and audit rows.
+Rules:
+1. Write access on the wildcard is `isMember && isClientWritableCollection(name)`, an allow-list of the few collections the client writes (`activity_log`, `config`, `counters`, `_migrations`). Anything else, including names nobody has invented, is denied. Reads stay generic (active member, except server-only names).
+2. Build the list from an audit, not memory: grep every `FirebaseService.put/patch/putMany/remove/mintCounter*` and every store that writes, and check the e2e suites. Record the audit in the test plan; the first device pass with logcat open on `PERMISSION_DENIED` is the proof, and a missed writer fails loudly (dev only).
+3. Adding a name to the allow-list is a security decision: a test and a design-doc line.
+4. Pins that documented the old behaviour ("look-alike names are still working collections", "orders are writable") flip to deny in the same PR; delete tests whose premise is gone instead of weakening them.
+5. In a test loop, do not name the loop variable `collection` when the body needs the firestore `collection()` function.
+6. The remaining client-writable name that is a security smell is `counters` (a member can burn ids). Locking it needs server-side id minting (S2f-6).

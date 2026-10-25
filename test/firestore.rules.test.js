@@ -131,29 +131,77 @@ for (const collection of LEDGER_COLLECTIONS) {
     });
 }
 
-// ── Working tier: member can read/write, non-member/anon cannot ────────────
+// ── Client-writable tier (S2f-4 + S2f-5): the wildcard's WRITE allow-list ──────────────────────────
+// Only activity_log, config, counters and _migrations are written by the client. Everything else is
+// written by the gateway Cloud Functions (Admin SDK). Reads stay open to active members.
 
-// inventory is NOT here any more: since S2c it is gateway-write-only (own section below).
-const WORKING_COLLECTIONS = ["orders", "staff", "suppliers"];
+const CLIENT_WRITABLE_COLLECTIONS = ["activity_log", "config", "counters", "_migrations"];
 
-for (const collection of WORKING_COLLECTIONS) {
-    test(`working/${collection}: a member can create, update, and delete`, async () => {
+for (const collection of CLIENT_WRITABLE_COLLECTIONS) {
+    test(`client-writable/${collection}: an active member can create, update, and delete`, async () => {
         await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/${collection}/doc1`), { name: "x" }));
         await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/${collection}/doc1`), { name: "y" }));
         await assertSucceeds(deleteDoc(doc(memberDb(), `tenants/${TENANT}/${collection}/doc1`)));
     });
 
-    test(`working/${collection}: a non-member can neither read nor write`, async () => {
+    test(`client-writable/${collection}: a non-member, an anonymous caller and a suspended member can neither read nor write`, async () => {
         await seedAsAdmin(`tenants/${TENANT}/${collection}`, "doc1", { name: "x" });
-
-        await assertFails(getDoc(doc(outsiderDb(), `tenants/${TENANT}/${collection}/doc1`)));
-        await assertFails(setDoc(doc(outsiderDb(), `tenants/${TENANT}/${collection}/doc1`), { tampered: true }));
-    });
-
-    test(`working/${collection}: an unauthenticated request cannot write`, async () => {
-        await assertFails(setDoc(doc(anonDb(), `tenants/${TENANT}/${collection}/doc1`), { x: 1 }));
+        const suspended = await dbWith("sx", "owner", "suspended");
+        for (const db of [outsiderDb(), anonDb(), suspended]) {
+            await assertFails(getDoc(doc(db, `tenants/${TENANT}/${collection}/doc1`)));
+            await assertFails(setDoc(doc(db, `tenants/${TENANT}/${collection}/doc1`), { tampered: true }));
+            await assertFails(deleteDoc(doc(db, `tenants/${TENANT}/${collection}/doc1`)));
+        }
+        assert.equal((await readAsAdmin(`tenants/${TENANT}/${collection}/doc1`)).name, "x");
     });
 }
+
+// Gateway-write-only since S4/S2f: members READ for display, nobody writes directly. A direct write would
+// skip the gateway's role gates (staff delete, removed_staff tombstone) and the audit_log row.
+const GATEWAY_ONLY_COLLECTIONS = ["orders", "staff", "suppliers", "removed_staff"];
+
+for (const coll of GATEWAY_ONLY_COLLECTIONS) {
+    test(`gateway-only/${coll}: every role reads, no role writes, stored data untouched`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/${coll}`, "doc1", { name: "x", total: 1 });
+        for (const role of ROSTER_ROLES) {
+            const db = role === "owner" ? memberDb() : await dbAs("r-" + role, role);
+            await assertSucceeds(getDoc(doc(db, `tenants/${TENANT}/${coll}/doc1`)));
+            await assertSucceeds(getDocs(collection(db, `tenants/${TENANT}/${coll}`)));
+            await assertFails(setDoc(doc(db, `tenants/${TENANT}/${coll}/doc1`), { name: "tampered" }));
+            await assertFails(setDoc(doc(db, `tenants/${TENANT}/${coll}/doc2`), { name: "new" }));
+            await assertFails(updateDoc(doc(db, `tenants/${TENANT}/${coll}/doc1`), { name: "tampered" }));
+            await assertFails(deleteDoc(doc(db, `tenants/${TENANT}/${coll}/doc1`)));
+        }
+        assert.deepEqual(await readAsAdmin(`tenants/${TENANT}/${coll}/doc1`), { name: "x", total: 1 });
+        assert.equal(await readAsAdmin(`tenants/${TENANT}/${coll}/doc2`), null);
+    });
+
+    test(`gateway-only/${coll}: a non-member can neither read nor write it, an anonymous caller neither`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/${coll}`, "doc1", { name: "x" });
+        await assertFails(getDoc(doc(outsiderDb(), `tenants/${TENANT}/${coll}/doc1`)));
+        await assertFails(setDoc(doc(outsiderDb(), `tenants/${TENANT}/${coll}/doc1`), { tampered: true }));
+        await assertFails(getDoc(doc(anonDb(), `tenants/${TENANT}/${coll}/doc1`)));
+        await assertFails(setDoc(doc(anonDb(), `tenants/${TENANT}/${coll}/doc1`), { x: 1 }));
+    });
+}
+
+// Default deny: a name nobody has invented yet, a look-alike of an allowed name, a case variant and a
+// sub-collection are all denied for writes. This is the point of S2f-5 (the blacklist failed open).
+test("default deny: unknown, look-alike and case-variant collection names are not writable, sub-collections neither", async () => {
+    const names = ["brand_new_collection", "settings", "sales", "inventory_archive", "Inventory", "Orders", "Config", "config2", "activity_log_x", "counters-2", "_migrations2", "ACTIVITY_LOG", "members2", "audit_log2"];
+    for (const name of names) {
+        await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/${name}/x1`), { name: "x" }));
+    }
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/orders/ORD-1/notes/n1`), { text: "x" }));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/config/categories/sub/s1`), { text: "x" }));
+});
+
+// The allow-list names are exact. Reads of an unknown name stay open to active members (unchanged).
+test("default deny: reads of an ordinary unknown collection still work for an active member, not for a non-member", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/brand_new_collection`, "x1", { name: "x" });
+    await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/brand_new_collection/x1`)));
+    await assertFails(getDoc(doc(outsiderDb(), `tenants/${TENANT}/brand_new_collection/x1`)));
+});
 
 // ── Gateway-write-only tier: inventory (P1 S2c) ────────────────────────────
 // Members read products for display; only the gateway Cloud Functions (Admin SDK, rules skipped) write
@@ -210,10 +258,9 @@ test("S2c inventory: a sub-collection under a product is denied by default (no r
     await assertFails(setDoc(doc(memberDb(), `${INVENTORY}/PRD-1/notes/n1`), { text: "x" }));
 });
 
-test("S2c PIN: the lock is by exact collection name; a look-alike name is still an ordinary working collection", async () => {
-    // Documents the limit instead of leaving it to be assumed. Nothing in the app uses these names.
-    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/inventory_archive/x1`), { name: "x" }));
-    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/Inventory/x1`), { name: "x" }));
+test("S2c PIN (flipped by S2f-5): look-alike names of inventory are denied too, the allow-list is default deny", async () => {
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/inventory_archive/x1`), { name: "x" }));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/Inventory/x1`), { name: "x" }));
 });
 
 // ── The ledger guard on the generic wildcard specifically ──────────────────
@@ -316,14 +363,13 @@ test("R07 pending_cleanup: a signed-in non-member (other tenant) is denied", asy
     await assertFails(deleteDoc(doc(outsiderDb(), `tenants/${TENANT}/pending_cleanup/PRD-1`)));
 });
 
-test("R08 PIN: ordinary wildcard collections are unchanged (a member still reads inventory, and still reads and writes orders)", async () => {
-    // Re-pointed in S2c: inventory writes are now denied (see the S2c tests above), so the write half of this pin
-    // moved to orders. The read half still proves the wildcard did not get too broad an exclusion.
+test("R08 PIN (re-pointed in S2f-5): a member still reads inventory and orders, writes activity_log, and cannot write orders", async () => {
     await seedAsAdmin(`tenants/${TENANT}/inventory`, "PRD-1", { name: "Widget" });
     await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 10 });
     await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/inventory/PRD-1`)));
     await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/orders/ORD-1`)));
-    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/orders/ORD-2`), { total: 20 }));
+    await assertSucceeds(setDoc(doc(memberDb(), `tenants/${TENANT}/activity_log/A-1`), { text: "x" }));
+    await assertFails(setDoc(doc(memberDb(), `tenants/${TENANT}/orders/ORD-2`), { total: 20 }));
 });
 
 test("R09 PIN: locks and audit_log are still denied to members", async () => {

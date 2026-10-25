@@ -122,7 +122,7 @@ edit/delete; client forges identity & time). The fix:
   so any member, even `staff`, can write a membership doc; (F2) `isMember` ignores `status`. F1 and F2
   are fixed in S2f-2 (PR-B, stacked on A; `members` is excluded from the wildcard, `isMember` = active
   member with a valid role, `canAssignRole` mirrors the policy, member `uid` and tenant `ownerId` are immutable on update, an admin cannot change or remove a peer admin: `canManageTarget` in the rules, `qml/helper/MemberPolicy.js` in the client) once merged and deployed. `staff`/`removed_staff` role gates
-  are still bypassable by a direct write until S2f-4. Do not describe the rules as sound or the
+  are no longer directly writable after S2f-4/5 (PR-C: the wildcard write guard is an allow-list, `isClientWritableCollection`; any new client-written collection must be added there with a test). Do not describe the rules as sound or the
   owner/admin gates as enforced until S2f-2 and S2f-4 are deployed.
 
 `TransactionStore` / `StockBatchStore` become **read models** over the ledger tier (not writers).
