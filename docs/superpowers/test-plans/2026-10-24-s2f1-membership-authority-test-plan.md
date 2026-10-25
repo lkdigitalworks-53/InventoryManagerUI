@@ -43,14 +43,14 @@
 Not changed in this slice (PR-B). Expected CI: Rules **52** unchanged.
 
 ## 4. E2E (emulator, CI job `e2e-tests`, `recordOperation.e2e.test.js`)
-**Observed on CI: 89 (baseline was 86, not 93)** (93 + 3). Written, NOT run in the sandbox (no emulator).
+**Observed on CI: 96** (baseline 93 + 3 new). Written, NOT run in the sandbox (no emulator).
 | ID | Test | Proves |
 |---|---|---|
 | E1 | seeded staff user, member doc deleted, users doc left -> `recordMutation` 403 `no-tenant-context`, no audit row | removed member, real Firestore reads |
 | E2 | member status `suspended` -> `recordMutation`, `acquireLock`, `recordOperation` all 403, no audit rows | F2 end to end, three endpoints |
 | E3 | restored member doc -> same user is not refused as a non-member | the seed user is restored (`finally`), later suites unaffected |
 The member doc is always restored in a `finally`; cleanup also removes `authE2E-*` audit and order docs.
-**CI total: 3055 on the first push; 3056 with the +1 functions test added after** (QML 2104, Functions 811, Rules 52, E2E 89 = 3055). A different number means a test was not picked up.
+**CI total observed: 3087** (QML 2104, Functions 835, Rules 52, E2E 96). A different number means a test was not picked up.
 
 ## 5. Deploy and rollback (Taher)
 1. Merge when CI is green. 2. `firebase deploy --only functions` (dev). 3. Rollback: revert the PR, same command. No data migration.
