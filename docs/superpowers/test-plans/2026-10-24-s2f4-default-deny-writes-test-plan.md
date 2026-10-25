@@ -10,7 +10,7 @@
 Ledger, server-only, inventory lock, pending_cleanup pins (52 rules tests) + PR #160's 31.
 
 ## 2. Rules tests (CI only)
-Predicted Rules **92** = 83 (after #160) - 9 (the old "working tier is open" tests, now wrong) + 18 new. Total predicted: 2104 + 811 + 92 + 89 = **3096**.
+Predicted Rules **92** = 83 (after #160) - 9 (the old "working tier is open" tests, now wrong) + 18 new. Total predicted: 2104 + 811 + 92 + 96 = **3103**.
 | Group | Tests | Proves |
 |---|---|---|
 | client-writable x 4 names | 8 | active member creates/updates/deletes; non-member, anonymous and suspended owner cannot read or write, data untouched |
@@ -20,7 +20,7 @@ Predicted Rules **92** = 83 (after #160) - 9 (the old "working tier is open" tes
 Happy path: client-writable. Negative: gateway-only, non-member, suspended. Edge: names (case, suffix, unicode-free look-alikes), sub-collections. Multi-scenario: 4 roles x 4 collections x 4 ops. Monkey: PR #160's last test plus the 14-name sweep.
 
 ## 3. Functions / E2E
-No change: Functions 811, E2E 89. The gateway writes with the Admin SDK, which skips rules.
+No change: Functions 811, E2E 96. The gateway writes with the Admin SDK, which skips rules.
 
 ## Deploy and rollback (Taher)
 `firebase deploy --only firestore:rules`. Rollback: revert, redeploy. No data migration.
