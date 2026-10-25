@@ -12,9 +12,13 @@ Taher device-testing PR #159 (rules deployed): owner flows fine, "login as staff
 - [x] 1. Read project notes, cloned, found PR #159 branch `fix/2026-10-24-s2f1-membership-authority`.
 - [x] 2. Traced cause: `Gateway.provisioningAvailable = false` (`Gateway.qml` L41) gates BOTH Add Staff login and Invite by UID via `Gateway.provisionMember`. Server `provisionMember` exists (`functions/index.js` ~L710). Flag never flipped.
 - [x] 3. Doc check: only scattered "dormant until login provisioning ships" lines; no entry of its own -> NOT documented. Added `KNOWN-ISSUES.md` entry + `AGENTS.md` status row + this file.
-- [ ] 4. Brainstorm design with Taher (one question at a time). NO CODE until approved.
-- [ ] 5. Design doc `specs/2026-10-25-multi-role-login-design.md`, then plan, then test plan.
+- [x] 4. Taher (2026-10-25): wants the FULL design brainstorm captured, notes in KNOWN-ISSUES/AGENTS, and will pick up AFTER compliance features. So no live grilling this session.
+- [x] 5. DRAFT design written `specs/2026-10-25-multi-role-login-design.md` (D1-D8 open, slices L1-L6, matrix X1-X13, questions Q0-Q7). Brainstorming gate NOT passed: no design approved, no plan, no code.
+- [ ] 5b. (resume) Answer Q0-Q7 one at a time, revise design, get approval, then `writing-plans`.
 - [ ] 6. Implement in slices, each its own branch/PR.
 
 ## Open questions (asked one at a time, answers recorded below)
-(none answered yet)
+None. All of Q0-Q7 live in the design doc section 8.
+
+## Resume
+Check PR #159/#160/#161 merged first (design assumes member-doc authority). Then Q0 (verify refresh behaviour in code), then Q1...

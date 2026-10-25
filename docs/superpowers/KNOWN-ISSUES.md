@@ -15,7 +15,9 @@ broken, where, why it was deferred, and leads for a future fix.
 
 **Dev-only workaround to device-test PR #159 today (no code change):** in the Firebase console create an Auth user (email + password), then write `users/{uid}` = `{tenantId, role}` and `tenants/{tenantId}/members/{uid}` = `{role, status: "active", displayName, email}`. Email sign-in already exists (`AuthService.signInWithEmail`). Do NOT do this on a project that holds real data.
 
-**Scope when built (design pending, see `specs/2026-10-25-multi-role-login-CHECKPOINT.md`):** (1) turn provisioning on and prove it with the emulator + a device run, (2) role-aware first screen / sign-in for non-owner roles, (3) a multi-actor test matrix across tenant users (staff sale, owner stock update, staff status change to leave / suspended, removal while signed in), with realtime/sync behaviour on the second device.
+**Status 2026-10-25:** full DRAFT design written, decisions OPEN, to be picked up AFTER the compliance features: `specs/2026-10-25-multi-role-login-design.md` (decisions D1-D8, slices L1-L6, cross-actor matrix X1-X13, resume questions Q0-Q7). Do NOT enable provisioning on prod before slice L2 (server RBAC): see the "no server-side role check" entry below, which becomes exploitable once a real non-owner can log in.
+
+**Scope when built (see the design above and `specs/2026-10-25-multi-role-login-CHECKPOINT.md`):** (1) turn provisioning on and prove it with the emulator + a device run, (2) role-aware first screen / sign-in for non-owner roles, (3) a multi-actor test matrix across tenant users (staff sale, owner stock update, staff status change to leave / suspended, removal while signed in), with realtime/sync behaviour on the second device.
 
 ---
 
@@ -235,6 +237,8 @@ returns 200 for a `manager` role, by design of the current (unfixed) behavior.
 Staff delete got a narrow, targeted fix (2026-09-21) because it carries real security weight — it
 can cascade-revoke a teammate's Firebase Auth login via `AuthService.cleanupStaffAuthDocs`. Every
 other entity/action is unfixed.
+
+**Update 2026-10-25:** becomes exploitable the day non-owner login ships (`Gateway.provisioningAvailable` flip). Planned as slice L2 of `specs/2026-10-25-multi-role-login-design.md` (D3), a hard prerequisite for real staff accounts on prod.
 
 **Decision:** not built — a general authorization matrix (deriving the allowed actions per role,
 server-side, for every entity) is a bigger design than any single delete-UI ticket should absorb
