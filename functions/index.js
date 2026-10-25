@@ -127,8 +127,8 @@ async function deriveContext(db, uid) {
     // the member doc alone. Before S2f-1 a missing member doc fell back to users/{uid}.role, so any
     // signed-in account could write {tenantId: <victim>, role: "owner"} to its own doc and act as
     // that tenant's owner, and a removed member whose users doc survived kept full gateway access.
-    // The status check mirrors firestore.rules' isActiveMember(): a missing status counts as
-    // active (legacy docs), any other value than "active" is refused.
+    // The status check mirrors firestore.rules' isMember(): only status "active" passes. There is no
+    // legacy tolerance (S2f-6: no production data exists, every member doc is created with a status).
     const userSnap = await db.doc("users/" + uid).get();
     if (!userSnap.exists) return null;
     const user = userSnap.data() || {};
@@ -141,11 +141,12 @@ async function deriveContext(db, uid) {
         "tenants/" + tenantId + "/members/" + uid).get();
     if (!memberSnap.exists) return null;
     const member = memberSnap.data() || {};
-    if (member.status && member.status !== "active") return null;
+    if (member.status !== "active") return null;
     const role = member.role || "";
-    // Display only (audit rows also carry actorUid): the member's own name wins, the users doc name
-    // is a cosmetic fallback.
-    const actorName = member.name || user.name || user.displayName || "";
+    // Display only (audit rows also carry actorUid). Taken from the member doc, which only an
+    // owner/admin or the server can write: the self-writable users doc must not name the actor in an
+    // audit row (S2f-6, was finding F8).
+    const actorName = member.displayName || member.name || "";
     // Tenant display name — preferred from the tenant doc, falling back to
     // whatever the user doc cached. Used when stamping new member/user docs.
     let tenantName = user.tenantName || "";

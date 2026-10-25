@@ -13,10 +13,16 @@ PR #156 sweep proved F1 (any member can rewrite `members`) and F2 (suspended mem
 - [x] 1. Read memory + sweep report, cloned, cut branch, archived previous checkpoint.
 - [x] 2. Probe F3 in the handler harness (`/tmp` only): users doc `{tenantId: victim, role: owner}`, no member doc -> 200. Red.
 - [x] 3. Design doc `specs/2026-10-24-s2f-authz-hardening-design.md` (8 findings, principles, slices S2f-1..6, decisions D1-D7, open questions).
-- [x] 4. PR-A built: `deriveContext` fixed (member doc required, role from member only, status gate, safe tenant id). `functions/test/index.handlers.membershipAuthority.test.js` 88 tests; `npm test` 810/810 (722 + 88). Fix-revert: 40 red. 4 mutants all caught. +3 emulator e2e in `recordOperation.e2e.test.js` (not run, no emulator). Test plan, Skill 128, SKILLS-INDEX (129 skills), AGENTS.md, README, test-plans index done. Script tests 109/109. Predicted CI total 3062 (QML 2104, Functions 810, Rules 52, E2E 96).
+- [x] 4. PR-A built: `deriveContext` fixed (member doc required, role from member only, status gate, safe tenant id). `functions/test/index.handlers.membershipAuthority.test.js` 88 tests; `npm test` 810/810 (722 + 88). Fix-revert: 40 red. 4 mutants all caught. +3 emulator e2e in `recordOperation.e2e.test.js` (not run, no emulator). Test plan, Skill 128, SKILLS-INDEX (129 skills), AGENTS.md, README, test-plans index done. Script tests 109/109. Predicted CI total 3062 (QML 2104, Functions 810, Rules 52, E2E 89 = 3055).
 - [ ] 5. Push PR-A.
 - [ ] 6. PR-B (stacked): rules F1 + F2 + tests for users/tenants/members blocks, test plan, docs.
 - [ ] 7. Push PR-B.
 
 ## NEXT
 See the design doc section "Slices". Not started: S2f-3 (client wording), S2f-4 (lock orders/staff/suppliers/removed_staff), S2f-5 (allow-list wildcard).
+
+## Update 2026-10-25 (session 2)
+- Taher: dev members all `active`, no legacy/prod data, do ALL S2f slices before moving on.
+- PR #159 CI: QML/Functions/Rules green; E2E 1 failure = my test used a recordOperation requestId without the `completeOrder:` prefix (400 before auth). Fixed. Real E2E baseline was 86, not 93.
+- PR-A now strict: member.status must equal `active`; actorName from member doc (F8). Functions 811/811.
+- NEXT: push PR-A fix, stack PR-B (rules F1/F2 + canAssignRole + strict status + tests), then S2f-4+5 (allow-list wildcard, locks 4 collections), S2f-3 (client wording), S2f-6 counters.

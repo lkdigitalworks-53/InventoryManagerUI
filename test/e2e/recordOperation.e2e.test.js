@@ -92,7 +92,7 @@ test.after(async () => {
     for (const p of createdPaths) await db.doc(p).delete();
     const audits = await db.collection(T + "audit_log").listDocuments();
     for (const ref of audits) {
-        if (ref.id.startsWith("completeOrder:opE2E") || ref.id.startsWith("bcE2E-") || ref.id.startsWith("cascade~bcE2E-") || ref.id.startsWith("authE2E-")) await ref.delete();
+        if (ref.id.startsWith("completeOrder:opE2E") || ref.id.startsWith("completeOrder:authE2E") || ref.id.startsWith("bcE2E-") || ref.id.startsWith("cascade~bcE2E-") || ref.id.startsWith("authE2E-")) await ref.delete();
     }
     for (const ref of await db.collection(T + "stock_batches").listDocuments()) if (ref.id.startsWith("bcE2E-")) await ref.delete();
     for (const ref of await db.collection(T + "pending_cleanup").listDocuments()) if (ref.id.startsWith("bcE2E-")) await ref.delete();
@@ -417,10 +417,10 @@ test("S2f-1 suspended member -> 403 on recordMutation, acquireLock and recordOpe
         const l = await post({ entity: "order", entityId: "authE2E-susp", requestId: "authE2E-lock" }, fixture.secondIdToken, "/acquireLock");
         assert.equal(l.status, 403, JSON.stringify(l.body));
         assert.equal(l.body.error, "no-tenant-context");
-        const o = await post({ requestId: "authE2E-op", opType: "completeOrder", clientTimestamp: 1, ops: [stockDelta("authE2E-p", -1)] }, fixture.secondIdToken);
+        const o = await post({ requestId: "completeOrder:authE2E-op:1", opType: "completeOrder", clientTimestamp: 1, ops: [stockDelta("authE2E-p", -1)] }, fixture.secondIdToken);
         assert.equal(o.status, 403, JSON.stringify(o.body));
         assert.equal(await read("audit_log/authE2E-susp"), null);
-        assert.equal(await read("audit_log/authE2E-op"), null);
+        assert.equal(await read("audit_log/completeOrder:authE2E-op:1"), null);
     });
 });
 

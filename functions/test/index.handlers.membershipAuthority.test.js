@@ -39,6 +39,8 @@ const HANDLERS = [
     { name: "deleteProductPhoto", body: { env: "test", productId: "PRD-1", photoId: "photo-1", requestId: "del-1" } }
 ];
 
+const LOCK = HANDLERS.find((h) => h.name === "acquireLock");
+
 function reset() {
     mockState.docs = {};
     mockState.setCalls = [];
@@ -117,12 +119,35 @@ for (const h of HANDLERS) {
     });
 }
 
-test("F2 legacy: a member doc WITHOUT a status field is treated as active (mirrors firestore.rules isActiveMember)", async () => {
+test("S2f-6 a member doc WITHOUT a status field is refused (no legacy tolerance; every member doc is created with a status)", async () => {
+    for (const h of HANDLERS) {
+        reset();
+        seedHappyPathAuth(mockState, { uid: UID, tenantId: HOME, role: "owner" });
+        delete mockState.docs["tenants/" + HOME + "/members/" + UID].status;
+        await assertRefused(h, "missing status");
+    }
+});
+
+test("S2f-6 actorName comes from the member doc (displayName, then name); the self-writable users doc never names the actor", async () => {
     reset();
     seedHappyPathAuth(mockState, { uid: UID, tenantId: HOME, role: "owner" });
-    delete mockState.docs["tenants/" + HOME + "/members/" + UID].status;
-    const res = await call(HANDLERS[0]);
-    assert.equal(res.statusCode, 200);
+    mockState.docs["users/" + UID].name = "Mallory";
+    const memberPath = "tenants/" + HOME + "/members/" + UID;
+    const last = () => mockState.acquireLockCalls[mockState.acquireLockCalls.length - 1];
+    mockState.acquireLockCalls = [];
+
+    mockState.docs[memberPath] = { role: "owner", status: "active", displayName: "Real Owner" };
+    let res = await call(LOCK);
+    assert.notEqual(res.statusCode, 403);
+    assert.equal(last().actorName, "Real Owner");
+
+    mockState.docs[memberPath] = { role: "owner", status: "active", name: "Member Name" };
+    await call(LOCK);
+    assert.equal(last().actorName, "Member Name");
+
+    mockState.docs[memberPath] = { role: "owner", status: "active" };
+    await call(LOCK);
+    assert.equal(last().actorName, "", "no member name -> empty, never the users doc name");
 });
 
 test("F3b role comes from the member doc only: users.role owner + member.role staff -> product delete 403 role-not-allowed", async () => {

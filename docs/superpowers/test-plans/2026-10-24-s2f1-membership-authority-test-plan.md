@@ -1,7 +1,7 @@
 # Test plan — S2f-1: the gateway trusts the member doc, never `users/{uid}`
 
 **Branch:** `fix/2026-10-24-s2f1-membership-authority` off `main` @ `b749a80` (PR #156 merged). **Design:** `specs/2026-10-24-s2f-authz-hardening-design.md` (findings F2, F3, decisions D1-D5).
-**Covers:** `functions/index.js` `deriveContext` (the single choke point for 10 endpoints), `functions/test/index.handlers.membershipAuthority.test.js` (new, 88 tests), `test/e2e/recordOperation.e2e.test.js` (+3 emulator tests), docs.
+**Covers:** `functions/index.js` `deriveContext` (the single choke point for 10 endpoints), `functions/test/index.handlers.membershipAuthority.test.js` (new, 89 tests), `test/e2e/recordOperation.e2e.test.js` (+3 emulator tests), docs.
 **Why:** `users/{uid}` is writable by its own user, field by field. The old `deriveContext` kept `users.role` when no member doc existed, so a signed-in account could write `{tenantId: <victim>, role: "owner"}` to its own doc and act as that tenant's owner. A removed member whose users doc survives (the client cannot delete another user's users doc) also kept full access. Status `suspended` was ignored on that path.
 **Server only. No rules, QML or client change.** Takes effect when Taher runs `firebase deploy --only functions`.
 
@@ -15,7 +15,7 @@
 | Regression | the 722 above | all still green after the change (verified, section 2) |
 
 ## 2. Unit / functional (genuinely run in the session)
-`cd functions && npm ci && npm test` -> **810 / 810** (722 + 88). New file, per handler (10 handlers: `recordMutation`, `recordDelta`, `recordMutationsBatch`, `recordOperation`, `acquireLock`, `releaseLock`, `provisionMember`, `computeAnalysis`, `uploadProductPhoto`, `deleteProductPhoto`) x 8 scenarios = 80, plus 8 cross-handler tests.
+`cd functions && npm ci && npm test` -> **811 / 811** (722 + 89). New file, per handler (10 handlers: `recordMutation`, `recordDelta`, `recordMutationsBatch`, `recordOperation`, `acquireLock`, `releaseLock`, `provisionMember`, `computeAnalysis`, `uploadProductPhoto`, `deleteProductPhoto`) x 8 scenarios = 80, plus 8 cross-handler tests.
 
 | ID | Scenario (each x 10 handlers) | Proves |
 |---|---|---|
@@ -25,7 +25,8 @@
 | A4-A6 | member status `suspended`, `inactive`, `banned` -> 403 | F2 on the server, any non-active value |
 | A7 | unsafe tenant id (`a/b`, `..`, `tenant/staff/S1`, `a b`, `x\y`) -> 403, zero writes | D4 |
 | A8 (control) | real active owner is NOT refused as `no-tenant-context` | bodies are valid, the table is not vacuous |
-| X1 | member doc without `status` -> still 200 | D2 legacy tolerance, mirrors the rules' `isActiveMember` |
+| X1 | member doc without `status` -> 403 on all 10 handlers | D2 closed: strict, no legacy tolerance (dev data confirmed all `active`) |
+| X9 | actorName from member doc (displayName, name), never the users doc | F8 closed (S2f-6) |
 | X2 | users.role owner + member.role staff -> product delete 403 `role-not-allowed` | role from the member doc only |
 | X3 | same, staff delete | same |
 | X4 | users.role owner + member.role staff -> `provisionMember` 403 `not-authorized` | cannot mint accounts |
@@ -42,14 +43,14 @@
 Not changed in this slice (PR-B). Expected CI: Rules **52** unchanged.
 
 ## 4. E2E (emulator, CI job `e2e-tests`, `recordOperation.e2e.test.js`)
-**Predicted: 96** (93 + 3). Written, NOT run in the sandbox (no emulator).
+**Observed on CI: 89 (baseline was 86, not 93)** (93 + 3). Written, NOT run in the sandbox (no emulator).
 | ID | Test | Proves |
 |---|---|---|
 | E1 | seeded staff user, member doc deleted, users doc left -> `recordMutation` 403 `no-tenant-context`, no audit row | removed member, real Firestore reads |
 | E2 | member status `suspended` -> `recordMutation`, `acquireLock`, `recordOperation` all 403, no audit rows | F2 end to end, three endpoints |
 | E3 | restored member doc -> same user is not refused as a non-member | the seed user is restored (`finally`), later suites unaffected |
 The member doc is always restored in a `finally`; cleanup also removes `authE2E-*` audit and order docs.
-**Expected CI total: 3062** (QML 2104, Functions 810, Rules 52, E2E 96). A different number means a test was not picked up.
+**CI total: 3055 on the first push; 3056 with the +1 functions test added after** (QML 2104, Functions 811, Rules 52, E2E 89 = 3055). A different number means a test was not picked up.
 
 ## 5. Deploy and rollback (Taher)
 1. Merge when CI is green. 2. `firebase deploy --only functions` (dev). 3. Rollback: revert the PR, same command. No data migration.
@@ -84,7 +85,7 @@ All unticked; nothing here has been run.
 ### Edge cases
 | # | Action | Expected |
 |---|---|---|
-| E1 | Console: remove the `status` field from the staff member doc. Device B: edit a product | Works (legacy tolerance, D2). Put `status: "active"` back. |
+| E1 | Console: remove the `status` field from the staff member doc. Device B: edit a product | Refused (strict, D2). Put `status: "active"` back. |
 | E2 | Device A: change the staff role admin -> staff, then Device B tries a product delete | Refused with the role message on the very next request. |
 | E3 | A user who belongs to two tenants switches tenant | Works; each tenant uses its own member doc. |
 | E4 | Offline write on B, then A suspends B, then B goes online | The queued write is refused on drain and parks; it does not run. |
