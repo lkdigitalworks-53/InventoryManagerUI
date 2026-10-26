@@ -9,7 +9,7 @@
 Rules 52 (ledger, server-only, inventory lock, pending_cleanup pins). **Nothing** covered `users`, `tenants` or `members`.
 
 ## 2. Rules tests (CI only, no emulator in the sandbox: the emulator jar host is unreachable)
-Rules **83** observed on `853ac8f` (52 + 31). CI total observed there: QML 2104 + Functions 835 + Rules 83 + E2E 96 = **3118**. (The first version of this plan said 3087, built from stale Functions 811 / E2E 89 baselines.) The review sweep (section 2b) adds 9: predicted Rules **92**, total **3127**.
+Rules **83** observed on `853ac8f` (52 + 31). CI total observed there: QML 2104 + Functions 835 + Rules 83 + E2E 96 = **3118**. (The first version of this plan said 3087, built from stale Functions 811 / E2E 89 baselines.) The review sweep (section 2b) adds 11 rules tests and 6 QML tests: predicted Rules **94**, QML **2110**, total **3135**.
 | Group | Tests | Proves |
 |---|---|---|
 | F1 | 6 (staff and manager x2, admin, roster read) | no member can promote itself, create, edit or delete a membership; owner doc untouched; roster still readable |
@@ -48,25 +48,27 @@ Unchanged: **96** (observed). The seeded owner and staff identities have `status
 | N3 | Admin picks `admin` in a member's role box | The box offers all four roles; the app refuses with the toast "Role assignment is not allowed" and writes nothing (client `_canAssignRole`). Forced through a REST call: 403 from the rules. |
 | N4 | Owner picks `owner` in a member's role box | Same toast, nothing written. Forced through a REST call: 403 from the rules. |
 | N5 | (REST/console probe) with a staff ID token, PATCH `members/<own uid>` role=owner | 403. |
-| N6 | Admin taps Suspend on another admin | Toast "Failed to update status" (rules deny: the write carries role `admin`); nothing changes. The button is still shown (client gating is S2f-3 / decision D-1). |
+| N6 | Admin opens Team Members and looks at another admin's row and the owner's row | Role box is greyed (read-only), no Suspend and no Remove button. The same applies to the admin's own row and to the owner's row for everyone. Forced through a REST call: 403. (D-1 b; client `MemberPolicy.canManageMember`.) |
 | N7 | Suspended member (any role) reopens the app | Data lists stay empty / error toasts. The role boxes and menus of their old role may still show, because the client does not read `status` yet (S2f-3). Nothing they tap can write. |
 
 ### Edge
 | # | Action | Expected |
 |---|---|---|
-| E4 | Admin changes another admin to staff, then removes the other admin (pinned today, decision D-1) | Both succeed. If Taher picks the hierarchy rule, this row flips to refused. |
+| E4 | Owner demotes an admin to staff, suspends and removes an admin; admin tries the same on a peer admin through REST | Owner: all work. Admin: 403 on every attempt. |
 | E1 | Re-activate the suspended user, they reopen the app | Access back with no reinstall. |
 | E2 | Remove the member document in the console while they are signed in | Their next load fails, gateway writes refused (PR #159). |
 | E3 | Rename the workspace as owner / as admin | Owner works, admin refused (unchanged). |
 
-## 2b. Review sweep additions (2026-10-26, stacked PR on this branch)
+## 2b. Review sweep additions (2026-10-26, stacked PR #164 on this branch)
 | Group | Tests | Proves |
 |---|---|---|
 | R1 | 6 (5 bad-role docs + 1 control) | an ACTIVE member whose role is `viewer`, empty, `Owner`, a number or missing has no read, write or management power (own doc still readable); every valid role still works. Mirrors `deriveContext` `VALID_ROLES` (Q1 of the PR #159 sweep). |
 | R2 | 1 | member `uid` field cannot be rewritten on update (owner and admin), same-uid update works |
 | R3 | 1 | tenant `ownerId` immutable: no second owner through the bootstrap rule, no takeover by an outsider; rename still works |
-| PIN D-1 | 1 | admin demotes and removes a peer admin, cannot suspend one (current behaviour, pinned on purpose) |
-Happy: R1 control, R2/R3 controls. Negative: R1, R2, R3. Edge: role types (number, empty, missing), same-value ownerId update. Multi-scenario: R1 loop, R2 owner and admin. Monkey: the existing monkey test still covers the tenant doc.
+| D-1 (b) | 3 | decided: hierarchy. Matrix actor x target (owner/admin x owner/admin/manager/staff) for update and delete; admin cannot demote/remove a peer admin or itself, owner can; admin can still leave |
+| QML `tst_MemberPolicy` | 6 | `MemberPolicy.canAssignRole` and `canManageMember`: 4x4 tables identical to the rules matrix, peer admin and owner refused, unknown actor/target fail closed |
+The UI gating (`MemberManagementDialog` hides Suspend/Remove and greys the role box for rows the actor cannot manage; `AuthService` refuses early with "You cannot change a member with this role") has no widget test: the dialog needs the full Felgo context; the logic lives in the tested helper and the rules are the boundary. Device steps N6 and E4 cover the UI.
+Happy: controls in R1/R2/R3, owner rows of the matrix. Negative: R1-R3, admin rows of the matrix. Edge: role types, same-value ownerId, self-leave of an admin. Multi-scenario: matrix, R1 loop. Monkey: the existing monkey test covers the tenant doc.
 
 ### Affected areas / Regression
 Team Members dialogs, login (`_loadMembership` reads the own member doc), workspace bootstrap, leave workspace, every store load (all go through `isMember`).

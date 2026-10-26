@@ -55,6 +55,14 @@ service cloud.firestore {
         || (isAdmin(tenantId) && role in ['manager', 'staff']);
     }
 
+    // Whose member doc an actor may change or remove, judged by the TARGET's CURRENT role (decision D-1 b):
+    // an owner acts on any non-owner, an admin only on manager/staff (never a peer admin, never the owner).
+    // Mirrors MemberPolicy.canManageMember (qml/helper/MemberPolicy.js).
+    function canManageTarget(tenantId, targetRole) {
+      return (isOwner(tenantId) && targetRole in ['admin', 'manager', 'staff'])
+        || (isAdmin(tenantId) && targetRole in ['manager', 'staff']);
+    }
+
     function roleIsValid(role) {
       return role in ['owner', 'admin', 'manager', 'staff'];
     }
@@ -155,16 +163,16 @@ service cloud.firestore {
                       && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerId == request.auth.uid
                       && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
 
-        // An existing owner doc is never modified; the new role must be one the actor may assign.
+        // An existing owner doc is never modified; the new role must be one the actor may assign, and the
+        // target's CURRENT role one the actor may manage (an admin cannot touch a peer admin, D-1 b).
         // The uid field must keep matching the doc id (create pins it; the Team Members roster targets
         // actions by this field, so a rewritten uid would aim Remove/Suspend at another member).
         allow update: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
                       && request.resource.data.uid == uid
-                      && resource.data.role != 'owner';
+                      && canManageTarget(tenantId, resource.data.role);
 
-        allow delete: if isOwnerOrAdmin(tenantId)
-                      && resource.data.role != 'owner'
+        allow delete: if canManageTarget(tenantId, resource.data.role)
                       && uid != request.auth.uid;
 
         // VOLUNTARY LEAVE: a member may remove their OWN membership (also when suspended). The owner

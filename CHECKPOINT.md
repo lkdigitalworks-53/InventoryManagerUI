@@ -37,6 +37,7 @@ Decisions from Taher on the PR #159 sweep: Q1 role allow-list yes (gateway in #1
 - [x] 2. CI on `853ac8f`: 3118/3118 (QML 2104, Functions 835, Rules 83, E2E 96). The plan/PR body said 3087 (stale baselines): fixed in docs.
 - [x] 3. Read: `firestore.rules` (full), `storage.rules` (no membership use, no drift), `deriveContext`, server/client `canAssignRole`, every client writer of `members/` and `tenants/`, the 31 tests, docs.
 - [x] 4. Fixes (stacked branch): R1 `isMember` also requires `roleIsValid(role)` (Q1 mirror, revives dead `roleIsValid`); R2 member `uid` immutable on update; R3 tenant `ownerId` immutable on update (closed a second-owner path via the bootstrap rule); +9 rules tests (CI only; predicted Rules 92, total 3127); `dbAs` now delegates to `dbWith`; test plan N3/N4 wording fixed (UI DOES offer all roles), N6/N7/E4 + section 2b added; Skill 129 rules 7-10; AGENTS line; design D8 edges, D9, D10, open D-1.
-- [ ] 5. CI on the review PR (rules emulator is the oracle; if red, the new helper line in `isMember` or an R-test is the suspect).
-- [ ] 6. Taher decides D-1 (peer-admin hierarchy), then merge review PR into #160's branch, then #160.
+- [x] 5. CI on #164 head `a892be8`: all green (R1-R3 + docs).
+- [x] 6. Taher decided D-1 = option (b), hierarchy. Done in the same PR: rules `canManageTarget` (update + delete), `qml/helper/MemberPolicy.js`, `AuthService` refusals, `MemberManagementDialog` gating (`actorRole`, `Main.qml`), `tst_MemberPolicy` (6), D-1 matrix rules tests (3 replace the pin; total +11), test plan N6/E4 + 2b, Skill 129 rules 9/11, design D-1 decided, AGENTS.
+- [ ] 7. CI on the D-1 commit (predicted Rules 94, QML 2110, total 3135), then merge #164 into #160's branch, then #160.
 - NEXT after merge: S2f-4+5 (PR #161, restack on #160), S2f-3 client wording (client ignores `status` today: `_loadMembership` applies the role of a suspended member), provisionMember owner-demotion slice.

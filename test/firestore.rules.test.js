@@ -644,15 +644,41 @@ test("R3 tenant ownerId is immutable: owner cannot hand it to another uid, that 
     await assertSucceeds(updateDoc(doc(memberDb(), `tenants/${TENANT}`), { ownerId: MEMBER_UID, name: "Same Owner" }));
 });
 
-// ---- PIN (decision D-1, open): an admin and a peer admin ----
-// Today an admin can demote or remove another admin but cannot suspend one (the update carries role 'admin',
-// which canAssignRole refuses for an admin). The three lines below pin that on purpose: if Taher picks a
-// hierarchy rule (admin acts only on manager/staff targets), flip them in the same change.
-test("PIN D-1: admin demotes and removes a peer admin, but cannot suspend one", async () => {
-    await seedAsAdmin(`tenants/${TENANT}/members`, "peer1", { uid: "peer1", role: "admin", status: "active" });
-    await seedAsAdmin(`tenants/${TENANT}/members`, "peer2", { uid: "peer2", role: "admin", status: "active" });
+// ---- D-1 (b), decided 2026-10-26: hierarchy. An owner manages any non-owner; an admin manages only
+// manager/staff targets, judged by the target's CURRENT role. Same 4x4 table as tests/tst_MemberPolicy.qml.
+test("D-1 hierarchy matrix: update (suspend) and delete, actor x target role", async () => {
+    const cases = [
+        ["owner", "admin", true], ["owner", "manager", true], ["owner", "staff", true], ["owner", "owner", false],
+        ["admin", "admin", false], ["admin", "manager", true], ["admin", "staff", true], ["admin", "owner", false],
+    ];
     const adm = await dbAs("adm", "admin");
-    await assertFails(setDoc(mRef(adm, "peer1"), { uid: "peer1", role: "admin", status: "suspended" }));
-    await assertSucceeds(setDoc(mRef(adm, "peer1"), { uid: "peer1", role: "staff", status: "active" }));
-    await assertSucceeds(deleteDoc(mRef(adm, "peer2")));
+    for (const [actor, target, allowed] of cases) {
+        const db = actor === "owner" ? memberDb() : adm;
+        const check = allowed ? assertSucceeds : assertFails;
+        const uSeed = target === "owner" ? MEMBER_UID : `u-${actor}-${target}`;
+        if (target !== "owner") await seedAsAdmin(`tenants/${TENANT}/members`, uSeed, { uid: uSeed, role: target, status: "active" });
+        await check(setDoc(mRef(db, uSeed), { uid: uSeed, role: target, status: "suspended" }));
+        const dSeed = target === "owner" ? MEMBER_UID : `d-${actor}-${target}`;
+        if (target !== "owner") await seedAsAdmin(`tenants/${TENANT}/members`, dSeed, { uid: dSeed, role: target, status: "active" });
+        await check(deleteDoc(mRef(db, dSeed)));
+        const left = await readAsAdmin(mPath(dSeed));
+        assert.equal(left === null, allowed, `${actor} deletes ${target}`);
+    }
+    assert.equal((await readAsAdmin(mPath(MEMBER_UID))).role, "owner");
+});
+
+test("D-1 an admin cannot demote or remove a peer admin, nor demote itself; the owner can demote an admin", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/members`, "peer", { uid: "peer", role: "admin", status: "active" });
+    const adm = await dbAs("adm", "admin");
+    await assertFails(setDoc(mRef(adm, "peer"), { uid: "peer", role: "staff", status: "active" }));
+    await assertFails(deleteDoc(mRef(adm, "peer")));
+    await assertFails(setDoc(mRef(adm, "adm"), { uid: "adm", role: "staff", status: "active" }));
+    assert.equal((await readAsAdmin(mPath("peer"))).role, "admin");
+    assert.equal((await readAsAdmin(mPath("adm"))).role, "admin");
+    await assertSucceeds(setDoc(mRef(memberDb(), "peer"), { uid: "peer", role: "staff", status: "active" }));
+});
+
+test("D-1 an admin can still leave on its own (voluntary leave is not management)", async () => {
+    const adm = await dbAs("adm", "admin");
+    await assertSucceeds(deleteDoc(mRef(adm, "adm")));
 });

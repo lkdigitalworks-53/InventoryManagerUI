@@ -732,6 +732,7 @@ App {
     MemberManagementDialog {
         id: memberMgmtDlg
         members: AuthService.tenantMembers
+        actorRole: AuthStore.role
         busy: AuthService.membersBusy
         errorMessage: memberErrorMessage
         onRefreshRequested: AuthService.loadTenantMembers()
