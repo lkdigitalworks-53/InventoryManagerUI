@@ -5,6 +5,21 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Membership changes leave no `audit_log` row — FOUND 2026-10-26 (S2f-7 design), NOT FIXED
+
+**Where:** `provisionMember` (Admin SDK) and the Team Members role/status edits (client writes to `tenants/{t}/members/{uid}` under `canManageTarget`). Neither writes to `audit_log`, and the gateway's `ENTITY_COLLECTIONS` map (`functions/lib/gatewayLogic.js`) has no `member` entity.
+**Why it matters:** an auditor asking "who made Ravi an admin, and when" cannot be answered from the ledger; the member doc only holds the latest state plus `invitedBy` / `joinedAt` for the first add. It is an access-control record, adjacent to Rule 11(g) rather than part of the books of account.
+**Leads:** a server-side membership endpoint (the client cannot be trusted to write its own audit row), or a Firestore trigger on `members/**` that appends the row. Decide before staff login goes live (multi-role slice L1). Do not forget the rules-path edits, they bypass any function.
+
+---
+
+## `provisionMember` turns an unknown role string into `staff` — FOUND 2026-10-26, NOT FIXED
+
+**Where:** `functions/index.js` `provisionMember` (`if ([...].indexOf(role) < 0) role = "staff"`), pinned by `index.handlers.remaining.test.js` ("an unrecognized role string silently falls back to staff"). Also: `body.uid` is not run through `isSafePathSegment` (not exploitable: `getUser` must succeed first).
+**Why deferred:** behaviour change on a dormant endpoint (`Gateway.provisioningAvailable` is `false`); safer answer is 400 `invalid-role`. Asked in the S2f-7 design, Q2.
+
+---
+
 ## Owner can mint a second owner via `ownerId` — RESOLVED (fixed by #164 / R3, found in the PR #161 review 2026-10-25)
 
 The `tenants/{t}` update rule now requires `request.resource.data.ownerId == resource.data.ownerId`, so the bootstrap rule can no longer be fed a new owner id. Covered by the rules test "R3 tenant ownerId is immutable". Fix option B (bootstrap only when the tenant has no members) was not needed and is not planned. Kept as a pointer; delete when convenient.

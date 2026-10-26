@@ -4492,3 +4492,18 @@ Rules:
 1. In a decision table, mark an option "rejected" only with the person's own sentence and date. Otherwise write "not chosen yet" and ask.
 2. A trade-off against an option must be checked in code before it is written. Here `mintCounterValue` already uses an `updateTime` precondition, so a server transaction on the same doc serialises safely.
 3. When the person's direction is a principle ("everything atomic, one transaction id"), design for the principle and name its limits (import chunking), instead of narrowing it to the first convenient case.
+
+---
+
+## Skill 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide
+
+S2f-7 (2026-10-26). `provisionMember` merged into any existing member doc, so an admin could demote the owner or a peer admin, un-suspend a member and overwrite `joinedAt` / `invitedBy`, while `firestore.rules` and the client both forbid exactly that. The Admin SDK does not run the rules.
+Rules:
+1. List every function that writes with the Admin SDK and, for each, ask: which rule would have refused this write if it came from a client? If the answer is "one that protects the doc I am merging into", the function needs the same guard, or must not touch existing docs at all. Prefer the second: one definition of the policy (the rules), not a copy in the function.
+2. Make creation endpoints ADD-ONLY. Read the target doc inside the transaction first, decide with a pure function (`functions/lib/memberProvisionLogic.js`), and write only on `create`. Reading inside the transaction is what stops two concurrent calls from both creating.
+3. Keep the exact repeat idempotent: same role, member already active = 200 with no write. A client that retries after a lost response must not see a failure for a success, and the retry must not overwrite `joinedAt` / `invitedBy`.
+4. One public code (`member-exists`, 409); the reason goes to the log with actor, target and a capped tenant id. Run the caller's own gates (token, tenant, caller role, `canAssignRole`) BEFORE looking at the target, so a 409 versus 403 cannot be used to probe who is a member.
+5. Normalise inputs before comparing (an unknown role string becomes `staff`); compare the normalised value, or an unknown role bypasses the "same role" check.
+6. Pin the structure, not only the behaviour: a test that `index.js` has exactly one writer of member docs and that it sits after the decision. A second `set` on the member doc added later would silently skip the guard.
+7. Test with an independent oracle: a 2 x 13 x 3 matrix written from the policy sentence, not from the function's branches, plus a seeded monkey whose invariant is "an existing doc never changes". An equivalent mutant (dropping the `owner` check only changes the log reason, because the endpoint can never request `owner`) is named in the test plan rather than hidden.
+8. A dormant feature is the cheapest time to fix it: `Gateway.provisioningAvailable` is still `false`, so this closed the hole before any client could reach it.

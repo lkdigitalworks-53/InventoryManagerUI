@@ -141,3 +141,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 131: Rebase a stacked PR with --onto the parent's new tip, and recount tests from CI, never from the plan
 - 133: Before designing on a shared server file, list the open PRs that edit it
 - 134: Never record an option as "rejected" unless the person rejected it, and quote their words
+- 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide
