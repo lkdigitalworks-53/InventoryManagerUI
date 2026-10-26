@@ -35,12 +35,16 @@ service cloud.firestore {
       return memberDoc(tenantId, uid).data.status == 'active';
     }
 
-    // "Member" means ACTIVE member everywhere in this file (S2f-2). Before, it was exists() only, so a
-    // suspended member kept direct Firestore read and write access that the gateway already refused.
+    // "Member" means ACTIVE member WITH A VALID ROLE everywhere in this file (S2f-2). Before, it was
+    // exists() only, so a suspended member kept direct Firestore read and write access that the gateway
+    // already refused. The role test mirrors deriveContext's VALID_ROLES (functions/index.js): a member doc
+    // whose role is "", "viewer", "Owner", a number or missing must not pass in one enforcer and fail in
+    // the other. Adding a role means editing roleIsValid AND VALID_ROLES (Skill 128 rule 10).
     function isMember(tenantId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid))
-        && memberStatusIsActive(tenantId, request.auth.uid);
+        && memberStatusIsActive(tenantId, request.auth.uid)
+        && roleIsValid(myRole(tenantId));
     }
 
     // Which roles an actor may hand out. Mirrors canAssignRole in functions/index.js and
@@ -123,7 +127,10 @@ service cloud.firestore {
                     && request.resource.data.ownerId == request.auth.uid
                     && request.resource.data.name is string;
 
-      allow update: if isOwner(tenantId);
+      // ownerId is the key the bootstrap rule below trusts: if an owner could rewrite it, the new id could
+      // create its own `owner` member doc and mint a second owner past canAssignRole. Immutable after create.
+      allow update: if isOwner(tenantId)
+                    && request.resource.data.ownerId == resource.data.ownerId;
       allow delete: if isOwner(tenantId);
 
       // tenants/{tenantId}/members/{uid}
@@ -149,8 +156,11 @@ service cloud.firestore {
                       && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
 
         // An existing owner doc is never modified; the new role must be one the actor may assign.
+        // The uid field must keep matching the doc id (create pins it; the Team Members roster targets
+        // actions by this field, so a rewritten uid would aim Remove/Suspend at another member).
         allow update: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
+                      && request.resource.data.uid == uid
                       && resource.data.role != 'owner';
 
         allow delete: if isOwnerOrAdmin(tenantId)

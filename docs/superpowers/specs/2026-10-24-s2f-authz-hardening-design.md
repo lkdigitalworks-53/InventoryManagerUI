@@ -43,7 +43,13 @@ F3 is the reason this is more than the two items the sweep named. It was found b
 
 ## 4. Decisions, trade-offs, default taken
 
-**D8. Align the members rules with the role policy (F9).** Done in S2f-2: `canAssignRole` (owner: admin/manager/staff; admin: manager/staff; nobody: owner). Cost: a client flow that assigns owner would break; none exists (`AuthService._canAssignRole` and the server both refuse it). Not done: an admin can still edit an existing peer admin's doc (to manager/staff); kept to avoid changing Team Members behaviour.
+**D8. Align the members rules with the role policy (F9).** Done in S2f-2: `canAssignRole` (owner: admin/manager/staff; admin: manager/staff; nobody: owner). Cost: a client flow that assigns owner would break; none exists (`AuthService._canAssignRole` and the server both refuse it). Not done: an admin can still edit an existing peer admin's doc (to manager/staff); kept to avoid changing Team Members behaviour. **Review sweep (2026-10-26) found the edges of that choice:** an admin can also REMOVE a peer admin (delete rule has no target-role test) yet cannot SUSPEND one (the update carries role `admin`, which `canAssignRole` refuses), so the policy is inconsistent, not just loose. Open decision **D-1** (below), pinned by a test until Taher picks.
+
+**D9. `isMember` also checks the role (review sweep).** `deriveContext` refuses a role outside owner/admin/manager/staff; the rules did not, so the two enforcers disagreed for a doc like `{status: active, role: viewer}`. Now `roleIsValid(myRole)` is part of `isMember` (no extra read, same doc). Cost: a member doc with an odd role loses access in Firestore too; none can be created through any app path.
+
+**D10. Identity fields are immutable on update.** Member `uid` (the roster targets actions by it) and tenant `ownerId` (the bootstrap rule trusts it: a rewritten `ownerId` let that uid create its own owner doc). Cost: ownership transfer, if ever built, must go through a server function; nothing writes `ownerId` after create today (`saveProfileSettings` uses a masked `patch`).
+
+**D-1 (OPEN, for Taher). Peer-admin hierarchy.** (a) Keep: admin can demote/remove admins, cannot suspend them. (b) Hierarchy: an admin acts only on targets whose CURRENT role is manager/staff, owner acts on all non-owners; one rule line on update and delete plus hiding the buttons in `MemberManagementDialog`. (c) Admins cannot touch each other at all (same as b for peers). Recommend (b): a compromised or disgruntled admin can otherwise strip every other admin, and only the owner can undo it. Cost of (b): a behaviour change for any shop with two admins, needs a device pass.
 
 **D1. How to fix F3.**
 - (a) Require the member doc in `deriveContext`; role from it only. *Default.* About 10 changed lines, one choke point for 10 handlers, closes F3 and the removed-member case.

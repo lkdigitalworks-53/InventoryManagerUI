@@ -4445,3 +4445,7 @@ Rules:
 4. Mirror the role-assignment policy in the rules (`canAssignRole`), or the rules are the loosest of the three enforcers (rules, gateway, client). Writing the test matrix is what exposed it (F9).
 5. Pin on purpose what you cannot fix: `users/{uid}` stays self-writable (onboarding, leave), with a test that says so and points at the server-side rule that makes it safe.
 6. A rules test file for a block with zero tests starts from the probe tests of the review, then the role x status x operation matrix, then one monkey test.
+7. Mirror the role allow-list in `isMember` too, not only in the gateway: `roleIsValid(myRole(tenantId))`. A rule that says "member" for a doc the gateway refuses (`viewer`, empty, `Owner`, a number, missing) is the drift Skill 128 rule 10 warns about. A helper whose last caller you just deleted (here `roleIsValid`) is the signal that a check went missing.
+8. Identity fields are immutable on update, and so is any field another rule reads as a key: member `uid` (create pinned it, update did not) and tenant `ownerId` (the bootstrap rule trusts it, so a rewrite mints a second owner past `canAssignRole`). List every field some rule reads with `get()`, then ask who can write it.
+9. An unresolved policy question gets a test labelled `PIN <decision id>` that records today's behaviour (admin vs peer admin: D-1), so changing it is a deliberate edit of that test.
+10. Count from CI, never from remembered baselines: the first plan said 3087 (stale Functions 811 and E2E 89); CI said 3118.

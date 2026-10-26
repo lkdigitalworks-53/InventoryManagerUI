@@ -102,8 +102,7 @@ async function readAsAdmin(docPath) {
 
 // A signed-in member of TENANT with the given role (beforeEach only seeds the owner).
 async function dbAs(uid, role) {
-    await seedAsAdmin(`tenants/${TENANT}/members`, uid, { uid, role, status: "active" });
-    return testEnv.authenticatedContext(uid).firestore();
+    return dbWith(uid, role, "active");
 }
 
 // ── Ledger tier: read yes (member), write always no (everyone) ─────────────
@@ -577,4 +576,83 @@ test("monkey: no non-owner member in any status can change the owner doc or the 
     }
     assert.deepEqual(await readAsAdmin(mPath(MEMBER_UID)), { uid: MEMBER_UID, role: "owner", status: "active" });
     assert.equal((await readAsAdmin(`tenants/${TENANT}`)).ownerId, MEMBER_UID);
+});
+
+// ═══ S2f-2 review sweep (2026-10-26): role validity, immutable identity fields, pinned peer-admin policy ═══
+
+async function dbWithDoc(uid, data) {
+    await seedAsAdmin(`tenants/${TENANT}/members`, uid, data);
+    return testEnv.authenticatedContext(uid).firestore();
+}
+
+// ---- R1: an ACTIVE member whose role is not one of the four is no member (mirrors deriveContext VALID_ROLES) ----
+const BAD_ROLE_DOCS = [
+    ["viewer", { role: "viewer" }],
+    ["empty", { role: "" }],
+    ["wrong case", { role: "Owner" }],
+    ["number", { role: 7 }],
+    ["missing", {}],
+];
+for (const [label, extra] of BAD_ROLE_DOCS) {
+    test(`R1 active member with role ${label}: no read, no write, no management; own doc still readable`, async () => {
+        const db = await dbWithDoc("bad", { uid: "bad", status: "active", ...extra });
+        await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 1 });
+        await seedAsAdmin(`tenants/${TENANT}/members`, "s1", { uid: "s1", role: "staff", status: "active" });
+        await assertFails(getDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`)));
+        await assertFails(setDoc(doc(db, `tenants/${TENANT}/orders/ORD-2`), { total: 2 }));
+        await assertFails(getDoc(doc(db, `tenants/${TENANT}`)));
+        await assertFails(getDoc(mRef(db, MEMBER_UID)));
+        await assertFails(setDoc(mRef(db, "s1"), { uid: "s1", role: "manager", status: "active" }));
+        await assertFails(updateDoc(doc(db, `tenants/${TENANT}`), { name: "Hijacked" }));
+        await assertSucceeds(getDoc(mRef(db, "bad")));
+        assert.equal((await readAsAdmin(mPath("s1"))).role, "staff");
+    });
+}
+
+test("R1 control: every valid role with status active still reads and writes working collections", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 1 });
+    for (const role of ROSTER_ROLES) {
+        const db = await dbWith("ok-" + role, role, "active");
+        await assertSucceeds(getDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`)));
+        await assertSucceeds(setDoc(doc(db, `tenants/${TENANT}/orders/ORD-${role}`), { total: 3 }));
+        await assertSucceeds(getDoc(doc(db, `tenants/${TENANT}`)));
+    }
+});
+
+// ---- R2: the uid field of a member doc cannot be rewritten (create already pins it) ----
+test("R2 member uid is immutable on update: owner and admin cannot aim a doc at another uid; same-uid update works", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/members`, "s1", { uid: "s1", role: "staff", status: "active" });
+    const adm = await dbAs("adm", "admin");
+    for (const db of [memberDb(), adm]) {
+        await assertFails(updateDoc(mRef(db, "s1"), { uid: MEMBER_UID }));
+        await assertFails(setDoc(mRef(db, "s1"), { uid: "adm", role: "staff", status: "active" }));
+    }
+    assert.equal((await readAsAdmin(mPath("s1"))).uid, "s1");
+    await assertSucceeds(updateDoc(mRef(memberDb(), "s1"), { uid: "s1", role: "manager" }));
+});
+
+// ---- R3: tenant ownerId is immutable, so the bootstrap rule cannot mint a second owner ----
+test("R3 tenant ownerId is immutable: owner cannot hand it to another uid, that uid cannot bootstrap an owner doc, outsiders cannot take the tenant over", async () => {
+    await assertFails(updateDoc(doc(memberDb(), `tenants/${TENANT}`), { ownerId: "accomplice" }));
+    const acc = testEnv.authenticatedContext("accomplice").firestore();
+    await assertFails(setDoc(mRef(acc, "accomplice"), { uid: "accomplice", role: "owner", status: "active" }));
+    await assertFails(setDoc(doc(outsiderDb(), `tenants/${TENANT}`), { ownerId: OUTSIDER_UID, name: "Hijack" }));
+    assert.equal((await readAsAdmin(`tenants/${TENANT}`)).ownerId, MEMBER_UID);
+    assert.equal(await readAsAdmin(mPath("accomplice")), null);
+    // controls: a rename, and an update that repeats the same ownerId, still work
+    await assertSucceeds(updateDoc(doc(memberDb(), `tenants/${TENANT}`), { name: "Renamed Again" }));
+    await assertSucceeds(updateDoc(doc(memberDb(), `tenants/${TENANT}`), { ownerId: MEMBER_UID, name: "Same Owner" }));
+});
+
+// ---- PIN (decision D-1, open): an admin and a peer admin ----
+// Today an admin can demote or remove another admin but cannot suspend one (the update carries role 'admin',
+// which canAssignRole refuses for an admin). The three lines below pin that on purpose: if Taher picks a
+// hierarchy rule (admin acts only on manager/staff targets), flip them in the same change.
+test("PIN D-1: admin demotes and removes a peer admin, but cannot suspend one", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/members`, "peer1", { uid: "peer1", role: "admin", status: "active" });
+    await seedAsAdmin(`tenants/${TENANT}/members`, "peer2", { uid: "peer2", role: "admin", status: "active" });
+    const adm = await dbAs("adm", "admin");
+    await assertFails(setDoc(mRef(adm, "peer1"), { uid: "peer1", role: "admin", status: "suspended" }));
+    await assertSucceeds(setDoc(mRef(adm, "peer1"), { uid: "peer1", role: "staff", status: "active" }));
+    await assertSucceeds(deleteDoc(mRef(adm, "peer2")));
 });
