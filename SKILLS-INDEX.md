@@ -139,5 +139,5 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 129: Access-control collections: name them in the wildcard's guard, make "member" mean active member, and write the missing tests before touching the rules
 - 130: Make the wildcard's write guard an allow-list; a blacklist of locked names fails open every time a name is forgotten
 - 131: Rebase a stacked PR with --onto the parent's new tip, and recount tests from CI, never from the plan
-- 132: Before designing on a shared server file, list the open PRs that edit it
-- 133: Never record an option as "rejected" unless the person rejected it, and quote their words
+- 133: Before designing on a shared server file, list the open PRs that edit it
+- 134: Never record an option as "rejected" unless the person rejected it, and quote their words

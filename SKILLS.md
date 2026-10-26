@@ -4476,7 +4476,7 @@ Rules:
 6. Fix a parent PR's docs on the parent, not in the child.
 7. A conflict-free merge is textual, not semantic. After a rebase, grep the tests the parent ADDED for the behaviour your PR flips (here #164's "R1 control" wrote `orders`, which #161 denies: auto-merged clean, would have gone red), and grep your own docs for claims the parent already fixed (here "`ownerId` is mutable", fixed by #164 R3). Rerun this check on every rebase, not only the first.
 
-## Skill 132: Before designing on a shared server file, list the open PRs that edit it
+## Skill 133: Before designing on a shared server file, list the open PRs that edit it
 
 Restock-atomic design session (2026-10-16). The design needed `functions/lib/operationLogic.js`. `git branch -r` showed `feature/2026-10-16-p1-s1a-server-movements` (PR #146), created the same day; `git diff --stat origin/main...<branch>` showed it rewrites that file and adds `DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" }`. A new `restock` opType would have defaulted to kind `adjustment` and conflicted textually.
 Rules:
@@ -4485,7 +4485,7 @@ Rules:
 3. Prefer a client-side parameter (explicit `movements: [{kind:"receipt"}]`) over a second edit to the shared server default, so the two PRs do not touch the same lines.
 
 
-## Skill 133: Never record an option as "rejected" unless the person rejected it, and quote their words
+## Skill 134: Never record an option as "rejected" unless the person rejected it, and quote their words
 
 Restock design v1 (2026-10-16) wrote "the rejected option C" for server-side id minting, and priced it with an unchecked claim (two writers racing on one counter). Taher had only rejected "retry deltas on 403"; his stated direction was the opposite (everything in one atomic operation). The error reached a pushed spec and a push-back he then had to correct.
 Rules:

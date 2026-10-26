@@ -44,6 +44,8 @@ One tap creates `requestId = "restock:" + <device id>` **at tap** (same shape as
 
 Client `InventoryStore.restock`: keep the parked-write refusal (D2) and a synchronous per-product in-flight latch (enqueue is now synchronous, so the double-tap window is a single tick, not a network round trip); build ops with a pure `RestockPlan.build`; `Gateway.recordOperation("restock", ops, key, {awaitServer: online})`. Applied (callback or `operationApplied`, both carry minted ids in results): set stock from the server value, add the batch, purchase (and supplier, activity) docs locally from results. Rejected or Discard: nothing exists server-side, nothing to undo but the latch, show the cause text. **Removed:** `_resolveSupplierId`'s separate mint for restock, the parallel `addBatch` + `recordDelta`, the callback-gated writes. `addBatch`, `SupplierStore.addSupplier` and the pending-mint queue stay for their other callers until those get their own PR.
 
+**Note 2026-10-26:** S0 is being built from its own self-contained design, `specs/2026-10-26-signout-guard-design.md` (branch `feat/2026-10-26-signout-guard`). Where it differs from this section (D-S0-3: `attention` = parked OR stuck, not parked only), the S0 design wins. This section stays as the origin of the idea; do not implement from it.
+
 ## 4b. Sign-out guard (answers Q-A6, closes gap G4 for the interactive path)
 
 Why: `Gateway.clear()` / `OutboxStore.clear()` / `PhotoQueue` clear run on sign-out so a pending write never replays under another account. Anything still queued is then dropped, and the user is told nothing.
@@ -88,7 +90,7 @@ Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no
 - **Q-A6:** at sign-out, show a popup listing the operations still in progress with brief details, and spell out the consequences of signing out anyway. Design in section 4b. (I had proposed blocking sign-out; Taher chose warn-and-let-proceed, so the user can still discard, knowingly.)
 
 ### Open
-**Q-A7. Order of work.** The sign-out guard needs neither the engine nor #146, fixes silent loss that already exists today for plain edits, and must exist before restock ships. **I propose it as PR 0, built first.** Confirm or reorder.
+**Q-A7. Order of work. ANSWERED 2026-10-26 by action (Taher started S0 in a separate session; not a quoted answer).** The sign-out guard needs neither the engine nor #146, fixes silent loss that already exists today for plain edits, and must exist before restock ships. **I propose it as PR 0, built first.** Confirm or reorder.
 
 ## 7. Build order for step (1) (each its own branch off `main`; #146 and the S2f authz work are merged)
 

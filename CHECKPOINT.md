@@ -11,9 +11,10 @@ Design v2 (2026-10-16) predates S2f. Taher confirmed 2026-10-26: S2f rules + fun
 
 ## Steps
 - [x] 1. Verified in code: `operationLogic.js:164-167` honours per-op `movements`, default for unknown opType is `adjustment`; rules allow-list is `activity_log, config, counters, _migrations`.
-- [x] 2. Rebuilt PR tree on `main`: design 7b (S2f interaction) + Q-A8, test plan RP1-RP4, status doc section 6 + G11, KNOWN-ISSUES, E2E roadmap, test-plans README row, Skills 122/123 renumbered to 132/133 (main is at 131).
+- [x] 2. Rebuilt PR tree on `main`: design 7b (S2f interaction) + Q-A8, test plan RP1-RP4, status doc section 6 + G11, KNOWN-ISSUES, E2E roadmap, test-plans README row, Skills 122/123 renumbered to 133/134 (main is at 131; Skill 132 is taken by the S0 branch `feat/2026-10-26-signout-guard`).
 - [x] 3. Pushed (see Resume).
-- [ ] 4. Taher: answer Q-A7 (order, S0 first?) and Q-A8 (accept `counters`/F7 open through the arc); approve or revise the spec on #147.
+- [x] 3b. Q-A7 answered by action: Taher started S0 in a separate session (branch `feat/2026-10-26-signout-guard`, no PR yet when checked). 4b is superseded by that design where they differ (D-S0-3).
+- [ ] 4. Taher: answer Q-A8 (accept `counters`/F7 open through the arc); approve or revise the spec on #147.
 - [ ] 5. After approval ONLY: invoke writing-plans for S0 (sign-out guard). Do not invoke it before.
 
 ## Open P1 tail (not gates): #165 (S2f-7), S2f-3 client wording, owner-demotion slice, S2d, S2e (parked on CA).
