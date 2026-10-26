@@ -1,6 +1,6 @@
 # Design — Atomic operations with server-minted ids; restock is the first consumer
 
-**Status:** v2, 2026-10-16. Q-A1..Q-A5 answered by Taher (section 6); Q-A6 answered (sign-out warning popup, section 4b). Spec is in PR review (#147); implementation plan is written only after the PR is approved. No product code written.
+**Status:** v2, refreshed 2026-10-26, APPROVED by Taher on merge of #147 (Q-A8 answered: "yes keep it as recommended"; Q-A7 answered by action, S0 under way). Next: implementation plan for R1+R2, not before this merges. Original status line: v2, 2026-10-16. Q-A1..Q-A5 answered by Taher (section 6); Q-A6 answered (sign-out warning popup, section 4b). Spec is in PR review (#147); implementation plan is written only after the PR is approved. No product code written.
 **Prior art and gaps:** `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md`.
 **Branch:** `docs/2026-10-16-restock-atomic-operation-design`. **Path:** architectural.
 **Origin:** `KNOWN-ISSUES.md` first entry (restock decided 2026-09-30) and Taher's standing direction in `E2E-TESTING-ROADMAP.md` (2026-09-16): idempotency and atomicity for network calls generally.
@@ -113,7 +113,7 @@ Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no
 5. **S2d is not a prerequisite for restock.** The server already takes explicit movements. S2d (client `Gateway.recordDelta` movements param + outbox concatenation) is needed for the non-op paths (imported-order deduct, return), i.e. step 3 of the arc, not step 1. Still to verify in R3: the client `recordOperation` builder passes `movements` through untouched.
 6. **provisionMember (S2f-7, #165) and the owner-demotion slice** touch `functions/index.js` handlers, not `operationLogic.js`. No textual overlap with R2 expected; re-check with `git diff --stat origin/main...<branch>` at R2 start (Skill 122).
 
-**Q-A8. Accept `counters` open until the last mint caller migrates (item 2)?** Recommended: yes. The alternative is a throwaway server mint endpoint now, which duplicates R2 and is deleted later.
+**Q-A8. Accept `counters` open until the last mint caller migrates (item 2)? ANSWERED 2026-10-26, Taher: "yes keep it as recommended".** Recommended: yes. The alternative is a throwaway server mint endpoint now, which duplicates R2 and is deleted later.
 
 ## 8. Risks
 - Server engine change touches `operationLogic.js`, the file every operation goes through: replay, marker and budget must stay byte-compatible for `completeOrder`. Regression tests pin the existing marker and result shapes first (R2 step 1).
