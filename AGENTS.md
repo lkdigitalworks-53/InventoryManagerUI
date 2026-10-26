@@ -15,7 +15,7 @@ work against it).
 
 ## Session & Sandbox Conventions (established 2026-08-30)
 
-Three standing rules, written down once so they don't need repeating each session:
+Four standing rules, written down once so they don't need repeating each session:
 
 **1. Sandbox execution limits are not a reason to leave code unwritten.** A Cloud sandbox session
 can't build the actual Felgo/Qt app (Windows/Felgo toolchain, Taher's machine only) and can't run
@@ -49,6 +49,9 @@ machine, not this chat.
 
 
 **3. Read order (token budget).** Do NOT read `SKILLS.md` in full: it is ~300 KB (~75k tokens). Read `SKILLS-INDEX.md` (~12 KB, generated), then read the FULL text of every skill whose title touches the task (`awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md`). Before touching an area (stores, gateway, outbox, photos, tests, CI) `grep -i <area> SKILLS-INDEX.md` and open every match; skipping a matching skill repeats a mistake that was already paid for. After adding or renaming a skill heading run `node .github/scripts/skills-index.js --write` (a script test fails the PR if the index is stale). Do not read `AGENTS.md` / `README.md` end to end either: use the section map (`grep -n '^## \|^### '`) and open the section you need.
+
+
+**4. There is no production. Do not ask about it, plan for it, or design around it (Taher, 2026-10-25).** No production code has been released, none is planned for the near future, and there is no real data anywhere: dev tenants only. So never raise production rollout order, app version skew, minimum-app-version gates, live-data migrations, backward compatibility with old builds, or "before the first production tenant" caveats, and do not add them to docs. When a design choice only matters for a released product, pick the simplest option and move on. This will change when Taher says a release is planned; until then it holds.
 
 ---
 

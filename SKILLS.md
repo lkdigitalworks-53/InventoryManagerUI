@@ -4461,3 +4461,16 @@ Rules:
 4. Pins that documented the old behaviour ("look-alike names are still working collections", "orders are writable") flip to deny in the same PR; delete tests whose premise is gone instead of weakening them.
 5. In a test loop, do not name the loop variable `collection` when the body needs the firestore `collection()` function.
 6. The remaining client-writable name that is a security smell is `counters` (a member can burn ids). Locking it needs server-side id minting (S2f-6).
+
+---
+
+## Skill 131: Rebase a stacked PR with --onto the parent's new tip, and recount tests from CI, never from the plan
+
+PR #161 review (2026-10-25). PR #160 (parent) had been rebased onto main after #159 was squash-merged; PR #161 still sat on the old #160 commit.
+Rules:
+1. Plain `git rebase main` on the child replays the squash-merged ancestors and the old parent commit: duplicate conflicts. Use `git rebase --onto <parent-new-tip> <old-parent-last-commit>` so only the child's own commits replay, and the stack stays aligned for when the parent merges.
+2. Push with `--force-with-lease=<branch>:<old-sha>`, token via `http.extraheader`, never in the remote URL. Keep a local backup branch before rebasing.
+3. Conflicts in count docs: take the upstream side, then replace every number with the CI-observed one (the PR's "CI test summary" comment). Predicted totals drift by whatever main gained.
+4. Count Rules tests exactly: stub `node:test` in a script, `require` the file, count `test()` registrations (loops expand correctly; a grep does not), and add `storage.rules.test.js` (CI's Rules number includes it).
+5. A constant used inside a test body but declared lower in the file works only because `node:test` starts tests asynchronously; hoist it.
+6. Fix a parent PR's docs on the parent, not in the child.

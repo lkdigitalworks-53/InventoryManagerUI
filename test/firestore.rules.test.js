@@ -40,6 +40,8 @@ const { doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc } = requi
 const TENANT = "tenant-1";
 const MEMBER_UID = "member-uid";
 const OUTSIDER_UID = "outsider-uid";
+// Declared here, not next to the members tests: the gateway-only and client-writable tests below use it.
+const ROSTER_ROLES = ["owner", "admin", "manager", "staff"];
 
 let testEnv;
 
@@ -156,6 +158,28 @@ for (const collection of CLIENT_WRITABLE_COLLECTIONS) {
     });
 }
 
+// Every role writes the four client-writable names. The app mints ids (counters) and logs activity as
+// staff and manager too, so a rules change that quietly became owner-only would break them (device pass H6).
+test("client-writable: every role (owner, admin, manager, staff) can write all four names", async () => {
+    for (const role of ROSTER_ROLES) {
+        const db = role === "owner" ? memberDb() : await dbAs("w-" + role, role);
+        for (const name of CLIENT_WRITABLE_COLLECTIONS) {
+            await assertSucceeds(setDoc(doc(db, `tenants/${TENANT}/${name}/${role}-1`), { value: 1 }));
+        }
+    }
+});
+
+// PIN (S2f-6, known residual risk, NOT fixed here): `counters` takes any value from any active member,
+// including a lower one or a non-number, so a staff member can rewind or burn ids. Locking it needs
+// server-side id minting. When that lands this test flips to assertFails and `counters` leaves the allow-list.
+test("PIN S2f-6: counters accept any value from any role (rewind, non-number, delete)", async () => {
+    const staffDb = await dbAs("pin-staff", "staff");
+    await seedAsAdmin(`tenants/${TENANT}/counters`, "products", { value: 500 });
+    await assertSucceeds(setDoc(doc(staffDb, `tenants/${TENANT}/counters/products`), { value: 0 }));
+    await assertSucceeds(setDoc(doc(staffDb, `tenants/${TENANT}/counters/products`), { value: "oops" }));
+    await assertSucceeds(deleteDoc(doc(staffDb, `tenants/${TENANT}/counters/products`)));
+});
+
 // Gateway-write-only since S4/S2f: members READ for display, nobody writes directly. A direct write would
 // skip the gateway's role gates (staff delete, removed_staff tombstone) and the audit_log row.
 const GATEWAY_ONLY_COLLECTIONS = ["orders", "staff", "suppliers", "removed_staff"];
@@ -201,6 +225,61 @@ test("default deny: reads of an ordinary unknown collection still work for an ac
     await seedAsAdmin(`tenants/${TENANT}/brand_new_collection`, "x1", { name: "x" });
     await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/brand_new_collection/x1`)));
     await assertFails(getDoc(doc(outsiderDb(), `tenants/${TENANT}/brand_new_collection/x1`)));
+});
+
+// Seeded monkey (S2f-5). Fixed seed, so a failure replays exactly. Random and mutated collection names (case,
+// prefix, suffix, one changed character, unchanged) x create / update / delete as an active owner. Only the exact
+// allow-list names may succeed; every other name, including mutations of ledger and gateway-only names, is denied.
+function mulberry32(seed) {
+    return function () {
+        seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+test("monkey: 100 seeded mutated collection names x create/update/delete, only the exact allow-list names are writable", async () => {
+    const rand = mulberry32(20261025);
+    const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+    const bases = [...CLIENT_WRITABLE_COLLECTIONS, ...GATEWAY_ONLY_COLLECTIONS, ...LEDGER_COLLECTIONS,
+        "inventory", "members", "locks", "pending_cleanup", "tenants", "users"];
+    const pick = (list) => list[Math.floor(rand() * list.length)];
+    const randomChar = () => pick(alphabet);
+    const mutate = (name) => {
+        switch (Math.floor(rand() * 5)) {
+        case 0: return name.toUpperCase();
+        case 1: return name + randomChar();
+        case 2: return randomChar() + name;
+        case 3: {
+            const i = Math.floor(rand() * name.length);
+            return name.slice(0, i) + randomChar() + name.slice(i + 1);
+        }
+        default: return name;   // unchanged: the exact names must still behave as listed
+        }
+    };
+    const db = memberDb();
+    let allowedHits = 0;
+    for (let i = 0; i < 100; i++) {
+        const name = mutate(pick(bases));
+        const allowed = CLIENT_WRITABLE_COLLECTIONS.includes(name);
+        const expect = allowed ? assertSucceeds : assertFails;
+        if (allowed) allowedHits++;
+        const where = `tenants/${TENANT}/${name}`;
+        await seedAsAdmin(where, "m1", { v: 1 });
+        const op = ["create", "update", "delete"][i % 3];
+        const label = `#${i} ${op} on "${name}" (allowed=${allowed})`;
+        try {
+            if (op === "create") await expect(setDoc(doc(db, `${where}/m2`), { v: 2 }));
+            else if (op === "update") await expect(updateDoc(doc(db, `${where}/m1`), { v: 3 }));
+            else await expect(deleteDoc(doc(db, `${where}/m1`)));
+        } catch (err) {
+            err.message = `monkey ${label}: ${err.message}`;
+            throw err;
+        }
+        if (!allowed) assert.deepEqual(await readAsAdmin(`${where}/m1`), { v: 1 }, `monkey ${label}: stored data changed`);
+    }
+    assert.ok(allowedHits > 0, "the seed must hit at least one allow-list name, or this test only proves denial");
 });
 
 // ── Gateway-write-only tier: inventory (P1 S2c) ────────────────────────────
@@ -396,7 +475,6 @@ test("R11 a forged marker attempt by a member leaves no marker behind", async ()
 
 const mPath = (uid) => `tenants/${TENANT}/members/${uid}`;
 const mRef = (db, uid) => doc(db, mPath(uid));
-const ROSTER_ROLES = ["owner", "admin", "manager", "staff"];
 
 async function dbWith(uid, role, status) {
     const data = { uid, role };
