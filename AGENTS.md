@@ -120,7 +120,8 @@ edit/delete; client forges identity & time). The fix:
   status now come from the member doc only (`deriveContext`: no member doc, a role outside owner/admin/manager/staff, non-active
   status or unsafe tenant id = 403 `no-tenant-context`, each refusal logged with a reason code); (F1) the fallback also matches `members/{uid}`,
   so any member, even `staff`, can write a membership doc; (F2) `isMember` ignores `status`. F1 and F2
-  are fixed in S2f-2 (PR-B, stacked on A) once merged and deployed. `staff`/`removed_staff` role gates
+  are fixed in S2f-2 (PR-B, stacked on A; `members` is excluded from the wildcard, `isMember` = active
+  member with a valid role, `canAssignRole` mirrors the policy, member `uid` and tenant `ownerId` are immutable on update, an admin cannot change or remove a peer admin: `canManageTarget` in the rules, `qml/helper/MemberPolicy.js` in the client) once merged and deployed. `staff`/`removed_staff` role gates
   are still bypassable by a direct write until S2f-4. Do not describe the rules as sound or the
   owner/admin gates as enforced until S2f-2 and S2f-4 are deployed.
 

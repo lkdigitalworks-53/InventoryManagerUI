@@ -1,9 +1,9 @@
 # CHECKPOINT — 2026-10-24 S2f authz hardening (resume here)
 
-**Branch:** `fix/2026-10-24-s2f1-membership-authority` off `main` @ `b749a80` (PR #156 merged). PR-B (`fix/2026-10-24-s2f2-members-rules`) will be STACKED on this branch.
+**Branch (current):** `review/2026-10-26-pr160-final-sweep`, STACKED on PR #160 (`fix/2026-10-24-s2f2-members-rules`, tip `853ac8f`, on `main` @ `3e14826`). History: PR-A = #159 (merged), PR-B = #160 (this sweep reviews it).
 **Commit identity:** `taher.lkdw@gmail.com`. PAT only inline in the push command; after push `grep -c ghp_ .git/config` must print 0.
 **Rules in force:** no build/run; no Qt in sandbox (CI is the QML + rules-emulator oracle); push without asking; short scope per session; honest trade-offs; tests + test plan for every change; caveman FULL for chat only.
-**Skills used:** `superpowers:brainstorming` (design doc, decisions marked vetoable), `ponytail`, `qt-qml` and `qt-ui-design` (no QML/UI in PR-A or PR-B; only a client wording follow-up is queued, S2f-3).
+**Skills used:** (2026-10-26 sweep) `superpowers:requesting-code-review`, `ponytail:ponytail-audit`, `qt-development-skills:qt-qml-review` (no QML changed by #160: deep agents N/A, client paths traced by hand); earlier: `superpowers:brainstorming` (design doc, decisions marked vetoable), `ponytail`, `qt-qml` and `qt-ui-design` (no QML/UI in PR-A or PR-B; only a client wording follow-up is queued, S2f-3).
 **Previous checkpoint archived:** `docs/superpowers/specs/2026-10-24-s2c-prev-CHECKPOINT.md`.
 
 ## Why
@@ -26,14 +26,19 @@ See the design doc section "Slices". Not started: S2f-3 (client wording), S2f-4 
 - PR #159 CI: QML/Functions/Rules green; E2E 1 failure = my test used a recordOperation requestId without the `completeOrder:` prefix (400 before auth). Fixed. Real E2E baseline was 86, not 93.
 - PR-A now strict: member.status must equal `active`; actorName from member doc (F8). Functions 811/811.
 - NEXT: push PR-A fix, stack PR-B (rules F1/F2 + canAssignRole + strict status + tests), then S2f-4+5 (allow-list wildcard, locks 4 collections), S2f-3 (client wording), S2f-6 counters.
+- [x] PR-B built (branch `fix/2026-10-24-s2f2-members-rules`, stacked on #159): rules + 31 tests (CI-only; predicted Rules 83, total 3087), test plan, Skill 129. Pushed; CI result pending.
+- NEXT: read CI on PR-B and fix; then S2f-4+5 (PR-C: allow-list wildcard, locks staff/removed_staff/orders/suppliers), S2f-3 client wording (PR-D), S2f-6 counters.
 
-## Update 2026-10-25 (session 3, sweep fixes applied on this PR; working branch `work/pr159-sweep-fixes`, pushed to this branch)
-Decisions from Taher: Q1 role allow-list yes (gateway here; rules mirror goes to PR #160), Q2 `provisionMember` owner-demotion/un-suspend = its own slice, Q3 log now / distinct client codes later (S2f-3), Q4 remove redundant lines, Q5 delete dead `photoAccessDenied` check.
-- [x] `deriveContext`: role allow-list (`VALID_ROLES`), one `logger.warn` per refusal (uid + reason, tenant id capped at 64), redundant `exists` return removed, tenant doc read moved into `provisionMember` (name from tenant doc only; no users-doc fallback), `photoAccessDenied` dead tenant check removed.
-- [x] Tests: `membershipAuthority` 89 -> 113 (role table x10 handlers, valid-role controls, tenantId types, logging, lean reads, tenantName source, seeded fuzz replacing the fixed "monkey"); BC-H01 updated. `npm test` 835/835; against `main`'s old `deriveContext` 56 of 113 red; mutants caught (see test plan "Sweep additions").
-- [x] Docs: Skill 127 rule 5, Skill 128 rules 4/7 + new 10-12 (no new Skill number, so #160/#161 do not renumber), test plan sections (CI count lines 46/53 left for #161, which rewrites them), AGENTS line.
-- [x] CI on head `d1a7f9a`: 3087/3087 (QML 2104, Functions 835, Rules 52, E2E 96). Test plan CI lines, `test-plans/README.md` row and the PR body now carry the observed numbers.
-- [ ] Mirror the role allow-list in `firestore.rules` `isMember`/`memberStatusIsActive` on PR #160 (rules tests, CI only).
-- [ ] Rebase #160 and #161 onto the new #159 head (docs conflicts expected: SKILLS.md, CHECKPOINT.md, AGENTS.md, test plan).
-- [ ] Own slice: `provisionMember` must refuse changing an `owner` member doc and decide what re-provisioning a `suspended` member does (sweep finding 6).
-- Not done on purpose: finding 9 (plain-text 500 on a Firestore blip), 11 (tenant-id charset check of dev data), 12 (client role default, S2f-3).
+## Update 2026-10-25 (session 3, restored: the #160 rebase kept the branch version of this file and dropped it)
+Decisions from Taher on the PR #159 sweep: Q1 role allow-list yes (gateway in #159; rules mirror = this sweep, D9), Q2 `provisionMember` owner-demotion / un-suspend = its own slice (NOT started, see `specs/2026-10-25-pr159-final-sweep.md` finding 6), Q3 log now / distinct client codes later (S2f-3), Q4 remove redundant lines, Q5 delete dead `photoAccessDenied` check. #159 merged as `fe1409f`. Not done on purpose: finding 9 (plain-text 500 on a Firestore blip), 11 (tenant-id charset), 12 (client role default, S2f-3).
+
+## Update 2026-10-26 (session 4: rebase + final-sweep review of PR #160)
+- [x] 1. Cloned, PAT scrubbed from `.git/config`, identity `taher.lkdw@gmail.com`. PR #160 was ALREADY on `main` @ `3e14826` (merge-base = main tip, 0 behind, 0 file overlap): rebase = no-op, nothing force-pushed.
+- [x] 2. CI on `853ac8f`: 3118/3118 (QML 2104, Functions 835, Rules 83, E2E 96). The plan/PR body said 3087 (stale baselines): fixed in docs.
+- [x] 3. Read: `firestore.rules` (full), `storage.rules` (no membership use, no drift), `deriveContext`, server/client `canAssignRole`, every client writer of `members/` and `tenants/`, the 31 tests, docs.
+- [x] 4. Fixes (stacked branch): R1 `isMember` also requires `roleIsValid(role)` (Q1 mirror, revives dead `roleIsValid`); R2 member `uid` immutable on update; R3 tenant `ownerId` immutable on update (closed a second-owner path via the bootstrap rule); +9 rules tests (CI only; predicted Rules 92, total 3127); `dbAs` now delegates to `dbWith`; test plan N3/N4 wording fixed (UI DOES offer all roles), N6/N7/E4 + section 2b added; Skill 129 rules 7-10; AGENTS line; design D8 edges, D9, D10, open D-1.
+- [x] 5. CI on #164 head `a892be8`: all green (R1-R3 + docs).
+- [x] 6. Taher decided D-1 = option (b), hierarchy. Done in the same PR: rules `canManageTarget` (update + delete), `qml/helper/MemberPolicy.js`, `AuthService` refusals, `MemberManagementDialog` gating (`actorRole`, `Main.qml`), `tst_MemberPolicy` (6), D-1 matrix rules tests (3 replace the pin; total +11), test plan N6/E4 + 2b, Skill 129 rules 9/11, design D-1 decided, AGENTS.
+- [x] 7. CI on D-1 commit `bf003ae`: 3137/3137 (QML 2112, Functions 835, Rules 94, E2E 96); #164 mergeable, clean.
+- [ ] 8. Taher: merge #164 into #160's branch, then #160, then `firebase deploy --only firestore:rules` (after the functions deploy of #159). Then restack #161. Device steps: N6, E4 in the test plan.
+- NEXT after merge: S2f-4+5 (PR #161, restack on #160), S2f-3 client wording (client ignores `status` today: `_loadMembership` applies the role of a suspended member), provisionMember owner-demotion slice.
