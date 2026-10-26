@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import "../components"
 import "../helper"
+import "../helper/MemberPolicy.js" as MemberPolicy
 
 // Member management — bottom sheet. Public contract preserved:
 //   signals: roleUpdateRequested, statusUpdateRequested,
@@ -26,6 +27,8 @@ BottomSheet {
     property string errorMessage: ""
     property string searchText: ""
     property string filterRole: "all"
+    // The signed-in user's role: decides which rows may be changed (MemberPolicy.canManageMember).
+    property string actorRole: ""
 
     property string confirmAction: ""
     property string confirmUid: ""
@@ -127,6 +130,9 @@ BottomSheet {
             Repeater {
                 model: root.members
                 delegate: ListCard {
+                    id: card
+                    // Rows the actor may not change show their role read-only and no Suspend/Remove (D-1 b).
+                    readonly property bool manageable: MemberPolicy.canManageMember(root.actorRole, modelData.role || "")
                     Layout.fillWidth: true
                     visible: root._matchesFilter(modelData)
                     title: modelData.displayName || "(No name)"
@@ -151,6 +157,7 @@ BottomSheet {
                             Layout.preferredWidth: dp(96)
                             Layout.preferredHeight: dp(32)
                             model: ["owner", "admin", "manager", "staff"]
+                            enabled: !root.busy && card.manageable
                             font.pixelSize: sp(Constants.fsCaption)
                             currentIndex: {
                                 var r = modelData.role || "staff"
@@ -165,6 +172,7 @@ BottomSheet {
                         // Compact icon-only Suspend/Activate (eye toggle) so the
                         // row fits inside a phone-width card without clipping.
                         QQC.AbstractButton {
+                            visible: card.manageable
                             Layout.preferredWidth: dp(32)
                             Layout.preferredHeight: dp(32)
                             enabled: !root.busy
@@ -188,6 +196,7 @@ BottomSheet {
                         }
 
                         QQC.AbstractButton {
+                            visible: card.manageable
                             Layout.preferredWidth: dp(32)
                             Layout.preferredHeight: dp(32)
                             enabled: !root.busy

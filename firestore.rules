@@ -35,12 +35,16 @@ service cloud.firestore {
       return memberDoc(tenantId, uid).data.status == 'active';
     }
 
-    // "Member" means ACTIVE member everywhere in this file (S2f-2). Before, it was exists() only, so a
-    // suspended member kept direct Firestore read and write access that the gateway already refused.
+    // "Member" means ACTIVE member WITH A VALID ROLE everywhere in this file (S2f-2). Before, it was
+    // exists() only, so a suspended member kept direct Firestore read and write access that the gateway
+    // already refused. The role test mirrors deriveContext's VALID_ROLES (functions/index.js): a member doc
+    // whose role is "", "viewer", "Owner", a number or missing must not pass in one enforcer and fail in
+    // the other. Adding a role means editing roleIsValid AND VALID_ROLES (Skill 128 rule 10).
     function isMember(tenantId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid))
-        && memberStatusIsActive(tenantId, request.auth.uid);
+        && memberStatusIsActive(tenantId, request.auth.uid)
+        && roleIsValid(myRole(tenantId));
     }
 
     // Which roles an actor may hand out. Mirrors canAssignRole in functions/index.js and
@@ -49,6 +53,14 @@ service cloud.firestore {
     function canAssignRole(tenantId, role) {
       return (isOwner(tenantId) && role in ['admin', 'manager', 'staff'])
         || (isAdmin(tenantId) && role in ['manager', 'staff']);
+    }
+
+    // Whose member doc an actor may change or remove, judged by the TARGET's CURRENT role (decision D-1 b):
+    // an owner acts on any non-owner, an admin only on manager/staff (never a peer admin, never the owner).
+    // Mirrors MemberPolicy.canManageMember (qml/helper/MemberPolicy.js).
+    function canManageTarget(tenantId, targetRole) {
+      return (isOwner(tenantId) && targetRole in ['admin', 'manager', 'staff'])
+        || (isAdmin(tenantId) && targetRole in ['manager', 'staff']);
     }
 
     function roleIsValid(role) {
@@ -123,7 +135,10 @@ service cloud.firestore {
                     && request.resource.data.ownerId == request.auth.uid
                     && request.resource.data.name is string;
 
-      allow update: if isOwner(tenantId);
+      // ownerId is the key the bootstrap rule below trusts: if an owner could rewrite it, the new id could
+      // create its own `owner` member doc and mint a second owner past canAssignRole. Immutable after create.
+      allow update: if isOwner(tenantId)
+                    && request.resource.data.ownerId == resource.data.ownerId;
       allow delete: if isOwner(tenantId);
 
       // tenants/{tenantId}/members/{uid}
@@ -148,13 +163,16 @@ service cloud.firestore {
                       && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerId == request.auth.uid
                       && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
 
-        // An existing owner doc is never modified; the new role must be one the actor may assign.
+        // An existing owner doc is never modified; the new role must be one the actor may assign, and the
+        // target's CURRENT role one the actor may manage (an admin cannot touch a peer admin, D-1 b).
+        // The uid field must keep matching the doc id (create pins it; the Team Members roster targets
+        // actions by this field, so a rewritten uid would aim Remove/Suspend at another member).
         allow update: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
-                      && resource.data.role != 'owner';
+                      && request.resource.data.uid == uid
+                      && canManageTarget(tenantId, resource.data.role);
 
-        allow delete: if isOwnerOrAdmin(tenantId)
-                      && resource.data.role != 'owner'
+        allow delete: if canManageTarget(tenantId, resource.data.role)
                       && uid != request.auth.uid;
 
         // VOLUNTARY LEAVE: a member may remove their OWN membership (also when suspended). The owner
