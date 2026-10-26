@@ -4474,3 +4474,4 @@ Rules:
 4. Count Rules tests exactly: stub `node:test` in a script, `require` the file, count `test()` registrations (loops expand correctly; a grep does not), and add `storage.rules.test.js` (CI's Rules number includes it).
 5. A constant used inside a test body but declared lower in the file works only because `node:test` starts tests asynchronously; hoist it.
 6. Fix a parent PR's docs on the parent, not in the child.
+7. A conflict-free merge is textual, not semantic. After a rebase, grep the tests the parent ADDED for the behaviour your PR flips (here #164's "R1 control" wrote `orders`, which #161 denies: auto-merged clean, would have gone red), and grep your own docs for claims the parent already fixed (here "`ownerId` is mutable", fixed by #164 R3). Rerun this check on every rebase, not only the first.

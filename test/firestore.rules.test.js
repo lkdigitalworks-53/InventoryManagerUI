@@ -733,12 +733,13 @@ for (const [label, extra] of BAD_ROLE_DOCS) {
     });
 }
 
-test("R1 control: every valid role with status active still reads and writes working collections", async () => {
+test("R1 control: every valid role with status active still reads orders and writes an allow-listed collection (config)", async () => {
     await seedAsAdmin(`tenants/${TENANT}/orders`, "ORD-1", { total: 1 });
     for (const role of ROSTER_ROLES) {
         const db = await dbWith("ok-" + role, role, "active");
         await assertSucceeds(getDoc(doc(db, `tenants/${TENANT}/orders/ORD-1`)));
-        await assertSucceeds(setDoc(doc(db, `tenants/${TENANT}/orders/ORD-${role}`), { total: 3 }));
+        // S2f-4/5: `orders` is gateway-write-only now, so the write half of this control uses `config` (allow-list).
+        await assertSucceeds(setDoc(doc(db, `tenants/${TENANT}/config/c-${role}`), { value: 3 }));
         await assertSucceeds(getDoc(doc(db, `tenants/${TENANT}`)));
     }
 });

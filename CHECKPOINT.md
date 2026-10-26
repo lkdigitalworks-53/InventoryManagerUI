@@ -54,3 +54,12 @@ Decisions from Taher on the PR #159 sweep: Q1 role allow-list yes (gateway in #1
 - [x] 7. CI on D-1 commit `bf003ae`: 3137/3137 (QML 2112, Functions 835, Rules 94, E2E 96); #164 mergeable, clean.
 - [ ] 8. Taher: merge #164 into #160's branch, then #160, then `firebase deploy --only firestore:rules` (after the functions deploy of #159). Then restack #161. Device steps: N6, E4 in the test plan.
 - NEXT after merge: S2f-4+5 (PR #161, restack on #160), S2f-3 client wording (client ignores `status` today: `_loadMembership` applies the role of a suspended member), provisionMember owner-demotion slice.
+
+## Update 2026-10-26 (session 5: rebase of PR #161 onto main after #160 merged)
+- [x] 1. Cloned, identity `tsadmin@gmail.com`. Backup of the old tip: local `backup/pr161-pre-rebase` (`9239cb5`). `git rebase origin/main` (#160 is merged, so plain rebase is right; old tip `9239cb5` -> new tip after push, see PR). 3 own commits replayed.
+- [x] 2. Conflicts (all docs; `firestore.rules` and `test/firestore.rules.test.js` auto-merged): AGENTS.md (merged both sentences), SKILLS.md (main's Skill 129 rules 7-11 + my Skill 130/131), test-plans README (my s2f4 row + main's s2f2 row), s2f2 test plan (main's observed counts, stale 3094 lines dropped), CHECKPOINT.md (my PR-C lines kept AND main's session 3/4 log kept; header rewritten).
+- [x] 3. Pushed with `--force-with-lease=<branch>:9239cb5`. CI result NOT yet read.
+- [x] 4. Review (ponytail-review): 2 post-rebase breaks found and fixed in a follow-up commit. (a) MUST: #164's test "R1 control" asserted every role can write `orders`; #161 denies that, so it would be red. Now writes `config`. (b) SHOULD: stale docs claimed `ownerId` is mutable (KNOWN-ISSUES, FIRESTORE_RULES.md, sweep doc); #164 R3 fixed it. Also FIRESTORE_RULES.md members row now shows `canManageTarget`, `uid` immutable, valid-role member. Skill 131 rule 7 added.
+- Counts: DO NOT trust the predicted numbers in older sections (3127/3130 were for the pre-rebase base). Rebased expected = main's 3137 plus this PR's new rules tests; read the exact numbers from the CI comment on the PR.
+- PAT note: clone used the token in the remote URL (Skill 131 rule 2 says use `http.extraheader`); scrubbed from `.git/config` after push.
+- NEXT: read CI on the new head; fix whatever is red (suspect list: any test in `firestore.rules.test.js` that writes `orders|staff|suppliers|removed_staff|inventory`); then Taher merges #161 and deploys rules; then S2f-3 client wording, provisionMember owner-demotion slice, S2f-6 counters.

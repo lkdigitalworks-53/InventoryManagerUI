@@ -25,13 +25,13 @@ What the Firestore security rules enforce for tenant RBAC, and the rules for edi
 
 ## What `firestore.rules` enforces
 
-"Member" means an **active** member: the member doc exists and `status == 'active'`. A suspended
+"Member" means an **active** member with a valid role (owner, admin, manager, staff): the member doc exists, `status == 'active'`. A suspended
 member is refused everywhere except reading their own member doc (so the app can say why).
 
 | Path under `tenants/{tenantId}` | Read | Write |
 |---|---|---|
-| `tenants/{tenantId}` (the doc) | active member | create: signed-in user who is the `ownerId`; update, delete: owner |
-| `members/{uid}` | own doc always; roster for active members | create: `canAssignRole` (owner assigns admin/manager/staff, admin assigns manager/staff, nobody assigns owner) or the one-time owner bootstrap; update: same role check, existing owner doc never modified; delete: owner/admin (not the owner doc, not self) or voluntary leave (non-owner) |
+| `tenants/{tenantId}` (the doc) | active member | create: signed-in user who is the `ownerId`; update: owner (`ownerId` is immutable); delete: owner |
+| `members/{uid}` | own doc always; roster for active members | create: `canAssignRole` (owner assigns admin/manager/staff, admin assigns manager/staff, nobody assigns owner) or the one-time owner bootstrap; update: `canAssignRole` for the new role AND `canManageTarget` for the target's current role (an admin cannot touch a peer admin or the owner; member `uid` immutable); delete: `canManageTarget` (not self) or voluntary leave (non-owner) |
 | `audit_log`, `transactions`, `stock_batches`, `stock_movements` (ledger) | active member | nobody (gateway Cloud Functions only, Admin SDK) |
 | `locks`, `pending_cleanup` (server-only) | nobody | nobody |
 | `activity_log`, `config`, `counters`, `_migrations` (client-writable allow-list) | active member | active member |
@@ -48,8 +48,6 @@ Rules to keep when editing `firestore.rules`:
   `test/firestore.rules.test.js` and a line in `docs/superpowers/specs/2026-10-24-s2f-authz-hardening-design.md`.
 - `counters` is on the allow-list because the client mints ids. Any active member can write any value
   to it. This is a known, pinned limit (test "PIN S2f-6"), to be removed with server-side minting.
-- Open item: an owner can change `ownerId` on the tenant doc (see `docs/superpowers/KNOWN-ISSUES.md`,
-  "Owner can mint a second owner").
 - The gateway (`functions/index.js` `deriveContext`) applies the same active-member rule. The two must
   not drift (Skills 127, 128).
 

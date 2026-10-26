@@ -22,7 +22,7 @@ Independent re-audit of every client write path (the PR's own audit was a grep; 
 | 3 | Should | Test gaps: only the owner was tested writing the allow-list; "monkey" was a fixed 14-name list; `ROSTER_ROLES` used before its declaration (worked only because tests start async). | Fixed: role-matrix test, seeded monkey (100 ops, fixed seed, guarded to hit an allowed name), constant hoisted |
 | 4 | Known | `counters` takes any value from any role (rewind, non-number, delete). | NOT fixed by decision (S2f-6, server-side minting). Pinned by test "PIN S2f-6". |
 | 5 | Process | Commit `12e2bf4` edits #160's test plan inside #161. | Counts now correct in both; note for the future: fix a parent PR's docs on the parent |
-| 6 | Investigate | Owner can set `ownerId`, then that uid bootstraps as a second owner. Read from rules, not proven. | Documented, `KNOWN-ISSUES.md`, with the probe test and fix options |
+| 6 | Investigate | Owner can set `ownerId`, then that uid bootstraps as a second owner. Read from rules, not proven. | Documented in `KNOWN-ISSUES.md`; then FIXED by #164 (R3, `ownerId` immutable), entry marked resolved after the 2026-10-26 rebase |
 | 7 | Investigate | Client cleanup calls `remove("users/..")` and tenant rollback that the rules refuse (403, warn only). Harmless since #159. | Documented, `KNOWN-ISSUES.md` |
 | 8 | Product | `config` (categories, order channels) is writable by every role including staff. | Open question for the owner, no change |
 | 9 | Lean | `MEMBER_ROLES` and `ROSTER_ROLES` identical; explicit `locks` block redundant with the read carve-out. | Left (about -10 lines); ledger deny blocks kept as defence in depth |

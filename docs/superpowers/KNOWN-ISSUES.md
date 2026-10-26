@@ -5,21 +5,9 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
-## Owner can mint a second owner: `tenants/{t}` update has no field check, and the owner bootstrap trusts `ownerId` — FOUND 2026-10-25 (PR #161 review), NOT PROVEN, NOT FIXED
+## Owner can mint a second owner via `ownerId` — RESOLVED (fixed by #164 / R3, found in the PR #161 review 2026-10-25)
 
-**Where:** `firestore.rules`, `match /tenants/{tenantId}` (`allow update: if isOwner(tenantId)`, no restriction on which fields change) and `match /members/{uid}` (the BOOTSTRAP `allow create`: signed-in user whose uid is the doc id, role `owner`, status `active`, `get(tenant).data.ownerId == request.auth.uid`, no existing member doc).
-
-**The chain, read from the rules (not run in the emulator):** (1) the owner updates `tenants/T` and sets `ownerId` to another signed-in uid X. (2) X creates `tenants/T/members/X` with role `owner`, status `active`: every bootstrap condition holds. (3) X is now a second owner. This breaks the invariant written in `canAssignRole` and in `AuthService._canAssignRole` ("nobody assigns owner; the only owner is the one the tenant bootstrap creates"). The gateway (`deriveContext`) trusts the member doc, so X also gets owner powers there.
-
-**Why it is deferred:** it needs the owner's own cooperation (an owner can already hand out admin, which is nearly everything), it is outside the diff of PR #161 (rules from #160 and earlier), and it is not proven. Also, non-owner login cannot be tested on device yet (see the staff-login entry below), so the second-owner path has no device test either.
-
-**First step when picked up (about 20 minutes, emulator or CI):** add a probe test in `test/firestore.rules.test.js`: as the seeded owner `updateDoc(tenants/T, { ownerId: "x1" })`, then as `x1` `setDoc(tenants/T/members/x1, { uid: "x1", role: "owner", status: "active" })`. If both succeed, the finding is real. The existing test "tenant hijacked" only covers a non-owner.
-
-**Fix options (decide with the owner, trade-offs):**
-- A. Make `ownerId` immutable on update: `request.resource.data.ownerId == resource.data.ownerId`. One line. The client only writes `ownerId` when it creates the tenant (`AuthService.qml` line 510, `grep ownerId qml/` shows no other writer), so no app behaviour changes. Does not allow a deliberate ownership transfer.
-- B. Also require, in the bootstrap rule, that the tenant has no members yet (`tenants/T` created in the last N seconds, or a `bootstrapped: false` flag the first member creation flips). Closes the path even if `ownerId` is ever mutable, costs a flag and a rule `get()`.
-- C. Add a real ownership-transfer flow through the gateway (needs design). Largest, only if transfer is a product need.
-My recommendation: A now (smallest, closes the chain), C only if transfer becomes a requirement.
+The `tenants/{t}` update rule now requires `request.resource.data.ownerId == resource.data.ownerId`, so the bootstrap rule can no longer be fed a new owner id. Covered by the rules test "R3 tenant ownerId is immutable". Fix option B (bootstrap only when the tenant has no members) was not needed and is not planned. Kept as a pointer; delete when convenient.
 
 ---
 
