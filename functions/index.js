@@ -27,6 +27,7 @@ const GatewayLogic = require("./lib/gatewayLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
 const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
+const MemberProvisionLogic = require("./lib/memberProvisionLogic");
 const PhotoValidation = require("./lib/photoValidation");
 const PhotoCleanup = require("./lib/photoCleanup");
 const { send } = require("./lib/httpResponse");
@@ -809,7 +810,15 @@ exports.provisionMember = functions.onRequest(
             const tenantDoc = tenantSnap.exists ? (tenantSnap.data() || {}) : {};
             const tenantName = tenantDoc.name || tenantDoc.tenantName || "";
 
-            await db.runTransaction(async (txn) => {
+            const verdict = await db.runTransaction(async (txn) => {
+                // S2f-7: read the target's member doc FIRST and let it decide. This endpoint only
+                // adds members; an existing doc is never merged into (see lib/memberProvisionLogic.js).
+                // Read inside the transaction so two concurrent calls cannot both "create".
+                const memberSnap = await txn.get(memberRef);
+                const decision = MemberProvisionLogic.decideProvision(
+                    memberSnap.exists ? (memberSnap.data() || {}) : null, role);
+                if (decision.action !== "create") return decision;
+
                 const userSnap = await txn.get(userRef);
                 const existing = userSnap.exists ? (userSnap.data() || {}) : {};
                 const tenants = Array.isArray(existing.tenants)
@@ -846,7 +855,18 @@ exports.provisionMember = functions.onRequest(
                     invitedBy: decoded.uid,
                     status: "active"
                 }, { merge: true });
+                return decision;
             });
+            if (verdict.action === "refuse") {
+                // One structured warning per refusal (who asked, about whom, why). The caller only
+                // learns `member-exists`: it already knows the uid or email it sent.
+                logger.warn("provisionMember refused", {
+                    actor: decoded.uid, target: uid, reason: verdict.reason,
+                    tenantId: String(ctx.tenantId).slice(0, 64)
+                });
+                send(res, 409, { ok: false, error: "member-exists" });
+                return;
+            }
         } catch (e) {
             console.error("provisionMember write failed", e);
             send(res, 500, { ok: false, error: classifyWriteError(e) });

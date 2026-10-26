@@ -139,3 +139,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 129: Access-control collections: name them in the wildcard's guard, make "member" mean active member, and write the missing tests before touching the rules
 - 130: Make the wildcard's write guard an allow-list; a blacklist of locked names fails open every time a name is forgotten
 - 131: Rebase a stacked PR with --onto the parent's new tip, and recount tests from CI, never from the plan
+- 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide

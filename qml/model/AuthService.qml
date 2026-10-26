@@ -854,6 +854,8 @@ QtObject {
             return "you don't have permission to assign that role."
         case "no-tenant-context":
             return "your workspace context is missing — sign in again."
+        case "member-exists":
+            return "this person is already on your team. Change their role or status from Team Members."
         case "not-signed-in":
             return "you're not signed in."
         case "provisioning-unavailable":

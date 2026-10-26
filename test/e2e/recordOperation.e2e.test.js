@@ -20,6 +20,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
 
 const PROJECT_ID = "inventorymanager-48392";   // must match seed.js and FirebaseService.qml
 const FUNCTIONS_BASE = "http://127.0.0.1:5001/" + PROJECT_ID + "/asia-south1";
@@ -32,7 +33,8 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, ".fixture.json"), "utf8"));
 const T = "tenants/" + fixture.tenantId + "/";
-const db = getFirestore(initializeApp({ projectId: PROJECT_ID }));   // "(default)", like seed.js
+const app = initializeApp({ projectId: PROJECT_ID });
+const db = getFirestore(app);   // "(default)", like seed.js
 
 const createdPaths = new Set();
 
@@ -428,4 +430,78 @@ test("S2f-1 control: the same staff user with a restored member doc is no longer
     const res = await mutate(authBody("control"), fixture.secondIdToken);
     assert.notEqual(res.body && res.body.error, "no-tenant-context", JSON.stringify(res.body));
     assert.notEqual(res.status, 401);
+});
+
+// ---- S2f-7: provisionMember only ADDS members (real Firestore transaction, real Auth emulator) ----
+// The Admin SDK skips firestore.rules, so this endpoint is the one place a role or status could be
+// changed without the hierarchy (D-1) seeing it. The seeded owner calls; the target is the seeded
+// staff user or the owner themselves. Every refusal must leave the member doc byte-for-byte as it was.
+const provision = (body, token) => post(body, token, "/provisionMember");
+
+test("S2f-7 owner re-provisions the seeded staff member as manager -> 409 member-exists, role stays staff", async () => {
+    const before = await read(MEMBER_REL(fixture.secondUid));
+    const res = await provision({ uid: fixture.secondUid, role: "manager" });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal(res.body.error, "member-exists");
+    assert.deepEqual(await read(MEMBER_REL(fixture.secondUid)), before);
+});
+
+test("S2f-7 the owner naming their own uid cannot re-role themselves -> 409, owner doc untouched", async () => {
+    const before = await read(MEMBER_REL(fixture.uid));
+    const res = await provision({ uid: fixture.uid, role: "admin" });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.deepEqual(await read(MEMBER_REL(fixture.uid)), before);
+    assert.equal(before.role, "owner");
+});
+
+test("S2f-7 a SUSPENDED member is not re-activated by an invite -> 409, status stays suspended", async () => {
+    await withMemberDoc((ref, original) => ref.set(Object.assign({}, original, { status: "suspended" })), async () => {
+        const res = await provision({ uid: fixture.secondUid, role: "staff" });
+        assert.equal(res.status, 409, JSON.stringify(res.body));
+        assert.equal((await read(MEMBER_REL(fixture.secondUid))).status, "suspended");
+    });
+});
+
+test("S2f-7 a brand-new Auth account is added; an exact repeat answers 200 and keeps joinedAt and invitedBy", async () => {
+    const email = "prov-e2e-" + Date.now() + "@example.com";
+    const auth = getAuth(app);
+    let uid = null;
+    try {
+        const first = await provision({ email: email, password: "s3cret-pass", displayName: "Prov E2E", role: "staff" });
+        assert.equal(first.status, 200, JSON.stringify(first.body));
+        assert.equal(first.body.created, true);
+        uid = first.body.uid;
+        createdPaths.add(T + MEMBER_REL(uid));
+        createdPaths.add("users/" + uid);
+        const stored = await read(MEMBER_REL(uid));
+        assert.equal(stored.role, "staff");
+        assert.equal(stored.status, "active");
+        assert.equal(stored.invitedBy, fixture.uid);
+
+        const again = await provision({ email: email, password: "s3cret-pass", displayName: "Prov E2E", role: "staff" });
+        assert.equal(again.status, 200, JSON.stringify(again.body));
+        assert.equal(again.body.created, false);
+        assert.deepEqual(await read(MEMBER_REL(uid)), stored, "the repeat must not rewrite the member doc");
+    } finally {
+        if (uid) await auth.deleteUser(uid).catch(() => {});
+    }
+});
+
+test("S2f-7 two identical invites at once: both answer 200 (one creates, one is the repeat), one member doc", async () => {
+    const auth = getAuth(app);
+    const user = await auth.createUser({ email: "prov-e2e-race-" + Date.now() + "@example.com", password: "s3cret-pass" });
+    createdPaths.add(T + MEMBER_REL(user.uid));
+    createdPaths.add("users/" + user.uid);
+    try {
+        const both = await Promise.all([
+            provision({ uid: user.uid, role: "manager" }),
+            provision({ uid: user.uid, role: "manager" })
+        ]);
+        assert.deepEqual(both.map((r) => r.status), [200, 200], JSON.stringify(both.map((r) => r.body)));
+        const stored = await read(MEMBER_REL(user.uid));
+        assert.equal(stored.role, "manager");
+        assert.equal(stored.status, "active");
+    } finally {
+        await auth.deleteUser(user.uid).catch(() => {});
+    }
 });
