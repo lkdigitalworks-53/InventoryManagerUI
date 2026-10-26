@@ -29,6 +29,23 @@ App {
     // GlassHeader's caption calls this when tapped.
     function openStuckWrites() { stuckWritesSheet.open() }
 
+    // The one way to sign out or leave a workspace from the UI. Signing out empties the
+    // outbox and the photo queue, so when anything is queued the person gets SignOutSheet
+    // (what would be lost, Stay as the easy choice); with nothing queued they get the plain
+    // confirm, or no confirm at all when `title` is empty (TenantSetupPage).
+    // opts = { leaving, title, message, confirmLabel, proceed }.
+    // Design: docs/superpowers/specs/2026-10-26-signout-guard-design.md
+    function askLeave(opts) {
+        if (signOutSheet.pendingCount() > 0) {
+            signOutSheet.ask({ leaving: opts.leaving === true, proceed: opts.proceed })
+        } else if (opts.title) {
+            confirmDlg.ask({ title: opts.title, message: opts.message,
+                             confirmLabel: opts.confirmLabel, onConfirm: opts.proceed })
+        } else {
+            opts.proceed()
+        }
+    }
+
     // Consume the Android Back event so it does NOT propagate to the OS (which
     // would background/exit the app). "AutoAccept" = mark the event accepted;
     // true keeps the app open and lets our _handleBack router do the navigation
@@ -89,7 +106,7 @@ App {
         // read as undefined here, which is falsy, so they close exactly as
         // before — this only changes behavior for dialogs that actually
         // have something to guard.
-        var dialogs = [stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
+        var dialogs = [signOutSheet, stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
                        newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
                        memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
                        manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
@@ -719,7 +736,7 @@ App {
             authErrorMessage = ""
             AuthService.createTenantForCurrentUser(tenantName)
         }
-        onSignOutRequested: logic.signOutRequested()
+        onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })
     }
 
     InviteMemberDialog {
@@ -786,6 +803,7 @@ App {
         id: confirmDlg
     }
     StuckWritesSheet { id: stuckWritesSheet }
+    SignOutSheet { id: signOutSheet }
 
     StaffDetailDialog {
         id: staffDetailDlg
@@ -1053,12 +1071,13 @@ App {
         }
         onSignOutRequested: {
             // Confirm before signing out — destructive action that drops the
-            // workspace context and clears local store caches.
-            confirmDlg.ask({
+            // workspace context and clears local store caches. With queued
+            // writes the confirm is SignOutSheet instead (see askLeave).
+            app.askLeave({
                 title: "Sign out?",
                 message: "You'll need to sign in again to access this workspace.",
                 confirmLabel: "Sign out",
-                onConfirm: function() {
+                proceed: function() {
                     profilePage.close()
                     logic.signOutRequested()
                 }
@@ -1068,11 +1087,12 @@ App {
             // Removes only the tenant membership, then signs out. The user
             // stays registered globally — they may own or belong to other
             // workspaces. Owner self-removal is blocked in AuthService.
-            confirmDlg.ask({
+            app.askLeave({
+                leaving: true,
                 title: qsTr("Leave workspace?"),
                 message: qsTr("You'll be removed from this workspace and signed out. Your sign-in still works elsewhere."),
                 confirmLabel: qsTr("Leave workspace"),
-                onConfirm: function() {
+                proceed: function() {
                     profilePage.close()
                     AuthService.leaveCurrentTenant()
                 }

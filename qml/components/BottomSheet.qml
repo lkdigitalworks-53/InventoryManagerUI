@@ -21,6 +21,8 @@ QQC.Dialog {
     property string sheetTitle: ""
     property string primaryAction: ""
     property string secondaryAction: "Cancel"
+    // Label colour of the secondary (ghost) button; e.g. Constants.danger for a destructive choice.
+    property color secondaryColor: Constants.textPrimary
     property bool primaryEnabled: true
     property bool busy: false
     // Non-empty turns on the full-sheet BusyOverlay (see contentItem below)
@@ -189,6 +191,7 @@ QQC.Dialog {
                     Layout.fillWidth: true
                     visible: root.secondaryAction.length > 0
                     text: root.secondaryAction
+                    textColor: root.secondaryColor
                     onClicked: { if (!root.busy) { root.secondaryClicked(); root.close() } }
                 }
 
