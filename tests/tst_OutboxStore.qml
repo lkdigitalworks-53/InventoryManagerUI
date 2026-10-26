@@ -14,9 +14,8 @@ import "../qml/model"
 // real XHR call with no mock HTTP layer in this codebase, so it's out of
 // scope for a fast, deterministic unit test. See tst_Gateway.qml for what
 // IS safely testable around the send path (the auth-token guard means
-// gateway-mode enqueue+drain is safe to exercise without hitting the
-// network; direct-mode's FirebaseService calls are not, so those aren't
-// exercised here either). Everything in this file is pure data-structure
+// enqueue+drain is safe to exercise without hitting the network).
+// Everything in this file is pure data-structure
 // logic (enqueue, dueItems, markInFlight/clearInFlight, coalescing) with no
 // network dependency at all, so it's fully reviewable even unexecuted.
 //

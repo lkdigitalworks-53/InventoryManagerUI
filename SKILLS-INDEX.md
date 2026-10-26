@@ -129,5 +129,15 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 119: A doc that calls a branch "unreachable" must be proven against the callee's own error paths, and one validator must serve both the read and the save of a persisted field
 - 120: Observable state over a plain map needs one funnel for every write, and a new object per change
 - 121: A stacked PR whose base is `main` but whose branch holds pre-squash commits will conflict AND can revert main
-- 122: Before designing on a shared server file, list the open PRs that edit it
-- 123: Never record an option as "rejected" unless the person rejected it, and quote their words
+- 122: A server limit is only reachable through the senders that exist: derive the reachable range from the sender before writing a verification item, and pin the relation with both constants
+- 123: Deleting a Cloud Function: the deployed copy survives, the test harness may require the deleted file, and the old docs are history
+- 124: Splitting a deletion slice: take the part with no test blast radius first, and pin a deleted client API with `typeof`
+- 125: Deleting a global test knob: count the blast radius over the WHOLE repo, and find who lived off the leak
+- 126: Locking a Firestore collection for clients: name it in the wildcard's guard, audit writers by auth level, and re-point the pins
+- 127: Firestore rules: two `match` blocks on one path are OR-ed, so audit every explicit block against the wildcard, and prove a suspected hole with a probe PR
+- 128: Authorization must come from the one record the user cannot write: gateway trusts the member doc, never `users/{uid}`
+- 129: Access-control collections: name them in the wildcard's guard, make "member" mean active member, and write the missing tests before touching the rules
+- 130: Make the wildcard's write guard an allow-list; a blacklist of locked names fails open every time a name is forgotten
+- 131: Rebase a stacked PR with --onto the parent's new tip, and recount tests from CI, never from the plan
+- 132: Before designing on a shared server file, list the open PRs that edit it
+- 133: Never record an option as "rejected" unless the person rejected it, and quote their words

@@ -72,7 +72,6 @@ TestCase {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
-        Gateway.mode = "gateway"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         StaffStore.staff = []

@@ -10,17 +10,11 @@ import "../helper/SendPolicy.js" as SendPolicy
 // account mutation in P0 scope (inventory + stock). Stores call
 // `recordMutation(...)` instead of writing Firestore directly.
 //
-// Two modes:
-//   "direct"  — Writes the working-tier doc via FirebaseService, exactly as
-//               the stores did before P0. No ledger entry. Behaviour-
-//               preserving fallback for when the Cloud Function/locked
-//               rules aren't deployed (e.g. a fresh `dev`/`test` env).
-//   "gateway" — DEFAULT since 649046d (Cloud Function + locked rules are
-//               live in production). Enqueues the call in the durable
-//               OutboxStore and POSTs it to the recordMutation Cloud
-//               Function (Bearer idToken), which atomically writes the
-//               working doc + an immutable audit_log entry. Failed/offline
-//               calls stay queued and retry w/ backoff.
+// Every write is enqueued in the durable OutboxStore and POSTed to the
+// recordMutation Cloud Function (Bearer idToken), which atomically writes the
+// working doc + an immutable audit_log entry. Failed/offline calls stay queued
+// and retry w/ backoff. There is no direct-to-Firestore mode any more (P1 S2a-2):
+// it bypassed the audit log and the ledger rows.
 //
 // Single-flight-per-record (Component 1, async-write-sequencing design §3):
 // drainNow() marks every due item in-flight (OutboxStore.markInFlight)
@@ -35,10 +29,6 @@ import "../helper/SendPolicy.js" as SendPolicy
 // before proceeding. Everything else stays fire-and-forget by design.
 QtObject {
     id: root
-
-    // "gateway" in production (649046d). "direct" remains available as a
-    // manual fallback for envs without the Cloud Function/locked rules.
-    property string mode: "gateway"
 
     // Member/staff credential provisioning needs the Admin-SDK Cloud Function
     // (provisionMember) — it CANNOT fall back to a direct client write, because
@@ -70,16 +60,12 @@ QtObject {
     // side, since there is no shared build-time constant between this QML
     // client and that Node runtime.
     readonly property int maxOperationOps: 200
-    // One-time fresh-start cutover endpoint (owner-only, server-side wipe).
-    property string cutoverUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/runCutover"
     // Member provisioning endpoint (Admin SDK; owner/admin only). Adds a
     // teammate to the caller's tenant — creates the Auth account for a new
     // staff member, or attaches an existing account, writing both users/{uid}
     // and the member doc server-side (the client can't write another user's
     // profile under the Firestore rules).
     property string provisionMemberUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/provisionMember"
-
-    signal cutoverFinished(bool ok, string error)
 
     // Component 3's client-side half (review finding C3, 2026-08-06): fired
     // when applyMutation's CAS check rejects a recordMutation because
@@ -181,11 +167,12 @@ QtObject {
     property var _operationWaiters: ({})
 
     // entity → working-tier collection. Mirrors ENTITY_COLLECTIONS in
-    // functions/index.js; the two MUST stay in sync.
+    // functions/index.js; the two MUST stay in sync. `stock_movement` is
+    // deliberately absent: the server builds those rows (P1 S1a), a client may
+    // never write one, so recordMutation("stock_movement", ...) refuses early.
     readonly property var _collections: ({
         "inventory": "inventory",
         "stock_batch": "stock_batches",
-        "stock_movement": "stock_movements",
         "transaction": "transactions",
         "order": "orders",
         "staff": "staff",
@@ -212,11 +199,6 @@ QtObject {
         }
         var requestId = _nextRequestId()
 
-        if (mode === "direct") {
-            _writeDirect(collection, entityId, action, after)
-            return requestId
-        }
-
         OutboxStore.enqueue({
             requestId: requestId,
             entity: entity,
@@ -235,15 +217,11 @@ QtObject {
     // but returns the requestId of the item that is actually STORED: OutboxStore.enqueue may
     // merge this call into an older not-in-flight item for the same record (which keeps ITS
     // requestId), and a dependent must hang off the item that will really be sent. Returns ""
-    // in direct mode (no outbox, nothing to wait for) or on a bad entity/id.
+    // on a bad entity/id.
     function recordEdit(entity, entityId, action, before, after) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordEdit: bad entity/id", entity, entityId)
-            return ""
-        }
-        if (mode === "direct") {
-            _writeDirect(collection, entityId, action, after)
             return ""
         }
         var stored = OutboxStore.enqueue({
@@ -264,9 +242,8 @@ QtObject {
     // Unlike every other Gateway call, this is NOT fire-and-forget: callback
     // fires once the real outcome is known — success, or a definitive
     // rejection (insufficient-quantity) — following the same shape as
-    // provisionMember's callback. Requires gateway mode; delta semantics
-    // need server-side read-then-write, which "direct" mode has no way to
-    // do (it's just a client-side FirebaseService.put of an absolute value).
+    // provisionMember's callback. Delta semantics need a server-side
+    // read-then-write, so there is no client-side equivalent.
     // If two recordDelta calls for the same record coalesce into one held
     // outbox item (OutboxStore.enqueueDelta), BOTH callbacks fire with that
     // item's single outcome — see _deltaCallbacks above.
@@ -285,11 +262,6 @@ QtObject {
         if (!collection || !entityId) {
             console.warn("[Gateway] recordDelta: bad entity/id", entity, entityId)
             if (callback) callback({ ok: false, error: "bad-request" })
-            return ""
-        }
-        if (mode !== "gateway") {
-            console.warn("[Gateway] recordDelta: requires gateway mode, got", mode)
-            if (callback) callback({ ok: false, error: "delta-requires-gateway-mode" })
             return ""
         }
         var requestId = _nextRequestId()
@@ -331,13 +303,8 @@ QtObject {
     //     window ended; the item is still queued and will resolve in the
     //     background (operationApplied/operationRejected fires later)
     //   { ok: false, error, opIndex, field, current, conflict } -- rejected
-    //   { ok: false, error: "bad-request" | "operation-requires-gateway-mode" }
+    //   { ok: false, error: "bad-request" }
     function recordOperation(opType, ops, opKey, options, callback) {
-        if (mode !== "gateway") {
-            console.warn("[Gateway] recordOperation: requires gateway mode, got", mode)
-            if (callback) callback({ ok: false, error: "operation-requires-gateway-mode" })
-            return ""
-        }
         if (!opKey || !Array.isArray(ops) || ops.length === 0 || ops.length > maxOperationOps) {
             console.warn("[Gateway] recordOperation: bad request", opKey, ops && ops.length)
             if (callback) callback({ ok: false, error: "bad-request" })
@@ -410,19 +377,6 @@ QtObject {
 
 
 
-    function _writeDirect(collection, entityId, action, after) {
-        var path = collection + "/" + entityId
-        if (action === "delete") {
-            FirebaseService.remove(path, function(ok) {
-                if (!ok) console.warn("[Gateway:direct] delete failed", path)
-            })
-            return
-        }
-        FirebaseService.put(path, after || {}, function(ok) {
-            if (!ok) console.warn("[Gateway:direct] write failed", path)
-        })
-    }
-
     // Server-side recordMutationsBatch (functions/lib/batchMutationLogic.js)
     // hard-rejects any single call over MAX_BATCH_SIZE items with a 400
     // ("batch-too-large") that can never succeed on retry. Mirrored here so
@@ -430,8 +384,9 @@ QtObject {
     // retry an oversized batch forever. If the server's constant ever
     // changes, functions/test/batchMutationLogic.test.js pins its value and
     // tests/tst_Gateway.qml pins this one — a drift shows up as a test
-    // failure on both sides rather than silently.
-    readonly property int maxBatchSize: 200
+    // failure on both sides rather than silently. 150 (not 200) since P1 S1b:
+    // an inventory batch writes up to 3 docs per item (doc + audit + ledger row).
+    readonly property int maxBatchSize: 150
 
     // Pure/testable: split items into chunks of at most `size`. No-op
     // wrapper (single chunk) when items already fits.
@@ -472,11 +427,6 @@ QtObject {
             })
         }
 
-        if (mode === "direct") {
-            _writeDirectBatch(collection, normalized)
-            return requestId
-        }
-
         var chunks = _chunkItems(normalized, maxBatchSize)
         for (var c = 0; c < chunks.length; ++c) {
             OutboxStore.enqueueBatch({
@@ -490,39 +440,12 @@ QtObject {
         return requestId
     }
 
-    // direct-mode fallback for recordMutations — preserves today's single
-    // putMany-per-batch performance for creates/updates; deletes (which
-    // putMany has no form for) go one call each, same as _writeDirect.
-    function _writeDirectBatch(collection, items) {
-        var docsById = {}
-        var deleteIds = []
-        for (var i = 0; i < items.length; ++i) {
-            var it = items[i]
-            if (it.action === "delete") {
-                deleteIds.push(it.entityId)
-            } else {
-                docsById[it.entityId] = it.after || {}
-            }
-        }
-        if (Object.keys(docsById).length > 0) {
-            FirebaseService.putMany(collection, docsById, function(ok) {
-                if (!ok) console.warn("[Gateway:direct] batch write failed", collection)
-            })
-        }
-        for (var j = 0; j < deleteIds.length; ++j) {
-            FirebaseService.remove(collection + "/" + deleteIds[j], function(ok) {
-                if (!ok) console.warn("[Gateway:direct] batch delete failed", collection, deleteIds[j])
-            })
-        }
-    }
-
-    // ── gateway mode (post-deploy) ──────────────────────────────────────────
+    // ── sending ──────────────────────────────────────────
 
     // Send every due outbox item, then reschedule the retry timer for the
     // next-due item. Safe to call repeatedly (start, connectivity regain,
     // timer tick, after each enqueue).
     function drainNow() {
-        if (mode !== "gateway") return
         if (typeof AuthService !== "undefined" && AuthService)
             AuthService.ensureFreshToken()
 
@@ -617,7 +540,7 @@ QtObject {
 
     // S3 Discard: drops ONE parked (server-rejected) write for good and tells the
     // stores to re-read (parkedWriteDiscarded). Checked again here, not trusted from
-    // the row the user tapped: gateway mode, online, still queued, still parked, not
+    // the row the user tapped: online, still queued, still parked, not
     // in flight; otherwise false and nothing changes. A later edit merged into the
     // parked write is discarded with it (P3); writes queued behind it survive
     // (Q-S3-1 A). Waiters on the item (operation or delta) are told { error: "discarded" }.
@@ -627,7 +550,6 @@ QtObject {
     function isParkedKey(requestId) { return StuckWrites.isParked(_stuckState, requestId) }
 
     function discardParked(requestId) {
-        if (mode !== "gateway") return false
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
         if (!online) return false
         if (OutboxStore.isInFlight(requestId)) return false
@@ -1141,47 +1063,6 @@ QtObject {
             opType: item.opType,
             ops: item.ops,
             clientTimestamp: item.clientTimestamp
-        }))
-    }
-
-    // ── Fresh-start cutover (owner-only, irreversible) ──────────────────────
-    // Calls the server to wipe the ledger collections + zero product stock.
-    // Emits cutoverFinished(ok, error). After success, callers should re-sync
-    // the stores (InventoryStore/StockBatchStore/TransactionStore.syncFromFirebase).
-    function runCutover() {
-        if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
-            cutoverFinished(false, qsTr("Not signed in"))
-            return
-        }
-        if (AuthStore.role !== "owner") {
-            cutoverFinished(false, qsTr("Only the workspace owner can run cutover"))
-            return
-        }
-        if (typeof AuthService !== "undefined" && AuthService)
-            AuthService.ensureFreshToken()
-
-        var xhr = new XMLHttpRequest()
-        var _snap = { status: 0, responseText: "", headers: "" }
-        xhr.onreadystatechange = function() {
-            _captureBeforeStatusIsLost(xhr, _snap)
-            if (xhr.readyState !== XMLHttpRequest.DONE) return
-            var effStatus = (xhr.status !== 0) ? xhr.status : _snap.status
-            var effResponseText = (xhr.status !== 0) ? xhr.responseText : _snap.responseText
-            var ok = effStatus >= 200 && effStatus < 300
-            if (ok) {
-                cutoverFinished(true, "")
-            } else {
-                console.warn("[Gateway] cutover failed", "raw-status:", xhr.status, "effective-status:", effStatus, effResponseText)
-                cutoverFinished(false, "HTTP " + effStatus)
-            }
-        }
-        xhr.open("POST", cutoverUrl)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
-        xhr.send(JSON.stringify({
-            env: FirebaseService.environment,
-            confirm: "CUTOVER",
-            clientTimestamp: new Date().toISOString()
         }))
     }
 

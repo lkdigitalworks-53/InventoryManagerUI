@@ -8,29 +8,21 @@ import "../qml/helper/SendPolicy.js" as SendPolicy
 // Regression tests for the P0 compliance gateway's client bridge.
 //
 // SCOPE NOTE (read before extending this file): Gateway._send/_sendBatch
-// perform real XHR calls against a live Cloud Functions URL, and
-// direct-mode's _writeDirect/_writeDirectBatch call FirebaseService.put/
-// remove/putMany, which talk to real Firestore. Neither has a mock/fake
-// layer anywhere in this codebase. So:
-//   - Direct-mode dispatch (recordMutation/recordMutations when
-//     mode==="direct") is NOT exercised end-to-end here — only the pieces
-//     that don't touch the network (_collectionFor, mode's default).
-//   - Gateway-mode's enqueue step IS safely testable: _send/_sendBatch both
-//     start with `if (!AuthStore.idToken || ...) return`, and a test run
-//     has no real signed-in session, so drainNow()'s immediate send attempt
-//     no-ops on that guard before any XHR happens. This is the one path in
-//     this file that indirectly touches _send, and it's safe specifically
-//     because of that guard — don't set AuthStore.idToken in these tests,
-//     or that safety property no longer holds.
+// perform real XHR calls against a live Cloud Functions URL and there is no
+// mock/fake HTTP layer anywhere in this codebase. So only the enqueue step is
+// tested here, and it is safe specifically because _send/_sendBatch/_sendDelta
+// all start with `if (!AuthStore.idToken || ...) return`: a test run has no
+// real signed-in session, so drainNow()'s immediate send attempt no-ops on
+// that guard before any XHR happens. Don't set AuthStore.idToken in these
+// tests, or that safety property no longer holds. (There is no direct mode
+// any more: since P1 S2a-2 every write goes through the outbox.)
 // A real mock-HTTP layer to test _send/_sendBatch's actual request/response
-// handling would need new test infrastructure this session didn't build —
-// flagging as a known gap rather than a silently-passing fake test. Same
-// applies to _sendDelta (Component 4) and its callback firing on a REAL
-// terminal response — only the enqueue-and-callback-stays-pending path is
-// testable here, not the actual success/conflict branch inside the XHR
-// handler. That branch is exercised indirectly by gatewayLogic.test.js
-// (node --test, fully executable in this sandbox) against the SERVER-side
-// logic it calls into — this file only covers the client dispatch shape.
+// handling would need new test infrastructure -- flagged as a known gap rather
+// than a silently-passing fake test. Same applies to _sendDelta (Component 4)
+// and its callback on a REAL terminal response: only the enqueue-and-callback-
+// stays-pending path is testable here. The success/conflict branch is exercised
+// indirectly by gatewayLogic.test.js (node --test) against the SERVER-side
+// logic it calls into -- this file only covers the client dispatch shape.
 //
 // NOT RUN IN THIS SANDBOX — no Qt/qmltestrunner toolchain available.
 // Written to convention and manually reviewed; needs a local
@@ -47,19 +39,8 @@ TestCase {
     SignalSpy { id: appliedSpy; target: Gateway; signalName: "mutationApplied" }
 
     function init() {
-        // Force "direct" for every case below so these tests stay isolated
-        // from whatever the real production default is (see Gateway.qml —
-        // currently "gateway" since 649046d). NOTE: this means no test in
-        // this file can assert on the *true* declared default — init() runs
-        // before every test function, so the singleton's real value is
-        // always overwritten before any compare() sees it. A prior version
-        // of this file had a test_mode_defaults_to_direct() that appeared
-        // to check this but couldn't actually observe it under this
-        // structure, and had gone stale (still asserting "direct" after the
-        // production default moved to "gateway") without ever failing.
-        // Verifying the real default is a job for an integration/E2E check
-        // that inspects the deployed app, not this per-case-reset TestCase.
-        Gateway.mode = "direct"
+        // The declared default of every Gateway option is NOT observable here: init() runs before
+        // each test. Verifying a real default is a job for an integration/E2E check.
         OutboxStore.clear()
         Gateway.clear() // also resets the stuck-write bookkeeping and stops the drain timer
         toastSpy.clear()
@@ -75,6 +56,9 @@ TestCase {
         // there, loadSession() silently overwrites the line above with
         // it, right before _send checks it. Clear the disk copy too.
         AuthStore._settings.sessionJson = ""
+        // drainNow() now always runs AuthService.ensureFreshToken(); a leaked authenticated singleton
+        // with a near expiry would fire a real refresh XHR (tst_PhotoQueue guards the same way).
+        AuthStore.isAuthenticated = false
         // D5 (docs/superpowers/specs/2026-09-20-atomic-operation-outbox-design.md):
         // a timeout only counts toward the stuck indicator while the device
         // believes it's online. Default true, same as every real device most of
@@ -83,7 +67,7 @@ TestCase {
         AuthService.isOnline = true
     }
 
-    // ── mode + collection mapping ────────────────────────────────────────────
+    // ── collection mapping ────────────────────────────────────────────────
 
     function test_collectionFor_covers_every_registered_entity() {
         // One entry per store this session (+ the two pre-existing ledger-
@@ -91,21 +75,51 @@ TestCase {
         // bug the CF-side gatewayLogic.test.js tests caught twice already.
         compare(Gateway._collectionFor("inventory"), "inventory")
         compare(Gateway._collectionFor("stock_batch"), "stock_batches")
-        compare(Gateway._collectionFor("stock_movement"), "stock_movements")
         compare(Gateway._collectionFor("transaction"), "transactions")
         compare(Gateway._collectionFor("order"), "orders")
         compare(Gateway._collectionFor("staff"), "staff")
         compare(Gateway._collectionFor("supplier"), "suppliers")
+        compare(Gateway._collectionFor("removed_staff"), "removed_staff")
     }
 
     function test_collectionFor_returns_empty_string_for_unknown_entity() {
         compare(Gateway._collectionFor("widget"), "")
     }
 
-    // ── gateway-mode enqueue (safe: no network — see header) ────────────────
+    // P1 S2a-1: the server builds stock_movements rows; the client must never
+    // be able to enqueue a write for one (server would reject it anyway).
+    function test_collectionFor_refuses_stock_movement() {
+        compare(Gateway._collectionFor("stock_movement"), "")
+    }
 
-    function test_recordMutation_in_gateway_mode_enqueues_not_writes_directly() {
-        Gateway.mode = "gateway"
+    // Four per-entity entry points. recordOperation is NOT gated here on purpose: its ops are built
+    // by in-app builders and the server rejects an unknown entity per op (unsupported-entity,
+    // functions/test/operationLogic.test.js + movementWiring.test.js). If an entry were ever
+    // re-opened, the write would land in the outbox (safe: no token in tests) and pendingCount fails.
+    function test_stock_movement_is_refused_by_the_four_per_entity_write_entry_points_without_touching_the_outbox() {
+        compare(Gateway.recordMutation("stock_movement", "m1", "create", null, { qty: 1 }), "")
+        compare(Gateway.recordEdit("stock_movement", "m1", "update", {}, { qty: 2 }), "")
+        compare(Gateway.recordMutations("stock_movement", [{ entityId: "m1", action: "create", before: null, after: {} }]), "")
+        compare(Gateway.recordDelta("stock_movement", "m1", { qty: 1 }, {}, {}, null), "")
+        compare(OutboxStore.pendingCount, 0, "a stock_movement write must never reach the outbox")
+    }
+
+    // P1 S2a-1: the irreversible tenant-wipe client call was deleted with its
+    // server endpoint (S2b). Pin the deletion so a bad merge cannot bring it back.
+    function test_client_cutover_api_is_gone() {
+        compare(typeof Gateway.runCutover, "undefined")
+        compare(typeof Gateway.cutoverUrl, "undefined")
+        compare(typeof Gateway.cutoverFinished, "undefined")
+    }
+
+    // P1 S2a-2: direct mode (and its `mode` property) was deleted. Pin it so a bad merge cannot bring it back.
+    function test_direct_mode_property_is_gone() {
+        compare(typeof Gateway.mode, "undefined")
+    }
+
+    // ── enqueue (safe: no network — see header) ──────────────────────────
+
+    function test_recordMutation_enqueues_and_does_not_write_directly() {
         var requestId = Gateway.recordMutation("order", "o1", "update", { status: "pending" }, { status: "approved" })
 
         verify(requestId.length > 0)
@@ -119,14 +133,12 @@ TestCase {
     }
 
     function test_recordMutation_returns_empty_string_for_an_unknown_entity() {
-        Gateway.mode = "gateway"
         var requestId = Gateway.recordMutation("widget", "w1", "update", null, {})
         compare(requestId, "")
         compare(OutboxStore.pendingCount, 0, "an unknown entity must not be enqueued at all")
     }
 
-    function test_recordMutations_in_gateway_mode_enqueues_one_batch_item() {
-        Gateway.mode = "gateway"
+    function test_recordMutations_enqueues_one_batch_item() {
         var requestId = Gateway.recordMutations("order", [
             { entityId: "o1", action: "update", before: { status: "pending" }, after: { status: "approved" } },
             { entityId: "o2", action: "update", before: { status: "pending" }, after: { status: "approved" } }
@@ -142,7 +154,6 @@ TestCase {
     }
 
     function test_recordMutations_returns_empty_string_for_an_empty_items_array() {
-        Gateway.mode = "gateway"
         var requestId = Gateway.recordMutations("order", [])
         compare(requestId, "")
         compare(OutboxStore.pendingCount, 0)
@@ -155,7 +166,6 @@ TestCase {
     // once a real session does arrive)
 
     function test_drainNow_does_not_leave_an_item_stuck_in_flight_when_unauthenticated() {
-        Gateway.mode = "gateway"
         Gateway.recordMutation("order", "o1", "update", null, { status: "approved" })
         // drainNow() already ran once inside recordMutation(); call again to
         // prove the item is actually drainable, not silently stuck blocked.
@@ -167,8 +177,7 @@ TestCase {
 
     // ── Component 4: recordDelta ─────────────────────────────────────────────
 
-    function test_recordDelta_in_gateway_mode_enqueues_a_delta_item() {
-        Gateway.mode = "gateway"
+    function test_recordDelta_enqueues_a_delta_item() {
         var requestId = Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, { qtyRemaining: 0 }, {}, null)
 
         verify(requestId.length > 0)
@@ -179,19 +188,7 @@ TestCase {
         compare(item.floors.qtyRemaining, 0)
     }
 
-    function test_recordDelta_requires_gateway_mode() {
-        Gateway.mode = "direct" // delta has no direct-mode equivalent — needs server-side read-then-write
-        var calledWith = null
-        Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, {}, function(result) { calledWith = result })
-
-        compare(OutboxStore.pendingCount, 0, "must not enqueue anything in direct mode")
-        verify(calledWith !== null, "callback must fire synchronously with an explanatory error, not hang")
-        compare(calledWith.ok, false)
-        compare(calledWith.error, "delta-requires-gateway-mode")
-    }
-
     function test_recordDelta_returns_empty_string_for_an_unknown_entity() {
-        Gateway.mode = "gateway"
         var requestId = Gateway.recordDelta("widget", "w1", { qty: -1 }, {}, {}, null)
         compare(requestId, "")
         compare(OutboxStore.pendingCount, 0)
@@ -201,7 +198,6 @@ TestCase {
         // With AuthStore.idToken empty (see init()), _sendDelta's guard
         // returns before any XHR fires — the callback must stay pending,
         // not fire with a fabricated success/failure.
-        Gateway.mode = "gateway"
         var callCount = 0
         Gateway.recordDelta("stock_batch", "b1", { qtyRemaining: -3 }, {}, {}, function(result) { callCount++ })
 
@@ -488,16 +484,15 @@ TestCase {
     function test_maxBatchSize_matches_the_servers_MAX_BATCH_SIZE() {
         // Same literal pinned from the other side in
         // functions/test/batchMutationLogic.test.js — see that test's
-        // comment for why both sides hardcode 200 rather than each other's
+        // comment for why both sides hardcode 150 rather than each other's
         // dynamic constant.
-        compare(Gateway.maxBatchSize, 200)
+        compare(Gateway.maxBatchSize, 150)
     }
 
-    // ── Regression: the exact reported bug — >200 rows must not be sent as
+    // ── Regression: the exact reported bug — >150 rows must not be sent as
     // one oversized outbox entry ──────────────────────────────────────────────
 
     function test_recordMutations_splits_an_oversized_batch_into_multiple_outbox_entries() {
-        Gateway.mode = "gateway"
         var items = []
         for (var i = 0; i < 250; ++i) {
             items.push({ entityId: "p" + i, action: "create", before: null, after: { name: "Product " + i } })
@@ -508,9 +503,9 @@ TestCase {
         // This is the actual regression: before the fix, this was 1 entry of
         // 250 items, which the server unconditionally rejects — every retry,
         // forever, identically.
-        compare(OutboxStore.pendingCount, 2, "250 items at a 200 cap must produce 2 outbox entries, not 1")
-        compare(OutboxStore.items[0].items.length, 200)
-        compare(OutboxStore.items[1].items.length, 50)
+        compare(OutboxStore.pendingCount, 2, "250 items at a 150 cap must produce 2 outbox entries, not 1")
+        compare(OutboxStore.items[0].items.length, 150)
+        compare(OutboxStore.items[1].items.length, 100)
         verify(OutboxStore.items[0].items.length <= Gateway.maxBatchSize)
         verify(OutboxStore.items[1].items.length <= Gateway.maxBatchSize)
     }
@@ -523,7 +518,6 @@ TestCase {
         // dedup in applyMutationsBatch, including across an app relaunch
         // that resumes a partially-sent import from what OutboxStore
         // persisted to disk before the interruption.
-        Gateway.mode = "gateway"
         var items = []
         for (var i = 0; i < 300; ++i) items.push({ entityId: "p" + i, action: "create", before: null, after: {} })
         var requestId = Gateway.recordMutations("inventory", items)
@@ -536,25 +530,13 @@ TestCase {
 
     function test_recordMutations_under_the_limit_is_unaffected_by_chunking() {
         // Must not regress the pre-existing, already-tested small-batch
-        // shape (test_recordMutations_in_gateway_mode_enqueues_one_batch_item
+        // shape (test_recordMutations_enqueues_one_batch_item
         // above) — a single chunk keeps the PLAIN requestId, no "-c0" suffix.
-        Gateway.mode = "gateway"
         var requestId = Gateway.recordMutations("inventory", [
             { entityId: "p1", action: "create", before: null, after: {} }
         ])
         compare(OutboxStore.pendingCount, 1)
         compare(OutboxStore.items[0].requestId, requestId)
-    }
-
-    function test_recordMutations_direct_mode_is_unaffected_by_chunking() {
-        // direct mode's _writeDirectBatch talks straight to FirebaseService,
-        // not the capped Cloud Function — out of scope for this fix (see
-        // CHECKPOINT.md), and must keep behaving exactly as before.
-        Gateway.mode = "direct"
-        var items = []
-        for (var i = 0; i < 250; ++i) items.push({ entityId: "p" + i, action: "create", before: null, after: {} })
-        Gateway.recordMutations("inventory", items)
-        compare(OutboxStore.pendingCount, 0, "direct mode must never touch the outbox")
     }
 
     // ── _classifyBatchMutationFailure ────────────────────────────────────────
@@ -652,7 +634,6 @@ TestCase {
     // tst_StuckWrites.qml.
 
     function _queueWrite(entityId) {
-        Gateway.mode = "gateway"
         var requestId = Gateway.recordMutation("order", entityId, "update", null, { status: "pending" })
         return OutboxStore.items.filter(function(i) { return i.requestId === requestId })[0]
     }
@@ -946,18 +927,7 @@ TestCase {
         compare(Gateway.maxOperationOps, 200)
     }
 
-    function test_recordOperation_requires_gateway_mode() {
-        Gateway.mode = "direct"
-        var got = null
-        var id = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", {}, function(r) { got = r })
-        compare(id, "")
-        compare(got.ok, false)
-        compare(got.error, "operation-requires-gateway-mode")
-        compare(OutboxStore.items.length, 0)
-    }
-
     function test_recordOperation_rejects_bad_requests_without_touching_the_outbox() {
-        Gateway.mode = "gateway"
         var got = []
         Gateway.recordOperation("completeOrder", [], "k1", {}, function(r) { got.push(r) })
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "", {}, function(r) { got.push(r) })
@@ -971,7 +941,6 @@ TestCase {
     }
 
     function test_recordOperation_accepts_exactly_maxOperationOps() {
-        Gateway.mode = "gateway"
         var ops = []
         for (var i = 0; i < Gateway.maxOperationOps; ++i) ops.push(["inventory", "p" + i])
         var got = null
@@ -981,7 +950,6 @@ TestCase {
     }
 
     function test_recordOperation_not_awaiting_enqueues_and_returns_queued_immediately() {
-        Gateway.mode = "gateway"
         var got = null
         var id = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["order", "o1"]]), "k1", {}, function(r) { got = r })
         compare(id, "k1")
@@ -995,7 +963,6 @@ TestCase {
     }
 
     function test_recordOperation_offline_never_waits_even_when_asked_to() {
-        Gateway.mode = "gateway"
         AuthService.isOnline = false
         var got = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
@@ -1005,7 +972,6 @@ TestCase {
     }
 
     function test_recordOperation_the_same_key_twice_enqueues_once_and_both_callers_are_told_queued() {
-        Gateway.mode = "gateway"
         var a = null, b = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", {}, function(r) { a = r })
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"], ["inventory", "p2"]]), "k1", {}, function(r) { b = r })
@@ -1016,7 +982,6 @@ TestCase {
     }
 
     function test_recordOperation_awaiting_online_registers_a_waiter_instead_of_answering_immediately() {
-        Gateway.mode = "gateway"
         AuthService.isOnline = true
         var got = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
@@ -1031,7 +996,6 @@ TestCase {
     // this test is what actually proves the Timer/_addOperationWaiter wiring
     // that those direct calls bypass.
     function test_recordOperation_awaiting_that_actually_times_out_delivers_pending_once() {
-        Gateway.mode = "gateway"
         AuthService.isOnline = true
         Gateway.awaitTimeoutMs = 30
         var results = []
@@ -1057,7 +1021,6 @@ TestCase {
     }
 
     function test_finishOperation_delivers_to_a_waiter_and_fires_operationApplied() {
-        Gateway.mode = "gateway"
         var got = null
         var applied = []
         var onApplied = function(id, opType, results, replay) {
@@ -1077,7 +1040,6 @@ TestCase {
     }
 
     function test_finishOperation_reports_a_replay() {
-        Gateway.mode = "gateway"
         var got = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
         Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [], idempotentReplay: true })
@@ -1085,7 +1047,6 @@ TestCase {
     }
 
     function test_finishOperation_delivers_a_rejection_and_fires_operationRejected() {
-        Gateway.mode = "gateway"
         var got = null
         var rejected = []
         var onRejected = function(id, opType, rejection) {
@@ -1107,7 +1068,6 @@ TestCase {
     function test_finishOperation_with_no_registered_waiter_still_fires_the_signal() {
         // Exactly the relaunch case: the callback died with the process, but the
         // eventual server answer must still be observable via the signal.
-        Gateway.mode = "gateway"
         var applied = []
         var onApplied = function(id) { applied.push(id) }
         Gateway.operationApplied.connect(onApplied)
@@ -1118,7 +1078,6 @@ TestCase {
     }
 
     function test_finishOperation_delivers_to_every_waiter_when_more_than_one_is_registered() {
-        Gateway.mode = "gateway"
         var a = null, b = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { a = r })
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { b = r })
@@ -1128,7 +1087,6 @@ TestCase {
     }
 
     function test_clear_stops_pending_await_timers_and_drops_their_callbacks() {
-        Gateway.mode = "gateway"
         var got = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { got = r })
         Gateway.clear()
@@ -1198,7 +1156,6 @@ TestCase {
     }
 
     function test_stuckRows_uses_the_record_name_when_the_item_has_one() {
-        Gateway.mode = "gateway"
         var id = Gateway.recordMutation("inventory", "p1", "update", { name: "Old" }, { name: "Sugar 1kg" })
         var item = OutboxStore.items.filter(function(i) { return i.requestId === id })[0]
         _failTimes(item, 500, 5)
@@ -1485,7 +1442,6 @@ TestCase {
         Gateway.clear() // sign-out: outbox wiped too
         compare(Gateway.stuckCount, 0)
         compare(OutboxStore.items.length, 0)
-        Gateway.mode = "gateway"
         var next = _queueWrite("o9")
         _failTimes(next, 500, 5)
         _relaunch()
@@ -1795,13 +1751,6 @@ TestCase {
         compare(Gateway.discardParked(item.requestId), true)
     }
 
-    function test_discardParked_refuses_outside_gateway_mode() {
-        var item = _parkedWrite("o1")
-        Gateway.mode = "direct"
-        compare(Gateway.discardParked(item.requestId), false)
-        compare(_inOutbox(item.requestId), true)
-    }
-
     function test_discardParked_twice_is_harmless() {
         var item = _parkedWrite("o1")
         compare(Gateway.discardParked(item.requestId), true)
@@ -1875,7 +1824,6 @@ TestCase {
     }
 
     function test_discardParked_a_batch_reports_its_entity() {
-        Gateway.mode = "gateway"
         Gateway.recordMutations("inventory", [
             { entityId: "p1", action: "update", before: { n: 1 }, after: { n: 2 } },
             { entityId: "p2", action: "update", before: { n: 1 }, after: { n: 2 } } ])
@@ -1887,7 +1835,6 @@ TestCase {
     }
 
     function test_discardParked_a_delta_fails_its_waiting_callbacks_once() {
-        Gateway.mode = "gateway"
         var got = []
         var id = Gateway.recordDelta("inventory", "p1", { stock: -1 }, {}, {}, function(r) { got.push(r) })
         Gateway.recordDelta("inventory", "p1", { stock: -2 }, {}, {}, function(r) { got.push(r) })
@@ -1905,7 +1852,6 @@ TestCase {
     }
 
     function test_discardParked_an_operation_fails_its_waiter_fires_the_signal_and_lists_every_entity() {
-        Gateway.mode = "gateway"
         var got = null
         var rejected = []
         var onRejected = function(id, opType, r) { rejected.push({ id: id, opType: opType, r: r }) }
@@ -1924,7 +1870,6 @@ TestCase {
     }
 
     function test_discardParked_an_operation_nobody_awaits_still_fires_the_signals() {
-        Gateway.mode = "gateway"
         var rejected = 0
         var onRejected = function() { rejected++ }
         Gateway.operationRejected.connect(onRejected)
@@ -1937,7 +1882,6 @@ TestCase {
     }
 
     function test_discardParked_an_operation_whose_waiter_already_timed_out_is_fine() {
-        Gateway.mode = "gateway"
         var results = []
         Gateway.recordOperation("completeOrder", _opBody([["order", "o1"]]), "k3", { awaitServer: true }, function(r) { results.push(r) })
         _failWith(_find("k3"), 500, _rejectedBody(), 5)
@@ -1996,7 +1940,6 @@ TestCase {
     // ── BC2: mutationApplied (Q-BC-3 A) ───────────────────────────────────────
 
     function test_ackSingle_removes_the_item_and_fires_mutationApplied_once() {
-        Gateway.mode = "gateway"
         Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
         var item = OutboxStore.items[0]
         compare(OutboxStore.pendingCount, 1)
@@ -2011,7 +1954,6 @@ TestCase {
     }
 
     function test_ackSingle_carries_the_items_own_action() {
-        Gateway.mode = "gateway"
         var actions = ["create", "update", "delete"]
         for (var i = 0; i < actions.length; ++i) {
             Gateway.recordMutation("order", "o" + i, actions[i], null, { n: i })
@@ -2023,7 +1965,6 @@ TestCase {
     }
 
     function test_mutationApplied_fires_only_after_the_item_left_the_outbox() {
-        Gateway.mode = "gateway"
         Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
         var item = OutboxStore.items[0]
         var pendingAtEmit = -1
@@ -2041,7 +1982,6 @@ TestCase {
     }
 
     function test_ackSingle_leaves_other_queued_items_alone() {
-        Gateway.mode = "gateway"
         Gateway.recordMutation("inventory", "p1", "delete", { name: "A" }, null)
         Gateway.recordMutation("order", "o1", "update", { s: 1 }, { s: 2 })
         Gateway._ackSingle(OutboxStore.items[0])
@@ -2050,7 +1990,6 @@ TestCase {
     }
 
     function test_send_while_signed_out_acks_nothing() {
-        Gateway.mode = "gateway"
         Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
         Gateway._send(OutboxStore.items[0])
         compare(appliedSpy.count, 0, "no request went out, so nothing was applied")
@@ -2058,14 +1997,12 @@ TestCase {
     }
 
     function test_recording_a_mutation_never_fires_mutationApplied_by_itself() {
-        Gateway.mode = "gateway"
         Gateway.recordMutation("inventory", "p1", "delete", { name: "W" }, null)
         Gateway.recordDelta("inventory", "p2", { stock: 1 }, {}, {}, function() {})
         compare(appliedSpy.count, 0)
     }
 
     function test_monkey_every_ack_fires_exactly_once_with_its_own_arguments() {
-        Gateway.mode = "gateway"
         var s = 4242
         function rnd(n) { s = (s * 1664525 + 1013904223) % 4294967296; return Math.floor(s / 65536) % n }
         var ents = ["inventory", "order", "staff", "supplier", "stock_batch"]

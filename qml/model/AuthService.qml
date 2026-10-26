@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 
 import "../helper/ProfileSettingsMath.js" as ProfileSettingsMath
+import "../helper/MemberPolicy.js" as MemberPolicy
 
 QtObject {
     id: root
@@ -233,11 +234,7 @@ QtObject {
     }
 
     function _canAssignRole(targetRole) {
-        if (AuthStore.role === "owner")
-            return targetRole === "admin" || targetRole === "manager" || targetRole === "staff"
-        if (AuthStore.role === "admin")
-            return targetRole === "manager" || targetRole === "staff"
-        return false
+        return MemberPolicy.canAssignRole(AuthStore.role, targetRole)
     }
 
     function _loadUserProfile() {
@@ -682,6 +679,10 @@ QtObject {
                 memberOperationFailed("Owner role cannot be modified")
                 return
             }
+            if (!MemberPolicy.canManageMember(AuthStore.role, member.role)) {
+                memberOperationFailed("You cannot change a member with this role")
+                return
+            }
 
             member.role = role
             FirebaseService.put("tenants/" + AuthStore.tenantId + "/members/" + uid, member, function(okWrite) {
@@ -712,6 +713,10 @@ QtObject {
             }
             if (member.role === "owner") {
                 memberOperationFailed("Owner status cannot be changed")
+                return
+            }
+            if (!MemberPolicy.canManageMember(AuthStore.role, member.role)) {
+                memberOperationFailed("You cannot change a member with this role")
                 return
             }
 
@@ -748,6 +753,10 @@ QtObject {
             }
             if (member.role === "owner") {
                 memberOperationFailed("Owner cannot be removed")
+                return
+            }
+            if (!MemberPolicy.canManageMember(AuthStore.role, member.role)) {
+                memberOperationFailed("You cannot remove a member with this role")
                 return
             }
 

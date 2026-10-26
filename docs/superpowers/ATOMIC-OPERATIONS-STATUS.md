@@ -62,3 +62,9 @@ grep -rn "Gateway\.record\(Mutation\|Delta\|Operation\)" qml --include=*.qml | g
 grep -rn "FirebaseService\.\(put\|putMany\|patch\|remove\|mintCounter\)" qml/model --include=*.qml
 grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | wc -l
 ```
+
+## 6. Update 2026-10-26 (P1 standing, after #161)
+- Merged and deployed: #146 (S1a), S2f-1/2/4/5 (#161); Taher confirmed rules + functions deployed, device passes N6/E4 done. Open: #165 (S2f-7). Queued P1 tail: S2f-3 (client wording), owner-demotion slice, S2d, S2e (parked on CA, do not wait for it).
+- New gap **G11:** `counters` and `activity_log` are on the client-writable allow-list; they leave it only after the last mint / activity-row caller moves into an op (design 7b items 2-3).
+- `mint` = S2f-6: one implementation, built in R2.
+- Gate to start build: spec approval (#147) + Q-A7 (order) + Q-A8 (accept F7 open through the arc). Engine work (R1+) may start after those; S0 can start right after Q-A7.

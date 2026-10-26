@@ -4,21 +4,21 @@
 // left out of index.handlers.test.js's original scope (see that file's
 // header comment and docs/superpowers/E2E-TESTING-ROADMAP.md, "Explicitly
 // scoped out" -> "functions/index.js handler tests for the other 5
-// endpoints"): acquireLock, releaseLock, provisionMember, runCutover,
-// computeAnalysis.
+// endpoints"): acquireLock, releaseLock, provisionMember,
+// computeAnalysis (runCutover was deleted in P1 S2b).
 //
 // Same harness, same philosophy as index.handlers.test.js: exercise the
 // REAL exported handler functions with mocked auth/Firestore/lib-module
 // dependencies (see testSupport/handlerHarness.js). Two different shapes
 // here, split into two sections:
 //
-//   1. acquireLock / releaseLock / runCutover -- each delegates its actual
-//      Firestore-writing work to a lib/ module (LockLogic, CutoverLogic)
+//   1. acquireLock / releaseLock -- each delegates its actual
+//      Firestore-writing work to a lib/ module (LockLogic)
 //      that already has its own full pure-logic test file. These tests
 //      cover the same seam index.handlers.test.js covers for
 //      recordMutation/recordDelta/recordMutationsBatch: auth, validation
 //      wiring, and translating a lib/ result into the HTTP response --
-//      NOT LockLogic/CutoverLogic's own correctness (already proven).
+//      NOT LockLogic's own correctness (already proven).
 //
 //   2. provisionMember / computeAnalysis -- neither delegates to a lib/
 //      module. Their auth resolution, request parsing, local helpers
@@ -426,105 +426,12 @@ test("provisionMember: the Firestore transaction failing -> 500 write-failed", a
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// runCutover
+// runCutover (deleted in P1 S2b)
 // ══════════════════════════════════════════════════════════════════════════
 
-function validCutoverBody(overrides) {
-    return Object.assign({ env: "test", confirm: "CUTOVER" }, overrides || {});
-}
-
-function resetCutoverMocks() {
-    mockState.deleteCollectionError = null;
-    mockState.zeroInventoryStockError = null;
-    mockState.setCalls.length = 0;
-}
-
-test("runCutover: success path returns 200 ok:true and writes the cutover marker to audit_log", async () => {
-    resetCutoverMocks();
-    seedHappyPathAuth(mockState, { role: "owner" });
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(jsonBody(res), { ok: true });
-
-    const markerSet = mockState.setCalls.find((c) => c.path.startsWith("tenants/test-tenant/audit_log/cutover-"));
-    assert.ok(markerSet, "expected a cutover marker written to tenants/test-tenant/audit_log/");
-    assert.equal(markerSet.data.action, "cutover");
-    assert.equal(markerSet.data.tenantId, "test-tenant");
-    assert.equal(markerSet.data.actorRole, "owner");
-});
-
-test("runCutover: non-POST method -> 405 method-not-allowed", async () => {
-    resetCutoverMocks();
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ method: "GET", body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 405);
-    assert.equal(jsonBody(res).error, "method-not-allowed");
-});
-
-test("runCutover: missing Authorization header -> 401 missing-token", async () => {
-    resetCutoverMocks();
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ headers: { origin: "http://localhost" }, body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 401);
-    assert.equal(jsonBody(res).error, "missing-token");
-});
-
-test("runCutover: verifyIdToken throwing -> 401 invalid-token", async () => {
-    resetCutoverMocks();
-    mockState.verifyIdToken = async () => { throw new Error("bad token"); };
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 401);
-    assert.equal(jsonBody(res).error, "invalid-token");
-});
-
-test("runCutover: no tenant context -> 403 no-tenant-context (validateCutoverRequest handles a null ctx)", async () => {
-    resetCutoverMocks();
-    mockState.verifyIdToken = async () => ({ uid: "ghost-uid-4" });
-    mockState.docs = {};
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 403);
-    assert.equal(jsonBody(res).error, "no-tenant-context");
-});
-
-test("runCutover: non-owner caller -> 403 owner-only", async () => {
-    resetCutoverMocks();
-    seedHappyPathAuth(mockState, { role: "admin" });
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 403);
-    assert.equal(jsonBody(res).error, "owner-only");
-});
-
-test("runCutover: missing/incorrect confirmation string -> 400 confirmation-required", async () => {
-    resetCutoverMocks();
-    seedHappyPathAuth(mockState, { role: "owner" });
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody({ confirm: "yes please" }) }), res);
-    assert.equal(res.statusCode, 400);
-    assert.equal(jsonBody(res).error, "confirmation-required");
-});
-
-test("runCutover: CutoverLogic.deleteCollection throwing partway through -> 500 cutover-failed", async () => {
-    resetCutoverMocks();
-    seedHappyPathAuth(mockState, { role: "owner" });
-    mockState.deleteCollectionError = new Error("simulated Firestore failure");
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 500);
-    assert.equal(jsonBody(res).error, "cutover-failed");
-});
-
-test("runCutover: CutoverLogic.zeroInventoryStock throwing -> 500 cutover-failed", async () => {
-    resetCutoverMocks();
-    seedHappyPathAuth(mockState, { role: "owner" });
-    mockState.zeroInventoryStockError = new Error("simulated Firestore failure");
-    const res = mockRes();
-    await handlers.runCutover(mockReq({ body: validCutoverBody() }), res);
-    assert.equal(res.statusCode, 500);
-    assert.equal(jsonBody(res).error, "cutover-failed");
+test("runCutover is gone: the irreversible ledger-wipe endpoint and its logic file no longer exist (P1 S2b)", () => {
+    assert.equal(handlers.runCutover, undefined);
+    assert.equal(require("node:fs").existsSync(require("node:path").join(__dirname, "../lib/cutoverLogic.js")), false);
 });
 
 // ══════════════════════════════════════════════════════════════════════════

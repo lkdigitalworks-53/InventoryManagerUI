@@ -21,7 +21,6 @@ TestCase {
         TransactionStore.entries = []
         TransactionStore.revision = 0
         InventoryStore.products = []
-        Gateway.mode = "gateway"    // enqueue into OutboxStore instead of a real write
         OutboxStore.clear()
         AuthStore.idToken = ""              // keeps Gateway._send's guard closed — no real network
         AuthStore._settings.sessionJson = "" // see tst_Gateway.qml header / CHECKPOINT.md 2026-08-18

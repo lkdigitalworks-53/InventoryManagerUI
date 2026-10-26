@@ -25,18 +25,16 @@
 //
 // Deliberately mocks each lib/ module's *Firestore-writing exported
 // functions* (GatewayLogic.applyMutation/applyDelta, BatchMutationLogic.
-// applyMutationsBatch, LockLogic.acquireLock/releaseLock, CutoverLogic.
-// deleteCollection/zeroInventoryStock) rather than simulating a real
+// applyMutationsBatch, LockLogic.acquireLock/releaseLock) rather than simulating a real
 // Firestore transaction for each -- every one of those lib/ modules'
 // Firestore-writing AND pure-validation functions already has its own
 // dedicated, passing test file (gatewayLogic.test.js, batchMutationLogic.
-// test.js, lockLogic.test.js, cutoverLogic.test.js). Re-deriving their
+// test.js, lockLogic.test.js). Re-deriving their
 // correctness here would duplicate coverage without adding any. This
 // harness's job is index.js's own logic: auth, deriveContext, request-body
 // wiring, and -- the one that matters most -- building the HTTP response
 // from whatever a lib/ function hands back. Each lib/ module's *pure*
-// functions (validateMutationRequest, validateAcquireRequest,
-// validateCutoverRequest, buildCutoverMarker, ...) are left REAL (not
+// functions (validateMutationRequest, validateAcquireRequest, ...) are left REAL (not
 // mocked) for exactly the same reason recordMutation's existing tests
 // leave GatewayLogic.validateMutationRequest real: they're cheap to run,
 // already correct, and exercising them for real here catches any future
@@ -65,7 +63,6 @@ function installMocks() {
     const batchMutationLogicPath = require.resolve("../../lib/batchMutationLogic");
     const operationLogicPath = require.resolve("../../lib/operationLogic");
     const lockLogicPath = require.resolve("../../lib/lockLogic");
-    const cutoverLogicPath = require.resolve("../../lib/cutoverLogic");
 
     const mockState = {
         verifyIdToken: async () => { throw new Error("mockState.verifyIdToken not configured for this test"); },
@@ -76,6 +73,7 @@ function installMocks() {
         collectionGetError: null, // when set, every collection(...).get() throws this (computeAnalysis 500 path)
         applyMutationResult: null,
         applyDeltaResult: null,
+        lastApplyDeltaParams: null,
         applyMutationsBatchResult: null,
         applyOperationResult: null,
         acquireLockResult: null,
@@ -84,10 +82,6 @@ function installMocks() {
         releaseLockResult: { ok: true },
         releaseLockError: null,
         releaseLockCalls: [],
-        deleteCollectionResult: 0,
-        deleteCollectionError: null,
-        zeroInventoryStockResult: 0,
-        zeroInventoryStockError: null,
         runTransactionError: null, // provisionMember's db.runTransaction() failing
         // admin.storage() mock for uploadProductPhoto/deleteProductPhoto (2026-09-21 photos
         // feature). storageFiles: path -> Buffer (what was actually .save()'d), so a test can
@@ -136,7 +130,14 @@ function installMocks() {
         // test that forgets to configure one fails loudly, not silently.
         getUserByEmail: async () => { throw Object.assign(new Error("no such user"), { code: "auth/user-not-found" }); },
         getUser: async () => { throw Object.assign(new Error("no such user"), { code: "auth/user-not-found" }); },
-        createUser: async () => { throw new Error("mockState.createUser not configured for this test"); }
+        createUser: async () => { throw new Error("mockState.createUser not configured for this test"); },
+        // S2f-1 (2026-10-25): deriveContext logs one structured warning per refusal. The stub below
+        // captures them here ([{msg, ...fields}]) so tests can assert the reason and the CI log stays
+        // quiet. Tests that care clear it themselves (mockState.logWarnings.length = 0).
+        logWarnings: []
+    };
+    require(resolveFromFunctionsRoot("firebase-functions/logger")).warn = (msg, data) => {
+        mockState.logWarnings.push(Object.assign({ msg: msg }, data));
     };
 
     function _writeDoc(docPath, data, opts) {
@@ -331,7 +332,7 @@ function installMocks() {
         }
     };
 
-    // Real GatewayLogic/BatchMutationLogic/LockLogic/CutoverLogic for their
+    // Real GatewayLogic/BatchMutationLogic/LockLogic for their
     // pure validate*/build* exports (already covered by their own test
     // files) -- only the actual Firestore-writing functions get stubbed.
     const realGatewayLogic = require(gatewayLogicPath);
@@ -342,7 +343,7 @@ function installMocks() {
                 mockState.applyMutationCalls.push(params);
                 return mockState.applyMutationResult;
             },
-            applyDelta: async () => mockState.applyDeltaResult
+            applyDelta: async (db, params) => { mockState.lastApplyDeltaParams = params; return mockState.applyDeltaResult; }
         })
     };
     const realBatchMutationLogic = require(batchMutationLogicPath);
@@ -372,20 +373,6 @@ function installMocks() {
                 mockState.releaseLockCalls.push(params);
                 if (mockState.releaseLockError) throw mockState.releaseLockError;
                 return mockState.releaseLockResult;
-            }
-        })
-    };
-    const realCutoverLogic = require(cutoverLogicPath);
-    require.cache[cutoverLogicPath] = {
-        id: cutoverLogicPath, filename: cutoverLogicPath, loaded: true,
-        exports: Object.assign({}, realCutoverLogic, {
-            deleteCollection: async () => {
-                if (mockState.deleteCollectionError) throw mockState.deleteCollectionError;
-                return mockState.deleteCollectionResult;
-            },
-            zeroInventoryStock: async () => {
-                if (mockState.zeroInventoryStockError) throw mockState.zeroInventoryStockError;
-                return mockState.zeroInventoryStockResult;
             }
         })
     };

@@ -30,8 +30,16 @@ import "../qml/helper/ImportMath.js" as ImportMath
 TestCase {
     name: "InventoryStore_upsertMany"
 
-    function init() { InventoryStore.products = [] }
-    function cleanup() { InventoryStore.products = [] }
+    function init() {
+        // This file enqueues for real: keep the _send guard closed (an earlier file could leak a
+        // token, and the default functionUrl is PRODUCTION) and drop the disk copy AuthService reloads.
+        AuthStore.idToken = ""
+        AuthStore.isAuthenticated = false
+        AuthStore._settings.sessionJson = ""
+        InventoryStore.products = []
+    }
+    // upsertMany now enqueues (no direct mode): keep the outbox clean for the next file.
+    function cleanup() { InventoryStore.products = []; OutboxStore.clear() }
 
     function _neverExists(name) { return false }
 
@@ -444,7 +452,7 @@ TestCase {
         var counts = { added: 0, updated: 0, skipped: 0, updatedProducts: [] }
         InventoryStore._upsertManySync(records, function() { return ids[callIdx++] }, _stubResolveSupplier(), _stubPullBatchId(), counts)
         compare(counts.added, 201)
-        compare(counts.chunked, true, "201 new rows must be flagged as chunked (>maxBatchSize=200)")
+        compare(counts.chunked, true, "201 new rows must be flagged as chunked (>maxBatchSize=150)")
     }
 
     // --- _onBatchMutationFailedPermanently: rollback + notify -------------

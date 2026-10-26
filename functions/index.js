@@ -24,7 +24,6 @@ const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
 const GatewayLogic = require("./lib/gatewayLogic");
-const CutoverLogic = require("./lib/cutoverLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
 const OperationLogic = require("./lib/operationLogic");
 const LockLogic = require("./lib/lockLogic");
@@ -43,7 +42,7 @@ admin.initializeApp();
 // fail-safe EnvConfig.js itself uses. `db` is now resolved PER REQUEST from
 // the client-declared `env`, not a module-level global: every handler below
 // calls `scopedDb(body.env)` instead of closing over one shared instance,
-// closing the gap where recordMutation/provisionMember/runCutover always
+// closing the gap where recordMutation/provisionMember always
 // wrote to `(default)` regardless of which env the calling client was built
 // for (see README "Environments" / AGENTS SS8).
 // "dev" env resolves to Firestore database id "dev1" (not "dev" — Firestore
@@ -112,42 +111,57 @@ async function sweepProductCleanup(db, tenantId, marker) {
     }, tenantId, marker);
 }
 
-// Photo endpoints: tenant id must be a safe path segment (it is concatenated into Storage paths and
-// comes from a users/{uid} doc) and the caller must be owner/admin. Returns null when allowed, else
-// the {status, error} to send. Runs before any inventory/audit read or Storage write.
+// Photo endpoints: the caller must be owner/admin. Returns null when allowed, else the {status, error}
+// to send. Runs before any inventory/audit read or Storage write. The tenant id is concatenated into
+// Storage paths; deriveContext has already refused anything that is not a safe path segment.
 function photoAccessDenied(ctx) {
-    if (!PhotoValidation.isSafePathSegment(ctx.tenantId)) return { status: 403, error: "no-tenant-context" };
     if (!PhotoCleanup.canManagePhotos(ctx.role)) return { status: 403, error: "role-not-allowed" };
     return null;
 }
 
+// The roles a member doc may hold. Mirrors firestore.rules roleIsValid(): keep the two lists equal.
+// Checked once here so no endpoint has to remember to: a privileged check that only tests for "owner"
+// or "admin" refuses an unknown role by accident, and an endpoint with no role check lets it through.
+const VALID_ROLES = ["owner", "admin", "manager", "staff"];
+
+// One structured warning per refusal (uid + reason code), then null. The HTTP answer stays a single
+// "no-tenant-context"; the reason is only in the log (S2f-1 Q3: distinct client codes come with S2f-3).
+function refuseContext(uid, reason, tenantId) {
+    const fields = { uid: uid, reason: reason };
+    // The tenant id comes from the self-writable users doc: cap what reaches the log.
+    if (tenantId !== undefined) fields.tenantId = String(tenantId).slice(0, 64);
+    logger.warn("deriveContext refused", fields);
+    return null;
+}
+
 async function deriveContext(db, uid) {
-    // Tenant + role come from the server's own records, not the client.
+    // Membership is the ONLY authority for tenant, role and status. users/{uid} is a client-owned
+    // pointer (firestore.rules lets a user write any field of their own doc), so it may name a
+    // tenant but must never grant anything: no active member doc -> no context, and the role comes
+    // from the member doc alone. Before S2f-1 a missing member doc fell back to users/{uid}.role, so
+    // any signed-in account could write {tenantId: <victim>, role: "owner"} to its own doc and act
+    // as that tenant's owner, and a removed member whose users doc survived kept full gateway access.
+    // The status check mirrors firestore.rules' isMember(): only status "active" passes. There is no
+    // legacy tolerance (S2f-6: no production data exists, every member doc is created with a status).
     const userSnap = await db.doc("users/" + uid).get();
-    if (!userSnap.exists) return null;
+    if (!userSnap.exists) return refuseContext(uid, "no-user-doc");
     const user = userSnap.data() || {};
     const tenantId = user.tenantId || "";
-    if (!tenantId) return null;
+    if (!tenantId) return refuseContext(uid, "no-tenant");
+    // The tenant id becomes a document path below; a "/" in it would walk to another document.
+    if (!PhotoValidation.isSafePathSegment(tenantId)) return refuseContext(uid, "unsafe-tenant", tenantId);
 
-    let role = user.role || "";
-    let actorName = user.name || user.displayName || "";
     const memberSnap = await db.doc(
         "tenants/" + tenantId + "/members/" + uid).get();
-    if (memberSnap.exists) {
-        const member = memberSnap.data() || {};
-        role = member.role || role;
-        actorName = member.name || actorName;
-        if (member.status && member.status !== "active") return null;
-    }
-    // Tenant display name — preferred from the tenant doc, falling back to
-    // whatever the user doc cached. Used when stamping new member/user docs.
-    let tenantName = user.tenantName || "";
-    const tenantSnap = await db.doc("tenants/" + tenantId).get();
-    if (tenantSnap.exists) {
-        const t = tenantSnap.data() || {};
-        tenantName = t.name || t.tenantName || tenantName;
-    }
-    return { tenantId: tenantId, role: role, tenantName: tenantName, actorName: actorName };
+    // A missing doc reads as {} and fails the status check; memberSnap.exists only picks the log reason.
+    const member = memberSnap.data() || {};
+    if (member.status !== "active") return refuseContext(uid, memberSnap.exists ? "not-active" : "no-member", tenantId);
+    if (VALID_ROLES.indexOf(member.role) < 0) return refuseContext(uid, "invalid-role", tenantId);
+    // Display only (audit rows also carry actorUid). Taken from the member doc, which only an
+    // owner/admin or the server can write: the self-writable users doc must not name the actor in an
+    // audit row (S2f-6, was finding F8).
+    const actorName = member.displayName || member.name || "";
+    return { tenantId: tenantId, role: member.role, actorName: actorName };
 }
 
 exports.recordMutation = functions.onRequest(
@@ -180,6 +194,11 @@ exports.recordMutation = functions.onRequest(
         const validated = GatewayLogic.validateMutationRequest(body);
         if (!validated.ok) {
             send(res, validated.status, { ok: false, error: validated.error });
+            return;
+        }
+        // D-2: the shared validator also serves recordOperation (ids with `~`), so the guard lives here.
+        if (!GatewayLogic.isClientRequestId(validated.requestId)) {
+            send(res, 400, { ok: false, error: "invalid-request-id" });
             return;
         }
 
@@ -332,6 +351,11 @@ exports.recordDelta = functions.onRequest(
             send(res, validated.status, { ok: false, error: validated.error });
             return;
         }
+        // D-2: the shared validator also serves recordOperation (ids with `~`), so the guard lives here.
+        if (!GatewayLogic.isClientRequestId(validated.requestId)) {
+            send(res, 400, { ok: false, error: "invalid-request-id" });
+            return;
+        }
 
         const ctx = await deriveContext(db, actorUid);
         if (!ctx) {
@@ -351,6 +375,7 @@ exports.recordDelta = functions.onRequest(
                 deltas: validated.deltas,
                 floors: validated.floors,
                 clamps: validated.clamps,
+                movements: validated.movements,
                 clientTimestamp: validated.clientTimestamp,
                 collection: validated.collection,
                 serverTimestamp: FieldValue.serverTimestamp()
@@ -650,15 +675,6 @@ exports.recordMutationsBatch = functions.onRequest(
         send(res, 200, { ok: true, requestId: validated.requestId, count: validated.items.length });
     });
 
-// ── One-time fresh-start cutover (P0) ───────────────────────────────────────
-// Owner-only, irreversible. Wipes the three ledger collections AND zeroes
-// every product's stock, so the immutable regime begins from a clean slate
-// (the user re-counts and re-enters stock afterwards, and those entries become
-// the first genuine audit_log records). Writes a single "cutover" marker.
-//
-// Server-side because the ledger collections are locked read-only to clients —
-// only the Admin SDK can delete them.
-
 // ── Member provisioning (Admin SDK) ─────────────────────────────────────────
 // Adds a teammate to the caller's tenant, handling all three cases the client
 // cannot do itself:
@@ -786,6 +802,13 @@ exports.provisionMember = functions.onRequest(
             "tenants/" + ctx.tenantId + "/members/" + uid);
 
         try {
+            // Tenant display name stamped into the new member/user docs. Read here, not in
+            // deriveContext: provisionMember is the only endpoint that uses it. It comes from the
+            // tenant doc only; the self-writable users doc never names the tenant for someone else.
+            const tenantSnap = await db.doc("tenants/" + ctx.tenantId).get();
+            const tenantDoc = tenantSnap.exists ? (tenantSnap.data() || {}) : {};
+            const tenantName = tenantDoc.name || tenantDoc.tenantName || "";
+
             await db.runTransaction(async (txn) => {
                 const userSnap = await txn.get(userRef);
                 const existing = userSnap.exists ? (userSnap.data() || {}) : {};
@@ -805,7 +828,7 @@ exports.provisionMember = functions.onRequest(
                     photoUrl: existing.photoUrl || "",
                     tenants: tenants,
                     tenantId: created ? ctx.tenantId : (existing.tenantId || ctx.tenantId),
-                    tenantName: created ? ctx.tenantName : (existing.tenantName || ctx.tenantName),
+                    tenantName: created ? tenantName : (existing.tenantName || tenantName),
                     role: created ? role : (existing.role || role),
                     createdAt: existing.createdAt || nowIso,
                     lastLoginAt: existing.lastLoginAt || nowIso,
@@ -818,7 +841,7 @@ exports.provisionMember = functions.onRequest(
                     role: role,
                     email: resolvedEmail,
                     displayName: displayName,
-                    tenantName: ctx.tenantName,
+                    tenantName: tenantName,
                     joinedAt: nowIso,
                     invitedBy: decoded.uid,
                     status: "active"
@@ -831,62 +854,6 @@ exports.provisionMember = functions.onRequest(
         }
 
         send(res, 200, { ok: true, uid: uid, created: created });
-    });
-
-exports.runCutover = functions.onRequest(
-    { region: "asia-south1", cors: true },
-    async (req, res) => {
-        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
-        if (req.method !== "POST") {
-            send(res, 405, { ok: false, error: "method-not-allowed" });
-            return;
-        }
-
-        const authHeader = req.get("Authorization") || "";
-        const match = authHeader.match(/^Bearer\s+(.+)$/i);
-        if (!match) { send(res, 401, { ok: false, error: "missing-token" }); return; }
-
-        let decoded;
-        try {
-            decoded = await admin.auth().verifyIdToken(match[1]);
-        } catch (e) {
-            send(res, 401, { ok: false, error: "invalid-token" });
-            return;
-        }
-
-        const body = req.body || {};
-        const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
-
-        const validated = CutoverLogic.validateCutoverRequest(ctx, body);
-        if (!validated.ok) {
-            send(res, validated.status, { ok: false, error: validated.error });
-            return;
-        }
-
-        const root = "tenants/" + ctx.tenantId;
-        try {
-            await CutoverLogic.deleteCollection(db, root + "/transactions");
-            await CutoverLogic.deleteCollection(db, root + "/stock_batches");
-            await CutoverLogic.deleteCollection(db, root + "/stock_movements");
-            await CutoverLogic.zeroInventoryStock(db, root);
-
-            const markerId = "cutover-" + Date.now();
-            const marker = CutoverLogic.buildCutoverMarker({
-                markerId: markerId,
-                tenantId: ctx.tenantId,
-                actorUid: decoded.uid,
-                actorRole: ctx.role,
-                serverTimestamp: FieldValue.serverTimestamp(),
-                clientTimestamp: body.clientTimestamp || null
-            });
-            await db.doc(root + "/audit_log/" + markerId).set(marker);
-        } catch (e) {
-            send(res, 500, { ok: false, error: "cutover-failed" });
-            return;
-        }
-
-        send(res, 200, { ok: true });
     });
 
 // ── Analysis compute (Phase 2 of the scale-reads-writes-analytics design) ──

@@ -400,8 +400,9 @@ Item {
     // docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md. Gateway tells us
     // which entities the discarded write touched; each owning store does its existing
     // full syncFromFirebase() once (staff + removed_staff share StaffStore).
-    // `stock_movement` has no client store and is ignored. Keep in step with
-    // Gateway._collections (tst_DataModel_discardResync checks every entity).
+    // An entity with no client store (or an unknown one) is ignored. `stock_movement` can no longer
+    // reach here: Gateway refuses it (P1 S2a-1). Keep in step with Gateway._collections
+    // (tst_DataModel_discardResync checks every entity).
     readonly property var _resyncStoreByEntity: ({
         "inventory": "inventory",
         "stock_batch": "stock_batch",

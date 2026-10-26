@@ -18,11 +18,15 @@ const {
     _deepEqual
 } = require("./gatewayLogic");
 const { isCascadeEntityDelete } = require("./photoCleanup");
+const MovementLogic = require("./movementLogic");
 
 // 200 ops = up to 200 working-doc writes + 200 per-op audit entries + 1 marker
 // = 401 writes, against a Firestore per-transaction ceiling the repo assumes is ~500. That ceiling,
 // and whether serverTimestamp() counts as an extra write per doc (which would make it 601), are both
-// UNVERIFIED (BC1 design review R3): treat MAX_OPS as a latent question, not a proven bound. Mirrored
+// UNVERIFIED (BC1 design review R3): treat MAX_OPS as a latent question, not a proven bound. Doc check
+// 2026-10-18: the public Firestore quotas page lists no per-commit write COUNT (only 10 MiB request size, 270 s
+// transaction time, 500 field transforms per document), so 500 is kept as a conservative budget, not a known
+// limit; the real answer still comes from the dev deploy check (P1 test plan, D-1). Mirrored
 // client-side as Gateway.qml's `maxOperationOps` (no shared build-time constant
 // between this Node runtime and the QML client); both sides pin the value in a
 // test so drift fails a test instead of failing in production.
@@ -85,6 +89,16 @@ function validateOperationRequest(body) {
         }
         ops.push(Object.assign({ kind: raw.kind }, v));
     }
+
+    // Write budget: one working doc + one audit entry per op, one marker, and
+    // (conservatively) at least one movement row per op on inventory.
+    let rowBudget = 0;
+    for (const op of ops) {
+        if (op.entity === "inventory") rowBudget += Math.max(1, op.movements ? op.movements.length : 0);
+    }
+    if (2 * ops.length + 1 + rowBudget > MovementLogic.MAX_TXN_WRITES)
+        return { ok: false, status: 400, error: "operation-too-large" };
+
     return { ok: true, requestId: requestId, opType: opType, ops: ops,
              clientTimestamp: (body && body.clientTimestamp) || null };
 }
@@ -147,8 +161,16 @@ async function applyOperation(db, params) {
                     before[field] = curVal;
                     after[field] = nextVal;
                 }
+                let movements = op.movements || [];
+                if (movements.length === 0 && op.entity === "inventory" && Object.prototype.hasOwnProperty.call(after, "stock"))
+                    movements = MovementLogic.deriveMovement(after.stock - before.stock,
+                        MovementLogic.DEFAULT_KIND_BY_OPTYPE[params.opType] || "adjustment");
+                if (movements.length > 0 && !MovementLogic.totalsMatch(movements, after.stock - before.stock)) {
+                    return { ok: false, status: 409, error: "movement-qty-mismatch",
+                             opIndex: i, field: "stock", current: before.stock };
+                }
                 entry.data = Object.assign({}, entry.data, after);
-                audits.push({ i: i, op: op, action: "delta", before: before, after: after });
+                audits.push({ i: i, op: op, action: "delta", before: before, after: after, movements: movements });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "delta", after: after });
             } else {
                 if (!_deepEqual(entry.data, op.before)) {
@@ -162,7 +184,11 @@ async function applyOperation(db, params) {
                     entry.exists = true;
                     entry.data = op.after || {};
                 }
-                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after });
+                // Inventory stock changes leave a server-derived ledger row (P1 D11); `before` is proven
+                // equal to the running state by the check above.
+                const movements = op.entity === "inventory"
+                    ? MovementLogic.deriveForMutation(op.action, op.before, op.action === "delete" ? null : (op.after || {})) : [];
+                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: movements });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "mutation",
                                after: op.action === "delete" ? null : (op.after || {}) });
             }
@@ -192,6 +218,19 @@ async function applyOperation(db, params) {
                 opType: params.opType,
                 opIndex: a.i
             });
+            const rows = MovementLogic.buildRows(a.movements, {
+                baseId: opAuditId(params.requestId, a.i),
+                productId: a.op.entityId,
+                actorUid: params.actorUid,
+                actorRole: params.actorRole,
+                serverTimestamp: params.serverTimestamp,
+                clientTimestamp: params.clientTimestamp,
+                requestId: opAuditId(params.requestId, a.i),
+                operationId: params.requestId,
+                opType: params.opType,
+                opIndex: a.i
+            });
+            for (const row of rows) txn.set(db.doc(tenantRoot + "/stock_movements/" + row.id), row.data);
         }
         // The marker is what makes a retry a no-op. Its id IS the requestId,
         // like every other audit_log entry.

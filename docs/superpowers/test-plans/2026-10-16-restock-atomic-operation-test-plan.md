@@ -19,7 +19,7 @@ Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + h
 - U09 guards, each zero writes: unknown counter; placeholder before its mint; unbound name; bad name pattern; >5 mints; placeholder in `before`, `deltas` or a key; resulting id with `/`; duplicate bind name.
 - U10 write budget counts counter writes; operation at the ceiling accepted, one over rejected.
 - U11 `restock` opType accepted; requestId prefix `restock:` enforced; `completeOrder:` prefix on `restock` rejected.
-- U12 full restock op: stock, batch, supplier (when new), purchase doc, activity doc, audit rows, marker, `receipt` movement (after #146) all in one transaction.
+- U12 full restock op: stock, batch, supplier (when new), purchase doc, activity doc, audit rows, marker, `receipt` movement (#146 merged; explicit kind, since unknown opTypes default to `adjustment`) all in one transaction.
 - U13 missing product: 404, no batch, no counter change.
 
 **Client pure `tests/tst_RestockPlan.qml` + Node mirror:**
@@ -73,6 +73,12 @@ Case ids follow Taher's answers (Q-A1 generic mint, Q-A2 no optimistic batch + h
 - E04 emulator: client REST mint and server mint interleaved on one counter doc, no duplicate id (the two-writer risk).
 - E05 `firestore.rules`: existing suite green; [Q-A3] `activity_log` rule reviewed and a test added if the path rules change.
 - E06 QML e2e for restock not written unless a `recordOperation` recipe exists under `qmltestrunner`; state the decision in the status block when built.
+
+### Rules pins (S2f interaction, design 7b)
+- RP1 `counters` and `activity_log` are still client-writable by an active member (pin; must stay green through R1-R6).
+- RP2 a suspended or removed member cannot write `counters` (existing S2f test, re-run, no change).
+- RP3 client cannot write `orders`, `staff`, `suppliers`, `removed_staff` directly (existing S2f tests, re-run).
+- RP4 (final PR only, not this arc's R-steps) flip RP1 to denied after the last mint caller migrates.
 
 ## 6. Sign-out guard tests (S series, PR 0)
 

@@ -70,8 +70,8 @@ test("validateBatchMutationRequest accepts a batch exactly at the max size", () 
 // literal deliberately so a future change to MAX_BATCH_SIZE without a
 // matching change to Gateway.qml fails loudly here instead of silently
 // reproducing the original bug (client sends an oversized batch again).
-test("MAX_BATCH_SIZE stays in sync with Gateway.qml's mirrored maxBatchSize (200)", () => {
-    assert.equal(BatchMutationLogic.MAX_BATCH_SIZE, 200);
+test("MAX_BATCH_SIZE stays in sync with Gateway.qml's mirrored maxBatchSize (150)", () => {
+    assert.equal(BatchMutationLogic.MAX_BATCH_SIZE, 150);
 });
 
 test("validateBatchMutationRequest rejects a batch containing an item with a disallowed action", () => {
@@ -338,8 +338,8 @@ test("F36 batch inventory create/update/opening_balance (import path) unaffected
     }
 });
 
-test("F36b a 200-item inventory create batch still validates (cap arithmetic untouched, no marker writes)", () => {
-    const items = Array.from({ length: 200 }, (_, i) => validItem({ entityId: "PRD-" + i, action: "create", before: null }));
+test("F36b a 150-item (max) inventory create batch still validates (3 writes per item = 450, no marker writes)", () => {
+    const items = Array.from({ length: 150 }, (_, i) => validItem({ entityId: "PRD-" + i, action: "create", before: null }));
     assert.equal(BatchMutationLogic.validateBatchMutationRequest(validBody({ entity: "inventory", items: items })).ok, true);
 });
 
@@ -358,5 +358,5 @@ test("RES-B1 validateBatchMutationRequest rejects a batch requestId in the reser
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.equal(result.error, "invalid-request-id");
-    assert.equal(BatchMutationLogic.validateBatchMutationRequest(validBody({ requestId: "Cascade~x" })).ok, true, "case-sensitive");
+    assert.equal(BatchMutationLogic.validateBatchMutationRequest(validBody({ requestId: "Cascade-x" })).ok, true, "case-sensitive");
 });

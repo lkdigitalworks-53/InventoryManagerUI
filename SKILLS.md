@@ -4344,7 +4344,139 @@ Rules:
 2. Never fix it by resolving conflicts toward the branch: that reverts main. Re-apply only the PR's own commits onto main (`git cherry-pick`), then join with `git merge -s ours --no-commit origin/main` + `git read-tree --reset -u <rebuilt tree>` so the PR gets main as an ancestor without a force-push.
 3. Verify the result: `git diff --stat origin/main HEAD` must list only the PR's files, and the earlier CI run no longer proves the new tree.
 
-## Skill 122: Before designing on a shared server file, list the open PRs that edit it
+
+## Skill 122: A server limit is only reachable through the senders that exist: derive the reachable range from the sender before writing a verification item, and pin the relation with both constants
+
+PR #149 review (2026-10-18). The test plan asked Taher to complete an order of 166+ lines and expect the server's `operation-too-large`. No app order can do that: `CompletionPlan.build` stops at `MAX_OPS` 200 ops (about 66 lines) with a local message first, and the server's 166 is the ceiling for inventory-only operations.
+Rules:
+1. Before a plan item says "trigger limit X", read the SENDER's own cap and shape (ops per line, fixed extra ops) and compute the largest request it can build. If that is below X, the item is wrong: write the local refusal as the expected result instead, and keep the server message as a Node-only pin (Skill 119 rule 1: list the callee's error paths that survive the guard).
+2. Pin the relation, not the two numbers: one test computes the sender's bound from the exported constants (`(MAX_OPS - 1) / 2` inventory ops) and asserts the server budget accepts it, plus the first shape beyond it is refused. Raising either constant then fails that test, not a person.
+3. An unverified external ceiling (here Firestore's per-commit write count) has to appear in EVERY path it governs. The import chunk (450 docs) was on the dev checklist; an about-60-line order (about 181 ops) was not, and it is the same question.
+4. "The public quotas page lists no write count limit" is evidence of a gap in the docs, not of no limit. Write it as "not documented", keep the conservative budget, and record the dev check as NOT YET RUN with the exact fallback (which constants move together).
+5. A cap that counts a per-ROW cost (one op per stock batch) is not a cap on what the person sees (lines). Say in the refusal both the unit they know and the way out ("move some lines, or part of a line's quantity, to a second order"); a "move lines" hint is wrong for a one-line order. Test the one-line-many-rows shape, not only many lines.
+6. A latent handler defect behind an unreachable path (3 identical re-sends, then `out of stock` for a "too large" rejection) goes in KNOWN-ISSUES with its trigger, not into untestable QML.
+
+
+## Skill 123: Deleting a Cloud Function: the deployed copy survives, the test harness may require the deleted file, and the old docs are history
+
+P1 S2b (2026-10-19), removing `runCutover` (export, `lib/cutoverLogic.js`, its tests). 740 -> 722 server tests (-10 pure-logic, -9 handler, +1 guard), 0 failures.
+Rules:
+1. Removing an `exports.x` from `functions/index.js` does not undeploy it. The next `firebase deploy --only functions` asks to delete it. Write that in the PR and README so the deploy prompt is not a surprise.
+2. `testSupport/handlerHarness.js` did `require.resolve` on the lib file and stubbed it in `require.cache`; deleting the file first would have failed EVERY handler test, not only the deleted endpoint's. Delete the mock first, then the file, then run the whole suite.
+3. Leave dated specs, plans and checkpoints alone (history). Update only present-tense docs (README, AGENTS.md) and say "deleted in <slice>" instead of rewriting.
+4. Use `git grep -I` to find references: plain `grep -r` over the repo hit a binary file and returned nothing.
+5. Pin the deletion with one test (`handlers.runCutover === undefined`, lib file absent) so a bad merge cannot bring back an irreversible wipe endpoint.
+6. A "no reference left" claim in a test plan must be the pasted output of the grep on the final tree. The guard test and the "deleted in" comments are references too: write the expected hits, not "none". Also grep the harness for mock STATE fields of the deleted code (`xxxResult`/`xxxError`), not only its `require`s.
+
+
+## Skill 124: Splitting a deletion slice: take the part with no test blast radius first, and pin a deleted client API with `typeof`
+
+P1 S2a-1 (2026-10-21). S2a (delete `direct` mode + client `runCutover`) was split in two before any code: S2a-1 (dead `runCutover`, `cutoverUrl`, `cutoverFinished`, plus the `stock_movement` entity-map entry) and S2a-2 (`direct` mode, the `mode` property).
+Rules:
+1. Count the blast radius of removing a property before you pick the slice: `git grep -c "Gateway.mode" -- tests qml` found 79 uses in 22 files (18 `_prevMode` lines). Assigning a property that no longer exists on a singleton is a runtime error, so S2a-2 must touch every one of those files, and with no Qt in the sandbox CI is the only oracle. That is its own session.
+2. A dead block with no caller and no test (here `runCutover`, 45 lines) is the cheap half: grep the helpers it uses (`_captureBeforeStatusIsLost` still has 5 other users, so it stays) and delete it first.
+3. Pin a deleted client API with `compare(typeof Gateway.x, "undefined")`, one line per removed name. Reading an absent member of a QtObject singleton should give `undefined` for properties, functions and signals alike, so one pin style fits all three; this was NOT run locally (no Qt), CI confirms it.
+4. A client-side entity map that is wider than the server's lets a caller enqueue a write the server can only reject. Narrow it to the server's list and test the four per-entity entry points (`recordMutation`, `recordEdit`, `recordMutations`, `recordDelta`) return `""` with the outbox empty. `recordOperation` carries entities inside its ops and is gated by the server only (`unsupported-entity` per op): say so in the test comment instead of writing "every entry point". The entity check runs before the mode check, but the test still sets `gateway` on purpose: a regression must land in the outbox (no token, no network), never in direct mode's `_writeDirect` (real Firestore).
+5. `DataModel._resyncStoreByEntity` has no `stock_movement` key and never had one; only a comment named it. Keep the generic "unknown entity is ignored" tests, drop any test-side ignore list for an entity that left `Gateway._collections` (it is dead code), and fix the comment.
+6. A "the test asserts every X" claim needs the count from the source: `_collections` has 7 entities and the test asserted 6 (`removed_staff` was never checked). Count with grep on both sides before writing the claim.
+7. A deployed function deleted by hand in the console is gone for `firebase deploy` too: remove every "deploy will ask to delete it, answer yes" sentence and give a `curl` that must print `404`.
+
+## Skill 125: Deleting a global test knob: count the blast radius over the WHOLE repo, and find who lived off the leak
+
+P1 S2a-2 (2026-10-23). `Gateway.mode` was deleted; 89 uses in 32 files, not the 79 / 22 written into Skill 124 and the CHECKPOINT recipe.
+Rules:
+1. Count a symbol's uses with `git grep -c SYMBOL -- . ':!*.md'` on `main`, never with a hand-picked folder list. The old count looked in `tests` and `qml` and missed the 9 files under `test/e2e` (singular `test`).
+2. A singleton knob forced in one test file's `init()` and never restored leaks into every later file: qmltestrunner is one process and runs files in name order. Here `tst_Gateway.init()` left `mode = "direct"`, and 21 files re-forced `"gateway"` to cope. After deleting the knob, list the files that run AFTER the forcing file, write through the changed code and never set it themselves: `ls tests/tst_*.qml | sort | awk '$0 > "tests/tst_Gateway.qml"'` plus a grep for the store write calls. Six matched, two really enqueue, so those two got `OutboxStore.clear()` in `cleanup()`.
+3. A test whose only premise is the deleted branch is deleted, not rewritten (`..._requires_gateway_mode` x3, the direct chunking test). Keep one pin instead: `compare(typeof Gateway.mode, "undefined")`.
+4. Test names that carry the knob (`..._in_gateway_mode_...`) rot into lies once it is gone: rename them in the same change and grep the docs for the old names.
+5. The check that makes the remaining tests safe is the `!AuthStore.idToken` guard in `_send*` plus `init()` clearing the token and the on-disk session. Keep both; the file header says so.
+   Every file that starts to enqueue (here `tst_StockBatchStore`, `tst_InventoryStore_upsertMany`) must do the same in its own `init()`: blank `AuthStore.idToken`, set `AuthStore.isAuthenticated = false`, clear `AuthStore._settings.sessionJson`. The default `functionUrl` is PRODUCTION, and `tst_AuthStore` documents that QtQuickTest does not guarantee file order, so rule 2's name-order audit is a heuristic, not the guard. The guard is each file cleaning up after itself (PR #155 sweep, 2026-10-24).
+7. A fallback branch whose trigger the change removes (here `parentId === ""` meaning "direct mode, nothing to wait for") is dead code that does the wrong thing if it ever runs: delete it, do not keep it as a safety net. Also grep comments, not only code, for the old mode name (6 test files and `AGENTS.md` still said "gateway mode").
+6. State the CI number you expect before pushing (here 2107 - 4 deleted + 1 pin = 2104), so a surprise is visible.
+
+## Skill 126: Locking a Firestore collection for clients: name it in the wildcard's guard, audit writers by auth level, and re-point the pins
+
+P1 S2c (2026-10-24). `inventory` became read-only to clients so a member token can no longer change stock without the gateway writing the ledger.
+Rules:
+1. Firestore grants a request if ANY matching rule allows it. A lone `match /inventory/{id} { allow write: if false }` denies nothing while the `match /{collection}/{docId}` fallback still allows. The lock is a name in a helper function that the fallback's write guard excludes (`!isGatewayWriteOnlyCollection(collection)`). This is the third time the file needed this (`isLedgerCollection`, `isServerOnlyCollection`, now this one): a new tier is a helper plus one `&&`, never just a block.
+2. Do not reuse a helper whose name and comment are a claim someone reads as evidence. `isLedgerCollection` says "immutable, append-only" for an MCA auditor; inventory is mutable. A new named tier costs about 10 lines and keeps the file true, and locking `orders` later is a one-word change.
+3. Before tightening, list every writer and classify it by how it authenticates, not by folder: Admin SDK and `Authorization: Bearer owner` skip the rules (Node e2e, `seed.js`, `createEmulatorDoc`), a member ID token does not (`FirebaseService.put/patch/putMany/remove/mintCounter*`, raw `XMLHttpRequest`). Only the second kind can break. The grep is evidence, not proof: say so in the design note and let the device checklist be the second check and the denied write on dev the third.
+4. The existing pin that asserted the old open behaviour (R08: member writes inventory) is re-pointed, not deleted: keep the read half on `inventory` (proves the exclusion is not too broad) and move the write half to a collection that is still open (`orders`). Keep the test ID so the older test plan still resolves.
+5. Prove a denied write did nothing: after the `assertFails` calls, read the document back with the rules off and `deepEqual` it, and check the would-be new document is absent. A rule that denies the client but lets the write through half-way is the failure that matters.
+6. Cover the matrix, not one user: every role (`owner`, `admin`, `manager`, `staff`) must be denied (a loop of tests), plus non-member, anonymous, a sub-collection (denied by default) and a look-alike collection name (exact-name pin, documents the limit).
+7. The sandbox cannot run the emulator. Recount the tests with a script and state the CI number before pushing (45 - 3 + 10 = 52 rules tests, 2971 in total).
+8. Merging does not change dev: the lock starts at `firebase deploy --only firestore:rules`. Rollback is a one-line revert plus the same command; there is no data to migrate. Say both in the PR.
+
+## Skill 127: Firestore rules: two `match` blocks on one path are OR-ed, so audit every explicit block against the wildcard, and prove a suspected hole with a probe PR
+
+PR #156 sweep (2026-10-24). The repo's own comments already say "Firestore grants a request if ANY matching rule allows it". The same rule applied to `members` was missed: `match /members/{uid}` and the fallback `match /{collection}/{docId}` both match `tenants/T/members/U`, and the fallback allowed any member to write it. A staff token could promote itself to owner. It sat in the file with zero tests.
+Rules:
+1. For every explicit `match` inside the tenant block, ask: does the fallback also match this path, and does it allow what the explicit block denies? If yes, the explicit block is decoration. Exclude the name in the fallback's guard (same trick as Skill 126), or replace the fallback with an allow-list.
+2. A rules file with no test for a block has no proof that block works. List the explicit blocks, then list the tests per block. Zero tests = finding.
+3. Do not report a rules hole from reading alone when CI can prove it. Push a probe branch off the PR with tests that assert the SECURE behaviour plus one control that must pass, open a draft PR against the PR's branch, read the result, close it. Red = proven. Control red = the probe is wrong. Keep the probe branch: its red tests are the first tests of the fix.
+4. CI check-run annotations do NOT name failed tests and job logs are blocked from the sandbox. The `ci-status-comment` on the PR does list each failed test name. Poll that comment, it appears after the slowest job.
+5. `isMember` is `exists()` only. The gateway (`deriveContext`) also requires `status` to be exactly `active`; a missing `status` is refused (S2f-1 D2, resolved strict 2026-10-25, no legacy data). Two gates for one question will drift: when fixing rules, mirror the gateway so the same member docs pass in both.
+6. A server-side role gate is only a trust boundary if the same data cannot be written directly. `staff` delete, `removed_staff` create and product delete are gated owner/admin in `functions/index.js`; until the collection is locked in rules (and `members` is safe) any member can skip the gate.
+
+## Skill 128: Authorization must come from the one record the user cannot write: gateway trusts the member doc, never `users/{uid}`
+
+S2f-1 (2026-10-24). `deriveContext` (the gateway's identity step for 10 endpoints) read tenant and role from `users/{uid}`, which the rules let every user write field by field, and kept that role when the member doc was missing. Any signed-in account could claim `{tenantId: <victim>, role: "owner"}`; a removed member whose users doc survived kept full access (the client cannot delete another user's users doc). Found while designing the F2 fix, not from a report.
+Rules:
+1. For every authorization decision, ask: which document does it read, and who can write that document? If the user can write it, it is a claim, not a fact. Tenant, role and status come from the member doc, which only owner/admin (rules) or the Admin SDK can write.
+2. The same question is decided in up to three places (rules, gateway, client). Audit all of them when fixing one; a fix in the rules alone left the gateway open (Skill 127 rule 5 predicted the drift, this is the proof).
+3. A "legacy fallback" in an auth path is an attack surface. With no production data (design decision D10) delete it instead of keeping it for compatibility.
+4. Fail closed on every missing piece: no member doc, a role outside the allowed set, any status but `active` (a missing status included), unsafe tenant id. No tolerance is kept (D2 resolved strict, 2026-10-25; every member doc is created with a status). Allow-list the role once, at the identity step (rule 10), not in each privileged check.
+5. Test a shared choke point once per caller: a table (handler x scenario) in one file plus a guard test that counts the call sites in the source (`await deriveContext(` count equals the table size), so a new endpoint cannot skip it. A control row per handler (a real owner is not refused) keeps the table from passing because every body is invalid.
+6. The harness hid the hole: `seedHappyPathAuth` always created a member doc, so no test ever reached the fallback. Seeds that only build the legitimate shape prove nothing about the illegitimate one. Add the bad shapes (users doc only, member of another tenant, suspended, role empty) to the seed vocabulary.
+7. Prove it red first (handler probe in `/tmp`, then the committed test against the old code: 56 of 113 fail), then run mutants of the fix (drop the role allow-list, the status gate, the safe-segment check, the logging, cap the logged tenant id): all caught. One mutant (fall back to `users.role`) survives and is equivalent: once the allow-list has passed, `member.role` is always set. A surviving mutant means a redundant line or a test gap; decide which and delete the line.
+8. A real-Firestore e2e for the same rule mutates the SEEDED member doc and restores it in a `finally`; later suites share the identity.
+9. Do not "fix" it by locking `users/{uid}` fields: onboarding and leave-workspace write them from the client on purpose. The server not trusting them is the boundary.
+10. Allow-list the role at the identity step. Comparing a role to `"owner"` only refuses an unknown role on the endpoints that compare; endpoints with no role check let `""`, `"viewer"`, `"Owner"`, a number or an object in at staff level (sweep of PR #159, probe P1: 6 of 10 endpoints). Keep the set equal to the rules' `roleIsValid`, and test every endpoint class (gated and ungated), not one example. A claim in a PR ("empty role = no privilege") needs that table.
+11. Log every refusal once with a reason code (`no-user-doc`, `no-tenant`, `unsafe-tenant`, `no-member`, `not-active`, `invalid-role`) and cap the self-writable tenant id in the log line (64 chars). The HTTP answer stays one code until the client can word each cause (S2f-3). A silent refusal hides exactly the attack the gate exists for.
+12. Read only what the endpoint uses. The tenant display name was read on every request and used by `provisionMember` alone; it moved there, and a test records the document reads to keep it there.
+
+## Skill 129: Access-control collections: name them in the wildcard's guard, make "member" mean active member, and write the missing tests before touching the rules
+
+S2f-2 (2026-10-24). `members` had an explicit, careful block and a wildcard that also matched it; Firestore ORs matching rules, so the careful block protected nothing (F1). `isMember` was `exists()` only, so suspending a member changed nothing in Firestore (F2). No test existed for `users`, `tenants` or `members`.
+Rules:
+1. Any collection with its own `match` block that decides access (members) is excluded from the wildcard write guard by name (`isAccessControlCollection`). Next step is an allow-list (S2f-5) so this list cannot be forgotten.
+2. `isMember` means ACTIVE member everywhere; `isOwner` and `isAdmin` build on it, so a suspended admin loses admin powers. Only `status == 'active'` passes (no legacy tolerance when there is no legacy data); the gateway applies the same test.
+3. Put the self-read check first in an `||` (`own doc || isMember`): when the member doc lacks a status, `isMember` errors, and a true left operand does not depend on how an error operand behaves.
+4. Mirror the role-assignment policy in the rules (`canAssignRole`), or the rules are the loosest of the three enforcers (rules, gateway, client). Writing the test matrix is what exposed it (F9).
+5. Pin on purpose what you cannot fix: `users/{uid}` stays self-writable (onboarding, leave), with a test that says so and points at the server-side rule that makes it safe.
+6. A rules test file for a block with zero tests starts from the probe tests of the review, then the role x status x operation matrix, then one monkey test.
+7. Mirror the role allow-list in `isMember` too, not only in the gateway: `roleIsValid(myRole(tenantId))`. A rule that says "member" for a doc the gateway refuses (`viewer`, empty, `Owner`, a number, missing) is the drift Skill 128 rule 10 warns about. A helper whose last caller you just deleted (here `roleIsValid`) is the signal that a check went missing.
+8. Identity fields are immutable on update, and so is any field another rule reads as a key: member `uid` (create pinned it, update did not) and tenant `ownerId` (the bootstrap rule trusts it, so a rewrite mints a second owner past `canAssignRole`). List every field some rule reads with `get()`, then ask who can write it.
+9. An unresolved policy question gets a test labelled `PIN <decision id>` that records today's behaviour, so changing it is a deliberate edit (admin vs peer admin was pinned, then decided as a hierarchy, D-1 b: the pin became a matrix).
+10. One policy, three enforcers, one table: when the rules, the gateway and the client helper (`MemberPolicy.js`) decide the same question, put the SAME actor x target table in the rules test and in the QML helper test, and name each enforcer in the comment of the other two. Judge hierarchy by the target's CURRENT role (`resource.data.role`), not only by the role being written, or an admin can still demote or remove a peer.
+11. Count from CI, never from remembered baselines: the first plan said 3087 (stale Functions 811 and E2E 89); CI said 3118.
+
+## Skill 130: Make the wildcard's write guard an allow-list; a blacklist of locked names fails open every time a name is forgotten
+
+S2f-4 + S2f-5 (2026-10-24). The wildcard `match /{collection}/{docId}` carried a growing `!isX(collection)` chain. Firestore grants a request if ANY matching rule allows it, so each explicit block next to the wildcard was a latent hole: S2c needed the inventory name added, F1 was `members`, and `orders`, `staff`, `suppliers`, `removed_staff` stayed writable, bypassing the gateway's role gates and audit rows.
+Rules:
+1. Write access on the wildcard is `isMember && isClientWritableCollection(name)`, an allow-list of the few collections the client writes (`activity_log`, `config`, `counters`, `_migrations`). Anything else, including names nobody has invented, is denied. Reads stay generic (active member, except server-only names).
+2. Build the list from an audit, not memory: grep every `FirebaseService.put/patch/putMany/remove/mintCounter*` and every store that writes, and check the e2e suites. Record the audit in the test plan; the first device pass with logcat open on `PERMISSION_DENIED` is the proof, and a missed writer fails loudly (dev only).
+3. Adding a name to the allow-list is a security decision: a test and a design-doc line.
+4. Pins that documented the old behaviour ("look-alike names are still working collections", "orders are writable") flip to deny in the same PR; delete tests whose premise is gone instead of weakening them.
+5. In a test loop, do not name the loop variable `collection` when the body needs the firestore `collection()` function.
+6. The remaining client-writable name that is a security smell is `counters` (a member can burn ids). Locking it needs server-side id minting (S2f-6).
+
+---
+
+## Skill 131: Rebase a stacked PR with --onto the parent's new tip, and recount tests from CI, never from the plan
+
+PR #161 review (2026-10-25). PR #160 (parent) had been rebased onto main after #159 was squash-merged; PR #161 still sat on the old #160 commit.
+Rules:
+1. Plain `git rebase main` on the child replays the squash-merged ancestors and the old parent commit: duplicate conflicts. Use `git rebase --onto <parent-new-tip> <old-parent-last-commit>` so only the child's own commits replay, and the stack stays aligned for when the parent merges.
+2. Push with `--force-with-lease=<branch>:<old-sha>`, token via `http.extraheader`, never in the remote URL. Keep a local backup branch before rebasing.
+3. Conflicts in count docs: take the upstream side, then replace every number with the CI-observed one (the PR's "CI test summary" comment). Predicted totals drift by whatever main gained.
+4. Count Rules tests exactly: stub `node:test` in a script, `require` the file, count `test()` registrations (loops expand correctly; a grep does not), and add `storage.rules.test.js` (CI's Rules number includes it).
+5. A constant used inside a test body but declared lower in the file works only because `node:test` starts tests asynchronously; hoist it.
+6. Fix a parent PR's docs on the parent, not in the child.
+7. A conflict-free merge is textual, not semantic. After a rebase, grep the tests the parent ADDED for the behaviour your PR flips (here #164's "R1 control" wrote `orders`, which #161 denies: auto-merged clean, would have gone red), and grep your own docs for claims the parent already fixed (here "`ownerId` is mutable", fixed by #164 R3). Rerun this check on every rebase, not only the first.
+
+## Skill 132: Before designing on a shared server file, list the open PRs that edit it
 
 Restock-atomic design session (2026-10-16). The design needed `functions/lib/operationLogic.js`. `git branch -r` showed `feature/2026-10-16-p1-s1a-server-movements` (PR #146), created the same day; `git diff --stat origin/main...<branch>` showed it rewrites that file and adds `DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" }`. A new `restock` opType would have defaulted to kind `adjustment` and conflicted textually.
 Rules:
@@ -4353,7 +4485,7 @@ Rules:
 3. Prefer a client-side parameter (explicit `movements: [{kind:"receipt"}]`) over a second edit to the shared server default, so the two PRs do not touch the same lines.
 
 
-## Skill 123: Never record an option as "rejected" unless the person rejected it, and quote their words
+## Skill 133: Never record an option as "rejected" unless the person rejected it, and quote their words
 
 Restock design v1 (2026-10-16) wrote "the rejected option C" for server-side id minting, and priced it with an unchecked claim (two writers racing on one counter). Taher had only rejected "retry deltas on 403"; his stated direction was the opposite (everything in one atomic operation). The error reached a pushed spec and a push-back he then had to correct.
 Rules:

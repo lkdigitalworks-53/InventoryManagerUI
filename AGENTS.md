@@ -15,7 +15,7 @@ work against it).
 
 ## Session & Sandbox Conventions (established 2026-08-30)
 
-Three standing rules, written down once so they don't need repeating each session:
+Four standing rules, written down once so they don't need repeating each session:
 
 **1. Sandbox execution limits are not a reason to leave code unwritten.** A Cloud sandbox session
 can't build the actual Felgo/Qt app (Windows/Felgo toolchain, Taher's machine only) and can't run
@@ -50,6 +50,9 @@ machine, not this chat.
 
 **3. Read order (token budget).** Do NOT read `SKILLS.md` in full: it is ~300 KB (~75k tokens). Read `SKILLS-INDEX.md` (~12 KB, generated), then read the FULL text of every skill whose title touches the task (`awk -v id=104 '/^## Skill /{p=($3==id":")} p' SKILLS.md`). Before touching an area (stores, gateway, outbox, photos, tests, CI) `grep -i <area> SKILLS-INDEX.md` and open every match; skipping a matching skill repeats a mistake that was already paid for. After adding or renaming a skill heading run `node .github/scripts/skills-index.js --write` (a script test fails the PR if the index is stale). Do not read `AGENTS.md` / `README.md` end to end either: use the section map (`grep -n '^## \|^### '`) and open the section you need.
 
+
+**4. There is no production. Do not ask about it, plan for it, or design around it (Taher, 2026-10-25).** No production code has been released, none is planned for the near future, and there is no real data anywhere: dev tenants only. So never raise production rollout order, app version skew, minimum-app-version gates, live-data migrations, backward compatibility with old builds, or "before the first production tenant" caveats, and do not add them to docs. When a design choice only matters for a released product, pick the simplest option and move on. This will change when Taher says a release is planned; until then it holds.
+
 ---
 
 ## Current Feature Status
@@ -82,10 +85,11 @@ machine, not this chat.
 | Cloud Functions env-awareness (all 4 functions resolve db per request) | ✅ Done — pending real deploy/emulator verification |
 | Paginated reads, all 6 growing stores (fixes silent truncation past Firestore's internal page-size threshold) | ✅ Done — pending qmltestrunner run |
 | Write-path fix (no more collection-wide bulk overwrite on a single mutation) | ✅ Done |
-| Bulk-import chunking (>200 rows split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 57 |
+| Bulk-import chunking (>150 rows since P1 S1b, was 200, split into `Gateway.maxBatchSize`-sized batches, permanent-failure rollback + notify) | ✅ Done — pending real `qmltestrunner`/emulator run, see Skill 57 |
 | `computeAnalysis` Cloud Function (server-side Revenue/Profit/Sold/Purchased aggregation) | ✅ Built, tested (Node-side) — not yet wired into SalesPage.qml, not yet deployed |
 | SalesPage.qml cutover to server-side analysis | 📋 Deferred — separate future project, not a thin swap (see `docs/superpowers/specs/2026-07-06-scale-reads-writes-analytics-design.md` §9.1) |
 | India compliance roadmap (design) | 📋 Approved — P0 substantially implemented, see below |
+| Login as non-owner roles (staff/admin/manager) + multi-user cross-actor tests | 📋 PENDING — DRAFT design `docs/superpowers/specs/2026-10-25-multi-role-login-design.md` (decisions open, resume after compliance); `Gateway.provisioningAvailable` is still `false`, so no second login can be created from the app; see `docs/superpowers/KNOWN-ISSUES.md` ("No way to log in as staff") |
 
 ---
 
@@ -109,9 +113,20 @@ edit/delete; client forges identity & time). The fix:
 - **Ledger tier (immutable, server-owned):** `audit_log` (new), `transactions`, `stock_batches`,
   `stock_movements` (new), plus mutation snapshots. Firestore rules = **read-only to clients**;
   the *only* writer is a Cloud Function (Admin SDK). **Append-only — no update, no delete.**
-- **Working tier (client-writable, as today):** live `inventory`, `orders`, `staff`, `suppliers`
-  the UI edits. Every mutation calls the gateway, which writes the doc **and** appends a ledger
-  entry in one transaction.
+- **Working tier:** live `inventory`, `orders`, `staff`, `suppliers` the UI edits. Every mutation
+  calls the gateway, which writes the doc **and** appends a ledger entry in one transaction.
+  Since P1 S2c `inventory` is **gateway-write-only** in `firestore.rules` (members read it, only the
+  Cloud Functions write it; `isGatewayWriteOnlyCollection`, Skill 126). `orders`, `staff`, `suppliers`
+  and `removed_staff` are still client-writable at the rules level; locking them is a separate follow-up.
+  **Authorization holes (PR #156 sweep, probe PR #157, S2f design `specs/2026-10-24-s2f-authz-hardening-design.md`, Skills 127-128):**
+  (F3, fixed in S2f-1, PR-A) the gateway used to trust the self-writable `users/{uid}` doc: tenant, role and
+  status now come from the member doc only (`deriveContext`: no member doc, a role outside owner/admin/manager/staff, non-active
+  status or unsafe tenant id = 403 `no-tenant-context`, each refusal logged with a reason code); (F1) the fallback also matches `members/{uid}`,
+  so any member, even `staff`, can write a membership doc; (F2) `isMember` ignores `status`. F1 and F2
+  are fixed in S2f-2 (PR-B, stacked on A; `members` is excluded from the wildcard, `isMember` = active
+  member with a valid role, `canAssignRole` mirrors the policy, member `uid` and tenant `ownerId` are immutable on update, an admin cannot change or remove a peer admin: `canManageTarget` in the rules, `qml/helper/MemberPolicy.js` in the client) once merged and deployed. `staff`/`removed_staff` role gates
+  are no longer directly writable after S2f-4/5 (PR-C: the wildcard write guard is an allow-list, `isClientWritableCollection`; any new client-written collection must be added there with a test). Do not describe the rules as sound or the
+  owner/admin gates as enforced until S2f-2 and S2f-4 are deployed.
 
 `TransactionStore` / `StockBatchStore` become **read models** over the ledger tier (not writers).
 
@@ -119,12 +134,11 @@ edit/delete; client forges identity & time). The fix:
 
 - **P0** Gateway + immutable `audit_log` (MCA 11(g), CGST 56(8)) — foundation, builds the gateway.
 - **P1** Stock-movement taxonomy: loss/theft/destroyed/write_off/free_sample/gift + opening/closing
-  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction.** Every stock change on `inventory`
+  balance register (CGST 56(2)). **Design settled 2026-09-24 (rev 2): server-side atomic, complete by construction. S1a implemented 2026-10-16 (server only; merged as PR #146). S1b implemented 2026-10-18 (branch `feature/2026-10-18-p1-s1b-derived-mutations`: derived rows on `recordMutation`/batch/mutation ops, cap 150 server + `Gateway.maxBatchSize`, requestId guard D-2); Taher deploys functions to dev, runs the S1a + S1b checklists (D-1, the 150-row import and a ~60-line order, NOT YET RUN as of 2026-10-18; the app's planner stops an order at 200 ops, so the server's `operation-too-large` is not reachable by an order: KNOWN-ISSUES, SKILLS 122), then S2 is planned.** Every stock change on `inventory`
   writes a `stock_movements` row in the same transaction: explicit `movements` on `recordDelta` (sum must equal the applied
   delta), otherwise a server-derived default (`adjustment`; `sale` in `completeOrder`; `receipt` on create). `stock_movement` is
-  closed to every client endpoint; batch cap 200 -> 150. Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
-  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 kind pickers + delete `direct` mode and
-  `runCutover` + lock `inventory` in rules, S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
+  closed to every client endpoint; batch cap 200 -> 150 (done in S1b). Everything is DEV only (no prod data). Slices: S1a `recordDelta` +
+  `recordOperation`, S1b `recordMutation`/batch/mutation ops + client cap mirror, S2 split a-e (design `specs/2026-10-19-p1-s2-design.md`): S2b server `runCutover` deleted (done; deployed copy deleted by hand in the console 2026-10-23), S2a-1 client `runCutover`/`cutoverUrl`/`cutoverFinished` + `stock_movement` client mapping deleted (done, `feat/2026-10-21-p1-s2a1-client-cutover-delete`), S2a-2 `direct` mode + the `mode` property deleted (done, `feat/2026-10-23-p1-s2a2-delete-direct-mode`; 89 uses in 32 files, Skill 125), S2c lock `inventory` in rules (done, `feat/2026-10-24-p1-s2c-lock-inventory-rules`: `isGatewayWriteOnlyCollection` + wildcard write guard, Rules tests 45 -> 52, takes effect on `firebase deploy --only firestore:rules`, Skill 126), S2d kinds on deltas, S2e pickers (waits for the CA), S3 `sale` per FIFO portion (after C-3 Phase 3), S4 register. The old client-side branch
   `feature/p1-stock-movement-taxonomy` is obsolete: never rebase it. Spec
   `specs/2026-09-24-p1-server-side-stock-movements-design.md`, plans `plans/2026-09-24-p1-server-side-stock-movements-s1a.md`
   and `...-s1b.md`.
@@ -159,7 +173,7 @@ collections and zeroes product stock).
 `Gateway.recordMutation` / `Gateway.recordMutations` (batch — new this session, see Skill 35 below)
 — zero direct `FirebaseService.put/patch/remove/putMany` calls remain in any of them. Status:
 
-- **`Gateway.mode` now defaults to `"gateway"`** (flipped 2026-07-29, commit `649046d`). Cloud
+- **Every write goes through the gateway** (`Gateway.mode` flipped to `"gateway"` 2026-07-29, commit `649046d`; the property and `direct` mode were deleted in P1 S2a-2). Cloud
   Functions and the locked Firestore rules are deployed and confirmed working (per Taher) —
   `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry.
   `recordMutation` also has one narrow, entity/action-specific server-side role check
@@ -168,8 +182,8 @@ collections and zeroes product stock).
   atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
   the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
   confirmed in a session — don't assume historical ledger/stock data was reset without checking.
-- CF-side gateway logic (`recordMutation`, `runCutover`, and the new batch endpoint
-  `recordMutationsBatch`) was extracted into `functions/lib/{gatewayLogic,cutoverLogic,
+- CF-side gateway logic (`recordMutation` and the batch endpoint
+  `recordMutationsBatch`; `runCutover`/`cutoverLogic.js` were deleted in P1 S2b) was extracted into `functions/lib/{gatewayLogic,
   batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no
   emulator needed; see Skill 35).
 - `recordOperation` (2026-09-21, logic in `functions/lib/operationLogic.js`) applies delta/mutation ops
@@ -687,9 +701,10 @@ to the gateway as of 2026-07-11), and the compliance design spec.
 - `actorUid`/`actorRole` are derived server-side from the verified token, never trusted from the
   client payload.
 
-**Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 8 Cloud
-Functions (`recordMutation`, `recordDelta`, `acquireLock`, `releaseLock`, `provisionMember`,
-`runCutover`, `computeAnalysis`, `recordMutationsBatch`) resolve their Firestore
+**Environment follow-up: done, including the 3 endpoints added 2026-07-29.** All 11 Cloud
+Functions (`recordMutation`, `recordDelta`, `recordOperation`, `acquireLock`, `releaseLock`,
+`recordMutationsBatch`, `provisionMember`, `computeAnalysis`, `uploadProductPhoto`,
+`deleteProductPhoto`, `cleanupPendingMarkers`; `runCutover` deleted in S2b) resolve their Firestore
 database **per request** via `scopedDb(env)` in `functions/index.js` — see SKILLS Skill 33.
 `Gateway.qml`, `LockManager.qml`, and `AnalysisService.qml` inject `env: FirebaseService.environment`
 into every request body. This was confirmed as a real, already-live gap (not hypothetical) before being
@@ -706,7 +721,7 @@ env.
   Staff/Suppliers migration, batch-mutation capability, test-gap closure — full trail of what was
   found, decided, and done)
 - `functions/` — Cloud Functions project: `index.js` (thin request/response handlers), `lib/`
-  (`gatewayLogic.js`, `cutoverLogic.js`, `batchMutationLogic.js` — pure, dependency-injected core
+  (`gatewayLogic.js`, `batchMutationLogic.js` — pure, dependency-injected core
   logic; see Skill 35) plus `breakdownMath.js`/`realisedMath.js`/`orderMath.js` (ported pure math),
   `test/` (48 tests, `npm test` = `node --test`, no emulator needed), `package.json`
 - `test/firestore.rules.test.js` + root `package.json` — Firestore rules tests
@@ -714,7 +729,7 @@ env.
   "node --test test/"`)
 - `tests/tst_Gateway.qml`, `tests/tst_OutboxStore.qml` — QML tests for the client-side gateway
   bridge and outbox queue (`qmltestrunner -input tests -platform offscreen`). **Every XHR call site
-  in `Gateway.qml` (`_send`, `_sendBatch`, `_sendDelta`, `runCutover`, `provisionMember`) works
+  in `Gateway.qml` (`_send`, `_sendBatch`, `_sendDelta`, `_sendOperation`, `provisionMember`; `runCutover` deleted in S2a-1) works
   around [QTBUG-49896](https://bugreports.qt.io/browse/QTBUG-49896) via
   `_captureBeforeStatusIsLost()`** — QML's `XMLHttpRequest` can lose `xhr.status` (reset to 0) at
   the readyState 3->4 transition for non-2xx responses. Unresolved upstream, no fix version. If you
@@ -844,7 +859,7 @@ env.
     an artifact of the file growing across separate passes chasing `recordMutation`'s own Skill 43
     regression rather than one symmetric pass. `index.js`'s CORS-tagged `send()` response helper is
     extracted to `functions/lib/httpResponse.js` (Skill 55, same zero-Firebase-SDK extraction
-    pattern as `cutoverLogic.js`/`gatewayLogic.js`), with its own `functions/test/httpResponse.test.js`
+    pattern as `gatewayLogic.js`), with its own `functions/test/httpResponse.test.js`
     directly covering the JSON.stringify-failure fallback added in PR #45 — previously reachable
     only through a live HTTPS round trip. Both share one harness,
     `functions/test/testSupport/handlerHarness.js`: install fakes into Node's `require.cache` (keyed
@@ -1009,7 +1024,7 @@ env.
 4. **Pages & Dialogs Agent** → Surface required fields (HSN, GSTIN, movement reason, consent) and
    any privacy notice.
 5. Never edit historical ledger rows — relabels propagate by stable id, not by rewriting past rows.
-- **S3 Discard (2026-10-01, `feat/2026-10-01-s3-discard-parked-writes`):** `Gateway.discardParked(requestId)` (gateway mode, online, queued, `StuckWrites.isParkedItem`, not in flight) removes the item with `OutboxStore.markSent`, answers operation waiters and `recordDelta` callbacks with `{ok:false, error:"discarded"}`, emits `parkedWriteDiscarded(requestId, entities)` (`StuckWrites.entitiesOf`), `_reschedule()`. `DataModel._resyncForDiscard` re-reads each affected store once (`_resyncStoreByEntity`; `stock_movement` ignored). `StuckWritesSheet` shows Discard on rejected rows with a local `ConfirmDialog` and `busy: discardConfirm.opened`. SKILLS Skill 90. Design: `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`. Review sweep 2026-10-01 (branch `review/2026-10-01-pr110-final-sweep`): row / header copy now says "Retry or Discard"; recordDelta callbacks answered through one helper `Gateway._answerDeltaCallbacks`; test plan section 3.0 lists device prerequisites and the unverified `write-rejected` recipe (SKILLS Skill 91).
+- **S3 Discard (2026-10-01, `feat/2026-10-01-s3-discard-parked-writes`):** `Gateway.discardParked(requestId)` (online, queued, `StuckWrites.isParkedItem`, not in flight) removes the item with `OutboxStore.markSent`, answers operation waiters and `recordDelta` callbacks with `{ok:false, error:"discarded"}`, emits `parkedWriteDiscarded(requestId, entities)` (`StuckWrites.entitiesOf`), `_reschedule()`. `DataModel._resyncForDiscard` re-reads each affected store once (`_resyncStoreByEntity`; `stock_movement` ignored). `StuckWritesSheet` shows Discard on rejected rows with a local `ConfirmDialog` and `busy: discardConfirm.opened`. SKILLS Skill 90. Design: `docs/superpowers/specs/2026-09-30-s3-discard-resync-design.md`. Review sweep 2026-10-01 (branch `review/2026-10-01-pr110-final-sweep`): row / header copy now says "Retry or Discard"; recordDelta callbacks answered through one helper `Gateway._answerDeltaCallbacks`; test plan section 3.0 lists device prerequisites and the unverified `write-rejected` recipe (SKILLS Skill 91).
 
 
 - **Unsynced product edits (PR #121 follow-up, 2026-10-05):** `InventoryStore.updateProduct` enqueues the edit with `Gateway.recordEdit` (returns the STORED requestId); its `field_change` / `stock_adjustment` ledger rows are outbox items with `dependsOn` (held until `OutboxStore.markAcked`, deleted by `pruneOrphans` if the edit leaves unacked), and its Activity `product_updated` entry waits in `InventoryStore._pendingUpdateActivity` for `Gateway.writeAcked`. `DataModel._tryCompleteOrder` refuses a line whose product has ANY queued non-delta write (`OutboxStore.hasUnsyncedEditForEntity`, message `InventoryStore.unsyncedEditMessage`); parked keeps `parkedWriteMessage` and wins. Other ledger kinds still register at once (roadmap).  test plan `docs/superpowers/test-plans/2026-10-05-unsynced-edit-ledger-test-plan.md`. PR #122 S4 (done, CI unverified): `OutboxStore.unsyncedByEntity(entity)` -> `{id: {state: pending|parked, edit}}` feeds `UnsyncedOverlay.overlayAll` in `InventoryStore._fetchFromFirebase` (per page; replays only changed fields, parked edits too) and `InventoryStore.syncStates` (badge pills in `InventoryPage` ProductCard, note in `EditProductDialog`). `DocLimits` + `InventoryStore.updateRefusal` refuse a product doc over 1 MiB before anything is queued (`updateProduct` returns the message, `addProduct` callback 3rd arg, `DataModel` reports via `errorOccurred("inventory", ...)`, both dialogs pre-check). Other ledger kinds and queued CREATE overlay: roadmap (rolled into the atomic-operation work). SKILLS 100, 101;

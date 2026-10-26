@@ -125,7 +125,6 @@ TestCase {
         // so completion is queued + shown as done, and the outbox drain delivers it to the
         // emulator; the polls below wait for the emulator's own doc.
         Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
-        Gateway.mode = "gateway" // the real production default — see Gateway.qml
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]

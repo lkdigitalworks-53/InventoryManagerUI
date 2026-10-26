@@ -171,7 +171,7 @@ Top-level collections (all tenant-scoped under `tenants/{tenantId}/...`):
 - `stock_batches/` – FIFO stock batches
 - `audit_log/` – compliance gateway's append-only mutation ledger, server-written only
   (`Gateway.recordMutation`/`recordMutations`/`recordDelta` → Cloud Functions). All 5 working-tier
-  stores route through it, and it's live — `Gateway.mode` is `"gateway"` (flipped 2026-07-29). See
+  stores route through it, and it's live — every write goes through it (the `direct` fallback mode was deleted in P1 S2a-2). See
   AGENTS.md §8's "P0 implementation status."
 - `locks/` – short-lived pessimistic locks (Component 2 of the async-write-sequencing design,
   below), server-written only. Not part of P0's compliance scope — a concurrency-control aid, not
@@ -269,7 +269,7 @@ unreachable code (`canAssignRole`'s dead `else` branch, `send()`'s unreachable s
 catch), not new gaps.
 
 **Update 2026-09-01:** landed PR #49 — `index.js`'s `send()` response helper extracted to
-`functions/lib/httpResponse.js` (Skill 55, same pattern as `cutoverLogic.js`/`gatewayLogic.js`),
+`functions/lib/httpResponse.js` (Skill 55, same pattern as `gatewayLogic.js`),
 with direct unit coverage (`functions/test/httpResponse.test.js`, 4 tests) for the
 serialization-failure fallback that was previously only reachable via a live HTTPS round trip.
 `functions/` suite: 178 tests, all passing. `index.js` line coverage 99.32% → 99.88% — those lines
@@ -326,6 +326,22 @@ edit, bulk import and delete cannot bypass the ledger. The `stock_movement` enti
 `docs/superpowers/specs/2026-09-24-p1-server-side-stock-movements-design.md`; plans (S1a, S1b):
 `docs/superpowers/plans/2026-09-24-p1-server-side-stock-movements-s1a.md` and `...-s1b.md`; test plan:
 `docs/superpowers/test-plans/2026-09-24-p1-stock-movements-test-plan.md`. Roadmap status is in `CHECKPOINT.md`.
+
+**Update 2026-10-16 (P1 slice S1a implemented, server only):** `functions/lib/movementLogic.js` (validate, derive, sum-check, row build) and its
+wiring: `recordDelta` and `recordOperation` delta ops now write a server-built `stock_movements` row in the same transaction (client `movements`
+must sum to the applied delta, else `409 movement-qty-mismatch`; no `movements` derives one `adjustment`, or `sale` inside `completeOrder`),
+operations obey a 500-write budget (`operation-too-large`), `recordMutation` rejects `movements`, and `stock_movement` is no longer a client
+entity. Nothing in QML changed. **Needs `firebase deploy --only functions` to dev before any row appears (R3).** Next: S1b (derived rows for
+`recordMutation`, batch, mutation ops; batch cap 150).
+
+**Update 2026-10-18 (P1 slice S1b implemented; server + client cap mirror):** `recordMutation`, `recordMutationsBatch` and `recordOperation`
+mutation ops on `inventory` now also write a server-derived `stock_movements` row (create -> `receipt`, update/delete -> `adjustment`, a delete
+counts as stock going to 0, no stock change = no row), in the same transaction, after the `before` conflict check. So every inventory write
+path leaves a ledger row; the rules still let a member write `inventory` directly until S2 (R2). `MAX_BATCH_SIZE` and `Gateway.maxBatchSize`
+are now 150 (inventory batch = 3 writes per item = 450). Review decision D-2 is in: `recordMutation`, `recordDelta` and `recordMutationsBatch`
+reject a requestId containing `~` or `/` or longer than 200 chars (and the batch rejects such an entityId) with `400 invalid-request-id` /
+`invalid-entity-id`, so none can forge a `recordOperation` audit or ledger id (those carry `~`). **Needs `firebase deploy --only functions`
+to dev.** S1a/S1b on-device checklists done 2026-10-21 (Taher). S2a-2 done (`direct` mode + `Gateway.mode` deleted, on `feat/2026-10-23-p1-s2a2-delete-direct-mode`). S2c done (`inventory` is read-only to clients in `firestore.rules`, on `feat/2026-10-24-p1-s2c-lock-inventory-rules`; takes effect on `firebase deploy --only firestore:rules`, Rules tests 45 -> 52). Next: S2d, S2e. S2 design (split S2a-S2e, Q1-Q3 approved): `docs/superpowers/specs/2026-10-19-p1-s2-design.md`. **S2f authz hardening (2026-10-24): gateway now trusts the member doc only (S2f-1, PR-A), rules fix for `members` + suspended members (S2f-2, PR-B); plan and findings in `docs/superpowers/specs/2026-10-24-s2f-authz-hardening-design.md`.** **S2b done (server `runCutover` + `cutoverLogic.js` deleted; the client `Gateway.runCutover` was deleted in S2a-1 on `feat/2026-10-21-p1-s2a1-client-cutover-delete`; `direct` mode was deleted in S2a-2). The deployed `runCutover` was deleted by hand in the Firebase console on 2026-10-23 (Taher), so `firebase deploy --only functions` will not ask about it; check with a POST to the old URL, expect `404`.**
 
 ## Qt Skills Cheat Sheet
 
@@ -440,8 +456,8 @@ On non-production builds a `DEV`/`TEST` badge shows in Profile settings.
 > Confirmed via `gcloud firestore databases list --project=inventorymanager-48392`
 > that `(default)` is genuinely in `asia-south1` — not `asia-southeast1` as an
 > earlier version of this doc and `AGENTS.md` assumed. Cloud Functions
-> (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
-> `recordMutationsBatch`) are not yet deployed and have been reconfigured to
+> (`recordMutation`, `provisionMember`, `computeAnalysis`,
+> `recordMutationsBatch`; `runCutover` was deleted in P1 S2b) are not yet deployed and have been reconfigured to
 > also target `asia-south1`, so DB, Functions, and every named environment
 > database live in the same region — data never leaves India, and no
 > cross-region latency between Functions and
@@ -476,8 +492,8 @@ an `{env}` path prefix (`prd`/`test`/`dev1`, via `EnvConfig.storagePrefixForEnv`
 Configuration" above) to keep the three environments' objects from colliding in the one shared
 bucket; this is the reason that prefix exists, not an arbitrary choice.
 
-All 5 Cloud Functions (`recordMutation`, `provisionMember`, `runCutover`, `computeAnalysis`,
-`recordMutationsBatch`) resolve their Firestore database **per request** from a client-declared
+All Cloud Functions (`recordMutation`, `provisionMember`, `computeAnalysis`,
+`recordMutationsBatch`; `runCutover` deleted in P1 S2b) resolve their Firestore database **per request** from a client-declared
 `env` field (`scopedDb(env)` in `functions/index.js`), mirroring this exact resolution chain — see
 `SKILLS.md` Skill 33. This closes a real, confirmed gap: before this fix, every Cloud Function
 always read/wrote the `(default)` (prd) database regardless of which env the calling client was
@@ -505,8 +521,8 @@ Two problems, fixed separately (full design: `docs/superpowers/specs/
   `Supplier`) now route through the compliance gateway (`Gateway.recordMutation`/`recordMutations`
   — see AGENTS.md §8, `SKILLS.md` Skill 35) instead of calling `FirebaseService` directly.
   `approveAllPending`'s bulk update specifically now uses `Gateway.recordMutations` (one atomic
-  transaction, capped at 200 items) — the old `FirebaseService.putMany()` call there is gone.
-  Functionally live as of 2026-07-29 (`Gateway.mode` is `"gateway"`), and this is the current code
+  transaction, capped at 150 items since P1 S1b) — the old `FirebaseService.putMany()` call there is gone.
+  Functionally live as of 2026-07-29 (the only mode; `direct` was deleted in P1 S2a-2), and this is the current code
   path, not the one described just above. As of the async-write-sequencing design (below),
   `InventoryStore.deductStock`/`StockBatchStore`'s FIFO functions route through
   `Gateway.recordDelta` instead — an atomic server-side delta, not a client-computed absolute value

@@ -38,7 +38,7 @@ One tap creates `requestId = "restock:" + <device id>` **at tap** (same shape as
 2. `mutation create` `supplier/{{sup}}` (same condition);
 3. `mint` stock_batch `batch`;
 4. `mutation create` `stock_batch/{{batch}}` (supplierId = known id or `{{sup}}`);
-5. `delta` `inventory/<productId>` `{stock:+qty}`, with explicit `receipt` movement once #146 is in;
+5. `delta` `inventory/<productId>` `{stock:+qty}`, with an explicit `receipt` movement (#146 is merged; `operationLogic.js:164-167` honours per-op `movements` and defaults unknown opTypes to `adjustment`, so the explicit kind is required, not optional);
 6. `mutation create` `transaction/tx-p-{{batch}}` (purchase doc);
 7. `mutation create` `activity_log/act-{{batch}}` if Q-A3 = yes.
 
@@ -90,7 +90,7 @@ Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no
 ### Open
 **Q-A7. Order of work.** The sign-out guard needs neither the engine nor #146, fixes silent loss that already exists today for plain edits, and must exist before restock ships. **I propose it as PR 0, built first.** Confirm or reorder.
 
-## 7. Build order for step (1) (each its own branch off `main`, after #146 merges)
+## 7. Build order for step (1) (each its own branch off `main`; #146 and the S2f authz work are merged)
 
 | Step | What |
 |---|---|
@@ -102,13 +102,24 @@ Standing from Taher (2026-10-16): D2 purchase record inside the operation; D5 no
 | R5 | `RestockDialog`, `FailureCause` texts, ActivityLog id param (Q-A3). |
 | R6 | Docs, device test. |
 
+## 7b. Interaction with P1 / S2f (added 2026-10-26, after #161 merged and deployed; Taher confirmed rules+functions deployed and device passes N6/E4 done)
+
+1. **`mint` IS S2f-6.** S2f-6 (server-side counters) and this design's `mint` op are the same server work. Build it once, here (R2). Do not build a separate S2f-6.
+2. **`counters` stays client-writable for the whole arc.** `firestore.rules` allow-list is `activity_log, config, counters, _migrations` (S2f-4+5), `counters` pinned by a rules test. Restock migrates only batch + supplier minting; product, order and staff minting stay on the client path until their own steps. The pin flips in a final, separate PR after the last caller migrates. F7 (burn ids, cannot overwrite; audit rating Low) stays open until then. This is accepted cost, not a surprise (Q-A8 below).
+3. **`activity_log` can leave the allow-list later.** Q-A3 moves the activity row into the op. Once every writer does that, `activity_log` can be removed from the allow-list. Same final PR as item 2, not before.
+4. **Gateway is the only writer for the locked collections** (orders, staff, suppliers, removed_staff). Restock's op writes `suppliers` and `purchases`-style docs only through `recordOperation`, which already runs in the Admin SDK. No new rule is needed for the op itself; the R2 rules test only asserts the client still cannot write them directly.
+5. **S2d is not a prerequisite for restock.** The server already takes explicit movements. S2d (client `Gateway.recordDelta` movements param + outbox concatenation) is needed for the non-op paths (imported-order deduct, return), i.e. step 3 of the arc, not step 1. Still to verify in R3: the client `recordOperation` builder passes `movements` through untouched.
+6. **provisionMember (S2f-7, #165) and the owner-demotion slice** touch `functions/index.js` handlers, not `operationLogic.js`. No textual overlap with R2 expected; re-check with `git diff --stat origin/main...<branch>` at R2 start (Skill 122).
+
+**Q-A8. Accept `counters` open until the last mint caller migrates (item 2)?** Recommended: yes. The alternative is a throwaway server mint endpoint now, which duplicates R2 and is deleted later.
+
 ## 8. Risks
 - Server engine change touches `operationLogic.js`, the file every operation goes through: replay, marker and budget must stay byte-compatible for `completeOrder`. Regression tests pin the existing marker and result shapes first (R2 step 1).
 - Two writers on the counter docs (server transaction, client REST mint for unmigrated paths). Safe by Firestore serialisation, but pin with an emulator test that interleaves both.
 - Counter format drift between client and server: parity fixtures.
 - Hidden product after offline restock (Q-A2) is a user-visible cost, accepted.
 - Sign-out guard (4b) must ship before restock; interactive paths only.
-- #146 overlap: build after it merges.
+- #146 overlap: resolved (merged). Restock sends the `receipt` movement explicitly.
 
 ## 9. Not in scope
 Steps (2)-(4) of Q-A5; per-opType server shape validation (D5); app-wide request timeouts; removing the pending-mint queue (needed until all minting callers migrate).

@@ -11,10 +11,11 @@
 const { isCascadeEntityDelete, buildMarker, isReservedAuditId } = require("./photoCleanup");
 
 // P0 scope. `entity` -> collection name under the tenant root.
+// `stock_movements` is deliberately absent: those rows are built server-side
+// by movementLogic (P1), so no client-facing endpoint can name that entity.
 const ENTITY_COLLECTIONS = {
     inventory: "inventory",
     stock_batch: "stock_batches",
-    stock_movement: "stock_movements",
     transaction: "transactions",
     order: "orders",
     staff: "staff",
@@ -24,6 +25,20 @@ const ENTITY_COLLECTIONS = {
     // the id is never re-minted. See StaffStore.deleteStaff.
     removed_staff: "removed_staff"
 };
+
+const MovementLogic = require("./movementLogic");
+
+// D-2 (PR #146 review): ids of the single-record endpoints (recordMutation, recordDelta,
+// recordMutationsBatch) share a keyspace with recordOperation's `{requestId}~{i}` audit ids and
+// `...~m{j}` ledger rows, and writes use `set`, so a member could pick an id that later overwrites
+// another request's audit entry and ledger row. `~` and `/` are therefore never allowed in a
+// client id here (recordOperation ids legitimately carry `~`, so this is NOT in the shared
+// validators), and the length is capped. Applied by the three handlers / the batch validator.
+const MAX_REQUEST_ID_LENGTH = 200;
+function isClientRequestId(id) {
+    return typeof id === "string" && id.length > 0 && id.length <= MAX_REQUEST_ID_LENGTH
+        && id.indexOf("~") < 0 && id.indexOf("/") < 0;
+}
 
 const ALLOWED_ACTIONS = ["create", "update", "delete", "opening_balance"];
 
@@ -60,6 +75,11 @@ function validateMutationRequest(body, entityCollections) {
     }
     if (isReservedAuditId(requestId)) {
         return { ok: false, status: 400, error: "invalid-request-id" };
+    }
+    // Whole-record mutations never carry client movements: the server derives
+    // the row from the before/after stock (P1 spec D11). Movements come via recordDelta.
+    if (body.movements !== undefined) {
+        return { ok: false, status: 400, error: "movements-not-supported" };
     }
 
     return {
@@ -106,6 +126,14 @@ function validateDeltaRequest(body, entityCollections) {
         }
     }
 
+    const mv = MovementLogic.validateMovements(body.movements);
+    if (!mv.ok) return mv;
+    if (mv.movements.length > 0) {
+        if (entity !== "inventory") return { ok: false, status: 400, error: "movements-require-inventory" };
+        if (!Object.prototype.hasOwnProperty.call(deltas, "stock"))
+            return { ok: false, status: 400, error: "movements-require-stock-delta" };
+    }
+
     return {
         ok: true,
         entity: entity,
@@ -114,6 +142,7 @@ function validateDeltaRequest(body, entityCollections) {
         deltas: deltas,
         floors: floors,
         clamps: clamps,
+        movements: mv.movements,
         clientTimestamp: clientTimestamp,
         collection: collection
     };
@@ -193,12 +222,28 @@ async function applyMutation(db, params) {
             return { ok: false, status: 409, conflict: true, current: current };
         }
 
+        // Inventory stock can only change through a transaction that also writes its ledger
+        // row (P1 spec D11): derive one from the stock before/after. `current` equals
+        // params.before here (the CAS above), so the row explains exactly this change.
+        const movements = params.entity === "inventory"
+            ? MovementLogic.deriveForMutation(params.action, current, params.after) : [];
+
         if (params.action === "delete") {
             txn.delete(workingRef);
         } else {
             txn.set(workingRef, params.after || {}, { merge: false });
         }
         if (marker) txn.set(markerRef, marker);
+        const rows = MovementLogic.buildRows(movements, {
+            baseId: params.requestId,
+            productId: params.entityId,
+            actorUid: params.actorUid,
+            actorRole: params.actorRole,
+            serverTimestamp: params.serverTimestamp,
+            clientTimestamp: params.clientTimestamp,
+            requestId: params.requestId
+        });
+        for (const row of rows) txn.set(db.doc("tenants/" + params.tenantId + "/stock_movements/" + row.id), row.data);
 
         txn.set(auditRef, {
             entryId: params.requestId,
@@ -251,7 +296,26 @@ async function applyDelta(db, params) {
             after[field] = nextVal;
         }
 
+        // Every stock change on inventory leaves a ledger row: the client's
+        // movements if it sent any, else one server-derived "adjustment".
+        let movements = params.movements || [];
+        if (movements.length === 0 && params.entity === "inventory" && Object.prototype.hasOwnProperty.call(after, "stock"))
+            movements = MovementLogic.deriveMovement(after.stock - before.stock, "adjustment");
+        if (movements.length > 0 && !MovementLogic.totalsMatch(movements, after.stock - before.stock)) {
+            return { ok: false, status: 409, error: "movement-qty-mismatch", field: "stock", current: before.stock };
+        }
+
         txn.set(workingRef, Object.assign({}, current, after), { merge: false });
+        const rows = MovementLogic.buildRows(movements, {
+            baseId: params.requestId,
+            productId: params.entityId,
+            actorUid: params.actorUid,
+            actorRole: params.actorRole,
+            serverTimestamp: params.serverTimestamp,
+            clientTimestamp: params.clientTimestamp,
+            requestId: params.requestId
+        });
+        for (const row of rows) txn.set(db.doc("tenants/" + params.tenantId + "/stock_movements/" + row.id), row.data);
         txn.set(auditRef, {
             entryId: params.requestId,
             tenantId: params.tenantId,
@@ -278,5 +342,7 @@ module.exports = {
     validateDeltaRequest,
     applyMutation,
     applyDelta,
+    isClientRequestId,
+    MAX_REQUEST_ID_LENGTH,
     _deepEqual
 };

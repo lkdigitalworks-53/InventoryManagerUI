@@ -14,21 +14,53 @@ service cloud.firestore {
       return memberDoc(tenantId, request.auth.uid).data.role;
     }
 
+    // An owner or admin must also be an ACTIVE member: a suspended admin keeps no admin powers.
     function isOwner(tenantId) {
-      return isSignedIn() && myRole(tenantId) == 'owner';
+      return isMember(tenantId) && myRole(tenantId) == 'owner';
     }
 
     function isAdmin(tenantId) {
-      return isSignedIn() && myRole(tenantId) == 'admin';
+      return isMember(tenantId) && myRole(tenantId) == 'admin';
     }
 
     function isOwnerOrAdmin(tenantId) {
       return isOwner(tenantId) || isAdmin(tenantId);
     }
 
+    // True only when the member doc says status == 'active'. No legacy tolerance (S2f-6): every member
+    // doc is created with a status and dev has no legacy data. The gateway (functions/index.js
+    // deriveContext) applies the same rule and the two must not drift (Skills 127, 128). A missing
+    // status makes this expression error, which denies.
+    function memberStatusIsActive(tenantId, uid) {
+      return memberDoc(tenantId, uid).data.status == 'active';
+    }
+
+    // "Member" means ACTIVE member WITH A VALID ROLE everywhere in this file (S2f-2). Before, it was
+    // exists() only, so a suspended member kept direct Firestore read and write access that the gateway
+    // already refused. The role test mirrors deriveContext's VALID_ROLES (functions/index.js): a member doc
+    // whose role is "", "viewer", "Owner", a number or missing must not pass in one enforcer and fail in
+    // the other. Adding a role means editing roleIsValid AND VALID_ROLES (Skill 128 rule 10).
     function isMember(tenantId) {
       return isSignedIn()
-        && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
+        && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid))
+        && memberStatusIsActive(tenantId, request.auth.uid)
+        && roleIsValid(myRole(tenantId));
+    }
+
+    // Which roles an actor may hand out. Mirrors canAssignRole in functions/index.js and
+    // AuthService._canAssignRole: an owner assigns admin/manager/staff, an admin assigns
+    // manager/staff, nobody assigns owner (the only owner is the one the tenant bootstrap creates).
+    function canAssignRole(tenantId, role) {
+      return (isOwner(tenantId) && role in ['admin', 'manager', 'staff'])
+        || (isAdmin(tenantId) && role in ['manager', 'staff']);
+    }
+
+    // Whose member doc an actor may change or remove, judged by the TARGET's CURRENT role (decision D-1 b):
+    // an owner acts on any non-owner, an admin only on manager/staff (never a peer admin, never the owner).
+    // Mirrors MemberPolicy.canManageMember (qml/helper/MemberPolicy.js).
+    function canManageTarget(tenantId, targetRole) {
+      return (isOwner(tenantId) && targetRole in ['admin', 'manager', 'staff'])
+        || (isAdmin(tenantId) && targetRole in ['manager', 'staff']);
     }
 
     function roleIsValid(role) {
@@ -39,21 +71,19 @@ service cloud.firestore {
       return status in ['active', 'suspended'];
     }
 
-    // Ledger tier (P0): immutable, append-only, written ONLY by the
-    // compliance gateway Cloud Function via the Admin SDK (which bypasses
-    // these rules). Clients may read for display but may never write —
-    // this is what an MCA Rule 11(g) auditor tests for.
-    function isLedgerCollection(name) {
-      return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
-    }
+    // Ledger tier (P0): audit_log, transactions, stock_batches, stock_movements. Immutable, append-only,
+    // written ONLY by the compliance gateway Cloud Function via the Admin SDK (which bypasses these
+    // rules). Clients may read for display but may never write: this is what an MCA Rule 11(g) auditor
+    // tests for. Each has an explicit `allow write: if false` block below, and none is in
+    // isClientWritableCollection, so the wildcard cannot open it either.
 
     // Server-only tier: unlike the ledger collections above (readable for
     // display, write-locked), clients have no legitimate reason to touch
     // this collection AT ALL, not even to read — every access goes through
     // LockManager -> the acquireLock/releaseLock Cloud Functions, which use
     // the Admin SDK and bypass these rules entirely. NOTE: the generic
-    // fallback's `allow read` below is not gated by isLedgerCollection, so
-    // adding a name to isLedgerCollection alone would NOT block reads —
+    // fallback's `allow read` below is not gated by the ledger names, so
+    // locking a name for writes alone would NOT block reads —
     // Firestore grants a request if ANY matching rule allows it, so the
     // fallback's read rule has to carve this out explicitly too.
     function isServerOnlyCollection(name) {
@@ -62,6 +92,26 @@ service cloud.firestore {
       // either leave photos orphaned or stop a pending sweep. Listing the name HERE (not just adding
       // a deny-all match block) is what actually denies: the wildcard below would still allow it.
       return name in ['locks', 'pending_cleanup'];
+    }
+
+    // Client-writable allow-list (S2f-4 + S2f-5). The wildcard at the bottom lets an active member WRITE
+    // only the collections named here; every other name is denied, including names nobody has invented
+    // yet. This replaces the old blacklist (ledger / gateway-write-only / access-control / server-only
+    // guards), which failed open: Firestore grants a request if ANY matching rule allows it, so every
+    // explicit `match` block next to the wildcard was a latent hole (F1: `members`, S2c: `inventory`),
+    // and orders, staff, suppliers and removed_staff stayed directly writable, skipping the gateway's
+    // role gates and audit_log (F4, F5). Everything not listed is written only by the gateway Cloud
+    // Functions (Admin SDK, rules skipped): inventory, orders, staff, removed_staff, suppliers,
+    // stock_batches, stock_movements, audit_log, transactions, locks, pending_cleanup. Members and
+    // users/tenants have their own explicit blocks and are not here.
+    //   activity_log  UX feed (ActivityLog.qml). NOT the compliance ledger: that is audit_log.
+    //   config        categories, order channels (CategoryStore, OrderChannelStore).
+    //   counters      id minting (FirebaseService.mintCounter*), see S2f-6 for the server-side plan.
+    //   _migrations   one-time migration markers (MigrationService).
+    // Adding a name here is a security decision: it needs a test in firestore.rules.test.js and a
+    // line in the design doc. Exact collection names only.
+    function isClientWritableCollection(name) {
+      return name in ['activity_log', 'config', 'counters', '_migrations'];
     }
 
     // users/{uid}
@@ -79,15 +129,22 @@ service cloud.firestore {
                     && request.resource.data.ownerId == request.auth.uid
                     && request.resource.data.name is string;
 
-      allow update: if isOwner(tenantId);
+      // ownerId is the key the bootstrap rule below trusts: if an owner could rewrite it, the new id could
+      // create its own `owner` member doc and mint a second owner past canAssignRole. Immutable after create.
+      allow update: if isOwner(tenantId)
+                    && request.resource.data.ownerId == resource.data.ownerId;
       allow delete: if isOwner(tenantId);
 
       // tenants/{tenantId}/members/{uid}
       match /members/{uid} {
-        allow read: if isMember(tenantId);
+        // Active members read the roster. A member may always read ITS OWN doc, even when suspended
+        // or inactive, so the app can learn why it was locked out instead of failing blind.
+        // The own-doc check goes FIRST: when the member doc has no status, isMember errors, and a
+        // true left operand settles the `||` without depending on how an error operand is treated.
+        allow read: if (isSignedIn() && request.auth.uid == uid)
+                    || isMember(tenantId);
 
-        allow create: if isOwnerOrAdmin(tenantId)
-                      && roleIsValid(request.resource.data.role)
+        allow create: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
                       && request.resource.data.uid == uid;
 
@@ -100,21 +157,19 @@ service cloud.firestore {
                       && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerId == request.auth.uid
                       && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
 
-        allow update: if isOwnerOrAdmin(tenantId)
-                      && roleIsValid(request.resource.data.role)
+        // An existing owner doc is never modified; the new role must be one the actor may assign, and the
+        // target's CURRENT role one the actor may manage (an admin cannot touch a peer admin, D-1 b).
+        // The uid field must keep matching the doc id (create pins it; the Team Members roster targets
+        // actions by this field, so a rewritten uid would aim Remove/Suspend at another member).
+        allow update: if canAssignRole(tenantId, request.resource.data.role)
                       && statusIsValid(request.resource.data.status)
-                      && resource.data.role != 'owner'
-                      && (
-                        isOwner(tenantId)
-                        || (isAdmin(tenantId)
-                            && request.resource.data.role in ['manager', 'staff'])
-                      );
+                      && request.resource.data.uid == uid
+                      && canManageTarget(tenantId, resource.data.role);
 
-        allow delete: if isOwnerOrAdmin(tenantId)
-                      && resource.data.role != 'owner'
+        allow delete: if canManageTarget(tenantId, resource.data.role)
                       && uid != request.auth.uid;
 
-        // VOLUNTARY LEAVE: a member may remove their OWN membership. The owner
+        // VOLUNTARY LEAVE: a member may remove their OWN membership (also when suspended). The owner
         // cannot self-leave (would orphan the workspace) — that's blocked by
         // the role check, matching leaveCurrentTenant()'s client guard.
         allow delete: if isSignedIn()
@@ -144,22 +199,17 @@ service cloud.firestore {
       // Server-only: acquireLock/releaseLock (Cloud Functions, Admin SDK)
       // are the only things that ever touch this. No client read either —
       // see isServerOnlyCollection's comment for why that has to be
-      // explicit and can't just ride on isLedgerCollection.
+      // explicit and can't just ride on the ledger names.
       match /locks/{lockId} {
         allow read, write: if false;
       }
 
-      // Working-tier domain collections (orders, inventory, sales, staff,
-      // suppliers, ...). Inventory/stock writes will route through the
-      // gateway once P0 cutover flips Gateway.mode to "gateway"; until then
-      // clients write directly. The explicit ledger guard keeps a ledger
-      // collection from ever matching this writable fallback; the
-      // server-only guard does the same for both read and write.
+      // Generic fallback. READ: any active member, except the server-only names. WRITE: only the
+      // allow-list above (default deny). See isClientWritableCollection.
       match /{collection}/{docId} {
         allow read: if isMember(tenantId) && !isServerOnlyCollection(collection);
         allow create, update, delete: if isMember(tenantId)
-                                      && !isLedgerCollection(collection)
-                                      && !isServerOnlyCollection(collection);
+                                      && isClientWritableCollection(collection);
       }
     }
   }

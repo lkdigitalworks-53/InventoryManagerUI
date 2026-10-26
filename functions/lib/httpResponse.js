@@ -2,7 +2,7 @@
 
 // CORS-tagged JSON response helper for the P0 compliance gateway's HTTPS
 // handlers. Zero Firebase SDK dependency of its own — `res` is passed in by
-// the caller (index.js), same extraction pattern as cutoverLogic.js /
+// the caller (index.js), same extraction pattern as gatewayLogic.js /
 // gatewayLogic.js, done specifically so the try/catch below (added in the
 // E2E testing phase 2 followup, thirteenth-round session) has direct unit
 // coverage instead of only being reachable through a live HTTPS request.

@@ -36,7 +36,6 @@ TestCase {
 
     function init() {
         OrdersStore.orders = []
-        Gateway.mode = "gateway"   // so recordMutation enqueues into OutboxStore instead of writing direct
         OutboxStore.clear()
         AuthStore.idToken = ""    // keeps Gateway._send's guard closed — no real network (see tst_Gateway.qml header)
         AuthStore._settings.sessionJson = "" // see tst_Gateway.qml header / CHECKPOINT.md 2026-08-18 for why

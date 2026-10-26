@@ -92,10 +92,11 @@ test.after(async () => {
     for (const p of createdPaths) await db.doc(p).delete();
     const audits = await db.collection(T + "audit_log").listDocuments();
     for (const ref of audits) {
-        if (ref.id.startsWith("completeOrder:opE2E") || ref.id.startsWith("bcE2E-") || ref.id.startsWith("cascade~bcE2E-")) await ref.delete();
+        if (ref.id.startsWith("completeOrder:opE2E") || ref.id.startsWith("completeOrder:authE2E") || ref.id.startsWith("bcE2E-") || ref.id.startsWith("cascade~bcE2E-") || ref.id.startsWith("authE2E-")) await ref.delete();
     }
     for (const ref of await db.collection(T + "stock_batches").listDocuments()) if (ref.id.startsWith("bcE2E-")) await ref.delete();
     for (const ref of await db.collection(T + "pending_cleanup").listDocuments()) if (ref.id.startsWith("bcE2E-")) await ref.delete();
+    for (const ref of await db.collection(T + "orders").listDocuments()) if (ref.id.startsWith("authE2E-")) await ref.delete();
 });
 
 test("warm-up: an empty body is a clean 400, not a hang or a 500", async () => {
@@ -374,4 +375,57 @@ test("BC role gate: a staff token cannot delete a product (403), batches and pro
     }, fixture.secondIdToken);
     assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
     assert.deepEqual(await batchesOf("bcE2E-p8"), ["bcE2E-p8-b1"]);
+});
+
+// ---- S2f-1: the gateway trusts the member doc, never users/{uid} (real Firestore reads) ----
+// The seeded second user (staff) has a users doc pointing at the tenant AND a member doc. Each
+// test breaks the member doc, calls the gateway with that user's real token, then restores it.
+// The users doc is left alone on purpose: it is the client-writable pointer the old code trusted.
+const MEMBER_REL = (uid) => "members/" + uid;
+
+async function withMemberDoc(change, fn) {
+    const ref = db.doc(T + MEMBER_REL(fixture.secondUid));
+    const original = (await ref.get()).data();
+    assert.ok(original && original.role === "staff", "seed.js must have created the staff member doc");
+    try {
+        await change(ref, original);
+        return await fn();
+    } finally {
+        await ref.set(original); // always restore: the QML suites and later files share this user
+    }
+}
+
+const authBody = (id) => ({
+    entity: "order", entityId: "authE2E-" + id, action: "update", requestId: "authE2E-" + id,
+    before: { notes: "" }, after: { notes: "x" }, clientTimestamp: "2026-10-24T10:00:00.000Z"
+});
+
+test("S2f-1 member doc deleted but users doc survives (a removed member) -> 403 no-tenant-context, no audit row", async () => {
+    await withMemberDoc((ref) => ref.delete(), async () => {
+        const res = await mutate(authBody("removed"), fixture.secondIdToken);
+        assert.equal(res.status, 403, JSON.stringify(res.body));
+        assert.equal(res.body.error, "no-tenant-context");
+        assert.equal(await read("audit_log/authE2E-removed"), null);
+    });
+});
+
+test("S2f-1 suspended member -> 403 on recordMutation, acquireLock and recordOperation; no audit row, no lock doc", async () => {
+    await withMemberDoc((ref, original) => ref.set(Object.assign({}, original, { status: "suspended" })), async () => {
+        const m = await mutate(authBody("susp"), fixture.secondIdToken);
+        assert.equal(m.status, 403, JSON.stringify(m.body));
+        assert.equal(m.body.error, "no-tenant-context");
+        const l = await post({ entity: "order", entityId: "authE2E-susp", requestId: "authE2E-lock" }, fixture.secondIdToken, "/acquireLock");
+        assert.equal(l.status, 403, JSON.stringify(l.body));
+        assert.equal(l.body.error, "no-tenant-context");
+        const o = await post({ requestId: "completeOrder:authE2E-op:1", opType: "completeOrder", clientTimestamp: 1, ops: [stockDelta("authE2E-p", -1)] }, fixture.secondIdToken);
+        assert.equal(o.status, 403, JSON.stringify(o.body));
+        assert.equal(await read("audit_log/authE2E-susp"), null);
+        assert.equal(await read("audit_log/completeOrder:authE2E-op:1"), null);
+    });
+});
+
+test("S2f-1 control: the same staff user with a restored member doc is no longer refused as a non-member", async () => {
+    const res = await mutate(authBody("control"), fixture.secondIdToken);
+    assert.notEqual(res.body && res.body.error, "no-tenant-context", JSON.stringify(res.body));
+    assert.notEqual(res.status, 401);
 });

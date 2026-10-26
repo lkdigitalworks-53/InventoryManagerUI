@@ -1,26 +1,20 @@
-# CHECKPOINT — 2026-10-16 Restock as one atomic operation: DESIGN session
+# CHECKPOINT — 2026-10-26 atomic-ops design refresh for P1/S2f (resume here)
 
-**Branch:** `docs/2026-10-16-restock-atomic-operation-design` (off `main` @ `6c6f358`). Commit identity `tsadmin@gmail.com`. PAT only in push commands, never stored.
-**Rules in force:** no build/run until told; no Qt tools in sandbox (CI is the proof); branch + push without asking; honest trade-offs, grill before deciding; short scope (several Claude accounts hand over via this file).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-16-pr144-prev-CHECKPOINT.md` (PR #144 Task 11; its steps 6-7 are Taher's CI/device/merge, untouched here).
+**Branch (current):** `docs/2026-10-16-restock-atomic-operation-design` (PR #147, docs only). Tree rebuilt on `main` @ `b494d52` and joined with `merge -s ours` (Skill 121), no force-push. Local backup of the old tip: `backup/pr147-pre-rebase` (not pushed).
+**Commit identity:** `tsadmin@gmail.com`. PAT only inline in the push command; after push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build/run; no Qt in sandbox (CI is the oracle); push without asking; short scope; honest trade-offs, grill before decisions; tests + test plan for every change (docs-only here: none); caveman FULL for chat only.
+**Skills used:** `superpowers:brainstorming` (hard gate: no plan, no code before spec approval).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-26-pr147-prev-CHECKPOINT.md` (S2f authz hardening; S2f-7 is #165).
 
-## Request
-Next task on the atomic-operations roadmap after #144/#145: **restock as one atomic operation** (KNOWN-ISSUES top entry, decided 2026-09-30, unbuilt). Design in this session if needed, else implement.
-
-## Classification: architectural (brainstorming skill)
-New `opType` (server deploy), new client flow, changes what a restock writes. Spec first, approval, then plan. So this session writes the spec + test plan only, no product code.
+## Why
+Design v2 (2026-10-16) predates S2f. Taher confirmed 2026-10-26: S2f rules + functions deployed, device passes N6/E4 done. The design needed to say how `mint` relates to S2f-6, what stays on the client-writable allow-list, and that #146 is merged.
 
 ## Steps
-- [x] 1-6. Skills loaded, repo read, design v1 + test plan v1 + docs pushed (see git log)
-- [x] 7. Taher answered v1 questions, then **corrected me: server-side id minting inside the transaction was never rejected; he wants ALL calls (id create, CRUD, transaction, audit) in one atomic operation with one transaction id.** My v1 error: called it "the rejected option C" and overstated a counter race (client REST mint and server Admin txn on the same doc serialise safely).
-- [x] 8. Design v2: new `mint` op kind + `{{placeholder}}` substitution inside `applyOperation`; counters rolled back on rejection (gapless); replay returns minted ids; restock = first consumer; key created at tap; paper walk-through of create-product and order-create; import needs chunking (named limit)
-- [x] 9. Test plan v2 rewritten (server mint cases, restock, regression incl. `completeOrder` golden marker, monkeys, emulator e2e, device plan)
-- [x] 10. Taher answered Q-A1..Q-A5 (generic mint; hide product while restock pending; activity in-op; server derives seed; one PR per consumer) and asked for a gap analysis of prior atomic work + a PR
-- [x] 11. Wrote `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` (what was built, 10 gaps G1-G10 with evidence, non-atomic path table, order of work). New finding G4: random-key op queued offline is lost on sign-out (outbox cleared) -> open Q-A6
-- [x] 12. Spec section 6 updated (answers recorded, Q-A6 open); test plan updated (R10, device 2b)
-- [x] 13. PR #147 opened for design review (https://github.com/lkdigitalworks-53/InventoryManagerUI/pull/147).  Brainstorming gate: plan only after approval.
-- [x] 14. Taher answered Q-A6: sign-out popup with brief operation details + consequences (warn-and-allow, not block). Spec 4b, test plan S series, status doc updated. Proposed as PR 0 before the engine (Q-A7).
-- [ ] 15. **Taher: confirm Q-A7 (guard first), review PR #147, approve.** Then next account: writing-plans, then R1..R6 in the design, each own branch off `main`, after PR #146 merges.
+- [x] 1. Verified in code: `operationLogic.js:164-167` honours per-op `movements`, default for unknown opType is `adjustment`; rules allow-list is `activity_log, config, counters, _migrations`.
+- [x] 2. Rebuilt PR tree on `main`: design 7b (S2f interaction) + Q-A8, test plan RP1-RP4, status doc section 6 + G11, KNOWN-ISSUES, E2E roadmap, test-plans README row, Skills 122/123 renumbered to 132/133 (main is at 131).
+- [x] 3. Pushed (see Resume).
+- [ ] 4. Taher: answer Q-A7 (order, S0 first?) and Q-A8 (accept `counters`/F7 open through the arc); approve or revise the spec on #147.
+- [ ] 5. After approval ONLY: invoke writing-plans for S0 (sign-out guard). Do not invoke it before.
 
-## Resume here
-Read `ATOMIC-OPERATIONS-STATUS.md`, then design v2 section 6 (Q-A7 open). Do not write the plan or product code until PR #147 is approved and Q-A7 answered.
+## Open P1 tail (not gates): #165 (S2f-7), S2f-3 client wording, owner-demotion slice, S2d, S2e (parked on CA).
+## To verify later: R3 must confirm the client `recordOperation` builder passes `movements` through untouched. R2 start: `git diff --stat origin/main...<branch>` for overlap (Skill 122).

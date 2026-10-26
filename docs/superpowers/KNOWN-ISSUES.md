@@ -5,6 +5,54 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Owner can mint a second owner via `ownerId` — RESOLVED (fixed by #164 / R3, found in the PR #161 review 2026-10-25)
+
+The `tenants/{t}` update rule now requires `request.resource.data.ownerId == resource.data.ownerId`, so the bootstrap rule can no longer be fed a new owner id. Covered by the rules test "R3 tenant ownerId is immutable". Fix option B (bootstrap only when the tenant has no members) was not needed and is not planned. Kept as a pointer; delete when convenient.
+
+---
+
+## Client cleanup writes the rules refuse (`users` delete, tenant rollback) — FOUND 2026-10-25 (PR #161 review), NOT FIXED
+
+**Where:** `AuthService.qml` `cleanupStaffAuthDocs` (about line 923) and the onboarding rollback (about lines 575-580) call `FirebaseService.remove("users/<uid>")`, but `firestore.rules` has `allow delete: if false` on `users/{uid}`, so these get 403 and only `console.warn`. The rollback `remove("tenants/<id>")` also fails when the member doc was never created, because `isOwner` needs the member doc: a failed onboarding can leave an orphan `tenants/<id>` and `users/<uid>` doc. Read from the code and rules, not run.
+
+**Why it is harmless today:** since PR #159 the gateway ignores `users/{uid}`, so a leftover doc grants nothing. It is dirt, not a hole.
+
+**Leads:** move the cleanup into a Cloud Function (Admin SDK), the same fix as the `TODO` already in `cleanupStaffAuthDocs`; do it together with the staff-login work.
+
+---
+
+## No way to log in as staff / admin / manager: `Gateway.provisioningAvailable` is still `false` — FOUND 2026-10-25 (PR #159 device test), NOT BUILT
+
+**What is missing:** the app can only ever run as the **owner**. Both ways to create another login go through `Gateway.provisionMember` (`AuthService.provisionStaffCredentials` for Add Staff, `AuthService.inviteMember` for Invite by UID, `qml/model/AuthService.qml` ~L637 and ~L806). `provisionMember` returns `provisioning-unavailable` at once while `Gateway.provisioningAvailable` is `false` (`qml/model/Gateway.qml` L41, `provisionMember` ~L1076), so no request is sent and no Auth account / `users/{uid}` / member doc is created. The staff RECORD is saved, the login is not.
+
+**Why it is `false`:** hard-coded pre-Blaze (design `specs/2026-06-26-five-features-design.md`, "The Blaze reconciliation"). The comment on the flag says "flip the day functions/ is deployed". Functions ARE deployed now (`provisionMember` exists, `functions/index.js` ~L710), the flag was never flipped. Earlier docs call this "dormant until login provisioning ships" (README staff-delete note, this file's staff-delete entry, `AGENTS.md`), but there was no entry of its own until now.
+
+**Consequence for tests:** every non-owner path is untestable on device: role guards in `DataModel.on*`, the server-side `staff/delete` role check, PR #159/#160 (member doc authority, suspended/removed members), `canAssignRole`. They are covered only by unit / handler / rules / emulator tests, never by a real second login. Cross-user flows (staff sells, owner restocks, staff set to leave, owner removes staff while staff is signed in) have never been run against two real sessions.
+
+**Dev-only workaround to device-test PR #159 today (no code change):** in the Firebase console create an Auth user (email + password), then write `users/{uid}` = `{tenantId, role}` and `tenants/{tenantId}/members/{uid}` = `{role, status: "active", displayName, email}`. Email sign-in already exists (`AuthService.signInWithEmail`). Do NOT do this on a project that holds real data.
+
+**Status 2026-10-25:** full DRAFT design written, decisions OPEN, to be picked up AFTER the compliance features: `specs/2026-10-25-multi-role-login-design.md` (decisions D1-D8, slices L1-L6, cross-actor matrix X1-X13, resume questions Q0-Q7). Do NOT enable provisioning on prod before slice L2 (server RBAC): see the "no server-side role check" entry below, which becomes exploitable once a real non-owner can log in.
+
+**Scope when built (see the design above and `specs/2026-10-25-multi-role-login-CHECKPOINT.md`):** (1) turn provisioning on and prove it with the emulator + a device run, (2) role-aware first screen / sign-in for non-owner roles, (3) a multi-actor test matrix across tenant users (staff sale, owner stock update, staff status change to leave / suspended, removal while signed in), with realtime/sync behaviour on the second device.
+
+---
+
+## A server `operation-too-large` for an order completion is mishandled, but the app cannot reach it today — FOUND 2026-10-18 (PR #149 review), NOT BUILT
+
+**Question (Taher):** what happens when an order's lines hit the server's 166 cap and it answers `operation-too-large`?
+
+**Answer (code reading, plus the Node pin `movementWiring.test.js` "write budget accepts the largest order the client planner can send"):**
+- The app never gets there. `CompletionPlan.build` refuses more than `MAX_OPS` = 200 ops BEFORE sending (about 66 lines: batch op + stock op + sale op each, plus the order op). The person sees "This order is too large to complete in one step (N changes, limit 200)", the order stays `pending`, and nothing reaches the server (`tst_DataModel_completeOrderAtomic` case 12).
+- 166 is the server ceiling for an operation made only of inventory ops. A planner order has at least 2 ops per stock line plus the order op, so at most 99 inventory ops: 2 x 200 + 1 + 99 = 500 writes, inside the budget.
+
+**Latent defect, only if the two caps ever drift** (a changed `MAX_OPS`, or an older / foreign client): the 400 carries no `opIndex`, so `DataModel._onCompletionRejected` re-plans and re-sends the same oversized operation `maxReplans` (3) times, then calls `_failCompletion(..., markOutOfStock = true)`. The order is then flagged `out of stock`, which is the wrong reason (Skill 118 rule 6, the same misnomer), and the cause toast is right ("too large"). Fix when needed: treat `FailureCause` kind `limit` as terminal at once (no re-plan, no `out of stock`).
+
+**Decision (Taher, 2026-10-19):** the app targets B2C retail counters, so the 200-op limit is accepted for now and the order is not completed in chunks (chunking would give up all-or-nothing completion and needs its own design). The refusal now tells the person what to do: "...Move some lines, or part of a line's quantity, to a second order, then complete both (N lines, M changes, limit 200)" (`CompletionPlan.js` via `FailureCause.js`, pinned in `tst_CompletionPlan`, `tst_FailureCause`, `tst_DataModel_completeOrderAtomic`).
+
+**Open risk (Taher: batches per product are unbounded):** the cap counts one op per stock BATCH consumed, not per line, so a product bought often in small lots can reach 200 ops with very few lines (one line over 199 batches = 202 ops). Splitting the quantity gets round it, but a busy shop will meet it. Leads when it hurts: merge exhausted / same-cost batches of one product, or consume at most N batches per line and book the rest as one repair batch (changes FIFO cost, needs a decision). Not built.
+
+**Why the server path is not reworked now:** unreachable with the current constants, and the Node pin fails first if either cap moves. Code for it would be untestable from the app and CI-only on the QML side.
+
 ## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
 
 **Found on-device (Taher, PR #97 test).** Member `status` set to suspended, then restock a product: toast "Could not
@@ -40,7 +88,7 @@ atomic outbox), so both land or neither does. Documented only; nothing built. Re
 - Not checked: other places that pair `addBatch` with `recordDelta` (for example product create with opening stock) and
   may have the same shape.
 
-**Design written 2026-10-16** (design v2 2026-10-16: ids minted inside the transaction, awaiting spec approval): `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md`; test plan `docs/superpowers/test-plans/2026-10-16-restock-atomic-operation-test-plan.md`. Still NOT BUILT. Build after PR #146 (it edits the same `operationLogic.js` and defaults movement kinds by opType, so a restock must be a `receipt`).
+**Design written 2026-10-16, refreshed 2026-10-26** (v2: ids minted inside the transaction, awaiting spec approval): `docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md`; test plan `docs/superpowers/test-plans/2026-10-16-restock-atomic-operation-test-plan.md`; standing `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md`. Still NOT BUILT. #146 is merged; restock sends an explicit `receipt` movement. `mint` also delivers S2f-6.
 
 **Until built:** to force a stuck write in device tests use a single-write action (edit a product name), not Restock.
 
@@ -207,6 +255,8 @@ returns 200 for a `manager` role, by design of the current (unfixed) behavior.
 Staff delete got a narrow, targeted fix (2026-09-21) because it carries real security weight — it
 can cascade-revoke a teammate's Firebase Auth login via `AuthService.cleanupStaffAuthDocs`. Every
 other entity/action is unfixed.
+
+**Update 2026-10-25:** becomes exploitable the day non-owner login ships (`Gateway.provisioningAvailable` flip). Planned as slice L2 of `specs/2026-10-25-multi-role-login-design.md` (D3), a hard prerequisite for real staff accounts on prod.
 
 **Decision:** not built — a general authorization matrix (deriving the allowed actions per role,
 server-side, for every entity) is a bigger design than any single delete-UI ticket should absorb
