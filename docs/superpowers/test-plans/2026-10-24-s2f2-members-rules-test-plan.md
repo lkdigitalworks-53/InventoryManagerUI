@@ -9,7 +9,7 @@
 Rules 52 (ledger, server-only, inventory lock, pending_cleanup pins). **Nothing** covered `users`, `tenants` or `members`.
 
 ## 2. Rules tests (CI only, no emulator in the sandbox: the emulator jar host is unreachable)
-Rules **83** observed on `853ac8f` (52 + 31). CI total observed there: QML 2104 + Functions 835 + Rules 83 + E2E 96 = **3118**. (The first version of this plan said 3087, built from stale Functions 811 / E2E 89 baselines.) The review sweep (section 2b) adds 11 rules tests and 6 QML tests: predicted Rules **94**, QML **2110**, total **3135**.
+Rules **83** observed on `853ac8f` (52 + 31). CI total observed there: QML 2104 + Functions 835 + Rules 83 + E2E 96 = **3118**. (The first version of this plan said 3087, built from stale Functions 811 / E2E 89 baselines.) The review sweep (section 2b) adds 11 rules tests and 6 QML test functions. CI observed on the sweep head: QML 2112 (the runner counted 8 new rows for 6 functions; cause not investigated), Functions 835, Rules **94**, E2E 96 = **3137**.
 | Group | Tests | Proves |
 |---|---|---|
 | F1 | 6 (staff and manager x2, admin, roster read) | no member can promote itself, create, edit or delete a membership; owner doc untouched; roster still readable |
