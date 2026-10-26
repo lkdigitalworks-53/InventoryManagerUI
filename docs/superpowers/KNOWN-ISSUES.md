@@ -5,6 +5,22 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Owner can mint a second owner via `ownerId` — RESOLVED (fixed by #164 / R3, found in the PR #161 review 2026-10-25)
+
+The `tenants/{t}` update rule now requires `request.resource.data.ownerId == resource.data.ownerId`, so the bootstrap rule can no longer be fed a new owner id. Covered by the rules test "R3 tenant ownerId is immutable". Fix option B (bootstrap only when the tenant has no members) was not needed and is not planned. Kept as a pointer; delete when convenient.
+
+---
+
+## Client cleanup writes the rules refuse (`users` delete, tenant rollback) — FOUND 2026-10-25 (PR #161 review), NOT FIXED
+
+**Where:** `AuthService.qml` `cleanupStaffAuthDocs` (about line 923) and the onboarding rollback (about lines 575-580) call `FirebaseService.remove("users/<uid>")`, but `firestore.rules` has `allow delete: if false` on `users/{uid}`, so these get 403 and only `console.warn`. The rollback `remove("tenants/<id>")` also fails when the member doc was never created, because `isOwner` needs the member doc: a failed onboarding can leave an orphan `tenants/<id>` and `users/<uid>` doc. Read from the code and rules, not run.
+
+**Why it is harmless today:** since PR #159 the gateway ignores `users/{uid}`, so a leftover doc grants nothing. It is dirt, not a hole.
+
+**Leads:** move the cleanup into a Cloud Function (Admin SDK), the same fix as the `TODO` already in `cleanupStaffAuthDocs`; do it together with the staff-login work.
+
+---
+
 ## No way to log in as staff / admin / manager: `Gateway.provisioningAvailable` is still `false` — FOUND 2026-10-25 (PR #159 device test), NOT BUILT
 
 **What is missing:** the app can only ever run as the **owner**. Both ways to create another login go through `Gateway.provisionMember` (`AuthService.provisionStaffCredentials` for Add Staff, `AuthService.inviteMember` for Invite by UID, `qml/model/AuthService.qml` ~L637 and ~L806). `provisionMember` returns `provisioning-unavailable` at once while `Gateway.provisioningAvailable` is `false` (`qml/model/Gateway.qml` L41, `provisionMember` ~L1076), so no request is sent and no Auth account / `users/{uid}` / member doc is created. The staff RECORD is saved, the login is not.

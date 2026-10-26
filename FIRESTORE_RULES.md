@@ -1,10 +1,11 @@
 # Firestore Rules For Tenant RBAC
 
-Use these rules to enforce the same member-management constraints that the app now applies client-side.
+What the Firestore security rules enforce for tenant RBAC, and the rules for editing them.
 
-> **Deployable copy:** the canonical, deploy-ready rules now live in `firestore.rules`
-> at the repo root (wired via the root `firebase.json`). The blocks below are the
-> explanatory reference; keep the two in sync. Deploy with `firebase deploy --only firestore:rules`.
+> **Source of truth:** `firestore.rules` at the repo root (wired via `firebase.json`). This file does
+> NOT carry a copy of the rules any more: the old code block drifted from the real file in two
+> consecutive PRs and showed an unsafe wildcard, so it was removed (2026-10-25, PR #161). Read the
+> real file; this page explains what it enforces. Deploy with `firebase deploy --only firestore:rules`.
 
 ## Goals
 
@@ -18,144 +19,43 @@ Use these rules to enforce the same member-management constraints that the app n
   Cloud Function (Admin SDK) writes them. This is what satisfies MCA Rule 11(g).
 - **`inventory` is gateway-write-only (P1 S2c):** members can read products, but every create,
   update and delete goes through the gateway Cloud Functions so the ledger rows are always written.
+- **Default deny for writes (S2f-4/5):** the wildcard only lets an active member write the four names on
+  the client-writable allow-list; `orders`, `staff`, `suppliers`, `removed_staff` and every unknown name
+  are gateway-only.
 
-## Example Rules
+## What `firestore.rules` enforces
 
-```rules
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
+"Member" means an **active** member with a valid role (owner, admin, manager, staff): the member doc exists, `status == 'active'`. A suspended
+member is refused everywhere except reading their own member doc (so the app can say why).
 
-    function isSignedIn() {
-      return request.auth != null;
-    }
+| Path under `tenants/{tenantId}` | Read | Write |
+|---|---|---|
+| `tenants/{tenantId}` (the doc) | active member | create: signed-in user who is the `ownerId`; update: owner (`ownerId` is immutable); delete: owner |
+| `members/{uid}` | own doc always; roster for active members | create: `canAssignRole` (owner assigns admin/manager/staff, admin assigns manager/staff, nobody assigns owner) or the one-time owner bootstrap; update: `canAssignRole` for the new role AND `canManageTarget` for the target's current role (an admin cannot touch a peer admin or the owner; member `uid` immutable); delete: `canManageTarget` (not self) or voluntary leave (non-owner) |
+| `audit_log`, `transactions`, `stock_batches`, `stock_movements` (ledger) | active member | nobody (gateway Cloud Functions only, Admin SDK) |
+| `locks`, `pending_cleanup` (server-only) | nobody | nobody |
+| `activity_log`, `config`, `counters`, `_migrations` (client-writable allow-list) | active member | active member |
+| everything else, e.g. `inventory`, `orders`, `staff`, `removed_staff`, `suppliers`, and any name not yet invented | active member (except the server-only names) | **nobody**: default deny, gateway Cloud Functions only |
+| sub-collections below any of the above | nobody | nobody |
+| `users/{uid}` (top level) | that user | that user (create, update); never delete |
 
-    function memberDoc(tenantId, uid) {
-      return get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
-    }
+Rules to keep when editing `firestore.rules`:
 
-    function myMember(tenantId) {
-      return memberDoc(tenantId, request.auth.uid);
-    }
+- Firestore grants a request if ANY matching rule allows it. An explicit `match` block next to the
+  wildcard never *removes* access. Deny by keeping a name **off** the client-writable allow-list
+  (`isClientWritableCollection`), not by adding a deny block.
+- Adding a name to that allow-list is a security decision: it needs a test in
+  `test/firestore.rules.test.js` and a line in `docs/superpowers/specs/2026-10-24-s2f-authz-hardening-design.md`.
+- `counters` is on the allow-list because the client mints ids. Any active member can write any value
+  to it. This is a known, pinned limit (test "PIN S2f-6"), to be removed with server-side minting.
+- The gateway (`functions/index.js` `deriveContext`) applies the same active-member rule. The two must
+  not drift (Skills 127, 128).
 
-    function myRole(tenantId) {
-      return myMember(tenantId).data.role;
-    }
-
-    function isOwner(tenantId) {
-      return isSignedIn() && myRole(tenantId) == 'owner';
-    }
-
-    function isAdmin(tenantId) {
-      return isSignedIn() && myRole(tenantId) == 'admin';
-    }
-
-    function isOwnerOrAdmin(tenantId) {
-      return isOwner(tenantId) || isAdmin(tenantId);
-    }
-
-    function isMember(tenantId) {
-      return isSignedIn() && exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
-    }
-
-    function roleIsValid(role) {
-      return role in ['owner', 'admin', 'manager', 'staff'];
-    }
-
-    function statusIsValid(status) {
-      return status in ['active', 'suspended'];
-    }
-
-    // users/{uid}
-    match /users/{uid} {
-      allow read: if isSignedIn() && request.auth.uid == uid;
-      allow create, update: if isSignedIn() && request.auth.uid == uid;
-      allow delete: if false;
-    }
-
-    // tenants/{tenantId}
-    match /tenants/{tenantId} {
-      allow read: if isMember(tenantId);
-
-      // One-time tenant creation by authenticated owner account.
-      allow create: if isSignedIn()
-                    && request.resource.data.ownerId == request.auth.uid
-                    && request.resource.data.name is string;
-
-      allow update: if isOwner(tenantId);
-      allow delete: if isOwner(tenantId);
-
-      // tenants/{tenantId}/members/{uid}
-      match /members/{uid} {
-        allow read: if isMember(tenantId);
-
-        // Create member records only by owner/admin.
-        allow create: if isOwnerOrAdmin(tenantId)
-                      && roleIsValid(request.resource.data.role)
-                      && statusIsValid(request.resource.data.status)
-                      && request.resource.data.uid == uid;
-
-        // BOOTSTRAP: Allow owner to create their own membership during tenant setup
-        // (when no member records exist yet for this tenant).
-        allow create: if isSignedIn()
-                      && request.auth.uid == uid
-                      && request.resource.data.role == 'owner'
-                      && request.resource.data.status == 'active'
-                      && exists(/databases/$(database)/documents/tenants/$(tenantId))
-                      && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerId == request.auth.uid
-                      && !exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(uid));
-
-        // Update member records with role restrictions.
-        allow update: if isOwnerOrAdmin(tenantId)
-                      && roleIsValid(request.resource.data.role)
-                      && statusIsValid(request.resource.data.status)
-                      // Cannot change owner row.
-                      && resource.data.role != 'owner'
-                      // Admin cannot assign owner/admin.
-                      && (
-                        isOwner(tenantId)
-                        || (isAdmin(tenantId)
-                            && request.resource.data.role in ['manager', 'staff'])
-                      );
-
-        // Owner/admin can remove non-owner records, cannot self-remove.
-        allow delete: if isOwnerOrAdmin(tenantId)
-                      && resource.data.role != 'owner'
-                      && uid != request.auth.uid;
-      }
-
-      // Ledger tier (P0): immutable, written only by the gateway Cloud
-      // Function (Admin SDK bypasses rules). Clients may read, never write.
-      match /audit_log/{docId}       { allow read: if isMember(tenantId); allow write: if false; }
-      match /transactions/{docId}    { allow read: if isMember(tenantId); allow write: if false; }
-      match /stock_batches/{docId}   { allow read: if isMember(tenantId); allow write: if false; }
-      match /stock_movements/{docId} { allow read: if isMember(tenantId); allow write: if false; }
-
-      // Working-tier domain collections (orders, inventory, sales, staff, ...).
-      // The ledger guard stops a ledger collection from ever matching this
-      // writable fallback (Firestore grants access if ANY match allows).
-      function isLedgerCollection(name) {
-        return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
-      }
-      // Gateway-write-only (S2c): read for members, never written by a client. It has to be
-      // excluded in the fallback's write guard; a lone deny block would not deny.
-      function isGatewayWriteOnlyCollection(name) {
-        return name in ['inventory'];
-      }
-      match /{collection}/{docId} {
-        allow read: if isMember(tenantId);
-        allow create, update, delete: if isMember(tenantId)
-                                      && !isLedgerCollection(collection)
-                                      && !isGatewayWriteOnlyCollection(collection);
-      }
-    }
-  }
-}
-```
+Tests: `test/firestore.rules.test.js` and `test/storage.rules.test.js` (see `README.md`, "Testing").
 
 ## Temporary Testing Rules (Permissive / Unrestricted)
 
-While debugging, use these permissive rules to ensure membership writes work, then tighten them:
+While debugging, use these permissive rules to ensure membership writes work, then deploy the real `firestore.rules`:
 
 ```rules
 rules_version = '2';
@@ -195,4 +95,4 @@ If you keep rules in a custom file path, reference it in `firebase.json` first.
 
 3. Check browser/app console logs for `[Firestore]` messages showing the exact error response
 
-4. Once membership write succeeds, deploy the strict rules above incrementally and test after each rule type
+4. Once membership write succeeds, deploy the real `firestore.rules` and run `test/firestore.rules.test.js` against the emulator

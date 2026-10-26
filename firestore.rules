@@ -71,21 +71,19 @@ service cloud.firestore {
       return status in ['active', 'suspended'];
     }
 
-    // Ledger tier (P0): immutable, append-only, written ONLY by the
-    // compliance gateway Cloud Function via the Admin SDK (which bypasses
-    // these rules). Clients may read for display but may never write —
-    // this is what an MCA Rule 11(g) auditor tests for.
-    function isLedgerCollection(name) {
-      return name in ['audit_log', 'transactions', 'stock_batches', 'stock_movements'];
-    }
+    // Ledger tier (P0): audit_log, transactions, stock_batches, stock_movements. Immutable, append-only,
+    // written ONLY by the compliance gateway Cloud Function via the Admin SDK (which bypasses these
+    // rules). Clients may read for display but may never write: this is what an MCA Rule 11(g) auditor
+    // tests for. Each has an explicit `allow write: if false` block below, and none is in
+    // isClientWritableCollection, so the wildcard cannot open it either.
 
     // Server-only tier: unlike the ledger collections above (readable for
     // display, write-locked), clients have no legitimate reason to touch
     // this collection AT ALL, not even to read — every access goes through
     // LockManager -> the acquireLock/releaseLock Cloud Functions, which use
     // the Admin SDK and bypass these rules entirely. NOTE: the generic
-    // fallback's `allow read` below is not gated by isLedgerCollection, so
-    // adding a name to isLedgerCollection alone would NOT block reads —
+    // fallback's `allow read` below is not gated by the ledger names, so
+    // locking a name for writes alone would NOT block reads —
     // Firestore grants a request if ANY matching rule allows it, so the
     // fallback's read rule has to carve this out explicitly too.
     function isServerOnlyCollection(name) {
@@ -96,28 +94,24 @@ service cloud.firestore {
       return name in ['locks', 'pending_cleanup'];
     }
 
-    // Gateway-write-only tier (P1 S2c): clients may READ these for display but
-    // may never create, update or delete. Every write goes through the gateway
-    // Cloud Functions (recordMutation / recordDelta / recordOperation, Admin
-    // SDK), which is what writes the audit_log and stock ledger rows; a direct
-    // client write would change stock with no ledger trail. Same trap as the
-    // two tiers above: a lone `match /inventory/{id} { allow write: if false }`
-    // would NOT deny, because the wildcard below still allows and Firestore
-    // grants a request if ANY matching rule allows it. The name must be listed
-    // HERE so the wildcard's write guard excludes it. Reads stay on the
-    // wildcard. Exact collection names only.
-    function isGatewayWriteOnlyCollection(name) {
-      return name in ['inventory'];
-    }
-
-    // Access-control tier (S2f-2): collections whose documents decide who may do what. They have their
-    // own explicit match block below, and Firestore ORs every matching rule, so the wildcard at the
-    // bottom would otherwise let ANY member write them (a staff token could promote itself to owner,
-    // proven by probe PR #157). Naming a collection HERE removes it from the wildcard's write guard,
-    // so the explicit block is the only thing that decides. Reads stay on the explicit block.
-    // Exact collection names only.
-    function isAccessControlCollection(name) {
-      return name in ['members'];
+    // Client-writable allow-list (S2f-4 + S2f-5). The wildcard at the bottom lets an active member WRITE
+    // only the collections named here; every other name is denied, including names nobody has invented
+    // yet. This replaces the old blacklist (ledger / gateway-write-only / access-control / server-only
+    // guards), which failed open: Firestore grants a request if ANY matching rule allows it, so every
+    // explicit `match` block next to the wildcard was a latent hole (F1: `members`, S2c: `inventory`),
+    // and orders, staff, suppliers and removed_staff stayed directly writable, skipping the gateway's
+    // role gates and audit_log (F4, F5). Everything not listed is written only by the gateway Cloud
+    // Functions (Admin SDK, rules skipped): inventory, orders, staff, removed_staff, suppliers,
+    // stock_batches, stock_movements, audit_log, transactions, locks, pending_cleanup. Members and
+    // users/tenants have their own explicit blocks and are not here.
+    //   activity_log  UX feed (ActivityLog.qml). NOT the compliance ledger: that is audit_log.
+    //   config        categories, order channels (CategoryStore, OrderChannelStore).
+    //   counters      id minting (FirebaseService.mintCounter*), see S2f-6 for the server-side plan.
+    //   _migrations   one-time migration markers (MigrationService).
+    // Adding a name here is a security decision: it needs a test in firestore.rules.test.js and a
+    // line in the design doc. Exact collection names only.
+    function isClientWritableCollection(name) {
+      return name in ['activity_log', 'config', 'counters', '_migrations'];
     }
 
     // users/{uid}
@@ -205,27 +199,17 @@ service cloud.firestore {
       // Server-only: acquireLock/releaseLock (Cloud Functions, Admin SDK)
       // are the only things that ever touch this. No client read either —
       // see isServerOnlyCollection's comment for why that has to be
-      // explicit and can't just ride on isLedgerCollection.
+      // explicit and can't just ride on the ledger names.
       match /locks/{lockId} {
         allow read, write: if false;
       }
 
-      // Working-tier domain collections (orders, sales, staff, suppliers,
-      // ...). inventory is gateway-write-only since S2c: members read it,
-      // only the gateway writes it. orders, staff, suppliers and
-      // removed_staff are still client-writable here; locking them is a
-      // separate follow-up (S2f-4). The access-control guard keeps `members` out of the writable
-      // fallback (S2f-2). The ledger guard keeps a ledger collection from
-      // ever matching this writable fallback, the gateway-write-only guard
-      // does the same for inventory, and the server-only guard does it for
-      // both read and write.
+      // Generic fallback. READ: any active member, except the server-only names. WRITE: only the
+      // allow-list above (default deny). See isClientWritableCollection.
       match /{collection}/{docId} {
         allow read: if isMember(tenantId) && !isServerOnlyCollection(collection);
         allow create, update, delete: if isMember(tenantId)
-                                      && !isLedgerCollection(collection)
-                                      && !isGatewayWriteOnlyCollection(collection)
-                                      && !isAccessControlCollection(collection)
-                                      && !isServerOnlyCollection(collection);
+                                      && isClientWritableCollection(collection);
       }
     }
   }
