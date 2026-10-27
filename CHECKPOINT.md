@@ -15,7 +15,7 @@
 - [x] 6. Fixes (all in this branch): sheet title follows the live count; Skill 136 cross-reference fixed; design D-S0-5 + README + test plan say the pending-mint fix is a separate PR and must merge first; test plan counts, E1, E10, new section 2b; new `.github/scripts/__tests__/signOutGuardWiring.test.js` (43/43 locally, 31 mutants, fix-revert 6 red -> 43 green); Skill 138 + index (138 skills); AGENTS + README lines.
 - [x] 7. Report: `docs/superpowers/specs/2026-10-27-pr167-final-sweep-review.md` (0 must-fix, 4 should-fix all fixed, 4 nice or open).
 - [x] 8. Local checks: script tests all green (109 before + 43 new), `skills-index.js --check` current.
-- [ ] 9. Pushed? See the last line of this file for the push result. Then: read CI on the review PR head; recount QML / Functions / Rules / E2E from the CI comment (this change adds no QML test; the Node test is in the script-tests job).
+- [x] 9. Pushed `review/2026-10-27-pr167-final-sweep` @ `b99c7a5`; review PR is **#169** (base `feat/2026-10-26-signout-guard`). Token check after push: `.git/config` 0 hits, none in tracked files. Still to do: read CI on the review PR head; recount QML / Functions / Rules / E2E from the CI comment (this change adds no QML test; the Node test is in the script-tests job).
 - [ ] 10. Taher: merge the review PR into `feat/2026-10-26-signout-guard`, merge `fix/2026-10-26-pending-mints-tenant-scope` (before the restock device rows), then #167; run the on-device plan rows.
 
 ## Open questions for Taher (defaults applied, vetoable)
@@ -28,3 +28,5 @@
 1. CI read on the review PR; fix whatever is red (suspects: none expected, no QML test added; the Node wiring test runs in the script-tests job).
 2. Pending-mints PR (`feat` branch `fix/2026-10-26-pending-mints-tenant-scope`): its SKILLS entry is Skill 137 and its commit message and docs may still say 133; check on rebase. #167/#168 use 136/138.
 3. S2f-3 client wording, S2d kinds on deltas, S2f-6 counters, P2 HSN/GSTIN (see the archived checkpoint for the roadmap table).
+
+**PUSH RESULT (session 7):** branch pushed, PR #169 opened against `feat/2026-10-26-signout-guard`. CI not read yet (next session: step 9).
