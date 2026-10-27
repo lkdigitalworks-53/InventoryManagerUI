@@ -6,6 +6,8 @@
 **Skills used:** `superpowers:requesting-code-review` (one read-only reviewer subagent on tests + docs), `ponytail:ponytail-audit`, `qt-development-skills:qt-qml-review` (lint script on the changed lines; agents 2/4/5 N/A: no layout, delegate or state change).
 **Previous checkpoint archived:** `docs/superpowers/specs/2026-10-27-pr168-sweep-prev-CHECKPOINT.md`.
 
+**Merge 2026-10-27 (session 8):** #167 took review PR #169 (title follows live count, Skill 138, wiring test), so #168 conflicted. Merged `origin/feat/2026-10-26-signout-guard` into this branch (docs only conflicts: AGENTS, README, SKILLS, SKILLS-INDEX regenerated; this checkpoint kept). No code conflicts.
+
 ## Steps (this session)
 - [x] 1. Cloned, fetched `pull/168/head`, checked out the PR branch, read memory + checkpoint. Scope = commit `feea99f` only.
 - [x] 2. Read `PendingMints.js`, the store diff, `nextBatchId` / `FirebaseService.mintCounterValue` / `_splitPath`, `Main.qml` resync, tests. Lint on changed lines: only false positives.

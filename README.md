@@ -707,6 +707,8 @@ only that tenant retries or sees them, and a result that arrives under another t
 `docs/superpowers/specs/2026-10-26-pending-mints-tenant-scope-design.md`; test plan:
 `docs/superpowers/test-plans/2026-10-26-pending-mints-tenant-scope-test-plan.md`.
 
+**Update 2026-10-27 (review of #167):** the sheet title now follows the live count (it said "with unsynced work" after the queue drained); a Node wiring test pins that every sign-out path goes through `askLeave` and that `signOut(` has exactly two callers (Skill 138). Merge `fix/2026-10-26-pending-mints-tenant-scope` before relying on "nothing replays under the next account".
+
 **Update 2026-10-26 (sign-out guard, S0):** signing out or leaving a workspace used to drop every queued write and photo
 upload with no word (`Main.qml onSignedOut` clears `Gateway` and `PhotoQueue`). `Main.qml askLeave()` now shows
 `SignOutSheet` when anything is queued: the rows (labels from `DescribeItem`, state Waiting / Sending / Needs attention),

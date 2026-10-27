@@ -30,7 +30,11 @@ BottomSheet {
         return root._summarize()
     }
 
-    sheetTitle: root.leaving ? qsTr("Leave with unsynced work?") : qsTr("Sign out with unsynced work?")
+    // The title follows the live count like the buttons do: once the queue drains while the
+    // sheet is open the body says "Everything has synced", so the title must not still warn.
+    sheetTitle: root._guard.count > 0
+        ? (root.leaving ? qsTr("Leave with unsynced work?") : qsTr("Sign out with unsynced work?"))
+        : (root.leaving ? qsTr("Leave workspace?") : qsTr("Sign out?"))
     primaryAction: root.leaving ? qsTr("Stay in workspace") : qsTr("Stay signed in")
     secondaryAction: root._guard.count > 0
         ? (root.leaving ? qsTr("Leave and discard") : qsTr("Sign out and discard"))
