@@ -1,27 +1,30 @@
-# CHECKPOINT — 2026-10-26 S0 sign-out guard (resume here)
+# CHECKPOINT — 2026-10-27 session 7: final-sweep review of PR #167 (resume here)
 
-**Branch:** `feat/2026-10-26-signout-guard` (off `main` @ `b494d52`, #161 merged). **Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`. PAT only inline in the push command; after push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build/run; no Qt in sandbox (CI is the QML oracle); push without asking; short scope; honest trade-offs; tests + test plan for every change; caveman FULL for chat only.
-**Skills used:** `superpowers:brainstorming`, `qt-development-skills:qt-qml`, `qt-development-skills:qt-ui-design`, `ponytail:ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-26-pr161-merged-prev-CHECKPOINT.md`.
+**Branch:** `review/2026-10-27-pr167-final-sweep`, stacked on `pr167` head `8a3904b` (`feat/2026-10-26-signout-guard`, base `main` @ `9c010f0`). Open the PR **into** `feat/2026-10-26-signout-guard`, not into `main`.
+**Commit identity:** `tsadmin@gmail.com` (Taher's instruction this session; earlier sessions used other ids). PAT comes from the chat prompt only: push with `git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$PAT" | base64 -w0)"`, never in the remote URL, `.git/config`, the repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build/run; no Qt in the sandbox (CI is the QML oracle); push without asking; short scope; honest trade-offs; tests + test plan for every change; caveman FULL for chat only.
+**Skills used:** `requesting-code-review`, `ponytail:ponytail-audit`, `qt-development-skills:qt-qml-review` (lint only: no Qt, so no qmllint and no agent-run QML).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-27-pr167-final-sweep-prev-CHECKPOINT.md`.
 
-## Why this task
-PR #161 merged; Taher deploys + device-tests it. Next important item with a ready design and no deploy: the sign-out guard (design 4b of the unmerged restock design PR #147, answered by Taher as Q-A6 = warn and allow; the restock design says it must ship before restock). Verified in code: `Main.qml onSignedOut` clears `Gateway` + `PhotoQueue`, the old confirms never mentioned queued work.
-Ranked and NOT picked: L1/L2 multi-role login (DRAFT, 8 open decisions, needs Taher), S2f-3 client wording (small, later), restock-as-one-operation (needs PR #147 approval first), S2f-6 server counters (needs design).
+## Steps (this session)
+- [x] 1. Read the three skills, cloned, fetched `pull/167/head`, made the stacked review branch.
+- [x] 2. Read design, `SignOutGuard.js`, `SignOutSheet.qml`, the `Main.qml` + `BottomSheet.qml` diffs, the test file, the test plan, the docs diff.
+- [x] 3. Verified against the stores: every symbol the sheet reads exists (`OutboxStore.revision/inFlightCount/isInFlight`, `PhotoQueue.revision`, `InventoryStore.getById`, `Constants.*`, `GhostButton.textColor`); item field names match (`opType`, `ops`, `terminal`, `stuck`, photo `state`); `signOut(` call sites = 2 in `qml/`, 0 in `src/` + `main.cpp`; new files are picked up by the CMake `GLOB_RECURSE` and by `qmltestrunner -input tests`; Leave workspace is hidden for owners.
+- [x] 4. Ran lint on the 4 touched QML files, filtered to changed lines: 82 hits, all kinds the whole repo has (`var`, property order, `property var`).
+- [x] 5. Independent fuzz of `SignOutGuard.build`: 20000 runs of JSON-shaped junk, 0 throws, invariants hold; 5000 items build in 18 ms (V8).
+- [x] 6. Fixes (all in this branch): sheet title follows the live count; Skill 136 cross-reference fixed; design D-S0-5 + README + test plan say the pending-mint fix is a separate PR and must merge first; test plan counts, E1, E10, new section 2b; new `.github/scripts/__tests__/signOutGuardWiring.test.js` (43/43 locally, 31 mutants, fix-revert 6 red -> 43 green); Skill 138 + index (138 skills); AGENTS + README lines.
+- [x] 7. Report: `docs/superpowers/specs/2026-10-27-pr167-final-sweep-review.md` (0 must-fix, 4 should-fix all fixed, 4 nice or open).
+- [x] 8. Local checks: script tests all green (109 before + 43 new), `skills-index.js --check` current.
+- [ ] 9. Pushed? See the last line of this file for the push result. Then: read CI on the review PR head; recount QML / Functions / Rules / E2E from the CI comment (this change adds no QML test; the Node test is in the script-tests job).
+- [ ] 10. Taher: merge the review PR into `feat/2026-10-26-signout-guard`, merge `fix/2026-10-26-pending-mints-tenant-scope` (before the restock device rows), then #167; run the on-device plan rows.
 
-## Steps
-- [x] 1. Read memory, cloned, read CHECKPOINT + roadmap + KNOWN-ISSUES + S2f design + multi-role design + restock design.
-- [x] 2. Design doc `specs/2026-10-26-signout-guard-design.md` (options A/B/C, decisions D-S0-1..7, Q-S0-1).
-- [x] 3. `qml/helper/SignOutGuard.js` (pure) + `tests/tst_SignOutGuard.qml` (36 fns + 4 data fns = 53 cases). Node shim 53/53; shim proved on `tst_DescribeItem` 43/43; 16/16 hand mutants killed.
-- [x] 4. `qml/pages/SignOutSheet.qml`, `Main.qml askLeave` (3 entry points + Back list), `BottomSheet.secondaryColor`.
-- [x] 5. Docs: test plan, Skill 132, SKILLS-INDEX regenerated, AGENTS, README, test-plans index. Script tests 109/109.
-- [x] 6. Pushed, PR #167 opened, rebased onto `main` @ `9c010f0` (#147 + #165 landed; Skills renumbered 136/137 because another session took 132-135). **CI green: 3247/3247** (QML 2174, Functions 866, Rules 106, E2E 101).
-- [ ] 7. Stacked PR 2: tenant-scope the pending batch-id mint queue (`StockBatchStore._pendingMints` is Settings-backed, survives sign-out, retried under the NEXT tenant).
+## Open questions for Taher (defaults applied, vetoable)
+- Q-R1: should a photo with many `attempts` count as "Needs attention" like a stuck outbox item? (default: no, wait for device evidence)
+- Q-R2: items queued during the Leave-workspace round-trip are discarded unwarned (test-plan E10). Add a busy state on Profile while it runs? (default: observe first)
+- Q-R3: `Constants.danger` fails AA contrast (3.76:1). Change the token in its own PR? (default: yes, separate PR)
+- Q-R4: gate the sheet's summary binding on `visible` (perf, untestable here)? (default: no until queues over 1000 are realistic)
 
-## State for the next session
-- Taher: device-test `test-plans/2026-10-26-signout-guard-test-plan.md` (H1-H7, N1-N5, E1-E9), then merge #167. Stacked PR #168 (pending-mint tenant scope) sits on this branch: restack it on `main` after #167 merges (`git rebase --onto origin/main <old #167 tip>`).
-- Q-S0-1 open: add a "Try to sync first" button (`Gateway.drainNow()`) to the sheet? Claude recommends no for now.
-- Not started, ranked: S2f-3 client wording (small, QML), restock operation R1-R6 (design approved on #147, needs a server `mint` kind), multi-role login L1/L2 (DRAFT, 8 open questions), S2f-6 server counters.
-
-## NEXT after this
-Taher: device-test the plan (H1-H7, N1-N5, E1-E9), merge. Then Q-S0-1 (add a "sync first" button?), PR #147 approval -> restock operation, S2f-3, multi-role login questions.
+## NEXT (each its own branch and session)
+1. CI read on the review PR; fix whatever is red (suspects: none expected, no QML test added; the Node wiring test runs in the script-tests job).
+2. Pending-mints PR (`feat` branch `fix/2026-10-26-pending-mints-tenant-scope`): its SKILLS entry is Skill 137 and its commit message and docs may still say 133; check on rebase. #167/#168 use 136/138.
+3. S2f-3 client wording, S2d kinds on deltas, S2f-6 counters, P2 HSN/GSTIN (see the archived checkpoint for the roadmap table).
