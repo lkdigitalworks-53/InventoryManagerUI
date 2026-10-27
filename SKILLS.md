@@ -4490,3 +4490,13 @@ Rules:
 6. Pin the structure, not only the behaviour: a test that `index.js` has exactly one writer of member docs and that it sits after the decision. A second `set` on the member doc added later would silently skip the guard.
 7. Test with an independent oracle: a 2 x 13 x 3 matrix written from the policy sentence, not from the function's branches, plus a seeded monkey whose invariant is "an existing doc never changes". An equivalent mutant (dropping the `owner` check only changes the log reason, because the endpoint can never request `owner`) is named in the test plan rather than hidden.
 8. A dormant feature is the cheapest time to fix it: `Gateway.provisioningAvailable` is still `false`, so this closed the hole before any client could reach it.
+
+## Skill 133: Check that the reason for a behaviour is true on the real caller path, and ask what every caller does with the id you return
+
+PR #165 sweep (2026-10-26). S2f-7 kept an "exact repeat answers 200" rule because "the client retries after a lost response (the outbox resends)". `Gateway.provisionMember` is one plain XHR: no outbox, no retry. The rule is still right (double tap, manual retry), but the written reason was false, and Skill 132 rule 3 repeated it.
+Rules:
+1. Before a design or skill pins behaviour to "the client does X", open the client function and read it. Outbox, retry and coalescing exist for `recordMutation` and `recordDelta`, not for every endpoint.
+2. When an add-only or idempotent endpoint returns an id (`uid`), grep every caller that acts on it. Here `provisionStaffCredentials` stamps `appUid` on success only, and `cleanupStaffAuthDocs(appUid)` later deletes the member doc: a 409 leaves an unlinked roster entry, and a repeat 200 can link two entries to one login. A server fix changes what the client holds; check both ends.
+3. A new TestCase file adds `initTestCase` and `cleanupTestCase` to the CI count: +N test functions is +N+2 in the QML job (seen: `tst_MemberPolicy` 6 -> +8, `tst_ProvisionErrorMessage` 4 -> +6). Write "+N functions (CI +N+2)" in plans; read the real total from the CI comment.
+4. A user-facing message must promise only what the reader can do. "Change their role" is false for an admin facing the owner or a peer admin (D-1); say "review".
+5. A test whose list of cases is a hand-kept copy of a `switch` cannot discover a new case; say so in its comment instead of claiming it will.

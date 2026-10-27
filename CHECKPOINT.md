@@ -37,3 +37,13 @@
 2. S2d kinds on deltas (the P1 core; the largest remaining S2 slice, needs a strong coalescing test set).
 3. S2f-6 counters (design first).
 4. P2 HSN/GSTIN: never started although the master spec said "start immediately"; cheap and client-only. P3/P4 before the DPDP dates above.
+
+## Update 2026-10-26 (session 6: final-sweep review of PR #165, stacked branch `review/2026-10-26-pr165-final-sweep`)
+**Commit identity this session:** `taher.lkdw@gmail.com`. **Skills used:** `superpowers:requesting-code-review`, `ponytail:ponytail-audit`, `qt-development-skills:qt-qml-review` (lint only, no Qt).
+- [x] 1. Read memory, skills, cloned, fetched `pull/165/head`; CI on `f7c2bf7` green 3191 (QML 2118, Functions 866, Rules 106, E2E 101).
+- [x] 2. Read all server + client paths and tests; ran `npm test` 866/866 and script tests 109/109 locally.
+- [x] 3. Report: `specs/2026-10-26-pr165-final-sweep.md` (0 must-fix, 6 should-fix, 3 nice).
+- [x] 4. Fixes: message reword + 1 QML test, D14 + test plan + counts corrected, 2 KNOWN-ISSUES entries, Skill 133 + index (134 skills), design Q4/Q5.
+- [ ] 5. Read CI on the review PR head; recount from the CI comment (expect QML 2119).
+- [ ] 6. Taher: answer Q1-Q5 in the design; merge review PR into #165's branch, then #165; `firebase deploy --only functions`; run DN/DR rows of the test plan.
+
