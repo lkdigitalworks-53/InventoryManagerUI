@@ -703,7 +703,7 @@ change, no deploy. Design: `docs/superpowers/specs/2026-10-13-completion-error-c
 **Update 2026-10-26 (pending batch-id mints are tenant-scoped):** the durable queue of failed batch-id mints survived
 sign-out but did not know its tenant, so a retry after another account signed in could write a batch into the wrong
 tenant and hide the wrong product from order pickers. Items now carry their tenant (`qml/helper/PendingMints.js`),
-only that tenant retries or sees them, and a result that arrives under another tenant is dropped. Client-only. Design:
+only that tenant retries or sees them, and a result that arrives under another tenant is dropped (the success path of `addBatch` too). The retry waits until the tenant's batch ledger is loaded, and items the loader cannot replay are quarantined, not destroyed. Client-only. Design:
 `docs/superpowers/specs/2026-10-26-pending-mints-tenant-scope-design.md`; test plan:
 `docs/superpowers/test-plans/2026-10-26-pending-mints-tenant-scope-test-plan.md`.
 

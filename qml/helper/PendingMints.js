@@ -23,14 +23,50 @@ function _valid(it) {
         && typeof it.qty === "number" && isFinite(it.qty) && it.qty > 0
 }
 
+// A new queue item, or null when it could never be replayed (no tenant, no product, qty not a
+// positive finite number). qty goes through Number() so a caller passing "3" does not queue an
+// item that normalize() would throw away on the next launch.
+function make(id, tenantId, productId, supplierId, qty, unitCost, note) {
+    var it = {
+        id: id,
+        tenantId: tenantId,
+        productId: productId,
+        supplierId: supplierId || "",
+        qty: Number(qty),
+        unitCost: unitCost,
+        note: note || ""
+    }
+    return _valid(it) ? it : null
+}
+
 // Cleans a persisted list. Drops anything that cannot be replayed safely, in particular items
 // saved before this fix (no tenantId): replaying them under whichever tenant is signed in is
-// exactly the bug. -> { items, dropped }
+// exactly the bug. `rejected` holds what was dropped, in order, so the caller can keep it.
+// -> { items, dropped, rejected }
 function normalize(list) {
     var src = Array.isArray(list) ? list : []
     var items = []
-    for (var i = 0; i < src.length; ++i) if (_valid(src[i])) items.push(src[i])
-    return { items: items, dropped: src.length - items.length }
+    var rejected = []
+    for (var i = 0; i < src.length; ++i) {
+        if (_valid(src[i])) items.push(src[i])
+        else rejected.push(src[i])
+    }
+    return { items: items, dropped: rejected.length, rejected: rejected }
+}
+
+// Appends `entries` to a saved JSON array of quarantined items and keeps the newest `cap`
+// (default 50). Quarantine, not replay: the owed batch is real money in the FIFO ledger, so a
+// refused item is kept for support instead of being destroyed. A damaged `prevJson` starts a
+// fresh list. -> JSON string
+function appendRejected(prevJson, entries, cap) {
+    var prev = []
+    try {
+        var parsed = JSON.parse(prevJson)
+        if (Array.isArray(parsed)) prev = parsed
+    } catch (e) { prev = [] }
+    var all = prev.concat(Array.isArray(entries) ? entries : [])
+    var keep = Math.max(1, Math.floor(cap) || 50)
+    return JSON.stringify(all.slice(-keep))
 }
 
 // Items queued under `tenantId`. Empty when no tenant is signed in.
@@ -40,10 +76,13 @@ function forTenant(list, tenantId) {
 }
 
 // Does `tenantId` owe a batch for `productId`? (Hides the product from order pickers.)
+// Called per product row by the pickers, so it allocates nothing.
 function has(list, tenantId, productId) {
-    var mine = forTenant(list, tenantId)
-    for (var i = 0; i < mine.length; ++i) if (mine[i].productId === productId) return true
-    return false
+    if (!_isTenant(tenantId) || !Array.isArray(list)
+            || typeof productId !== "string" || productId.length === 0) return false
+    return list.some(function(it) {
+        return !!it && it.tenantId === tenantId && it.productId === productId
+    })
 }
 
 // The items a retry pass should start now: this tenant's, not already in flight.
@@ -54,12 +93,16 @@ function due(list, tenantId, inFlight) {
 }
 
 // The same tenant, and a real one. A retry whose mint answers after the person switched
-// account must NOT write the batch: it stays queued for its own tenant.
+// account must NOT write the batch: it stays queued for its own tenant. Also the "is this
+// tenant's batch ledger loaded?" test (loadedTenant vs the signed-in tenant): nextBatchId
+// floors its counter with the highest LOCAL batch id, so minting against an empty or another
+// tenant's ledger could reissue a used id.
 function sameTenant(itemTenant, currentTenant) {
     return _isTenant(itemTenant) && itemTenant === currentTenant
 }
 
 // A new list without the item `id` (by id, not index: the list may have changed meanwhile).
+// Ids are Date.now()_random, unique per device in practice; two items sharing an id would both go.
 function without(list, id) {
     return Array.isArray(list) ? list.filter(function(it) { return !it || it.id !== id }) : []
 }

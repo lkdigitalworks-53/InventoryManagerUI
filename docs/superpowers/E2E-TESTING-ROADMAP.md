@@ -295,7 +295,7 @@ closed, not just mergeable.
   race directly: normal resolution, timeout-fires-first, and both orderings of "the other one resolves
   late" to confirm no double-fire and no duplicate batch risk. Full suite: 363 passed, 29 failed, same
   pre-existing cause, zero new regressions.
-  **Update 2026-10-26:** the pending-mint queue was tenant-blind (a retry after an account switch could write into the wrong tenant); now tenant-scoped, see `KNOWN-ISSUES.md` and Skill 137.
+  **Update 2026-10-26:** the pending-mint queue was tenant-blind (a retry after an account switch could write into the wrong tenant); now tenant-scoped (success path, ledger-loaded gate and quarantine added in the PR #168 sweep), see `KNOWN-ISSUES.md` and Skill 137.
 
 - **`functions/index.js` handler tests for the other 5 endpoints** (2026-08-29) — `acquireLock`/
   `releaseLock`/`provisionMember`/`runCutover`/`computeAnalysis` now covered in
