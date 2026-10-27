@@ -30,8 +30,8 @@ Existing suites that must stay green: `tst_DescribeItem` (the helper reuses it),
 ## 3. E2E
 None. The change is view + pure helper; nothing reaches the server.
 
-## 4. Counts
-Expected CI total = main's last observed total + 53 (QML). Read the exact number from the CI comment on the PR; do not trust this line (Skill 131 rule 3).
+## 4. Counts (observed, CI comment on PR #167, head `38ae344`)
+**3247/3247 green** = QML 2174, Functions 866, Rules 106, E2E 101. The new file adds **55** to the QML number in CI: its 53 expanded cases plus the runner's own `initTestCase` and `cleanupTestCase` (inferred from the delta; the same +2 holds for #165's `tst_ProvisionErrorMessage`: 5 cases, +7). Recount from the CI comment after any rebase, not from this line.
 
 ---
 
