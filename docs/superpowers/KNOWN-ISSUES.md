@@ -10,7 +10,7 @@ broken, where, why it was deferred, and leads for a future fix.
 **Where:** `AuthService.provisionStaffCredentials` (stamps `appUid` only when the call returns `ok`), `StaffStore.setAppUid`, `AuthService.cleanupStaffAuthDocs`, `functions/index.js` `provisionMember` (409 `member-exists`, no `uid` in the body). Dormant: `Gateway.provisioningAvailable` is `false`.
 **Case A:** the owner adds a staff entry whose email is already a member with a different role, or is suspended. The roster record saves, the call answers 409, no `appUid` is stamped. The person keeps a working login but is unlinked: `StaffScope.ownOrders` fails closed (they see no orders), and deleting the roster entry does NOT remove their member doc, so their access outlives the entry.
 **Case B:** there is no duplicate-email check when adding staff. A second entry with the email of an already linked, active, same-role member gets the exact-repeat 200 (with `uid`), so both entries carry the same `appUid`. Deleting the second entry runs `cleanupStaffAuthDocs` and removes the member doc and `users/{uid}` of the person the first entry still describes. (Before S2f-7 the old merge linked them too; it is not new, it is now explicit.)
-**Leads:** (1) refuse a second roster entry with an email already on the roster (client, one check); (2) on 409 show the toast AND offer to remove the just-saved roster entry; (3) never cascade from an entry whose `appUid` is also on another entry. Decide before multi-role slice L1.
+**Leads:** (1) refuse a second roster entry with an email already on the roster (client, one check); (2) on 409 show the toast AND offer to remove the just-saved roster entry; (3) never cascade from an entry whose `appUid` is also on another entry. **Decided 2026-10-27: fix in L1, before the flag flips (design "L1 gate").**
 
 ---
 
@@ -18,7 +18,7 @@ broken, where, why it was deferred, and leads for a future fix.
 
 **Where:** `provisionMember` with `body.uid` (`getUser(uid)` then member doc + `users/{uid}.tenants` push). Test plan row DE3 pins it.
 **Why it matters:** an owner/admin who knows any uid (for example of someone who left their workspace) can put that account into their own tenant as `admin`/`manager`/`staff` with no accept step; the member doc stores that account's Auth email, which the roster then shows; and 404 `user-not-found` vs 200 tells the caller whether a uid exists in the whole Firebase project. Needs an owner/admin token and the uid. Relevant to the DPDP consent work (P4).
-**Leads:** an invitation doc the invitee accepts (multi-role slice L1), or at least do not copy the Auth email into the member doc.
+**Leads:** an invitation doc the invitee accepts (multi-role slice L1), or at least do not copy the Auth email into the member doc. **Decided 2026-10-27: accept step in L1, before the flag flips (design "L1 gate").**
 
 ---
 

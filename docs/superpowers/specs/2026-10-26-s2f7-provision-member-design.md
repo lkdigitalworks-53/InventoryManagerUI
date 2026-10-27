@@ -43,5 +43,8 @@
 1. Option A (add-only) or B (role editor with the hierarchy inside the endpoint)? Recommendation A.
 2. Should an unknown role become a 400 instead of `staff` (item 4.2)?
 3. Do you want membership changes in `audit_log` before staff login goes live (item 4.1)? Recommendation yes, as its own slice before multi-role L1.
-4. (Sweep 2026-10-26, see `2026-10-26-pr165-final-sweep.md` findings 1, 2) The staff-add flow after a 409, and two roster entries sharing one login: keep as documented, or change the client? Recommendation: decide before the multi-role slice L1 flips `provisioningAvailable`.
-5. (Sweep finding 3) Invite-by-uid adds any existing Auth account to the tenant with no consent from that person, and answers 404 vs 200 as a uid-exists probe. Do you want an accept step, or is it fine because uids are unguessable? Recommendation: accept step in L1.
+4. **DECIDED 2026-10-27 (Taher took the default): leave documented now, fix in L1 together with the flag flip.** (Sweep 2026-10-26, see `2026-10-26-pr165-final-sweep.md` findings 1, 2) The staff-add flow after a 409, and two roster entries sharing one login: keep as documented, or change the client? Recommendation: decide before the multi-role slice L1 flips `provisioningAvailable`.
+5. **DECIDED 2026-10-27 (Taher took the default): add an accept step in L1.** (Sweep finding 3) Invite-by-uid adds any existing Auth account to the tenant with no consent from that person, and answers 404 vs 200 as a uid-exists probe. Do you want an accept step, or is it fine because uids are unguessable? Recommendation: accept step in L1.
+
+## L1 gate (from Q4 + Q5, binding for the multi-role login slice)
+`Gateway.provisioningAvailable` must NOT become `true` until all of these are done and tested: (a) a second roster entry with an email already on the roster is refused; (b) a 409 on staff add does not leave a silently unlinked entry (toast plus offer to remove it); (c) `cleanupStaffAuthDocs` never cascades from an entry whose `appUid` is on another entry; (d) invite-by-uid becomes an invitation the invitee accepts, and the member doc stops copying the Auth email; test plan row DE3 is flipped.

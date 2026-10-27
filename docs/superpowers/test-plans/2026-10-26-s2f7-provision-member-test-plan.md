@@ -60,7 +60,7 @@ Cleanup deletes the created member, users and Auth docs.
 `tst_ProvisionErrorMessage.qml`: 5 functions (sweep added one): `member-exists` text points at "Team members" (the real label); it does not promise "Change their role" (an admin facing the owner or a peer admin cannot); every code in the hand-kept list has its own text; the two permission codes share one; empty/undefined/unknown fall back.
 
 ## 6. Counts
-Functions **866** (was 835). QML +5 test functions after the sweep (+4 before), **CI count = functions + 2** (the JUnit report also lists `initTestCase` and `cleanupTestCase` for every new TestCase file; same +2 seen for `tst_MemberPolicy` in #164). E2E +5. Rules unchanged. Observed on the #165 head BEFORE the sweep (4 functions): QML 2118, Functions 866, Rules 106, E2E 101 = 3191; the sweep head should read QML 2119. Read the new CI comment before trusting this line. **Do not trust a predicted grand total: read it from the CI comment on the PR** (Skill 131 rule 11).
+Functions **866** (was 835). QML +5 test functions after the sweep (+4 before), **CI count = functions + 2** (the JUnit report also lists `initTestCase` and `cleanupTestCase` for every new TestCase file; same +2 seen for `tst_MemberPolicy` in #164). E2E +5. Rules unchanged. Observed on the #165 head BEFORE the sweep (4 functions): QML 2118, Functions 866, Rules 106, E2E 101 = 3191; the review PR #166 head read QML 2119, Functions 866, Rules 106, E2E 101 = 3192 (observed). **Do not trust a predicted grand total: read it from the CI comment on the PR** (Skill 131 rule 11).
 
 ## 7. Deploy and rollback (Taher)
 1. Merge when CI is green. 2. `firebase deploy --only functions`. 3. Rollback: revert, same command. No data migration.
