@@ -4492,3 +4492,28 @@ Rules:
 1. In a decision table, mark an option "rejected" only with the person's own sentence and date. Otherwise write "not chosen yet" and ask.
 2. A trade-off against an option must be checked in code before it is written. Here `mintCounterValue` already uses an `updateTime` precondition, so a server transaction on the same doc serialises safely.
 3. When the person's direction is a principle ("everything atomic, one transaction id"), design for the principle and name its limits (import chunking), instead of narrowing it to the first convenient case.
+
+---
+
+## Skill 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide
+
+S2f-7 (2026-10-26). `provisionMember` merged into any existing member doc, so an admin could demote the owner or a peer admin, un-suspend a member and overwrite `joinedAt` / `invitedBy`, while `firestore.rules` and the client both forbid exactly that. The Admin SDK does not run the rules.
+Rules:
+1. List every function that writes with the Admin SDK and, for each, ask: which rule would have refused this write if it came from a client? If the answer is "one that protects the doc I am merging into", the function needs the same guard, or must not touch existing docs at all. Prefer the second: one definition of the policy (the rules), not a copy in the function.
+2. Make creation endpoints ADD-ONLY. Read the target doc inside the transaction first, decide with a pure function (`functions/lib/memberProvisionLogic.js`), and write only on `create`. Reading inside the transaction is what stops two concurrent calls from both creating.
+3. Keep the exact repeat idempotent: same role, member already active = 200 with no write. A caller that sends the same call twice (double tap, manual retry; this endpoint has NO automatic client retry, see Skill 135) must not see a failure for a success, and the repeat must not overwrite `joinedAt` / `invitedBy`.
+4. One public code (`member-exists`, 409); the reason goes to the log with actor, target and a capped tenant id. Run the caller's own gates (token, tenant, caller role, `canAssignRole`) BEFORE looking at the target, so a 409 versus 403 cannot be used to probe who is a member.
+5. Normalise inputs before comparing (an unknown role string becomes `staff`); compare the normalised value, or an unknown role bypasses the "same role" check.
+6. Pin the structure, not only the behaviour: a test that `index.js` has exactly one writer of member docs and that it sits after the decision. A second `set` on the member doc added later would silently skip the guard.
+7. Test with an independent oracle: a 2 x 13 x 3 matrix written from the policy sentence, not from the function's branches, plus a seeded monkey whose invariant is "an existing doc never changes". An equivalent mutant (dropping the `owner` check only changes the log reason, because the endpoint can never request `owner`) is named in the test plan rather than hidden.
+8. A dormant feature is the cheapest time to fix it: `Gateway.provisioningAvailable` is still `false`, so this closed the hole before any client could reach it.
+
+## Skill 135: Check that the reason for a behaviour is true on the real caller path, and ask what every caller does with the id you return
+
+PR #165 sweep (2026-10-26). S2f-7 kept an "exact repeat answers 200" rule because "the client retries after a lost response (the outbox resends)". `Gateway.provisionMember` is one plain XHR: no outbox, no retry. The rule is still right (double tap, manual retry), but the written reason was false, and Skill 132 rule 3 repeated it (rule 3 corrected in place).
+Rules:
+1. Before a design or skill pins behaviour to "the client does X", open the client function and read it. Outbox, retry and coalescing exist for `recordMutation` and `recordDelta`, not for every endpoint.
+2. When an add-only or idempotent endpoint returns an id (`uid`), grep every caller that acts on it. Here `provisionStaffCredentials` stamps `appUid` on success only, and `cleanupStaffAuthDocs(appUid)` later deletes the member doc: a 409 leaves an unlinked roster entry, and a repeat 200 can link two entries to one login. A server fix changes what the client holds; check both ends.
+3. A new TestCase file adds `initTestCase` and `cleanupTestCase` to the CI count: +N test functions is +N+2 in the QML job (seen: `tst_MemberPolicy` 6 -> +8, `tst_ProvisionErrorMessage` 4 -> +6). Write "+N functions (CI +N+2)" in plans; read the real total from the CI comment.
+4. A user-facing message must promise only what the reader can do. "Change their role" is false for an admin facing the owner or a peer admin (D-1); say "review".
+5. A test whose list of cases is a hand-kept copy of a `switch` cannot discover a new case; say so in its comment instead of claiming it will.
