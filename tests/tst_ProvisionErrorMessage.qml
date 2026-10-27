@@ -4,8 +4,8 @@ import "../qml/model"
 
 // S2f-7: provisionMember answers 409 `member-exists` when the target is already a member (it only
 // adds members; changing an existing member goes through Team Members). This pins the user-facing
-// text for every code the endpoint or the Gateway can return, so a new code cannot fall through to
-// the generic "please try again" unnoticed.
+// text for every code in the list below (a hand-kept copy of the switch: a NEW code added to the
+// endpoint must be added here too, this test cannot discover it).
 //
 // NOT RUN IN THIS SANDBOX (no Qt toolchain, project convention): CI's qml-tests job is the oracle.
 TestCase {
@@ -14,7 +14,14 @@ TestCase {
     function test_memberExists_pointsToTeamMembers() {
         var msg = AuthService._provisionErrorMessage("member-exists")
         verify(msg.indexOf("already on your team") >= 0, msg)
-        verify(msg.indexOf("Team Members") >= 0, msg)
+        verify(msg.indexOf("Team members") >= 0, msg)   // the label ProfilePage / MemberManagementDialog show
+    }
+
+    function test_memberExists_doesNotPromiseARoleChange() {
+        // An admin hitting 409 for the owner or a peer admin cannot change that member (D-1); the text
+        // must say "review", not "change".
+        var msg = AuthService._provisionErrorMessage("member-exists")
+        verify(msg.indexOf("Change their role") < 0, msg)
     }
 
     function test_everyKnownCodeHasItsOwnMessage() {
