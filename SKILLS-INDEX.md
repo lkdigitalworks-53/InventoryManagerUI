@@ -142,4 +142,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 133: Before designing on a shared server file, list the open PRs that edit it
 - 134: Never record an option as "rejected" unless the person rejected it, and quote their words
 - 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide
-- 133: Check that the reason for a behaviour is true on the real caller path, and ask what every caller does with the id you return
+- 135: Check that the reason for a behaviour is true on the real caller path, and ask what every caller does with the id you return

@@ -22,8 +22,8 @@ Server change is correct and well tested. No must-fix. Two client-side side effe
 2. **Two roster entries can share one login** (no duplicate-email check in `StaffStore`; repeat call answers 200 with `uid`). Deleting the second entry runs `cleanupStaffAuthDocs` and removes the member doc and `users/{uid}` of the person the first entry still describes. Pre-existing (old merge linked too), now explicit. Dormant. *Decision for Taher (Q4).*
 3. **Invite-by-uid adds any existing Auth account with no consent from that person**; the member doc stores that account's Auth email; 404 vs 200 reveals whether a uid exists in the whole project. Pre-existing, untouched by the PR, but test plan row DE3 now pins it. Needs an owner/admin token plus the uid. DPDP-relevant. *Decision for Taher (Q5).*
 4. **Wrong message for owner / peer-admin targets** (`AuthService.qml`): "Change their role or status from Team Members" is false for an admin facing the owner or a peer admin (D-1), and the real label is "Team members". FIXED in the review PR (+1 QML test).
-5. **Design D14 and Skill 132 rule 3 give a false reason** ("the client retries, the outbox resends"). `Gateway.provisionMember` is a single XHR. The rule stays (double tap, manual retry); the text is corrected and Skill 133 records the lesson. FIXED (docs).
-6. **Counts in docs**: "QML +4" but CI reads +6 (every new TestCase file also adds `initTestCase` and `cleanupTestCase`). FIXED (test plan, Skill 133 rule 3).
+5. **Design D14 and Skill 132 rule 3 give a false reason** ("the client retries, the outbox resends"). `Gateway.provisionMember` is a single XHR. The rule stays (double tap, manual retry); the text is corrected and Skill 135 records the lesson. FIXED (docs).
+6. **Counts in docs**: "QML +4" but CI reads +6 (every new TestCase file also adds `initTestCase` and `cleanupTestCase`). FIXED (test plan, Skill 135 rule 3).
 
 **Nice to have**
 7. The structural guard test counts exact source lines containing `"/members/"`; a harmless refactor breaks it. Keep (it caught a real class of bug); loosen only if it ever misfires.

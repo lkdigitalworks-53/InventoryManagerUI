@@ -43,7 +43,7 @@
 - [x] 1. Read memory, skills, cloned, fetched `pull/165/head`; CI on `f7c2bf7` green 3191 (QML 2118, Functions 866, Rules 106, E2E 101).
 - [x] 2. Read all server + client paths and tests; ran `npm test` 866/866 and script tests 109/109 locally.
 - [x] 3. Report: `specs/2026-10-26-pr165-final-sweep.md` (0 must-fix, 6 should-fix, 3 nice).
-- [x] 4. Fixes: message reword + 1 QML test, D14 + test plan + counts corrected, 2 KNOWN-ISSUES entries, Skill 133 + index (134 skills), design Q4/Q5.
+- [x] 4. Fixes: message reword + 1 QML test, D14 + test plan + counts corrected, 2 KNOWN-ISSUES entries, Skill 135 + index (136 skills; main took 133/134 while this PR was open), design Q4/Q5.
 - [x] 5. CI on #166 head `997bdbe`: 3192/3192 green (QML 2119, Functions 866, Rules 106, E2E 101).
 - [x] 5b. Q4 + Q5 answered 2026-10-27: Taher took the defaults (fix in L1; accept step in L1). Recorded as the "L1 gate" in the design doc. No code change.
 - [ ] 6. Taher: merge #166 into #165's branch, then #165; `firebase deploy --only functions`; run DN/DR rows of the test plan.
