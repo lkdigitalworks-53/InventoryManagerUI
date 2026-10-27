@@ -144,3 +144,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide
 - 135: Check that the reason for a behaviour is true on the real caller path, and ask what every caller does with the id you return
 - 136: Warn before sign-out throws queued work away: one chokepoint, a pure summary, Stay as the easy choice
+- 138: A guard only guards if every path goes through it: pin the caller list with a source test, and mutate the test itself

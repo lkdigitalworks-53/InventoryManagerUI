@@ -1,6 +1,6 @@
 # Test plan — sign-out guard (S0): warn before sign-out / leave-workspace discards unsynced work
 
-**Branch:** `feat/2026-10-26-signout-guard` (off `main` @ `b494d52`). **Design:** `specs/2026-10-26-signout-guard-design.md`.
+**Branch:** `feat/2026-10-26-signout-guard` (merge-base with `main` @ `9c010f0`, after #165). **Design:** `specs/2026-10-26-signout-guard-design.md`.
 **Covers:** `qml/helper/SignOutGuard.js` (new, pure), `qml/pages/SignOutSheet.qml` (new view), `qml/Main.qml` (`askLeave`, three entry points, Back list), `qml/components/BottomSheet.qml` (`secondaryColor`).
 **Why:** `Main.qml onSignedOut` runs `Gateway.clear()` and `PhotoQueue.clear()`; the old confirms never said that queued writes and photos would be thrown away.
 **No server change, no deploy.**
@@ -11,7 +11,7 @@
 - **Not run:** the QML run itself (CI is the signal), `SignOutSheet`, `Main.qml` wiring (Felgo, no `App` context under `qmltestrunner`: on-device only).
 - Brace/paren/bracket balance on every touched file: clean (`Main.qml` reads the same as on `main`). `qt_qml_lint.py` on the two QML files: only findings of the kinds that every file in the repo already has (property order, `var`, `property var` for arrays), plus one intentional imperative assignment (`leaving` in `ask()`).
 
-## 1. Unit tests (`tests/tst_SignOutGuard.qml`, 36 test functions + 4 data functions = 53 cases)
+## 1. Unit tests (`tests/tst_SignOutGuard.qml`, 36 test functions, 3 of them data-driven = 53 cases)
 | Area | Cases |
 |---|---|
 | Nothing pending | empty -> count 0, no consequences, "Everything has synced"; five non-array/missing inputs (and null / string opts) |
@@ -27,6 +27,14 @@ Happy path: one-item, mixed, completion, photos. Negative: junk input, throwing 
 ## 2. Regression tests (automated)
 Existing suites that must stay green: `tst_DescribeItem` (the helper reuses it), `tst_StuckWrites` (`isParkedItem`), `tst_PhotoQueue`, `tst_Gateway`. No existing test references the old `confirmDlg` sign-out wording (grep of `tests/`, `test/`, `functions/test/`: none).
 
+## 2b. Wiring and store contract (Node, CI "script tests" job; added in the #167 review)
+`.github/scripts/__tests__/signOutGuardWiring.test.js`, 43 tests, run locally 43/43. It reads the source because `Main.qml` and `SignOutSheet` cannot run under `qmltestrunner`:
+- every UI path to sign out or leave goes through `app.askLeave` (3 entry points, no direct `confirmDlg` with the old wording, `logic.signOutRequested()` and `AuthService.leaveCurrentTenant()` only inside `proceed`);
+- the `signOut(` call sites in `qml/` are exactly `Main.qml` and `AuthService.qml`, none in `src/` or `main.cpp`: a NEW caller fails CI;
+- the sheet: Stay is primary and closes, the destructive button nulls `_proceed` before calling it (double tap runs it once), the three live watchers, title and buttons follow the live count, state shown in words;
+- the store members the sheet and helper read exist (`OutboxStore.revision / inFlightCount / isInFlight / items`, `PhotoQueue.revision / items`, `InventoryStore.getById`, the item fields `opType` / `ops`, the four photo states, `StuckWrites.isParkedItem`);
+- 31 mutants, one per rule, each must be reported. Fix-revert: on the original sheet (static title) 6 tests go red; on the fixed sheet 43/43 green.
+
 ## 3. E2E
 None. The change is view + pure helper; nothing reaches the server.
 
@@ -36,7 +44,7 @@ None. The change is view + pure helper; nothing reaches the server.
 ---
 
 ## On-device test plan
-**Prerequisites:** a NEW tenant (owner), the app online. To queue work on purpose: switch on airplane mode, then edit a product / complete an order / add a photo. For a parked write see the stuck-writes test plan (temporary wrong `functionUrl`, or a suspended member). For a **Sending** row: turn airplane mode on right after tapping save, then open the Profile page and tap Sign out immediately.
+**Prerequisites:** a NEW tenant (owner), the app online. **Merge order:** the pending batch-id mint queue survives sign-out and, until `fix/2026-10-26-pending-mints-tenant-scope` is merged, replays into the NEXT tenant. So rows H4 and the monkey row only hold for a restock if that PR is merged first; otherwise do not queue a restock in them. To queue work on purpose: switch on airplane mode, then edit a product / complete an order / add a photo. For a parked write see the stuck-writes test plan (temporary wrong `functionUrl`, or a suspended member). For a **Sending** row: turn airplane mode on right after tapping save, then open the Profile page and tap Sign out immediately.
 
 ### Happy path
 | # | Action | Expected |
@@ -61,7 +69,7 @@ None. The change is view + pure helper; nothing reaches the server.
 ### Edge cases
 | # | Action | Expected |
 |---|---|---|
-| E1 | Sheet open while online with a Waiting item; the item syncs | Rows disappear, text "Everything has synced. Nothing will be lost.", the red button reads plain "Sign out" (or "Leave workspace") and signs out without loss |
+| E1 | Sheet open while online with a Waiting item; the item syncs | Rows disappear, text "Everything has synced. Nothing will be lost.", the TITLE changes from "Sign out with unsynced work?" to "Sign out?" (leave: "Leave workspace?"), the red button reads plain "Sign out" (or "Leave workspace") and signs out without loss |
 | E2 | 8 queued edits | 5 rows, then "+ 3 more"; the summary says 8 |
 | E3 | A Sending row (request in flight when you tapped Sign out) | Tag Sending, extra line "Changes marked Sending may or may not have been saved. Check after you sign in."; after sign-in check the record |
 | E4 | Edits + order completion + photo together | All three consequence lines once each, "Data stored on this device..." last |
@@ -70,6 +78,7 @@ None. The change is view + pure helper; nothing reaches the server.
 | E7 | Kill the app with items queued, reopen (still signed in) | Items still queued (they survive a kill); Sign out then warns about them |
 | E8 | Two items for the same product edited twice offline | Counted once (the outbox coalesces them), row shows the product |
 | E9 | Screen reader on | Each row is read as title, detail, state |
+| E10 | Leave workspace on a slow network: tap Leave and discard, and while the leave round-trip runs (several seconds) edit a product offline | Open question from the #167 review (not decided): that edit is discarded when the sign-out lands, without a warning. Note what happens and report it |
 
 ### Multi-scenario / monkey (manual)
 Queue a random mix (edit, restock, add product, complete order, photo) offline; open and cancel the sheet 10 times quickly; then discard. After sign-in nothing from the old session appears, no toast says a write succeeded, no crash. Repeat with a parked write present.
@@ -78,8 +87,8 @@ Queue a random mix (edit, restock, add product, complete order, photo) offline; 
 | File | Automated coverage | Where to look on device |
 |---|---|---|
 | `qml/helper/SignOutGuard.js` | 53 cases + 16/16 mutants | H2-H7, E2-E4 |
-| `qml/pages/SignOutSheet.qml` | none (Felgo) | all H, N1-N3, E1, E5, E6, E9 |
-| `qml/Main.qml` (`askLeave`, 3 entry points, Back list) | none (Felgo) | H1, H3, H4, H7, N1, N5 |
+| `qml/pages/SignOutSheet.qml` | static wiring test only (Felgo) | all H, N1-N3, E1, E5, E6, E9 |
+| `qml/Main.qml` (`askLeave`, 3 entry points, Back list) | static wiring test only (Felgo) | H1, H3, H4, H7, N1, N5 |
 | `qml/components/BottomSheet.qml` (`secondaryColor`, default unchanged) | none | every other BottomSheet footer still has a normal ghost button: Close in "Changes not syncing", Cancel in Add Product, Export |
 
 ### Regression watch
