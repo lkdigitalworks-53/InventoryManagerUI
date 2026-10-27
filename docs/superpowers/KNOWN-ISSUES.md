@@ -37,6 +37,12 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Pending batch-id mints replayed under the wrong tenant — FOUND + FIXED 2026-10-26 (stacked PR on the sign-out guard)
+
+`StockBatchStore._pendingMints` (E2E roadmap item 1, Decision 1) survived sign-out and was tenant-blind: after a failed mint under tenant A, signing in as B and going online minted B's counter and wrote a `stock_batch` into B for A's product id; `hasPendingMint` also hid B's same-id product from B's pickers. Read from code, not reproduced on a device. Fixed by tagging items with their tenant (`PendingMints.js`), Skill 137, design `specs/2026-10-26-pending-mints-tenant-scope-design.md`. **Residual:** an item owed to a tenant nobody signs into again stays on the device (tiny, harmless); the whole queue is retired when the restock design (server-side mint inside the operation, PR #147) lands. Older-build or damaged items are quarantined on load (`rejectedJson`, newest 50, never replayed), not destroyed. PR #168 sweep (2026-10-27) also fixed: the success path of `addBatch` wrote into the NEW tenant when the account switched while the mint was out, and the retry could mint before the tenant's batch ledger had loaded (counter seed from an empty ledger). **Status: fixed in code, headless tests green; the store wiring is device-verification pending** (test plan H/N/E rows). **Open (Taher):** quarantine vs adopt-into-first-tenant for pre-fix items, see the design doc section 6.
+
+---
+
 ## Owner can mint a second owner via `ownerId` — RESOLVED (fixed by #164 / R3, found in the PR #161 review 2026-10-25)
 
 The `tenants/{t}` update rule now requires `request.resource.data.ownerId == resource.data.ownerId`, so the bootstrap rule can no longer be fed a new owner id. Covered by the rules test "R3 tenant ownerId is immutable". Fix option B (bootstrap only when the tenant has no members) was not needed and is not planned. Kept as a pointer; delete when convenient.
