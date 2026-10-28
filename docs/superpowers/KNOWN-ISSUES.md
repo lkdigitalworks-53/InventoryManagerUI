@@ -741,3 +741,11 @@ PH5 removed the product `photoUrl`/`photoUpdatedAt` fields from the client. Serv
 
 ## Spreadsheet import is positional; a pre-PH5 15-column file or template imports shifted (accepted, Taher 2026-10-08)
 `XlsxService.cpp` `readSheet` reads column N and labels it `kProductHeaders[N-1]`; the file's header row is never read and there is no column-count check. After PH5 a file exported or a template downloaded BEFORE PH5 (Photo URL in column 11) imports with Supplier = the URL text (a bogus supplier is created on confirm), Size = Supplier, Taxable = Size, Tax % = Taxable, old Tax % ignored. No warning. Accepted: dev only, fresh install each time, always export first and import later from the same build. Rule for users: never import a file or template made by an older build. If this ever matters: header-row check in `readSheet` (rejects a mismatched file; also covers the orders and staff sheets that share it). Review PR #137, finding R1.
+
+## `OutboxStore.enqueueDelta` can coalesce a new delta into a PARKED item (found 2026-10-28, not verified end to end)
+
+Found while reading the coalescing loop for P1 S2d-1: it skips only the in-flight item, not one the server already rejected and parked (`StuckWrites.isParkedItem`). Restock and product delete are guarded higher up (`hasParkedWrite`); order completion has its own guard; other callers of `Gateway.recordDelta` were not audited. Effect if reachable: the new change rides on a rejected request and is rejected too. Decide in a small slice: add `StuckWrites.isParkedItem(candidate)` to the skip condition and a test in `tst_OutboxStore_movements.qml`.
+
+## Imported-order completion is typed `adjustment`, not `sale` (P1 S2d-1, by design until S2d-2)
+
+A clamped deduction cannot carry explicit movements (server 409 on a clamped quantity would lose the deduction). S2d-2 = a server-side kind hint for derived rows; needs a functions deploy.

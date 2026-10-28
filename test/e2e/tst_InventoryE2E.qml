@@ -249,6 +249,45 @@ TestCase {
         compare(Number(doc.fields.stock.integerValue), 25)
     }
 
+    // P1 S2d-1: restock now sends an explicit `receipt` movement. The real recordDelta function
+    // rejects (409) a movements list whose qtys do not sum to the applied delta, which would leave
+    // stock unchanged and fire Gateway.mutationConflicted, so "stock rose by the restock qty" is the
+    // end-to-end proof that the client payload is accepted. (The returned-stock path with
+    // `sales_return` is exercised by tst_ReturnAfterMetadataEditE2E.)
+    function _restock(id, qty, reason) {
+        var done = false, okResult = false
+        InventoryStore.restock(id, qty, fixture.supplierName, 80, reason, function(ok) { done = true; okResult = ok })
+        tryVerify(function() { return done }, 5000, "restock callback never fired")
+        verify(okResult, "restock was refused")
+    }
+
+    function test_restock_receipt_movement_is_accepted_by_the_real_function() {
+        var id = _createProduct("E2E Widget Restock", "SKU-E2E-R1", 10)
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
+        _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000, "product doc never appeared before the restock")
+        lastConflict = null
+        _restock(id, 4, "e2e box 1")
+        var doc = _pollEmulatorDoc(docPath, id, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 14
+        }, 8000, "restocked stock never reached the emulator")
+        compare(Number(doc.fields.stock.integerValue), 14)
+        compare(lastConflict, null, "the explicit receipt must not conflict")
+    }
+
+    function test_two_back_to_back_restocks_coalesce_into_one_valid_delta() {
+        var id = _createProduct("E2E Widget Restock 2", "SKU-E2E-R2", 10)
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
+        _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000, "product doc never appeared before the restocks")
+        lastConflict = null
+        _restock(id, 3, "first")
+        _restock(id, 2, "second")
+        var doc = _pollEmulatorDoc(docPath, id, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 15
+        }, 8000, "both restocks never reached the emulator")
+        compare(Number(doc.fields.stock.integerValue), 15)
+        compare(lastConflict, null)
+    }
+
     function test_deleteProduct_removes_from_emulator() {
         var id = _createProduct("E2E Widget Delete", "SKU-E2E-3", 3)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
