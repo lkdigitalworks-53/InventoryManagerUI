@@ -3,6 +3,7 @@ import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
 import "../helper"
+import "../helper/SheetFooter.js" as SheetFooter
 
 // Modal bottom sheet matching the prototype.
 //
@@ -21,6 +22,8 @@ QQC.Dialog {
     property string sheetTitle: ""
     property string primaryAction: ""
     property string secondaryAction: "Cancel"
+    // Label colour of the secondary (ghost) button; e.g. Constants.danger for a destructive choice.
+    property color secondaryColor: Constants.textPrimary
     property bool primaryEnabled: true
     property bool busy: false
     // Non-empty turns on the full-sheet BusyOverlay (see contentItem below)
@@ -30,6 +33,12 @@ QQC.Dialog {
     property string busyMessage: ""
     property var primaryPalette: Constants.gradHero
     default property alias body: bodyHolder.data
+
+    // Width the primary button keeps so its label is never ellipsized ("Stay signed in" showed as
+    // "S..."). PrimaryButton reports no label width of its own, so without this floor a long
+    // secondary label took the room first. Math in SheetFooter.js (tested headlessly).
+    readonly property real _primaryFloor: SheetFooter.primaryFloor(
+        primaryMetrics.advanceWidth, primaryButton.leftPadding + primaryButton.rightPadding, footerRow.width)
 
     signal primaryClicked()
     signal secondaryClicked()
@@ -96,6 +105,14 @@ QQC.Dialog {
         // BusyOverlay need to ride the same slide-up offset as one unit,
         // not just the ColumnLayout on its own.
         transform: Translate { y: root._slideOffset }
+
+        // Must match PrimaryButton's label font (bold, fsBodyLg): same text, same width.
+        TextMetrics {
+            id: primaryMetrics
+            font.pixelSize: sp(Constants.fsBodyLg)
+            font.bold: true
+            text: root.primaryAction
+        }
 
         ColumnLayout {
             id: contentLayout
@@ -177,6 +194,7 @@ QQC.Dialog {
 
             // Footer — primary/secondary actions, always visible at bottom.
             RowLayout {
+                id: footerRow
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space5)
                 Layout.rightMargin: dp(Constants.space5)
@@ -189,11 +207,16 @@ QQC.Dialog {
                     Layout.fillWidth: true
                     visible: root.secondaryAction.length > 0
                     text: root.secondaryAction
+                    textColor: root.secondaryColor
                     onClicked: { if (!root.busy) { root.secondaryClicked(); root.close() } }
                 }
 
                 PrimaryButton {
+                    id: primaryButton
                     Layout.fillWidth: true
+                    // Floor = preferred: the secondary button shrinks first, the primary keeps its label.
+                    Layout.minimumWidth: root._primaryFloor
+                    Layout.preferredWidth: root._primaryFloor
                     visible: root.primaryAction.length > 0
                     text: root.primaryAction
                     loading: root.busy

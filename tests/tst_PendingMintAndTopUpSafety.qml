@@ -15,6 +15,11 @@ import QtTest
 // exercised deterministically from a test. On-device/CI confirmation that
 // the real store matches this model is still the one thing this file can't
 // substitute for.
+//
+// DRIFT NOTE (2026-10-27): this model predates tenant scoping. The shipped queue is tenant-tagged
+// and the retry waits for the tenant's ledger to load; none of that is modelled here, on purpose:
+// this file pins the single-tenant stay-queued / hide-product / top-up behaviour only. The tenant
+// rules run through the real helper in tst_PendingMints.qml.
 TestCase {
     name: "PendingMintAndTopUpSafety"
 
