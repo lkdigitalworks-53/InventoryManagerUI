@@ -3,6 +3,7 @@ import QtQuick
 
 import "../helper/ProfileSettingsMath.js" as ProfileSettingsMath
 import "../helper/MemberPolicy.js" as MemberPolicy
+import "../helper/AccessState.js" as AccessState
 
 QtObject {
     id: root
@@ -17,6 +18,12 @@ QtObject {
     property bool tenantCreateBusy: false
     property bool profileResolved: false
     property bool onboardingNeeded: false
+    // "" while the signed-in user may use the app; otherwise why not: "removed" | "suspended" | "role" |
+    // "unverified" (AccessState). Main.qml shows AccessBlockedPage while this is non-empty (S2f-3).
+    property string accessBlock: ""
+    property string accessTenantName: ""
+    // Bumped by every profile load and by sign-out: a late answer from an older load must not apply.
+    property int _profileSeq: 0
     property int lastStatusCode: 0
     property string lastError: ""
     property var tenantMembers: []
@@ -187,30 +194,39 @@ QtObject {
         })
     }
 
-    function _loadMembership(tenantId, onDone) {
-        if (!tenantId) {
-            if (onDone) onDone(false)
-            return
-        }
+    // The member doc is the only authority for tenant access and role (S2f-1, S2f-2); users/{uid} is only
+    // a pointer to the tenant to open, writable by the user, and is never used for the role. Reads the
+    // signed-in user's OWN member doc (the rules allow it even when suspended; a removed member gets 404)
+    // and either opens the app with the role found there or shows the access-blocked screen.
+    // Design: docs/superpowers/specs/2026-10-28-s2f3-access-wording-design.md
+    function _verifyMembership(seq, tenantId, tenantName) {
+        FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data, status) {
+            if (seq !== _profileSeq) return
+            var held = AuthStore.tenantId === tenantId ? AuthStore.role : ""
+            var out = AccessState.outcome(AccessState.classify(ok, status, data), held)
+            onboardingNeeded = false
+            profileResolved = true
 
-        FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data) {
-            if (!ok || !data) {
-                if (onDone) onDone(false)
+            if (out.action === "block") {
+                accessTenantName = tenantName || AuthStore.tenantName
+                accessBlock = out.reason
                 return
             }
 
-            AuthStore.applyTenantContext({
-                tenantId: tenantId,
-                tenantName: data.tenantName || AuthStore.tenantName,
-                role: data.role || "staff"
-            })
+            var name = tenantName || (data && data.tenantName) || AuthStore.tenantName
+            AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: out.role })
             // Backfill workspace name from canonical tenant doc when missing.
-            if (!AuthStore.tenantName || AuthStore.tenantName.length === 0)
-                _ensureTenantName(tenantId)
+            if (!name) _ensureTenantName(tenantId)
             loadTenantMembers()
             tenantContextReady(AuthStore.tenantId, AuthStore.role)
-            if (onDone) onDone(true)
         })
+    }
+
+    // "Try again" on the access-blocked screen. Offline there is nothing to ask, and _loadUserProfile
+    // would reopen the app from the saved session, so the screen stays as it is.
+    function recheckAccess() {
+        if (!isOnline) return
+        _loadUserProfile()
     }
 
     function loadTenantMembers() {
@@ -238,8 +254,10 @@ QtObject {
     }
 
     function _loadUserProfile() {
+        var seq = ++_profileSeq
         profileResolved = false
         onboardingNeeded = false
+        accessBlock = ""
 
         if (!AuthStore.uid) {
             onboardingNeeded = true
@@ -251,6 +269,7 @@ QtObject {
         if (!isOnline) { profileResolved = true; return; }
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, data) {
+            if (seq !== _profileSeq) return
             if (!ok || !data) {
                 onboardingNeeded = true
                 profileResolved = true
@@ -273,8 +292,6 @@ QtObject {
             })
 
             var tenantId = data.tenantId || ""
-            var tenantName = data.tenantName || ""
-            var role = data.role || ""
 
             if (!tenantId) {
                 onboardingNeeded = true
@@ -283,31 +300,8 @@ QtObject {
                 return
             }
 
-            AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: tenantName, role: role })
-
-            // If the user doc didn't carry a tenant name, fetch the canonical
-            // tenant doc so the workspace name shows in the header.
-            if (!tenantName || tenantName.length === 0)
-                _ensureTenantName(tenantId)
-
-            if (role && role.length > 0) {
-                onboardingNeeded = false
-                profileResolved = true
-                loadTenantMembers()
-                tenantContextReady(tenantId, role)
-                return
-            }
-
-            _loadMembership(tenantId, function(found) {
-                if (!found) {
-                    onboardingNeeded = true
-                    profileResolved = true
-                    onboardingRequired()
-                } else {
-                    onboardingNeeded = false
-                    profileResolved = true
-                }
-            })
+            // Tenant and role are applied only after the member doc has been read (S2f-3).
+            _verifyMembership(seq, tenantId, data.tenantName || "")
         })
     }
 
@@ -489,7 +483,7 @@ QtObject {
         }
 
         if (AuthStore.tenantId && AuthStore.tenantId.length > 0) {
-            tenantContextReady(AuthStore.tenantId, AuthStore.role || "owner")
+            _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)
             return
         }
 
@@ -540,15 +534,9 @@ QtObject {
 
         FirebaseService.get("users/" + AuthStore.uid, function(okExisting, existingUser) {
             if (okExisting && existingUser && existingUser.tenantId) {
-                AuthStore.applyTenantContext({
-                    tenantId: existingUser.tenantId,
-                    tenantName: existingUser.tenantName || safeName,
-                    role: existingUser.role || "owner"
-                })
                 busy = false
                 tenantCreateBusy = false
-                loadTenantMembers()
-                tenantContextReady(AuthStore.tenantId, AuthStore.role)
+                _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)
                 return
             }
 
@@ -866,8 +854,11 @@ QtObject {
     }
 
     function signOut() {
+        _profileSeq++
         profileResolved = true
         onboardingNeeded = false
+        accessBlock = ""
+        accessTenantName = ""
         AuthStore.clear()
         AuthStore.saveSession()
         // Clear activity log to prevent cross-tenant data leakage. The log is

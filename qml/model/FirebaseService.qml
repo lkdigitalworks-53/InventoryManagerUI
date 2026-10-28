@@ -302,12 +302,15 @@ QtObject {
             return
         }
 
-        _request("GET", _docUrl(p.normalizedPath), null, function(ok, data) {
+        // The HTTP status is the callback's third argument (existing callers ignore it). A caller that
+        // must tell "the document does not exist" (404) from "could not read it" passes it on, e.g.
+        // AuthService reading the signed-in user's own member doc (S2f-3, AccessState.classify).
+        _request("GET", _docUrl(p.normalizedPath), null, function(ok, data, status) {
             if (!ok) {
-                if (callback) callback(false, null)
+                if (callback) callback(false, null, status)
                 return
             }
-            if (callback) callback(true, _decodeDoc(data))
+            if (callback) callback(true, _decodeDoc(data), status)
         })
     }
 
