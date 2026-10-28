@@ -35,8 +35,9 @@ S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; retu
 - [x] S6. Fix F4: restock refusal toast says why (`Quantity must be greater than zero`), not "try again".
 - [x] S7. Tests: Node parity SM-11 RUN 11/11, 8/8 mutants; QML StockMovements +5, OutboxStore_movements +9, InventoryStore_movementKinds +12 (two old merge-pinning tests rewritten). Gateway_movements untouched. QML CI-only, NOT RUN here.
 - [x] S8. Docs (done, 95e9d4c + next commit): test plan, design (K11-K13), KNOWN-ISSUES (close parked-coalesce item, add legacy derived floors drift), Skill 140, SKILLS-INDEX regen, AGENTS/README if they mention counts.
-- [ ] S9. Push, wait CI, record observed counts.
+- [x] S9. Push, wait CI, record observed counts.
 
 **Pushed:** 30cdff3 (code + Node), 95e9d4c (QML tests + design/KNOWN-ISSUES/Skill 140), then test plan/README/AGENTS/checkpoint. S9 open: read CI comment on PR #170, fix any QML test I mis-wrote (none run locally), record observed counts here and in the test plan.
 **Risk to watch in CI:** the sent-or-parked merge guard applies to derived deltas too; any legacy tst_Gateway/tst_OutboxStore case that merged after a failure would break.
 **CI round 1 on 71d1ee4:** QML failed 1 test: `Gateway_movements::test_two_explicit_calls_coalesce...` (pinned restock + floored sale merging; I missed it, grep for `tst_Gateway_movements` had not been done). Rewritten as equal-floor merge + different-floor separate-answers test. Lesson: after changing a merge rule, grep EVERY suite that calls `recordDelta`, not only the ones named after the feature.
+**CI round 2 on 34bc69a: ALL GREEN, 3528/3528** (QML 2442, Functions 877, Rules 106, E2E 103). Sweep DONE. Open for a human: device checks 8, 15, 16 in the test plan; veto K11-K14; decide the derived-floors slice (KNOWN-ISSUES).

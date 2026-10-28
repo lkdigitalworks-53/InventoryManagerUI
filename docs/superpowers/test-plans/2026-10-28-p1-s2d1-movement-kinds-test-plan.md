@@ -60,3 +60,5 @@ Restock dialog, order return/exchange/reopen flows, imported-order completion, s
 
 ### Monkey
 14. 2 minutes of random restock / return / reopen / modify taps on 2 products, toggling airplane mode. Expect no crash, no stuck-writes entry, final stock = start + restocks + returns - sales; every row's kind matches the action.
+
+**Observed CI after the PR #170 review sweep (34bc69a): 3528/3528** (QML 2442, Functions 877, Rules 106, E2E 103). Device steps 8, 15, 16 not yet run.
