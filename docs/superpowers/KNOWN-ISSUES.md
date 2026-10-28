@@ -5,6 +5,21 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Login: a failed users-doc read shows "Create your workspace" to a signed-in user — FOUND 2026-10-28 (S2f-3), NOT FIXED
+
+**Where:** `AuthService._loadUserProfile`: `if (!ok || !data) { onboardingNeeded = true ... }`. Any failure reading `users/{uid}` (timeout, 5xx, 401) is treated as "new user", including on a reconnect re-run for a user who is already working.
+**Why not fixed in S2f-3:** same class as the "unverified" state the slice added for the member doc, but it changes onboarding behaviour (404 = new user, other failures = keep the verified session or show the retry screen) and needs its own tests and device plan. `FirebaseService.get` now passes the status, so the fix is small: 404 -> onboarding, anything else -> `AccessState` "unverified" path.
+
+## Mid-session membership changes are noticed late — KNOWN 2026-10-28 (S2f-3), L3 of the multi-role design
+
+A member suspended or removed while the app is open keeps the old UI until the next reconnect or launch (`onIsOnlineChanged` re-runs the profile load). There is no re-check on token refresh or app resume, and the server answers one code (`no-tenant-context`) for every cause, so the 403 text says "most likely". Dialogs and sheets that are open when the access-blocked screen appears stay above it (Qt popups draw above every item); they cannot expose data (reads are refused) and their writes are refused. A cold start OFFLINE after being blocked reopens the app from the saved session (the block is in memory only); it is re-applied at the next online profile load.
+
+## Dead code: `AuthService.setTenantContext` applies any role it is given — FOUND 2026-10-28 (S2f-3), NOT FIXED
+
+**Where:** `AuthService.setTenantContext(tenantId, tenantName, role)`, reached only from `Main.qml onSetTenantContext`, a `Logic` signal that nothing emits (grep 2026-10-28). If anything ever emits it, it bypasses the member-doc check of S2f-3. Delete both, or route through `_loadUserProfile`.
+
+---
+
 ## Staff add: link lost on 409, and two roster entries can share one login — FOUND 2026-10-26 (PR #165 sweep), NOT FIXED
 
 **Where:** `AuthService.provisionStaffCredentials` (stamps `appUid` only when the call returns `ok`), `StaffStore.setAppUid`, `AuthService.cleanupStaffAuthDocs`, `functions/index.js` `provisionMember` (409 `member-exists`, no `uid` in the body). Dormant: `Gateway.provisioningAvailable` is `false`.
