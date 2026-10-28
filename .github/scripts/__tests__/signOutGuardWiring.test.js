@@ -123,6 +123,24 @@ function problems(s) {
   if (!/property color secondaryColor: Constants\.textPrimary/.test(s.bottom)) out.push('bottom-default-colour');
   if (!/textColor: root\.secondaryColor/.test(s.bottom)) out.push('bottom-binds-colour');
 
+  // ---- BottomSheet footer floor (PR #167 device test: "Stay signed in" showed as "S...") ----
+  // PrimaryButton reports no label width, so the footer gives the primary button a floor of its own
+  // label width (SheetFooter.primaryFloor). The pieces below must stay together: the import, the
+  // inputs, both Layout properties, and TextMetrics measuring the font PrimaryButton really draws.
+  const bottom = code(s.bottom);
+  if (!bottom.includes('import "../helper/SheetFooter.js" as SheetFooter')) out.push('footer-import');
+  if (!/SheetFooter\.primaryFloor\(\s*primaryMetrics\.advanceWidth,\s*primaryButton\.leftPadding \+ primaryButton\.rightPadding,\s*footerRow\.width\)/.test(bottom)) out.push('footer-floor-inputs');
+  if (!/PrimaryButton \{\s*id: primaryButton[^}]*?Layout\.minimumWidth: root\._primaryFloor/s.test(bottom)) out.push('footer-floor-min');
+  if (!/PrimaryButton \{\s*id: primaryButton[^}]*?Layout\.preferredWidth: root\._primaryFloor/s.test(bottom)) out.push('footer-floor-preferred');
+  if (!/RowLayout \{\s*id: footerRow\b/.test(bottom)) out.push('footer-row-id');
+  const fontOf = (m) => (m ? `${(/font\.pixelSize:\s*([^\n]+)/.exec(m[1]) || [])[1]}|${/font\.bold:\s*true/.test(m[1])}` : '');
+  const metrics = /TextMetrics \{([^}]*)\}/.exec(bottom);
+  const drawn = /id: titleText([^}]*)\}/.exec(code(s.primary));
+  if (!metrics || !drawn || !/^sp\(.*\)\|true$/.test(fontOf(metrics)) || fontOf(metrics) !== fontOf(drawn)) out.push('footer-metrics-font');
+  if (!metrics || !/text: root\.primaryAction/.test(metrics[1])) out.push('footer-metrics-text');
+  if (!/^\.pragma library/.test(s.footer)) out.push('footer-lib');
+  if (!/function primaryFloor\(labelWidth, padding, rowWidth\)/.test(s.footer)) out.push('footer-signature');
+
   // ---- store contract (a missing singleton member reads as undefined at runtime, no load error) ----
   if (!/property int revision: 0/.test(s.outbox)) out.push('store-outbox-revision');
   if (!/readonly property int inFlightCount:/.test(s.outbox)) out.push('store-outbox-inFlightCount');
@@ -154,6 +172,8 @@ function sources() {
     main: read('qml', 'Main.qml'),
     sheet: read('qml', 'pages', 'SignOutSheet.qml'),
     bottom: read('qml', 'components', 'BottomSheet.qml'),
+    primary: read('qml', 'components', 'PrimaryButton.qml'),
+    footer: read('qml', 'helper', 'SheetFooter.js'),
     outbox: read('qml', 'model', 'OutboxStore.qml'),
     photo: read('qml', 'model', 'PhotoQueue.qml'),
     inventory: read('qml', 'model', 'InventoryStore.qml'),
@@ -237,6 +257,20 @@ const MUTANTS = [
   ['sheet', 'state-in-words', 'text: row.modelData.stateLabel', 'text: ""'],
   ['bottom', 'bottom-default-colour', 'property color secondaryColor: Constants.textPrimary', 'property color secondaryColor: Constants.danger'],
   ['bottom', 'bottom-binds-colour', 'textColor: root.secondaryColor', 'textColor: Constants.textPrimary'],
+  ['bottom', 'footer-import', 'import "../helper/SheetFooter.js" as SheetFooter', ''],
+  ['bottom', 'footer-floor-inputs', 'primaryMetrics.advanceWidth, primaryButton', 'primaryMetrics.width, primaryButton'],
+  ['bottom', 'footer-floor-inputs', 'primaryButton.leftPadding + primaryButton.rightPadding', 'primaryButton.leftPadding'],
+  ['bottom', 'footer-floor-inputs', ', footerRow.width)', ', width)'],
+  ['bottom', 'footer-floor-min', 'Layout.minimumWidth: root._primaryFloor', 'Layout.minimumWidth: 0'],
+  ['bottom', 'footer-floor-preferred', 'Layout.preferredWidth: root._primaryFloor', 'Layout.preferredWidth: 0'],
+  ['bottom', 'footer-row-id', 'id: footerRow', 'id: footerRow2'],
+  ['bottom', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)\n            font.bold: true\n            text: root.primaryAction', 'font.pixelSize: sp(Constants.fsBody)\n            font.bold: true\n            text: root.primaryAction'],
+  ['bottom', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)\n            font.bold: true\n            text: root.primaryAction', 'font.pixelSize: sp(Constants.fsBodyLg)\n            text: root.primaryAction'],
+  ['bottom', 'footer-metrics-text', 'text: root.primaryAction\n        }\n\n        ColumnLayout', 'text: root.secondaryAction\n        }\n\n        ColumnLayout'],
+  ['primary', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)', 'font.pixelSize: sp(Constants.fsBody)'],
+  ['primary', 'footer-metrics-font', 'font.bold: true\n            elide: Text.ElideRight', 'elide: Text.ElideRight'],
+  ['footer', 'footer-lib', '.pragma library', '// not a library'],
+  ['footer', 'footer-signature', 'function primaryFloor(labelWidth, padding, rowWidth)', 'function primaryFloor(labelWidth, padding)'],
   ['outbox', 'store-outbox-revision', 'property int revision: 0', 'property int rev: 0'],
   ['outbox', 'store-outbox-inFlightCount', 'readonly property int inFlightCount:', 'readonly property int inFlight:'],
   ['outbox', 'store-outbox-isInFlight', 'function isInFlight(requestId)', 'function inFlight(requestId)'],
@@ -270,6 +304,25 @@ test('edge: allInsideProceed checks every occurrence, not only the first', () =>
 test('edge: bodyOf returns empty for a missing function and balances nested braces', () => {
   assert.equal(bodyOf('no functions here', 'askLeave'), '');
   assert.equal(bodyOf('function f(a) { if (a) { return 1 } return 2 } tail', 'f').trim(), 'if (a) { return 1 } return 2');
+});
+
+test('edge: a BottomSheet without the TextMetrics block is reported, not thrown on', () => {
+  const noMetrics = real.bottom.replace(/\s*TextMetrics \{[^}]*\}/, '');
+  assert.notEqual(noMetrics, real.bottom);
+  const out = problems(Object.assign({}, real, { bottom: noMetrics }));
+  assert.ok(out.includes('footer-metrics-font'));
+  assert.ok(out.includes('footer-metrics-text'));
+});
+
+test('edge: prose that mentions the floor in a comment does not satisfy the rules', () => {
+  const stripped = real.bottom.replace('import "../helper/SheetFooter.js" as SheetFooter', '// import "../helper/SheetFooter.js" as SheetFooter');
+  assert.ok(problems(Object.assign({}, real, { bottom: stripped })).includes('footer-import'));
+});
+
+test('regression: the premise holds, PrimaryButton still has no implicit label width', () => {
+  // If PrimaryButton ever reports its own label width the floor becomes redundant (harmless):
+  // revisit then. Until that, the anchored Text is the reason the floor exists.
+  assert.match(real.primary, /id: titleText\s*\n\s*anchors\.fill: parent/);
 });
 
 // ---- monkey: random single-token damage to Main.qml / SignOutSheet.qml is caught or harmless ----

@@ -28,7 +28,7 @@ Happy path: one-item, mixed, completion, photos. Negative: junk input, throwing 
 Existing suites that must stay green: `tst_DescribeItem` (the helper reuses it), `tst_StuckWrites` (`isParkedItem`), `tst_PhotoQueue`, `tst_Gateway`. No existing test references the old `confirmDlg` sign-out wording (grep of `tests/`, `test/`, `functions/test/`: none).
 
 ## 2b. Wiring and store contract (Node, CI "script tests" job; added in the #167 review)
-`.github/scripts/__tests__/signOutGuardWiring.test.js`, 43 tests, run locally 43/43. It reads the source because `Main.qml` and `SignOutSheet` cannot run under `qmltestrunner`:
+`.github/scripts/__tests__/signOutGuardWiring.test.js`, 60 tests (43 + 17 for the footer width, see `2026-10-28-signout-sheet-footer-width-test-plan.md`), run locally 60/60. It reads the source because `Main.qml` and `SignOutSheet` cannot run under `qmltestrunner`:
 - every UI path to sign out or leave goes through `app.askLeave` (3 entry points, no direct `confirmDlg` with the old wording, `logic.signOutRequested()` and `AuthService.leaveCurrentTenant()` only inside `proceed`);
 - the `signOut(` call sites in `qml/` are exactly `Main.qml` and `AuthService.qml`, none in `src/` or `main.cpp`: a NEW caller fails CI;
 - the sheet: Stay is primary and closes, the destructive button nulls `_proceed` before calling it (double tap runs it once), the three live watchers, title and buttons follow the live count, state shown in words;
@@ -73,7 +73,7 @@ None. The change is view + pure helper; nothing reaches the server.
 | E2 | 8 queued edits | 5 rows, then "+ 3 more"; the summary says 8 |
 | E3 | A Sending row (request in flight when you tapped Sign out) | Tag Sending, extra line "Changes marked Sending may or may not have been saved. Check after you sign in."; after sign-in check the record |
 | E4 | Edits + order completion + photo together | All three consequence lines once each, "Data stored on this device..." last |
-| E5 | Font size Large, small phone (360 dp wide) | Title, rows and buttons wrap, no overlap; the sheet scrolls; both buttons stay visible |
+| E5 | Font size Large, small phone (360 dp wide) | Title, rows and buttons wrap, no overlap; the sheet scrolls; both buttons stay visible; "Stay signed in" is complete (footer floor, 2026-10-28), "Sign out and discard" may end in "..." at this size (known limit Q-FW-1 in the footer plan) |
 | E6 | Rotate or lose focus with the sheet open | Sheet survives; Stay still works |
 | E7 | Kill the app with items queued, reopen (still signed in) | Items still queued (they survive a kill); Sign out then warns about them |
 | E8 | Two items for the same product edited twice offline | Counted once (the outbox coalesces them), row shows the product |
@@ -89,7 +89,7 @@ Queue a random mix (edit, restock, add product, complete order, photo) offline; 
 | `qml/helper/SignOutGuard.js` | 53 cases + 16/16 mutants | H2-H7, E2-E4 |
 | `qml/pages/SignOutSheet.qml` | static wiring test only (Felgo) | all H, N1-N3, E1, E5, E6, E9 |
 | `qml/Main.qml` (`askLeave`, 3 entry points, Back list) | static wiring test only (Felgo) | H1, H3, H4, H7, N1, N5 |
-| `qml/components/BottomSheet.qml` (`secondaryColor`, default unchanged) | none | every other BottomSheet footer still has a normal ghost button: Close in "Changes not syncing", Cancel in Add Product, Export |
+| `qml/components/BottomSheet.qml` (`secondaryColor`, default unchanged; footer width floor added 2026-10-28) | static wiring pins; footer plan `2026-10-28-signout-sheet-footer-width-test-plan.md` | every other BottomSheet footer still has a normal ghost button: Close in "Changes not syncing", Cancel in Add Product, Export |
 
 ### Regression watch
 - Sign-out with nothing queued behaves exactly as before (H1, N5).

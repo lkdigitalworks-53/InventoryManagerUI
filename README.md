@@ -715,7 +715,7 @@ upload with no word (`Main.qml onSignedOut` clears `Gateway` and `PhotoQueue`). 
 what is lost, **Stay signed in** as the primary button and a red **Sign out and discard**; with nothing queued the plain
 confirm is unchanged. Warn-and-allow, not block (Taher, Q-A6). Client-only, no deploy. Design:
 `docs/superpowers/specs/2026-10-26-signout-guard-design.md`; test plan:
-`docs/superpowers/test-plans/2026-10-26-signout-guard-test-plan.md`.
+`docs/superpowers/test-plans/2026-10-26-signout-guard-test-plan.md`. The footer of every two-button `BottomSheet` keeps the primary button at least as wide as its own label (`qml/helper/SheetFooter.js`): `PrimaryButton` reports no label width, so a long secondary label used to squeeze "Stay signed in" to "S...".
 
 **Update 2026-09-29 (stuck-writes dialog + Retry now, part B slice S1):** the `GlassHeader` stuck caption is now
 underlined and tappable while online. It opens `StuckWritesSheet` (`qml/pages/`), one row per stuck write
