@@ -125,11 +125,14 @@ TestCase {
         }
     }
 
-    function test_U14_no_tenant_context_says_access_may_have_changed_and_never_asserts_one_cause() {
+    function test_U14_no_tenant_context_says_removed_or_suspended_most_likely_and_never_asserts_one_cause() {
         var r = FC.forWriteError("no-tenant-context", 403)
         compare(r.kind, "access")
-        compare(r.text, "The server no longer accepts your access to this shop. Your account may have been changed or deactivated. Ask the shop owner")
-        verify(r.text.indexOf("may have been") >= 0, "must hedge: the code cannot know which cause")
+        compare(r.text, "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it")
+        verify(r.text.indexOf("most likely") >= 0, "must hedge: the code cannot know which cause")
+        verify(r.text.indexOf("removed") >= 0 && r.text.indexOf("suspended") >= 0, "names the two usual causes")
+        verify(r.text.indexOf("owner or an admin") >= 0, "names who can fix it (an admin can restore members)")
+        verify(r.text.indexOf("deactivated") < 0, "S2f-3 wording replaced 'changed or deactivated'")
         verify(r.text.indexOf("403") < 0, "the status is not echoed when the code is known")
     }
 
