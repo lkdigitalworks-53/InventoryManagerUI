@@ -133,10 +133,11 @@ function problems(s) {
   if (!/PrimaryButton \{\s*id: primaryButton[^}]*?Layout\.minimumWidth: root\._primaryFloor/s.test(bottom)) out.push('footer-floor-min');
   if (!/PrimaryButton \{\s*id: primaryButton[^}]*?Layout\.preferredWidth: root\._primaryFloor/s.test(bottom)) out.push('footer-floor-preferred');
   if (!/RowLayout \{\s*id: footerRow\b/.test(bottom)) out.push('footer-row-id');
-  const fontOf = (m) => (m ? `${(/font\.pixelSize:\s*([^\n]+)/.exec(m[1]) || [])[1]}|${/font\.bold:\s*true/.test(m[1])}` : '');
+  // Every font.* line, sorted: a weight / family / spacing added on one side only goes red too.
+  const fontOf = (m) => (m ? [...m[1].matchAll(/font\.(\w+):\s*([^\n]+)/g)].map((x) => `${x[1]}=${x[2].trim()}`).sort().join('|') : '');
   const metrics = /TextMetrics \{([^}]*)\}/.exec(bottom);
   const drawn = /id: titleText([^}]*)\}/.exec(code(s.primary));
-  if (!metrics || !drawn || !/^sp\(.*\)\|true$/.test(fontOf(metrics)) || fontOf(metrics) !== fontOf(drawn)) out.push('footer-metrics-font');
+  if (!metrics || !drawn || !/(^|\|)bold=true(\||$)/.test(fontOf(metrics)) || !/(^|\|)pixelSize=sp\(/.test(fontOf(metrics)) || fontOf(metrics) !== fontOf(drawn)) out.push('footer-metrics-font');
   if (!metrics || !/text: root\.primaryAction/.test(metrics[1])) out.push('footer-metrics-text');
   if (!/^\.pragma library/.test(s.footer)) out.push('footer-lib');
   if (!/function primaryFloor\(labelWidth, padding, rowWidth\)/.test(s.footer)) out.push('footer-signature');
@@ -264,11 +265,13 @@ const MUTANTS = [
   ['bottom', 'footer-floor-min', 'Layout.minimumWidth: root._primaryFloor', 'Layout.minimumWidth: 0'],
   ['bottom', 'footer-floor-preferred', 'Layout.preferredWidth: root._primaryFloor', 'Layout.preferredWidth: 0'],
   ['bottom', 'footer-row-id', 'id: footerRow', 'id: footerRow2'],
-  ['bottom', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)\n            font.bold: true\n            text: root.primaryAction', 'font.pixelSize: sp(Constants.fsBody)\n            font.bold: true\n            text: root.primaryAction'],
-  ['bottom', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)\n            font.bold: true\n            text: root.primaryAction', 'font.pixelSize: sp(Constants.fsBodyLg)\n            text: root.primaryAction'],
-  ['bottom', 'footer-metrics-text', 'text: root.primaryAction\n        }\n\n        ColumnLayout', 'text: root.secondaryAction\n        }\n\n        ColumnLayout'],
+  ['bottom', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)', 'font.pixelSize: sp(Constants.fsBody)'],
+  ['bottom', 'footer-metrics-font', 'font.bold: true', 'font.bold: false'],
+  ['bottom', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)', 'font.pixelSize: sp(Constants.fsBodyLg)\n            font.weight: Font.Light'],
+  ['bottom', 'footer-metrics-text', 'text: root.primaryAction', 'text: root.secondaryAction'],
   ['primary', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)', 'font.pixelSize: sp(Constants.fsBody)'],
-  ['primary', 'footer-metrics-font', 'font.bold: true\n            elide: Text.ElideRight', 'elide: Text.ElideRight'],
+  ['primary', 'footer-metrics-font', 'font.bold: true', 'font.bold: false'],
+  ['primary', 'footer-metrics-font', 'font.pixelSize: sp(Constants.fsBodyLg)', 'font.pixelSize: sp(Constants.fsBodyLg)\n            font.weight: Font.Light'],
   ['footer', 'footer-lib', '.pragma library', '// not a library'],
   ['footer', 'footer-signature', 'function primaryFloor(labelWidth, padding, rowWidth)', 'function primaryFloor(labelWidth, padding)'],
   ['outbox', 'store-outbox-revision', 'property int revision: 0', 'property int rev: 0'],

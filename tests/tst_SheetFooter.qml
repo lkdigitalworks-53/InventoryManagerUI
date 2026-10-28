@@ -37,15 +37,15 @@ TestCase {
     }
 
     function test_stay_signed_in_on_a_small_phone() {
-        // ~104 dp label at 14sp bold, 32 dp padding, 312 dp row (360 dp phone, 20 dp margins).
-        // The old layout gave the primary about 87 dp here; the floor is 138 dp.
-        var floor = SF.primaryFloor(104, 32, 312)
+        // ESTIMATES, not measured: label about 104 dp (14sp bold), padding 32 dp, footer row 320 dp
+        // (360 dp phone minus two 20 dp margins). The old layout gave the primary roughly 80-90 dp.
+        var floor = SF.primaryFloor(104, 32, 320)
         compare(floor, 138)
-        verify(floor > 87)
+        verify(floor > 90)
     }
 
     function test_roomier_screens_keep_the_same_floor() {
-        compare(SF.primaryFloor(104, 32, 342), 138)
+        compare(SF.primaryFloor(104, 32, 350), 138)   // 390 dp phone
         compare(SF.primaryFloor(104, 32, 600), 138)
     }
 
@@ -139,7 +139,7 @@ TestCase {
 
     // ---- regression: the reported device bug ----
     function test_regression_long_secondary_label_cannot_squeeze_the_primary() {
-        // Real wording from SignOutSheet. Natural label widths at 14sp bold (approximate).
+        // Real wording from SignOutSheet. Natural label widths at 14sp bold are ESTIMATES.
         var stay = 104        // "Stay signed in"
         var stayWs = 150      // "Stay in workspace"
         var padding = 32
@@ -163,7 +163,7 @@ TestCase {
     function test_every_primary_label_in_the_app_gets_a_sane_floor() {
         // Rough natural widths (dp) of the primary labels at 14sp bold: short to long.
         var widths = [28, 34, 52, 58, 63, 71, 80, 104, 110, 118, 130, 150]
-        var row = 312
+        var row = 320
         var last = -1
         for (var i = 0; i < widths.length; i++) {
             var f = SF.primaryFloor(widths[i], 32, row)

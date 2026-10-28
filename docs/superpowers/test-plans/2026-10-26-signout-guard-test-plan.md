@@ -28,7 +28,7 @@ Happy path: one-item, mixed, completion, photos. Negative: junk input, throwing 
 Existing suites that must stay green: `tst_DescribeItem` (the helper reuses it), `tst_StuckWrites` (`isParkedItem`), `tst_PhotoQueue`, `tst_Gateway`. No existing test references the old `confirmDlg` sign-out wording (grep of `tests/`, `test/`, `functions/test/`: none).
 
 ## 2b. Wiring and store contract (Node, CI "script tests" job; added in the #167 review)
-`.github/scripts/__tests__/signOutGuardWiring.test.js`, 60 tests (43 + 17 for the footer width, see `2026-10-28-signout-sheet-footer-width-test-plan.md`), run locally 60/60. It reads the source because `Main.qml` and `SignOutSheet` cannot run under `qmltestrunner`:
+`.github/scripts/__tests__/signOutGuardWiring.test.js`, 62 tests (43 + 19 for the footer width, see `2026-10-28-signout-sheet-footer-width-test-plan.md`), run locally 62/62. It reads the source because `Main.qml` and `SignOutSheet` cannot run under `qmltestrunner`:
 - every UI path to sign out or leave goes through `app.askLeave` (3 entry points, no direct `confirmDlg` with the old wording, `logic.signOutRequested()` and `AuthService.leaveCurrentTenant()` only inside `proceed`);
 - the `signOut(` call sites in `qml/` are exactly `Main.qml` and `AuthService.qml`, none in `src/` or `main.cpp`: a NEW caller fails CI;
 - the sheet: Stay is primary and closes, the destructive button nulls `_proceed` before calling it (double tap runs it once), the three live watchers, title and buttons follow the live count, state shown in words;
