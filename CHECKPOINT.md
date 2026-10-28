@@ -23,3 +23,16 @@ S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; retu
 ## Open, unverified
 - `enqueueDelta` does not skip parked items when coalescing (pre-existing; not checked whether other paths guard it).
 - restock success-path QML tests assume the batch mint fails quietly offline.
+
+## Review sweep of PR #170 (session 2, 2026-10-28, resume here if interrupted)
+**Commit identity this session:** `tsadmin@gmail.com` (Taher's chat instruction overrides the line at the top). Skills run: requesting-code-review, ponytail-audit, qt-ui-design, qt-qml-review.
+**Sweep result so far:** qmllint-style linter on PR-added lines = 0 real findings (77 JS-1 `var` = house style; 7 JS-2 are `!==` false positives; ORD-1/STY-1 only in tests, house style). Server contract re-read (movementLogic.js, gatewayLogic.js applyDelta): client helper matches.
+- [x] S1. Clone, checkout PR branch, read design + test plan + all production diffs.
+- [x] S2. Lint on changed QML. Nothing real.
+- [ ] S3. Fix F1: `OutboxStore.enqueueDelta` never merges into a parked item or one with attempts > 0 (timed-out send may already be applied; same requestId => server replays old answer => merged qty lost).
+- [ ] S4. Fix F2: explicit-movement items only coalesce when floors are equal (merge keeps the LATEST floors: a sale's floor is dropped by a later restock, or a restock is rejected together with a floored sale).
+- [ ] S5. Fix F3: `InventoryStore` movement label can never lose the stock change: invalid kind/direction degrades to the server-derived row (helper `_movementsFor`).
+- [ ] S6. Fix F4: restock refusal toast says why (`Quantity must be greater than zero`), not "try again".
+- [ ] S7. Tests: Node parity (floors), QML (StockMovements, OutboxStore_movements, InventoryStore_movementKinds, Gateway_movements). CI-only for QML.
+- [ ] S8. Docs: test plan, design (K11-K13), KNOWN-ISSUES (close parked-coalesce item, add legacy derived floors drift), Skill 140, SKILLS-INDEX regen, AGENTS/README if they mention counts.
+- [ ] S9. Push, wait CI, record observed counts.
