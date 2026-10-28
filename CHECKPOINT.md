@@ -26,7 +26,8 @@
 - [x] 11. Fixed: D10 (screen stays up, `accessBlock` cleared only by a definitive answer, spinner + disabled Try again via `checking`, Sign out never disabled) and D11 (`AccessState.outcome(cls, heldRole, prevBlock)`). Tests: `tst_AccessState` 44 -> 49 functions (shim 49/49, helper mutants 62/63, survivor equivalent); `accessBlockWiring.test.js` 21 -> 34 tests (30 mutants); script suite 205/205.
 - [x] 12. Docs: design D10/D11, test plan (counts, H3, N4-N7), KNOWN-ISSUES (users-doc entry narrowed, new "failed Try again says nothing"), Skill 140 rule 5, AGENTS rule 7, README.
 - [x] 13. Committed (2 commits), pushed, PR raised against `main`.
-- [ ] 14. CI on the PR head (QML tests, rules tests, functions tests, E2E are CI-only); Taher device-tests the plan (N4-N7 are new); review the PR.
+- [x] 14. PR #171 raised. CI on head `cc2e079`: all 4 jobs green, 3454/3454 (QML 2379, Functions 866, Rules 108, E2E 101).
+- [ ] 15. Taher device-tests the plan (H1-H8, N1-N7 (N4-N7 new), E1-E7) and reviews PR #171; answer the vetoable decisions D1/D3/D4/D5/D10/D11 there.
 
 ## Open decisions for Taher (defaults applied, vetoable in the PR)
 D1 extra member-doc read per login/reconnect; D3 dedicated screen; D4 failed check keeps a previously verified member in (alternative: block on any failure); D5 no "create new workspace" for a removed member; D10 retry keeps the blocked screen up (alternative: separate checking cover); D11 a failed retry keeps the block showing. Details in the design doc.
