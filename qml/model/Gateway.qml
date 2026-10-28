@@ -5,6 +5,7 @@ import "../helper/StuckWrites.js" as StuckWrites
 import "../helper/DescribeItem.js" as DescribeItem
 import "../helper/FailureCause.js" as FailureCause
 import "../helper/SendPolicy.js" as SendPolicy
+import "../helper/StockMovements.js" as StockMovements
 
 // Compliance gateway client (P0). Single entry point for every books-of-
 // account mutation in P0 scope (inventory + stock). Stores call
@@ -257,11 +258,25 @@ QtObject {
     // (completeImportedOrder's deliberate "complete + report shortfall"
     // business rule — rejecting would break its designed behavior). A field
     // should only ever appear in one of the two maps, never both.
-    function recordDelta(entity, entityId, deltas, floors, clamps, callback) {
+    //
+    // `movements` (optional, LAST so no existing caller changes; P1 S2d): explicit stock
+    // ledger kinds for an `inventory` stock delta, [{ kind, qty, reason }] built with
+    // StockMovements.make. Without it the server derives one `adjustment` row. Rules (the
+    // server enforces the same, a violation here is refused BEFORE anything is queued
+    // because the server's rejection is terminal): `deltas.stock` must be present, no
+    // `clamps`, the signed qtys must sum to `deltas.stock`, each qty must match its kind's
+    // direction. A bad call answers { ok: false, error: "bad-request", detail: <code> }.
+    function recordDelta(entity, entityId, deltas, floors, clamps, callback, movements) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordDelta: bad entity/id", entity, entityId)
             if (callback) callback({ ok: false, error: "bad-request" })
+            return ""
+        }
+        var movementsError = StockMovements.validate(entity, deltas, clamps, movements)
+        if (movementsError !== "") {
+            console.warn("[Gateway] recordDelta: bad movements", movementsError, entity, entityId)
+            if (callback) callback({ ok: false, error: "bad-request", detail: movementsError })
             return ""
         }
         var requestId = _nextRequestId()
@@ -272,6 +287,7 @@ QtObject {
             deltas: deltas || {},
             floors: floors || {},
             clamps: clamps || {},
+            movements: movements,
             clientTimestamp: new Date().toISOString()
         })
         // item.requestId is the SURVIVING requestId — may belong to an
@@ -1006,6 +1022,7 @@ QtObject {
             deltas: item.deltas,
             floors: item.floors,
             clamps: item.clamps,
+            movements: item.movements,
             requestId: item.requestId,
             clientTimestamp: item.clientTimestamp
         }))

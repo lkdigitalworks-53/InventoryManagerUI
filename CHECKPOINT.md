@@ -1,29 +1,43 @@
-# CHECKPOINT — 2026-10-28 PR #167 sign-out sheet footer width (resume here)
+# CHECKPOINT — 2026-10-28 P1 S2d-1 typed movement kinds on client deltas (resume here)
 
-**Branch:** `feat/2026-10-26-signout-guard` (PR #167). All work is committed and pushed to this branch (first fix `d35d33a`, review fixes in the next commit); nothing is held locally. (This branch already contains the merge of PR #168.)
-**Commit identity:** `lkdwtaher@gmail.com`. PAT comes from the chat prompt only, passed with `git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$PAT" | base64 -w0)"`, never in the remote URL, `.git/config`, the repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build/run; no Qt in the sandbox (CI is the QML oracle); push without asking; short scope; honest trade-offs; tests + test plan for every change; caveman FULL for chat only; do not touch other PRs/branches.
-**Skills used:** `superpowers:systematic-debugging`, `qt-development-skills:qt-qml`, `qt-development-skills:qt-ui-design`, `ponytail:ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr167-footer-width-prev-CHECKPOINT.md`.
+**Branch:** `feat/2026-10-28-p1-s2d1-movement-kinds`, cut from `main` @ `9c010f0` (PR #165 merged).
+**Commit identity:** `taher.lkdw@gmail.com`. PAT comes from the chat prompt only (`git -c http.extraHeader=...`), never in remote URL, config, repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build/run; no Qt in sandbox (CI is the QML oracle); push without asking; tests + test plan for every change; caveman FULL in chat only.
+**Skills used:** brainstorming (decisions defaulted, vetoable: Taher asked for one turn), qt-qml, ponytail.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr165-merged-prev-CHECKPOINT.md`.
 
-## Bug (device test of PR #167)
-"Stay signed in" button shows only "S…". Taher asked: shrink the discard / sign-out button, widen Stay, so the full text shows. Then review the change in the same pass, in the same PR.
-
-## Root cause (systematic-debugging phase 1-2, from code, not a guess)
-`PrimaryButton.contentItem` is an `Item` whose `Text` uses `anchors.fill`, so it reports NO implicit text width: the button's implicit width is only its padding (16 + 16 = 32 dp). `GhostButton.contentItem` is a plain `Text`, so its implicit width is the full label. In the `BottomSheet` footer both buttons are `Layout.fillWidth` with no preferred width: the layout starts from those implicit widths and splits the spare room equally. With the long label "Sign out and discard" (about 150 dp + 32) next to "Stay signed in", the primary starts at 32 dp and only gets half the spare room: roughly 80-90 dp on a 360 dp phone (ESTIMATE from assumed glyph widths, never measured), so the label ellipsizes to "S…". Sheets with a short secondary ("Cancel") never showed it; long primaries elsewhere ("Confirm & save", "Send reset link", "Import N rows") are at risk for the same reason.
+## Slice
+S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; return, reopen, failed-exchange rollback => `sales_return`; exchange/modify-up addition => `sale` (reject mode). Imported-order clamp deduction stays derived `adjustment` (explicit row + clamp = terminal 409 = lost deduction). S2d-2 (server kind hint for derived rows) needs Taher's call.
 
 ## Steps
-- [x] 1. Cloned, checked out PR #167 branch, read SignOutSheet, BottomSheet, GhostButton, PrimaryButton, wiring test. Root cause above.
-- [x] 2. `qml/helper/SheetFooter.js` (pure `primaryFloor`) + `tests/tst_SheetFooter.qml` (21 functions; Node shim 21/21; 24/24 killable mutants killed, 1 equivalent).
-- [x] 3. `BottomSheet.qml` footer: `TextMetrics` + floor on the primary button; wiring pins in `signOutGuardWiring.test.js` (43 -> 60/60).
-- [x] 4. Docs: new test plan `2026-10-28-signout-sheet-footer-width-test-plan.md`, sign-out plan amended, design note, README, AGENTS, KNOWN-ISSUES, Skill 139, SKILLS-INDEX regenerated. Script suite 169/169.
-- [x] 5. Node suite (169/169 before the review fixes, 171/171 after), commit, push: `d35d33a`.
-- [x] 6. Review pass (independent read-only reviewer + own checks). Accepted and fixed: row is 320 not 312 in the tests (values unchanged), labels called estimates, sheet count 15 incl. SignOutSheet, 340 dp threshold withdrawn (340-370, to be measured, H2), StaffActionSheet is Cancel not Close, shim + mutation script committed in `scripts/probes/*.cjs`, font pin compares every `font.*` line, indent-fragile mutants made single-token (wiring 62/62). Documented not coded: spinner overlap when the primary sits exactly at its floor while busy. Rejected: reviewer's "Haiku trailer" note (this session is Sonnet 5.5). UNVERIFIED until device: binding-loop warning (plan E4), pixel result.
-- [ ] 7. Read CI on the new head (CI only oracle for the QML tests); Taher device-tests.
+- [x] 1. Read memory, repo, P1 designs, client + server code.
+- [x] 2. `qml/helper/StockMovements.js` + Node parity/unit test `functions/test/stockMovementsParity.test.js` (10/10 run, helper 100% line/branch, 16/16 mutants killed).
+- [x] 3. `OutboxStore.enqueueDelta` (explicit only coalesces with explicit, concatenates), `Gateway.recordDelta` 7th arg `movements` + local refusal + `_sendDelta`, `InventoryStore` restock/deductStock/creditStockNoBatch, 4 `DataModel` call sites. Server: only exports `MAX_REASON`.
+- [x] 4. QML tests written, NOT run: `tst_StockMovements`, `tst_OutboxStore_movements`, `tst_Gateway_movements`, `tst_InventoryStore_movementKinds`.
+- [x] 5. `tests/tst_DataModel_movementKinds.qml` (return, damaged=no row, reopen, exchange add, rollback; harness = `tst_DataModel_adjustOrderSyncGuard`, server answers simulated with `Gateway._answerDeltaCallbacks` + `OutboxStore.markSent`).
+- [x] 6. e2e: 2 restock tests in `tst_InventoryE2E` (first CI run failed: file never redirected `Gateway.deltaFunctionUrl`; fixed + recordDelta warm-up). Returns already covered by `tst_ReturnAfterMetadataEditE2E`.
+- [x] 7. Design doc, test plan (Skill 49 format), Skill entry + SKILLS-INDEX regen, AGENTS, README, KNOWN-ISSUES, test-plans README row.
+- [x] 8. PR #170 CI GREEN @ c438881: QML 2415, Functions 876, Rules 106, E2E 103 = 3500/3500 (observed). First run failed only on my 2 new e2e tests (URL not redirected), fixed. Merged main (PR #167); my skill renumbered 140.
+- [ ] 9. Taher (only open step): veto/accept defaults (clamp stays adjustment; reopen+rollback = sales_return; damaged return = no row until S2e Q4); decide S2d-2.
 
-## Open decisions for Taher (defaults applied, vetoable in the PR)
-1. Q-FW-1: when both labels do not fit (narrow phone, Large font) the secondary ellipsizes first (applied). Alternative: stack the buttons vertically, primary on top (Claude recommends it if a 340 dp phone is a target; it changes the footer pattern). Test plan H2 asks for the phone's width in dp so this is decided on a number.
-2. Footer fix lives in the shared `BottomSheet` (applied, 15 two-button sheets get a spot check) instead of only the sign-out sheet. Veto = move the floor behind an opt-in property.
+## Open, unverified
+- `enqueueDelta` does not skip parked items when coalescing (pre-existing; not checked whether other paths guard it).
+- restock success-path QML tests assume the batch mint fails quietly offline.
 
-## NEXT
-CI on the new head; device-test H1-H4 + footer spot check + E4 (logcat); then merge order as in the sign-out plan.
+## Review sweep of PR #170 (session 2, 2026-10-28, resume here if interrupted)
+**Commit identity this session:** `tsadmin@gmail.com` (Taher's chat instruction overrides the line at the top). Skills run: requesting-code-review, ponytail-audit, qt-ui-design, qt-qml-review.
+**Sweep result so far:** qmllint-style linter on PR-added lines = 0 real findings (77 JS-1 `var` = house style; 7 JS-2 are `!==` false positives; ORD-1/STY-1 only in tests, house style). Server contract re-read (movementLogic.js, gatewayLogic.js applyDelta): client helper matches.
+- [x] S1. Clone, checkout PR branch, read design + test plan + all production diffs.
+- [x] S2. Lint on changed QML. Nothing real.
+- [x] S3. Fix F1: `OutboxStore.enqueueDelta` never merges into a parked item or one with attempts > 0 (timed-out send may already be applied; same requestId => server replays old answer => merged qty lost).
+- [x] S4. Fix F2: explicit-movement items only coalesce when floors are equal (merge keeps the LATEST floors: a sale's floor is dropped by a later restock, or a restock is rejected together with a floored sale).
+- [x] S5. Fix F3: `InventoryStore` movement label can never lose the stock change: invalid kind/direction degrades to the server-derived row (helper `_movementsFor`).
+- [x] S6. Fix F4: restock refusal toast says why (`Quantity must be greater than zero`), not "try again".
+- [x] S7. Tests: Node parity SM-11 RUN 11/11, 8/8 mutants; QML StockMovements +5, OutboxStore_movements +9, InventoryStore_movementKinds +12 (two old merge-pinning tests rewritten). Gateway_movements untouched. QML CI-only, NOT RUN here.
+- [x] S8. Docs (done, 95e9d4c + next commit): test plan, design (K11-K13), KNOWN-ISSUES (close parked-coalesce item, add legacy derived floors drift), Skill 140, SKILLS-INDEX regen, AGENTS/README if they mention counts.
+- [x] S9. Push, wait CI, record observed counts.
+
+**Pushed:** 30cdff3 (code + Node), 95e9d4c (QML tests + design/KNOWN-ISSUES/Skill 140), then test plan/README/AGENTS/checkpoint. S9 open: read CI comment on PR #170, fix any QML test I mis-wrote (none run locally), record observed counts here and in the test plan.
+**Risk to watch in CI:** the sent-or-parked merge guard applies to derived deltas too; any legacy tst_Gateway/tst_OutboxStore case that merged after a failure would break.
+**CI round 1 on 71d1ee4:** QML failed 1 test: `Gateway_movements::test_two_explicit_calls_coalesce...` (pinned restock + floored sale merging; I missed it, grep for `tst_Gateway_movements` had not been done). Rewritten as equal-floor merge + different-floor separate-answers test. Lesson: after changing a merge rule, grep EVERY suite that calls `recordDelta`, not only the ones named after the feature.
+**CI round 2 on 34bc69a: ALL GREEN, 3528/3528** (QML 2442, Functions 877, Rules 106, E2E 103). Sweep DONE. Open for a human: device checks 8, 15, 16 in the test plan; veto K11-K14; decide the derived-floors slice (KNOWN-ISSUES).

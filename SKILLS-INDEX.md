@@ -143,6 +143,7 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 134: Never record an option as "rejected" unless the person rejected it, and quote their words
 - 132: An Admin-SDK endpoint skips the rules, so it must not edit what the rules protect; make it add-only and let the existing doc decide
 - 135: Check that the reason for a behaviour is true on the real caller path, and ask what every caller does with the id you return
+- 140: When the server derives a row from what it applied, the client must not describe a quantity it cannot predict; refuse bad calls before they are queued
 - 136: Warn before sign-out throws queued work away: one chokepoint, a pure summary, Stay as the easy choice
 - 137: A device-local durable queue must carry the tenant it was queued under, and only that tenant may see, hide for, start or apply a result for it; wait for the tenant's ledger to load before minting; quarantine, never destroy, what you cannot replay
 - 138: A guard only guards if every path goes through it: pin the caller list with a source test, and mutate the test itself
