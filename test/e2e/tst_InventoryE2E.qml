@@ -36,6 +36,7 @@ TestCase {
     readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    readonly property string realDeltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
 
     property var fixture: null
     // seed.js and this file both live in test/e2e/ (moved here 2026-08-14 —
@@ -170,12 +171,25 @@ TestCase {
             "Cloud Functions emulator never responded to the warm-up call")
         compare(result.status, 200,
                 "warm-up recordMutation call was rejected — response body: " + result.text)
+
+        // recordDelta cold start (P1 S2d-1 restock tests): a nonexistent entityId is EXPECTED to answer
+        // 404; any real response proves the worker is warm (same pattern as tst_OrdersE2E).
+        var deltaResult = E2EHelpers.postDirect(this, emulatorFunctionsBase + "/recordDelta", {
+            env: "prd", entity: "stock_batch", entityId: "warmup-delta-" + Date.now(),
+            deltas: { qtyRemaining: 0 }, floors: {}, clamps: {},
+            requestId: "warmup-delta-req-" + Date.now(), clientTimestamp: new Date().toISOString()
+        }, 15000, "Cloud Functions emulator never responded to the recordDelta warm-up call")
+        verify(deltaResult.status === 200 || deltaResult.status === 404,
+               "warm-up recordDelta call got an unexpected status " + deltaResult.status)
     }
 
     function init() {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        // P1 S2d-1: restock goes through recordDelta, which this file never used before; without this the
+        // delta hit the REAL cloud URL and was refused (restock callback false).
+        Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
@@ -188,6 +202,7 @@ TestCase {
         Gateway.mutationConflicted.disconnect(_onMutationConflicted)
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
+        Gateway.deltaFunctionUrl = realDeltaFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }

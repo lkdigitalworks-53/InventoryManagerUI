@@ -14,10 +14,10 @@ S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; retu
 - [x] 2. `qml/helper/StockMovements.js` + Node parity/unit test `functions/test/stockMovementsParity.test.js` (10/10 run, helper 100% line/branch, 16/16 mutants killed).
 - [x] 3. `OutboxStore.enqueueDelta` (explicit only coalesces with explicit, concatenates), `Gateway.recordDelta` 7th arg `movements` + local refusal + `_sendDelta`, `InventoryStore` restock/deductStock/creditStockNoBatch, 4 `DataModel` call sites. Server: only exports `MAX_REASON`.
 - [x] 4. QML tests written, NOT run: `tst_StockMovements`, `tst_OutboxStore_movements`, `tst_Gateway_movements`, `tst_InventoryStore_movementKinds`.
-- [ ] 5. `tests/tst_DataModel_movementKinds.qml` (return, damaged=no row, reopen, exchange add, rollback; harness = `tst_DataModel_adjustOrderSyncGuard`, server answers simulated with `Gateway._answerDeltaCallbacks` + `OutboxStore.markSent`).
-- [ ] 6. e2e rows (emulator) for restock receipt + return sales_return.
-- [ ] 7. Design doc, test plan (Skill 49 format), Skill entry + SKILLS-INDEX regen, AGENTS, README, KNOWN-ISSUES, test-plans README row.
-- [ ] 8. Read CI on PR head, fix red. Count tests from CI, not predictions.
+- [x] 5. `tests/tst_DataModel_movementKinds.qml` (return, damaged=no row, reopen, exchange add, rollback; harness = `tst_DataModel_adjustOrderSyncGuard`, server answers simulated with `Gateway._answerDeltaCallbacks` + `OutboxStore.markSent`).
+- [x] 6. e2e: 2 restock tests in `tst_InventoryE2E` (first CI run failed: file never redirected `Gateway.deltaFunctionUrl`; fixed + recordDelta warm-up). Returns already covered by `tst_ReturnAfterMetadataEditE2E`.
+- [x] 7. Design doc, test plan (Skill 49 format), Skill entry + SKILLS-INDEX regen, AGENTS, README, KNOWN-ISSUES, test-plans README row.
+- [ ] 8. PR #170. CI @ ae14e5d: QML 2415/2415, Functions 876, Rules 106 green; E2E 69/71 (my 2 restock tests, e2e URL bug, fixed in next commit). Re-read CI after push. Merged main (PR #167); my skill renumbered 140.
 - [ ] 9. Taher: veto/accept defaults (clamp stays adjustment; reopen+rollback = sales_return; damaged return = no row until S2e Q4); decide S2d-2.
 
 ## Open, unverified
