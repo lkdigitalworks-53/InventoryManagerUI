@@ -4517,6 +4517,21 @@ Rules:
 3. A new TestCase file adds `initTestCase` and `cleanupTestCase` to the CI count: +N test functions is +N+2 in the QML job (seen: `tst_MemberPolicy` 6 -> +8, `tst_ProvisionErrorMessage` 4 -> +6). Write "+N functions (CI +N+2)" in plans; read the real total from the CI comment.
 4. A user-facing message must promise only what the reader can do. "Change their role" is false for an admin facing the owner or a peer admin (D-1); say "review".
 5. A test whose list of cases is a hand-kept copy of a `switch` cannot discover a new case; say so in its comment instead of claiming it will.
+
+## Skill 140: When the server derives a row from what it applied, the client must not describe a quantity it cannot predict; refuse bad calls before they are queued
+
+P1 S2d-1 (2026-10-28). Typed stock-movement kinds on client deltas. Two traps found while reading the contract, both silent data loss rather than wrong labels.
+Rules:
+1. The server requires `sum(movements.qty) == applied delta`. With a clamp the applied delta is only known server-side, so an explicit row next to a clamp is a terminal 409 and a fire-and-forget deduction (`completeImportedOrder`) is lost. Leave clamped calls derived; type them with a server-side hint (S2d-2), never a guessed client qty.
+2. A queued write rejected terminally is parked or dropped. So validate a new payload field on the client BEFORE queueing (`StockMovements.validate`) and answer `bad-request` locally. A client bug then fails loudly with nothing half-done instead of losing a stock change.
+3. Coalescing must preserve the server's invariant, not only the sum. Explicit joins explicit (concatenate), explicit never mixes with derived, no clamp, cap 50; otherwise queue a second item. Do not synthesise a ledger row for the derived side: it invents an event nobody caused.
+4. Guard before side effects: `restock` fires the batch write in parallel with the delta, so a delta refused later would leave a batch without stock. Check qty first.
+5. Mirror server constants in a pure helper and pin them with a Node test that loads the QML `.pragma library` file (strip the pragma, run in `vm`) against the server module, plus a seeded monkey comparing accept/reject. Drift then fails in the sandbox, not on a device.
+6. Mutation-test a new pure helper (sed one-liners: flip `>` to `>=`, drop a guard) before trusting 100% coverage. 16 of 16 caught here; the sweep's floors rule caught 7 of 8 first time, the survivor (same key count, key absent on one side, both values undefined) needed one more assertion.
+7. A reopen or rollback of a `sale` is a `sales_return`, so supplies net to zero in the register; `adjustment` would leave an unexplained positive row. CA to confirm.
+8. A coalesced outbox item keeps ONE requestId, ONE floor map and ONE movements list. Never merge into an item that was already sent (`attempts > 0`: the reply may have been lost after the server applied it, the retry replays the OLD answer and drops what you merged) or parked (it is rejected and takes the new change with it). Never give a merged item a fresh requestId: if the first send was applied, the old delta is applied twice. Queue a separate item instead. Explicit items also need EQUAL floors, or a later restock drops a sale's floor or is rejected with it.
+9. A label may degrade, the data change may not. When a describing field (movement kind) fails validation, fall back to the server-derived default and keep the stock change; refuse outright only where the caller can see the failure (restock quantity). A fire-and-forget credit refused for a bad label is a silently lost return.
+10. A refusal that retrying cannot fix must say why (callback's third argument), never "try again".
 ## Skill 136: Warn before sign-out throws queued work away: one chokepoint, a pure summary, Stay as the easy choice
 
 S0 (2026-10-26, design `specs/2026-10-26-signout-guard-design.md`). `Main.qml onSignedOut` calls `Gateway.clear()` and `PhotoQueue.clear()`: every queued edit, stock delta, order completion, parked write and photo upload is dropped, and the old "Sign out?" confirm never said so. Taher device-tests on a new tenant per PR, so he signs out right after provoking stuck writes.
@@ -4569,7 +4584,7 @@ Rules:
 6. Name the limit instead of hiding it, and do not state estimates as measurements (glyph widths were guessed here; the review caught a threshold that contradicted the doc's own numbers): the sibling now ellipsizes first on narrow phones. For a destructive label that is a real cost, so it is written down as an open decision with the stacked-buttons alternative (KNOWN-ISSUES, plan Q-FW-1), not silently shipped.
 7. Do not call a layout fix verified from the sandbox: `BottomSheet` cannot run under `qmltestrunner`, so the claim is "math tested, wiring pinned, device steps written", and CI plus a device are the only proof of the pixels.
 
-## Skill 140: Authority is the record the server trusts, not the pointer the user can write: verify the member doc before applying role or tenant, and tell "gone" from "could not read"
+## Skill 141: Authority is the record the server trusts, not the pointer the user can write: verify the member doc before applying role or tenant, and tell "gone" from "could not read"
 
 S2f-3 (2026-10-28). The gateway and the rules had trusted the member doc since S2f-1/S2f-2, but the client still took its role from `users/{uid}`, a doc the user writes, and skipped the member doc whenever that role existed. A suspended or removed member got the full app, every request was refused, and the screen showed empty lists. A role-less path defaulted to `staff`, and two onboarding sites defaulted to `owner`.
 Rules:

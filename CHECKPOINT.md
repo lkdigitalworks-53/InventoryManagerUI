@@ -20,11 +20,11 @@
 - [x] 5. `FirebaseService.get` passes HTTP status; `AuthService._verifyMembership`, `accessBlock`, `recheckAccess`, `_profileSeq`; no role defaults left.
 - [x] 6. `qml/pages/AccessBlockedPage.qml` + `Main.qml` (z 300). CMake globs, nothing to edit.
 - [x] 7. `.github/scripts/__tests__/accessBlockWiring.test.js` (21: rules + 17 mutants + 3 parity), rules tests (+2 definitions).
-- [x] 8. Docs: test plan, README, AGENTS, KNOWN-ISSUES (3 entries), S2f design row, Skill 140, SKILLS-INDEX regenerated.
+- [x] 8. Docs: test plan, README, AGENTS, KNOWN-ISSUES (3 entries), S2f design row, Skill 141, SKILLS-INDEX regenerated.
 - [x] 9. Script suite 192/192 locally; committed; pushed (see git log on the branch).
 - [x] 10. Second session, review pass: traced the retry path through `Main.qml` and `AuthService`. Found **B1** (Try again cleared `accessBlock` + `profileResolved`, so the login cover at z 100 showed through: blocked -> login -> blocked, no feedback; the same flash happened on every hourly token refresh and reconnect while blocked) and **B2** (a failed retry reused `AuthStore.role` from BEFORE the block, so one network blip let a just-suspended member back into the app). Checked and NOT a bug: offline cold start (`init()` already called `_loadUserProfile` on `main`, the `!isOnline` early return is old).
 - [x] 11. Fixed: D10 (screen stays up, `accessBlock` cleared only by a definitive answer, spinner + disabled Try again via `checking`, Sign out never disabled) and D11 (`AccessState.outcome(cls, heldRole, prevBlock)`). Tests: `tst_AccessState` 44 -> 49 functions (shim 49/49, helper mutants 62/63, survivor equivalent); `accessBlockWiring.test.js` 21 -> 34 tests (30 mutants); script suite 205/205.
-- [x] 12. Docs: design D10/D11, test plan (counts, H3, N4-N7), KNOWN-ISSUES (users-doc entry narrowed, new "failed Try again says nothing"), Skill 140 rule 5, AGENTS rule 7, README.
+- [x] 12. Docs: design D10/D11, test plan (counts, H3, N4-N7), KNOWN-ISSUES (users-doc entry narrowed, new "failed Try again says nothing"), Skill 141 rule 5, AGENTS rule 7, README.
 - [x] 13. Committed (2 commits), pushed, PR raised against `main`.
 - [x] 14. PR #171 raised. CI on head `cc2e079`: all 4 jobs green, 3454/3454 (QML 2379, Functions 866, Rules 108, E2E 101).
 - [ ] 15. Taher device-tests the plan (H1-H8, N1-N7 (N4-N7 new), E1-E7) and reviews PR #171; answer the vetoable decisions D1/D3/D4/D5/D10/D11 there.
