@@ -17,8 +17,8 @@ S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; retu
 - [x] 5. `tests/tst_DataModel_movementKinds.qml` (return, damaged=no row, reopen, exchange add, rollback; harness = `tst_DataModel_adjustOrderSyncGuard`, server answers simulated with `Gateway._answerDeltaCallbacks` + `OutboxStore.markSent`).
 - [x] 6. e2e: 2 restock tests in `tst_InventoryE2E` (first CI run failed: file never redirected `Gateway.deltaFunctionUrl`; fixed + recordDelta warm-up). Returns already covered by `tst_ReturnAfterMetadataEditE2E`.
 - [x] 7. Design doc, test plan (Skill 49 format), Skill entry + SKILLS-INDEX regen, AGENTS, README, KNOWN-ISSUES, test-plans README row.
-- [ ] 8. PR #170. CI @ ae14e5d: QML 2415/2415, Functions 876, Rules 106 green; E2E 69/71 (my 2 restock tests, e2e URL bug, fixed in next commit). Re-read CI after push. Merged main (PR #167); my skill renumbered 140.
-- [ ] 9. Taher: veto/accept defaults (clamp stays adjustment; reopen+rollback = sales_return; damaged return = no row until S2e Q4); decide S2d-2.
+- [x] 8. PR #170 CI GREEN @ c438881: QML 2415, Functions 876, Rules 106, E2E 103 = 3500/3500 (observed). First run failed only on my 2 new e2e tests (URL not redirected), fixed. Merged main (PR #167); my skill renumbered 140.
+- [ ] 9. Taher (only open step): veto/accept defaults (clamp stays adjustment; reopen+rollback = sales_return; damaged return = no row until S2e Q4); decide S2d-2.
 
 ## Open, unverified
 - `enqueueDelta` does not skip parked items when coalescing (pre-existing; not checked whether other paths guard it).

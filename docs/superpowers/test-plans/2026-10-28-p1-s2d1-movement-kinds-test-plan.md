@@ -1,7 +1,7 @@
 # Test plan — P1 S2d-1: typed stock-movement kinds on client deltas
 
 Branch `feat/2026-10-28-p1-s2d1-movement-kinds`. Design: `specs/2026-10-28-p1-s2d-kinds-on-deltas-design.md`. Standard format (Skill 49).
-Honesty note: only the Node file was RUN (sandbox). Every QML case is written but CI-only; counts below are test functions grepped from the files (QML 15+18+15+22+7 = 77; Node 10; server suite 866 -> 876 RUN), CI adds +2 per new TestCase file (`initTestCase`, `cleanupTestCase`). Read the real totals from the CI comment.
+CI observed on PR #170 @ c438881: QML 2415, Functions 876, Rules 106, E2E 103, total 3500/3500 green (all 77 new QML cases and both new e2e cases passed; the first e2e run failed because `tst_InventoryE2E` never redirected `Gateway.deltaFunctionUrl`, a test bug, fixed). Honesty note: in the sandbox only the Node file was RUN. Every QML case is written but CI-only; counts below are test functions grepped from the files (QML 15+18+15+22+7 = 77; Node 10; server suite 866 -> 876 RUN), CI adds +2 per new TestCase file (`initTestCase`, `cleanupTestCase`). Read the real totals from the CI comment.
 
 ## 1. Unit tests
 | File | Cases | Run? | Covers |
