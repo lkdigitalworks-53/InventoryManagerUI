@@ -4,7 +4,7 @@ import "../qml/helper/StockMovements.js" as SM
 
 // P1 S2d-1: pure helper for explicit stock-movement kinds on client deltas. MIRRORS
 // functions/lib/movementLogic.js; the same cases run in Node (functions/test/stockMovementsParity.test.js,
-// 10/10 green, helper 100% line/branch, 16/16 mutants caught). This file is the Qt-side copy: CI only.
+// 11/11 green, 8/8 sweep mutants caught on the floors rule). This file is the Qt-side copy: CI only.
 TestCase {
     name: "StockMovements"
 
@@ -12,6 +12,12 @@ TestCase {
         var arr = []
         for (var i = 0; i < n; ++i) arr.push({ kind: "adjustment", qty: 1 })
         return { movements: arr, clamps: clamps || ({}) }
+    }
+
+    function _exf(floors, n, clamps) {
+        var item = _ex(n || 1, clamps)
+        item.floors = floors
+        return item
     }
 
     // ── constants ────────────────────────────────────────────────────────
@@ -113,6 +119,32 @@ TestCase {
         compare(SM.canCoalesce(_ex(25), _ex(26)), false)
         compare(SM.canCoalesce(_ex(1, { stock: 0 }), _ex(1)), false)
         compare(SM.canCoalesce(_ex(1), _ex(1, { stock: 0 })), false)
+    }
+    function test_canCoalesce_explicit_pairs_with_equal_floors_merge() {
+        compare(SM.canCoalesce(_exf({}), _exf({})), true)
+        compare(SM.canCoalesce(_exf(undefined), _exf({})), true)
+        compare(SM.canCoalesce(_exf(null), _exf(undefined)), true)
+        compare(SM.canCoalesce(_exf({ stock: 0 }), _exf({ stock: 0 })), true)
+    }
+    function test_canCoalesce_a_non_object_floors_counts_as_empty() {
+        compare(SM.canCoalesce(_exf("x"), _exf({})), true)
+        compare(SM.canCoalesce(_exf(5), _exf(undefined)), true)
+    }
+    function test_canCoalesce_explicit_pairs_with_different_floors_never_merge() {
+        compare(SM.canCoalesce(_exf({ stock: 0 }), _exf({})), false)
+        compare(SM.canCoalesce(_exf({}), _exf({ stock: 0 })), false)
+        compare(SM.canCoalesce(_exf({ stock: 0 }), _exf({ stock: 1 })), false)
+        compare(SM.canCoalesce(_exf({ stock: 0 }), _exf({ qty: 0 })), false)
+        compare(SM.canCoalesce(_exf({ stock: 0, qty: 0 }), _exf({ stock: 0 })), false)
+        compare(SM.canCoalesce(_exf({ stock: undefined }), _exf({ qty: undefined })), false)
+    }
+    function test_canCoalesce_the_other_rules_still_apply_with_equal_floors() {
+        compare(SM.canCoalesce(_exf({ stock: 0 }, 1, { stock: 0 }), _exf({ stock: 0 })), false)
+        compare(SM.canCoalesce(_exf({ stock: 0 }, 25), _exf({ stock: 0 }, 26)), false)
+        compare(SM.canCoalesce(_exf({ stock: 0 }, 25), _exf({ stock: 0 }, 25)), true)
+    }
+    function test_canCoalesce_derived_pairs_ignore_floors() {
+        compare(SM.canCoalesce({ floors: { stock: 0 } }, { floors: {} }), true)
     }
     function test_mergeMovements_keeps_call_order_and_does_not_mutate() {
         var a = [{ kind: "receipt", qty: 10 }]

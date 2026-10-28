@@ -126,6 +126,93 @@ TestCase {
         compare(m.movements, undefined)
     }
 
+    // ── floors: a merged item keeps ONE floor map ────────────────────────
+    function test_a_floored_sale_and_an_unfloored_restock_queue_separately() {
+        OutboxStore.enqueueDelta(_call("d1", -3, [_mv("sale", -3)], { floors: { stock: 0 } }))
+        OutboxStore.enqueueDelta(_call("d2", 5, [_mv("receipt", 5)]))
+        compare(OutboxStore.pendingCount, 2, "merging would drop the sale's floor (stock could go negative)")
+        compare(OutboxStore.items[0].floors.stock, 0)
+        compare(OutboxStore.items[0].deltas.stock, -3)
+        compare(OutboxStore.items[1].floors.stock, undefined)
+        compare(OutboxStore.items[1].deltas.stock, 5)
+    }
+    function test_an_unfloored_restock_and_a_floored_sale_queue_separately() {
+        OutboxStore.enqueueDelta(_call("d1", 5, [_mv("receipt", 5)]))
+        OutboxStore.enqueueDelta(_call("d2", -8, [_mv("sale", -8)], { floors: { stock: 0 } }))
+        compare(OutboxStore.pendingCount, 2, "merging would reject the restock together with a sale it never depended on")
+        compare(OutboxStore.items[0].deltas.stock, 5)
+        compare(OutboxStore.items[1].deltas.stock, -8)
+        compare(OutboxStore.items[1].floors.stock, 0)
+    }
+    function test_two_floored_sales_still_coalesce_and_keep_the_floor() {
+        OutboxStore.enqueueDelta(_call("d1", -3, [_mv("sale", -3)], { floors: { stock: 0 } }))
+        var merged = OutboxStore.enqueueDelta(_call("d2", -2, [_mv("sale", -2)], { floors: { stock: 0 } }))
+        compare(OutboxStore.pendingCount, 1)
+        compare(merged.deltas.stock, -5)
+        compare(merged.movements.length, 2)
+        compare(merged.floors.stock, 0)
+    }
+
+    // ── never merge into a parked item or one that was already sent ──────
+    function test_a_parked_explicit_item_is_never_a_merge_target() {
+        OutboxStore.enqueueDelta(_call("d1", -3, [_mv("sale", -3)]))
+        compare(OutboxStore.setStuckMeta("d1", { stuck: true, terminal: true, failures: 1 }), true)
+        OutboxStore.enqueueDelta(_call("d2", -2, [_mv("sale", -2)]))
+        compare(OutboxStore.pendingCount, 2, "the new change must not ride on a rejected request")
+        compare(OutboxStore.items[0].requestId, "d1")
+        compare(OutboxStore.items[0].deltas.stock, -3)
+        compare(OutboxStore.items[0].movements.length, 1)
+        compare(OutboxStore.items[1].requestId, "d2")
+        compare(OutboxStore.items[1].deltas.stock, -2)
+    }
+    function test_a_parked_derived_item_is_never_a_merge_target() {
+        OutboxStore.enqueueDelta(_call("d1", -3, undefined))
+        OutboxStore.setStuckMeta("d1", { stuck: true, terminal: true, failures: 1 })
+        OutboxStore.enqueueDelta(_call("d2", -2, undefined))
+        compare(OutboxStore.pendingCount, 2)
+        compare(OutboxStore.items[0].deltas.stock, -3)
+    }
+    function test_a_stuck_but_not_terminal_item_that_was_never_sent_still_merges() {
+        // stuck without terminal = "may still succeed", never sent here (attempts 0): still merges
+        OutboxStore.enqueueDelta(_call("d1", -3, [_mv("sale", -3)]))
+        OutboxStore.setStuckMeta("d1", { stuck: true, failures: 1 })
+        OutboxStore.enqueueDelta(_call("d2", -2, [_mv("sale", -2)]))
+        compare(OutboxStore.pendingCount, 1)
+        compare(OutboxStore.items[0].deltas.stock, -5)
+    }
+    function test_an_item_that_was_sent_and_failed_is_never_a_merge_target() {
+        // Its reply may have been lost AFTER the server applied it. A retry carries the same
+        // requestId and gets the old answer back, so anything merged in meanwhile would vanish.
+        OutboxStore.enqueueDelta(_call("d1", 10, [_mv("receipt", 10)]))
+        OutboxStore.markFailed("d1")
+        compare(OutboxStore.items[0].attempts, 1)
+        OutboxStore.enqueueDelta(_call("d2", 4, [_mv("receipt", 4)]))
+        compare(OutboxStore.pendingCount, 2)
+        compare(OutboxStore.items[0].requestId, "d1")
+        compare(OutboxStore.items[0].deltas.stock, 10, "the already-sent payload stays byte-identical")
+        compare(OutboxStore.items[0].movements.length, 1)
+        compare(OutboxStore.items[1].requestId, "d2")
+        compare(OutboxStore.items[1].deltas.stock, 4)
+    }
+    function test_a_derived_item_that_was_sent_and_failed_is_never_a_merge_target() {
+        OutboxStore.enqueueDelta(_call("d1", -2, undefined, { clamps: { stock: 0 } }))
+        OutboxStore.markFailed("d1")
+        OutboxStore.enqueueDelta(_call("d2", -3, undefined, { clamps: { stock: 0 } }))
+        compare(OutboxStore.pendingCount, 2)
+        compare(OutboxStore.items[0].deltas.stock, -2)
+        compare(OutboxStore.items[1].deltas.stock, -3)
+    }
+    function test_a_skipped_candidate_does_not_hide_a_fresh_one_behind_it() {
+        OutboxStore.enqueueDelta(_call("d1", 10, [_mv("receipt", 10)]))
+        OutboxStore.markFailed("d1")
+        OutboxStore.enqueueDelta(_call("d2", 4, [_mv("receipt", 4)]))   // own item (d1 was sent)
+        OutboxStore.enqueueDelta(_call("d3", 1, [_mv("receipt", 1)]))   // joins d2, skipping d1
+        compare(OutboxStore.pendingCount, 2)
+        compare(OutboxStore.items[0].deltas.stock, 10)
+        compare(OutboxStore.items[1].deltas.stock, 5)
+        compare(OutboxStore.items[1].movements.length, 2)
+    }
+
     // ── isolation ────────────────────────────────────────────────────────
     function test_different_products_never_coalesce() {
         OutboxStore.enqueueDelta(_call("d1", 5, [_mv("receipt", 5)]))

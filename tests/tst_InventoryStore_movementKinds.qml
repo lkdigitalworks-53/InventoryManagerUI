@@ -132,15 +132,32 @@ TestCase {
         compare(out.r.error, "not-found")
         compare(OutboxStore.pendingCount, 0)
     }
-    function test_a_restock_then_a_sale_deduction_coalesce_with_a_net_delta_and_two_rows() {
+    function test_a_restock_then_a_floored_sale_deduction_queue_as_two_items() {
+        // One merged item keeps ONE floor map: the sale's `stock >= 0` floor would be dropped
+        // (stock could go negative) or the restock rejected together with the sale.
         InventoryStore.restock("SKU-1", 10, "", 10, "", function() {})
         InventoryStore.deductStock("SKU-1", 3, function() {}, false, "sale", "o")
         var items = _inv("SKU-1")
-        compare(items.length, 1)
-        compare(items[0].deltas.stock, 7)
-        compare(items[0].movements.length, 2)
+        compare(items.length, 2)
+        compare(items[0].deltas.stock, 10)
+        compare(items[0].floors.stock, undefined)
+        compare(items[0].movements.length, 1)
         compare(items[0].movements[0].kind, "receipt")
-        compare(items[0].movements[1].kind, "sale")
+        compare(items[1].deltas.stock, -3)
+        compare(items[1].floors.stock, 0)
+        compare(items[1].movements.length, 1)
+        compare(items[1].movements[0].kind, "sale")
+    }
+    function test_two_restocks_around_a_failed_send_never_share_an_item() {
+        InventoryStore.restock("SKU-1", 3, "", 10, "a", function() {})
+        OutboxStore.markFailed(_inv("SKU-1")[0].requestId)   // sent once, reply may have been lost
+        InventoryStore.restock("SKU-1", 4, "", 10, "b", function() {})
+        var items = _inv("SKU-1")
+        compare(items.length, 2)
+        compare(items[0].deltas.stock, 3)
+        compare(items[0].movements.length, 1)
+        compare(items[1].deltas.stock, 4)
+        compare(items[1].movements[0].reason, "b")
     }
     function test_a_clamped_deduction_queues_next_to_an_explicit_restock_not_into_it() {
         InventoryStore.restock("SKU-1", 10, "", 10, "", function() {})
@@ -179,13 +196,95 @@ TestCase {
         var items = _inv("SKU-1")
         compare(items.length === 0 || items[0].movements === undefined, true)
     }
-    function test_a_sale_and_its_rollback_return_net_to_zero_with_two_rows() {
+    function test_a_sale_and_its_rollback_return_queue_as_two_rows_that_net_to_zero() {
         InventoryStore.deductStock("SKU-1", 2, function() {}, false, "sale", "Exchange - order O1")
         InventoryStore.creditStockNoBatch("SKU-1", 2, "sales_return", "Rollback - order edit failed - order O1")
         var items = _inv("SKU-1")
+        compare(items.length, 2, "floored sale and unfloored credit do not share an item")
+        compare(items[0].movements.length, 1)
+        compare(items[1].movements.length, 1)
+        compare(items[0].deltas.stock + items[1].deltas.stock, 0)
+        compare(items[0].movements[0].qty + items[1].movements[0].qty, 0)
+        compare(items[0].movements[0].kind, "sale")
+        compare(items[1].movements[0].kind, "sales_return")
+    }
+
+    // ── the label may degrade, the stock change may not ──────────────────
+    function test_movementsFor_builds_one_valid_row() {
+        var m = InventoryStore._movementsFor("sales_return", 2, "  r  ")
+        compare(m.length, 1)
+        compare(m[0].kind, "sales_return")
+        compare(m[0].qty, 2)
+        compare(m[0].reason, "r")
+    }
+    function test_movementsFor_without_a_kind_is_undefined() {
+        compare(InventoryStore._movementsFor(undefined, 2, "x"), undefined)
+        compare(InventoryStore._movementsFor("", 2, "x"), undefined)
+        compare(InventoryStore._movementsFor(null, 2, "x"), undefined)
+    }
+    function test_movementsFor_drops_an_unknown_kind_a_wrong_direction_and_a_bad_qty() {
+        compare(InventoryStore._movementsFor("bogus", 2, "x"), undefined)
+        compare(InventoryStore._movementsFor("toString", 2, "x"), undefined)
+        compare(InventoryStore._movementsFor("sale", 2, "x"), undefined, "a sale cannot add stock")
+        compare(InventoryStore._movementsFor("sales_return", -2, "x"), undefined, "a return cannot remove stock")
+        compare(InventoryStore._movementsFor("receipt", 0, "x"), undefined)
+        compare(InventoryStore._movementsFor("receipt", NaN, "x"), undefined)
+        compare(InventoryStore._movementsFor("receipt", Infinity, "x"), undefined)
+    }
+    function test_movementsFor_accepts_an_adjustment_in_either_direction() {
+        compare(InventoryStore._movementsFor("adjustment", 3, "x").length, 1)
+        compare(InventoryStore._movementsFor("adjustment", -3, "x").length, 1)
+    }
+    function test_a_credit_with_an_unknown_kind_still_queues_the_stock_change_as_a_derived_row() {
+        InventoryStore.creditStockNoBatch("SKU-1", 2, "bogus", "x")
+        var items = _inv("SKU-1")
+        compare(items.length, 1, "the return must not be lost because its label is wrong")
+        compare(items[0].deltas.stock, 2)
+        compare(items[0].movements, undefined)
+    }
+    function test_a_credit_with_a_decreasing_kind_still_queues_the_stock_change() {
+        InventoryStore.creditStockNoBatch("SKU-1", 2, "sale", "x")
+        var items = _inv("SKU-1")
         compare(items.length, 1)
-        compare(items[0].deltas.stock, 0)
-        compare(items[0].movements.length, 2)
-        compare(items[0].movements[0].qty + items[0].movements[1].qty, 0)
+        compare(items[0].deltas.stock, 2)
+        compare(items[0].movements, undefined)
+    }
+    function test_a_deduction_with_an_unknown_kind_still_queues_with_its_floor() {
+        InventoryStore.deductStock("SKU-1", 2, function() {}, false, "bogus", "x")
+        var items = _inv("SKU-1")
+        compare(items.length, 1)
+        compare(items[0].deltas.stock, -2)
+        compare(items[0].floors.stock, 0, "reject mode keeps its floor")
+        compare(items[0].movements, undefined)
+    }
+    function test_a_deduction_with_an_increasing_kind_still_queues_the_stock_change() {
+        InventoryStore.deductStock("SKU-1", 2, function() {}, false, "receipt", "x")
+        var items = _inv("SKU-1")
+        compare(items.length, 1)
+        compare(items[0].deltas.stock, -2)
+        compare(items[0].movements, undefined)
+    }
+
+    // ── restock refusal tells the user why ───────────────────────────────
+    function test_a_refused_restock_answers_with_the_quantity_message_not_try_again() {
+        var out = { ok: null, supplierFailed: null, refusal: null }
+        InventoryStore.restock("SKU-1", -3, "", 10, "", function(ok, sf, refusal) { out.ok = ok; out.supplierFailed = sf; out.refusal = refusal })
+        compare(out.ok, false)
+        compare(out.supplierFailed, false)
+        compare(out.refusal, "Quantity must be greater than zero")
+        compare(out.refusal, InventoryStore.restockQtyRefusal)
+    }
+    function test_a_text_quantity_is_refused_with_the_same_message_and_no_side_effect() {
+        var out = { ok: null, refusal: null }
+        InventoryStore.restock("SKU-1", "5", "", 10, "", function(ok, sf, refusal) { out.ok = ok; out.refusal = refusal })
+        compare(out.ok, false)
+        compare(out.refusal, InventoryStore.restockQtyRefusal)
+        compare(OutboxStore.pendingCount, 0)
+        compare(StockBatchStore._pendingMints.length, 0)
+    }
+    function test_a_nan_quantity_falls_back_to_the_default_ten_like_before() {
+        InventoryStore.restock("SKU-1", NaN, "", 10, "", function() {})
+        compare(_inv("SKU-1")[0].deltas.stock, 10)
+        compare(_inv("SKU-1")[0].movements[0].qty, 10)
     }
 }
