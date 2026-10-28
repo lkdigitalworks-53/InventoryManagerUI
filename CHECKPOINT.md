@@ -13,15 +13,22 @@
 `AuthService._loadUserProfile` takes tenant and ROLE from the self-writable `users/{uid}` doc and, when that doc carries a role, never reads the member doc at all (`tenantContextReady(tenantId, role)` fires at once). A suspended or removed member therefore gets the full app (role from the users doc), and every read and write is refused: empty lists, writes stuck on HTTP 403. `_loadMembership` (only used when the users doc has no role) ignores `status`, defaults a missing role to `staff`, and any failure there routes to the "Create your workspace" screen. `FirebaseService.get` drops the HTTP status, so a 404 (member doc deleted) cannot be told from a network error. Rules already let a member read ITS OWN member doc when suspended (pinned by `F2 ... can still read ITS OWN member doc`).
 
 ## Steps
-- [x] 1. Cloned, branched, read the S2f design, multi-role design, AuthService, FirebaseService, rules, Main.qml, TenantSetupPage, test harness. Root cause above.
-- [ ] 2. Design doc + decisions (D1-D7).
-- [ ] 3. `qml/helper/AccessState.js` + `tests/tst_AccessState.qml` (+ Node shim run).
-- [ ] 4. `FailureCause.forWriteError` wording + `tst_FailureCause.qml` update.
-- [ ] 5. `FirebaseService.get` passes the HTTP status; `AuthService` verifies the member doc at every profile load; `accessBlock` state; `recheckAccess()`.
-- [ ] 6. `qml/pages/AccessBlockedPage.qml` + `Main.qml` wiring + `CMakeLists.txt`.
-- [ ] 7. Wiring tests (`.github/scripts/__tests__/accessBlockWiring.test.js`) + rules test (removed member reads own missing doc).
-- [ ] 8. Docs: test plan, README, AGENTS, KNOWN-ISSUES, S2f design row, Skill, SKILLS-INDEX.
-- [ ] 9. Node suites, commit, push, read CI.
+- [x] 1. Cloned, branched, read S2f design, multi-role design, AuthService, FirebaseService, rules, Main, TenantSetupPage, test harness. Root cause above.
+- [x] 2. Design doc + decisions D1-D9 (`docs/superpowers/specs/2026-10-28-s2f3-access-wording-design.md`), all vetoable defaults.
+- [x] 3. `qml/helper/AccessState.js` + `tests/tst_AccessState.qml` (44 functions, Node shim 44/44, 55/56 mutants, 1 equivalent).
+- [x] 4. `FailureCause.forWriteError` 403 wording + `tst_FailureCause.qml` U14 + quotes in the 2026-10-13 plan/design.
+- [x] 5. `FirebaseService.get` passes HTTP status; `AuthService._verifyMembership`, `accessBlock`, `recheckAccess`, `_profileSeq`; no role defaults left.
+- [x] 6. `qml/pages/AccessBlockedPage.qml` + `Main.qml` (z 300). CMake globs, nothing to edit.
+- [x] 7. `.github/scripts/__tests__/accessBlockWiring.test.js` (21: rules + 17 mutants + 3 parity), rules tests (+2 definitions).
+- [x] 8. Docs: test plan, README, AGENTS, KNOWN-ISSUES (3 entries), S2f design row, Skill 140, SKILLS-INDEX regenerated.
+- [x] 9. Script suite 192/192 locally; committed; pushed (see git log on the branch).
+- [ ] 10. Read CI on the head (QML + rules tests are CI-only); Taher device-tests the plan; review the PR.
+
+## Open decisions for Taher (defaults applied, vetoable in the PR)
+D1 extra member-doc read per login/reconnect; D3 dedicated screen; D4 failed check keeps a previously verified member in (alternative: block on any failure); D5 no "create new workspace" for a removed member. Details in the design doc.
+
+## Found, not fixed (KNOWN-ISSUES)
+Users-doc read failure shows "Create your workspace"; mid-session changes noticed only at reconnect/launch; dead `AuthService.setTenantContext`.
 
 ## NEXT
-Step 2.
+Read CI. Then, in order: users-doc failure fix (small, `get` now has the status), L3 session lifecycle (refresh/resume re-check + distinct server codes), S2f-6 only together with the restock `mint` design approval. Another session on `feat/2026-10-28-p1-s2d1-movement-kinds` (S2d-1) also edits `CHECKPOINT.md`: on merge keep the incoming one, archive this one to `docs/superpowers/specs/` (rebase rule).
