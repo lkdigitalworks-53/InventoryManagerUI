@@ -1,29 +1,27 @@
-# CHECKPOINT — 2026-10-28 PR #167 sign-out sheet footer width (resume here)
+# CHECKPOINT — 2026-10-28 S2f-3 access wording + access-blocked screen (resume here)
 
-**Branch:** `feat/2026-10-26-signout-guard` (PR #167). All work is committed and pushed to this branch (first fix `d35d33a`, review fixes in the next commit); nothing is held locally. (This branch already contains the merge of PR #168.)
-**Commit identity:** `lkdwtaher@gmail.com`. PAT comes from the chat prompt only, passed with `git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$PAT" | base64 -w0)"`, never in the remote URL, `.git/config`, the repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build/run; no Qt in the sandbox (CI is the QML oracle); push without asking; short scope; honest trade-offs; tests + test plan for every change; caveman FULL for chat only; do not touch other PRs/branches.
-**Skills used:** `superpowers:systematic-debugging`, `qt-development-skills:qt-qml`, `qt-development-skills:qt-ui-design`, `ponytail:ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr167-footer-width-prev-CHECKPOINT.md`.
+**Branch:** `feat/2026-10-28-s2f3-access-wording` (from `main` @ `69e7381`). Push after every phase; nothing is held locally once a phase is marked pushed.
+**Commit identity:** `dextran52@gmail.com` (Taher, 2026-10-28; the previous checkpoint said another address, this instruction wins). PAT comes from the chat prompt only, passed with `git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$PAT" | base64 -w0)"`, never in the remote URL, `.git/config`, the repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build/run; no Qt in the sandbox (CI is the QML oracle); push without asking; short scope; honest trade-offs; tests + test plan for every change; caveman FULL for chat only; do not touch other PRs/branches (the sibling branch `feat/2026-10-28-p1-s2d1-movement-kinds` is another session's: S2d-1, no file overlap except this CHECKPOINT).
+**Skills used:** `superpowers:brainstorming` (design decisions below, vetoable in the PR), `qt-development-skills:qt-qml`, `qt-development-skills:qt-ui-design`, `ponytail:ponytail`, `caveman:caveman` (chat only).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr167-merged-prev-CHECKPOINT.md` (PR #167 is merged into `main`).
 
-## Bug (device test of PR #167)
-"Stay signed in" button shows only "S…". Taher asked: shrink the discard / sign-out button, widen Stay, so the full text shows. Then review the change in the same pass, in the same PR.
+## Why S2f-3 and not S2f-6
+`restock-atomic-operation-design.md` says S2f-6 `counters` locking IS the `mint` op of the restock design (R2): "Build it once, here. Do not build a separate S2f-6." So S2f-6 is not an independent slice, it is a big server slice with no design sign-off yet. S2f-3 is client only, designed (`2026-10-24-s2f-authz-hardening-design.md` row S2f-3), needs no deploy, and closes finding 12 of the PR #159 sweep.
 
-## Root cause (systematic-debugging phase 1-2, from code, not a guess)
-`PrimaryButton.contentItem` is an `Item` whose `Text` uses `anchors.fill`, so it reports NO implicit text width: the button's implicit width is only its padding (16 + 16 = 32 dp). `GhostButton.contentItem` is a plain `Text`, so its implicit width is the full label. In the `BottomSheet` footer both buttons are `Layout.fillWidth` with no preferred width: the layout starts from those implicit widths and splits the spare room equally. With the long label "Sign out and discard" (about 150 dp + 32) next to "Stay signed in", the primary starts at 32 dp and only gets half the spare room: roughly 80-90 dp on a 360 dp phone (ESTIMATE from assumed glyph widths, never measured), so the label ellipsizes to "S…". Sheets with a short secondary ("Cancel") never showed it; long primaries elsewhere ("Confirm & save", "Send reset link", "Import N rows") are at risk for the same reason.
+## Root cause (read from code, not guessed)
+`AuthService._loadUserProfile` takes tenant and ROLE from the self-writable `users/{uid}` doc and, when that doc carries a role, never reads the member doc at all (`tenantContextReady(tenantId, role)` fires at once). A suspended or removed member therefore gets the full app (role from the users doc), and every read and write is refused: empty lists, writes stuck on HTTP 403. `_loadMembership` (only used when the users doc has no role) ignores `status`, defaults a missing role to `staff`, and any failure there routes to the "Create your workspace" screen. `FirebaseService.get` drops the HTTP status, so a 404 (member doc deleted) cannot be told from a network error. Rules already let a member read ITS OWN member doc when suspended (pinned by `F2 ... can still read ITS OWN member doc`).
 
 ## Steps
-- [x] 1. Cloned, checked out PR #167 branch, read SignOutSheet, BottomSheet, GhostButton, PrimaryButton, wiring test. Root cause above.
-- [x] 2. `qml/helper/SheetFooter.js` (pure `primaryFloor`) + `tests/tst_SheetFooter.qml` (21 functions; Node shim 21/21; 24/24 killable mutants killed, 1 equivalent).
-- [x] 3. `BottomSheet.qml` footer: `TextMetrics` + floor on the primary button; wiring pins in `signOutGuardWiring.test.js` (43 -> 60/60).
-- [x] 4. Docs: new test plan `2026-10-28-signout-sheet-footer-width-test-plan.md`, sign-out plan amended, design note, README, AGENTS, KNOWN-ISSUES, Skill 139, SKILLS-INDEX regenerated. Script suite 169/169.
-- [x] 5. Node suite (169/169 before the review fixes, 171/171 after), commit, push: `d35d33a`.
-- [x] 6. Review pass (independent read-only reviewer + own checks). Accepted and fixed: row is 320 not 312 in the tests (values unchanged), labels called estimates, sheet count 15 incl. SignOutSheet, 340 dp threshold withdrawn (340-370, to be measured, H2), StaffActionSheet is Cancel not Close, shim + mutation script committed in `scripts/probes/*.cjs`, font pin compares every `font.*` line, indent-fragile mutants made single-token (wiring 62/62). Documented not coded: spinner overlap when the primary sits exactly at its floor while busy. Rejected: reviewer's "Haiku trailer" note (this session is Sonnet 5.5). UNVERIFIED until device: binding-loop warning (plan E4), pixel result.
-- [ ] 7. Read CI on the new head (CI only oracle for the QML tests); Taher device-tests.
-
-## Open decisions for Taher (defaults applied, vetoable in the PR)
-1. Q-FW-1: when both labels do not fit (narrow phone, Large font) the secondary ellipsizes first (applied). Alternative: stack the buttons vertically, primary on top (Claude recommends it if a 340 dp phone is a target; it changes the footer pattern). Test plan H2 asks for the phone's width in dp so this is decided on a number.
-2. Footer fix lives in the shared `BottomSheet` (applied, 15 two-button sheets get a spot check) instead of only the sign-out sheet. Veto = move the floor behind an opt-in property.
+- [x] 1. Cloned, branched, read the S2f design, multi-role design, AuthService, FirebaseService, rules, Main.qml, TenantSetupPage, test harness. Root cause above.
+- [ ] 2. Design doc + decisions (D1-D7).
+- [ ] 3. `qml/helper/AccessState.js` + `tests/tst_AccessState.qml` (+ Node shim run).
+- [ ] 4. `FailureCause.forWriteError` wording + `tst_FailureCause.qml` update.
+- [ ] 5. `FirebaseService.get` passes the HTTP status; `AuthService` verifies the member doc at every profile load; `accessBlock` state; `recheckAccess()`.
+- [ ] 6. `qml/pages/AccessBlockedPage.qml` + `Main.qml` wiring + `CMakeLists.txt`.
+- [ ] 7. Wiring tests (`.github/scripts/__tests__/accessBlockWiring.test.js`) + rules test (removed member reads own missing doc).
+- [ ] 8. Docs: test plan, README, AGENTS, KNOWN-ISSUES, S2f design row, Skill, SKILLS-INDEX.
+- [ ] 9. Node suites, commit, push, read CI.
 
 ## NEXT
-CI on the new head; device-test H1-H4 + footer spot check + E4 (logcat); then merge order as in the sign-out plan.
+Step 2.
