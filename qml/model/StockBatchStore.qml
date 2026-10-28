@@ -3,6 +3,7 @@ import QtQuick
 import QtCore
 
 import "../helper/SettingsPath.js" as SettingsPath
+import "../helper/PendingMints.js" as PendingMints
 
 // FIFO inventory cost ledger. Each row in `stock_batches/{batchId}` is one
 // receipt of goods — typically created when the user restocks a product
@@ -52,6 +53,9 @@ QtObject {
     // Skill 39's "residual trade-off" note.
     property bool _resetPending: false
     property var _cursor: null
+    // The tenant whose batch ledger is fully loaded in `batches` ("" = none). nextBatchId seeds
+    // its counter from the local ledger, so owed mints wait until this equals the signed-in tenant.
+    property string _loadedTenant: ""
 
     // Only fetch here if tenant context is ALREADY known (lazy/warm
     // creation). On cold start with a persisted session this singleton could
@@ -65,6 +69,9 @@ QtObject {
         Gateway.mutationConflicted.connect(_onMutationConflicted)
         _loadPendingMints()
         AuthService.isOnlineChanged.connect(_onIsOnlineChanged)
+        // Runs before the tenant is known on a cold start (then it does nothing: items are
+        // tenant-scoped). The retry that follows sign-in is started by the ledger load's
+        // completion in _fetchFromFirebase, not here (see retryPendingMints).
         if (AuthService.isOnline) retryPendingMints()
     }
 
@@ -116,6 +123,7 @@ QtObject {
     function _resetAndFetch() {
         if (loadingMore) { _resetPending = true; return }
         batches = []
+        _loadedTenant = ""
         hasMore = true
         _cursor = null
         _fetchFromFirebase()
@@ -167,6 +175,10 @@ QtObject {
                 _fetchFromFirebase()
             } else {
                 console.log("[StockBatchStore] Synced", batches.length, "batches (all pages)")
+                // The ledger is complete for this tenant, so the counter seed is right: owed
+                // mints can run now.
+                _loadedTenant = AuthStore.tenantId
+                if (AuthService.isOnline) retryPendingMints()
             }
         })
     }
@@ -175,6 +187,7 @@ QtObject {
 
     function clear() {
         batches = []
+        _loadedTenant = ""
         revision++
     }
 
@@ -359,7 +372,17 @@ QtObject {
     // addBatchWithId's identical parameter).
     function addBatch(productId, supplierId, qty, unitCost, note, deferWrite, callback) {
         if (!productId || !qty || qty <= 0) { if (callback) callback(null); return }
-        nextBatchId(function(id) {
+        // The tenant the mint is made under: the retry queue must belong to it, even if
+        // the person switches account while the mint hangs (see PendingMints.js).
+        var mintTenant = AuthStore.tenantId
+        nextBatchId(function(mintedId) {
+            // Another account signed in while the mint was out (a mint can retry for seconds):
+            // the id came from the old tenant's counter and Gateway would write the batch into
+            // the NEW tenant. Drop the id (a counter gap is harmless) and owe the batch to the
+            // tenant that asked for it, like a failed mint.
+            var tenantChanged = !!mintedId && mintTenant !== AuthStore.tenantId
+            if (tenantChanged) console.warn("[StockBatchStore] tenant changed during a mint -- queued for its own tenant")
+            var id = tenantChanged ? "" : mintedId
             if (!id) {
                 // No error/warning surfaced beyond this log -- by design (see
                 // docs/superpowers/E2E-TESTING-ROADMAP.md item 1, Decision 1).
@@ -370,7 +393,7 @@ QtObject {
                 // ledger. hasPendingMint() lets order-entry screens hide this
                 // product from the picker until the retry actually lands.
                 console.warn("[StockBatchStore] could not mint a batchId — queued for retry on reconnect")
-                _queuePendingMint(productId, supplierId, qty, unitCost, note)
+                _queuePendingMint(productId, supplierId, qty, unitCost, note, mintTenant)
                 if (callback) callback(null)
                 return
             }
@@ -422,15 +445,33 @@ QtObject {
                       Application.organization,
                       StandardPaths.writableLocation(StandardPaths.TempLocation))
         property string pendingJson: ""
+        // Items the loader refused (saved before tenant scoping, or damaged), kept for support
+        // instead of destroyed: each is an owed FIFO batch. Newest 50, never replayed.
+        property string rejectedJson: ""
     }
 
     function _loadPendingMints() {
         if (_pendingMintSettings.pendingJson && _pendingMintSettings.pendingJson.length > 2) {
             try {
-                var arr = JSON.parse(_pendingMintSettings.pendingJson)
-                if (Array.isArray(arr)) _pendingMints = arr
+                var parsed = JSON.parse(_pendingMintSettings.pendingJson)
+                if (!Array.isArray(parsed)) throw new Error("pending mints are not a list")
+                var cleaned = PendingMints.normalize(parsed)
+                _pendingMints = cleaned.items
+                if (cleaned.dropped > 0) {
+                    // Saved before items carried a tenant (or damaged): replaying them under
+                    // whoever is signed in is the bug this scoping fixes. Keep them aside.
+                    console.warn("[StockBatchStore] quarantined " + cleaned.dropped + " unreplayable pending mint(s)")
+                    _pendingMintSettings.rejectedJson = PendingMints.appendRejected(
+                        _pendingMintSettings.rejectedJson, cleaned.rejected, 50)
+                    _savePendingMints()
+                }
             } catch (e) {
+                // Damaged file: keep the raw text aside before the next save overwrites it.
+                console.warn("[StockBatchStore] pending mints unreadable -- quarantined: " + e)
+                _pendingMintSettings.rejectedJson = PendingMints.appendRejected(
+                    _pendingMintSettings.rejectedJson, [{ raw: String(_pendingMintSettings.pendingJson) }], 50)
                 _pendingMints = []
+                _savePendingMints()
             }
         }
     }
@@ -439,16 +480,18 @@ QtObject {
         _pendingMintSettings.pendingJson = JSON.stringify(_pendingMints)
     }
 
-    function _queuePendingMint(productId, supplierId, qty, unitCost, note) {
+    function _queuePendingMint(productId, supplierId, qty, unitCost, note, tenantId) {
+        var item = PendingMints.make(Date.now() + "_" + Math.floor(Math.random() * 1000000),
+                                     tenantId, productId, supplierId, qty, unitCost, note)
+        if (!item) {
+            // No tenant (no mint was possible, nobody could ever replay it), no product or a
+            // bad qty: do not queue an item that belongs to no one or would be thrown away on
+            // the next launch.
+            console.warn("[StockBatchStore] pending mint has no tenant, product or valid qty -- not queued")
+            return
+        }
         var arr = _pendingMints.slice()
-        arr.push({
-            id: Date.now() + "_" + Math.floor(Math.random() * 1000000),
-            productId: productId,
-            supplierId: supplierId || "",
-            qty: qty,
-            unitCost: unitCost,
-            note: note || ""
-        })
+        arr.push(item)
         _pendingMints = arr
         _savePendingMints()
     }
@@ -457,9 +500,7 @@ QtObject {
     // a product until its pending batch actually lands -- see the header
     // comment above.
     function hasPendingMint(productId) {
-        for (var i = 0; i < _pendingMints.length; ++i)
-            if (_pendingMints[i].productId === productId) return true
-        return false
+        return PendingMints.has(_pendingMints, AuthStore.tenantId, productId)
     }
 
     // Called on reconnect (AuthService.isOnlineChanged, see
@@ -471,10 +512,19 @@ QtObject {
     // triggers (isOnline flapping true/false/true) can't retry the same item
     // twice concurrently.
     function retryPendingMints() {
-        var snapshot = _pendingMints.slice()
+        // Only the signed-in tenant's items (PendingMints.due), snapshotted so an item
+        // queued mid-pass is not double-processed.
+        var snapshot = PendingMints.due(_pendingMints, AuthStore.tenantId, _pendingMintsInFlight)
+        if (snapshot.length === 0) return
+        // nextBatchId floors its counter with the highest LOCAL batch id: minting before this
+        // tenant's ledger is loaded could reissue a used id. Load first (a failed load stays
+        // retried on the next reconnect); the load's completion calls this again.
+        if (!PendingMints.sameTenant(_loadedTenant, AuthStore.tenantId)) {
+            if (!loadingMore) _resetAndFetch()
+            return
+        }
         for (var i = 0; i < snapshot.length; ++i) {
             var item = snapshot[i]
-            if (_pendingMintsInFlight[item.id]) continue
             _pendingMintsInFlight[item.id] = true
             _retryOnePendingMint(item)
         }
@@ -484,6 +534,13 @@ QtObject {
         nextBatchId(function(id) {
             delete _pendingMintsInFlight[item.id]
             if (!id) return   // still failing -- stays queued for next reconnect
+            if (!PendingMints.sameTenant(item.tenantId, AuthStore.tenantId)) {
+                // Another account signed in while the mint was out: the id belongs to the old
+                // tenant's counter and the write would go to the new one. Drop the id (a gap in
+                // a counter is harmless); the item stays queued for its own tenant.
+                console.warn("[StockBatchStore] tenant changed during a pending mint -- left queued")
+                return
+            }
             var doc = _buildBatchDoc(id, item.productId, item.supplierId, item.qty, item.unitCost, item.note)
             var arr = batches.slice()
             arr.push(doc)
@@ -492,10 +549,7 @@ QtObject {
             // Remove by id, not index -- _pendingMints may have changed
             // (new failures queued, or a concurrent retry already removed a
             // different item) since this item's snapshot was taken.
-            var next = []
-            for (var j = 0; j < _pendingMints.length; ++j)
-                if (_pendingMints[j].id !== item.id) next.push(_pendingMints[j])
-            _pendingMints = next
+            _pendingMints = PendingMints.without(_pendingMints, item.id)
             _savePendingMints()
         })
     }
