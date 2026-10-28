@@ -223,6 +223,46 @@ TestCase {
         compare(AS.outcome({ state: "removed" }).action, "block")
     }
 
+    // ---- outcome with prevBlock (a "Try again" from the blocked screen) ----------------------
+
+    function test_outcome_a_failed_check_keeps_the_block_that_is_showing_even_with_a_held_role() {
+        var shown = ["removed", "suspended", "role", "unverified"]
+        for (var i = 0; i < shown.length; i++) {
+            for (var h = 0; h < 2; h++) {
+                var o = AS.outcome({ state: "unverified" }, h === 0 ? "owner" : "", shown[i])
+                compare(o.action, "block", shown[i] + " held " + h)
+                compare(o.reason, shown[i])
+                verify(o.role === undefined)
+            }
+        }
+    }
+
+    function test_outcome_a_conclusive_answer_beats_the_block_that_is_showing() {
+        var shown = ["removed", "suspended", "role", "unverified"]
+        for (var i = 0; i < shown.length; i++) {
+            var ok = AS.outcome({ state: "ok", role: "staff" }, "owner", shown[i])
+            compare(ok.action, "enter")
+            compare(ok.role, "staff")
+            compare(ok.verified, true)
+            compare(AS.outcome({ state: "removed" }, "owner", shown[i]).reason, "removed")
+            compare(AS.outcome({ state: "suspended" }, "owner", shown[i]).reason, "suspended")
+            compare(AS.outcome({ state: "role" }, "owner", shown[i]).reason, "role")
+        }
+    }
+
+    function test_outcome_a_prevBlock_that_is_not_a_block_state_is_ignored() {
+        var junk = ["", undefined, null, "zzz", "ok", "Suspended", " removed", 0, 1, true, {}, []]
+        for (var i = 0; i < junk.length; i++) {
+            var held = AS.outcome({ state: "unverified" }, "manager", junk[i])
+            compare(held.action, "enter", "junk " + i)
+            compare(held.verified, false)
+            compare(held.role, "manager")
+            var none = AS.outcome({ state: "unverified" }, "", junk[i])
+            compare(none.action, "block", "junk none " + i)
+            compare(none.reason, "unverified")
+        }
+    }
+
     // ---- copy ------------------------------------------------------------------------------
 
     function test_copy_removed() {
@@ -315,6 +355,18 @@ TestCase {
         compare(AS.outcome(AS.classify(true, 200, _member("suspended", "staff")), "staff").action, "block")
     }
 
+    function test_scenario_suspended_member_retries_on_a_flaky_network_then_is_restored() {
+        var shown = AS.outcome(AS.classify(true, 200, _member("suspended", "staff")), "staff", "").reason
+        compare(shown, "suspended")
+        var codes = [0, 500, 503, 401, 403]
+        for (var i = 0; i < codes.length; i++) {
+            var o = AS.outcome(AS.classify(false, codes[i], null), "staff", shown)
+            compare(o.action, "block", "retry failed " + codes[i])
+            compare(o.reason, "suspended")
+        }
+        compare(AS.outcome(AS.classify(true, 200, _member("active", "staff")), "staff", shown).action, "enter")
+    }
+
     function test_scenario_flaky_network_never_blocks_a_verified_member_but_always_blocks_an_unknown_one() {
         var codes = [0, 500, 503, 401, 403]
         for (var i = 0; i < codes.length; i++) {
@@ -368,6 +420,29 @@ TestCase {
             } else {
                 verify(AS.isBlockedState(o.reason), "block without a reason, iteration " + n)
                 verify(o.role === undefined)
+            }
+        }
+    }
+
+    function test_monkey_outcome_with_prevBlock_never_enters_on_an_inconclusive_check_while_blocked() {
+        var rnd = _rng(20261031)
+        var states = ["ok", "removed", "suspended", "role", "unverified", "", "zzz", undefined, null]
+        var blocks = ["removed", "suspended", "role", "unverified"]
+        for (var n = 0; n < 4000; n++) {
+            var cls = rnd() < 0.1 ? _junk(rnd) : { state: states[Math.floor(rnd() * states.length)], role: _junk(rnd) }
+            var held = rnd() < 0.5 ? roles[Math.floor(rnd() * 4)] : _junk(rnd)
+            var prev = rnd() < 0.5 ? blocks[Math.floor(rnd() * 4)] : _junk(rnd)
+            var o = AS.outcome(cls, held, prev)
+            var st = (cls && typeof cls === "object") ? cls.state : ""
+            var conclusive = (st === "ok" && roles.indexOf(cls.role) >= 0) || st === "removed" || st === "suspended" || st === "role"
+            if (!conclusive && blocks.indexOf(prev) >= 0) {
+                compare(o.action, "block", "entered while blocked on an inconclusive check, iteration " + n)
+                compare(o.reason, prev)
+            } else {
+                var base = AS.outcome(cls, held)
+                compare(o.action, base.action, "prevBlock changed a case it must not, iteration " + n)
+                compare(o.reason, base.reason)
+                compare(o.role, base.role)
             }
         }
     }

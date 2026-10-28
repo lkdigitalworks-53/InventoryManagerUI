@@ -16,6 +16,8 @@ Item {
     property string reason: ""
     property string tenantName: ""
     property string userEmail: ""
+    // True while "Try again" is asking the server: spinner on the button, no second tap.
+    property bool checking: false
 
     signal retryRequested()
     signal signOutRequested()
@@ -100,6 +102,8 @@ Item {
                 PrimaryButton {
                     Layout.fillWidth: true
                     text: qsTr("Try again")
+                    loading: root.checking
+                    enabled: !root.checking
                     onClicked: root.retryRequested()
                 }
 

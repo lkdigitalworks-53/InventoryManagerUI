@@ -745,8 +745,9 @@ App {
     AccessBlockedPage {
         id: accessBlockedPage
         anchors.fill: parent
-        visible: AuthStore.isAuthenticated && AuthService.profileResolved && AuthService.accessBlock.length > 0
+        visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0
         z: 300
+        checking: !AuthService.profileResolved
         reason: AuthService.accessBlock
         tenantName: AuthService.accessTenantName
         userEmail: AuthStore.email

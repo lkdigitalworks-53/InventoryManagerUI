@@ -59,11 +59,16 @@ function classify(ok, status, doc) {
 //   { action: "block", reason }           show the access-blocked screen
 // A failed check never locks out a user who was verified before (flaky networks must not block an
 // active member); with no held role there is nothing safe to show, so it blocks with "unverified".
-function outcome(cls, heldRole) {
+// prevBlock = the reason the blocked screen is showing right now ("" when it is not). A failed check
+// (a "Try again" that hit a network error) keeps that block as it is: the held role is the one from
+// BEFORE the block, so reusing it would let a member just shown "suspended" back in on a flaky network.
+// Only a conclusive answer (ok, removed, suspended, role) changes the screen.
+function outcome(cls, heldRole, prevBlock) {
     var state = (cls && typeof cls === "object") ? cls.state : ""
     if (state === STATE_OK && isValidRole(cls.role)) return { action: "enter", role: cls.role, verified: true }
     if (state === STATE_REMOVED || state === STATE_SUSPENDED || state === STATE_ROLE)
         return { action: "block", reason: state }
+    if (isBlockedState(prevBlock)) return { action: "block", reason: prevBlock }
     if (isValidRole(heldRole)) return { action: "enter", role: heldRole, verified: false }
     return { action: "block", reason: STATE_UNVERIFIED }
 }

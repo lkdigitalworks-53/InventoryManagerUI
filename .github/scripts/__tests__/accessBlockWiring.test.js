@@ -10,9 +10,11 @@
 //      doc callback; no role default ("owner" / "staff") survives in AuthService.
 //   2. Order: block outcomes return BEFORE the tenant context is applied.
 //   3. Races: every profile load takes a sequence number, callbacks bail when it is stale, sign-out bumps it.
-//   4. Retry: offline "Try again" never reaches _loadUserProfile (it would reopen the app).
-//   5. Screen: shown for authenticated + resolved + non-empty accessBlock, above the z 200 overlays, dynamic
-//      text is plain text, sign-out goes through app.askLeave.
+//   4. Retry: offline "Try again" never reaches _loadUserProfile (it would reopen the app). An online retry
+//      keeps the blocked screen up (accessBlock is cleared only by a definitive answer, never up front or by
+//      an unreadable users doc), shows a spinner and refuses a second tap; Sign out stays available.
+//   5. Screen: shown for authenticated + non-empty accessBlock (NOT tied to profileResolved), above the z 200
+//      overlays, dynamic text is plain text, sign-out goes through app.askLeave.
 //   6. Parity: the helper's role list equals the gateway's and the rules'.
 //   7. FirebaseService.get hands the HTTP status to its callback on both outcomes.
 // Design: docs/superpowers/specs/2026-10-28-s2f3-access-wording-design.md
@@ -38,6 +40,18 @@ function bodyOf(src, name) {
   return '';
 }
 const code = (src) => src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+// The text inside the braces that follow `marker` (e.g. an `if (...) {` branch), '' when absent.
+function blockAfter(src, marker) {
+  const at = src.indexOf(marker);
+  if (at < 0) return '';
+  const open = src.indexOf('{', at);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    if (src[i] === '}' && --depth === 0) return src.slice(open + 1, i);
+  }
+  return '';
+}
 
 // Every rule is a pure function of the sources, so the mutation tests below can feed it broken copies.
 function problems(src) {
@@ -56,7 +70,7 @@ function problems(src) {
   if (/\|\|\s*"(owner|staff|admin|manager)"/.test(auth)) out.push('role-default');
   if (/_loadMembership/.test(auth)) out.push('old-loadMembership');
   if (!/FirebaseService\.get\("tenants\/" \+ tenantId \+ "\/members\/" \+ AuthStore\.uid,/.test(verify)) out.push('verify-reads-own-member-doc');
-  if (!/AccessState\.outcome\(AccessState\.classify\(ok, status, data\), held\)/.test(verify)) out.push('verify-no-classify');
+  if (!/AccessState\.outcome\(AccessState\.classify\(ok, status, data\), held, accessBlock\)/.test(verify)) out.push('verify-no-classify');
   if (!/AuthStore\.tenantId === tenantId \? AuthStore\.role : ""/.test(verify)) out.push('verify-held-role-same-tenant-only');
 
   // 2. order: block returns before applyTenantContext, ready only after it
@@ -77,7 +91,19 @@ function problems(src) {
   if (!/if \(seq !== _profileSeq\) return/.test(verify)) out.push('verify-stale-guard');
   if (!/_profileSeq\+\+/.test(signOut)) out.push('signout-no-seq');
   if (!/accessBlock = ""/.test(signOut) || !/accessTenantName = ""/.test(signOut)) out.push('signout-no-reset');
-  if (!/accessBlock = ""/.test(load)) out.push('load-no-reset');
+
+  // 3b. a retry keeps the blocked screen up: the block is cleared only by a definitive answer
+  // (no uid, no tenant on the users doc, member verified), never up front, never by an unreadable users doc
+  const iFirstClear = load.indexOf('accessBlock = ""');
+  const iUidGuard = load.indexOf('if (!AuthStore.uid)');
+  if (iFirstClear >= 0 && iFirstClear < iUidGuard) out.push('load-clears-block-upfront');
+  if ((load.match(/accessBlock = ""/g) || []).length !== 2) out.push('load-definitive-clears');
+  if (!/accessBlock = ""/.test(blockAfter(load, 'if (!AuthStore.uid)'))) out.push('load-definitive-clears');
+  if (!/accessBlock = ""/.test(blockAfter(load, 'if (!tenantId)'))) out.push('load-definitive-clears');
+  if (/accessBlock/.test(blockAfter(load, 'if (!ok || !data)'))) out.push('load-usersdoc-failure-keeps-block');
+  if (/accessBlock/.test(blockAfter(load, 'if (!isOnline)'))) out.push('load-offline-keeps-block');
+  const iClearOk = verify.indexOf('accessBlock = ""', iRet);
+  if (!(iClearOk > iRet && iClearOk < iApply)) out.push('verify-enter-no-clear');
 
   // 4. retry
   const iOff = recheck.indexOf('if (!isOnline) return');
@@ -95,7 +121,10 @@ function problems(src) {
   if (!m) out.push('page-missing');
   else {
     const blk = m[0];
-    if (!/visible: AuthStore\.isAuthenticated && AuthService\.profileResolved && AuthService\.accessBlock\.length > 0/.test(blk)) out.push('page-visible');
+    // visible must NOT depend on profileResolved: a "Try again" re-resolves the profile, and the login
+    // cover (z 100) would show through for the round trip. `checking` carries that state instead.
+    if (!/visible: AuthStore\.isAuthenticated && AuthService\.accessBlock\.length > 0\n/.test(blk)) out.push('page-visible');
+    if (!/checking: !AuthService\.profileResolved/.test(blk)) out.push('page-checking');
     const z = blk.match(/\bz: (\d+)/);
     if (!z || Number(z[1]) <= 200) out.push('page-z-above-overlays');
     if (!/reason: AuthService\.accessBlock/.test(blk)) out.push('page-reason');
@@ -114,6 +143,11 @@ function problems(src) {
   if (!/AccessState\.copy\(reason, tenantName\)/.test(page)) out.push('page-copy');
   if (!/MouseArea \{ anchors\.fill: parent \}/.test(page)) out.push('page-swallow');
   if (!/signal retryRequested\(\)/.test(page) || !/signal signOutRequested\(\)/.test(page)) out.push('page-signals');
+  const tryAgain = blockAfter(page, 'PrimaryButton {');
+  if (!/property bool checking: false/.test(page)) out.push('page-checking-property');
+  if (!/loading: root\.checking/.test(tryAgain)) out.push('page-busy-feedback');
+  if (!/enabled: !root\.checking/.test(tryAgain)) out.push('page-no-double-tap');
+  if (/checking/.test(blockAfter(page, 'GhostButton {'))) out.push('page-signout-blocked-while-checking');
 
   // 7. FirebaseService.get
   const fb = code(src.firebase);
@@ -136,7 +170,14 @@ test('S2f-3 wiring: the real sources satisfy every rule', () => {
 // ---- mutation: each deliberate break must be reported (proves the rules are not vacuous) ----
 const MUTANTS = [
   ['auth', 'accessBlock = out.reason', 'accessBlockX = out.reason', 'verify-no-block'],
-  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held)', 'AccessState.outcome(AccessState.classify(ok, 0, data), held)', 'verify-no-classify'],
+  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, 0, data), held, accessBlock)', 'verify-no-classify'],
+  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, status, data), held)', 'verify-no-classify'],
+  ['auth', 'var seq = ++_profileSeq\n        profileResolved = false\n', 'var seq = ++_profileSeq\n        profileResolved = false\n        accessBlock = ""\n', 'load-clears-block-upfront'],
+  ['auth', '        if (!AuthStore.uid) {\n            accessBlock = ""\n', '        if (!AuthStore.uid) {\n', 'load-definitive-clears'],
+  ['auth', '            if (!tenantId) {\n                accessBlock = ""\n', '            if (!tenantId) {\n', 'load-definitive-clears'],
+  ['auth', '            if (!ok || !data) {\n                onboardingNeeded = true', '            if (!ok || !data) {\n                accessBlock = ""\n                onboardingNeeded = true', 'load-usersdoc-failure-keeps-block'],
+  ['auth', 'if (!isOnline) { profileResolved = true; return; }', 'if (!isOnline) { accessBlock = ""; profileResolved = true; return; }', 'load-offline-keeps-block'],
+  ['auth', '            accessBlock = ""\n            var name = tenantName', '            var name = tenantName', 'verify-enter-no-clear'],
   ['auth', 'AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'AuthStore.role', 'verify-held-role-same-tenant-only'],
   ['auth', 'role: out.role', 'role: data.role', 'apply-not-member-role'],
   ['auth', '            // Tenant and role are applied only after the member doc has been read (S2f-3).\n            _verifyMembership(seq, tenantId, data.tenantName || "")', '            AuthStore.applyTenantContext({ tenantId: tenantId, role: data.role })\n            _verifyMembership(seq, tenantId, data.tenantName || "")', 'load-applies-context'],
@@ -146,11 +187,17 @@ const MUTANTS = [
   ['auth', '    property string accessBlock: ""', '    property string accessBlock: ""\n    function _x() { return role || "owner" }', 'role-default'],
   ['auth', '            _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)\n                return\n            }\n\n            FirebaseService.put', '            AuthStore.applyTenantContext({ role: existingUser.role })\n                return\n            }\n\n            FirebaseService.put', 'create-reverify'],
   ['main', 'z: 300', 'z: 150', 'page-z-above-overlays'],
-  ['main', 'AuthService.profileResolved && AuthService.accessBlock.length > 0', 'AuthService.accessBlock.length > 0', 'page-visible'],
+  ['main', 'visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0', 'visible: AuthStore.isAuthenticated && AuthService.profileResolved && AuthService.accessBlock.length > 0', 'page-visible'],
+  ['main', 'visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0', 'visible: AuthStore.isAuthenticated', 'page-visible'],
+  ['main', '        checking: !AuthService.profileResolved\n', '', 'page-checking'],
   ['main', 'onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })\n    }\n\n    InviteMemberDialog', 'onSignOutRequested: logic.signOutRequested()\n    }\n\n    InviteMemberDialog', 'page-signout-guard'],
   ['main', 'if (!AuthService.isOnline) {', 'if (false) {', 'page-retry-offline-toast'],
   ['page', 'textFormat: Text.PlainText\n                wrapMode: Text.Wrap\n                font.pixelSize: sp(Constants.fsH1)', 'wrapMode: Text.Wrap\n                font.pixelSize: sp(Constants.fsH1)', 'page-text-not-plain'],
   ['page', '    MouseArea { anchors.fill: parent }\n', '', 'page-swallow'],
+  ['page', '                    loading: root.checking\n', '', 'page-busy-feedback'],
+  ['page', '                    enabled: !root.checking\n', '', 'page-no-double-tap'],
+  ['page', '    property bool checking: false\n', '', 'page-checking-property'],
+  ['page', 'text: qsTr("Sign out")\n', 'text: qsTr("Sign out")\n                    enabled: !root.checking\n', 'page-signout-blocked-while-checking'],
   ['firebase', 'callback(true, _decodeDoc(data), status)', 'callback(true, _decodeDoc(data))', 'get-status'],
 ];
 for (const [file, from, to, expect] of MUTANTS) {
