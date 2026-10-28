@@ -51,15 +51,30 @@ TestCase {
         Gateway.recordDelta("inventory", "p1", { stock: 5 }, {}, {}, function(r) { calls++ }, [_mv("receipt", 5)])
         compare(calls, 0, "no server answer yet, the callback must not fire")
     }
-    function test_two_explicit_calls_coalesce_and_both_callbacks_join_the_survivor() {
+    function test_two_explicit_calls_with_equal_floors_coalesce_and_both_callbacks_join_the_survivor() {
+        var a = 0, b = 0
+        var id1 = Gateway.recordDelta("inventory", "p1", { stock: -3 }, { stock: 0 }, {}, function(r) { a++ }, [_mv("sale", -3)])
+        var id2 = Gateway.recordDelta("inventory", "p1", { stock: -2 }, { stock: 0 }, {}, function(r) { b++ }, [_mv("sale", -2)])
+        compare(id2, id1, "the second call coalesced into the first item")
+        compare(OutboxStore.pendingCount, 1)
+        compare(OutboxStore.items[0].deltas.stock, -5)
+        compare(OutboxStore.items[0].floors.stock, 0)
+        compare(OutboxStore.items[0].movements.length, 2)
+        Gateway._answerDeltaCallbacks(id1, { ok: true, after: { stock: 7 } })
+        compare(a, 1); compare(b, 1)
+    }
+    function test_explicit_calls_with_different_floors_queue_separately_and_answer_separately() {
         var a = 0, b = 0
         var id1 = Gateway.recordDelta("inventory", "p1", { stock: 10 }, {}, {}, function(r) { a++ }, [_mv("receipt", 10)])
         var id2 = Gateway.recordDelta("inventory", "p1", { stock: -3 }, { stock: 0 }, {}, function(r) { b++ }, [_mv("sale", -3)])
-        compare(id2, id1, "the second call coalesced into the first item")
-        compare(OutboxStore.pendingCount, 1)
-        compare(OutboxStore.items[0].deltas.stock, 7)
-        compare(OutboxStore.items[0].movements.length, 2)
-        Gateway._answerDeltaCallbacks(id1, { ok: true, after: { stock: 7 } })
+        verify(id2 !== id1, "a floored sale must not share an item with an unfloored restock")
+        compare(OutboxStore.pendingCount, 2)
+        compare(OutboxStore.items[0].deltas.stock, 10)
+        compare(OutboxStore.items[1].deltas.stock, -3)
+        compare(OutboxStore.items[1].floors.stock, 0)
+        Gateway._answerDeltaCallbacks(id1, { ok: true, after: { stock: 10 } })
+        compare(a, 1); compare(b, 0, "the sale callback waits for its own answer")
+        Gateway._answerDeltaCallbacks(id2, { ok: false, error: "insufficient-quantity" })
         compare(a, 1); compare(b, 1)
     }
     function test_a_floor_next_to_explicit_movements_is_allowed() {

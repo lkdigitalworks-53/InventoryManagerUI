@@ -39,3 +39,4 @@ S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; retu
 
 **Pushed:** 30cdff3 (code + Node), 95e9d4c (QML tests + design/KNOWN-ISSUES/Skill 140), then test plan/README/AGENTS/checkpoint. S9 open: read CI comment on PR #170, fix any QML test I mis-wrote (none run locally), record observed counts here and in the test plan.
 **Risk to watch in CI:** the sent-or-parked merge guard applies to derived deltas too; any legacy tst_Gateway/tst_OutboxStore case that merged after a failure would break.
+**CI round 1 on 71d1ee4:** QML failed 1 test: `Gateway_movements::test_two_explicit_calls_coalesce...` (pinned restock + floored sale merging; I missed it, grep for `tst_Gateway_movements` had not been done). Rewritten as equal-floor merge + different-floor separate-answers test. Lesson: after changing a merge rule, grep EVERY suite that calls `recordDelta`, not only the ones named after the feature.
