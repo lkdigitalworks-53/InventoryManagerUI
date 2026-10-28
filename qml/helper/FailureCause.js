@@ -55,11 +55,12 @@ function forWriteError(code, status) {
     var c = _str(code)
     if (c === "write-rejected")
         return { kind: "rejected", text: "The server refused to save this. Usually a permission change, invalid data, or a record deleted elsewhere" }
-    // HTTP 403 `no-tenant-context`: the server could not resolve this account's shop, which
-    // happens when the member was deactivated or removed, or the account has no shop. The code
-    // cannot tell which, so the text says "may" (never assert a cause the code cannot know).
+    // HTTP 403 `no-tenant-context`: the gateway refused the caller's membership. Almost always the
+    // member doc is gone (removed) or its status is not "active" (suspended); the same code also
+    // covers an invalid role, a missing users doc and an unsafe tenant id, and the client cannot tell
+    // which, so the text says "most likely" (never assert a cause the code cannot know). S2f-3.
     if (c === "no-tenant-context")
-        return { kind: "access", text: "The server no longer accepts your access to this shop. Your account may have been changed or deactivated. Ask the shop owner" }
+        return { kind: "access", text: "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it" }
     if (c === "write-unavailable")
         return { kind: "transient", text: "The server is temporarily unavailable" }
     if (c === "write-failed")

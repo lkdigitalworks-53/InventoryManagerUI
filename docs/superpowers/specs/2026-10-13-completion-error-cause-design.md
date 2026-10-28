@@ -42,5 +42,7 @@ Server fact: `classifyWriteError` keeps only the class (rejected/unavailable/fai
 
 ## Addendum 2026-10-15: Q-EC-4 (decided by Taher: option A, in this PR)
 **Problem:** an `inactive` member makes every write endpoint answer HTTP 403 `no-tenant-context`. That is "stuck, retrying", not parked, and the cause line fell through to "The server returned an error (HTTP 403)", which does not tell the person their access changed.
+**Superseded 2026-10-28 (S2f-3): the text now reads "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it" (names the two usual causes, still hedged). The decision below is kept for the record.**
+
 **Decision:** map `no-tenant-context` in `FailureCause.forWriteError` to "The server no longer accepts your access to this shop. Your account may have been changed or deactivated. Ask the shop owner" (kind `access`). Hedged with "may" because the same code also covers a missing user record or an account with no shop. Not changed: the 403 stays non-terminal (the member can be re-activated, so retrying is right). Tests: U14, U15, F06e.
 
