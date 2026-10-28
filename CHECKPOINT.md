@@ -29,10 +29,13 @@ S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; retu
 **Sweep result so far:** qmllint-style linter on PR-added lines = 0 real findings (77 JS-1 `var` = house style; 7 JS-2 are `!==` false positives; ORD-1/STY-1 only in tests, house style). Server contract re-read (movementLogic.js, gatewayLogic.js applyDelta): client helper matches.
 - [x] S1. Clone, checkout PR branch, read design + test plan + all production diffs.
 - [x] S2. Lint on changed QML. Nothing real.
-- [ ] S3. Fix F1: `OutboxStore.enqueueDelta` never merges into a parked item or one with attempts > 0 (timed-out send may already be applied; same requestId => server replays old answer => merged qty lost).
-- [ ] S4. Fix F2: explicit-movement items only coalesce when floors are equal (merge keeps the LATEST floors: a sale's floor is dropped by a later restock, or a restock is rejected together with a floored sale).
-- [ ] S5. Fix F3: `InventoryStore` movement label can never lose the stock change: invalid kind/direction degrades to the server-derived row (helper `_movementsFor`).
-- [ ] S6. Fix F4: restock refusal toast says why (`Quantity must be greater than zero`), not "try again".
-- [ ] S7. Tests: Node parity (floors), QML (StockMovements, OutboxStore_movements, InventoryStore_movementKinds, Gateway_movements). CI-only for QML.
-- [ ] S8. Docs: test plan, design (K11-K13), KNOWN-ISSUES (close parked-coalesce item, add legacy derived floors drift), Skill 140, SKILLS-INDEX regen, AGENTS/README if they mention counts.
+- [x] S3. Fix F1: `OutboxStore.enqueueDelta` never merges into a parked item or one with attempts > 0 (timed-out send may already be applied; same requestId => server replays old answer => merged qty lost).
+- [x] S4. Fix F2: explicit-movement items only coalesce when floors are equal (merge keeps the LATEST floors: a sale's floor is dropped by a later restock, or a restock is rejected together with a floored sale).
+- [x] S5. Fix F3: `InventoryStore` movement label can never lose the stock change: invalid kind/direction degrades to the server-derived row (helper `_movementsFor`).
+- [x] S6. Fix F4: restock refusal toast says why (`Quantity must be greater than zero`), not "try again".
+- [x] S7. Tests: Node parity SM-11 RUN 11/11, 8/8 mutants; QML StockMovements +5, OutboxStore_movements +9, InventoryStore_movementKinds +12 (two old merge-pinning tests rewritten). Gateway_movements untouched. QML CI-only, NOT RUN here.
+- [x] S8. Docs (done, 95e9d4c + next commit): test plan, design (K11-K13), KNOWN-ISSUES (close parked-coalesce item, add legacy derived floors drift), Skill 140, SKILLS-INDEX regen, AGENTS/README if they mention counts.
 - [ ] S9. Push, wait CI, record observed counts.
+
+**Pushed:** 30cdff3 (code + Node), 95e9d4c (QML tests + design/KNOWN-ISSUES/Skill 140), then test plan/README/AGENTS/checkpoint. S9 open: read CI comment on PR #170, fix any QML test I mis-wrote (none run locally), record observed counts here and in the test plan.
+**Risk to watch in CI:** the sent-or-parked merge guard applies to derived deltas too; any legacy tst_Gateway/tst_OutboxStore case that merged after a failure would break.
