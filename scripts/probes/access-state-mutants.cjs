@@ -47,6 +47,15 @@ const M = [
   ['role: heldRole, verified: false }', 'role: heldRole, verified: true }'],
   ['return { action: "block", reason: STATE_UNVERIFIED }\n}', 'return { action: "enter", role: "staff", verified: false }\n}'],
   ['(cls && typeof cls === "object") ? cls.state : ""', 'cls.state'],
+  // outcome: prevBlock (a failed "Try again" keeps the block that is showing)
+  ['    if (isBlockedState(prevBlock)) return { action: "block", reason: prevBlock }\n', ''],
+  ['if (isBlockedState(prevBlock)) return', 'if (prevBlock) return'],
+  ['if (isBlockedState(prevBlock)) return', 'if (prevBlock === STATE_SUSPENDED) return'],
+  ['if (isBlockedState(prevBlock)) return', 'if (prevBlock === STATE_REMOVED || prevBlock === STATE_SUSPENDED || prevBlock === STATE_ROLE) return'],
+  ['return { action: "block", reason: prevBlock }', 'return { action: "block", reason: STATE_UNVERIFIED }'],
+  ['    if (isBlockedState(prevBlock)) return { action: "block", reason: prevBlock }\n    if (isValidRole(heldRole)) return { action: "enter", role: heldRole, verified: false }',
+   '    if (isValidRole(heldRole)) return { action: "enter", role: heldRole, verified: false }\n    if (isBlockedState(prevBlock)) return { action: "block", reason: prevBlock }'],
+  ['    if (isBlockedState(prevBlock)) return { action: "block", reason: prevBlock }\n    if (isValidRole(heldRole))', '    if (isBlockedState(prevBlock) && state !== STATE_UNVERIFIED) return { action: "block", reason: prevBlock }\n    if (isValidRole(heldRole))'],
   // copy
   ['var MAX_NAME = 60', 'var MAX_NAME = 61'], ['var MAX_NAME = 60', 'var MAX_NAME = 59'],
   ['var FALLBACK_NAME = "this shop"', 'var FALLBACK_NAME = "the shop"'],

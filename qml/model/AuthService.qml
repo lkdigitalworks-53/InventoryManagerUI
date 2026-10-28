@@ -203,7 +203,7 @@ QtObject {
         FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data, status) {
             if (seq !== _profileSeq) return
             var held = AuthStore.tenantId === tenantId ? AuthStore.role : ""
-            var out = AccessState.outcome(AccessState.classify(ok, status, data), held)
+            var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)
             onboardingNeeded = false
             profileResolved = true
 
@@ -213,6 +213,7 @@ QtObject {
                 return
             }
 
+            accessBlock = ""
             var name = tenantName || (data && data.tenantName) || AuthStore.tenantName
             AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: out.role })
             // Backfill workspace name from canonical tenant doc when missing.
@@ -257,9 +258,11 @@ QtObject {
         var seq = ++_profileSeq
         profileResolved = false
         onboardingNeeded = false
-        accessBlock = ""
+        // accessBlock is NOT cleared here: a "Try again" must keep the blocked screen up while it checks.
+        // It is cleared only by a definitive answer: no uid, no tenant on the users doc, member verified.
 
         if (!AuthStore.uid) {
+            accessBlock = ""
             onboardingNeeded = true
             profileResolved = true
             onboardingRequired()
@@ -294,6 +297,7 @@ QtObject {
             var tenantId = data.tenantId || ""
 
             if (!tenantId) {
+                accessBlock = ""
                 onboardingNeeded = true
                 profileResolved = true
                 onboardingRequired()
