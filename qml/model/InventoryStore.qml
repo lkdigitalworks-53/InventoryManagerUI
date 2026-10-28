@@ -7,6 +7,7 @@ import "../helper/ImportMath.js" as ImportMath
 import "../helper/DocLimits.js" as DocLimits
 import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
 import "../helper/PhotoQueueLogic.js" as PQL
+import "../helper/StockMovements.js" as StockMovements
 
 QtObject {
     id: root
@@ -1212,6 +1213,14 @@ QtObject {
             if (arr[i].productId === productId) { current = arr[i]; break; }
         }
         if (!current) { if (callback) callback(false); return }
+        // P1 S2d: the receipt row needs a positive finite qty. Refuse BEFORE the supplier
+        // auto-promote and the batch write: the batch is fired in parallel with the delta
+        // below, so a delta refused later would leave a batch without its stock.
+        if (typeof addedQty !== "number" || !isFinite(addedQty) || addedQty <= 0) {
+            console.warn("[InventoryStore] restock: bad quantity", amount)
+            if (callback) callback(false)
+            return
+        }
         // D2: refuse before the supplier auto-promote and the batch write, so nothing drifts.
         // callback(false, false, message): callers show `message` instead of "try again".
         if (hasParkedWrite(productId)) { if (callback) callback(false, false, parkedWriteMessage); return }
@@ -1278,7 +1287,7 @@ QtObject {
                 TransactionStore.recordPurchase(productId, addedQty, batchCost, current.name, supplierId, reasonText, current.category);
 
                 if (callback) callback(true, supplierFailed)
-            })
+            }, [StockMovements.make("receipt", addedQty, reasonText)])   // P1 S2d: typed ledger row
         })
     }
 
@@ -1306,7 +1315,12 @@ QtObject {
     // shortfall" business rule, which must keep succeeding the way it
     // always has — same atomicity/race-safety either way, only the
     // floor-crossing behavior differs.
-    function deductStock(productId, qty, callback, clampInsteadOfReject) {
+    //
+    // `kind` + `reason` (P1 S2d, optional): the ledger kind of this deduction (e.g. "sale").
+    // Ignored in clamp mode: the server cannot match an explicit row to a clamped quantity
+    // (it would reject with movement-qty-mismatch and the deduction would be lost), so a
+    // clamped deduction keeps the server-derived row (S2d-2 decides how to type it).
+    function deductStock(productId, qty, callback, clampInsteadOfReject, kind, reason) {
         var arr = _clone();
         var exists = false;
         for (var i = 0; i < arr.length; ++i) {
@@ -1319,6 +1333,8 @@ QtObject {
         }
         var floors = clampInsteadOfReject ? {} : { stock: 0 }
         var clamps = clampInsteadOfReject ? { stock: 0 } : {}
+        var movements = (kind && !clampInsteadOfReject && qty > 0 && isFinite(qty))
+                ? [StockMovements.make(kind, -qty, reason)] : undefined
         Gateway.recordDelta("inventory", productId, { stock: -qty }, floors, clamps, function(result) {
             if (result && result.ok && result.after && result.after.stock !== undefined) {
                 var arr2 = _clone()
@@ -1331,14 +1347,16 @@ QtObject {
                 products = arr2
             }
             if (callback) callback(result)
-        })
+        }, movements)
     }
 
     // Increment product.stock WITHOUT creating a batch or purchase event. Used by
     // the returns flow, where StockBatchStore.restoreFifo has ALREADY credited the
     // batch ledger — this just keeps product.stock in lockstep. (Distinct from
     // restock(), which is a supplier receipt that DOES create a batch.)
-    function creditStockNoBatch(productId, qty) {
+    // `kind` + `reason` (P1 S2d, optional): ledger kind of this credit, "sales_return" for
+    // every current caller (customer return, reopened order, rollback of a failed edit).
+    function creditStockNoBatch(productId, qty, kind, reason) {
         if (!qty || qty <= 0) return
         var arr = _clone()
         var exists = false
@@ -1368,7 +1386,7 @@ QtObject {
                 if (arr2[j].productId === productId) { arr2[j].stock = result.after.stock; break }
             }
             products = arr2
-        })
+        }, (kind && isFinite(qty)) ? [StockMovements.make(kind, qty, reason)] : undefined)
     }
 
     // Replace product.stock with a server-confirmed value, WITHOUT sending
