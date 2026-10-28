@@ -248,7 +248,8 @@ QtObject {
     // taken from the LATEST call (they're a property of the call site, not
     // something that accumulates). Optional `movements` (P1 S2d, inventory
     // stock only) are explicit ledger kinds: see StockMovements.canCoalesce
-    // for when two such calls may share one item.
+    // for when two such calls may share one item. Only a queued item that was never
+    // sent and is not parked is a merge target (see the guard in the loop).
     function enqueueDelta(call) {
         var nowMs = Date.now()
         var arr = items.slice()
@@ -259,6 +260,13 @@ QtObject {
             if (candidate.entity !== call.entity || candidate.entityId !== call.entityId) continue
             var key = _keyFor(call.entity, call.entityId)
             if (_inFlightKeys[key] === candidate.requestId) continue
+            // Never merge into an item that was already sent or was rejected. A parked item
+            // (rejected, waits for the user) would drag the new change down with it. An item
+            // with attempts > 0 left the device at least once and the reply may have been lost
+            // AFTER the server applied it: a retry carries the same requestId, the server
+            // answers with the old result (idempotent replay), and a quantity merged in since
+            // would be silently dropped. The new call queues as its own item instead.
+            if (StuckWrites.isParkedItem(candidate) || (candidate.attempts || 0) > 0) continue
             // P1 S2d: the server needs sum(movements.qty) == the delta it applies, so a call
             // with explicit stock movements only joins another explicit one (movements
             // concatenate); mixed or clamped or over-cap calls queue as their own item.

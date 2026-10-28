@@ -1201,6 +1201,27 @@ QtObject {
         }
     }
 
+    // Shown when a restock quantity is not a positive number (callback's 3rd argument, so the
+    // dialog and the dispatcher show it instead of "try again": retrying cannot help).
+    readonly property string restockQtyRefusal: "Quantity must be greater than zero"
+
+    // P1 S2d: the ledger LABEL may degrade, the stock change may not. Builds the one-row
+    // `movements` for a stock delta of `signedQty`, or undefined (the server then derives an
+    // `adjustment` row) when there is no kind or the pair is not acceptable: unknown kind, wrong
+    // direction for the kind, zero or non-finite qty. Needed because Gateway.recordDelta refuses a
+    // bad `movements` BEFORE queueing (the server's rejection would be terminal), so passing a bad
+    // label through would drop the stock change itself, silently for the fire-and-forget credit.
+    function _movementsFor(kind, signedQty, reason) {
+        if (!kind) return undefined
+        var movements = [StockMovements.make(kind, signedQty, reason)]
+        var error = StockMovements.validate("inventory", { stock: signedQty }, {}, movements)
+        if (error !== "") {
+            console.warn("[InventoryStore] movement label dropped, stock change kept:", kind, signedQty, error)
+            return undefined
+        }
+        return movements
+    }
+
     // `party` may be a supplierId, an existing supplier name, or a brand-new
     // name we'll auto-promote. `unitCost` is cost-per-unit at receipt time
     // and defaults to the product's cost field (`changed.price`) when the
@@ -1218,7 +1239,7 @@ QtObject {
         // below, so a delta refused later would leave a batch without its stock.
         if (typeof addedQty !== "number" || !isFinite(addedQty) || addedQty <= 0) {
             console.warn("[InventoryStore] restock: bad quantity", amount)
-            if (callback) callback(false)
+            if (callback) callback(false, false, restockQtyRefusal)
             return
         }
         // D2: refuse before the supplier auto-promote and the batch write, so nothing drifts.
@@ -1333,8 +1354,7 @@ QtObject {
         }
         var floors = clampInsteadOfReject ? {} : { stock: 0 }
         var clamps = clampInsteadOfReject ? { stock: 0 } : {}
-        var movements = (kind && !clampInsteadOfReject && qty > 0 && isFinite(qty))
-                ? [StockMovements.make(kind, -qty, reason)] : undefined
+        var movements = clampInsteadOfReject ? undefined : _movementsFor(kind, -qty, reason)
         Gateway.recordDelta("inventory", productId, { stock: -qty }, floors, clamps, function(result) {
             if (result && result.ok && result.after && result.after.stock !== undefined) {
                 var arr2 = _clone()
@@ -1386,7 +1406,7 @@ QtObject {
                 if (arr2[j].productId === productId) { arr2[j].stock = result.after.stock; break }
             }
             products = arr2
-        }, (kind && isFinite(qty)) ? [StockMovements.make(kind, qty, reason)] : undefined)
+        }, _movementsFor(kind, qty, reason))
     }
 
     // Replace product.stock with a server-confirmed value, WITHOUT sending

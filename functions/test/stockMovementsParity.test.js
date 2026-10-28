@@ -125,6 +125,31 @@ test('SM-7 canCoalesce: derived+derived keeps the old rule; explicit mixed with 
   assert.equal(H.canCoalesce(ex(1), ex(1, { stock: 0 })), false);
 });
 
+test('SM-11 canCoalesce: explicit items need EQUAL floors (a merged item keeps one floor map); derived keeps the old rule', () => {
+  const ex = (floors, n, clamps) => ({ movements: new Array(n || 1).fill({ kind: 'adjustment', qty: 1 }), floors, clamps: clamps || {} });
+  // equal: same keys and values, absent counts as empty
+  assert.equal(H.canCoalesce(ex({}), ex({})), true);
+  assert.equal(H.canCoalesce(ex(undefined), ex({})), true);
+  assert.equal(H.canCoalesce(ex(null), ex(undefined)), true);
+  assert.equal(H.canCoalesce(ex({ stock: 0 }), ex({ stock: 0 })), true);
+  // a non-object floors value is treated as empty, never throws
+  assert.equal(H.canCoalesce(ex('x'), ex({})), true);
+  assert.equal(H.canCoalesce(ex(5), ex(undefined)), true);
+  // different: a floored sale never merges with an unfloored restock, either order
+  assert.equal(H.canCoalesce(ex({ stock: 0 }), ex({})), false);
+  assert.equal(H.canCoalesce(ex({}), ex({ stock: 0 })), false);
+  assert.equal(H.canCoalesce(ex({ stock: 0 }), ex({ stock: 1 })), false);
+  assert.equal(H.canCoalesce(ex({ stock: 0 }), ex({ qty: 0 })), false);
+  assert.equal(H.canCoalesce(ex({ stock: 0, qty: 0 }), ex({ stock: 0 })), false);
+  assert.equal(H.canCoalesce(ex({ stock: undefined }), ex({ qty: undefined })), false); // same count, key absent on one side
+  // the other rules still apply with equal floors
+  assert.equal(H.canCoalesce(ex({ stock: 0 }, 1, { stock: 0 }), ex({ stock: 0 })), false);
+  assert.equal(H.canCoalesce(ex({ stock: 0 }, 25), ex({ stock: 0 }, 26)), false);
+  assert.equal(H.canCoalesce(ex({ stock: 0 }, 25), ex({ stock: 0 }, 25)), true);
+  // derived + derived: floors never mattered here, rule unchanged (legacy behaviour pinned elsewhere)
+  assert.equal(H.canCoalesce({ floors: { stock: 0 } }, { floors: {} }), true);
+});
+
 test('SM-8 mergeMovements: call order, no mutation of either input, tolerates an empty side', () => {
   const a = [{ kind: 'receipt', qty: 10 }];
   const b = [{ kind: 'sale', qty: -3 }];

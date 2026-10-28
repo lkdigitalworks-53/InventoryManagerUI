@@ -34,6 +34,18 @@ function _hasKeys(obj) {
     return false
 }
 
+// Same floor map on both sides ({} and undefined count as equal). Compared by key and value.
+function _sameFloors(a, b) {
+    var fa = (a && typeof a === "object") ? a : {}
+    var fb = (b && typeof b === "object") ? b : {}
+    var ka = Object.keys(fa)
+    if (ka.length !== Object.keys(fb).length) return false
+    for (var i = 0; i < ka.length; ++i) {
+        if (!Object.prototype.hasOwnProperty.call(fb, ka[i]) || fa[ka[i]] !== fb[ka[i]]) return false
+    }
+    return true
+}
+
 // True for a non-empty movements array (the only shape that means "explicit movements").
 function hasMovements(movements) {
     return Array.isArray(movements) && movements.length > 0
@@ -84,15 +96,19 @@ function validate(entity, deltas, clamps, movements) {
 //   - neither side explicit: the old rule (sum the deltas), unchanged for stock_batch and the
 //     clamped imported-order deduction;
 //   - one side explicit, the other derived: NO (merging would leave part of the delta unexplained);
-//   - both explicit: yes, movements concatenate, unless a clamp is present or the total would pass
-//     the server's per-request cap (then a second item is queued instead).
-// `a` and `b` are outbox items / calls: { movements?, clamps? }.
+//   - both explicit: yes, movements concatenate, unless a clamp is present, the floors differ, or
+//     the total would pass the server's per-request cap (then a second item is queued instead).
+//     Floors must match because a merged item keeps ONE floor map: a sale's `stock >= 0` floor
+//     would be dropped by a later restock (stock could go negative), or a restock would be rejected
+//     together with a floored sale it never depended on (batch written, stock not raised).
+// `a` and `b` are outbox items / calls: { movements?, clamps?, floors? }.
 function canCoalesce(a, b) {
     var aExplicit = hasMovements(a && a.movements)
     var bExplicit = hasMovements(b && b.movements)
     if (!aExplicit && !bExplicit) return true
     if (aExplicit !== bExplicit) return false
     if (_hasKeys(a.clamps) || _hasKeys(b.clamps)) return false
+    if (!_sameFloors(a.floors, b.floors)) return false
     return a.movements.length + b.movements.length <= MAX_MOVEMENTS
 }
 
