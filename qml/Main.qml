@@ -739,6 +739,27 @@ App {
         onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })
     }
 
+    // Replaces the app for a signed-in user whose own member doc says removed / suspended / invalid
+    // role, or could not be read (S2f-3). z 300: above the z 200 full-screen overlays. Popups (dialogs,
+    // sheets) still draw above it, which is what the sign-out sheet needs.
+    AccessBlockedPage {
+        id: accessBlockedPage
+        anchors.fill: parent
+        visible: AuthStore.isAuthenticated && AuthService.profileResolved && AuthService.accessBlock.length > 0
+        z: 300
+        reason: AuthService.accessBlock
+        tenantName: AuthService.accessTenantName
+        userEmail: AuthStore.email
+        onRetryRequested: {
+            if (!AuthService.isOnline) {
+                Toast.show(qsTr("You are offline. Connect to the internet and try again"))
+                return
+            }
+            AuthService.recheckAccess()
+        }
+        onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })
+    }
+
     InviteMemberDialog {
         id: inviteMemberDlg
         onMemberInviteRequested: function(uid, email, displayName, role) {
