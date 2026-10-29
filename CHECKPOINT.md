@@ -33,7 +33,7 @@
 - [x] S3. Scripts: `deploy-check.sh`, `deploy-tag.sh`, `verify-deploy-gate.js`, `deploy-paths.js` NUL split + header fix.
 - [x] S4. Workflow: use scripts, split `mark-deployed`, permissions, timeout, SHA pin, gate + stale steps.
 - [x] S5. Tests: executed shell tests (temp git repos), gate unit tests, wiring rules + mutants, DP updates. Run all in sandbox.
-- [ ] S6. Docs: design (setup order, WIF condition, IAM), test plan (counts, new real-run checks), README, AGENTS, SKILLS Skill 141 + index regen.
+- [x] S6. Docs: design (setup order, WIF condition, IAM), test plan (counts, new real-run checks), README, AGENTS, SKILLS Skill 141 + index regen.
 - [ ] S7. Push, read CI comment on PR #173, record observed counts here.
 
 ## Progress log
@@ -41,3 +41,6 @@
 - Verified in sandbox: `npm ci --ignore-scripts` in `functions/` is safe (only `protobufjs` postinstall, a version-compat note); `index.js` loads; functions tests 877/877.
 - LESSON: first draft of DT14 failed on a TEST helper bug (tag reset without `-f`), not on product code.
 - NEXT: S6 docs (design: setup ORDER + WIF condition + IAM; test plan; README; AGENTS; Skill 141 + `node .github/scripts/skills-index.js` regen), then S7 push + CI.
+- S6 DONE: design doc (ordered setup, WIF condition w/ immutable ids + Environment sub + ref, runtime-SA-only actAs, 10-row sweep table, accepted risks), test plan (DP 18, DC 16, DT 15, VG 10, wiring 44; real-run R0, N6-N10, E5-E6), README, AGENTS row, Skill 141 rules 9-13 (index check OK), KNOWN-ISSUES (5 accepted items).
+- Coverage (node --experimental-test-coverage): deploy-paths.js + verify-deploy-gate.js 100% line/branch/func. Shell scripts: enumerated branches + 14/14 mutants killed.
+- NEXT: S7 push, PR #173 body refresh (counts 219 -> 274, sweep summary), poll CI, record OBSERVED counts here.

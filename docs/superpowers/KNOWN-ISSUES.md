@@ -762,3 +762,11 @@ A clamped deduction cannot carry explicit movements (server 409 on a clamped qua
 ## BottomSheet footer: the secondary button ellipsizes first on narrow phones and at Large font (open, Q-FW-1, 2026-10-28)
 Since PR #167's footer fix the primary button keeps its full label (`SheetFooter.primaryFloor`) and the secondary button gives way. When both labels cannot fit side by side (somewhere between about 340 and 370 dp wide, the real glyph widths were estimated not measured; or Large system font; H2 in the footer test plan records the real number) the secondary label ends in "..." (sign-out sheet: "Sign out and disc..."). Nothing is lost: the title and the consequence lines already say that the work is discarded. Fix if a 340 dp phone matters: stack the two buttons vertically when their label widths do not fit (primary on top); needs a `GridLayout` footer and a second `TextMetrics`. Not done: it changes the footer pattern, which the bug report did not ask for.
 Related, same cause class: `PrimaryButton` draws its busy spinner at the left edge over the centred label, so a busy primary that sits exactly at its floor (long primary label next to a long secondary) has no room for it. No shipped sheet pairs the two today.
+
+## CI deploy-on-merge (PR #173 sweep, 2026-10-29): accepted, not fixed
+- `firebase-tools@15.25.1` is fetched by `npx` at deploy time: pinned by version, no lockfile integrity. Moving it into a lockfile would turn every CLI bump into a functions-dependency change.
+- Tag `deployed-main` is movable by anyone with write access. The forward-only move and the stale guard protect against our own runs only.
+- No `dependabot.yml` for `github-actions`: the SHA-pinned `google-github-actions/auth` (`v2.1.13`) is bumped by hand.
+- `main` has no branch protection (API check 2026-10-29). The approval gate protects the deploy, not the merge.
+- The root `firestore-rules-tests` job still runs an unpinned `npm install -g firebase-tools` (pre-existing, not in this PR).
+
