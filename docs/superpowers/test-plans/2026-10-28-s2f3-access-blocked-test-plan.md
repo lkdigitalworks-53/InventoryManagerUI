@@ -31,6 +31,9 @@ One test that the real sources satisfy ~45 source rules, 30 mutation tests that 
 - `FirebaseService.get` passes the HTTP status on success and failure.
 - Parity: `VALID_ROLES` in the helper = gateway = rules `roleIsValid`; `active` is the only status in the helper, the rules and the gateway; CMake globs `qml/*.qml` (no file list to edit).
 
+## 2b. Behaviour (Node, CI "script tests": `.github/scripts/__tests__/accessBlockBehavior.test.js`, 47 tests)
+Runs the REAL text of `_loadUserProfile`, `_verifyMembership`, `recheckAccess`, `signOut`, `_ensureTenantName` and `loadTenantMembers` from `AuthService.qml` in a vm sandbox (bare names resolved through a Proxy, like QML resolves them against the root object) with stubs for `FirebaseService` / `AuthStore` and the real `AccessState.js`. 28 scenarios: role from the member doc only (users doc says owner), nothing applied before the member doc is read, removed / suspended / inactive / status-less / invalid or missing role / 403 / 500 / unreadable, held role reused only for the same tenant, B1 (retry keeps the screen, definitive ok clears it), B2 (failed retry keeps the block), conclusive retry replaces the block, offline retry asks nothing and does not invalidate a check in flight, stale answers dropped (two loads; sign-out in flight), sign-out clears block + shop name + roster, users doc without tenant / unreadable while blocked / no uid / offline, member path is the own doc, shop-name precedence + lookup, late shop-name answer after sign-out or tenant switch, late roster of the old tenant, roster with no tenant. Plus a seeded monkey (300 sequences x 25 random events, invariants: announced only with a valid role and never while blocked, applied roles valid, sign-out leaves nothing, block is one of four reasons), 14 mutants of `AuthService.qml` each caught (and a control that the unmutated source passes), two caller pins (only `_verifyMembership`, `_ensureTenantName`, `createTenantForCurrentUser` call `applyTenantContext`; `setTenantContext` is gone) and one pin for the Back-key guard in `Main.qml`. Not covered here (device only): bindings, what is drawn, z-order, the login cover timing.
+
 ## 3. Rules (CI, emulator): `test/firestore.rules.test.js`, 2 new test definitions
 A removed member (no member doc) reads its own member path and gets "does not exist", not a permission error, and still cannot read anyone else's doc or the tenant doc. A suspended member of each role reads its own doc with `status` and `role` intact. (These are the two answers the app tells apart: 404 vs 403.)
 
@@ -38,10 +41,10 @@ A removed member (no member doc) reads its own member path and gets "does not ex
 No server code changed, so no new handler tests. QML E2E runs one app session per process (singletons), so a second actor cannot be driven there; the cross-actor cases (X6 suspend, X7 remove while signed in) belong to the multi-role matrix.
 
 ## 5. Regression
-Owner login and first sign-up unchanged in the happy path (device R1, R2). `FirebaseService.get` callers ignore the new third argument. Existing script tests (205 incl. these) pass locally. QML suites run only in CI.
+Owner login and first sign-up unchanged in the happy path (device R1, R2). `FirebaseService.get` callers ignore the new third argument. Existing script tests (252 incl. these) pass locally. QML suites run only in CI.
 
 ## 6. Verification status
-Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (205/205), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
+Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (252/252, of which 47 behaviour tests, 34 wiring), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
 
 ## On-device test plan
 ### Prerequisites
@@ -87,6 +90,8 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | E5 | App open and working, owner doc suspended in the console, then airplane mode on and off | The blocked screen appears after reconnect. **Record** how long it took |
 | E6 | On a blocked screen restore `active` in the console and do NOT tap anything | The screen stays until **Try again** or the next reconnect |
 | E7 | Users doc has `role: "staff"` but the member doc says `owner` (edit users doc), reopen | The app opens with OWNER rights (the member doc wins) |
+| E8 | Owner of shop A, Team Members screen open once. Sign out, sign in as a member of shop B straight away (fast network, then again with the network throttled) | The Team Members screen and the header show ONLY shop B (name and roster); never a name or email from shop A, not even for a moment after B's data loads |
+| E9 | Android Back on the blocked screen while the app behind was on the Orders tab, or with the profile page open | First Back: toast "Press back again to exit" (no tab change, no page closing out of sight). Second Back leaves the app. A sign-out sheet that is open closes first |
 
 ### Multi-scenario / monkey (manual)
 Cycle active -> suspended -> removed -> invalid role -> active, force-stopping between each, 10 rounds: the screen always matches the doc, never the previous one. Tap Try again rapidly 10 times on a suspended member, toggling airplane mode in between: no crash, never the login screen, never the app, ends on the suspended screen.

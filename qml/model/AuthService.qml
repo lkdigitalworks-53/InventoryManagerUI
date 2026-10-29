@@ -237,8 +237,12 @@ QtObject {
             return
         }
 
+        var tid = AuthStore.tenantId
         membersBusy = true
-        FirebaseService.get("tenants/" + AuthStore.tenantId + "/members", function(ok, data) {
+        FirebaseService.get("tenants/" + tid + "/members", function(ok, data) {
+            // A roster that arrives after sign-out or a tenant change must not replace the current one
+            // (names and emails of another shop). The newer load, or signOut, resets membersBusy.
+            if (AuthStore.tenantId !== tid) return
             membersBusy = false
             if (!ok) {
                 memberOperationFailed("Failed to load tenant members")
@@ -313,6 +317,8 @@ QtObject {
         if (!tenantId) return
         FirebaseService.get("tenants/" + tenantId, function(ok, data) {
             if (!ok || !data) return
+            // A late answer must not write into a session that moved on (signed out, or another tenant).
+            if (AuthStore.tenantId !== tenantId) return
             var name = data.name || data.tenantName || ""
             if (name && name.length > 0) {
                 AuthStore.applyTenantContext({
@@ -457,18 +463,6 @@ QtObject {
         var thresholdSec = 5 * 60
         if (AuthStore.expiresAtEpochSec <= (_nowEpochSec() + thresholdSec))
             refreshIdToken()
-    }
-
-    function setTenantContext(tenantId, tenantName, role) {
-        AuthStore.applyTenantContext({
-            tenantId: tenantId,
-            tenantName: tenantName,
-            role: role
-        })
-        onboardingNeeded = false
-        profileResolved = true
-        loadTenantMembers()
-        tenantContextReady(AuthStore.tenantId, AuthStore.role)
     }
 
     function createTenantForCurrentUser(tenantName) {
@@ -863,6 +857,8 @@ QtObject {
         onboardingNeeded = false
         accessBlock = ""
         accessTenantName = ""
+        tenantMembers = []
+        membersBusy = false
         AuthStore.clear()
         AuthStore.saveSession()
         // Clear activity log to prevent cross-tenant data leakage. The log is
@@ -894,7 +890,7 @@ QtObject {
         var uid = AuthStore.uid
 
         // Clear the tenant pointer on the user's OWN doc FIRST. Removing only
-        // the member doc isn't enough: _loadUserProfile reads tenantId/role
+        // the member doc isn't enough: _loadUserProfile reads the tenantId
         // from users/{uid} on the next login and would walk straight back into
         // the (now membership-less) workspace — showing no data. We read-modify
         // -write so other fields (and other-tenant ownership) are preserved.
