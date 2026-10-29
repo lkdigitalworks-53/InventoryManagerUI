@@ -59,6 +59,7 @@ function problems(src) {
   const auth = code(src.auth);
   const load = bodyOf(auth, '_loadUserProfile');
   const verify = bodyOf(auth, '_verifyMembership');
+  const apply = bodyOf(auth, '_applyAccess');
   const recheck = bodyOf(auth, 'recheckAccess');
   const signOut = bodyOf(auth, 'signOut');
 
@@ -70,20 +71,23 @@ function problems(src) {
   if (/\|\|\s*"(owner|staff|admin|manager)"/.test(auth)) out.push('role-default');
   if (/_loadMembership/.test(auth)) out.push('old-loadMembership');
   if (!/FirebaseService\.get\("tenants\/" \+ tenantId \+ "\/members\/" \+ AuthStore\.uid,/.test(verify)) out.push('verify-reads-own-member-doc');
-  if (!/AccessState\.outcome\(AccessState\.classify\(ok, status, data\), held, accessBlock\)/.test(verify)) out.push('verify-no-classify');
-  if (!/AuthStore\.tenantId === tenantId \? AuthStore\.role : ""/.test(verify)) out.push('verify-held-role-same-tenant-only');
+  if (!/_applyAccess\(tenantId, tenantName, ok, data, status\)/.test(verify)) out.push('verify-no-apply-access');
+  if (!/AccessState\.outcome\(AccessState\.classify\(ok, status, data\), held, accessBlock\)/.test(apply)) out.push('apply-no-classify');
+  if (!/AuthStore\.tenantId === tenantId \? AuthStore\.role : ""/.test(apply)) out.push('apply-held-role-same-tenant-only');
+  if (!/tenantId && AuthStore\.tenantId === tenantId/.test(apply)) out.push('apply-held-role-needs-tenant');
 
   // 2. order: block returns before applyTenantContext, ready only after it
-  const iBlock = verify.indexOf('accessBlock = out.reason');
-  const iRet = verify.indexOf('return', iBlock);
-  const iApply = verify.indexOf('AuthStore.applyTenantContext');
-  const iReady = verify.indexOf('tenantContextReady(');
-  if (iBlock < 0) out.push('verify-no-block');
+  const iBlock = apply.indexOf('accessBlock = out.reason');
+  const iRet = apply.indexOf('return', iBlock);
+  const iApply = apply.indexOf('AuthStore.applyTenantContext');
+  const iReady = apply.indexOf('tenantContextReady(');
+  if (iBlock < 0) out.push('apply-no-block');
   if (!(iBlock >= 0 && iRet > iBlock && iApply > iRet)) out.push('block-not-before-apply');
   if (!(iReady > iApply && iApply > 0)) out.push('ready-not-after-apply');
-  if (!/role: out\.role/.test(verify)) out.push('apply-not-member-role');
-  if ((verify.match(/applyTenantContext\(/g) || []).length !== 1) out.push('apply-count');
-  if ((verify.match(/tenantContextReady\(/g) || []).length !== 1) out.push('ready-count');
+  if (!/role: out\.role/.test(apply)) out.push('apply-not-member-role');
+  if ((apply.match(/applyTenantContext\(/g) || []).length !== 1) out.push('apply-count');
+  if ((apply.match(/tenantContextReady\(/g) || []).length !== 1) out.push('ready-count');
+  if (/applyTenantContext|tenantContextReady/.test(verify)) out.push('verify-applies-context');
 
   // 3. races
   if (!/var seq = \+\+_profileSeq/.test(load)) out.push('load-no-seq');
@@ -102,8 +106,18 @@ function problems(src) {
   if (!/accessBlock = ""/.test(blockAfter(load, 'if (!tenantId)'))) out.push('load-definitive-clears');
   if (/accessBlock/.test(blockAfter(load, 'if (!ok || !data)'))) out.push('load-usersdoc-failure-keeps-block');
   if (/accessBlock/.test(blockAfter(load, 'if (!isOnline)'))) out.push('load-offline-keeps-block');
-  const iClearOk = verify.indexOf('accessBlock = ""', iRet);
-  if (!(iClearOk > iRet && iClearOk < iApply)) out.push('verify-enter-no-clear');
+  const iClearOk = apply.indexOf('accessBlock = ""', iRet);
+  if (!(iClearOk > iRet && iClearOk < iApply)) out.push('apply-enter-no-clear');
+
+  // 3c. a users doc that could not be READ is not "no workspace": only a 404 goes to onboarding, anything else
+  // takes the same access decision as an unreadable member doc; and create-workspace never writes after one
+  if (!/function\(ok, data, status\)/.test(load) || !/if \(!ok && status === 404\)/.test(load)) out.push('load-usersdoc-404-only');
+  if (!/_applyAccess\(AuthStore\.tenantId, AuthStore\.tenantName, false, null, status\)/.test(load)) out.push('load-usersdoc-unreadable-decides');
+  if ((load.match(/onboardingRequired\(\)/g) || []).length !== 3) out.push('load-onboarding-sites');
+  const createFn = bodyOf(auth, 'createTenantForCurrentUser');
+  const iGuard = createFn.indexOf('if (!okExisting && statusExisting !== 404)');
+  const iPut = createFn.indexOf('FirebaseService.put(');
+  if (!(iGuard >= 0 && iGuard < iPut)) out.push('create-unreadable-guard');
 
   // 4. retry
   const iOff = recheck.indexOf('if (!isOnline) return');
@@ -169,23 +183,28 @@ test('S2f-3 wiring: the real sources satisfy every rule', () => {
 
 // ---- mutation: each deliberate break must be reported (proves the rules are not vacuous) ----
 const MUTANTS = [
-  ['auth', 'accessBlock = out.reason', 'accessBlockX = out.reason', 'verify-no-block'],
-  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, 0, data), held, accessBlock)', 'verify-no-classify'],
-  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, status, data), held)', 'verify-no-classify'],
+  ['auth', 'accessBlock = out.reason', 'accessBlockX = out.reason', 'apply-no-block'],
+  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, 0, data), held, accessBlock)', 'apply-no-classify'],
+  ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, status, data), held)', 'apply-no-classify'],
   ['auth', 'var seq = ++_profileSeq\n        profileResolved = false\n', 'var seq = ++_profileSeq\n        profileResolved = false\n        accessBlock = ""\n', 'load-clears-block-upfront'],
   ['auth', '        if (!AuthStore.uid) {\n            accessBlock = ""\n', '        if (!AuthStore.uid) {\n', 'load-definitive-clears'],
   ['auth', '            if (!tenantId) {\n                accessBlock = ""\n', '            if (!tenantId) {\n', 'load-definitive-clears'],
-  ['auth', '            if (!ok || !data) {\n                onboardingNeeded = true', '            if (!ok || !data) {\n                accessBlock = ""\n                onboardingNeeded = true', 'load-usersdoc-failure-keeps-block'],
+  ['auth', '            if (!ok || !data) {\n                if (!ok && status === 404) {', '            if (!ok || !data) {\n                accessBlock = ""\n                if (!ok && status === 404) {', 'load-usersdoc-failure-keeps-block'],
   ['auth', 'if (!isOnline) { profileResolved = true; return; }', 'if (!isOnline) { accessBlock = ""; profileResolved = true; return; }', 'load-offline-keeps-block'],
-  ['auth', '            accessBlock = ""\n            var name = tenantName', '            var name = tenantName', 'verify-enter-no-clear'],
-  ['auth', 'AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'AuthStore.role', 'verify-held-role-same-tenant-only'],
+  ['auth', '        accessBlock = ""\n        var name = tenantName', '        var name = tenantName', 'apply-enter-no-clear'],
+  ['auth', 'AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'AuthStore.role', 'apply-held-role-same-tenant-only'],
   ['auth', 'role: out.role', 'role: data.role', 'apply-not-member-role'],
   ['auth', '            // Tenant and role are applied only after the member doc has been read (S2f-3).\n            _verifyMembership(seq, tenantId, data.tenantName || "")', '            AuthStore.applyTenantContext({ tenantId: tenantId, role: data.role })\n            _verifyMembership(seq, tenantId, data.tenantName || "")', 'load-applies-context'],
   ['auth', 'var seq = ++_profileSeq', 'var seq = _profileSeq', 'load-no-seq'],
   ['auth', '        _profileSeq++\n        profileResolved = true', '        profileResolved = true', 'signout-no-seq'],
   ['auth', 'if (!isOnline) return\n        _loadUserProfile()', '_loadUserProfile()\n        if (!isOnline) return', 'recheck-offline-guard'],
   ['auth', '    property string accessBlock: ""', '    property string accessBlock: ""\n    function _x() { return role || "owner" }', 'role-default'],
-  ['auth', '            _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)\n                return\n            }\n\n            FirebaseService.put', '            AuthStore.applyTenantContext({ role: existingUser.role })\n                return\n            }\n\n            FirebaseService.put', 'create-reverify'],
+  ['auth', '_loadUserProfile()   // the member doc decides the role, never a default (S2f-3)', 'AuthStore.applyTenantContext({ role: existingUser.role })', 'create-reverify'],
+  ['auth', 'tenantId && AuthStore.tenantId === tenantId', 'AuthStore.tenantId === tenantId', 'apply-held-role-needs-tenant'],
+  ['auth', '            _applyAccess(tenantId, tenantName, ok, data, status)', '            void 0', 'verify-no-apply-access'],
+  ['auth', 'if (!ok && status === 404) {', 'if (!ok) {', 'load-usersdoc-404-only'],
+  ['auth', '_applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)', 'onboardingRequired()', 'load-usersdoc-unreadable-decides'],
+  ['auth', 'if (!okExisting && statusExisting !== 404) {', 'if (false) {', 'create-unreadable-guard'],
   ['main', 'z: 300', 'z: 150', 'page-z-above-overlays'],
   ['main', 'visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0', 'visible: AuthStore.isAuthenticated && AuthService.profileResolved && AuthService.accessBlock.length > 0', 'page-visible'],
   ['main', 'visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0', 'visible: AuthStore.isAuthenticated', 'page-visible'],

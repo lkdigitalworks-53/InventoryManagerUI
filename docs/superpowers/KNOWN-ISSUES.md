@@ -5,12 +5,6 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
-## Login: a failed users-doc read shows "Create your workspace" to a signed-in user — FOUND 2026-10-28 (S2f-3), NOT FIXED
-
-**Where:** `AuthService._loadUserProfile`: `if (!ok || !data) { onboardingNeeded = true ... }`. Any failure reading `users/{uid}` (timeout, 5xx, 401) is treated as "new user", including on a reconnect re-run for a user who is already working.
-**Why not fixed in S2f-3:** same class as the "unverified" state the slice added for the member doc, but it changes onboarding behaviour (404 = new user, other failures = keep the verified session or show the retry screen) and needs its own tests and device plan. `FirebaseService.get` now passes the status, so the fix is small: 404 -> onboarding, anything else -> `AccessState` "unverified" path.
-**Narrowed 2026-10-28 (S2f-3 review pass, D10):** a user already on the access-blocked screen who taps Try again keeps the block when the users doc cannot be read (it no longer drops into onboarding). Every other user still does.
-
 ## Access-blocked screen: a failed "Try again" says nothing — FOUND 2026-10-28 (S2f-3 review pass), NOT FIXED
 
 **Where:** `AuthService._verifyMembership` / `AccessState.outcome` (D11). When the retry cannot reach the server the spinner ends and the same screen stays; nothing tells the user the check failed (offline is covered by a toast, a server error is not). **Why not fixed:** it needs AuthService to report the outcome of a recheck (a signal or a `lastCheckFailed` flag) and a second wording; the safe behaviour (stay blocked) is already right. **Lead:** emit one signal from the `unverified`-while-blocked branch and let Main show the same toast style as the offline case.
