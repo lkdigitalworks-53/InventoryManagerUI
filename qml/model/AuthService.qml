@@ -202,25 +202,34 @@ QtObject {
     function _verifyMembership(seq, tenantId, tenantName) {
         FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data, status) {
             if (seq !== _profileSeq) return
-            var held = AuthStore.tenantId === tenantId ? AuthStore.role : ""
-            var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)
-            onboardingNeeded = false
-            profileResolved = true
-
-            if (out.action === "block") {
-                accessTenantName = tenantName || AuthStore.tenantName
-                accessBlock = out.reason
-                return
-            }
-
-            accessBlock = ""
-            var name = tenantName || (data && data.tenantName) || AuthStore.tenantName
-            AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: out.role })
-            // Backfill workspace name from canonical tenant doc when missing.
-            if (!name) _ensureTenantName(tenantId)
-            loadTenantMembers()
-            tenantContextReady(AuthStore.tenantId, AuthStore.role)
+            _applyAccess(tenantId, tenantName, ok, data, status)
         })
+    }
+
+    // The one place that turns an access answer into "open the app with this role" or "show the blocked
+    // screen". Reached from the member-doc answer and from an unreadable users doc (ok = false, status
+    // never 404 there), so both decide the same way: only a definitive answer clears or sets a block, and
+    // an inconclusive one keeps the block that is showing or lets a member this device already verified in
+    // the same tenant keep working (AccessState.outcome).
+    function _applyAccess(tenantId, tenantName, ok, data, status) {
+        var held = tenantId && AuthStore.tenantId === tenantId ? AuthStore.role : ""
+        var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)
+        onboardingNeeded = false
+        profileResolved = true
+
+        if (out.action === "block") {
+            accessTenantName = tenantName || AuthStore.tenantName
+            accessBlock = out.reason
+            return
+        }
+
+        accessBlock = ""
+        var name = tenantName || (data && data.tenantName) || AuthStore.tenantName
+        AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: out.role })
+        // Backfill workspace name from canonical tenant doc when missing.
+        if (!name) _ensureTenantName(tenantId)
+        loadTenantMembers()
+        tenantContextReady(AuthStore.tenantId, AuthStore.role)
     }
 
     // "Try again" on the access-blocked screen. Offline there is nothing to ask, and _loadUserProfile
@@ -275,12 +284,20 @@ QtObject {
 
         if (!isOnline) { profileResolved = true; return; }
 
-        FirebaseService.get("users/" + AuthStore.uid, function(ok, data) {
+        FirebaseService.get("users/" + AuthStore.uid, function(ok, data, status) {
             if (seq !== _profileSeq) return
             if (!ok || !data) {
-                onboardingNeeded = true
-                profileResolved = true
-                onboardingRequired()
+                if (!ok && status === 404) {
+                    // Definitively no users doc: a new account, so onboarding.
+                    onboardingNeeded = true
+                    profileResolved = true
+                    onboardingRequired()
+                    return
+                }
+                // Could not READ it (offline blip, 5xx, expired token, empty body): that is not "no workspace".
+                // Never offer to create one; decide like an unreadable member doc against the tenant this
+                // device already holds: keep a verified member working, keep a showing block, else "unverified".
+                _applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)
                 return
             }
 
@@ -530,11 +547,20 @@ QtObject {
             createdAt: nowIso
         }
 
-        FirebaseService.get("users/" + AuthStore.uid, function(okExisting, existingUser) {
+        FirebaseService.get("users/" + AuthStore.uid, function(okExisting, existingUser, statusExisting) {
             if (okExisting && existingUser && existingUser.tenantId) {
                 busy = false
                 tenantCreateBusy = false
                 _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)
+                return
+            }
+
+            // A users doc that could not be read is not a missing one: writing now could replace the pointer
+            // to the shop this user already belongs to. Only a 404 (a new account) may go on to create.
+            if (!okExisting && statusExisting !== 404) {
+                busy = false
+                tenantCreateBusy = false
+                authFailed("Could not check your account. Check your connection and try again.")
                 return
             }
 

@@ -2,7 +2,7 @@
 
 // S2f-3 behaviour pins. AuthService cannot be instantiated under qmltestrunner (Felgo, no App context), and
 // accessBlockWiring.test.js only reads the source. This file RUNS the real function text of AuthService.qml
-// (_loadUserProfile, _verifyMembership, recheckAccess, signOut, _ensureTenantName, loadTenantMembers) in a
+// (_loadUserProfile, _verifyMembership, _applyAccess, recheckAccess, signOut, _ensureTenantName, loadTenantMembers, createTenantForCurrentUser) in a
 // vm sandbox against stubs for FirebaseService / AuthStore, with the real qml/helper/AccessState.js.
 //
 // The sandbox resolves bare names (accessBlock, profileResolved, tenantContextReady(...)) through a Proxy,
@@ -21,7 +21,7 @@ const AUTH_PATH = 'qml/model/AuthService.qml';
 const AUTH_SRC = fs.readFileSync(path.join(REPO, AUTH_PATH), 'utf8');
 const ACCESS_SRC = fs.readFileSync(path.join(REPO, 'qml/helper/AccessState.js'), 'utf8').replace(/^\.pragma library/m, '');
 
-const FNS = ['_loadUserProfile', '_verifyMembership', 'recheckAccess', 'signOut', '_ensureTenantName', 'loadTenantMembers'];
+const FNS = ['_loadUserProfile', '_verifyMembership', '_applyAccess', 'recheckAccess', 'signOut', '_ensureTenantName', 'loadTenantMembers', 'createTenantForCurrentUser'];
 const ROLES = ['owner', 'admin', 'manager', 'staff'];
 // tenants/{t}/members/{uid}: the member doc, not the roster read (tenants/{t}/members) that a successful load also issues.
 const MEMBER_DOC = /^tenants\/[^/]+\/members\/[^/]+$/;
@@ -48,11 +48,11 @@ function makeAccessState() {
 
 // A harness over one copy of AuthService source (the mutants pass a broken copy).
 function makeHarness(authSrc, init = {}) {
-  const calls = { applyTenantContext: [], tenantContextReady: [], onboardingRequired: 0, ensureName: 0, get: [] };
+  const calls = { applyTenantContext: [], tenantContextReady: [], onboardingRequired: 0, ensureName: 0, get: [], put: [], authFailed: [] };
   const pending = [];
   const state = {
     accessBlock: '', accessTenantName: '', _profileSeq: 0, profileResolved: false, onboardingNeeded: false,
-    isOnline: true, tenantMembers: [], membersBusy: false,
+    isOnline: true, tenantMembers: [], membersBusy: false, busy: false, tenantCreateBusy: false,
   };
   const AuthStore = {
     uid: 'u1', isAuthenticated: true, tenantId: '', tenantName: '', role: '', email: 'u@x.in', displayName: 'U', photoUrl: '',
@@ -66,6 +66,7 @@ function makeHarness(authSrc, init = {}) {
   };
   const FirebaseService = {
     get(p, cb) { calls.get.push(p); pending.push({ p, cb }); },
+    put(p, doc, cb) { calls.put.push(p); pending.push({ p: 'PUT ' + p, cb }); },
     toArray: (d) => d,
   };
   const noop = new Proxy(function () {}, { get: (t, k) => (k === Symbol.toPrimitive ? () => '' : noop), apply: () => noop });
@@ -74,6 +75,7 @@ function makeHarness(authSrc, init = {}) {
     tenantContextReady(t, r) { calls.tenantContextReady.push({ t, r, blockAtEmit: scope.accessBlock }); },
     onboardingRequired() { calls.onboardingRequired++; },
     tenantMembersLoaded() {}, memberOperationFailed() {}, signedOut() {},
+    authFailed(m) { calls.authFailed.push(m); },
   };
   const scope = new Proxy(own, {
     has: () => true,
@@ -270,10 +272,89 @@ const SCENARIOS = {
     assert.equal(h.scope.onboardingNeeded, true);
     assert.equal(h.calls.onboardingRequired, 1);
   },
-  'users doc unreadable while blocked: the block stays (the screen does not vanish)'(h) {
+  'users doc unreadable while blocked: the block stays and onboarding is never offered'(h) {
     h.scope.accessBlock = 'suspended';
     h.scope._loadUserProfile(); h.answer('users/', false, null, 0);
     assert.equal(h.scope.accessBlock, 'suspended');
+    assert.equal(h.calls.onboardingRequired, 0);
+    assert.equal(h.scope.onboardingNeeded, false);
+    assert.equal(h.scope.profileResolved, true);
+  },
+  'users doc 404 (a new account): onboarding, no block, no tenant context'(h) {
+    h.scope._loadUserProfile(); h.answer('users/', false, null, 404);
+    assert.equal(h.scope.onboardingNeeded, true);
+    assert.equal(h.calls.onboardingRequired, 1);
+    assert.equal(h.scope.accessBlock, '');
+    assert.equal(h.calls.applyTenantContext.length, 0);
+    assert.equal(h.scope.profileResolved, true);
+  },
+  'users doc unreadable (0, 401, 403, 500, 503), nothing held: "unverified", NEVER onboarding'(h) {
+    for (const st of [0, undefined, 401, 403, 500, 503]) {
+      h.scope._loadUserProfile(); h.answer('users/', false, null, st);
+      assert.equal(h.scope.accessBlock, 'unverified', String(st));
+      assert.equal(h.scope.onboardingNeeded, false, String(st));
+    }
+    assert.equal(h.calls.onboardingRequired, 0);
+    assert.equal(h.calls.tenantContextReady.length, 0);
+    assert.equal(h.calls.applyTenantContext.length, 0);
+  },
+  'users doc unreadable for a member this device already verified: the app keeps working with the held role'(h) {
+    h.scope._loadUserProfile(); h.answer('users/', false, null, 503);
+    assert.equal(h.scope.accessBlock, '');
+    assert.equal(h.calls.onboardingRequired, 0);
+    assert.deepEqual(h.calls.tenantContextReady.map((c) => c.r), ['manager']);
+    assert.equal(h.AuthStore.tenantId, 't1');
+    assert.equal(h.AuthStore.role, 'manager');
+  },
+  'users doc unreadable with a saved tenant but no valid role: unverified, not in'(h) {
+    for (const role of ['', 'viewer']) {
+      const h2 = makeHarness(AUTH_SRC, { tenantId: 't1', role });
+      h2.scope._loadUserProfile(); h2.answer('users/', false, null, 0);
+      assert.equal(h2.scope.accessBlock, 'unverified', role);
+      assert.equal(h2.calls.tenantContextReady.length, 0);
+    }
+  },
+  'users doc readable but empty body (ok, no data) is unreadable, not "no workspace"'(h) {
+    h.scope._loadUserProfile(); h.answer('users/', true, null, 200);
+    assert.equal(h.scope.accessBlock, 'unverified');
+    assert.equal(h.calls.onboardingRequired, 0);
+  },
+  'a stale users-doc failure is dropped'(h) {
+    h.scope._loadUserProfile(); h.scope._loadUserProfile();
+    h.answer('users/', false, null, 0);               // answers load 1
+    assert.equal(h.scope.accessBlock, '');
+    assert.equal(h.scope.profileResolved, false);
+    h.users('t1'); h.member(active('staff'));
+    assert.equal(h.AuthStore.role, 'staff');
+  },
+  'create workspace: users doc could not be read -> nothing is written, the user is told'(h) {
+    for (const st of [0, undefined, 401, 403, 500]) {
+      h.scope.createTenantForCurrentUser('Shop');
+      h.answer('users/', false, null, st);
+      assert.equal(h.calls.put.length, 0, String(st));
+    }
+    assert.equal(h.calls.authFailed.length, 5);
+    assert.match(h.calls.authFailed[0], /check/i);
+    assert.equal(h.scope.busy, false);
+    assert.equal(h.scope.tenantCreateBusy, false);
+  },
+  'create workspace: users doc 404 (new account) goes on to create the tenant'(h) {
+    h.scope.createTenantForCurrentUser('Shop');
+    h.answer('users/', false, null, 404);
+    assert.deepEqual(h.calls.put.map((p) => p.split('/')[0]), ['tenants']);
+    assert.equal(h.calls.authFailed.length, 0);
+  },
+  'create workspace: users doc already points at a shop -> re-verify, no write'(h) {
+    h.scope.createTenantForCurrentUser('Shop');
+    h.answer('users/', true, { tenantId: 'tX' }, 200);
+    assert.equal(h.calls.put.length, 0);
+    assert.ok(h.calls.get.filter((p) => p.startsWith('users/')).length === 2, 'users doc read again by the load');
+    assert.equal(h.scope.tenantCreateBusy, false);
+  },
+  'create workspace: users doc exists without a tenant (left a shop) -> may create'(h) {
+    h.scope.createTenantForCurrentUser('Shop');
+    h.answer('users/', true, { tenantId: '' }, 200);
+    assert.equal(h.calls.put.length, 1);
   },
   'no uid: the block is cleared (nothing to verify)'(h) {
     h.AuthStore.uid = ''; h.scope.accessBlock = 'removed';
@@ -345,6 +426,7 @@ const SCENARIOS = {
 
 // Scenarios that need a pre-held role start from a harness with it.
 const INIT = {
+  'users doc unreadable for a member this device already verified: the app keeps working with the held role': { tenantId: 't1', role: 'manager' },
   'the member role beats a held role that disagrees (a demoted member gets the new role)': { tenantId: 't1', role: 'owner' },
   'unreadable answer for a member this device already verified (same tenant): the app opens with the held role': { tenantId: 't1', role: 'manager' },
   'a held role from ANOTHER tenant is not reused': { tenantId: 't1', role: 'owner' },
@@ -395,10 +477,10 @@ test('S2f-3 behaviour monkey: invariants hold over 300 seeded random event seque
 
 // Mutants: each broken copy of AuthService.qml must make at least one scenario fail.
 const MUTANTS = [
-  ['if (seq !== _profileSeq) return\n            var held', 'var held', 'stale member answers are applied'],
+  ['if (seq !== _profileSeq) return\n            _applyAccess(', '_applyAccess(', 'stale member answers are applied'],
   ['var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'var out = AccessState.outcome(AccessState.classify(ok, status, data), held, "")', 'a failed retry forgets the block (B2)'],
   ['var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'var out = AccessState.outcome(AccessState.classify(ok, status, data), "owner", accessBlock)', 'a role is invented'],
-  ['var held = AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'var held = AuthStore.role', 'a role held for another tenant is reused'],
+  ['var held = tenantId && AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'var held = AuthStore.role', 'a role held for another tenant is reused'],
   ['var seq = ++_profileSeq\n        profileResolved = false', 'var seq = _profileSeq\n        profileResolved = false', 'loads do not take a sequence number'],
   ['var seq = ++_profileSeq\n        profileResolved = false\n        onboardingNeeded = false', 'var seq = ++_profileSeq\n        profileResolved = false\n        onboardingNeeded = false\n        accessBlock = ""', 'Try again clears the block up front (B1)'],
   ['if (!isOnline) return\n        _loadUserProfile()', '_loadUserProfile()', 'offline Try again reaches the profile load'],
@@ -407,7 +489,11 @@ const MUTANTS = [
   ['if (AuthStore.tenantId !== tenantId) return\n            var name', 'var name', 'a late shop-name answer is applied'],
   ['if (AuthStore.tenantId !== tid) return\n            membersBusy = false', 'membersBusy = false', 'a late roster is applied'],
   ['AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: out.role })', 'AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: held || out.role })', 'the held role beats the member role'],
-  ['accessTenantName = tenantName || AuthStore.tenantName\n                accessBlock = out.reason', 'accessBlock = out.reason', 'the block screen loses the shop name'],
+  ['if (!ok && status === 404) {', 'if (!ok) {', 'any users-doc failure means onboarding'],
+  ['_applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)', 'onboardingNeeded = true; profileResolved = true; onboardingRequired()', 'an unreadable users doc offers onboarding'],
+  ['if (!okExisting && statusExisting !== 404) {', 'if (false) {', 'create workspace writes after an unreadable users doc'],
+  ['if (!okExisting && statusExisting !== 404) {', 'if (!okExisting) {', 'create workspace refuses a genuine 404 (new account)'],
+  ['accessTenantName = tenantName || AuthStore.tenantName\n            accessBlock = out.reason', 'accessBlock = out.reason', 'the block screen loses the shop name'],
   ['            accessBlock = ""\n            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', '            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', 'no-uid keeps the block'],
 ];
 
@@ -433,11 +519,11 @@ for (const [from, to, what] of MUTANTS) {
 
 // A guard only guards if every path goes through it (Skill 138): applyTenantContext is the call that hands a
 // role to the rest of the app. Only these three AuthService functions may call it; anything else must go
-// through the member-doc check (_verifyMembership). setTenantContext (applied any role it was given) is gone.
-test('S2f-3 caller pin: only _verifyMembership, _ensureTenantName and createTenantForCurrentUser apply a tenant context', () => {
+// through the access decision (_applyAccess). setTenantContext (applied any role it was given) is gone.
+test('S2f-3 caller pin: only _applyAccess, _ensureTenantName and createTenantForCurrentUser apply a tenant context', () => {
   const names = [...AUTH_SRC.matchAll(/^\s*function (\w+)\(/gm)].map((m) => m[1]);
   const callers = names.filter((n) => fnText(AUTH_SRC, n).includes('applyTenantContext('));
-  assert.deepEqual(callers.sort(), ['_ensureTenantName', '_verifyMembership', 'createTenantForCurrentUser']);
+  assert.deepEqual(callers.sort(), ['_applyAccess', '_ensureTenantName', 'createTenantForCurrentUser']);
 });
 
 test('S2f-3 caller pin: nothing else in qml/ applies a tenant context or revives setTenantContext', () => {
