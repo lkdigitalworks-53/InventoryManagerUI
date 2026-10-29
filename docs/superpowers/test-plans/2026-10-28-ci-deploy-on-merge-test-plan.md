@@ -4,6 +4,7 @@
 **Scope:** CI/infra only. No QML, no Cloud Function code, no rules changed, so no unit/rules/e2e tests of the app apply. There is no on-device (phone) step; "on device" here means a real run on GitHub + Firebase, which only Taher can do.
 **Coverage target (user rule: 100% of new code):** measured with `node --test --experimental-test-coverage`: `deploy-paths.js` and `verify-deploy-gate.js` are **100% line / branch / function**. The two shell scripts have no coverage tool; every branch is enumerated below and exercised by a named test against real throwaway git repos (DC/DT), and 14 mutants of the three scripts were all killed. The workflow YAML cannot be executed in the sandbox; its safety properties are pinned by source tests with mutants (section 2).
 **Sandbox result after the PR #173 review sweep (2026-10-29):** whole `.github/scripts/__tests__/*.test.js` glob = **274/274** (was 219).
+**CI observed (run 40805804603, head b0c9616):** all green, 3528/3528 (QML 2442, Functions 877, Rules 106, E2E 103); the script-glob step in `pr-comment` is green (count not printed there); `Deploy Check`, `Deploy to Firebase`, `Record Deployed Commit` skipped on the PR (R1).
 
 ## 1. Unit + executed script tests
 ### 1a. `deploy-paths.test.js` (18)
