@@ -318,6 +318,12 @@ endpoint against the Firestore emulator's real transaction semantics, including 
 once (exactly one wins) and concurrent retries of one request id (applied exactly once). Its results are
 written next to the QML ones (`results-recordOperation.xml`), so they are counted in the E2E check.
 
+**Update 2026-10-28 (R2, server only):** `recordOperation` gained a `mint` op: the server hands out counter ids
+(`SUP-NNN`, `BAT-<year>-NNN`) inside the operation transaction, so a rejected operation burns no number and a replay
+returns the same ids. `restock` is now an allowed `opType`. Nothing in the app calls it yet (client work is R3-R5 of the
+atomic-operations arc). Design `docs/superpowers/specs/2026-10-28-r2-mint-engine-design.md`; deploy with
+`firebase deploy --only functions`. 50 new Node tests (functions suite 927), 3 emulator e2e cases (CI).
+
 **Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
 same transaction as every stock change on `inventory`: explicit `movements` on `recordDelta` (signed quantities must sum to the
 applied delta) or a server-derived default row (`adjustment`; `sale` inside `completeOrder`; `receipt` on create), so product create,

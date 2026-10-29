@@ -189,6 +189,14 @@ collections and zeroes product stock).
   `recordMutationsBatch`; `runCutover`/`cutoverLogic.js` were deleted in P1 S2b) was extracted into `functions/lib/{gatewayLogic,
   batchMutationLogic}.js` and has real, verified test coverage (48 tests, `node --test` — no
   emulator needed; see Skill 35).
+- `mint` op (R2, 2026-10-28, `functions/lib/counterRegistry.js` + `operationLogic.js`): an operation may start with
+  `{kind:"mint", counter:"supplier"|"stock_batch", bind:"x"}` and later ops use `{{x}}` in a `create` `entityId` and in
+  `after` strings. The server reads the SAME counter doc the client mints from (`counters/<name>`, `{value}`) inside
+  the transaction, skips occupied ids (max 20), writes the counter only if every op is accepted (a rejection burns no
+  number), and stores the minted ids in the marker `results` (a replay mints nothing). `restock` is an allowed `opType`; its
+  stock delta must carry an explicit `receipt` movement. No client sends it yet (R3-R5). Design
+  `docs/superpowers/specs/2026-10-28-r2-mint-engine-design.md`, Skill 145. Registry holds only supplier + batch counters; add
+  an entry plus a row in `counterRegistry.guard.test.js` per new consumer.
 - `recordOperation` (2026-09-21, logic in `functions/lib/operationLogic.js`) applies delta/mutation ops
   on several docs in one Firestore transaction under one `requestId`; a rejection writes nothing, so the
   same key can be re-planned and resent; request ids must be `{opType}:...` without `/` or `~`. Emulator

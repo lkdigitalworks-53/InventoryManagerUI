@@ -68,3 +68,10 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
 - New gap **G11:** `counters` and `activity_log` are on the client-writable allow-list; they leave it only after the last mint / activity-row caller moves into an op (design 7b items 2-3).
 - `mint` = S2f-6: one implementation, built in R2.
 - Gates: Q-A7 answered by action (S0 started in its own session); Q-A8 answered by Taher ("yes keep it as recommended"); spec approval = merge of #147. After the merge, the only gate left for R1+ is the implementation plan. Engine work (R1+) may start after those; S0 can start right after Q-A7.
+
+## 7. Update 2026-10-28 (R1+R2 built)
+- Merged since section 6: #167 (S0 sign-out guard), #168 (pending-mint tenant scope), #170 (S2d-1 kinds on deltas). In flight: #171 (S2f-3).
+- **Built (branch `feat/2026-10-28-r2-mint-engine`, server only):** `mint` op, `{{name}}` substitution, `counterRegistry.js` (supplier + stock_batch), collision skip, seed from ids, `restock` opType, replay results. G2 is closed on the SERVER only: no client calls it. Design `specs/2026-10-28-r2-mint-engine-design.md`.
+- R1 evidence (counter doc shape, formats, doc id = entity id) is in that design, section 1; a source guard test pins it.
+- Next: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), then R4 (`InventoryStore.restock` rewrite + latch + picker hide), R5 (dialog, `FailureCause`, `activity_log` id). Deploy functions BEFORE the client.
+

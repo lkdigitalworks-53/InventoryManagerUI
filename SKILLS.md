@@ -4649,3 +4649,17 @@ Rules:
 4. A loop over many items that each make a request needs a stop rule for "the network is not there": a circuit breaker on N consecutive no-answers (any real answer resets it), the skipped items reported, not silently dropped. Skip in a `while` loop, never by recursing (Skill 143 rule 4).
 5. Test the wrapper's REAL text against a scripted fake XHR (HEADERS -> LOADING -> DONE with status 0, timeout then DONE, double DONE), not only the classifier behind it: `lockTransportBehavior.test.js`, with mutants for each line. Run the real classifier on the recovered answer so the test fails if the two halves disagree.
 6. Write timeouts as "starting value, not measured" (SendPolicy convention) and say what to look at to tune them (function latency, cold start).
+## Skill 145: Mint ids inside the transaction: validate the template, resolve inside, re-validate the result; a boundary test needs the state that makes the boundary reachable
+
+R2 (2026-10-28), the server `mint` op. Rules:
+1. An id that does not exist yet cannot be validated up front. Validate the TEMPLATE (`{{name}}`: declared by an EARLIER mint op, create only for `entityId`), resolve inside the transaction, then run the id checks (`isSafeDocId`) again on the resolved value. A guard that only runs on the template passes `{{` and `/`.
+2. All reads before the first write (Firestore, and `strictDb` throws otherwise). Memoise doc reads so the collision probe for a minted id and the `create` op that uses it share one read.
+3. A rejection returns before any `txn.set`, so the counter is not incremented: no gaps from rejected operations, and the retry gets the same id. Test both halves (nothing written, same id next time).
+4. A seed read outside the transaction is safe ONLY because a collision probe inside it skips ids that exist. Remove one and the other stops being harmless.
+5. Strict where an id is built (`entityId`), lenient where users type text (`after` strings): a supplier called `{{x}}` must not 400 forever. Without a mint op nothing is scanned, so old operations stay byte-identical; prove it by NOT editing the old test file.
+6. Boundary tests need the state that makes the boundary reachable. The "20 occupied ids are skipped" test passed against the mutant `>=` because with no counter doc the seed jumped over the occupied ids and never skipped. Mutation testing found it; add the counter doc.
+7. A drift guard over source text must check EVERY caller, not that one matches. The first mutant (change one of several `recordMutation("supplier", ..., "create"` ids) was not caught by "at least one matches".
+8. Two writers on one counter doc (client REST mint, server transaction) are safe by Firestore serialisation; pin it with a racing emulator test that records and restores the shared counter.
+9. A year in an id is a time-zone decision. This app is INR / en-IN, so the server uses Asia/Kolkata (constant, tested on both sides of Jan 1 IST); a device elsewhere can mint a different-year prefix for a few hours, ids stay unique because the prefix differs.
+10. Equivalent mutants exist (`<` vs `<=` where the two operands can never be equal; `0 + x`). Name them instead of contorting a test.
+
