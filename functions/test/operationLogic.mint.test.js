@@ -71,8 +71,8 @@ test("validate: unknown counter, product/order/staff are not registered yet (M1)
 test("validate: bind names", () => {
     for (const b of ["", "Sup", "1a", "a-b", "a b", "a".repeat(17), "{{x}}", undefined, null, 5, "é"])
         assert.equal(invalid(body([mint("supplier", b)])).error, "invalid-bind-name", String(b));
-    assert.equal(OL.validateOperationRequest(body([mint("supplier", "a".repeat(16)), create("supplier", "SUP-1", {})])).ok, true);
-    assert.equal(OL.validateOperationRequest(body([mint("supplier", "aB9")])).ok, true);
+    for (const b of ["a".repeat(16), "aB9"])
+        assert.equal(OL.validateOperationRequest(body([mint("supplier", b), create("supplier", "{{" + b + "}}", {})])).ok, true, b);
 });
 
 test("validate: duplicate bind names, and the 5-mint cap", () => {
@@ -80,7 +80,8 @@ test("validate: duplicate bind names, and the 5-mint cap", () => {
     assert.equal(dup.error, "duplicate-bind-name");
     assert.equal(dup.opIndex, 1);
     const five = ["a", "b", "c", "d", "e"].map((n) => mint("supplier", n));
-    assert.equal(OL.validateOperationRequest(body(five)).ok, true);
+    const uses = five.map((m) => create("supplier", "SUP-{{" + m.bind + "}}", {}));
+    assert.equal(OL.validateOperationRequest(body(five.concat(uses))).ok, true);
     const six = invalid(body(five.concat([mint("supplier", "f")])));
     assert.equal(six.error, "too-many-mints");
     assert.equal(six.opIndex, 5);
@@ -116,7 +117,7 @@ test("validate: `after` strings: a later-declared name is rejected, unknown name
     // user text that is not a declared name is accepted, whatever it looks like
     const text = ["{{x}}", "{{", "}}", "{{a b}}", "{{}}", "{{{sup2}}}", "a{{Z9}}"];
     for (const t of text)
-        assert.equal(OL.validateOperationRequest(body([mint("supplier", "sup"), create("supplier", "SUP-1", { name: t })])).ok, true, t);
+        assert.equal(OL.validateOperationRequest(body([mint("supplier", "sup"), create("supplier", "{{sup}}", { name: t })])).ok, true, t);
 });
 
 test("validate: no mint op = no placeholder scanning at all (byte compatibility)", () => {
@@ -128,8 +129,7 @@ test("validate: no mint op = no placeholder scanning at all (byte compatibility)
         ops: [{ kind: "mutation", entity: "order", entityId: "o{{1}}", action: "update", before: { a: 1 }, after: { a: "{{b}}" } }] }).ok, true);
 });
 
-test("validate: a mint-only operation, and ops that are neither mint, delta nor mutation, still behave", () => {
-    assert.equal(OL.validateOperationRequest(body([mint("supplier", "a")])).ok, true);
+test("validate: ops that are neither mint, delta nor mutation, still behave", () => {
     assert.equal(invalid(body([mint("supplier", "a"), { kind: "teleport" }])).error, "unsupported-kind");
     assert.equal(invalid(body([mint("supplier", "a"), null])).error, "unsupported-kind");
     assert.equal(invalid(body([mint("supplier", "a"), create("nope", "x", {})])).error, "unsupported-entity");
@@ -137,17 +137,47 @@ test("validate: a mint-only operation, and ops that are neither mint, delta nor 
 });
 
 test("validate: write budget counts a mint op as ONE write and no audit row (M8)", () => {
-    // base 1 (marker) + 9 inventory ops carrying 50 movements (2 + 50 each) + 10 plain inventory ops (2 + 1 each)
+    // base 1 (marker) + 9 inventory ops carrying 50 movements (2 + 50 each) + 9 plain inventory ops (2 + 1 each)
+    // + one consumer of every mint (a transaction create: 2). Each mint adds exactly 1.
     const heavy = () => ({ kind: "delta", entity: "inventory", entityId: "p", deltas: { stock: 50 },
         movements: Array.from({ length: 50 }, () => ({ kind: "receipt", qty: 1 })) });
     const plain = () => ({ kind: "delta", entity: "inventory", entityId: "q", deltas: { stock: 1 } });
-    const work = [];
-    for (let i = 0; i < 9; i++) work.push(heavy());
-    for (let i = 0; i < 10; i++) work.push(plain());                  // 1 + 468 + 30 = 499
-    assert.equal(OL.validateOperationRequest(body(work.concat([mint("supplier", "a")]))).ok, true);               // 500
-    const over = invalid(body(work.concat([mint("supplier", "a"), mint("supplier", "b")])));                       // 501
+    const build = (names) => {
+        const ops = [];
+        for (let i = 0; i < 9; i++) ops.push(heavy());
+        for (let i = 0; i < 9; i++) ops.push(plain());                                   // 1 + 468 + 27 = 496
+        for (const n of names) ops.push(mint("supplier", n));
+        ops.push(create("transaction", "tx-" + names.map((n) => "{{" + n + "}}").join("-"), {}));   // + 2
+        return ops;
+    };
+    assert.equal(OL.validateOperationRequest(body(build(["a", "b"]))).ok, true);                    // 496 + 2 + 2 = 500
+    const over = invalid(body(build(["a", "b", "c"])));                                              // 501
     assert.equal(over.error, "operation-too-large");
     assert.equal(over.opIndex, undefined);
+});
+
+test("validate: a mint nobody uses is refused (it would burn a number); mint-only is the extreme case", () => {
+    const mintOnly = invalid(body([mint("supplier", "a")]));
+    assert.deepEqual([mintOnly.error, mintOnly.opIndex], ["unused-mint", 0]);
+    const second = invalid(body([mint("supplier", "a"), mint("stock_batch", "b"), create("supplier", "{{a}}", {})]));
+    assert.deepEqual([second.error, second.opIndex], ["unused-mint", 1]);
+    // a name that only appears in `before`, in a key, in a delta or in text that is not a token is NOT a use
+    const notUses = [{ kind: "mutation", entity: "transaction", entityId: "t1", action: "update", before: { x: "{{a}}" }, after: { "{{a}}": 1, y: "{a}" } }];
+    assert.equal(invalid(body([mint("supplier", "a")].concat(notUses))).error, "unused-mint");
+    // used in an entityId (also embedded), or only inside a nested `after` string: each counts
+    assert.equal(OL.validateOperationRequest(body([mint("supplier", "a"), create("transaction", "tx-{{a}}", {})])).ok, true);
+    assert.equal(OL.validateOperationRequest(body([mint("supplier", "a"), create("transaction", "t1", { n: [{ z: "{{a}}" }] })])).ok, true);
+    // a name declared LATER than the op that mentions it is the ordering error, reported first
+    assert.equal(invalid(body([create("transaction", "t1", { n: "{{a}}" }), mint("supplier", "a")])).error, "unbound-placeholder");
+});
+
+test("validate: a whole-id placeholder must belong to the entity its counter serves (embedded ids are free)", () => {
+    const r = invalid(body([mint("supplier", "s"), create("stock_batch", "{{s}}", {})]));
+    assert.deepEqual([r.error, r.opIndex], ["placeholder-entity-mismatch", 1]);
+    assert.equal(invalid(body([mint("stock_batch", "b"), create("supplier", "{{b}}", {})])).error, "placeholder-entity-mismatch");
+    assert.equal(OL.validateOperationRequest(body([mint("stock_batch", "b"), create("stock_batch", "{{b}}", {}), create("transaction", "tx-p-{{b}}", {})])).ok, true);
+    // names that are Object.prototype members are plain unbound text, never a crash
+    assert.equal(invalid(body([mint("supplier", "s"), create("supplier", "{{s}}", {}), create("supplier", "{{constructor}}", {})])).error, "unbound-placeholder");
 });
 
 // ------------------------------------------------------------- apply: happy path
@@ -233,15 +263,6 @@ test("apply: `now` defaults to the real clock when the caller passes none", asyn
     assert.match(r.results[0].id, /^BAT-20[0-9]{2}-001$/);
 });
 
-test("apply: an unused bind still consumes its number; a mint-only operation is valid", async () => {
-    const db = strictDb({});
-    const r = await run(db, body([mint("supplier", "a")]));
-    assert.equal(r.ok, true);
-    assert.deepEqual(r.results, [{ kind: "mint", counter: "supplier", bind: "a", id: "SUP-001" }]);
-    assert.deepEqual(db.store[T + "counters/suppliers"], { value: 1 });
-    assert.deepEqual(paths(db), [T + "audit_log/restock:dev1-a", T + "counters/suppliers"]);
-});
-
 test("apply: a second operation continues the sequence (counter written by the first is read by the second)", async () => {
     const db = strictDb(baseDocs());
     const a = await run(db, body(restockOps({ newSupplier: false }), "a"));
@@ -291,14 +312,45 @@ test("apply: a counter that lags the data skips occupied ids and ends on a free 
     const r = await run(db, body(restockOps({ newSupplier: false })));
     assert.equal(r.results[0].id, "BAT-2026-004");
     assert.deepEqual(db.store[T + "counters/stockBatches-2026"], { value: 4 });
+    // the occupied ids were only READ: rewriting them would bump their update time and break the write budget
+    assert.equal(paths(db).some((p) => /BAT-2026-00[23]$/.test(p)), false, paths(db).join());
 });
 
-test("apply: 20 occupied ids are skipped, the 21st occupied one gives 409 mint-exhausted with zero writes", async () => {
+test("apply: a counter far behind the data jumps to the highest id in use, once, and the next operation is cheap", async () => {
+    const docs = { [T + "counters/suppliers"]: { value: 5 } };
+    for (let i = 6; i <= 45; i++) docs[T + "suppliers/SUP-" + String(i).padStart(3, "0")] = { n: i };   // a gap of 40 > MAX_MINT_SKIPS
+    const db = strictDb(docs);
+    const ops = (n) => body([mint("supplier", "s"), create("supplier", "{{s}}", { id: "{{s}}" })], n);
+    const r = await run(db, ops("1"));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.results[0].id, "SUP-046");
+    assert.deepEqual(db.store[T + "counters/suppliers"], { value: 46 });
+    assert.deepEqual(db.listCalls, [T + "suppliers"]);
+    assert.equal(paths(db).some((p) => /SUP-0(0[6-9]|[1-3]\d|4[0-5])$/.test(p)), false, "occupied ids must not be rewritten");
+    const next = await run(db, ops("2"));
+    assert.equal(next.results[0].id, "SUP-047");
+    assert.equal(db.listCalls.length, 1, "no second listing: the counter is healed and in step");
+});
+
+test("apply: the heal happens once per counter even when the first jump lands on another occupied id (stale listing)", async () => {
+    const db = strictDb({ [T + "counters/suppliers"]: { value: 0 }, [T + "suppliers/SUP-001"]: {}, [T + "suppliers/SUP-002"]: {}, [T + "suppliers/SUP-003"]: {} });
+    let calls = 0;
+    // The listing is stale: it only knows SUP-001. The probe still finds 002 and 003 and walks past them.
+    db.collection = () => ({ async listDocuments() { calls++; return [{ id: "SUP-001" }]; } });
+    const r = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", {})]));
+    assert.equal(r.results[0].id, "SUP-004");
+    assert.equal(calls, 1);
+});
+
+test("apply: 20 occupied ids are walked past, the 21st gives 409 mint-exhausted with zero writes (when the heal cannot help)", async () => {
     const taken = (n) => { const d = { ...baseDocs(), [T + "counters/stockBatches-2026"]: { value: 0 } }; for (let i = 1; i <= n; i++) d[T + "stock_batches/BAT-2026-" + String(i).padStart(3, "0")] = {}; return d; };
     const okDb = strictDb(taken(20));
+    okDb.collection = () => ({ async listDocuments() { return []; } });
     const ok = await run(okDb, body(restockOps({ newSupplier: false })));
     assert.equal(ok.results[0].id, "BAT-2026-021");
     const badDb = strictDb(taken(21));
+    // A stale listing (nothing known) makes the one-time jump useless, so the walk limit is what ends it.
+    badDb.collection = () => ({ async listDocuments() { return []; } });
     const bad = await run(badDb, body(restockOps({ newSupplier: false })));
     assert.deepEqual(bad, { ok: false, status: 409, error: "mint-exhausted", opIndex: 0 });
     assert.deepEqual(badDb.writes, []);
@@ -314,14 +366,14 @@ test("apply: any rejection after the mint writes NOTHING and burns no number (M1
                 { kind: "mutation", entity: "transaction", entityId: "t9", action: "update", before: { v: 1 }, after: { v: 2 } }],
           docs: { [T + "transactions/t9"]: { v: 99 } }, status: 409, error: "conflict", opIndex: 2 },
         // delta floor
-        { ops: [mint("supplier", "s"), { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -50 }, floors: { stock: 0 } }],
-          docs: baseDocs(), status: 409, error: "insufficient-quantity", opIndex: 1 },
+        { ops: [mint("supplier", "s"), create("supplier", "{{s}}", {}), { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -50 }, floors: { stock: 0 } }],
+          docs: baseDocs(), status: 409, error: "insufficient-quantity", opIndex: 2 },
         // missing product
-        { ops: [mint("supplier", "s"), { kind: "delta", entity: "inventory", entityId: "ghost", deltas: { stock: 1 } }],
-          docs: {}, status: 404, error: "not-found", opIndex: 1 },
+        { ops: [mint("supplier", "s"), create("supplier", "{{s}}", {}), { kind: "delta", entity: "inventory", entityId: "ghost", deltas: { stock: 1 } }],
+          docs: {}, status: 404, error: "not-found", opIndex: 2 },
         // create over an existing doc that is NOT a minted id
-        { ops: [mint("supplier", "s"), create("supplier", "SUP-900", { x: 1 })],
-          docs: { [T + "suppliers/SUP-900"]: { x: 0 } }, status: 409, error: "conflict", opIndex: 1 }
+        { ops: [mint("supplier", "s"), create("supplier", "{{s}}", {}), create("supplier", "SUP-900", { x: 1 })],
+          docs: { [T + "suppliers/SUP-900"]: { x: 0 } }, status: 409, error: "conflict", opIndex: 2 }
     ];
     for (const c of rejects) {
         const db = strictDb(Object.assign({ [T + "counters/suppliers"]: { value: 4 } }, c.docs));
@@ -431,6 +483,17 @@ test("apply: hand-built ops (no validation) are defended at run time", async () 
     assert.deepEqual(await hand([sup, mk("{{s}}/x")]), { ok: false, status: 400, error: "invalid-entity-id", opIndex: 1 });
 });
 
+test("apply: a JSON key named __proto__ stays an own key through substitution, as in an operation without a mint op", async () => {
+    const after = JSON.parse('{"__proto__":{"x":"{{s}}"},"a":"{{s}}"}');
+    const db = strictDb({});
+    const r = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", after)]));
+    const out = r.results[1].after;
+    assert.deepEqual(Object.keys(out), ["__proto__", "a"]);
+    assert.equal(Object.getPrototypeOf(out), Object.prototype);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(out, "__proto__").value, { x: "SUP-001" });
+    assert.equal(out.a, "SUP-001");
+});
+
 // ------------------------------------------------------------- monkey
 
 test("monkey: 300 seeded runs over random counter state, occupied ids and hostile text keep every invariant", async () => {
@@ -455,11 +518,12 @@ test("monkey: 300 seeded runs over random counter state, occupied ids and hostil
         const r = await run(db, body(ops, "m" + iter));
         if (!r.ok) {
             rejected++;
-            assert.equal(r.error, "mint-exhausted");
+            assert.equal(r.error, "mint-exhausted");      // cannot happen now that the counter heals; kept as a tripwire
             assert.deepEqual(db.writes, []);
             continue;
         }
         accepted++;
+        for (const w of db.writes) assert.equal(occupied.has(parseInt(w.path.split("SUP-")[1], 10)) && w.path.indexOf("/suppliers/") > 0 && before[w.path] !== undefined && before[w.path].pre === true, false, "rewrote " + w.path);
         const ids = r.results.filter((x) => x.kind === "mint").map((x) => x.id);
         assert.equal(new Set(ids).size, ids.length);
         for (const id of ids) {
@@ -473,5 +537,6 @@ test("monkey: 300 seeded runs over random counter state, occupied ids and hostil
         assert.equal(replay.idempotentReplay, true);
         assert.deepEqual(replay.results, r.results);
     }
-    assert.ok(accepted > 250 && rejected <= 50, accepted + "/" + rejected);
+    assert.equal(rejected, 0, "the heal means no run may be exhausted");
+    assert.equal(accepted, 300);
 });

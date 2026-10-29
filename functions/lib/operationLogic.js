@@ -66,6 +66,8 @@ function isSafeDocId(id) {
 }
 
 
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
 // ---- placeholders -------------------------------------------------------------------------------
 // {{name}} tokens in an op's entityId and in the string values of its `after` are replaced by the id
 // a `mint` op bound to `name`. Never in keys, `before` or `deltas`. See design section 2 and M6.
@@ -87,13 +89,16 @@ function substituteDeep(node, bound, depth) {
     if (Array.isArray(node)) return node.map((v) => substituteDeep(v, bound, depth + 1));
     if (Object.prototype.toString.call(node) !== "[object Object]") return node;
     const out = {};
-    for (const k of Object.keys(node)) out[k] = substituteDeep(node[k], bound, depth + 1);
+    // defineProperty, not `out[k] =`: a JSON key named "__proto__" must stay an own key, exactly as it
+    // does in an operation without a mint op, instead of silently becoming the copy's prototype.
+    for (const k of Object.keys(node))
+        Object.defineProperty(out, k, { value: substituteDeep(node[k], bound, depth + 1), enumerable: true, writable: true, configurable: true });
     return out;
 }
 
 function replaceBound(str, bound) {
     return str.replace(PLACEHOLDER, function (whole, name) {
-        return Object.prototype.hasOwnProperty.call(bound, name) ? bound[name] : whole;
+        return has(bound, name) ? bound[name] : whole;
     });
 }
 
@@ -126,6 +131,7 @@ function validateOperationRequest(body) {
 
     // `mint` ops first: they decide which {{names}} exist and where they are declared.
     const declaredAt = {};
+    const declaredEntity = {};     // bind name -> the entity its counter hands ids to
     let mintCount = 0;
     for (let i = 0; i < rawOps.length; i++) {
         const raw = rawOps[i] || {};
@@ -134,11 +140,13 @@ function validateOperationRequest(body) {
         if (mintCount > MAX_MINT_OPS) return { ok: false, status: 400, error: "too-many-mints", opIndex: i };
         if (!CounterRegistry.isKnownCounter(raw.counter)) return { ok: false, status: 400, error: "unknown-counter", opIndex: i };
         if (typeof raw.bind !== "string" || !BIND_NAME.test(raw.bind)) return { ok: false, status: 400, error: "invalid-bind-name", opIndex: i };
-        if (Object.prototype.hasOwnProperty.call(declaredAt, raw.bind)) return { ok: false, status: 400, error: "duplicate-bind-name", opIndex: i };
+        if (has(declaredAt, raw.bind)) return { ok: false, status: 400, error: "duplicate-bind-name", opIndex: i };
         declaredAt[raw.bind] = i;
+        declaredEntity[raw.bind] = CounterRegistry.describe(raw.counter, "0000").entity;
     }
 
     const ops = [];
+    const used = {};               // bind names some op actually references
     for (let i = 0; i < rawOps.length; i++) {
         const raw = rawOps[i] || {};
         if (raw.kind === "mint") {
@@ -163,11 +171,15 @@ function validateOperationRequest(body) {
         // Placeholders exist only in an operation that has a mint op; without one nothing below runs,
         // so completeOrder-style operations are checked and applied exactly as before.
         if (mintCount > 0) {
-            const bad = checkPlaceholders(raw.kind, v, i, declaredAt);
+            const bad = checkPlaceholders(raw.kind, v, i, { at: declaredAt, entity: declaredEntity, used: used });
             if (bad) return bad;
         }
         ops.push(Object.assign({ kind: raw.kind }, v));
     }
+    // A minted number nobody uses is a client bug that would burn a number and leave a marker for
+    // nothing (a mint-only operation is the extreme case), so it is refused, not tolerated.
+    for (const name in declaredAt)
+        if (!used[name]) return { ok: false, status: 400, error: "unused-mint", opIndex: declaredAt[name] };
 
     // Write budget: one working doc + one audit entry per op, one marker, and
     // (conservatively) at least one movement row per op on inventory. A mint op is ONE write (its
@@ -187,23 +199,34 @@ function validateOperationRequest(body) {
 }
 
 // Placeholder rules for one non-mint op of an operation that has mint ops (M6). Returns an error
-// result or null. entityId: strict, create only. `after` strings: a name declared by a LATER mint op
-// is a client ordering bug (400); a name nobody declared is user text and stays.
-function checkPlaceholders(kind, v, index, declaredAt) {
+// result or null. `decl` = { at: bind -> index of its mint op, entity: bind -> entity, used: bind -> true }.
+// entityId: strict, create only; an id that is exactly one {{name}} must belong to the entity the
+// counter hands ids to (a SUP- id as a stock batch id would put two id spaces in one collection).
+// `after` strings: a name declared by a LATER mint op is a client ordering bug (400); a name nobody
+// declared is user text and stays. Every earlier-declared name seen is recorded as used.
+function checkPlaceholders(kind, v, index, decl) {
+    const earlier = (name) => has(decl.at, name) && decl.at[name] < index;
     const id = v.entityId;
     if (hasBraces(id)) {
         if (kind !== "mutation" || v.action !== "create")
             return { ok: false, status: 400, error: "placeholder-not-allowed", opIndex: index };
         const rest = id.replace(PLACEHOLDER, function (whole, name) {
-            return (Object.prototype.hasOwnProperty.call(declaredAt, name) && declaredAt[name] < index) ? "" : whole;
+            if (!earlier(name)) return whole;
+            decl.used[name] = true;
+            return "";
         });
         if (hasBraces(rest)) return { ok: false, status: 400, error: "unbound-placeholder", opIndex: index };
+        const whole = /^\{\{([^{}]*)\}\}$/.exec(id);
+        if (whole && decl.entity[whole[1]] !== v.entity)
+            return { ok: false, status: 400, error: "placeholder-entity-mismatch", opIndex: index };
     }
     if (kind === "mutation" && v.after) {
         let bad = false;
         eachString(v.after, function (str) {
-            for (const name of placeholderNames(str))
-                if (Object.prototype.hasOwnProperty.call(declaredAt, name) && declaredAt[name] >= index) bad = true;
+            for (const name of placeholderNames(str)) {
+                if (earlier(name)) decl.used[name] = true;
+                else if (has(decl.at, name)) bad = true;
+            }
         }, 0);
         if (bad) return { ok: false, status: 400, error: "unbound-placeholder", opIndex: index };
     }
@@ -242,9 +265,9 @@ async function runMints(db, txn, load, tenantRoot, params) {
             const snap = await txn.get(ref);
             const stored = snap.exists ? snap.data().value : undefined;
             // A damaged counter doc is re-seeded from the ids, not trusted.
-            const value = CounterRegistry.usableCount(stored)
-                ? stored : await seedFromIds(db, tenantRoot + "/" + desc.collection, desc.prefix);
-            c = counters[counterPath] = { ref: ref, value: value, changed: false };
+            const usable = CounterRegistry.usableCount(stored);
+            const value = usable ? stored : await seedFromIds(db, tenantRoot + "/" + desc.collection, desc.prefix);
+            c = counters[counterPath] = { ref: ref, value: value, changed: false, listed: !usable };
         }
 
         let id = "";
@@ -254,6 +277,13 @@ async function runMints(db, txn, load, tenantRoot, params) {
             id = CounterRegistry.formatId(desc.prefix, c.value);
             const taken = await load(tenantRoot + "/" + desc.collection + "/" + id);
             if (!taken.exists) break;
+            // The counter is behind the data (hand edit, restored backup, drift). Jump once to the highest
+            // id in use instead of walking: a gap wider than MAX_MINT_SKIPS would otherwise fail every
+            // retry for ever, because a rejected operation never moves the counter (M10).
+            if (!c.listed) {
+                c.listed = true;
+                c.value = Math.max(c.value, await seedFromIds(db, tenantRoot + "/" + desc.collection, desc.prefix));
+            }
         }
         c.changed = true;
         bound[op.bind] = id;
@@ -310,7 +340,7 @@ async function applyOperation(db, params) {
             const ref = db.doc(path);
             const snap = await txn.get(ref);
             state[path] = { ref: ref, existed: snap.exists, exists: snap.exists,
-                            data: snap.exists ? snap.data() : null };
+                            data: snap.exists ? snap.data() : null, dirty: false };
             return state[path];
         };
 
@@ -365,6 +395,7 @@ async function applyOperation(db, params) {
                              opIndex: i, field: "stock", current: before.stock };
                 }
                 entry.data = Object.assign({}, entry.data, after);
+                entry.dirty = true;
                 audits.push({ i: i, op: op, action: "delta", before: before, after: after, movements: movements });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "delta", after: after });
             } else {
@@ -379,6 +410,7 @@ async function applyOperation(db, params) {
                     entry.exists = true;
                     entry.data = op.after || {};
                 }
+                entry.dirty = true;
                 // Inventory stock changes leave a server-derived ledger row (P1 D11); `before` is proven
                 // equal to the running state by the check above.
                 const movements = op.entity === "inventory"
@@ -392,6 +424,7 @@ async function applyOperation(db, params) {
         // Every op accepted: now (and only now) write.
         for (const path in state) {
             const entry = state[path];
+            if (!entry.dirty) continue;     // read only (a collision probe): no write, no budget
             if (entry.exists) txn.set(entry.ref, entry.data, { merge: false });
             else if (entry.existed) txn.delete(entry.ref);
         }

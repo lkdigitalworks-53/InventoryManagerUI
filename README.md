@@ -322,7 +322,7 @@ written next to the QML ones (`results-recordOperation.xml`), so they are counte
 (`SUP-NNN`, `BAT-<year>-NNN`) inside the operation transaction, so a rejected operation burns no number and a replay
 returns the same ids. `restock` is now an allowed `opType`. Nothing in the app calls it yet (client work is R3-R5 of the
 atomic-operations arc). Design `docs/superpowers/specs/2026-10-28-r2-mint-engine-design.md`; deploy with
-`firebase deploy --only functions`. 50 new Node tests (functions suite 927), 3 emulator e2e cases (CI).
+`firebase deploy --only functions`. 54 new Node tests (functions suite 931), 5 emulator e2e cases (CI). Review sweep 2026-10-29 (design section 7): a skipped id is no longer rewritten, a counter far behind the data heals in one operation, an unused mint or a cross-entity id is a 400.
 
 **Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
 same transaction as every stock change on `inventory`: explicit `movements` on `recordDelta` (signed quantities must sum to the

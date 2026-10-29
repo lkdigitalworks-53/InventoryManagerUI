@@ -215,6 +215,9 @@ test("recordOperation: invalid mint requests are 400 with the op index (0 surviv
     for (const c of [
         { ops: [mintOp("product", "p")], error: "unknown-counter", opIndex: 0 },
         { ops: [mintOp("supplier", "a"), mintOp("supplier", "a")], error: "duplicate-bind-name", opIndex: 1 },
+        { ops: [mintOp("supplier", "a")], error: "unused-mint", opIndex: 0 },
+        { ops: [mintOp("supplier", "a"), { kind: "mutation", entity: "stock_batch", entityId: "{{a}}", action: "create", before: null, after: {} }],
+          error: "placeholder-entity-mismatch", opIndex: 1 },
         { ops: [mintOp("supplier", "A")], error: "invalid-bind-name", opIndex: 0 },
         { ops: [{ kind: "mutation", entity: "supplier", entityId: "{{x}}", action: "create", before: null, after: {} }, mintOp("supplier", "x")],
           error: "unbound-placeholder", opIndex: 0 }
@@ -233,7 +236,8 @@ test("recordOperation: mint-exhausted is forwarded as 409 with its op index", as
     seedHappyPathAuth(mockState);
     mockState.applyOperationResult = { ok: false, status: 409, error: "mint-exhausted", opIndex: 0 };
     const res = mockRes();
-    await handlers.recordOperation(mockReq({ body: restockBody([mintOp("stock_batch", "b")]) }), res);
+    await handlers.recordOperation(mockReq({ body: restockBody([mintOp("stock_batch", "b"),
+        { kind: "mutation", entity: "stock_batch", entityId: "{{b}}", action: "create", before: null, after: {} }]) }), res);
     assert.equal(res.statusCode, 409);
     assert.equal(jsonBody(res).error, "mint-exhausted");
     assert.equal(jsonBody(res).opIndex, 0);

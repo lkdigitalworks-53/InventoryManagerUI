@@ -16,10 +16,19 @@ Other open work: S2f-3 = PR #171 (in flight); S2d-2 (kind hint) and S2e (pickers
 - [x] 4. `operationLogic.js` mint kind etc.; 35 tests; 100% line; 27/30 mutants killed (3 equivalent).
 - [x] 5. +3 handler tests, +3 emulator e2e (CI only, NOT run), QML source drift guard (3, mutation-tested). Functions suite 927/927 local.
 - [x] 6. Docs: test plan, Skill 142 (#171 holds 141; renumber on rebase conflict), SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES, atomic status, design v2 note.
-- [ ] 7. Push, read CI, record observed counts.
+- [x] 7. Pushed; CI read on 353050f: QML 2442 ok, Functions 927 ok, Rules 106 ok, E2E 99 with 1 red (test hygiene, see session 2).
+
+## Session 2 — 2026-10-29 review sweep of this PR (branch `review/2026-10-29-pr172-sweep`, pushed INTO `feat/2026-10-28-r2-mint-engine`)
+Skills run: requesting-code-review, ponytail-audit, qt-qml-review (N/A: no QML in the diff; reported, not skipped silently). Findings F1-F7 are in design section 7; every one was reproduced with `strictDb` first.
+- [x] S2-1. Read memory, cloned, read design, `counterRegistry.js`, the whole `operationLogic.js` diff, handler, drift guard, e2e, CI comment.
+- [x] S2-2. F1 spurious rewrite of probed docs (`dirty` flag), F2 counter stuck for gaps > 20 (M12 heal), F3 unused/mint-only mint (M13 `unused-mint`), F4 `__proto__` key, F5 cross-entity whole id (M14).
+- [x] S2-3. Tests: 4 old tests rewritten, +4 new, handler +2 rows; mutation-checked 7/7 killed; coverage 100% line+branch on both lib files; functions suite 931/931.
+- [x] S2-4. E2E: per-test cleanup of minted docs (the CI red), +2 new cases (heal with 25 occupied ids, unused-mint 400). NOT RUN (no emulator in the sandbox): CI is the oracle.
+- [x] S2-5. Docs: design section 7 + M5 row, test plan (counts, new cases), README, AGENTS, Skill 143 + regenerated SKILLS-INDEX.
+- [ ] S2-6. Read CI on the new head; fix what is red; record observed counts in the test plan (PREDICTED: Functions 931, E2E 101, QML 2442, Rules 106).
 
 ## Open for a human / next account
-- Read CI on the PR; e2e (3 new) and counts are PREDICTED (Functions 927, E2E 106). Fix what is red, record observed counts in the test plan.
-- Taher: veto M1-M11 (esp. M3 IST year, M5 collision skip, M6 lenient `after`); `firebase deploy --only functions`; run the on-device regression in the test plan.
-- NEXT SLICE: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), QML, CI is the oracle.
-
+- Read CI on the PR. Expect Functions 931 and E2E 101; if an e2e case is red, read the job log first (the heal case plants 25 docs, the counter must equal `v0`).
+- Taher: veto M1-M14 (new: M12 heal, M13 `unused-mint`, M14 entity match); `firebase deploy --only functions`; run the on-device regression in the test plan.
+- NEXT SLICE: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), QML, CI is the oracle. The client must send a `receipt` movement on the restock stock delta and must use every bind it mints.
+- Not done on purpose (decisions for Taher): role gate on `restock`; restricting `mint` by opType; a per-tenant cap on counter jumps.

@@ -4663,3 +4663,14 @@ R2 (2026-10-28), the server `mint` op. Rules:
 9. A year in an id is a time-zone decision. This app is INR / en-IN, so the server uses Asia/Kolkata (constant, tested on both sides of Jan 1 IST); a device elsewhere can mint a different-year prefix for a few hours, ids stay unique because the prefix differs.
 10. Equivalent mutants exist (`<` vs `<=` where the two operands can never be equal; `0 + x`). Name them instead of contorting a test.
 
+
+## Skill 146: A shared read-set is not a write-set; a rejected-never-writes counter needs a heal path; a test that mints must clean up in its own finally
+
+Review sweep of the R2 mint op (2026-10-29). Each point was reproduced against the real code before it was fixed.
+1. A memoised read map shared by two phases (collision probe + apply) must carry a `dirty` flag, and the write loop must write only dirty entries. The probe loaded occupied docs into the map and the generic "write everything loaded" loop rewrote them: spurious writes, bumped update times, and writes outside the write budget. The old code was safe only because every loaded doc happened to be touched; the day a second reader appears that stops being true.
+2. "A rejected operation never moves the counter" (M10) plus "give up after N collisions" is a permanent stuck state when the data is further ahead than N: every retry sees the same counter and fails the same way. Any all-or-nothing design that refuses to persist progress needs a way to re-sync from the data (here: one jump to the highest id in use, per counter, per operation), or the bound is a trap and not a safety.
+3. A bound test must be re-pointed when the thing it bounds gets a heal: the "21 occupied = exhausted" test now needs a STALE listing, otherwise the heal passes it. Keep the tripwire test, change the state that reaches it.
+4. Refuse what only a bug can send: a mint nobody uses (mint-only operation, forgotten bind) burns a number and writes a marker for nothing. Detect it in validation from the same pass that resolves the names, so "used" has one definition.
+5. `out[k] = v` on an object built from JSON keys turns a `__proto__` key into the prototype. Copy with `Object.defineProperty` wherever user keys are copied, so a feature flag (here: the mint op) does not change what is stored.
+6. A shared-tenant e2e test that mints an id and restores the counter must also delete the doc it minted, in the same `finally`. Deleting at the end of the file leaves an occupied id exactly where the next test's counter points, and the server is right to skip it. The failure looks like a server bug and is a test bug.
+7. Do not write predicted CI counts from memory of another job: `106` was the Rules count, E2E was 96. Read the PR comment, then write the number.
