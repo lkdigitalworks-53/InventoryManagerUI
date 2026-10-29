@@ -26,7 +26,7 @@ Skills run: requesting-code-review, ponytail-audit, qt-qml-review (N/A: no QML i
 - [x] S2-4. E2E: per-test cleanup of minted docs (the CI red), +2 new cases (heal with 25 occupied ids, unused-mint 400). NOT RUN (no emulator in the sandbox): CI is the oracle.
 - [x] S2-5. Docs: design section 7 + M5 row, test plan (counts, new cases), README, AGENTS, Skill 143 + regenerated SKILLS-INDEX.
 - [x] S2-6. CI on 0f114ad: QML 2442, Functions 931, Rules 106, E2E 101 (1 red: my heal e2e assumed id v0+26; the seeded tenant holds BAT-2026-900 so the correct id is 901; the heal worked as designed).
-- [x] S2-7. CI on 0e4fe4f: ALL GREEN (QML 2442, Functions 931, Rules 106, E2E 101).
+- [x] S2-7. CI on 0e4fe4f: ALL GREEN, 3587/3587 (QML 2442, Functions 931, Rules 106, E2E 108). The 99 and 101 seen on the red runs were totals of runs that had a failing case; do not use them as a baseline.
 
 ## Open for a human / next account
 - CI is green on 0e4fe4f (observed above). Nothing to read; review the diff, veto decisions, deploy.
