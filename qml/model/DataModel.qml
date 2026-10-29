@@ -1058,7 +1058,8 @@ Item {
                 _topUpOldestSafe(line.productId, qty)
             }
             if (line.productId)
-                InventoryStore.creditStockNoBatch(line.productId, qty)
+                InventoryStore.creditStockNoBatch(line.productId, qty, "sales_return",
+                                                  "Order reopened - sale reversed - order " + o.orderId)
             // Negating ledger event so realised revenue/sold/profit unwind exactly
             // what completion booked. Reason "reopened" surfaces it in history.
             TransactionStore.recordReturn(o, { productId: line.productId, name: line.name, price: line.price },
@@ -1179,7 +1180,8 @@ Item {
                         var fc = failedEntry.cons[fci]
                         _restoreFifoSafe(fc.batchId, failedEntry.d.productId, fc.qtyConsumed)
                     }
-                    InventoryStore.creditStockNoBatch(failedEntry.d.productId, failedEntry.d.addedQty)
+                    InventoryStore.creditStockNoBatch(failedEntry.d.productId, failedEntry.d.addedQty, "sales_return",
+                                                      "Rollback - order edit failed - order " + o.orderId)
                 }
                 dataModel.stockErrorMsg = deltaFailMsg
                 if (callback) callback(false)
@@ -1352,7 +1354,8 @@ Item {
                         // Pre-FIFO line: no lineage — repair via topUpOldest.
                         _topUpOldestSafe(d.productId, d.returnedQty)
                     }
-                    InventoryStore.creditStockNoBatch(d.productId, d.returnedQty)
+                    InventoryStore.creditStockNoBatch(d.productId, d.returnedQty, "sales_return",
+                                                      "Return - order " + o.orderId)
                 }
                 // Damaged: units are written off — batch ledger NOT credited and
                 // product.stock stays reduced (it already reflects the sale).
@@ -1406,7 +1409,8 @@ Item {
                                         pendingAdditions.push({ d: dCaptured, invA: invACaptured, cons: cons })
                                     }
                                     _oneResolved()
-                                }, false /* reject, matching this flow's own pre-check intent */)
+                                }, false /* reject, matching this flow's own pre-check intent */,
+                                   "sale", "Exchange / modify - order " + o.orderId)
                             }
 
                             if (fifoResult.shortfall > 0) {

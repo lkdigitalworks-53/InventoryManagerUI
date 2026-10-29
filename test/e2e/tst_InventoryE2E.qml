@@ -36,6 +36,7 @@ TestCase {
     readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    readonly property string realDeltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
 
     property var fixture: null
     // seed.js and this file both live in test/e2e/ (moved here 2026-08-14 —
@@ -170,12 +171,25 @@ TestCase {
             "Cloud Functions emulator never responded to the warm-up call")
         compare(result.status, 200,
                 "warm-up recordMutation call was rejected — response body: " + result.text)
+
+        // recordDelta cold start (P1 S2d-1 restock tests): a nonexistent entityId is EXPECTED to answer
+        // 404; any real response proves the worker is warm (same pattern as tst_OrdersE2E).
+        var deltaResult = E2EHelpers.postDirect(this, emulatorFunctionsBase + "/recordDelta", {
+            env: "prd", entity: "stock_batch", entityId: "warmup-delta-" + Date.now(),
+            deltas: { qtyRemaining: 0 }, floors: {}, clamps: {},
+            requestId: "warmup-delta-req-" + Date.now(), clientTimestamp: new Date().toISOString()
+        }, 15000, "Cloud Functions emulator never responded to the recordDelta warm-up call")
+        verify(deltaResult.status === 200 || deltaResult.status === 404,
+               "warm-up recordDelta call got an unexpected status " + deltaResult.status)
     }
 
     function init() {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        // P1 S2d-1: restock goes through recordDelta, which this file never used before; without this the
+        // delta hit the REAL cloud URL and was refused (restock callback false).
+        Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
@@ -188,6 +202,7 @@ TestCase {
         Gateway.mutationConflicted.disconnect(_onMutationConflicted)
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
+        Gateway.deltaFunctionUrl = realDeltaFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
@@ -247,6 +262,45 @@ TestCase {
             return d !== null && Number(d.fields.stock.integerValue) === 25
         }, 5000, "updated stock never reached the emulator")
         compare(Number(doc.fields.stock.integerValue), 25)
+    }
+
+    // P1 S2d-1: restock now sends an explicit `receipt` movement. The real recordDelta function
+    // rejects (409) a movements list whose qtys do not sum to the applied delta, which would leave
+    // stock unchanged and fire Gateway.mutationConflicted, so "stock rose by the restock qty" is the
+    // end-to-end proof that the client payload is accepted. (The returned-stock path with
+    // `sales_return` is exercised by tst_ReturnAfterMetadataEditE2E.)
+    function _restock(id, qty, reason) {
+        var done = false, okResult = false
+        InventoryStore.restock(id, qty, fixture.supplierName, 80, reason, function(ok) { done = true; okResult = ok })
+        tryVerify(function() { return done }, 5000, "restock callback never fired")
+        verify(okResult, "restock was refused")
+    }
+
+    function test_restock_receipt_movement_is_accepted_by_the_real_function() {
+        var id = _createProduct("E2E Widget Restock", "SKU-E2E-R1", 10)
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
+        _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000, "product doc never appeared before the restock")
+        lastConflict = null
+        _restock(id, 4, "e2e box 1")
+        var doc = _pollEmulatorDoc(docPath, id, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 14
+        }, 8000, "restocked stock never reached the emulator")
+        compare(Number(doc.fields.stock.integerValue), 14)
+        compare(lastConflict, null, "the explicit receipt must not conflict")
+    }
+
+    function test_two_back_to_back_restocks_coalesce_into_one_valid_delta() {
+        var id = _createProduct("E2E Widget Restock 2", "SKU-E2E-R2", 10)
+        var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
+        _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000, "product doc never appeared before the restocks")
+        lastConflict = null
+        _restock(id, 3, "first")
+        _restock(id, 2, "second")
+        var doc = _pollEmulatorDoc(docPath, id, function(d) {
+            return d !== null && Number(d.fields.stock.integerValue) === 15
+        }, 8000, "both restocks never reached the emulator")
+        compare(Number(doc.fields.stock.integerValue), 15)
+        compare(lastConflict, null)
     }
 
     function test_deleteProduct_removes_from_emulator() {
