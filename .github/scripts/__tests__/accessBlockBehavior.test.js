@@ -21,7 +21,7 @@ const AUTH_PATH = 'qml/model/AuthService.qml';
 const AUTH_SRC = fs.readFileSync(path.join(REPO, AUTH_PATH), 'utf8');
 const ACCESS_SRC = fs.readFileSync(path.join(REPO, 'qml/helper/AccessState.js'), 'utf8').replace(/^\.pragma library/m, '');
 
-const FNS = ['_loadUserProfile', '_verifyMembership', '_applyAccess', 'recheckAccess', 'signOut', '_ensureTenantName', 'loadTenantMembers', 'createTenantForCurrentUser'];
+const FNS = ['_loadUserProfile', '_verifyMembership', '_applyAccess', 'recheckAccess', 'signOut', '_ensureTenantName', 'loadTenantMembers', 'createTenantForCurrentUser', 'leaveCurrentTenant'];
 const ROLES = ['owner', 'admin', 'manager', 'staff'];
 // tenants/{t}/members/{uid}: the member doc, not the roster read (tenants/{t}/members) that a successful load also issues.
 const MEMBER_DOC = /^tenants\/[^/]+\/members\/[^/]+$/;
@@ -48,7 +48,7 @@ function makeAccessState() {
 
 // A harness over one copy of AuthService source (the mutants pass a broken copy).
 function makeHarness(authSrc, init = {}) {
-  const calls = { applyTenantContext: [], tenantContextReady: [], onboardingRequired: 0, ensureName: 0, get: [], put: [], authFailed: [] };
+  const calls = { applyTenantContext: [], tenantContextReady: [], onboardingRequired: 0, ensureName: 0, get: [], put: [], putDoc: [], remove: [], signedOut: 0, authFailed: [] };
   const pending = [];
   const state = {
     accessBlock: '', accessTenantName: '', _profileSeq: 0, profileResolved: false, onboardingNeeded: false,
@@ -66,7 +66,8 @@ function makeHarness(authSrc, init = {}) {
   };
   const FirebaseService = {
     get(p, cb) { calls.get.push(p); pending.push({ p, cb }); },
-    put(p, doc, cb) { calls.put.push(p); pending.push({ p: 'PUT ' + p, cb }); },
+    put(p, doc, cb) { calls.put.push(p); calls.putDoc.push(doc); pending.push({ p: 'PUT ' + p, cb }); },
+    remove(p, cb) { calls.remove.push(p); pending.push({ p: 'REMOVE ' + p, cb }); },
     toArray: (d) => d,
   };
   const noop = new Proxy(function () {}, { get: (t, k) => (k === Symbol.toPrimitive ? () => '' : noop), apply: () => noop });
@@ -74,7 +75,7 @@ function makeHarness(authSrc, init = {}) {
     ...state, AuthStore, FirebaseService, AccessState: makeAccessState(),
     tenantContextReady(t, r) { calls.tenantContextReady.push({ t, r, blockAtEmit: scope.accessBlock }); },
     onboardingRequired() { calls.onboardingRequired++; },
-    tenantMembersLoaded() {}, memberOperationFailed() {}, signedOut() {},
+    tenantMembersLoaded() {}, memberOperationFailed() {}, signedOut() { calls.signedOut++; },
     authFailed(m) { calls.authFailed.push(m); },
   };
   const scope = new Proxy(own, {
@@ -288,6 +289,63 @@ const SCENARIOS = {
     assert.equal(h.calls.applyTenantContext.length, 0);
     assert.equal(h.scope.profileResolved, true);
   },
+  'users doc 404 while a block is showing: the block stays, onboarding is never offered (D13, follows D5)'(h) {
+    h.scope.accessBlock = 'removed';
+    h.scope._loadUserProfile(); h.answer('users/', false, null, 404);
+    assert.equal(h.scope.accessBlock, 'removed');
+    assert.equal(h.calls.onboardingRequired, 0);
+    assert.equal(h.scope.onboardingNeeded, false);
+    assert.equal(h.scope.profileResolved, true, 'the spinner on Try again stops');
+    assert.equal(h.calls.applyTenantContext.length, 0);
+  },
+  'leave workspace: users doc unreadable (0, 401, 403, 500, 503) -> nothing written, nothing removed, not signed out'(h) {
+    for (const st of [0, undefined, 401, 403, 500, 503]) {
+      h.scope.leaveCurrentTenant(); h.answer('users/', false, null, st);
+    }
+    assert.equal(h.calls.put.length, 0, 'a users doc that could not be read is never overwritten');
+    assert.equal(h.calls.remove.length, 0);
+    assert.equal(h.calls.signedOut, 0);
+    assert.equal(h.calls.authFailed.length, 6);
+    assert.match(h.calls.authFailed[0], /check your account/i);
+  },
+  'leave workspace: users doc empty body (200, null) -> treated as unreadable, nothing written'(h) {
+    h.scope.leaveCurrentTenant(); h.answer('users/', true, null, 200);
+    assert.equal(h.calls.put.length, 0);
+    assert.equal(h.calls.signedOut, 0);
+    assert.equal(h.calls.authFailed.length, 1);
+  },
+  'leave workspace: users doc read -> other fields and other shops kept, pointer cleared, member removed, signed out'(h) {
+    h.scope.leaveCurrentTenant();
+    h.answer('users/', true, { phone: '98', tenantId: 't1', tenantName: 'A', role: 'staff', tenants: ['t1', 't2'] }, 200);
+    const doc = h.calls.putDoc[0];
+    assert.equal(doc.phone, '98'); assert.deepEqual(doc.tenants, ['t2']);
+    assert.equal(doc.tenantId, ''); assert.equal(doc.tenantName, ''); assert.equal(doc.role, '');
+    h.answer('PUT users/', true, {}, 200);
+    assert.deepEqual(h.calls.remove, ['tenants/t1/members/u1']);
+    assert.equal(h.calls.signedOut, 0, 'not before the member doc is gone');
+    h.answer('REMOVE ', true, null, 200);
+    assert.equal(h.calls.signedOut, 1);
+  },
+  'leave workspace: users doc 404 -> a blank doc is written (nothing to lose), then member removed, signed out'(h) {
+    h.scope.leaveCurrentTenant(); h.answer('users/', false, null, 404);
+    assert.equal(h.calls.put.length, 1);
+    assert.equal(h.calls.putDoc[0].tenantId, '');
+    h.answer('PUT users/', true, {}, 200); h.answer('REMOVE ', false, null, 500);
+    assert.equal(h.calls.signedOut, 1, 'signs out even when the member delete fails (documented)');
+  },
+  'leave workspace: users doc write fails -> authFailed, member kept, not signed out'(h) {
+    h.scope.leaveCurrentTenant(); h.answer('users/', true, { tenants: ['t1'] }, 200);
+    h.answer('PUT users/', false, null, 500);
+    assert.equal(h.calls.remove.length, 0); assert.equal(h.calls.signedOut, 0);
+    assert.deepEqual(h.calls.authFailed, ['Failed to leave workspace']);
+  },
+  'leave workspace: owner, no workspace, not signed in are all refused before any read'(h) {
+    h.AuthStore.role = 'owner'; h.scope.leaveCurrentTenant();
+    h.AuthStore.role = 'staff'; h.AuthStore.tenantId = ''; h.scope.leaveCurrentTenant();
+    h.AuthStore.isAuthenticated = false; h.scope.leaveCurrentTenant();
+    assert.equal(h.calls.get.length, 0);
+    assert.deepEqual(h.calls.authFailed, ['Owner cannot leave their own workspace', 'No active workspace', 'Not authenticated']);
+  },
   'users doc unreadable (0, 401, 403, 500, 503), nothing held: "unverified", NEVER onboarding'(h) {
     for (const st of [0, undefined, 401, 403, 500, 503]) {
       h.scope._loadUserProfile(); h.answer('users/', false, null, st);
@@ -426,6 +484,12 @@ const SCENARIOS = {
 
 // Scenarios that need a pre-held role start from a harness with it.
 const INIT = {
+  'leave workspace: users doc unreadable (0, 401, 403, 500, 503) -> nothing written, nothing removed, not signed out': { tenantId: 't1', role: 'staff' },
+  'leave workspace: users doc empty body (200, null) -> treated as unreadable, nothing written': { tenantId: 't1', role: 'staff' },
+  'leave workspace: users doc read -> other fields and other shops kept, pointer cleared, member removed, signed out': { tenantId: 't1', role: 'staff' },
+  'leave workspace: users doc 404 -> a blank doc is written (nothing to lose), then member removed, signed out': { tenantId: 't1', role: 'staff' },
+  'leave workspace: users doc write fails -> authFailed, member kept, not signed out': { tenantId: 't1', role: 'staff' },
+  'leave workspace: owner, no workspace, not signed in are all refused before any read': { tenantId: 't1', role: 'staff' },
   'users doc unreadable for a member this device already verified: the app keeps working with the held role': { tenantId: 't1', role: 'manager' },
   'the member role beats a held role that disagrees (a demoted member gets the new role)': { tenantId: 't1', role: 'owner' },
   'unreadable answer for a member this device already verified (same tenant): the app opens with the held role': { tenantId: 't1', role: 'manager' },
@@ -493,6 +557,10 @@ const MUTANTS = [
   ['_applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)', 'onboardingNeeded = true; profileResolved = true; onboardingRequired()', 'an unreadable users doc offers onboarding'],
   ['if (!okExisting && statusExisting !== 404) {', 'if (false) {', 'create workspace writes after an unreadable users doc'],
   ['if (!okExisting && statusExisting !== 404) {', 'if (!okExisting) {', 'create workspace refuses a genuine 404 (new account)'],
+  ['if (!missing && !(okGet && userDoc)) {', 'if (false) {', 'leave workspace overwrites an unreadable users doc'],
+  ['if (!missing && !(okGet && userDoc)) {', 'if (!missing && !okGet) {', 'leave workspace accepts an empty body as a users doc'],
+  ['var missing = !okGet && statusGet === 404', 'var missing = !okGet', 'leave workspace treats any failed read as a missing doc'],
+  ['if (accessBlock.length > 0) {\n                        profileResolved = true\n                        return\n                    }', '', 'a users doc 404 while blocked opens onboarding behind the block (D13)'],
   ['accessTenantName = tenantName || AuthStore.tenantName\n            accessBlock = out.reason', 'accessBlock = out.reason', 'the block screen loses the shop name'],
   ['            accessBlock = ""\n            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', '            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', 'no-uid keeps the block'],
 ];
