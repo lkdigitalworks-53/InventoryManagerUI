@@ -636,17 +636,23 @@ test("mint: a counter far behind the data heals in ONE operation, and the occupi
             planted.push(n);
             await db.doc(T + "stock_batches/" + idFor(n)).set({ batchId: idFor(n), productId: "opE2E-pm", qtyRemaining: 0, planted: true });
         }
+        // The heal jumps to the highest id IN USE in the collection, and the shared tenant may hold higher ones
+        // (the QML suites seed ids like BAT-<year>-900; CI run 40843573031 minted 901 for exactly that reason).
+        // So the expected number is computed from the real collection, not assumed to be v0 + 26.
+        const top = CounterRegistry.maxNumber(BATCH_PREFIX, (await db.collection(T + "stock_batches").listDocuments()).map((ref) => ref.id));
+        assert.ok(top >= v0 + 25, "planted ids must be in the listing");
+        const want = top + 1;
         const r = await post(restockOp("restock:opE2E-m4", 3));
         assert.equal(r.status, 200, JSON.stringify(r.body));
-        assert.equal(r.body.results[0].id, idFor(v0 + 26));
-        trackMinted(v0 + 26);
-        assert.deepEqual(await counterSnapshot(), { value: v0 + 26 });
+        assert.equal(r.body.results[0].id, idFor(want));
+        trackMinted(want);
+        assert.deepEqual(await counterSnapshot(), { value: want });
         assert.equal((await read("stock_batches/" + idFor(v0 + 1))).planted, true);
         // a second operation continues from the healed counter
         const second = await post(restockOp("restock:opE2E-m5", 1));
         assert.equal(second.status, 200, JSON.stringify(second.body));
-        assert.equal(second.body.results[0].id, idFor(v0 + 27));
-        trackMinted(v0 + 27);
+        assert.equal(second.body.results[0].id, idFor(want + 1));
+        trackMinted(want + 1);
     } finally {
         for (const n of planted) await db.doc(T + "stock_batches/" + idFor(n)).delete();
         await restoreCounter(before);

@@ -1,7 +1,7 @@
 # Test plan — R1+R2: the `mint` op of `recordOperation` (server only)
 
 Branch `feat/2026-10-28-r2-mint-engine`. Design: `specs/2026-10-28-r2-mint-engine-design.md` (M1-M14; section 7 = review sweep 2026-10-29). Standard format (Skill 49).
-Honesty note: this slice changes NO QML and NO rules. Every Node test below was RUN in the sandbox (functions suite 931/931 locally). The emulator e2e cases are written but CI-only (no emulator here). CI OBSERVED on the first push (353050f): QML 2442, Functions 927, Rules 106, E2E 99 with 1 red (a test-hygiene bug, fixed in the sweep). PREDICTED after the sweep: Functions 931, E2E 101 (96 + 5), QML 2442 and Rules 106 unchanged.
+Honesty note: this slice changes NO QML and NO rules. Every Node test below was RUN in the sandbox (functions suite 931/931 locally). The emulator e2e cases are written but CI-only (no emulator here). CI OBSERVED on the first push (353050f): QML 2442, Functions 927, Rules 106, E2E 99 with 1 red (a test-hygiene bug, fixed in the sweep). OBSERVED on the sweep push (0f114ad): QML 2442, Functions 931, Rules 106, E2E 101 with 1 red (the heal case assumed `v0 + 26`; the tenant holds `BAT-<year>-900`, so the correct jump is 901; test fixed). Expected after the fix: E2E 101 all green.
 
 ## 1. Unit tests
 | File | Cases | Run? | Covers |
@@ -20,7 +20,7 @@ Honesty note: this slice changes NO QML and NO rules. Every Node test below was 
 - restock operation takes `BAT-<year>-NNN` from the server counter, every doc lands, stock +3, marker holds the mint result, replay returns the same id and the counter does not move;
 - a rejected restock (floor) burns nothing: counter and batch absent, no marker; after fixing stock the retry gets the SAME id;
 - client-style counter mint racing the server op on one counter: two different numbers, final counter +2;
-- NEW: 25 occupied ids after the counter (wider than the 20-walk limit): one operation heals, mints id +26, the occupied docs are untouched, the next operation mints +27;
+- NEW: 25 occupied ids after the counter (wider than the 20-walk limit): one operation heals, mints one above the highest id in use in the collection (computed from the real listing: the shared tenant also holds QML-seeded ids such as `BAT-<year>-900`), the occupied docs are untouched, the next operation mints the next number;
 - NEW: a mint nobody uses is a clean 400 `unused-mint`, no counter move, no marker.
 
 ## 4. Rules

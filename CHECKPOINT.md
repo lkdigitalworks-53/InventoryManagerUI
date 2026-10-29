@@ -25,7 +25,8 @@ Skills run: requesting-code-review, ponytail-audit, qt-qml-review (N/A: no QML i
 - [x] S2-3. Tests: 4 old tests rewritten, +4 new, handler +2 rows; mutation-checked 7/7 killed; coverage 100% line+branch on both lib files; functions suite 931/931.
 - [x] S2-4. E2E: per-test cleanup of minted docs (the CI red), +2 new cases (heal with 25 occupied ids, unused-mint 400). NOT RUN (no emulator in the sandbox): CI is the oracle.
 - [x] S2-5. Docs: design section 7 + M5 row, test plan (counts, new cases), README, AGENTS, Skill 143 + regenerated SKILLS-INDEX.
-- [ ] S2-6. Read CI on the new head; fix what is red; record observed counts in the test plan (PREDICTED: Functions 931, E2E 101, QML 2442, Rules 106).
+- [x] S2-6. CI on 0f114ad: QML 2442, Functions 931, Rules 106, E2E 101 (1 red: my heal e2e assumed id v0+26; the seeded tenant holds BAT-2026-900 so the correct id is 901; the heal worked as designed).
+- [ ] S2-7. Read CI on the head after the e2e fix (expect E2E 101 green). If still red, read the job log before changing anything.
 
 ## Open for a human / next account
 - Read CI on the PR. Expect Functions 931 and E2E 101; if an e2e case is red, read the job log first (the heal case plants 25 docs, the counter must equal `v0`).
