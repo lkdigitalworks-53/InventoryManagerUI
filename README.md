@@ -430,6 +430,10 @@ Use it during feature completion to keep docs coverage consistent.
 
 ---
 
+## Deploy on merge (Firebase functions + Firestore rules + indexes)
+
+After a PR is merged, `checks.yml` can deploy `functions`, `firestore:rules` and `firestore:indexes` to Firebase after **one tap of approval** (GitHub Environment `firebase-deploy`, reviewer = Taher). Jobs: `Deploy Check` (did a deployable file change since the last deployed commit, git tag `deployed-main`?) then `Deploy` (needs all four test jobs green, `main` only). Docs/QML-only merges never prompt. `storage.rules`, hosting, and the `test`/`dev1` databases stay manual; there is no `--force`, so deleting a function must be done by hand. Manual re-run: Actions -> Checks -> Run workflow on `main`. Rollback = merge a revert PR. **One-time GCP + GitHub setup is Taher's** (commands and the unverified-assumption list in `docs/superpowers/specs/2026-10-28-ci-deploy-on-merge-design.md`); until it is done the first approved deploy fails at the auth step and deploys nothing. Test plan: `docs/superpowers/test-plans/2026-10-28-ci-deploy-on-merge-test-plan.md`.
+
 ## Environments (dev / test / prd)
 
 The app selects its Firestore database at **build time** from `PRODUCT_STAGE` in

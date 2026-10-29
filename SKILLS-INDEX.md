@@ -147,3 +147,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 137: A device-local durable queue must carry the tenant it was queued under, and only that tenant may see, hide for, start or apply a result for it; wait for the tenant's ledger to load before minting; quarantine, never destroy, what you cannot replay
 - 138: A guard only guards if every path goes through it: pin the caller list with a source test, and mutate the test itself
 - 139: Two buttons sharing a row: a button that reports no label width loses to one that does; give the one that must stay readable a measured floor, and test the math apart from the layout
+- 140: Deploy from CI: gate it, diff against the last DEPLOYED commit, fail loud on deletes, and pin the gate with mutated source tests

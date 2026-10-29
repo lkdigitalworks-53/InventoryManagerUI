@@ -5,6 +5,8 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  # Re-run the deploy of main by hand (failed deploy, rejected approval). Only main can deploy.
+  workflow_dispatch:
 
 jobs:
   qml-tests:
@@ -231,3 +233,83 @@ jobs:
           FIRESTORE_RULES_TESTS_RESULT: ${{ needs.firestore-rules-tests.result }}
           E2E_TESTS_RESULT: ${{ needs.e2e-tests.result }}
         run: node .github/scripts/post-ci-comment.js
+
+  # ---- Firebase deploy on merge (design: docs/superpowers/specs/2026-10-28-ci-deploy-on-merge-design.md) ----
+  # Pre-launch there is ONE Firebase project and Functions are shared by dev/test/prd, so this deploy is
+  # the only deploy. One-tap approval (GitHub Environment `firebase-deploy`, required reviewer = Taher)
+  # keeps "device-test before it ships". When a real prod stage exists, revisit (see the design doc).
+  deploy-check:
+    name: Deploy Check
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      needed: ${{ steps.diff.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Compare against the LAST DEPLOYED commit (tag `deployed-main`), not against this push: a pending
+      # approval can be superseded by a newer run, and a push-only diff would then lose its changes.
+      - name: Did anything deployable change since the last deploy?
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          needed=true
+          if [ "$EVENT" != "workflow_dispatch" ] && git rev-parse -q --verify refs/tags/deployed-main >/dev/null; then
+            if files=$(git diff --name-only deployed-main "$GITHUB_SHA"); then
+              needed=$(printf '%s\n' "$files" | node .github/scripts/deploy-paths.js)
+            fi
+          fi
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "Deploy needed: $needed" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to Firebase
+    needs: [qml-tests, functions-tests, firestore-rules-tests, e2e-tests, deploy-check]
+    if: needs.deploy-check.outputs.needed == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: firebase-deploy
+    # One deploy at a time; never cancel one that is mid-flight (half-deployed state).
+    concurrency:
+      group: firebase-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      # The CLI loads functions/index.js locally to discover triggers, so deps must be installed.
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      # No --force: a deleted function makes this fail loudly instead of deleting it in prod.
+      # storage.rules is deliberately not deployed from CI (Taher 2026-10-28).
+      - name: Deploy functions + firestore rules + firestore indexes
+        run: npx --yes firebase-tools@15.25.1 deploy --only functions,firestore:rules,firestore:indexes --project inventorymanager-48392 --non-interactive
+
+      - name: Record the deployed commit
+        run: |
+          git tag -f deployed-main "$GITHUB_SHA"
+          git push --force origin refs/tags/deployed-main
+          echo "Deployed $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

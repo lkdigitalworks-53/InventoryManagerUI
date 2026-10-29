@@ -76,6 +76,7 @@ machine, not this chat.
 | Success toast for key operations | ✅ Done |
 | QML unit-test harness (qmltestrunner, first suite landed) | ✅ Done |
 | PR CI status comment (pass/fail summary + per-job failing-test breakdown + logs links, `checks.yml`) | ✅ Done, `feature/pr-ci-status-comment` — SKILLS.md Skill 56 |
+| Firebase deploy on merge to `main` (functions + firestore rules + indexes, one-tap approval Environment `firebase-deploy`, `deployed-main` tag path filter) | ✅ Built, `ci/2026-10-28-deploy-on-merge` — script + wiring tests green (219/219 in the CI glob); **not run on GitHub/GCP**: Taher must do the one-time WIF + Environment setup (design `specs/2026-10-28-ci-deploy-on-merge-design.md`). SKILLS.md Skill 140 |
 | Fix: completed-order discount/price edit on a taxable line left tax stale (order-level AND Analysis/Reports aggregation) | ✅ Done, `fix/2026-09-02-price-adjust-tax-delta` — SKILLS.md Skill 59 (renumbered from 57 after rebasing onto main, which had independently claimed 57/58). Node-side (`functions/lib/realisedMath.js`) genuinely tested, 195/195 `functions/` suite passing; QML-side pending CI |
 | Editable per-line price in New Order dialog | ✅ Done |
 | Swipe left/right between Analysis report views | ✅ Done |

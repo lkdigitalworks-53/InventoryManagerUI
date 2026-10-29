@@ -1,6 +1,6 @@
 # CI deploy on merge (functions + firestore:rules) - brainstorm checkpoint
 
-**Date:** 2026-10-28 | **Branch:** `docs/2026-10-28-ci-deploy-brainstorm` | **Status:** BRAINSTORM ONLY. Design NOT approved. No workflow/code changed.
+**Date:** 2026-10-28 | **Branch:** `docs/2026-10-28-ci-deploy-brainstorm` | **Status:** DECIDED 2026-10-28, IMPLEMENTED on `ci/2026-10-28-deploy-on-merge` (see `2026-10-28-ci-deploy-on-merge-design.md`). Needs Taher's one-time GCP/GitHub setup, then the real-run steps in the test plan.
 
 ## Ask (Taher)
 After every PR merge to `main`, the workflow should run `firebase deploy --only functions` and `--only firestore:rules` so he stops deploying by hand. Asked for feasibility.
@@ -49,4 +49,9 @@ Feasible. Technically ~1 job (~40 lines YAML) + 1 GCP service account + 1 GitHub
 4. Do NOT build/run the app; do NOT install Qt in the sandbox; CI is the signal.
 
 ## Answers
-(none yet)
+- Q1: no separate dev project, and no prod stage yet either. Auto-deploy setting to be revisited when a prod stage exists.
+- Q2: one-tap approval.
+- Q3: yes, everything as recommended: functions + firestore rules + firestore indexes, storage rules stay manual.
+
+## Resume (if interrupted)
+Branch `ci/2026-10-28-deploy-on-merge`: workflow jobs `deploy-check` + `deploy` in `.github/workflows/checks.yml`, `.github/scripts/deploy-paths.js` (+16 tests), `deployWorkflowWiring.test.js` (32 tests), design + runbook, test plan, README/AGENTS/SKILLS 140. Sandbox: `node --test .github/scripts/__tests__/*.test.js` = 219/219. Remaining: Taher sets up WIF + Environment `firebase-deploy`, reviews the PR, runs test-plan section 4. Do not run the app; CI is the signal.
