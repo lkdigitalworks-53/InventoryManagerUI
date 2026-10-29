@@ -288,6 +288,12 @@ QtObject {
             if (seq !== _profileSeq) return
             if (!ok || !data) {
                 if (!ok && status === 404) {
+                    // A block that is showing stays (D5/D13): a removed or suspended member is never offered
+                    // "Create your workspace" from the blocked screen, and onboarding must not start hidden behind it.
+                    if (accessBlock.length > 0) {
+                        profileResolved = true
+                        return
+                    }
                     // Definitively no users doc: a new account, so onboarding.
                     onboardingNeeded = true
                     profileResolved = true
@@ -920,8 +926,16 @@ QtObject {
         // from users/{uid} on the next login and would walk straight back into
         // the (now membership-less) workspace — showing no data. We read-modify
         // -write so other fields (and other-tenant ownership) are preserved.
-        FirebaseService.get("users/" + uid, function(okGet, userDoc) {
-            var doc = (okGet && userDoc) ? userDoc : {}
+        FirebaseService.get("users/" + uid, function(okGet, userDoc, statusGet) {
+            // A users doc that could not be READ is not a missing one: writing now would replace the whole doc
+            // with blanks and lose the user's profile and the other shops they own (same rule as D12). Only a
+            // 404 (nothing there to lose) may go on with an empty doc.
+            var missing = !okGet && statusGet === 404
+            if (!missing && !(okGet && userDoc)) {
+                authFailed("Could not check your account. Check your connection and try again.")
+                return
+            }
+            var doc = missing ? {} : userDoc
             doc.tenantId = ""
             doc.tenantName = ""
             doc.role = ""

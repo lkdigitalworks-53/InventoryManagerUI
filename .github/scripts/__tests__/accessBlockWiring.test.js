@@ -104,7 +104,14 @@ function problems(src) {
   if ((load.match(/accessBlock = ""/g) || []).length !== 2) out.push('load-definitive-clears');
   if (!/accessBlock = ""/.test(blockAfter(load, 'if (!AuthStore.uid)'))) out.push('load-definitive-clears');
   if (!/accessBlock = ""/.test(blockAfter(load, 'if (!tenantId)'))) out.push('load-definitive-clears');
-  if (/accessBlock/.test(blockAfter(load, 'if (!ok || !data)'))) out.push('load-usersdoc-failure-keeps-block');
+  // the unreadable-users-doc branch may READ accessBlock (D13 guard) but never clear or set it
+  if (/accessBlock\s*=(?!=)/.test(blockAfter(load, 'if (!ok || !data)'))) out.push('load-usersdoc-failure-keeps-block');
+  {   // D13: a users doc 404 while a block shows keeps the block; the guard must come before onboarding starts
+    const blk = blockAfter(load, 'if (!ok || !data)');
+    const iG = blk.indexOf('accessBlock.length > 0');
+    const iO = blk.indexOf('onboardingRequired()');
+    if (!(iG >= 0 && iO > iG)) out.push('load-usersdoc-404-keeps-block');
+  }
   if (/accessBlock/.test(blockAfter(load, 'if (!isOnline)'))) out.push('load-offline-keeps-block');
   const iClearOk = apply.indexOf('accessBlock = ""', iRet);
   if (!(iClearOk > iRet && iClearOk < iApply)) out.push('apply-enter-no-clear');
@@ -118,6 +125,11 @@ function problems(src) {
   const iGuard = createFn.indexOf('if (!okExisting && statusExisting !== 404)');
   const iPut = createFn.indexOf('FirebaseService.put(');
   if (!(iGuard >= 0 && iGuard < iPut)) out.push('create-unreadable-guard');
+  // leaving a workspace read-modify-writes the users doc: an unreadable doc is never replaced with blanks
+  const leaveFn = bodyOf(auth, 'leaveCurrentTenant');
+  const iLG = leaveFn.indexOf('if (!missing && !(okGet && userDoc))');
+  const iLP = leaveFn.indexOf('FirebaseService.put(');
+  if (!(iLG >= 0 && iLP > iLG && /var missing = !okGet && statusGet === 404/.test(leaveFn))) out.push('leave-unreadable-guard');
 
   // 4. retry
   const iOff = recheck.indexOf('if (!isOnline) return');
@@ -190,6 +202,9 @@ const MUTANTS = [
   ['auth', '        if (!AuthStore.uid) {\n            accessBlock = ""\n', '        if (!AuthStore.uid) {\n', 'load-definitive-clears'],
   ['auth', '            if (!tenantId) {\n                accessBlock = ""\n', '            if (!tenantId) {\n', 'load-definitive-clears'],
   ['auth', '            if (!ok || !data) {\n                if (!ok && status === 404) {', '            if (!ok || !data) {\n                accessBlock = ""\n                if (!ok && status === 404) {', 'load-usersdoc-failure-keeps-block'],
+  ['auth', '                    if (accessBlock.length > 0) {\n                        profileResolved = true\n                        return\n                    }\n', '', 'load-usersdoc-404-keeps-block'],
+  ['auth', 'if (!missing && !(okGet && userDoc)) {', 'if (false) {', 'leave-unreadable-guard'],
+  ['auth', 'var missing = !okGet && statusGet === 404', 'var missing = !okGet', 'leave-unreadable-guard'],
   ['auth', 'if (!isOnline) { profileResolved = true; return; }', 'if (!isOnline) { accessBlock = ""; profileResolved = true; return; }', 'load-offline-keeps-block'],
   ['auth', '        accessBlock = ""\n        var name = tenantName', '        var name = tenantName', 'apply-enter-no-clear'],
   ['auth', 'AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'AuthStore.role', 'apply-held-role-same-tenant-only'],
