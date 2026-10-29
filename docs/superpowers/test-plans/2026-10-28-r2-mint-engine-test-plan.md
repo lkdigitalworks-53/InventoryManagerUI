@@ -1,7 +1,7 @@
 # Test plan — R1+R2: the `mint` op of `recordOperation` (server only)
 
 Branch `feat/2026-10-28-r2-mint-engine`. Design: `specs/2026-10-28-r2-mint-engine-design.md` (M1-M14; section 7 = review sweep 2026-10-29). Standard format (Skill 49).
-Honesty note: this slice changes NO QML and NO rules. Every Node test below was RUN in the sandbox (functions suite 931/931 locally). The emulator e2e cases are written but CI-only (no emulator here). CI OBSERVED on the first push (353050f): QML 2442, Functions 927, Rules 106, E2E 99 with 1 red (a test-hygiene bug, fixed in the sweep). OBSERVED on the sweep push (0f114ad): QML 2442, Functions 931, Rules 106, E2E 101 with 1 red (the heal case assumed `v0 + 26`; the tenant holds `BAT-<year>-900`, so the correct jump is 901; test fixed). Expected after the fix: E2E 101 all green.
+Honesty note: this slice changes NO QML and NO rules. Every Node test below was RUN in the sandbox (functions suite 931/931 locally). The emulator e2e cases are written but CI-only (no emulator here). CI OBSERVED on the first push (353050f): QML 2442, Functions 927, Rules 106, E2E 99 with 1 red (a test-hygiene bug, fixed in the sweep). OBSERVED on the sweep push (0f114ad): QML 2442, Functions 931, Rules 106, E2E 101 with 1 red (the heal case assumed `v0 + 26`; the tenant holds `BAT-<year>-900`, so the correct jump is 901; test fixed). OBSERVED after the fix (0e4fe4f): ALL GREEN, E2E 101.
 
 ## 1. Unit tests
 | File | Cases | Run? | Covers |
