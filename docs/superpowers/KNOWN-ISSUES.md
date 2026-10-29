@@ -19,10 +19,6 @@ broken, where, why it was deferred, and leads for a future fix.
 
 A member suspended or removed while the app is open keeps the old UI until the next reconnect or launch (`onIsOnlineChanged` re-runs the profile load). There is no re-check on token refresh or app resume, and the server answers one code (`no-tenant-context`) for every cause, so the 403 text says "most likely". Dialogs and sheets that are open when the access-blocked screen appears stay above it (Qt popups draw above every item); they cannot expose data (reads are refused) and their writes are refused. A cold start OFFLINE after being blocked reopens the app from the saved session (the block is in memory only); it is re-applied at the next online profile load.
 
-## Dead code: `AuthService.setTenantContext` applies any role it is given — FOUND 2026-10-28 (S2f-3), NOT FIXED
-
-**Where:** `AuthService.setTenantContext(tenantId, tenantName, role)`, reached only from `Main.qml onSetTenantContext`, a `Logic` signal that nothing emits (grep 2026-10-28). If anything ever emits it, it bypasses the member-doc check of S2f-3. Delete both, or route through `_loadUserProfile`.
-
 ---
 
 ## Staff add: link lost on 409, and two roster entries can share one login — FOUND 2026-10-26 (PR #165 sweep), NOT FIXED

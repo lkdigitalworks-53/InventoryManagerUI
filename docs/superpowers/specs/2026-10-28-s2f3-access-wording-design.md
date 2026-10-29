@@ -37,7 +37,9 @@
 - Mid-session detection (L3 of the multi-role design): a member suspended while the app stays open is noticed at the next reconnect or launch, not at the next token refresh or resume, and no server code says which cause it was.
 - Dialogs and sheets that are open when the block appears stay above the screen (Qt popups draw above every item). They cannot expose data (reads are refused); their writes are refused too. Closing them needs a shared dialog list; `_handleBack` pins its own list in `signOutGuardWiring.test.js`.
 - Found, not fixed: a transient failure reading the users doc (`!ok || !data`) shows "Create your workspace" to a signed-in user who is not already on the blocked screen (D10 keeps the block for those). Same class as D4, different code path and an onboarding behaviour change. KNOWN-ISSUES.
-- Found, not fixed: `AuthService.setTenantContext(tenantId, tenantName, role)` applies any role it is given; its only caller is a `Logic` signal nothing emits. Dead code candidate. KNOWN-ISSUES.
+- Fixed in the review sweep (PR #171, third session): `AuthService.setTenantContext(tenantId, tenantName, role)` applied any role it was given and its only caller was a `Logic` signal nothing emitted. Deleted with the signal and the `Main.qml` handler; a source pin (`accessBlockBehavior.test.js`) lists the only three functions allowed to call `applyTenantContext`.
+- Fixed in the same sweep, pre-existing and on this load path: a late `_ensureTenantName` answer and a late `loadTenantMembers` roster were applied to whatever tenant was current when they arrived (sign out of shop A, sign in to shop B: A's roster and shop name could land in B's session); `signOut` kept the old roster. Both now drop an answer for a tenant that is no longer current, and `signOut` clears the roster.
+- Fixed in the same sweep: Android Back on the blocked screen also closed overlays and switched tabs behind it (test plan N2 promised otherwise). `_handleBack` skips those steps while the screen is up.
 
 ## Tests
 See `docs/superpowers/test-plans/2026-10-28-s2f3-access-blocked-test-plan.md`.

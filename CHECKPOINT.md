@@ -27,13 +27,17 @@
 - [x] 12. Docs: design D10/D11, test plan (counts, H3, N4-N7), KNOWN-ISSUES (users-doc entry narrowed, new "failed Try again says nothing"), Skill 140 rule 5, AGENTS rule 7, README.
 - [x] 13. Committed (2 commits), pushed, PR raised against `main`.
 - [x] 14. PR #171 raised. CI on head `cc2e079`: all 4 jobs green, 3454/3454 (QML 2379, Functions 866, Rules 108, E2E 101).
+- [x] 16. Third session (2026-10-29): full sweep of PR #171 (requesting-code-review, qt-qml-review, ponytail-audit). Merged `origin/main` (#170) into the branch: only `CHECKPOINT.md` conflicted (kept branch); S2f-3 skill renumbered 140 -> 141 (main took 140), README/AGENTS/CHECKPOINT refs fixed.
+- [x] 17. Review fixes: (a) `_ensureTenantName` + `loadTenantMembers` drop answers for a tenant that is no longer current, `signOut` clears the roster (cross-shop roster/name leak, pre-existing); (b) dead `AuthService.setTenantContext` + `Logic` signal + `Main` handler deleted (role bypass); (c) `_handleBack` skips overlay/tab steps while the blocked screen is up (test plan N2); (d) stale comment in `leaveCurrentTenant`.
+- [x] 18. `accessBlockBehavior.test.js` (47 tests: 28 scenarios on the real AuthService function text, seeded monkey, 14 mutants + control, 2 caller pins, 1 Back-key pin). Script suite 252/252 locally. Test plan 2b + E8/E9, design doc, KNOWN-ISSUES, AGENTS rules 8-10, README, Skill 141 rules 11-13.
+- [ ] 19. CI on the sweep head; PR body updated; Taher device-tests (E8/E9 are new).
 - [ ] 15. Taher device-tests the plan (H1-H8, N1-N7 (N4-N7 new), E1-E7) and reviews PR #171; answer the vetoable decisions D1/D3/D4/D5/D10/D11 there.
 
 ## Open decisions for Taher (defaults applied, vetoable in the PR)
 D1 extra member-doc read per login/reconnect; D3 dedicated screen; D4 failed check keeps a previously verified member in (alternative: block on any failure); D5 no "create new workspace" for a removed member; D10 retry keeps the blocked screen up (alternative: separate checking cover); D11 a failed retry keeps the block showing. Details in the design doc.
 
 ## Found, not fixed (KNOWN-ISSUES)
-Users-doc read failure shows "Create your workspace" (except from the blocked screen's retry, D10); a failed Try again is silent; mid-session changes noticed only at reconnect/launch; dead `AuthService.setTenantContext`.
+Users-doc read failure shows "Create your workspace" (except from the blocked screen's retry, D10); a failed Try again is silent; mid-session changes noticed only at reconnect/launch. (Dead `AuthService.setTenantContext` was deleted in the third-session sweep.)
 
 ## NEXT
 Read CI. Then, in order: users-doc failure fix (small, `get` now has the status), L3 session lifecycle (refresh/resume re-check + distinct server codes), S2f-6 only together with the restock `mint` design approval. Another session on `feat/2026-10-28-p1-s2d1-movement-kinds` (S2d-1) also edits `CHECKPOINT.md`: on merge keep the incoming one, archive this one to `docs/superpowers/specs/` (rebase rule).

@@ -20,7 +20,6 @@ Item {
     signal sendPasswordResetEmail(string email)
     signal signOutRequested()
     signal refreshAuthToken()
-    signal setTenantContext(string tenantId, string tenantName, string role)
     signal inviteMember(string uid, string email, string displayName, string role)
 
     // ── Authentication feedback ───────────────────────────────────────────────
