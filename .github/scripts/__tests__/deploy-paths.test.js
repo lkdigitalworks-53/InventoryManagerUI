@@ -99,3 +99,15 @@ test('DP16 CLI: prints true for a deployable diff, false for docs only, false fo
   assert.equal(run('').stdout, 'false\n');
   assert.equal(run('functions/index.js').status, 0);
 });
+
+test('DP17 CLI: NUL-separated input (git diff -z), incl. a non-ASCII functions/ path', () => {
+  assert.equal(run('README.md\0functions/é.js\0').stdout, 'true\n');
+  assert.equal(run('README.md\0docs/é.md\0').stdout, 'false\n');
+  assert.equal(run('\0\0').stdout, 'false\n');
+});
+test('DP18 CLI: NUL and newline separators may be mixed; a path is never glued to its neighbour', () => {
+  assert.equal(run('docs/a.md\0README.md\nfirestore.rules').stdout, 'true\n');
+  // glued, "docs/a.mdfunctions/index.js" would not match; split, it must
+  assert.equal(run('docs/a.md\0functions/index.js').stdout, 'true\n');
+  assert.equal(run('docs/a.md\0qml/A.qml\0').stdout, 'false\n');
+});

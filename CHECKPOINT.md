@@ -30,8 +30,14 @@
 ## Steps
 - [x] S1. Clone, checkout PR branch, read workflow, scripts, tests, design, test plan, repo state via API.
 - [x] S2. Findings list above.
-- [ ] S3. Scripts: `deploy-check.sh`, `deploy-tag.sh`, `verify-deploy-gate.js`, `deploy-paths.js` NUL split + header fix.
-- [ ] S4. Workflow: use scripts, split `mark-deployed`, permissions, timeout, SHA pin, gate + stale steps.
-- [ ] S5. Tests: executed shell tests (temp git repos), gate unit tests, wiring rules + mutants, DP updates. Run all in sandbox.
+- [x] S3. Scripts: `deploy-check.sh`, `deploy-tag.sh`, `verify-deploy-gate.js`, `deploy-paths.js` NUL split + header fix.
+- [x] S4. Workflow: use scripts, split `mark-deployed`, permissions, timeout, SHA pin, gate + stale steps.
+- [x] S5. Tests: executed shell tests (temp git repos), gate unit tests, wiring rules + mutants, DP updates. Run all in sandbox.
 - [ ] S6. Docs: design (setup order, WIF condition, IAM), test plan (counts, new real-run checks), README, AGENTS, SKILLS Skill 141 + index regen.
 - [ ] S7. Push, read CI comment on PR #173, record observed counts here.
+
+## Progress log
+- S3-S5 DONE, pushed with the commit that adds this line. Sandbox: whole `.github/scripts/__tests__/*.test.js` glob = **274/274** (was 219). New: `deployCheck.script.test.js` 16, `deployTag.script.test.js` 15, `verifyDeployGate.test.js` 10, `deploy-paths` +2 (DP17/18), wiring 44 (was 32; 20 rules, each mutated). Scripts mutation-tested: 14/14 mutants killed (one equivalent single-layer mutant needed a combined mutation, DC13).
+- Verified in sandbox: `npm ci --ignore-scripts` in `functions/` is safe (only `protobufjs` postinstall, a version-compat note); `index.js` loads; functions tests 877/877.
+- LESSON: first draft of DT14 failed on a TEST helper bug (tag reset without `-f`), not on product code.
+- NEXT: S6 docs (design: setup ORDER + WIF condition + IAM; test plan; README; AGENTS; Skill 141 + `node .github/scripts/skills-index.js` regen), then S7 push + CI.

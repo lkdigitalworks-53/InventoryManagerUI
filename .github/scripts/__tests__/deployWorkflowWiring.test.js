@@ -26,6 +26,9 @@ function job(text, id) {
 }
 
 const TEST_JOBS = ['qml-tests', 'functions-tests', 'firestore-rules-tests', 'e2e-tests'];
+const ifLine = (j) => ((j.match(/^ {4}if:\s*(.*)$/m) || [, ''])[1]);
+const before = (j, a, b) => { const x = j.indexOf(a); const y = j.indexOf(b); return x > -1 && y > -1 && x < y; };
+const SCRIPTS_DIR = path.join(__dirname, '..');
 
 const RULES = {
   'deploy needs every test job and the check job': (t) => {
@@ -33,16 +36,23 @@ const RULES = {
     return [...TEST_JOBS, 'deploy-check'].every((j) => needs.includes(j));
   },
   'deploy is gated by the approval environment': (t) => /^\s{4}environment:\s*firebase-deploy\s*$/m.test(job(t, 'deploy')),
-  'deploy only runs on main': (t) => /github\.ref == 'refs\/heads\/main'/.test(job(t, 'deploy')),
+  'deploy only runs on main and only when the check says so': (t) => {
+    const c = ifLine(job(t, 'deploy'));
+    return /github\.ref == 'refs\/heads\/main'/.test(c) && /needs\.deploy-check\.outputs\.needed == 'true'/.test(c) && /&&/.test(c);
+  },
+  'no status-check override can run a job after a red test (always/failure/cancelled)': (t) => {
+    const bad = /\b(always|failure|cancelled)\s*\(/;
+    return ['deploy', 'mark-deployed', 'deploy-check'].every((id) => job(t, id) !== '' && !bad.test(ifLine(job(t, id))));
+  },
   'deploy-check never runs on pull requests': (t) => {
     const j = job(t, 'deploy-check');
     return /github\.ref == 'refs\/heads\/main'/.test(j) && !/pull_request/.test(j) && /github\.event_name == 'push'/.test(j);
   },
   'deploys never overlap and are never cancelled mid-flight': (t) => {
     const j = job(t, 'deploy');
-    return /group:\s*firebase-deploy/.test(j) && /cancel-in-progress:\s*false/.test(j);
+    return /group:\s*firebase-deploy\s*$/m.test(j) && /cancel-in-progress:\s*false/.test(j);
   },
-  'deploy has no --force (a deleted function must fail, not delete)': (t) => !/--force\b/.test(job(t, 'deploy').replace(/git push --force origin/g, '')),
+  'no job in the deploy chain uses --force (a deleted function must fail, not delete)': (t) => ['deploy', 'mark-deployed', 'deploy-check'].every((id) => !/--force\b/.test(job(t, id))),
   'deploy ships exactly functions + firestore rules + indexes, never storage': (t) => {
     const m = job(t, 'deploy').match(/firebase-tools@[\d.]+ deploy --only (\S+)/);
     return !!m && m[1].split(',').sort().join() === 'firestore:indexes,firestore:rules,functions' && !/storage/.test(m[1]);
@@ -56,39 +66,66 @@ const RULES = {
     const j = job(t, 'deploy');
     return /id-token:\s*write/.test(j) && /workload_identity_provider:/.test(j) && !/credentials_json|secrets\./.test(j);
   },
-  'functions deps are installed before the deploy runs': (t) => {
-    const j = job(t, 'deploy');
-    const i = j.indexOf('npm ci');
-    return i > -1 && i < j.indexOf('firebase-tools@');
+  'third-party actions in the deploy chain are pinned to a commit SHA': (t) => {
+    const uses = ['deploy', 'mark-deployed', 'deploy-check'].flatMap((id) => [...job(t, id).matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]));
+    const third = uses.filter((u) => !u.startsWith('actions/'));
+    return third.length > 0 && third.every((u) => /@[0-9a-f]{40}$/.test(u));
   },
-  'the deployed commit is recorded only after the deploy step': (t) => {
+  'the approval gate is verified (fail closed) before any third-party code or cloud login': (t) => {
     const j = job(t, 'deploy');
-    const d = j.indexOf('firebase-tools@');
-    const r = j.indexOf('tag -f deployed-main');
-    return d > -1 && r > d && /contents:\s*write/.test(j);
+    return /verify-deploy-gate\.js/.test(j) && /set -o pipefail/.test(j) && /actions:\s*read/.test(j)
+      && before(j, 'verify-deploy-gate.js', 'npm ci') && before(j, 'verify-deploy-gate.js', 'google-github-actions/auth');
   },
-  'path filter diffs against the last deployed tag and fails open to "deploy"': (t) => {
+  'an older approved run cannot deploy over newer code': (t) => {
+    const j = job(t, 'deploy');
+    return /deploy-tag\.sh stale/.test(j) && /fetch-depth:\s*0/.test(j) && before(j, 'deploy-tag.sh stale', 'npm ci') && before(j, 'deploy-tag.sh stale', 'google-github-actions/auth');
+  },
+  'functions deps are installed without install scripts, before the deploy runs': (t) => {
+    const j = job(t, 'deploy');
+    return /npm ci --ignore-scripts/.test(j) && before(j, 'npm ci --ignore-scripts', 'firebase-tools@');
+  },
+  'the deploy job cannot write to the repo and leaves no repo token on disk': (t) => {
+    const j = job(t, 'deploy');
+    return !/contents:\s*write/.test(j) && /contents:\s*read/.test(j) && /persist-credentials:\s*false/.test(j);
+  },
+  'a hung deploy cannot hold the lock for hours': (t) => ['deploy', 'mark-deployed', 'deploy-check'].every((id) => /timeout-minutes:\s*\d+/.test(job(t, id))) && Number((job(t, 'deploy').match(/timeout-minutes:\s*(\d+)/) || [, 999])[1]) <= 60,
+  'the tag moves in its own job, only after a successful deploy, forward only, with write access and no cloud login': (t) => {
+    const j = job(t, 'mark-deployed');
+    const needs = (j.match(/needs:\s*\[([^\]]*)\]/) || [, ''])[1].split(',').map((s) => s.trim());
+    return needs.includes('deploy') && /contents:\s*write/.test(j) && !/id-token/.test(j) && /deploy-tag\.sh mark/.test(j)
+      && !/\bnpm\b|\bnpx\b|firebase-tools/.test(j) && /group:\s*firebase-deploy-mark/.test(j) && /cancel-in-progress:\s*false/.test(j);
+  },
+  'path filter runs deploy-check.sh (diff vs last deployed tag, fail open) and manual runs skip it': (t) => {
     const j = job(t, 'deploy-check');
-    return /git diff --name-only deployed-main/.test(j) && /needed=true/.test(j) && /fetch-depth:\s*0/.test(j);
+    return /bash \.github\/scripts\/deploy-check\.sh/.test(j) && /EVENT:\s*\$\{\{\s*github\.event_name\s*\}\}/.test(j) && /fetch-depth:\s*0/.test(j) && /^ {2}workflow_dispatch:/m.test(stripComments(t));
   },
-  'manual re-run (workflow_dispatch) is declared and skips the path filter': (t) => /^ {2}workflow_dispatch:/m.test(stripComments(t)) && /\$EVENT" != "workflow_dispatch"/.test(job(t, 'deploy-check')),
+  'every script the deploy chain calls exists': (t) => {
+    const names = new Set(['deploy', 'mark-deployed', 'deploy-check'].flatMap((id) => [...job(t, id).matchAll(/\.github\/scripts\/([\w.-]+)/g)].map((m) => m[1])));
+    return names.size >= 3 && [...names].every((n) => fs.existsSync(path.join(SCRIPTS_DIR, n)));
+  },
 };
 
 const MUTANTS = {
   'deploy needs every test job and the check job': (t) => t.replace('needs: [qml-tests, functions-tests, firestore-rules-tests, e2e-tests, deploy-check]', 'needs: [qml-tests, deploy-check]'),
   'deploy is gated by the approval environment': (t) => t.replace('    environment: firebase-deploy\n', ''),
-  'deploy only runs on main': (t) => t.replace("needs.deploy-check.outputs.needed == 'true' && github.ref == 'refs/heads/main'", "needs.deploy-check.outputs.needed == 'true'"),
+  'deploy only runs on main and only when the check says so': (t) => t.replace("needs.deploy-check.outputs.needed == 'true' && github.ref == 'refs/heads/main'", "needs.deploy-check.outputs.needed == 'true'"),
+  'no status-check override can run a job after a red test (always/failure/cancelled)': (t) => t.replace("if: needs.deploy-check.outputs.needed == 'true' &&", "if: always() && needs.deploy-check.outputs.needed == 'true' &&"),
   'deploy-check never runs on pull requests': (t) => t.replace("(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'", "github.event_name == 'pull_request' || github.ref == 'refs/heads/main'"),
-  'deploys never overlap and are never cancelled mid-flight': (t) => t.replace('cancel-in-progress: false\n    permissions:\n      contents: write', 'cancel-in-progress: true\n    permissions:\n      contents: write'),
-  'deploy has no --force (a deleted function must fail, not delete)': (t) => t.replace('--non-interactive\n', '--non-interactive --force\n'),
+  'deploys never overlap and are never cancelled mid-flight': (t) => t.replace('cancel-in-progress: false\n    # Least privilege', 'cancel-in-progress: true\n    # Least privilege'),
+  'no job in the deploy chain uses --force (a deleted function must fail, not delete)': (t) => t.replace('--non-interactive\n', '--non-interactive --force\n'),
   'deploy ships exactly functions + firestore rules + indexes, never storage': (t) => t.replace('functions,firestore:rules,firestore:indexes', 'functions,firestore:rules,firestore:indexes,storage'),
   'deploy is non-interactive and pinned to the one project': (t) => t.replace(' --non-interactive\n', '\n'),
   'firebase-tools is version-pinned': (t) => t.replace('firebase-tools@15.25.1 deploy', 'firebase-tools@latest deploy'),
   'auth is keyless (WIF) and no JSON key secret is used': (t) => t.replace('workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}', 'credentials_json: ${{ secrets.GCP_KEY }}'),
-  'functions deps are installed before the deploy runs': (t) => t.replace('        run: npm ci\n\n      - uses: google-github-actions/auth@v2', '        run: echo skip\n\n      - uses: google-github-actions/auth@v2'),
-  'the deployed commit is recorded only after the deploy step': (t) => t.replace('git tag -f deployed-main "$GITHUB_SHA"\n          git push --force origin refs/tags/deployed-main\n', ''),
-  'path filter diffs against the last deployed tag and fails open to "deploy"': (t) => t.replace('git diff --name-only deployed-main "$GITHUB_SHA"', 'git diff --name-only HEAD~1 "$GITHUB_SHA"'),
-  'manual re-run (workflow_dispatch) is declared and skips the path filter': (t) => t.replace('  workflow_dispatch:\n', ''),
+  'third-party actions in the deploy chain are pinned to a commit SHA': (t) => t.replace('google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed', 'google-github-actions/auth@v2'),
+  'the approval gate is verified (fail closed) before any third-party code or cloud login': (t) => t.replace('| node .github/scripts/verify-deploy-gate.js', '| cat'),
+  'an older approved run cannot deploy over newer code': (t) => t.replace('run: bash .github/scripts/deploy-tag.sh stale', 'run: echo skip'),
+  'functions deps are installed without install scripts, before the deploy runs': (t) => t.replace('run: npm ci --ignore-scripts', 'run: npm ci'),
+  'the deploy job cannot write to the repo and leaves no repo token on disk': (t) => t.replace('persist-credentials: false  # no repo token left on disk for later steps', 'persist-credentials: true'),
+  'a hung deploy cannot hold the lock for hours': (t) => t.replace('    timeout-minutes: 45\n', ''),
+  'the tag moves in its own job, only after a successful deploy, forward only, with write access and no cloud login': (t) => t.replace('bash .github/scripts/deploy-tag.sh mark', 'git tag -f deployed-main "$GITHUB_SHA" && git push --force origin refs/tags/deployed-main'),
+  'path filter runs deploy-check.sh (diff vs last deployed tag, fail open) and manual runs skip it': (t) => t.replace('          EVENT: ${{ github.event_name }}\n', ''),
+  'every script the deploy chain calls exists': (t) => t.replace('.github/scripts/verify-deploy-gate.js', '.github/scripts/verify-deploy-gate-MISSING.js'),
 };
 
 test('DW00 the workflow defines both deploy jobs', () => {
