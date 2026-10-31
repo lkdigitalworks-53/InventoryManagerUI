@@ -9,7 +9,7 @@ broken, where, why it was deferred, and leads for a future fix.
 
 **Where:** `OrdersPage._approveAllPending` + `BulkApproveProgress` (the `shortcut: no watchdog` comment). The lock request can no longer hang (D16: 15 s timeout, circuit breaker after 3 no-answers), but the completion step (`DataModel.tryCompleteOrder`, the Gateway write) has no watchdog of its own here: if its callback never fires the state stays "running" and the Approve button stays disabled until the page is rebuilt.
 **Why deferred:** nothing shows it hanging (Gateway's own send timeouts, 10 s / 30 s, answer every request), and a page-level watchdog would need a cancel/abandon design for an in-flight write.
-**Lead:** if a device ever shows the banner stuck, add a per-order timer in the loop that records the order as failed after `SendPolicy.TIMEOUT_AWAIT_MS` x 2 and ignores the late callback (answer-once guard, Skill 143 rule 2).
+**Lead:** if a device ever shows the banner stuck, add a per-order timer in the loop that records the order as failed after `SendPolicy.TIMEOUT_AWAIT_MS` x 2 and ignores the late callback (answer-once guard, Skill 144 rule 2).
 **Also unmeasured:** `LockManager.requestTimeoutMs` (15 s) is a starting value; read `acquireLock` latency (cold start) and tune.
 
 ---
