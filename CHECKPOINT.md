@@ -20,7 +20,7 @@ PR #171's checkpoint NEXT: "L3 session lifecycle (refresh/resume re-check + dist
 - [x] 7. Corrected the stale "no re-check on token refresh" claim in KNOWN-ISSUES, the S2f-3 design (line 44) and the multi-role draft (line 11); new KNOWN-ISSUES entry "A healthy re-check shows the sign-in form and blanks lists" (read from code, NOT device-verified).
 - [x] 8. Skill 145 + regenerated `SKILLS-INDEX.md` (check passes), AGENTS pointer. README: no change needed (it indexes no L3 content).
 - [x] 9. Script suite run, committed, pushed (see `git log` on the branch).
-- [x] 10. Taher answered in chat 2026-10-31: L3-D1 = (c) resync only when tenant or role changed, L3-D2 = (a) add resume, L3-D5 = (b) toast + jump to first allowed tab. Recorded in the design `Taher:` lines, the test plan header, the AGENTS pointer and this file. PR raised from this branch (docs only).
+- [x] 10. Taher answered in chat 2026-10-31: L3-D1 = (c) resync only when tenant or role changed, L3-D2 = (a) add resume, L3-D5 = (b) toast + jump to first allowed tab. Recorded in the design `Taher:` lines, the test plan header, the AGENTS pointer and this file. PR #175 raised from this branch (docs only).
 - [ ] 11. Still open: L3-D3, D4, D6 (not needed for slice A), D7 (read `Gateway` in slice C step 0). Taher may run device step B0 (baseline, confirms or refutes F2); if nothing flashes, slice A shrinks to the resume trigger and the plan is edited.
 
 ## Decisions
