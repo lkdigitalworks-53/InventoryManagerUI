@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/FailureCause.js" as FailureCause
 
 // Product detail / edit — bottom sheet. Public contract preserved:
 //   signal productUpdateRequested(productId, fields, reason)
@@ -47,7 +48,7 @@ BottomSheet {
     // "denied" — couldn't get a real answer (network/undeployed endpoint)
     // vs. a genuine other holder. Conflating the two showed a lone tester
     // "someone else is editing this" when nobody else was.
-    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "no-access" | "error"
     property var _lockHolder: null
 
     function _enterEditMode() {
@@ -58,14 +59,16 @@ BottomSheet {
         var lockedProductId = productId
         LockManager.acquire("inventory", productId, function(result) {
             if (root.productId !== lockedProductId) return // moved on already
-            _lockState = result.granted ? "granted" : result.reason
+            _lockState = FailureCause.lockState(result)
             _lockHolder = result.holder
             if (!result.granted) {
-                errorLabel.text = result.reason === "denied"
+                errorLabel.text = _lockState === "denied"
                     ? (result.holder && result.holder.name
                         ? qsTr("%1 is currently editing this product — try again shortly").arg(result.holder.name)
                         : qsTr("This product is currently being edited elsewhere — try again shortly"))
-                    : qsTr("Couldn't confirm this product is free to edit (connection issue) — try again")
+                    : (_lockState === "no-access"
+                        ? FailureCause.forAccess().text
+                        : qsTr("Couldn't confirm this product is free to edit (connection issue) — try again"))
             }
         })
     }
@@ -86,7 +89,7 @@ BottomSheet {
         var lockedProductId = productId
         LockManager.acquire("inventory", productId, function(result) {
             if (root.productId !== lockedProductId) return
-            _lockState = result.granted ? "granted" : result.reason
+            _lockState = FailureCause.lockState(result)
             _lockHolder = result.holder
         })
     }
@@ -1039,6 +1042,8 @@ BottomSheet {
                 errorLabel.text = _lockHolder && _lockHolder.name
                     ? qsTr("%1 is currently editing this product — try again shortly").arg(_lockHolder.name)
                     : qsTr("This product is currently being edited elsewhere — try again shortly")
+            } else if (_lockState === "no-access") {
+                errorLabel.text = FailureCause.forAccess().text
             } else if (_lockState === "error") {
                 errorLabel.text = qsTr("Couldn't confirm this product is free to edit (connection issue) — try again")
             } else {

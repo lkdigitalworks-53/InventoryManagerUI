@@ -97,6 +97,13 @@ QtObject {
         // was already fixed for on the delta path (2026-07-29) — this is
         // the same fix, applied here (2026-08-06 review, finding C6).
         if (status === 409) return { granted: false, holder: body.holder || null, reason: "denied" }
+        // 403 `no-tenant-context`: the server refused the caller's MEMBERSHIP (removed, suspended, invalid
+        // role). Still reason "error" (not a denial, so no caller can call it "edited elsewhere"), plus
+        // `noAccess` so a caller can say what happened instead of "connection issue, try again": retrying
+        // can never succeed until an owner or admin restores the member (S2f-3 sweep, PR #171 device test).
+        // Only this exact pair counts: any other 403 body stays a plain error.
+        if (status === 403 && body.error === "no-tenant-context")
+            return { granted: false, holder: null, reason: "error", noAccess: true }
         return { granted: false, holder: null, reason: "error" }
     }
 
