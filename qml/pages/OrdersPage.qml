@@ -540,6 +540,24 @@ Item {
         var noAccess = []
         var unchecked = []
         var idx = 0
+        // Circuit breaker (PR #174 sweep, D-E): with the network down or flaky every acquire ends in "no real
+        // answer", and a run of 200 orders would ask 200 times in a row (each up to the request timeout) with no
+        // cancel button. After this many CONSECUTIVE no-answers the rest are not asked: they are reported as
+        // "couldn't confirm" and the user can tap Approve again. Any real answer (granted, denied, 403) resets
+        // the run, so one bad request in the middle never stops a healthy batch.
+        var noAnswerRun = 0
+        var maxNoAnswerRun = 3
+
+        // Not asked: file every remaining order under `list` and advance the progress state for each, so the
+        // banner still finishes. A LOOP, never one _next() per order: there is no network wait between the
+        // calls, so recursion nested one frame per order and a big batch would hit the QML engine's call-depth
+        // cap and throw, leaving the busy overlay up for good.
+        function _skipRest(list) {
+            while (idx < toApprove.length) {
+                list.push(toApprove[idx++])
+                root._approveState = BAP.step(root._approveState, "locked")
+            }
+        }
 
         function _next() {
             if (idx >= toApprove.length) {
@@ -553,8 +571,12 @@ Item {
                         parts.push(qsTr("Being edited elsewhere, try again shortly: %1").arg(lockedOut.join(", ")))
                     if (noAccess.length > 0)
                         parts.push(qsTr("%1 not approved. %2").arg(noAccess.length).arg(FailureCause.forAccess().text))
-                    if (unchecked.length > 0)
-                        parts.push(qsTr("Couldn't confirm %1 order(s) are free to edit (connection issue), try again: %2").arg(unchecked.length).arg(unchecked.join(", ")))
+                    if (unchecked.length > 0) {
+                        // Capped: after the breaker trips this list can hold every pending order.
+                        var shownIds = unchecked.slice(0, 5).join(", ")
+                            + (unchecked.length > 5 ? qsTr(" and %1 more").arg(unchecked.length - 5) : "")
+                        parts.push(qsTr("Couldn't confirm %1 order(s) are free to edit (connection issue), try again: %2").arg(unchecked.length).arg(shownIds))
+                    }
                     stockErrorDlg.show({
                         title: qsTr("Some Orders Weren't Approved"),
                         message: parts.join("\n\n"),
@@ -565,22 +587,6 @@ Item {
             }
             var orderId = toApprove[idx]
             idx++
-            // Fail fast: the server already said our membership is refused, and every remaining
-            // order would get the same 403. Skip the requests (a suspended member with 200 pending
-            // orders would otherwise wait on 200 sequential refusals with no cancel button).
-            // The rest are drained in a LOOP, not by calling _next() once per order: that recursion is
-            // synchronous (no network wait between calls), so its depth grew with the batch and the QML
-            // engine's call-depth cap would throw on a big one, leaving the busy overlay up for good.
-            if (noAccess.length > 0) {
-                noAccess.push(orderId)
-                root._approveState = BAP.step(root._approveState, "locked")
-                while (idx < toApprove.length) {
-                    noAccess.push(toApprove[idx++])
-                    root._approveState = BAP.step(root._approveState, "locked")
-                }
-                _next()
-                return
-            }
             // Headless equivalent of OrderDetailDialog's acquire/release —
             // same lock, no dialog UI since this runs as a background batch
             // action. One attempt per order, no retry (matches this app's
@@ -588,9 +594,15 @@ Item {
             // philosophy for bulk operations).
             LockManager.acquire("order", orderId, function(result) {
                 var lockSt = FailureCause.lockState(result)
+                noAnswerRun = lockSt === "error" ? noAnswerRun + 1 : 0
                 if (lockSt !== "granted") {
                     (lockSt === "denied" ? lockedOut : (lockSt === "no-access" ? noAccess : unchecked)).push(orderId)
                     root._approveState = BAP.step(root._approveState, "locked")
+                    // Stop asking: a 403 means every remaining order gets the same 403 (a suspended member
+                    // with 200 pending orders would otherwise wait on 200 refusals); a run of no-answers
+                    // means the network is not there (see noAnswerRun above).
+                    if (lockSt === "no-access") _skipRest(noAccess)
+                    else if (noAnswerRun >= maxNoAnswerRun) _skipRest(unchecked)
                     _next()
                     return
                 }

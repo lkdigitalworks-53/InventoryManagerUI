@@ -148,4 +148,39 @@ TestCase {
         compare(received.granted, false)
         compare(received.reason, "error", "not being signed in yet is not the same as someone else holding the lock")
     }
+
+    // ---- PR #174 sweep, D-E / F2: request timeout + renewal rule ----
+    // The XHR itself (timeout, QTBUG-49896 snapshot, answer-once) has no mock HTTP layer here; it is run on
+    // the real text in .github/scripts/__tests__/lockTransportBehavior.test.js. These two are pure.
+    function test_requestTimeoutMs_is_bounded_and_shorter_than_the_renew_heartbeat() {
+        verify(LockManager.requestTimeoutMs > 0, "0 would mean no timeout at all")
+        verify(LockManager.requestTimeoutMs < LockManager.renewIntervalMs, "two renewals must never overlap")
+        compare(LockManager.requestTimeoutMs, 15000)
+    }
+
+    function test_renewalLost_a_no_answer_keeps_the_hold() {
+        // status 0 = timeout or offline: the lock may well still be ours; the next heartbeat retries
+        var none = LockManager._classifyAcquireResponse(0, null)
+        compare(LockManager._renewalLost(0, none), false)
+    }
+
+    function test_renewalLost_a_real_refusal_drops_the_hold() {
+        var cases = [
+            [409, { ok: false, holder: { name: "A" } }],
+            [403, { ok: false, error: "no-tenant-context" }],
+            [500, { ok: false, error: "lock-failed" }],
+            [502, null],
+            [200, null]
+        ]
+        for (var i = 0; i < cases.length; ++i) {
+            var c = LockManager._classifyAcquireResponse(cases[i][0], cases[i][1])
+            compare(LockManager._renewalLost(cases[i][0], c), true, "case " + i)
+        }
+    }
+
+    function test_renewalLost_a_granted_renewal_is_never_lost() {
+        var ok = LockManager._classifyAcquireResponse(200, { ok: true })
+        compare(LockManager._renewalLost(200, ok), false)
+        compare(LockManager._renewalLost(0, ok), false)
+    }
 }

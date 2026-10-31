@@ -28,6 +28,12 @@ QtObject {
     // spare even accounting for a slow request or two before it's due.
     readonly property int renewIntervalMs: 30000
 
+    // How long one lock request may take before it counts as "no answer" (status 0). Without a timeout a
+    // request that never answers never calls back: a bulk Approve then waits on it for good, with no cancel
+    // button (PR #174 sweep, D-E). 15 s: the endpoint is one small transaction, and well under renewIntervalMs
+    // so two renewals never overlap.
+    readonly property int requestTimeoutMs: 15000
+
     // The lock this device currently holds, or null. { entity, entityId, requestId }
     property var _held: null
     property var _renewTimer: null
@@ -65,13 +71,22 @@ QtObject {
             // renewing and let the next real save attempt be the source of
             // truth.
             var classified = _classifyAcquireResponse(status, body)
-            if (!classified.granted) {
+            if (_renewalLost(status, classified)) {
                 console.warn("[LockManager] renewal failed, no longer holding",
                              heldNow.entity, heldNow.entityId)
                 if (_held === heldNow) _held = null
                 _renewTimerInstance().stop()
             }
         })
+    }
+
+    // True when a renewal answer means the lock is gone: the server REFUSED it (409, 403, 5xx, an unreadable
+    // answer). A renewal that got no answer at all (status 0: the request timed out or the device is offline)
+    // keeps the hold and the next heartbeat tries again: the TTL (3 heartbeats) outlives one lost renewal. Before
+    // the request timeout existed a hung renewal behaved exactly like this; keeping it so means adding the
+    // timeout does not start dropping locks on a slow network (PR #174 sweep, D-E).
+    function _renewalLost(status, classified) {
+        return !classified.granted && status !== 0
     }
 
     // Classifies an acquireLock HTTP response. Pure function, no XHR — same
@@ -184,17 +199,44 @@ QtObject {
         return "lock-" + Date.now() + "-" + _requestSeq
     }
 
+    // QTBUG-49896 (SKILLS Skill 45/76): QML's XMLHttpRequest can reset `status` to 0 at the 3->4 transition for
+    // some non-2xx answers (a 409 is the original report). Same snapshot as Gateway / PhotoQueue: keep the last
+    // non-zero status and body seen at HEADERS_RECEIVED / LOADING. Without it a real 403 `no-tenant-context` or
+    // 409 denial could reach _classifyAcquireResponse as status 0 and be worded as "connection issue".
+    function _captureBeforeStatusIsLost(xhr, snap) {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {
+            if (xhr.status !== 0) {
+                snap.status = xhr.status
+                snap.responseText = xhr.responseText
+            }
+        }
+    }
+
+    // Answers `callback(status, body)` exactly once: DONE and the timeout can both fire for one request (see
+    // PhotoQueue._failUpload), and a late DONE after the timeout must not answer a second time.
+    // status 0 + null body = no answer (timeout, offline); the classifier turns that into reason "error".
     function _post(url, payload, callback) {
         var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE) return
+        var settled = false
+        var snap = { status: 0, responseText: "" }
+        function _settle(status, text) {
+            if (settled) return
+            settled = true
             var body = null
-            try { body = JSON.parse(xhr.responseText) } catch (e) { body = null }
-            if (callback) callback(xhr.status, body)
+            try { body = JSON.parse(text) } catch (e) { body = null }
+            if (callback) callback(status, body)
         }
+        xhr.onreadystatechange = function() {
+            _captureBeforeStatusIsLost(xhr, snap)
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            var lost = xhr.status === 0
+            _settle(lost ? snap.status : xhr.status, lost ? snap.responseText : xhr.responseText)
+        }
+        xhr.ontimeout = function() { _settle(0, "") }
         xhr.open("POST", url)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+        xhr.timeout = requestTimeoutMs
         var envelope = { env: FirebaseService.environment }
         for (var k in payload) envelope[k] = payload[k]
         xhr.send(JSON.stringify(envelope))
