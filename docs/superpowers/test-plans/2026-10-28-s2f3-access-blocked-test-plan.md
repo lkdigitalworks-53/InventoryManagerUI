@@ -5,6 +5,8 @@ Design: `docs/superpowers/specs/2026-10-28-s2f3-access-wording-design.md`. Branc
 ## What changed
 Login now reads the signed-in user's own member doc and decides from it (role, status). Removed, suspended and invalid-role members get `AccessBlockedPage` instead of the app; an unreadable answer reuses the role this device already verified, or blocks with "Could not check your access". The stuck-write text for HTTP 403 `no-tenant-context` names the two usual causes.
 
+**Sixth session (PR #171 device test, 2026-10-31):** a suspended member who pressed **Approve** on Orders was told "Being edited elsewhere, try again shortly". The lock request (`acquireLock`) is refused with 403 `no-tenant-context` for a suspended member BEFORE any write is queued; the client called that "error" and bulk Approve filed every non-granted acquire under "edited elsewhere". Now the 403 is its own state (`noAccess`): bulk Approve and the three edit dialogs (order, product, staff) show the same removed-or-suspended text as a stuck write, and bulk Approve stops asking after the first 403. **H8 as first written was wrong** (it said Approve queues a write and shows a stuck row; it cannot, the lock fails first), so H8 now uses Restock and N8-N14 cover the lock paths.
+
 ## 1. Unit tests (`tests/tst_AccessState.qml`, 49 functions, pure JS)
 | Kind | Cases |
 |---|---|
@@ -40,11 +42,20 @@ A removed member (no member doc) reads its own member path and gets "does not ex
 ## 4. Functions / handler / E2E
 No server code changed, so no new handler tests. QML E2E runs one app session per process (singletons), so a second actor cannot be driven there; the cross-actor cases (X6 suspend, X7 remove while signed in) belong to the multi-role matrix.
 
+## 2d. Lock no-access (Node, `.github/scripts/__tests__/lockNoAccessBehavior.test.js`, 40 tests; QML `tst_LockManager` +3, `tst_FailureCause` U17-U20)
+Runs the REAL text of `LockManager._classifyAcquireResponse`, `OrdersPage._approveAllPending` (stubs for `LockManager`, `dataModel`, the dialog; real `BulkApproveProgress.js` and `FailureCause.js`) and the real helper.
+- Classifier: 403 + `no-tenant-context` -> `noAccess`, `reason: "error"`, no holder; 11 near misses (other 403 bodies, 401/400/500/409 with the same code, null/string bodies) are NOT noAccess; 409 stays denied with its holder; 200 stays granted.
+- Bulk Approve: the reported case (3 orders, every acquire 403) -> ONE dialog "3 not approved. The server no longer accepts your access...", never "elsewhere", "connection" or "try again", exactly one request (fail-fast), nothing completed, progress ends at 0 approved; connection errors -> "connection issue" with the ids and no fail-fast; real holder -> the old text with the id and the other orders still complete; all granted -> no dialog; insufficient inventory unchanged; a mixed run (ok, denied, error, 403, ok) stops after the 403 and lists each cause once; empty list; asynchronous answers; seeded monkey (200 runs x random outcomes incl. null, undefined, `{granted:"yes"}`) with 7 invariants (request count, completions, progress ends, approved count, "elsewhere" iff a real holder, access text iff a 403, "connection" iff an error, dialog iff something failed).
+- Dialogs: each imports `FailureCause`, maps every acquire result through `FailureCause.lockState`, has the `no-access` branch with the shared text, never reads the raw `reason`.
+- Pin: exactly four files call `LockManager.acquire` (the three dialogs and OrdersPage); a fifth caller fails this test until it adopts `lockState`.
+- Mutants: 4 on the classifier, 11 on the page, 5 per dialog; every one is caught.
+Not covered here (device only): that the dialog text is drawn where the user sees it, the real 403 from the server, timing.
+
 ## 5. Regression
 Owner login and first sign-up unchanged in the happy path (device R1, R2). `FirebaseService.get` callers ignore the new third argument. Existing script tests (271 incl. these) pass locally. QML suites run only in CI.
 
 ## 6. Verification status
-Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (285/285, of which 72 behaviour tests, 42 wiring), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
+Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (325/325, of which 72 AuthService behaviour tests, 42 wiring, 40 lock no-access), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
 
 ## On-device test plan
 ### Prerequisites
@@ -67,7 +78,7 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | H5 | Re-create the doc with `role: "viewer"`, `status: "active"`. Reopen | **Your role is not valid**, body "Your account in <shop> has a role this app does not recognise, so access is blocked. Ask the shop owner or an admin to fix your role." |
 | H6 | On any blocked screen with nothing queued, tap **Sign out** | Straight to the login screen, no confirmation (same as the workspace-setup screen) |
 | H7 | Queue a write first: airplane mode on, change a product's stock, airplane mode still on; suspend the member in the console; airplane mode off. Wait for the blocked screen, tap **Sign out** | The sign-out sheet lists the waiting change. **Stay signed in** returns to the blocked screen; **Sign out and discard** goes to login |
-| H8 | App open on Orders, online. Set `status` to `inactive`. Approve an order. Wait up to 10 minutes, open the "not syncing" sheet | The row's cause line reads "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it". **Record** whether the blocked screen appeared by itself (it does after a connectivity change) |
+| H8 | App open on Inventory, online. Set `status` to `inactive`. Open any product, **Restock** by 1 and confirm. Wait up to 10 minutes, open the "not syncing" sheet | The row's cause line reads "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it". **Record** whether the blocked screen appeared by itself (it does after a connectivity change). (Approve on Orders is NOT a valid way to reach this row: its lock is refused first and nothing is queued, see N8) |
 
 ### Negative
 | # | Action | Expected |
@@ -79,6 +90,11 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | N5 | On the suspended screen tap **Try again**, then at once turn airplane mode on (the check fails) | The suspended screen stays: never the app, and the title does not change to "Could not check your access". **Record** whether anything tells you the check failed (today nothing does, see KNOWN-ISSUES) |
 | N6 | While the spinner shows, tap **Sign out** | Sign-out works (sheet if something is queued, else login); the late answer does not bring the blocked screen back over the login screen |
 | N7 | Double-tap **Try again** quickly | One check only (the button is disabled while it runs); no crash |
+| N8 | App open on Orders, online, at least 2 pending orders. Set `status` to `suspended`. Tap the **Approve** banner button | Dialog "Some Orders Weren't Approved" with "2 not approved. The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it". NEVER "Being edited elsewhere" or "connection issue". Both orders stay pending. It ends in about a second (one request, not one per order). **Record** whether the blocked screen appeared |
+| N9 | Same state. Open one pending order, change a quantity, tap the primary button | Red text under the form shows the same removed-or-suspended sentence (not "currently being updated elsewhere", not "connection issue"); the dialog stays open; the order is unchanged |
+| N10 | Same state. Open a product, tap **Edit** | The same sentence appears in the product form as soon as edit mode opens, and again after tapping Save; the product is unchanged |
+| N11 | Same state. Open a staff member, tap **Edit** (owner login) | The same sentence in the staff form on opening edit mode and on Save |
+| N12 | After N8, set `status` back to `active` WITHOUT restarting the app. Tap **Approve** again | The orders are approved normally; no stale error text; no blocked screen |
 
 ### Edge cases
 | # | Action | Expected |
@@ -96,6 +112,7 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | E11 | Regression for D12: existing owner signs in on a good network | App opens directly as owner; "Create your workspace" never flashes |
 | E12 | D13: a removed member is on the blocked screen; in the Firebase console delete that member's `users/{uid}` doc, then tap **Try again** | Spinner on the button, then the SAME blocked screen; no "Create your workspace" behind or after it; **Sign out** still works. (A cold start with the same two docs deleted shows "Create your workspace": see KNOWN-ISSUES) |
 | E13 | D14: signed in as staff/manager, turn on airplane mode right after tapping **Leave workspace** and confirming | Error "Could not check your account. Check your connection and try again."; still signed in; in the console `users/{uid}` is unchanged (phone, address, `tenants` intact) |
+| E14 | Member active, 2 pending orders, airplane mode ON, tap **Approve** | Dialog "Couldn't confirm 2 order(s) are free to edit (connection issue), try again: <ids>"; never the removed-or-suspended text and never "elsewhere". Turn airplane mode off, tap **Approve**: both approve |
 
 ### Multi-scenario / monkey (manual)
 Cycle active -> suspended -> removed -> invalid role -> active, force-stopping between each, 10 rounds: the screen always matches the doc, never the previous one. Tap Try again rapidly 10 times on a suspended member, toggling airplane mode in between: no crash, never the login screen, never the app, ends on the suspended screen.
@@ -104,6 +121,7 @@ Cycle active -> suspended -> removed -> invalid role -> active, force-stopping b
 - "Could not check your access": needs the member read to fail while the users read just succeeded on a first login. Covered by unit and wiring tests only.
 - The users-doc read failing (D12: at login, during a retry, or inside create-workspace): needs the users read to fail while the network looks up (airplane mode makes the app skip the read entirely); unit, behaviour and wiring tests only.
 - Non-owner roles: no way to sign in as staff yet (KNOWN-ISSUES).
+- A REAL lock denial (another person holds the order): needs a second actor; covered by `tst_LockManager` (409) and the bulk Approve behaviour tests (text and other orders still complete).
 - A dialog open when the block appears: known limit, stays above the screen.
 
 ### Affected areas
@@ -113,4 +131,7 @@ Cycle active -> suspended -> removed -> invalid role -> active, force-stopping b
 | `qml/model/AuthService.qml` | wiring pins only (Felgo) | H1-H7, E5-E7, N1, N4-N5 |
 | `qml/pages/AccessBlockedPage.qml`, `qml/Main.qml` | wiring pins only | all, N2-N3, N4, N6-N7, E3-E4 |
 | `qml/model/FirebaseService.qml` `get` | wiring pin | H1 (every login reads it) |
-| `qml/helper/FailureCause.js` | tst_FailureCause U14 | H8 |
+| `qml/helper/FailureCause.js` | tst_FailureCause U14, U17-U20; real-text node tests | H8, N8-N11 |
+| `qml/model/LockManager.qml` | tst_LockManager (+3), node classifier + 4 mutants | N8-N12, E14 |
+| `qml/pages/OrdersPage.qml` (bulk Approve) | real-text node run, 11 mutants, monkey | N8, N12, E14 |
+| `qml/pages/OrderDetailDialog.qml`, `EditProductDialog.qml`, `StaffDetailDialog.qml` | source pins + 5 mutants each | N9-N11 |
