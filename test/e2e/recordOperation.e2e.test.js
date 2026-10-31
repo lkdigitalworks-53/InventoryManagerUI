@@ -540,7 +540,17 @@ function restockOp(requestId, stockDeltaQty) {
           after: { txId: "tx-p-{{b}}", batchId: "{{b}}", kind: "purchase" } }
     ] };
 }
-function trackMinted(n) { mintedNow.push(n); }
+// F10: register what a response minted THE MOMENT it is known, before any assertion can throw. Registering
+// after the assertions meant one failing assertion left a doc behind (the counter is restored, the doc was
+// not), and the next test then failed on an occupied id, which hid the real failure.
+function trackResult(r) {
+    if (!r || r.status !== 200 || !r.body || !Array.isArray(r.body.results)) return;
+    for (const entry of r.body.results) {
+        if (!entry || entry.kind !== "mint" || typeof entry.id !== "string") continue;
+        const n = CounterRegistry.numberOf(BATCH_PREFIX, entry.id);
+        if (n !== null) mintedNow.push(n);
+    }
+}
 
 test.after(async () => {
     for (const ref of await db.collection(T + "stock_movements").listDocuments()) if (ref.id.startsWith("restock:opE2E")) await ref.delete();
@@ -554,10 +564,10 @@ test("mint: a restock operation takes its batch id from the server counter, land
         await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
         const body = restockOp("restock:opE2E-m1", 3);
         const r = await post(body);
+        trackResult(r);
         assert.equal(r.status, 200, JSON.stringify(r.body));
         assert.equal(r.body.idempotentReplay, false);
         assert.deepEqual(r.body.results[0], { kind: "mint", counter: "stock_batch", bind: "b", id: idFor(v0 + 1) });
-        trackMinted(v0 + 1);
 
         assert.deepEqual(await counterSnapshot(), { value: v0 + 1 });
         assert.equal((await read("stock_batches/" + idFor(v0 + 1))).batchId, idFor(v0 + 1));
@@ -592,9 +602,9 @@ test("mint: a rejected restock burns no number, and the retry after the fix gets
 
         await db.doc(T + "inventory/opE2E-pm").set({ productId: "opE2E-pm", stock: 100, name: "Mint E2E" });
         const retried = await post(restockOp("restock:opE2E-m2", -5));
+        trackResult(retried);
         assert.equal(retried.status, 200, JSON.stringify(retried.body));
         assert.equal(retried.body.results[0].id, idFor(v0 + 1));
-        trackMinted(v0 + 1);
     } finally {
         await restoreCounter(before);
     }
@@ -614,9 +624,9 @@ test("mint: a client-style counter mint and a server mint racing on one counter 
             return next;
         });
         const [serverRes, clientValue] = await Promise.all([postWithRetryOn5xx(restockOp("restock:opE2E-m3", 1)), clientMint()]);
+        trackResult(serverRes);
         assert.equal(serverRes.status, 200, JSON.stringify(serverRes.body));
         const serverNumber = parseInt(serverRes.body.results[0].id.substring(BATCH_PREFIX.length), 10);
-        trackMinted(serverNumber);
         assert.notEqual(serverNumber, clientValue);
         assert.deepEqual([serverNumber, clientValue].sort(), [v0 + 1, v0 + 2]);
         assert.deepEqual(await counterSnapshot(), { value: v0 + 2 });
@@ -643,16 +653,16 @@ test("mint: a counter far behind the data heals in ONE operation, and the occupi
         assert.ok(top >= v0 + 25, "planted ids must be in the listing");
         const want = top + 1;
         const r = await post(restockOp("restock:opE2E-m4", 3));
+        trackResult(r);
         assert.equal(r.status, 200, JSON.stringify(r.body));
         assert.equal(r.body.results[0].id, idFor(want));
-        trackMinted(want);
         assert.deepEqual(await counterSnapshot(), { value: want });
         assert.equal((await read("stock_batches/" + idFor(v0 + 1))).planted, true);
         // a second operation continues from the healed counter
         const second = await post(restockOp("restock:opE2E-m5", 1));
+        trackResult(second);
         assert.equal(second.status, 200, JSON.stringify(second.body));
         assert.equal(second.body.results[0].id, idFor(want + 1));
-        trackMinted(want + 1);
     } finally {
         for (const n of planted) await db.doc(T + "stock_batches/" + idFor(n)).delete();
         await restoreCounter(before);
@@ -669,6 +679,43 @@ test("mint: a mint nobody uses is a clean 400 and burns nothing", async () => {
         assert.equal(r.body.opIndex, 0);
         assert.deepEqual(await counterSnapshot(), before);
         assert.equal(await read("audit_log/restock:opE2E-m6"), null);
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("mint: a counter hand-set to 2^53-1 is damaged, not trusted: the next restock gets a sane id and heals the counter (F9, M16)", async () => {
+    const before = await counterSnapshot();
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        await db.doc(T + BATCH_COUNTER).set({ value: Number.MAX_SAFE_INTEGER });
+        // The shared tenant may hold other ids of this year (the QML suites seed some), so the expected number
+        // comes from the real collection, exactly like the heal test.
+        const top = CounterRegistry.maxNumber(BATCH_PREFIX, (await db.collection(T + "stock_batches").listDocuments()).map((ref) => ref.id));
+        const want = top + 1;
+        const r = await post(restockOp("restock:opE2E-m7", 3));
+        trackResult(r);
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(r.body.results[0].id, idFor(want));
+        assert.deepEqual(await counterSnapshot(), { value: want });          // no longer enormous
+        const second = await post(restockOp("restock:opE2E-m7b", 1));
+        trackResult(second);
+        assert.equal(second.status, 200, JSON.stringify(second.body));
+        assert.equal(second.body.results[0].id, idFor(want + 1));
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("mint: a bind named after an Object.prototype member and never used is a clean 400 unused-mint (F8)", async () => {
+    const before = await counterSnapshot();
+    try {
+        const r = await post({ requestId: "restock:opE2E-m8", opType: "restock", clientTimestamp: "2026-10-31T10:00:00.000Z",
+                               ops: [{ kind: "mint", counter: "stock_batch", bind: "toString" }] });
+        assert.equal(r.status, 400);
+        assert.equal(r.body.error, "unused-mint");
+        assert.deepEqual(await counterSnapshot(), before);
+        assert.equal(await read("audit_log/restock:opE2E-m8"), null);
     } finally {
         await restoreCounter(before);
     }
