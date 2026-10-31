@@ -42,20 +42,21 @@ A removed member (no member doc) reads its own member path and gets "does not ex
 ## 4. Functions / handler / E2E
 No server code changed, so no new handler tests. QML E2E runs one app session per process (singletons), so a second actor cannot be driven there; the cross-actor cases (X6 suspend, X7 remove while signed in) belong to the multi-role matrix.
 
-## 2d. Lock no-access (Node, `.github/scripts/__tests__/lockNoAccessBehavior.test.js`, 40 tests; QML `tst_LockManager` +3, `tst_FailureCause` U17-U20)
+## 2d. Lock no-access (Node, `.github/scripts/__tests__/lockNoAccessBehavior.test.js`, 43 tests; QML `tst_LockManager` +3, `tst_FailureCause` U17-U20)
 Runs the REAL text of `LockManager._classifyAcquireResponse`, `OrdersPage._approveAllPending` (stubs for `LockManager`, `dataModel`, the dialog; real `BulkApproveProgress.js` and `FailureCause.js`) and the real helper.
 - Classifier: 403 + `no-tenant-context` -> `noAccess`, `reason: "error"`, no holder; 11 near misses (other 403 bodies, 401/400/500/409 with the same code, null/string bodies) are NOT noAccess; 409 stays denied with its holder; 200 stays granted.
 - Bulk Approve: the reported case (3 orders, every acquire 403) -> ONE dialog "3 not approved. The server no longer accepts your access...", never "elsewhere", "connection" or "try again", exactly one request (fail-fast), nothing completed, progress ends at 0 approved; connection errors -> "connection issue" with the ids and no fail-fast; real holder -> the old text with the id and the other orders still complete; all granted -> no dialog; insufficient inventory unchanged; a mixed run (ok, denied, error, 403, ok) stops after the 403 and lists each cause once; empty list; asynchronous answers; seeded monkey (200 runs x random outcomes incl. null, undefined, `{granted:"yes"}`) with 7 invariants (request count, completions, progress ends, approved count, "elsewhere" iff a real holder, access text iff a 403, "connection" iff an error, dialog iff something failed).
+- Big batch (seventh session sweep): 5000 pending orders for a suspended member -> still ONE request, one dialog "5000 not approved.", progress ends at 5000 of 5000; and a 403 that arrives MID-batch (3 approved, then refused) -> 4 requests, "4997 not approved.", 3 approved. The harness samples the call-stack depth at every 500th progress step and requires it to stay under 40 frames: the first version of the fail-fast skip called `_next()` once per remaining order (synchronous, so depth grew with the batch; the QML engine caps call depth and would throw, leaving the busy overlay up for good), now it drains the rest in a loop.
 - Dialogs: each imports `FailureCause`, maps every acquire result through `FailureCause.lockState`, has the `no-access` branch with the shared text, never reads the raw `reason`.
 - Pin: exactly four files call `LockManager.acquire` (the three dialogs and OrdersPage); a fifth caller fails this test until it adopts `lockState`.
-- Mutants: 4 on the classifier, 11 on the page, 5 per dialog; every one is caught.
+- Mutants: 4 on the classifier, 14 on the page (3 new: recursion back, drain skips progress, drain drops orders), 5 per dialog; every one is caught.
 Not covered here (device only): that the dialog text is drawn where the user sees it, the real 403 from the server, timing.
 
 ## 5. Regression
 Owner login and first sign-up unchanged in the happy path (device R1, R2). `FirebaseService.get` callers ignore the new third argument. Existing script tests (271 incl. these) pass locally. QML suites run only in CI.
 
 ## 6. Verification status
-Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (325/325, of which 72 AuthService behaviour tests, 42 wiring, 40 lock no-access), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
+Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (328/328, of which 72 AuthService behaviour tests, 42 wiring, 43 lock no-access), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
 
 ## On-device test plan
 ### Prerequisites
@@ -95,6 +96,7 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | N10 | Same state. Open a product, tap **Edit** | The same sentence appears in the product form as soon as edit mode opens, and again after tapping Save; the product is unchanged |
 | N11 | Same state. Open a staff member, tap **Edit** (owner login) | The same sentence in the staff form on opening edit mode and on Save |
 | N12 | After N8, set `status` back to `active` WITHOUT restarting the app. Tap **Approve** again | The orders are approved normally; no stale error text; no blocked screen |
+| N13 | Suspended member (N8 state) with MANY pending orders (30 or more; create them in the shop first). Tap **Approve** | Ends in about a second; ONE dialog "<n> not approved. ...removed or suspended..." with n = the number of pending orders; the banner progress bar reaches full and the button re-enables; the app does not freeze or crash; every order stays pending |
 
 ### Edge cases
 | # | Action | Expected |
@@ -133,5 +135,5 @@ Cycle active -> suspended -> removed -> invalid role -> active, force-stopping b
 | `qml/model/FirebaseService.qml` `get` | wiring pin | H1 (every login reads it) |
 | `qml/helper/FailureCause.js` | tst_FailureCause U14, U17-U20; real-text node tests | H8, N8-N11 |
 | `qml/model/LockManager.qml` | tst_LockManager (+3), node classifier + 4 mutants | N8-N12, E14 |
-| `qml/pages/OrdersPage.qml` (bulk Approve) | real-text node run, 11 mutants, monkey | N8, N12, E14 |
+| `qml/pages/OrdersPage.qml` (bulk Approve) | real-text node run, 14 mutants, monkey, 5000-order stack-depth probe | N8, N12, N13, E14 |
 | `qml/pages/OrderDetailDialog.qml`, `EditProductDialog.qml`, `StaffDetailDialog.qml` | source pins + 5 mutants each | N9-N11 |
