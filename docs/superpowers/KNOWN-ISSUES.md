@@ -801,3 +801,10 @@ In an operation with a mint op, a string inside `after` that contains `{{name}}`
 
 `counters` stays client-writable and product / order / staff ids are still minted by the client until each consumer migrates (atomic design 7b). F7 (a member can burn ids) stays open until the last caller moves; then the rules pin flips in its own PR.
 
+## Mint seed lists the whole collection once per counter per year — FOUND 2026-10-31 (R2 sweep 2), ACCEPTED
+
+When a counter doc is missing or damaged (first restock ever, and every January for the year-scoped batch counter) the server lists all doc ids of `suppliers` or `stock_batches` once to seed the counter. For a tenant with tens of thousands of batches that is that many document reads, once. A document-id range query on the year prefix would cut it, but could not be verified without the emulator in the chat sandbox. Revisit if a tenant ever passes ~10k batches.
+
+## A member can still set a counter to any value up to 999,999,999 — FOUND 2026-10-31, OPEN until the rules pin
+
+F9 closed the worst case (a value near 2^53 killed minting for the tenant). A member can still move a counter forward by hand, burning ids up to the ceiling; they cannot lock the tenant out any more because an out-of-range value is re-seeded. The real fix remains the `counters` rules pin at the end of the atomic arc (F7 above).

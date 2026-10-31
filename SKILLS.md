@@ -4662,6 +4662,8 @@ R2 (2026-10-28), the server `mint` op. Rules:
 8. Two writers on one counter doc (client REST mint, server transaction) are safe by Firestore serialisation; pin it with a racing emulator test that records and restores the shared counter.
 9. A year in an id is a time-zone decision. This app is INR / en-IN, so the server uses Asia/Kolkata (constant, tested on both sides of Jan 1 IST); a device elsewhere can mint a different-year prefix for a few hours, ids stay unique because the prefix differs.
 10. Equivalent mutants exist (`<` vs `<=` where the two operands can never be equal; `0 + x`). Name them instead of contorting a test.
+11. A plain `{}` keyed by user text lies about `obj[name]`: `used["toString"]` is a function, so a name like `constructor` looks already-seen. Use `Object.prototype.hasOwnProperty.call` (or a `Map`) for every dictionary whose keys a caller can choose, and make the test iterate the inherited names, not one example (F8, found by a second review of code the first review had passed).
+12. Every number a client can write needs a ceiling you control. 2^53-1 is a valid "safe integer" and still breaks an id counter (`n + 1 === n`; ids no longer parse back). Treat out-of-range as damaged and re-seed; never wrap (F9, M16).
 
 
 ## Skill 146: A shared read-set is not a write-set; a rejected-never-writes counter needs a heal path; a test that mints must clean up in its own finally
