@@ -568,9 +568,16 @@ Item {
             // Fail fast: the server already said our membership is refused, and every remaining
             // order would get the same 403. Skip the requests (a suspended member with 200 pending
             // orders would otherwise wait on 200 sequential refusals with no cancel button).
+            // The rest are drained in a LOOP, not by calling _next() once per order: that recursion is
+            // synchronous (no network wait between calls), so its depth grew with the batch and the QML
+            // engine's call-depth cap would throw on a big one, leaving the busy overlay up for good.
             if (noAccess.length > 0) {
                 noAccess.push(orderId)
                 root._approveState = BAP.step(root._approveState, "locked")
+                while (idx < toApprove.length) {
+                    noAccess.push(toApprove[idx++])
+                    root._approveState = BAP.step(root._approveState, "locked")
+                }
                 _next()
                 return
             }
