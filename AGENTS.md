@@ -147,6 +147,7 @@ edit/delete; client forges identity & time). The fix:
   and `...-s1b.md`.
 - **P2** Tax-identity fields: HSN (4/6/8-digit) on products; GSTIN on supplier/customer/tenant
   (client-only, run parallel to P0).
+  **Status 2026-10-31: not started** (0 hits for `hsnCode`/`gstin` in code, rules, tests, all branches). "Client-only" is stale since S2c (inventory writes are gateway-only, so server validation is cheap); see `specs/2026-10-31-p2-tax-identity-status-review.md` for slices P2-a..f and open decisions Q1-Q5.
 - **P3** Legal docs & acceptance: ToS, Privacy Policy, DPA + versioned accept-record.
 - **P4** DPDP privacy core: consent capture/logs, privacy notice, grievance channel, 18+ gate,
   data-residency decision (Firestore `(default)` is `asia-south1`/Mumbai, confirmed via
