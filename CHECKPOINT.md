@@ -1,10 +1,10 @@
 # CHECKPOINT — 2026-10-28 R1+R2 server `mint` op (atomic-ops arc, resume here)
 
-**Branch:** `feat/2026-10-28-r2-mint-engine`, cut from `main` @ `fbd7dec` (PR #170 merged). Server only: no QML touched.
+**Branch:** `feat/2026-10-28-r2-mint-engine`, cut from `main` @ `fbd7dec` (PR #170 merged); rebased onto `main` @ `f18445e` (PRs #171 + #173 merged) on 2026-10-31, session 3. Server only: no QML touched.
 **Commit identity:** `dextran52@gmail.com` (Taher, this session). PAT comes from the chat prompt only, never in a remote URL, repo, config or memory. After a push `grep -c ghp_ .git/config` must print 0.
 **Rules in force:** no build/run; no Qt in sandbox (CI is the QML oracle; this slice has no QML); push without asking; tests + test plan for every change; caveman FULL in chat only.
 **Skills used:** brainstorming (design approved as v2 in #147; slice design = `specs/2026-10-28-r2-mint-engine-design.md`, defaults vetoable), ponytail, qt-qml + qt-ui-design (N/A: no QML/UI in this slice).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr170-merged-prev-CHECKPOINT.md`.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr170-merged-prev-CHECKPOINT.md`; main's own checkpoint (PR #171 S2f-3) archived in session 3 as `docs/superpowers/specs/2026-10-31-pr171-merged-prev-CHECKPOINT.md`.
 
 ## Why this slice
 Other open work: S2f-3 = PR #171 (in flight); S2d-2 (kind hint) and S2e (pickers) wait for Taher / the CA. The atomic-ops design (#147) is merged and approved; its only remaining gate was the implementation plan. S0 (sign-out guard, #167) and pending-mint scoping (#168) are merged. R1+R2 is the next critical-path item, and S2f-6 (server-side counters) folds into it (design 7b item 1).
@@ -15,7 +15,7 @@ Other open work: S2f-3 = PR #171 (in flight); S2d-2 (kind hint) and S2e (pickers
 - [x] 3. `counterRegistry.js` + 9 tests (100%).
 - [x] 4. `operationLogic.js` mint kind etc.; 35 tests; 100% line; 27/30 mutants killed (3 equivalent).
 - [x] 5. +3 handler tests, +3 emulator e2e (CI only, NOT run), QML source drift guard (3, mutation-tested). Functions suite 927/927 local.
-- [x] 6. Docs: test plan, Skill 142 (#171 holds 141; renumber on rebase conflict), SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES, atomic status, design v2 note.
+- [x] 6. Docs: test plan, Skill 145 (was 142; main took 141-144, renumbered in session 3), SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES, atomic status, design v2 note.
 - [x] 7. Pushed; CI read on 353050f: QML 2442 ok, Functions 927 ok, Rules 106 ok, E2E 99 with 1 red (test hygiene, see session 2).
 
 ## Session 2 — 2026-10-29 review sweep of this PR (branch `review/2026-10-29-pr172-sweep`, pushed INTO `feat/2026-10-28-r2-mint-engine`)
@@ -24,7 +24,7 @@ Skills run: requesting-code-review, ponytail-audit, qt-qml-review (N/A: no QML i
 - [x] S2-2. F1 spurious rewrite of probed docs (`dirty` flag), F2 counter stuck for gaps > 20 (M12 heal), F3 unused/mint-only mint (M13 `unused-mint`), F4 `__proto__` key, F5 cross-entity whole id (M14).
 - [x] S2-3. Tests: 4 old tests rewritten, +4 new, handler +2 rows; mutation-checked 7/7 killed; coverage 100% line+branch on both lib files; functions suite 931/931.
 - [x] S2-4. E2E: per-test cleanup of minted docs (the CI red), +2 new cases (heal with 25 occupied ids, unused-mint 400). NOT RUN (no emulator in the sandbox): CI is the oracle.
-- [x] S2-5. Docs: design section 7 + M5 row, test plan (counts, new cases), README, AGENTS, Skill 143 + regenerated SKILLS-INDEX.
+- [x] S2-5. Docs: design section 7 + M5 row, test plan (counts, new cases), README, AGENTS, Skill 146 (was 143; renumbered in session 3) + regenerated SKILLS-INDEX.
 - [x] S2-6. CI on 0f114ad: QML 2442, Functions 931, Rules 106, E2E 101 (1 red: my heal e2e assumed id v0+26; the seeded tenant holds BAT-2026-900 so the correct id is 901; the heal worked as designed).
 - [x] S2-7. CI on 0e4fe4f: ALL GREEN, 3587/3587 (QML 2442, Functions 931, Rules 106, E2E 108). The 99 and 101 seen on the red runs were totals of runs that had a failing case; do not use them as a baseline.
 
@@ -33,3 +33,9 @@ Skills run: requesting-code-review, ponytail-audit, qt-qml-review (N/A: no QML i
 - Taher: veto M1-M14 (new: M12 heal, M13 `unused-mint`, M14 entity match); `firebase deploy --only functions`; run the on-device regression in the test plan.
 - NEXT SLICE: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), QML, CI is the oracle. The client must send a `receipt` movement on the restock stock delta and must use every bind it mints.
 - Not done on purpose (decisions for Taher): role gate on `restock`; restricting `mint` by opType; a per-tenant cap on counter jumps.
+
+## Session 3 — 2026-10-31 rebase + second full sweep (same branch, no new branch: fixes go into PR #172)
+Skills to run: requesting-code-review, qt-qml-review (N/A unless QML appears in the diff), ponytail-audit.
+- [x] S3-1. Read memory, cloned, rebased 9 commits onto `main` @ `f18445e` with a throw-away merge driver that keeps this file's own version. Conflicts only in docs: SKILLS.md, SKILLS-INDEX.md, KNOWN-ISSUES.md (kept both sides). Main took Skills 141-144, so mine are now 145 (mint) and 146 (read-set vs write-set); AGENTS.md reference fixed. Code files: no conflict.
+- [x] S3-2. Main's checkpoint archived; pushed with `--force-with-lease` (rebased history).
+
