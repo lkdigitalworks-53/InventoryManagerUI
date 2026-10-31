@@ -115,6 +115,9 @@ QtObject {
     // a real decision (network issue, endpoint not deployed, etc.) — the
     // caller should show a different, honest message for that case, not
     // claim someone else is editing when we don't actually know that.
+    // An "error" result may also carry `noAccess: true` (403 no-tenant-context: the
+    // membership was refused, retrying cannot help). Callers read the four-way state
+    // through FailureCause.lockState(result), never `reason` directly.
     function acquire(entity, entityId, callback) {
         if (!AuthStore.idToken || AuthStore.idToken.length === 0) {
             if (callback) callback({ granted: false, holder: null, reason: "error" })
