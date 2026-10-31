@@ -73,7 +73,7 @@ QtObject {
             // renewing and let the next real save attempt be the source of
             // truth.
             var classified = _classifyAcquireResponse(status, body)
-            if (_renewalLost(status, classified)) {
+            if (_renewalLost(status, body, classified)) {
                 console.warn("[LockManager] renewal failed, no longer holding",
                              heldNow.entity, heldNow.entityId)
                 if (_held === heldNow) _held = null
@@ -82,13 +82,15 @@ QtObject {
         })
     }
 
-    // True when a renewal answer means the lock is gone: the server REFUSED it (409, 403, 5xx, an unreadable
-    // answer). A renewal that got no answer at all (status 0: the request timed out or the device is offline)
-    // keeps the hold and the next heartbeat tries again: the TTL (3 heartbeats) outlives one lost renewal. Before
-    // the request timeout existed a hung renewal behaved exactly like this; keeping it so means adding the
-    // timeout does not start dropping locks on a slow network (PR #174 sweep, D-E).
-    function _renewalLost(status, classified) {
-        return !classified.granted && status !== 0
+    // True when a renewal answer means the lock is gone: the server REFUSED it with an answer we can read
+    // (409, 403, or a 5xx that carries `{ ok: false, ... }`). A renewal with NO answer keeps the hold and the
+    // next heartbeat tries again (the TTL, 3 heartbeats, outlives one lost renewal). No answer = status 0 (the
+    // request timed out or the device is offline) OR a body we cannot read (an HTML error page, or the empty /
+    // partial body a timeout leaves next to a status recovered by the QTBUG-49896 snapshot). Before the request
+    // timeout existed a hung renewal behaved exactly like this; keeping it so means adding the timeout does not
+    // start dropping locks on a slow network (PR #174 sweep, D-E).
+    function _renewalLost(status, body, classified) {
+        return !classified.granted && status !== 0 && body !== null && typeof body === "object" && typeof body.ok === "boolean"
     }
 
     // Classifies an acquireLock HTTP response. Pure function, no XHR — same

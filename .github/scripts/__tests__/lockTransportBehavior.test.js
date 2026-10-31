@@ -168,9 +168,15 @@ function renewalProblems(src) {
     r = renew(src, [0, null]);
     if (r.scope._held !== r.before || r.scope.stops !== 0) out.push('no-answer-keeps');
     for (const [name, ans] of [['409', [409, { ok: false, holder: { name: 'A' } }]], ['403', [403, { ok: false, error: 'no-tenant-context' }]],
-      ['500', [500, { ok: false, error: 'lock-failed' }]], ['502-html', [502, null]], ['200-no-ok', [200, null]]]) {
+      ['500', [500, { ok: false, error: 'lock-failed' }]]]) {
       r = renew(src, ans);
       if (r.scope._held !== null || r.scope.stops !== 1) out.push(`refusal-drops-${name}`);
+    }
+    // an answer we cannot read (HTML error page, empty or partial body after a timeout, JSON without `ok`) is a
+    // no-answer too: keep the hold, the next heartbeat asks again
+    for (const [name, ans] of [['502-html', [502, null]], ['200-empty', [200, null]], ['200-no-ok', [200, {}]], ['500-ok-not-bool', [500, { ok: 'no' }]]]) {
+      r = renew(src, ans);
+      if (r.scope._held !== r.before || r.scope.stops !== 0) out.push(`unreadable-keeps-${name}`);
     }
     // nothing held: stop the timer, send nothing
     r = renew(src, [200, { ok: true }], { held: null });
@@ -180,9 +186,12 @@ function renewalProblems(src) {
     r = renew(src, [409, { ok: false, holder: null }], { during: (s) => { s._held = fresh; } });
     if (r.scope._held !== fresh) out.push('new-lock-not-dropped');
     // the unit rule itself
-    const lost = build(src, ['_renewalLost'], { }) ._renewalLost;
-    if (lost(0, { granted: false }) !== false || lost(409, { granted: false }) !== true || lost(200, { granted: true }) !== false
-      || lost(403, { granted: false }) !== true || lost(0, { granted: true }) !== false) out.push('renewalLost-rule');
+    const lost = build(src, ['_renewalLost'], { })._renewalLost;
+    const real = { ok: false };
+    if (lost(0, real, { granted: false }) !== false || lost(409, real, { granted: false }) !== true || lost(200, { ok: true }, { granted: true }) !== false
+      || lost(403, real, { granted: false }) !== true || lost(0, { ok: true }, { granted: true }) !== false
+      || lost(502, null, { granted: false }) !== false || lost(500, undefined, { granted: false }) !== false
+      || lost(500, [], { granted: false }) !== false || lost(500, 'x', { granted: false }) !== false) out.push('renewalLost-rule');
   } catch (err) {
     out.push(`threw: ${err.message}`);
   }
@@ -218,9 +227,11 @@ const MUT = [
   ['body parse not guarded', 'transport', 'try { body = JSON.parse(text) } catch (e) { body = null }', 'body = JSON.parse(text)'],
   ['callback called without a null check', 'transport', 'if (callback) callback(status, body)', 'callback(status, body)'],
   ['auth header dropped', 'transport', 'xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)', ''],
-  ['renewal drops the hold on a no-answer (old behaviour once timeouts exist)', 'renewal', 'return !classified.granted && status !== 0', 'return !classified.granted'],
-  ['renewal never drops the hold', 'renewal', 'return !classified.granted && status !== 0', 'return false'],
-  ['renewal rule not used', 'renewal', 'if (_renewalLost(status, classified)) {', 'if (!classified.granted) {'],
+  ['renewal drops the hold on a no-answer (old behaviour once timeouts exist)', 'renewal', 'return !classified.granted && status !== 0 && body !== null && typeof body === "object" && typeof body.ok === "boolean"', 'return !classified.granted'],
+  ['renewal drops the hold on an unreadable answer', 'renewal', ' && body !== null && typeof body === "object" && typeof body.ok === "boolean"', ''],
+  ['renewal readable check ignores the ok flag', 'renewal', ' && typeof body.ok === "boolean"', ''],
+  ['renewal never drops the hold', 'renewal', 'return !classified.granted && status !== 0 && body', 'return false && body'],
+  ['renewal rule not used', 'renewal', 'if (_renewalLost(status, body, classified)) {', 'if (!classified.granted) {'],
 ];
 for (const [name, kind, from, to] of MUT) {
   test(`negative (LockManager): ${name} is caught`, () => {
