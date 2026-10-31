@@ -155,3 +155,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 145: Mint ids inside the transaction: validate the template, resolve inside, re-validate the result; a boundary test needs the state that makes the boundary reachable
 - 146: A shared read-set is not a write-set; a rejected-never-writes counter needs a heal path; a test that mints must clean up in its own finally
 - 147: A runtime pin lives in three files and the cloud can retire it under you; a permissions list written without a live run needs a live run before it is trusted
+- 148: Prove an absence claim with a caller grep, list what a "noisy" path also does before silencing it, and never carry a refusal's detail by changing a falsy sentinel
