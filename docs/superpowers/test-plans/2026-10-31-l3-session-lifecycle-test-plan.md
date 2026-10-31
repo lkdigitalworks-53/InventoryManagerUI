@@ -1,6 +1,6 @@
 # Test plan — L3 session lifecycle (PLANNED, written before implementation, NOTHING RUN)
 
-Design: `docs/superpowers/specs/2026-10-31-l3-session-lifecycle-design.md` (decisions open). Branch of this PR: `docs/2026-10-31-l3-session-lifecycle-design` (docs only, no behaviour). Standard format (Skill 49). Slices: **A** client silent re-check + resume (no deploy), **B** server `reason` (deploy), **C** client consumes `reason`. Cases below assume the recommended answers (L3-D1c, D2a, D3b, D4b, D5b, D6c); if Taher answers differently the affected rows change and the plan is edited in the same commit as the design.
+Design: `docs/superpowers/specs/2026-10-31-l3-session-lifecycle-design.md` (L3-D1c, D2a, D5b decided 2026-10-31; D3, D4, D6, D7 open). Branch of this PR: `docs/2026-10-31-l3-session-lifecycle-design` (docs only, no behaviour). Standard format (Skill 49). Slices: **A** client silent re-check + resume (no deploy), **B** server `reason` (deploy), **C** client consumes `reason`. Slice A rows are final (L3-D1c, D2a, D5b decided). Slice B and C rows assume the recommended answers (D3b, D4b, D6c) until Taher decides; if Taher answers differently the affected rows change and the plan is edited in the same commit as the design.
 Tooling truth: no Qt in the sandbox, so every `tst_*.qml` is verified by CI only; pure JS, script tests and `functions/` tests run in Node here. Counts below are PLANNED; the observed CI numbers replace them when each slice lands.
 
 ## 1. Unit tests (planned)
