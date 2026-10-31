@@ -1,6 +1,6 @@
 # L3 session lifecycle — DESIGN (decisions OPEN, nothing built)
 
-**Status:** 2026-10-31. Brainstorming path: **architectural** (a new client re-check flow, a server error contract, a new trigger). No code in this PR; every `L3-Dn` below has options, trade-offs, a recommendation and an empty `Taher:` line. Nothing is approved until those lines are filled.
+**Status:** 2026-10-31. Brainstorming path: **architectural** (a new client re-check flow, a server error contract, a new trigger). No code in this PR; every `L3-Dn` below has options, trade-offs, a recommendation and an empty `Taher:` line. **Decided so far: L3-D1c, L3-D2a, L3-D5b (2026-10-31). Still open: L3-D3, D4, D6 (slices B, C, and a docs pin), D7 (a question, read first).** Slice A is unblocked; a decision with an empty `Taher:` line is not approved.
 **Why now:** PR #171's checkpoint named L3 next. Source: `2026-10-25-multi-role-login-design.md` section 3 D6/D7 and section 4 L3, a DRAFT whose D6/D7 were never answered. Reading the code to design it overturned two of that draft's premises (section 3), so this spec supersedes the L3 bullet there.
 **Test plan:** `docs/superpowers/test-plans/2026-10-31-l3-session-lifecycle-test-plan.md` (planned, nothing run).
 
@@ -31,13 +31,13 @@
 (d) Silent check, resync every time through a non-blanking merge. Needs every store's sync rewritten: that is L4's scope, not L3's.
 (e) Smallest patch: keep the resync, replace `profileResolved = false` with a separate `checking` flag. Kills the sign-in flash, not the blanked lists, and D2 makes it worse.
 **Rec: (c), then L4 (resume sync, pull to refresh) straight after slice A.** Honest regression: an owner who uses two phones loses the accidental hourly refresh until L4 lands. (e) is the choice if you want zero freshness change now.
-Taher:
+Taher: **DECIDED 2026-10-31: (c)** silent check, resync only when tenant or role changed (and on the first resolve), then L4 straight after slice A. Taher answered after the regression was stated (an owner on two phones loses the accidental hourly refresh until L4 lands), so it is accepted, not overlooked. Option (e) is rejected.
 
 **L3-D2. When to re-check.** Today: launch, token refresh (about hourly), reconnect. Missing: resume from background, and a refused request.
 (a) Add resume. (b) Add resume and a refused request (L3-D4). (c) Poll on a timer: rejected, two reads every two minutes is about 1,440 reads a day per device for nothing.
 Throttle (applies to every automatic trigger): one check in flight; at least 60 s between automatic checks; a trigger inside the window is dropped, not queued; "Try again" bypasses the throttle. Two reads per check (users doc, member doc).
 **Rec: (a) in slice A, the refused-request trigger in slice C.**
-Taher:
+Taher: **DECIDED 2026-10-31: (a)** add the app-resume trigger in slice A with the throttle above (one in flight, 60 s apart, drop not queue, "Try again" bypasses). The refused-request trigger (b) is NOT decided here: it depends on L3-D4 and stays open for slice C.
 
 **L3-D3. Server error contract.**
 (a) Keep one code; the client reads the member doc to learn the cause (it already does for the blocked screen). (b) Keep `error: "no-tenant-context"` and add a `reason` field. (c) Replace the code with distinct codes.
@@ -56,7 +56,7 @@ Taher:
 **L3-D5. A role changes while the app is open.** The re-check already applies the new role through `AuthStore.applyTenantContext`; role flags rebind. Open question is the screen the person is on.
 (a) Toast only ("Your role is now staff"). (b) Toast, and if the current tab is no longer allowed, jump to the first allowed tab. (c) Reset the app to the home state.
 (c) throws away unsaved work. **Rec: (b).** Slice A reads how tabs are gated before it commits to the jump; if gating is not binding-driven the jump becomes its own small step.
-Taher:
+Taher: **DECIDED 2026-10-31: (b)** toast, and jump to the first allowed tab when the current tab is no longer allowed. Slice A step 0 reads how tabs are gated before committing to the jump; if gating is not binding-driven the jump becomes its own small step, and that is reported rather than hidden.
 
 **L3-D6. Meaning of "leave" (old D7).** Verified: roster status and member status are unlinked (F5). (a) Leave is roster text only, today's behaviour. (c) Blocking access is a separate, explicit act (`setMemberStatus`). **Rec: (c), which is what exists: no code, one pinning test, one doc line.** Question for you: should "on leave" ever block login? Rec: no.
 Taher:

@@ -1,4 +1,4 @@
-# CHECKPOINT — 2026-10-31 L3 session lifecycle: DESIGN + TEST PLAN pushed, waiting for Taher's decisions (resume here)
+# CHECKPOINT — 2026-10-31 L3 session lifecycle: DESIGN + TEST PLAN pushed, D1/D2/D5 DECIDED, PR raised, STOP here; next session builds slice A (resume here)
 
 **Branch:** `docs/2026-10-31-l3-session-lifecycle-design` (from `main` @ `f18445e`, which contains PR #171 merged). Docs only: no app, server, rules or test code changed, so no test counts moved. Push after every phase.
 **Commit identity:** `tsadmin <tsadmin@gmail.com>` (the project instruction for this session). Earlier sessions used other addresses; that history is not rewritten.
@@ -20,12 +20,15 @@ PR #171's checkpoint NEXT: "L3 session lifecycle (refresh/resume re-check + dist
 - [x] 7. Corrected the stale "no re-check on token refresh" claim in KNOWN-ISSUES, the S2f-3 design (line 44) and the multi-role draft (line 11); new KNOWN-ISSUES entry "A healthy re-check shows the sign-in form and blanks lists" (read from code, NOT device-verified).
 - [x] 8. Skill 145 + regenerated `SKILLS-INDEX.md` (check passes), AGENTS pointer. README: no change needed (it indexes no L3 content).
 - [x] 9. Script suite run, committed, pushed (see `git log` on the branch).
-- [ ] 10. Taher answers L3-D1..D6 (and D7 as a question) in the design file or in chat; CI on the branch head; Taher runs step B0 on a device if he can (confirms or refutes F2).
+- [x] 10. Taher answered in chat 2026-10-31: L3-D1 = (c) resync only when tenant or role changed, L3-D2 = (a) add resume, L3-D5 = (b) toast + jump to first allowed tab. Recorded in the design `Taher:` lines, the test plan header, the AGENTS pointer and this file. PR raised from this branch (docs only).
+- [ ] 11. Still open: L3-D3, D4, D6 (not needed for slice A), D7 (read `Gateway` in slice C step 0). Taher may run device step B0 (baseline, confirms or refutes F2); if nothing flashes, slice A shrinks to the resume trigger and the plan is edited.
 
-## Open decisions for Taher (recommendation first; none applied, nothing built behind them)
-L3-D1 silent check + resync only when tenant/role changed, L4 right after (alt: keep resync, only drop the cover). L3-D2 add resume, 60 s throttle, drop not queue. L3-D3 additive `reason` next to the unchanged code; never change `deriveContext`'s null return. L3-D4 silent `recheckAccess` on a refused request, member doc stays the authority. L3-D5 toast + jump to an allowed tab on a role change. L3-D6 leave stays roster-only. L3-D7 parked writes: question only, read `Gateway` in slice C step 0.
+## Decisions
+DECIDED (2026-10-31): L3-D1c silent check, resync only on tenant or role change or first resolve, L4 right after slice A (the hourly accidental refresh loss was stated and accepted). L3-D2a resume trigger, 60 s throttle, drop not queue, Try again bypasses. L3-D5b toast and jump to first allowed tab.
+OPEN: L3-D3 additive `reason` (rec b), L3-D4 silent `recheckAccess` on a refused request (rec b), L3-D6 leave stays roster-only (rec c, question: should on-leave ever block login, rec no), L3-D7 parked writes (question, read first). The refused-request trigger of D2(b) waits on D4.
 
 ## NEXT
-1. Read Taher's answers; edit the design's `Taher:` lines and the test plan in the same commit.
-2. Build slice A first (branch `feat/<date>-l3a-silent-recheck`, tests before code): `SessionRecheck.js` + Node shim + mutants, `AuthService` silent path with its own `checking` flag, wiring pins, `Main.qml` resume hook, role toast; read the tab-gating code first (L3-D5). Then L4 (resume sync), B (server `reason`, deploy first), C.
-3. S2f-6 only together with the restock `mint` design approval (unchanged).
+1. Merge or review the docs PR (docs only, nothing to run; no CI expected beyond docs checks).
+2. Build slice A first, new branch `feat/<date>-l3a-silent-recheck` from `main` (after this PR merges, or from this branch if not yet merged), tests before code. Step 0: read the tab-gating code (L3-D5b) and `AuthService` call sites. Then `qml/helper/SessionRecheck.js` + Node shim + hand mutants, `AuthService` silent path with its own `checking` flag, wiring pins, `Main.qml` resume hook, role toast and tab jump. CI is the QML oracle; no Qt in the sandbox; no build or run until Taher says so.
+3. Then L4 (resume sync, pull to refresh), B (server `reason`, deploy first, needs D3), C (needs D4, D7).
+4. S2f-6 only together with the restock `mint` design approval (unchanged).
