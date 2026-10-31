@@ -1,6 +1,7 @@
 # Design — Atomic operations with server-minted ids; restock is the first consumer
 
 **Status:** v2, refreshed 2026-10-26, APPROVED by Taher on merge of #147 (Q-A8 answered: "yes keep it as recommended"; Q-A7 answered by action, S0 under way). Next: implementation plan for R1+R2, not before this merges. Original status line: v2, 2026-10-16. Q-A1..Q-A5 answered by Taher (section 6); Q-A6 answered (sign-out warning popup, section 4b). Spec is in PR review (#147); implementation plan is written only after the PR is approved. No product code written.
+**Progress 2026-10-28:** S0 merged (#167); R1+R2 built, see `2026-10-28-r2-mint-engine-design.md` (placeholders strict in `entityId`, lenient in `after`; collision skip; per-year IST batch counter). Next R3.
 **Prior art and gaps:** `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md`.
 **Branch:** `docs/2026-10-16-restock-atomic-operation-design`. **Path:** architectural.
 **Origin:** `KNOWN-ISSUES.md` first entry (restock decided 2026-09-30) and Taher's standing direction in `E2E-TESTING-ROADMAP.md` (2026-09-16): idempotency and atomicity for network calls generally.

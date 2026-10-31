@@ -505,3 +505,171 @@ test("S2f-7 two identical invites at once: both answer 200 (one creates, one is 
         await auth.deleteUser(user.uid).catch(() => {});
     }
 });
+
+// ---- mint op (R2): ids minted inside the transaction, against real Firestore ----
+// These tests share the seeded tenant's real counter docs with the QML suites, so each one records
+// the counter before and restores it after: the QML suites that mint later must see what they saw.
+
+const CounterRegistry = require("../../functions/lib/counterRegistry");
+const batchYear = CounterRegistry.yearFor(new Date());
+const BATCH_COUNTER = "counters/stockBatches-" + batchYear;
+const BATCH_PREFIX = "BAT-" + batchYear + "-";
+const idFor = (n) => BATCH_PREFIX + String(n).padStart(3, "0");
+
+async function counterSnapshot() { return await read(BATCH_COUNTER); }
+// Every number a test minted is deleted again in that test's `finally`, together with the counter
+// restore. Leaving the docs until the end of the file made the next test's "idFor(v0 + 1)" an OCCUPIED id
+// (the counter is restored, the doc was not), so the server rightly skipped it and the test failed.
+let mintedNow = [];
+async function restoreCounter(before) {
+    for (const n of mintedNow.splice(0)) {
+        await db.doc(T + "stock_batches/" + idFor(n)).delete();
+        await db.doc(T + "transactions/tx-p-" + idFor(n)).delete();
+    }
+    if (before === null) await db.doc(T + BATCH_COUNTER).delete();
+    else await db.doc(T + BATCH_COUNTER).set(before);
+}
+function restockOp(requestId, stockDeltaQty) {
+    return { requestId: requestId, opType: "restock", clientTimestamp: "2026-10-28T10:00:00.000Z", ops: [
+        { kind: "mint", counter: "stock_batch", bind: "b" },
+        { kind: "mutation", entity: "stock_batch", entityId: "{{b}}", action: "create", before: null,
+          after: { batchId: "{{b}}", productId: "opE2E-pm", qtyRemaining: 3, unitCost: 2 } },
+        { kind: "delta", entity: "inventory", entityId: "opE2E-pm", deltas: { stock: stockDeltaQty },
+          floors: { stock: 0 }, movements: [{ kind: stockDeltaQty > 0 ? "receipt" : "loss", qty: stockDeltaQty, reason: "e2e" }] },
+        { kind: "mutation", entity: "transaction", entityId: "tx-p-{{b}}", action: "create", before: null,
+          after: { txId: "tx-p-{{b}}", batchId: "{{b}}", kind: "purchase" } }
+    ] };
+}
+function trackMinted(n) { mintedNow.push(n); }
+
+test.after(async () => {
+    for (const ref of await db.collection(T + "stock_movements").listDocuments()) if (ref.id.startsWith("restock:opE2E")) await ref.delete();
+    for (const ref of await db.collection(T + "audit_log").listDocuments()) if (ref.id.startsWith("restock:opE2E")) await ref.delete();
+});
+
+test("mint: a restock operation takes its batch id from the server counter, lands every doc, and a replay burns nothing", async () => {
+    const before = await counterSnapshot();
+    const v0 = before ? before.value : 0;
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const body = restockOp("restock:opE2E-m1", 3);
+        const r = await post(body);
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(r.body.idempotentReplay, false);
+        assert.deepEqual(r.body.results[0], { kind: "mint", counter: "stock_batch", bind: "b", id: idFor(v0 + 1) });
+        trackMinted(v0 + 1);
+
+        assert.deepEqual(await counterSnapshot(), { value: v0 + 1 });
+        assert.equal((await read("stock_batches/" + idFor(v0 + 1))).batchId, idFor(v0 + 1));
+        assert.equal((await read("transactions/tx-p-" + idFor(v0 + 1))).batchId, idFor(v0 + 1));
+        assert.equal((await read("inventory/opE2E-pm")).stock, 13);
+        const marker = await read("audit_log/restock:opE2E-m1");
+        assert.equal(marker.opType, "restock");
+        assert.equal(marker.results[0].id, idFor(v0 + 1));
+
+        const again = await post(body);
+        assert.equal(again.status, 200);
+        assert.equal(again.body.idempotentReplay, true);
+        assert.equal(again.body.results[0].id, idFor(v0 + 1));
+        assert.deepEqual(await counterSnapshot(), { value: v0 + 1 });
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("mint: a rejected restock burns no number, and the retry after the fix gets the SAME id", async () => {
+    const before = await counterSnapshot();
+    const v0 = before ? before.value : 0;
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 1, name: "Mint E2E" });
+        const rejected = await post(restockOp("restock:opE2E-m2", -5));       // floor stock >= 0 fails
+        assert.equal(rejected.status, 409);
+        assert.equal(rejected.body.error, "insufficient-quantity");
+        assert.equal(rejected.body.opIndex, 2);
+        assert.deepEqual(await counterSnapshot(), before);                    // untouched (absent stays absent)
+        assert.equal(await read("stock_batches/" + idFor(v0 + 1)), null);
+        assert.equal(await read("audit_log/restock:opE2E-m2"), null);
+
+        await db.doc(T + "inventory/opE2E-pm").set({ productId: "opE2E-pm", stock: 100, name: "Mint E2E" });
+        const retried = await post(restockOp("restock:opE2E-m2", -5));
+        assert.equal(retried.status, 200, JSON.stringify(retried.body));
+        assert.equal(retried.body.results[0].id, idFor(v0 + 1));
+        trackMinted(v0 + 1);
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("mint: a client-style counter mint and a server mint racing on one counter never hand out the same number", async () => {
+    const before = await counterSnapshot();
+    const v0 = before ? before.value : 0;
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        // What FirebaseService.mintCounterValue does (read, then a guarded write), as an Admin transaction.
+        const clientMint = () => db.runTransaction(async (t) => {
+            const ref = db.doc(T + BATCH_COUNTER);
+            const snap = await t.get(ref);
+            const next = (snap.exists ? snap.data().value : 0) + 1;
+            t.set(ref, { value: next });
+            return next;
+        });
+        const [serverRes, clientValue] = await Promise.all([postWithRetryOn5xx(restockOp("restock:opE2E-m3", 1)), clientMint()]);
+        assert.equal(serverRes.status, 200, JSON.stringify(serverRes.body));
+        const serverNumber = parseInt(serverRes.body.results[0].id.substring(BATCH_PREFIX.length), 10);
+        trackMinted(serverNumber);
+        assert.notEqual(serverNumber, clientValue);
+        assert.deepEqual([serverNumber, clientValue].sort(), [v0 + 1, v0 + 2]);
+        assert.deepEqual(await counterSnapshot(), { value: v0 + 2 });
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("mint: a counter far behind the data heals in ONE operation, and the occupied docs are not rewritten", async () => {
+    const before = await counterSnapshot();
+    const v0 = before ? before.value : 0;
+    const planted = [];
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        // 25 occupied ids right after the counter: wider than the 20-id walk limit, so only the heal can pass them.
+        for (let n = v0 + 1; n <= v0 + 25; n++) {
+            planted.push(n);
+            await db.doc(T + "stock_batches/" + idFor(n)).set({ batchId: idFor(n), productId: "opE2E-pm", qtyRemaining: 0, planted: true });
+        }
+        // The heal jumps to the highest id IN USE in the collection, and the shared tenant may hold higher ones
+        // (the QML suites seed ids like BAT-<year>-900; CI run 40843573031 minted 901 for exactly that reason).
+        // So the expected number is computed from the real collection, not assumed to be v0 + 26.
+        const top = CounterRegistry.maxNumber(BATCH_PREFIX, (await db.collection(T + "stock_batches").listDocuments()).map((ref) => ref.id));
+        assert.ok(top >= v0 + 25, "planted ids must be in the listing");
+        const want = top + 1;
+        const r = await post(restockOp("restock:opE2E-m4", 3));
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(r.body.results[0].id, idFor(want));
+        trackMinted(want);
+        assert.deepEqual(await counterSnapshot(), { value: want });
+        assert.equal((await read("stock_batches/" + idFor(v0 + 1))).planted, true);
+        // a second operation continues from the healed counter
+        const second = await post(restockOp("restock:opE2E-m5", 1));
+        assert.equal(second.status, 200, JSON.stringify(second.body));
+        assert.equal(second.body.results[0].id, idFor(want + 1));
+        trackMinted(want + 1);
+    } finally {
+        for (const n of planted) await db.doc(T + "stock_batches/" + idFor(n)).delete();
+        await restoreCounter(before);
+    }
+});
+
+test("mint: a mint nobody uses is a clean 400 and burns nothing", async () => {
+    const before = await counterSnapshot();
+    try {
+        const r = await post({ requestId: "restock:opE2E-m6", opType: "restock", clientTimestamp: "2026-10-29T10:00:00.000Z",
+                               ops: [{ kind: "mint", counter: "stock_batch", bind: "b" }] });
+        assert.equal(r.status, 400);
+        assert.equal(r.body.error, "unused-mint");
+        assert.equal(r.body.opIndex, 0);
+        assert.deepEqual(await counterSnapshot(), before);
+        assert.equal(await read("audit_log/restock:opE2E-m6"), null);
+    } finally {
+        await restoreCounter(before);
+    }
+});

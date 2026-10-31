@@ -152,3 +152,5 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 142: Authority is the record the server trusts, not the pointer the user can write: verify the member doc before applying role or tenant, and tell "gone" from "could not read"
 - 143: A refused membership shows up at the first server call a user makes, not only at login: classify it once, name it once, and never let a catch-all bucket describe it
 - 144: Every raw XHR wrapper needs three things: the status snapshot, a timeout, and an answer-once guard; a new timeout must not change what "no answer" does to existing state
+- 145: Mint ids inside the transaction: validate the template, resolve inside, re-validate the result; a boundary test needs the state that makes the boundary reachable
+- 146: A shared read-set is not a write-set; a rejected-never-writes counter needs a heal path; a test that mints must clean up in its own finally
