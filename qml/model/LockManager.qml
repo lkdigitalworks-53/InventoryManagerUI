@@ -30,8 +30,10 @@ QtObject {
 
     // How long one lock request may take before it counts as "no answer" (status 0). Without a timeout a
     // request that never answers never calls back: a bulk Approve then waits on it for good, with no cancel
-    // button (PR #174 sweep, D-E). 15 s: the endpoint is one small transaction, and well under renewIntervalMs
-    // so two renewals never overlap.
+    // button (PR #174 sweep, D-E). 15 s is a STARTING value, not measured (like SendPolicy's 10 s / 30 s):
+    // between the 10 s a waiting caller gets there and the 30 s a background send gets, and under
+    // renewIntervalMs so two renewals never overlap. A cold Cloud Function start that exceeds it reads as
+    // "no answer" (the user taps again and it is warm): check acquireLock latency on a device and tune.
     readonly property int requestTimeoutMs: 15000
 
     // The lock this device currently holds, or null. { entity, entityId, requestId }

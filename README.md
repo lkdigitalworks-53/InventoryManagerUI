@@ -559,7 +559,9 @@ reverting from "completed" to "pending"):
   Functions, `LockManager.qml`) — proactive cross-device conflict avoidance: opening an editable
   dialog (product, staff, order) acquires a lock first, so a second device finds out immediately
   rather than doing real edit work only to be rejected at save time. TTL + client renewal, no
-  cleanup job — an abandoned session just expires.
+  cleanup job — an abandoned session just expires. Lock requests have a 15 s timeout and the QTBUG-49896
+  status snapshot; a renewal that gets no answer keeps the lock, and bulk Approve stops asking after 3
+  consecutive no-answers (PR #174 sweep, design D16).
 - **Server-side compare-and-swap** (`applyMutation` in `gatewayLogic.js`) — a backstop, not the
   primary mechanism now that locking exists: rejects a mutation whose `before` doesn't match the
   record's actual current state, instead of blindly overwriting.

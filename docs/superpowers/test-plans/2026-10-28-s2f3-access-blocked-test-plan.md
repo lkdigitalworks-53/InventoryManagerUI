@@ -42,21 +42,32 @@ A removed member (no member doc) reads its own member path and gets "does not ex
 ## 4. Functions / handler / E2E
 No server code changed, so no new handler tests. QML E2E runs one app session per process (singletons), so a second actor cannot be driven there; the cross-actor cases (X6 suspend, X7 remove while signed in) belong to the multi-role matrix.
 
-## 2d. Lock no-access (Node, `.github/scripts/__tests__/lockNoAccessBehavior.test.js`, 43 tests; QML `tst_LockManager` +3, `tst_FailureCause` U17-U20)
+## 2d. Lock no-access (Node, `.github/scripts/__tests__/lockNoAccessBehavior.test.js`, 52 tests; QML `tst_LockManager` +3, `tst_FailureCause` U17-U20)
 Runs the REAL text of `LockManager._classifyAcquireResponse`, `OrdersPage._approveAllPending` (stubs for `LockManager`, `dataModel`, the dialog; real `BulkApproveProgress.js` and `FailureCause.js`) and the real helper.
 - Classifier: 403 + `no-tenant-context` -> `noAccess`, `reason: "error"`, no holder; 11 near misses (other 403 bodies, 401/400/500/409 with the same code, null/string bodies) are NOT noAccess; 409 stays denied with its holder; 200 stays granted.
 - Bulk Approve: the reported case (3 orders, every acquire 403) -> ONE dialog "3 not approved. The server no longer accepts your access...", never "elsewhere", "connection" or "try again", exactly one request (fail-fast), nothing completed, progress ends at 0 approved; connection errors -> "connection issue" with the ids and no fail-fast; real holder -> the old text with the id and the other orders still complete; all granted -> no dialog; insufficient inventory unchanged; a mixed run (ok, denied, error, 403, ok) stops after the 403 and lists each cause once; empty list; asynchronous answers; seeded monkey (200 runs x random outcomes incl. null, undefined, `{granted:"yes"}`) with 7 invariants (request count, completions, progress ends, approved count, "elsewhere" iff a real holder, access text iff a 403, "connection" iff an error, dialog iff something failed).
 - Big batch (seventh session sweep): 5000 pending orders for a suspended member -> still ONE request, one dialog "5000 not approved.", progress ends at 5000 of 5000; and a 403 that arrives MID-batch (3 approved, then refused) -> 4 requests, "4997 not approved.", 3 approved. The harness samples the call-stack depth at every 500th progress step and requires it to stay under 40 frames: the first version of the fail-fast skip called `_next()` once per remaining order (synchronous, so depth grew with the batch; the QML engine caps call depth and would throw, leaving the busy overlay up for good), now it drains the rest in a loop.
 - Dialogs: each imports `FailureCause`, maps every acquire result through `FailureCause.lockState`, has the `no-access` branch with the shared text, never reads the raw `reason`.
 - Pin: exactly four files call `LockManager.acquire` (the three dialogs and OrdersPage); a fifth caller fails this test until it adopts `lockState`.
-- Mutants: 4 on the classifier, 14 on the page (3 new: recursion back, drain skips progress, drain drops orders), 5 per dialog; every one is caught.
+- Circuit breaker (D16): 10 orders, every acquire a no-answer -> exactly 3 requests, one dialog "Couldn't confirm 10 order(s) ... o1, o2, o3, o4, o5 and 5 more", progress ends 10 of 10, nothing completes; no-answers separated by a real answer (granted or a real holder) never trip it (8 orders E,E,G,E,E,D,E,E -> 8 requests); G,E,E,E trips on the 3rd (4 requests, 5 listed, only the first order completes); a 403 inside an error run says access; two no-answers alone skip nothing and name both ids in full; 5000 offline orders -> 3 requests, stack depth under 40, "and 4995 more"; asynchronous answers trip it the same way. The seeded monkey now checks request count, completions, progress and wording against a reference model of the breaker.
+- Mutants: 4 on the classifier, 23 on the page (recursion back, drain skips progress, drain drops orders, wrong skip list, breaker removed / at 2 / at 4 / never resets / counts a denial / wrong list, id list uncapped / no tail), 5 per dialog; every one is caught.
 Not covered here (device only): that the dialog text is drawn where the user sees it, the real 403 from the server, timing.
+
+## 2e. Lock transport (Node, `.github/scripts/__tests__/lockTransportBehavior.test.js`, 20 tests; QML `tst_LockManager` +4)
+Runs the REAL text of `LockManager._post`, `_captureBeforeStatusIsLost`, `_onRenewTick` and `_renewalLost` against a scripted fake `XMLHttpRequest` (the real classifier decides what each answer means).
+- Request shape: POST, url, `Content-Type`, `Authorization: Bearer <token>`, `env` + payload in one envelope, `timeout` = 15000 set before `send`, no callback before an answer.
+- QTBUG-49896 (F2): HEADERS(403) -> LOADING(403, body) -> DONE(status 0) is delivered as 403 + body and classifies as `noAccess`; the same for a 409 with a holder (`denied`); headers only (no body seen) keeps status 403 with a null body, which is still NOT `noAccess` (never guess); a later state with status 0 never wipes the snapshot; a real status at DONE wins over an older snapshot; a genuine network failure (no headers ever) stays status 0.
+- Timeout (D-E): the timeout answers once with (0, null) = `reason "error"`; a late DONE after it, a timeout after DONE, and two DONEs each answer once; empty / HTML / truncated / `null` bodies read as no body and never throw; no callback given never throws.
+- Renewal: a granted renewal and a no-answer (status 0) keep the hold and do not stop the heartbeat; 409, 403, 500, a 502 HTML page and a 200 without `ok` drop it; nothing held stops the timer and sends nothing; a failing OLD renewal never drops a NEWER lock taken while it was in flight.
+- QML `tst_LockManager`: `requestTimeoutMs` is 15000 and shorter than `renewIntervalMs`; `_renewalLost` rule for no-answer, real refusals and a granted renewal.
+- Mutants (13): snapshot call removed, DONE status always used, snapshot overwritten with 0, timeout 0 / wrong value / `ontimeout` removed, answer-once guard removed, JSON parse unguarded, callback unguarded, auth header dropped, renewal drops on no-answer, renewal never drops, renewal rule unused; every one is caught.
+Not covered here (device only): that Qt really delivers `ontimeout` / the status loss on this device and Qt version, the real 15 s against the real function (cold start), what the user sees.
 
 ## 5. Regression
 Owner login and first sign-up unchanged in the happy path (device R1, R2). `FirebaseService.get` callers ignore the new third argument. Existing script tests (271 incl. these) pass locally. QML suites run only in CI.
 
 ## 6. Verification status
-Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (328/328, of which 72 AuthService behaviour tests, 42 wiring, 43 lock no-access), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
+Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (357/357, of which 72 AuthService behaviour tests, 42 wiring, 52 lock no-access, 20 lock transport), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
 
 ## On-device test plan
 ### Prerequisites
@@ -97,6 +108,7 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | N11 | Same state. Open a staff member, tap **Edit** (owner login) | The same sentence in the staff form on opening edit mode and on Save |
 | N12 | After N8, set `status` back to `active` WITHOUT restarting the app. Tap **Approve** again | The orders are approved normally; no stale error text; no blocked screen |
 | N13 | Suspended member (N8 state) with MANY pending orders (30 or more; create them in the shop first). Tap **Approve** | Ends in about a second; ONE dialog "<n> not approved. ...removed or suspended..." with n = the number of pending orders; the banner progress bar reaches full and the button re-enables; the app does not freeze or crash; every order stays pending |
+| N14 | Orders with at least 6 pending orders, online and ACTIVE member. Tap **Approve**, then turn airplane mode ON within a second | Within about 3 requests (a few seconds, never minutes) one dialog \"Couldn't confirm <n> order(s) are free to edit (connection issue), try again: <up to 5 ids> and <k> more\"; never \"edited elsewhere\" and never the removed-or-suspended sentence; the progress bar reaches full and the button re-enables; orders approved before airplane mode stay approved. Airplane mode OFF, tap **Approve** again: the rest approve |
 
 ### Edge cases
 | # | Action | Expected |
@@ -115,6 +127,7 @@ Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.git
 | E12 | D13: a removed member is on the blocked screen; in the Firebase console delete that member's `users/{uid}` doc, then tap **Try again** | Spinner on the button, then the SAME blocked screen; no "Create your workspace" behind or after it; **Sign out** still works. (A cold start with the same two docs deleted shows "Create your workspace": see KNOWN-ISSUES) |
 | E13 | D14: signed in as staff/manager, turn on airplane mode right after tapping **Leave workspace** and confirming | Error "Could not check your account. Check your connection and try again."; still signed in; in the console `users/{uid}` is unchanged (phone, address, `tenants` intact) |
 | E14 | Member active, 2 pending orders, airplane mode ON, tap **Approve** | Dialog "Couldn't confirm 2 order(s) are free to edit (connection issue), try again: <ids>"; never the removed-or-suspended text and never "elsewhere". Turn airplane mode off, tap **Approve**: both approve |
+| E15 | Throttle the network hard (very slow connection or a proxy that never answers), tap **Approve** with 6 pending orders. **Record** how long it takes to end | Ends after at most about 3 x 15 s with the same dialog as N14; the app never waits indefinitely and the Approve button re-enables. A lock held in an open order dialog survives one slow heartbeat (open an order, throttle for under a minute, restore: Save still works) |
 
 ### Multi-scenario / monkey (manual)
 Cycle active -> suspended -> removed -> invalid role -> active, force-stopping between each, 10 rounds: the screen always matches the doc, never the previous one. Tap Try again rapidly 10 times on a suspended member, toggling airplane mode in between: no crash, never the login screen, never the app, ends on the suspended screen.
@@ -134,6 +147,6 @@ Cycle active -> suspended -> removed -> invalid role -> active, force-stopping b
 | `qml/pages/AccessBlockedPage.qml`, `qml/Main.qml` | wiring pins only | all, N2-N3, N4, N6-N7, E3-E4 |
 | `qml/model/FirebaseService.qml` `get` | wiring pin | H1 (every login reads it) |
 | `qml/helper/FailureCause.js` | tst_FailureCause U14, U17-U20; real-text node tests | H8, N8-N11 |
-| `qml/model/LockManager.qml` | tst_LockManager (+3), node classifier + 4 mutants | N8-N12, E14 |
-| `qml/pages/OrdersPage.qml` (bulk Approve) | real-text node run, 14 mutants, monkey, 5000-order stack-depth probe | N8, N12, N13, E14 |
+| `qml/model/LockManager.qml` | tst_LockManager (+7), node classifier + 4 mutants, 20 transport/renewal tests + 13 mutants | N8-N12, N14, E14, E15 |
+| `qml/pages/OrdersPage.qml` (bulk Approve) | real-text node run, 23 mutants, monkey (with breaker model), 5000-order stack-depth probe | N8, N12, N13, N14, E14, E15 |
 | `qml/pages/OrderDetailDialog.qml`, `EditProductDialog.qml`, `StaffDetailDialog.qml` | source pins + 5 mutants each | N9-N11 |
