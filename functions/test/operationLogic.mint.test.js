@@ -171,6 +171,28 @@ test("validate: a mint nobody uses is refused (it would burn a number); mint-onl
     assert.equal(invalid(body([create("transaction", "t1", { n: "{{a}}" }), mint("supplier", "a")])).error, "unbound-placeholder");
 });
 
+test("validate: bind names that exist on every object (constructor, toString, ...) are judged by real use, not by the prototype (F8)", () => {
+    const inherited = ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "toLocaleString"];
+    for (const name of inherited) {
+        // declared, never used: refused like any other unused name (it used to be accepted)
+        const e = invalid(body([mint("supplier", name), create("supplier", "SUP-001", { name: "x" })]));
+        assert.deepEqual([e.error, e.opIndex], ["unused-mint", 0], name);
+        // declared and used (whole id, embedded id, nested text): accepted
+        assert.equal(OL.validateOperationRequest(body([mint("supplier", name), create("supplier", "{{" + name + "}}", {})])).ok, true, name);
+        assert.equal(OL.validateOperationRequest(body([mint("supplier", name), create("transaction", "tx-{{" + name + "}}", {})])).ok, true, name);
+        assert.equal(OL.validateOperationRequest(body([mint("supplier", name), create("transaction", "t1", { n: ["{{" + name + "}}"] })])).ok, true, name);
+        // never declared, in `after`: user text, exactly like any other unknown name (the prototype does not make it "declared")
+        assert.equal(OL.validateOperationRequest(body([create("transaction", "t1", { n: "{{" + name + "}}" }), mint("supplier", "z"), create("supplier", "{{z}}", {})])).ok, true, name);
+        // declared only LATER than the op that mentions it: the ordering error
+        assert.equal(invalid(body([create("transaction", "t1", { n: "{{" + name + "}}" }), mint("supplier", name), create("supplier", "{{" + name + "}}", {})])).error, "unbound-placeholder", name);
+        // an inherited name that was never declared cannot satisfy a whole-id placeholder either
+        assert.equal(invalid(body([mint("supplier", "z"), create("supplier", "{{" + name + "}}", {})])).error, "unbound-placeholder", name);
+    }
+    // two inherited names, one used: the unused one is the one reported
+    const second = invalid(body([mint("supplier", "toString"), mint("stock_batch", "valueOf"), create("supplier", "{{toString}}", {})]));
+    assert.deepEqual([second.error, second.opIndex], ["unused-mint", 1]);
+});
+
 test("validate: a whole-id placeholder must belong to the entity its counter serves (embedded ids are free)", () => {
     const r = invalid(body([mint("supplier", "s"), create("stock_batch", "{{s}}", {})]));
     assert.deepEqual([r.error, r.opIndex], ["placeholder-entity-mismatch", 1]);
@@ -304,6 +326,63 @@ test("apply: a damaged counter doc is re-seeded from the ids, not trusted (strin
         assert.equal(r.results[0].id, "BAT-2026-010", JSON.stringify(doc));
         assert.deepEqual(db.store[T + "counters/stockBatches-2026"], { value: 10 });
     }
+});
+
+test("apply: an inherited bind name resolves to the minted id, never to Object.prototype's member (F8)", async () => {
+    const db = strictDb(baseDocs());
+    const r = await run(db, body([
+        mint("supplier", "constructor"), mint("stock_batch", "toString"),
+        create("supplier", "{{constructor}}", { supplierId: "{{constructor}}", name: "Acme" }),
+        create("stock_batch", "{{toString}}", { batchId: "{{toString}}", supplierId: "{{constructor}}", qtyRemaining: 5 })
+    ]));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.results.slice(0, 2).map((x) => [x.bind, x.id]), [["constructor", "SUP-001"], ["toString", "BAT-2026-001"]]);
+    assert.deepEqual(db.store[T + "suppliers/SUP-001"], { supplierId: "SUP-001", name: "Acme" });
+    assert.deepEqual(db.store[T + "stock_batches/BAT-2026-001"], { batchId: "BAT-2026-001", supplierId: "SUP-001", qtyRemaining: 5 });
+});
+
+test("apply: a counter hand-set to 2^53-1 or any value above the ceiling is damaged: re-seeded from the sane ids, ids stay unique (F9, M16)", async () => {
+    for (const value of [Number.MAX_SAFE_INTEGER, 1e9, 1e15]) {
+        const docs = { ...baseDocs(), [T + "counters/suppliers"]: { value } };
+        for (let n = 1; n <= 4; n++) docs[T + "suppliers/SUP-00" + n] = { pre: true };
+        const db = strictDb(docs);
+        const r = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", { supplierId: "{{s}}" })]));
+        assert.equal(r.ok, true, String(value));
+        assert.equal(r.results[0].id, "SUP-005", String(value));
+        assert.deepEqual(db.store[T + "counters/suppliers"], { value: 5 }, String(value));      // healed, no longer enormous
+        // and the next operation walks on normally
+        const r2 = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", {})], "b"));
+        assert.equal(r2.results[0].id, "SUP-006", String(value));
+    }
+});
+
+test("apply: ids above the ceiling in the data cannot drag the seed up, and cannot be parsed into a duplicate (F9, M16)", async () => {
+    const db = strictDb({ ...baseDocs(), [T + "suppliers/SUP-003"]: {}, [T + "suppliers/SUP-9007199254740991"]: {}, [T + "suppliers/SUP-1000000000"]: {} });
+    const r = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", {})]));
+    assert.equal(r.results[0].id, "SUP-004");
+});
+
+test("apply: when the id space itself is full (counter or highest id at MAX_COUNTER) the answer is 409 mint-exhausted with zero writes, never a wrapped id (M16)", async () => {
+    const full = [
+        { [T + "counters/suppliers"]: { value: 999999999 } },
+        { [T + "suppliers/SUP-999999999"]: {} },                                   // no counter doc: seeded to the ceiling
+        { [T + "counters/suppliers"]: { value: 999999998 }, [T + "suppliers/SUP-999999999"]: {} }  // the next id is taken, the heal lands on the ceiling
+    ];
+    for (const extra of full) {
+        const db = strictDb({ ...baseDocs(), ...extra });
+        const r = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", {})]));
+        assert.deepEqual([r.ok, r.status, r.error, r.opIndex], [false, 409, "mint-exhausted", 0], JSON.stringify(extra));
+        assert.deepEqual(db.writes, []);
+    }
+    // one below the ceiling still works and hands out exactly the ceiling
+    const db = strictDb({ ...baseDocs(), [T + "counters/suppliers"]: { value: 999999998 } });
+    const r = await run(db, body([mint("supplier", "s"), create("supplier", "{{s}}", {})]));
+    assert.equal(r.results[0].id, "SUP-999999999");
+    // two mints on a counter one below the ceiling: the second finds the space full, nothing is written
+    const db2 = strictDb({ ...baseDocs(), [T + "counters/suppliers"]: { value: 999999998 } });
+    const r2 = await run(db2, body([mint("supplier", "a"), mint("supplier", "b"), create("supplier", "{{a}}", {}), create("supplier", "{{b}}", {})]));
+    assert.deepEqual([r2.ok, r2.status, r2.error, r2.opIndex], [false, 409, "mint-exhausted", 1]);
+    assert.deepEqual(db2.writes, []);
 });
 
 test("apply: a counter that lags the data skips occupied ids and ends on a free one (M5)", async () => {
@@ -507,11 +586,11 @@ test("monkey: 300 seeded runs over random counter state, occupied ids and hostil
         for (let i = 0; i < rnd(8); i++) { const n = 1 + rnd(40); occupied.add(n); docs[T + "suppliers/" + "SUP-" + String(n).padStart(3, "0")] = { pre: true }; }
         const mode = rnd(4);
         if (mode === 1) docs[T + "counters/suppliers"] = { value: rnd(45) };
-        if (mode === 2) docs[T + "counters/suppliers"] = { value: ["x", -1, 2.5, null][rnd(4)] };
+        if (mode === 2) docs[T + "counters/suppliers"] = { value: ["x", -1, 2.5, null, Number.MAX_SAFE_INTEGER, 1e9, 1e15][rnd(7)] };
         const db = strictDb(docs);
         const nMints = 1 + rnd(3);
         const ops = [];
-        const binds = ["a", "b", "c"].slice(0, nMints);
+        const binds = [["a", "b", "c"], ["constructor", "toString", "valueOf"]][rnd(2)].slice(0, nMints);
         for (const b of binds) ops.push(mint("supplier", b));
         for (const b of binds) ops.push(create("supplier", "{{" + b + "}}", { id: "{{" + b + "}}", name: junk[rnd(junk.length)], tags: [junk[rnd(junk.length)]] }));
         const before = Object.assign({}, db.store);

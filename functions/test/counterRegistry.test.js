@@ -53,15 +53,25 @@ test("maxNumber: numeric max over ids, 0 when none match", () => {
     assert.equal(R.maxNumber("BAT-2026-", ["BAT-2025-099", "BAT-2026-004"]), 4);
 });
 
-test("usableCount: whole numbers >= 0 only", () => {
-    for (const ok of [0, 1, 6, 1000, Number.MAX_SAFE_INTEGER]) assert.equal(R.usableCount(ok), true, String(ok));
-    for (const bad of [-1, 3.5, NaN, Infinity, "5", "abc", null, undefined, {}, [], true, Number.MAX_SAFE_INTEGER + 1])
+test("usableCount: whole numbers from 0 to MAX_COUNTER only", () => {
+    for (const ok of [0, 1, 6, 1000, R.MAX_COUNTER]) assert.equal(R.usableCount(ok), true, String(ok));
+    for (const bad of [-1, 3.5, NaN, Infinity, "5", "abc", null, undefined, {}, [], true, R.MAX_COUNTER + 1, 1e15, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1])
         assert.equal(R.usableCount(bad), false, String(bad));
+});
+
+test("MAX_COUNTER (M16): the ceiling is nine digits, a number above it is not a counter id, and the edge is exact", () => {
+    assert.equal(R.MAX_COUNTER, 999999999);
+    assert.equal(R.numberOf("SUP-", "SUP-999999999"), 999999999);          // the last id the server will use
+    assert.equal(R.numberOf("SUP-", "SUP-1000000000"), null);              // one above
+    assert.equal(R.numberOf("SUP-", "SUP-9007199254740991"), null);        // 2^53 - 1: used to parse, then n + 1 === n + 2 trouble
+    assert.equal(R.numberOf("SUP-", "SUP-9007199254740993"), null);        // not even representable
+    assert.equal(R.numberOf("SUP-", "SUP-" + "9".repeat(400)), null);      // parseInt gives Infinity, never a number
+    assert.equal(R.maxNumber("SUP-", ["SUP-005", "SUP-9007199254740991", "SUP-1000000000"]), 5);   // junk above the ceiling cannot drag the seed up
 });
 
 test("round trip: formatId then numberOf gives the number back (monkey over 0..5000 and odd widths)", () => {
     for (let n = 0; n <= 5000; n += 7) assert.equal(R.numberOf("SUP-", R.formatId("SUP-", n)), n);
-    for (const n of [99999, 123456789, Number.MAX_SAFE_INTEGER])
+    for (const n of [99999, 123456789, R.MAX_COUNTER])
         assert.equal(R.numberOf("BAT-2026-", R.formatId("BAT-2026-", n)), n);
 });
 

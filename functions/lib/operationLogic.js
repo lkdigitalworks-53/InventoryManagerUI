@@ -179,7 +179,7 @@ function validateOperationRequest(body) {
     // A minted number nobody uses is a client bug that would burn a number and leave a marker for
     // nothing (a mint-only operation is the extreme case), so it is refused, not tolerated.
     for (const name in declaredAt)
-        if (!used[name]) return { ok: false, status: 400, error: "unused-mint", opIndex: declaredAt[name] };
+        if (!has(used, name)) return { ok: false, status: 400, error: "unused-mint", opIndex: declaredAt[name] };
 
     // Write budget: one working doc + one audit entry per op, one marker, and
     // (conservatively) at least one movement row per op on inventory. A mint op is ONE write (its
@@ -272,7 +272,9 @@ async function runMints(db, txn, load, tenantRoot, params) {
 
         let id = "";
         for (let skips = 0; ; skips++) {
-            if (skips > MAX_MINT_SKIPS) return { ok: false, status: 409, error: "mint-exhausted", opIndex: i };
+            // MAX_COUNTER: the id space itself is full (M16). The counter is never above it here, because a value
+            // or an id above it is not trusted when the counter is read or seeded.
+            if (skips > MAX_MINT_SKIPS || c.value >= CounterRegistry.MAX_COUNTER) return { ok: false, status: 409, error: "mint-exhausted", opIndex: i };
             c.value += 1;
             id = CounterRegistry.formatId(desc.prefix, c.value);
             const taken = await load(tenantRoot + "/" + desc.collection + "/" + id);
@@ -481,4 +483,4 @@ async function applyOperation(db, params) {
     });
 }
 
-module.exports = { MAX_OPS, MAX_MINT_OPS, MAX_MINT_SKIPS, OP_TYPES, validateOperationRequest, applyOperation, opAuditId };
+module.exports = { MAX_OPS, MAX_MINT_SKIPS, OP_TYPES, validateOperationRequest, applyOperation, opAuditId };
