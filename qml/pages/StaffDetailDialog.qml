@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import "../components"
 import "../helper"
+import "../helper/FailureCause.js" as FailureCause
 import "../model"
 
 // Staff detail / edit — bottom sheet. Public contract preserved:
@@ -29,7 +30,7 @@ BottomSheet {
     // EditProductDialog — acquired entering edit mode, released leaving it.
     // "error" (added 2026-07-29, real bug report) distinguishes "couldn't
     // get a real answer" from "denied" — a genuine other holder.
-    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "no-access" | "error"
     property var _lockHolder: null
 
     function _enterEditMode() {
@@ -39,14 +40,16 @@ BottomSheet {
         var lockedStaffId = staffId
         LockManager.acquire("staff", staffId, function(result) {
             if (root.staffId !== lockedStaffId) return
-            _lockState = result.granted ? "granted" : result.reason
+            _lockState = FailureCause.lockState(result)
             _lockHolder = result.holder
             if (!result.granted) {
-                errorText.text = result.reason === "denied"
+                errorText.text = _lockState === "denied"
                     ? (result.holder && result.holder.name
                         ? qsTr("%1 is currently editing this profile — try again shortly").arg(result.holder.name)
                         : qsTr("This profile is currently being edited elsewhere — try again shortly"))
-                    : qsTr("Couldn't confirm this profile is free to edit (connection issue) — try again")
+                    : (_lockState === "no-access"
+                        ? FailureCause.forAccess().text
+                        : qsTr("Couldn't confirm this profile is free to edit (connection issue) — try again"))
             }
         })
     }
@@ -59,7 +62,7 @@ BottomSheet {
         var lockedStaffId = staffId
         LockManager.acquire("staff", staffId, function(result) {
             if (root.staffId !== lockedStaffId) return
-            _lockState = result.granted ? "granted" : result.reason
+            _lockState = FailureCause.lockState(result)
             _lockHolder = result.holder
         })
     }
@@ -258,6 +261,8 @@ BottomSheet {
                 errorText.text = _lockHolder && _lockHolder.name
                     ? qsTr("%1 is currently editing this profile — try again shortly").arg(_lockHolder.name)
                     : qsTr("This profile is currently being edited elsewhere — try again shortly")
+            } else if (_lockState === "no-access") {
+                errorText.text = FailureCause.forAccess().text
             } else if (_lockState === "error") {
                 errorText.text = qsTr("Couldn't confirm this profile is free to edit (connection issue) — try again")
             } else {

@@ -87,6 +87,44 @@ TestCase {
     function test_classifyAcquireResponse_403_no_tenant_context_is_error_not_denied() {
         var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context" })
         compare(result.reason, "error")
+        compare(result.granted, false)
+        compare(result.holder, null)
+    }
+
+    // PR #171 device test (2026-10-31): a suspended member's bulk Approve said "Being edited
+    // elsewhere, try again shortly". The 403 must be told apart (noAccess) so no caller words it as
+    // a lock denial or as a connection problem. Only the exact status + code pair counts.
+    function test_classifyAcquireResponse_403_no_tenant_context_sets_noAccess() {
+        var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context" })
+        compare(result.noAccess, true)
+    }
+
+    function test_classifyAcquireResponse_noAccess_is_only_the_exact_403_pair() {
+        var others = [
+            [403, { ok: false, error: "not-authorized" }],
+            [403, { ok: false }],
+            [403, { ok: false, error: "no-tenant-context-x" }],
+            [403, { ok: false, error: " no-tenant-context" }],
+            [401, { ok: false, error: "no-tenant-context" }],
+            [400, { ok: false, error: "no-tenant-context" }],
+            [500, { ok: false, error: "no-tenant-context" }],
+            [409, { ok: false, error: "no-tenant-context", holder: { name: "A" } }],
+            [200, { ok: true }],
+            [0, null],
+            [403, null],
+            [403, "no-tenant-context"]
+        ]
+        for (var i = 0; i < others.length; ++i) {
+            var r = LockManager._classifyAcquireResponse(others[i][0], others[i][1])
+            verify(r.noAccess !== true, "case " + i + " must not be noAccess")
+        }
+    }
+
+    function test_classifyAcquireResponse_403_pair_wins_over_a_stray_holder_field() {
+        var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context", holder: { name: "Zed" } })
+        compare(result.noAccess, true)
+        compare(result.holder, null, "a refused member is never shown as someone else's lock")
+        compare(result.reason, "error")
     }
 
     function test_classifyAcquireResponse_500_lock_failed_is_error_not_denied() {

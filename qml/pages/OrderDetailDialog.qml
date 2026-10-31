@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../helper/OrderMath.js" as OrderMath
+import "../helper/FailureCause.js" as FailureCause
 import "../helper/OrderAdjust.js" as OrderAdjust
 import "../helper/StaffPicker.js" as StaffPicker
 import "../model"
@@ -45,7 +46,7 @@ BottomSheet {
     // get a real answer at all (network issue, endpoint not deployed),
     // not that someone else genuinely has it. Conflating the two showed a
     // lone tester "someone else is editing this" when nobody else was.
-    property string _lockState: "pending" // "pending" | "granted" | "denied" | "error"
+    property string _lockState: "pending" // "pending" | "granted" | "denied" | "no-access" | "error"
     property var _lockHolder: null
     // Set right before dlg.close() when handing the lock off to
     // ConfirmReturnSheet (see the linesChanged branch in _save() below) so
@@ -317,7 +318,7 @@ BottomSheet {
         var openedOrderId = id
         LockManager.acquire("order", id, function(result) {
             if (dlg.orderId !== openedOrderId) return // dialog moved on to a different order
-            _lockState = result.granted ? "granted" : result.reason // "denied" or "error"
+            _lockState = FailureCause.lockState(result)
             _lockHolder = result.holder
         })
 
@@ -354,7 +355,7 @@ BottomSheet {
         var openedOrderId = orderId
         LockManager.acquire("order", orderId, function(result) {
             if (dlg.orderId !== openedOrderId) return
-            _lockState = result.granted ? "granted" : result.reason
+            _lockState = FailureCause.lockState(result)
             _lockHolder = result.holder
         })
     }
@@ -392,6 +393,9 @@ BottomSheet {
                 stockErrorLabel.text = _lockHolder && _lockHolder.name
                     ? qsTr("%1 is currently updating this order — try again shortly").arg(_lockHolder.name)
                     : qsTr("This order is currently being updated elsewhere — try again shortly")
+            } else if (_lockState === "no-access") {
+                // 403 no-tenant-context: removed / suspended. "Try again" would be wrong advice.
+                stockErrorLabel.text = FailureCause.forAccess().text
             } else if (_lockState === "error") {
                 stockErrorLabel.text = qsTr("Couldn't confirm this order is free to edit (connection issue) — try again")
             } else {

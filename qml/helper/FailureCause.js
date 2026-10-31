@@ -49,6 +49,23 @@ function forRejection(rejection, name) {
     return { kind: "unknown", text: safe ? GENERIC_REJECT + " (" + safe + ")" : GENERIC_REJECT }
 }
 
+// The one wording for "the server refused your membership" (HTTP 403 `no-tenant-context`), shared by a
+// stuck write (forWriteError) and a lock acquire (lockState below) so the two can never drift. Never
+// "try again": retrying cannot help until an owner or admin restores the member.
+var ACCESS_TEXT = "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it"
+function forAccess() { return { kind: "access", text: ACCESS_TEXT } }
+
+// State name an edit dialog / bulk action keeps for a LockManager.acquire result:
+// "granted" | "denied" (a real other holder) | "no-access" (membership refused, result.noAccess) |
+// "error" (anything else: network, 5xx, malformed). Anything that is not clearly one of the first
+// three is "error", so a junk result can never read as "someone else is editing this".
+function lockState(result) {
+    if (result === null || typeof result !== "object") return "error"
+    if (result.granted === true) return "granted"
+    if (result.noAccess === true) return "no-access"
+    return result.reason === "denied" ? "denied" : "error"
+}
+
 // A failed SEND of a queued write: `code` = the 500 body's `error` string ("" when
 // none), `status` = HTTP status number, or "timeout" (StuckWrites.TIMEOUT).
 function forWriteError(code, status) {
@@ -60,7 +77,7 @@ function forWriteError(code, status) {
     // covers an invalid role, a missing users doc and an unsafe tenant id, and the client cannot tell
     // which, so the text says "most likely" (never assert a cause the code cannot know). S2f-3.
     if (c === "no-tenant-context")
-        return { kind: "access", text: "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it" }
+        return forAccess()
     if (c === "write-unavailable")
         return { kind: "transient", text: "The server is temporarily unavailable" }
     if (c === "write-failed")

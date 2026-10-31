@@ -7,6 +7,7 @@ import "../helper"
 import "../model"
 import "../helper/StaffScope.js" as StaffScope
 import "../helper/BulkApproveProgress.js" as BAP
+import "../helper/FailureCause.js" as FailureCause
 
 // Mobile-first orders feed. Glass header with filter/search icons, status
 // chip-scroller, swipe-friendly card list, FAB for new order.
@@ -532,19 +533,28 @@ Item {
         // lock) could race with a bulk-approve completing the same order.
         // Tracked separately from `failed` because "insufficient inventory"
         // would be an actively wrong explanation for a lock denial.
+        // `lockedOut` = a REAL other holder (409). `noAccess` = the server refused our
+        // membership (403, removed / suspended): retrying cannot help, so it must never read
+        // "edited elsewhere" (PR #171 device test). `unchecked` = no real answer (network, 5xx).
         var lockedOut = []
+        var noAccess = []
+        var unchecked = []
         var idx = 0
 
         function _next() {
             if (idx >= toApprove.length) {
                 dataModel.syncOrdersModel()
                 if (root._approveState.phase === "done") approveHold.restart()
-                if (failed.length > 0 || lockedOut.length > 0) {
+                if (failed.length > 0 || lockedOut.length > 0 || noAccess.length > 0 || unchecked.length > 0) {
                     var parts = []
                     if (failed.length > 0)
                         parts.push(qsTr("Insufficient inventory: %1").arg(failed.join(", ")))
                     if (lockedOut.length > 0)
                         parts.push(qsTr("Being edited elsewhere, try again shortly: %1").arg(lockedOut.join(", ")))
+                    if (noAccess.length > 0)
+                        parts.push(qsTr("%1 not approved. %2").arg(noAccess.length).arg(FailureCause.forAccess().text))
+                    if (unchecked.length > 0)
+                        parts.push(qsTr("Couldn't confirm %1 order(s) are free to edit (connection issue), try again: %2").arg(unchecked.length).arg(unchecked.join(", ")))
                     stockErrorDlg.show({
                         title: qsTr("Some Orders Weren't Approved"),
                         message: parts.join("\n\n"),
@@ -555,14 +565,24 @@ Item {
             }
             var orderId = toApprove[idx]
             idx++
+            // Fail fast: the server already said our membership is refused, and every remaining
+            // order would get the same 403. Skip the requests (a suspended member with 200 pending
+            // orders would otherwise wait on 200 sequential refusals with no cancel button).
+            if (noAccess.length > 0) {
+                noAccess.push(orderId)
+                root._approveState = BAP.step(root._approveState, "locked")
+                _next()
+                return
+            }
             // Headless equivalent of OrderDetailDialog's acquire/release —
             // same lock, no dialog UI since this runs as a background batch
             // action. One attempt per order, no retry (matches this app's
             // existing no-cancel-button, no-row-counter busy-overlay
             // philosophy for bulk operations).
             LockManager.acquire("order", orderId, function(result) {
-                if (!result.granted) {
-                    lockedOut.push(orderId)
+                var lockSt = FailureCause.lockState(result)
+                if (lockSt !== "granted") {
+                    (lockSt === "denied" ? lockedOut : (lockSt === "no-access" ? noAccess : unchecked)).push(orderId)
                     root._approveState = BAP.step(root._approveState, "locked")
                     _next()
                     return
