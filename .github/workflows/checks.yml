@@ -5,6 +5,8 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  # Re-run the deploy of main by hand (failed deploy, rejected approval). Only main can deploy.
+  workflow_dispatch:
 
 jobs:
   qml-tests:
@@ -231,3 +233,123 @@ jobs:
           FIRESTORE_RULES_TESTS_RESULT: ${{ needs.firestore-rules-tests.result }}
           E2E_TESTS_RESULT: ${{ needs.e2e-tests.result }}
         run: node .github/scripts/post-ci-comment.js
+
+  # ---- Firebase deploy on merge (design: docs/superpowers/specs/2026-10-28-ci-deploy-on-merge-design.md) ----
+  # Pre-launch there is ONE Firebase project and Functions are shared by dev/test/prd, so this deploy is
+  # the only deploy. One-tap approval (GitHub Environment `firebase-deploy`, required reviewer = Taher)
+  # keeps "device-test before it ships". When a real prod stage exists, revisit (see the design doc).
+  # Logic lives in .github/scripts/*.sh|js so it is unit-tested; the wiring is pinned by deployWorkflowWiring.test.js.
+  deploy-check:
+    name: Deploy Check
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      needed: ${{ steps.diff.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Compare against the LAST DEPLOYED commit (tag `deployed-main`), not against this push: a pending
+      # approval can be superseded by a newer run, and a push-only diff would then lose its changes.
+      # Fails open to "deploy needed" (no tag, git error, odd output). Manual runs always deploy.
+      - name: Did anything deployable change since the last deploy?
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          needed=$(bash .github/scripts/deploy-check.sh)
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "Deploy needed: $needed" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to Firebase
+    needs: [qml-tests, functions-tests, firestore-rules-tests, e2e-tests, deploy-check]
+    if: needs.deploy-check.outputs.needed == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # A hung deploy would hold the non-cancelling lock below for GitHub's 6 h default.
+    timeout-minutes: 45
+    environment: firebase-deploy
+    # One deploy at a time; never cancel one that is mid-flight (half-deployed state).
+    concurrency:
+      group: firebase-deploy
+      cancel-in-progress: false
+    # Least privilege: this job runs third-party code (npm ci, firebase-tools) next to cloud credentials, so it
+    # cannot write to the repo. The tag is moved by the separate `mark-deployed` job.
+    permissions:
+      actions: read     # verify-deploy-gate reads the Environment's protection rules
+      contents: read
+      id-token: write   # keyless GCP login (WIF)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0              # deploy-tag.sh needs history + tags
+          persist-credentials: false  # no repo token left on disk for later steps
+
+      # Fail closed BEFORE any third-party code or cloud login: a workflow naming a missing Environment
+      # auto-creates it with NO reviewers and the job would run unapproved.
+      - name: Verify the approval gate exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -o pipefail
+          curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/environments/firebase-deploy" | node .github/scripts/verify-deploy-gate.js
+
+      # An older run approved after a newer one must not overwrite newer code (functions are shared by all envs).
+      - name: Refuse to deploy older code over newer
+        run: bash .github/scripts/deploy-tag.sh stale
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      # The CLI loads functions/index.js locally to discover triggers, so deps must be installed.
+      # --ignore-scripts: no dependency install script may run next to the cloud credentials.
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      # Pinned to a commit (v2.1.13): a movable tag must not decide who receives the cloud login.
+      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      # No --force: a deleted function makes this fail loudly instead of deleting it in prod.
+      # storage.rules is deliberately not deployed from CI (Taher 2026-10-28).
+      - name: Deploy functions + firestore rules + firestore indexes
+        run: npx --yes firebase-tools@15.25.1 deploy --only functions,firestore:rules,firestore:indexes --project inventorymanager-48392 --non-interactive
+
+  # Separate job so the only job with repo write access runs no third-party code and holds no cloud login.
+  mark-deployed:
+    name: Record Deployed Commit
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Serialised so the forward-only check in deploy-tag.sh always sees the previous move.
+    concurrency:
+      group: firebase-deploy-mark
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move deployed-main forward
+        run: |
+          bash .github/scripts/deploy-tag.sh mark
+          echo "Deployed $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

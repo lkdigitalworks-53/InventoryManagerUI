@@ -1,43 +1,52 @@
-# CHECKPOINT — 2026-10-28 P1 S2d-1 typed movement kinds on client deltas (resume here)
+# CHECKPOINT — 2026-10-29 review sweep of PR #173 (CI deploy-on-merge) — resume here
 
-**Branch:** `feat/2026-10-28-p1-s2d1-movement-kinds`, cut from `main` @ `9c010f0` (PR #165 merged).
-**Commit identity:** `taher.lkdw@gmail.com`. PAT comes from the chat prompt only (`git -c http.extraHeader=...`), never in remote URL, config, repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build/run; no Qt in sandbox (CI is the QML oracle); push without asking; tests + test plan for every change; caveman FULL in chat only.
-**Skills used:** brainstorming (decisions defaulted, vetoable: Taher asked for one turn), qt-qml, ponytail.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-28-pr165-merged-prev-CHECKPOINT.md`.
+**Branch:** `ci/2026-10-28-deploy-on-merge` (PR #173 head; fixes go on the SAME branch/PR). Base `main` @ `fbd7dec`.
+**Commit identity:** `tsadmin@gmail.com`. PAT from the chat prompt only, via `git -c http.extraHeader=...` (helper `/home/claude/gitp.sh` in the sandbox, lost on a new session: recreate). Never in remote URL/config/repo. After a push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build/run; no Qt in sandbox (CI is the QML oracle); push without asking; tests + test plan for every change; caveman FULL in chat only; keep scope per turn small, state in remote branch.
+**Skills run:** requesting-code-review, ponytail-audit, qt-ui-design, qt-qml-review. **Qt skills: N/A** (PR touches no QML/C++; only `.github/**` + docs).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-10-29-pr170-sweep-prev-CHECKPOINT.md`.
 
-## Slice
-S2d-1 (client only; server S1a/S1b already deployed): restock => `receipt`; return, reopen, failed-exchange rollback => `sales_return`; exchange/modify-up addition => `sale` (reject mode). Imported-order clamp deduction stays derived `adjustment` (explicit row + clamp = terminal 409 = lost deduction). S2d-2 (server kind hint for derived rows) needs Taher's call.
+## Facts checked against the live repo (GitHub API, 2026-10-29)
+- Repo is **public**, id `1151883837`, owner id `256964261`. No branch protection on `main`.
+- **Environment `firebase-deploy` does NOT exist yet.** No `deployed-main` tag yet.
+- `google-github-actions/auth` `v2` = `v2.1.13` = `c200f3691d83b41bf9bbd8638997a462592937ed` (checked).
+- `firebase-tools@15.25.1` exists, published 2026-07-30 (>14 days), Node >=20 OK. Newer exists (15.34.2), pin is deliberate.
+- Functions are v2 (`firebase-functions/v2/*`), no custom runtime service account => default compute SA at runtime.
+
+## Findings (numbered; F = fix in this PR, D = documented, A = accepted)
+1. **F** Approval gate can be absent: a workflow that names a missing Environment AUTO-CREATES it with NO reviewers; the job then runs unapproved. Env does not exist today. Fix: runtime fail-closed gate check (`verify-deploy-gate.js`) + doc order "arm GCP last".
+2. **F/D** WIF bound to `attribute.repository` only: ANY branch workflow in the repo can mint a token and deploy, bypassing the Environment. Fix (doc): provider condition = repository_id + owner_id + `sub` of the Environment + `ref == main`.
+3. **D** `roles/iam.serviceAccountUser` at project level lets the deploy SA act as any SA (privilege escalation). Fix (doc): bind on the runtime SA only.
+4. **F** Stale deploy: an older approved run could overwrite newer code and move the tag backwards. Fix: `deploy-tag.sh stale` guard + forward-only tag move.
+5. **F** Path filter blind spots: renames (`functions/x.js` -> `docs/x.js` shows only the new path) and non-ASCII names (git quotes them). Fix: `--no-renames`, `-z`, NUL-aware script.
+6. **F** Job that runs `npm ci` + `npx` holds `contents: write` + persisted token + `id-token`. Fix: split tag move into `mark-deployed` job; deploy = `contents: read`, `persist-credentials: false`.
+7. **F** No `timeout-minutes`: a hung deploy holds the non-cancelling lock 6 h. Fix: 45 min.
+8. **F** Wiring tests miss the worst mutation (`always()` in the deploy `if`), the `needed == 'true'` gate, privilege split, pinning. Fix: new rules + mutants; plus REAL executed tests of the shell logic in temp git repos.
+9. **F** `google-github-actions/auth@v2` is a movable tag in the job holding cloud creds: pin to SHA.
+10. **F** stale name in `deploy-paths.js` header (`deploy-changes`).
+11. **A/D** `npx --yes firebase-tools@15.25.1` has no lockfile integrity at deploy time (pinned version only). Accepted, documented.
+12. **A/D** Tag `deployed-main` can be moved by anyone with write access. Accepted (single-owner repo), documented.
 
 ## Steps
-- [x] 1. Read memory, repo, P1 designs, client + server code.
-- [x] 2. `qml/helper/StockMovements.js` + Node parity/unit test `functions/test/stockMovementsParity.test.js` (10/10 run, helper 100% line/branch, 16/16 mutants killed).
-- [x] 3. `OutboxStore.enqueueDelta` (explicit only coalesces with explicit, concatenates), `Gateway.recordDelta` 7th arg `movements` + local refusal + `_sendDelta`, `InventoryStore` restock/deductStock/creditStockNoBatch, 4 `DataModel` call sites. Server: only exports `MAX_REASON`.
-- [x] 4. QML tests written, NOT run: `tst_StockMovements`, `tst_OutboxStore_movements`, `tst_Gateway_movements`, `tst_InventoryStore_movementKinds`.
-- [x] 5. `tests/tst_DataModel_movementKinds.qml` (return, damaged=no row, reopen, exchange add, rollback; harness = `tst_DataModel_adjustOrderSyncGuard`, server answers simulated with `Gateway._answerDeltaCallbacks` + `OutboxStore.markSent`).
-- [x] 6. e2e: 2 restock tests in `tst_InventoryE2E` (first CI run failed: file never redirected `Gateway.deltaFunctionUrl`; fixed + recordDelta warm-up). Returns already covered by `tst_ReturnAfterMetadataEditE2E`.
-- [x] 7. Design doc, test plan (Skill 49 format), Skill entry + SKILLS-INDEX regen, AGENTS, README, KNOWN-ISSUES, test-plans README row.
-- [x] 8. PR #170 CI GREEN @ c438881: QML 2415, Functions 876, Rules 106, E2E 103 = 3500/3500 (observed). First run failed only on my 2 new e2e tests (URL not redirected), fixed. Merged main (PR #167); my skill renumbered 140.
-- [ ] 9. Taher (only open step): veto/accept defaults (clamp stays adjustment; reopen+rollback = sales_return; damaged return = no row until S2e Q4); decide S2d-2.
+- [x] S1. Clone, checkout PR branch, read workflow, scripts, tests, design, test plan, repo state via API.
+- [x] S2. Findings list above.
+- [x] S3. Scripts: `deploy-check.sh`, `deploy-tag.sh`, `verify-deploy-gate.js`, `deploy-paths.js` NUL split + header fix.
+- [x] S4. Workflow: use scripts, split `mark-deployed`, permissions, timeout, SHA pin, gate + stale steps.
+- [x] S5. Tests: executed shell tests (temp git repos), gate unit tests, wiring rules + mutants, DP updates. Run all in sandbox.
+- [x] S6. Docs: design (setup order, WIF condition, IAM), test plan (counts, new real-run checks), README, AGENTS, SKILLS Skill 141 + index regen.
+- [x] S7. Push, read CI comment on PR #173, record observed counts here.
 
-## Open, unverified
-- `enqueueDelta` does not skip parked items when coalescing (pre-existing; not checked whether other paths guard it).
-- restock success-path QML tests assume the batch mint fails quietly offline.
+## Progress log
+- S3-S5 DONE, pushed with the commit that adds this line. Sandbox: whole `.github/scripts/__tests__/*.test.js` glob = **274/274** (was 219). New: `deployCheck.script.test.js` 16, `deployTag.script.test.js` 15, `verifyDeployGate.test.js` 10, `deploy-paths` +2 (DP17/18), wiring 44 (was 32; 20 rules, each mutated). Scripts mutation-tested: 14/14 mutants killed (one equivalent single-layer mutant needed a combined mutation, DC13).
+- Verified in sandbox: `npm ci --ignore-scripts` in `functions/` is safe (only `protobufjs` postinstall, a version-compat note); `index.js` loads; functions tests 877/877.
+- LESSON: first draft of DT14 failed on a TEST helper bug (tag reset without `-f`), not on product code.
+- NEXT: S6 docs (design: setup ORDER + WIF condition + IAM; test plan; README; AGENTS; Skill 141 + `node .github/scripts/skills-index.js` regen), then S7 push + CI.
+- S6 DONE: design doc (ordered setup, WIF condition w/ immutable ids + Environment sub + ref, runtime-SA-only actAs, 10-row sweep table, accepted risks), test plan (DP 18, DC 16, DT 15, VG 10, wiring 44; real-run R0, N6-N10, E5-E6), README, AGENTS row, Skill 141 rules 9-13 (index check OK), KNOWN-ISSUES (5 accepted items).
+- Coverage (node --experimental-test-coverage): deploy-paths.js + verify-deploy-gate.js 100% line/branch/func. Shell scripts: enumerated branches + 14/14 mutants killed.
+- NEXT: S7 push, PR #173 body refresh (counts 219 -> 274, sweep summary), poll CI, record OBSERVED counts here.
 
-## Review sweep of PR #170 (session 2, 2026-10-28, resume here if interrupted)
-**Commit identity this session:** `tsadmin@gmail.com` (Taher's chat instruction overrides the line at the top). Skills run: requesting-code-review, ponytail-audit, qt-ui-design, qt-qml-review.
-**Sweep result so far:** qmllint-style linter on PR-added lines = 0 real findings (77 JS-1 `var` = house style; 7 JS-2 are `!==` false positives; ORD-1/STY-1 only in tests, house style). Server contract re-read (movementLogic.js, gatewayLogic.js applyDelta): client helper matches.
-- [x] S1. Clone, checkout PR branch, read design + test plan + all production diffs.
-- [x] S2. Lint on changed QML. Nothing real.
-- [x] S3. Fix F1: `OutboxStore.enqueueDelta` never merges into a parked item or one with attempts > 0 (timed-out send may already be applied; same requestId => server replays old answer => merged qty lost).
-- [x] S4. Fix F2: explicit-movement items only coalesce when floors are equal (merge keeps the LATEST floors: a sale's floor is dropped by a later restock, or a restock is rejected together with a floored sale).
-- [x] S5. Fix F3: `InventoryStore` movement label can never lose the stock change: invalid kind/direction degrades to the server-derived row (helper `_movementsFor`).
-- [x] S6. Fix F4: restock refusal toast says why (`Quantity must be greater than zero`), not "try again".
-- [x] S7. Tests: Node parity SM-11 RUN 11/11, 8/8 mutants; QML StockMovements +5, OutboxStore_movements +9, InventoryStore_movementKinds +12 (two old merge-pinning tests rewritten). Gateway_movements untouched. QML CI-only, NOT RUN here.
-- [x] S8. Docs (done, 95e9d4c + next commit): test plan, design (K11-K13), KNOWN-ISSUES (close parked-coalesce item, add legacy derived floors drift), Skill 140, SKILLS-INDEX regen, AGENTS/README if they mention counts.
-- [x] S9. Push, wait CI, record observed counts.
-
-**Pushed:** 30cdff3 (code + Node), 95e9d4c (QML tests + design/KNOWN-ISSUES/Skill 140), then test plan/README/AGENTS/checkpoint. S9 open: read CI comment on PR #170, fix any QML test I mis-wrote (none run locally), record observed counts here and in the test plan.
-**Risk to watch in CI:** the sent-or-parked merge guard applies to derived deltas too; any legacy tst_Gateway/tst_OutboxStore case that merged after a failure would break.
-**CI round 1 on 71d1ee4:** QML failed 1 test: `Gateway_movements::test_two_explicit_calls_coalesce...` (pinned restock + floored sale merging; I missed it, grep for `tst_Gateway_movements` had not been done). Rewritten as equal-floor merge + different-floor separate-answers test. Lesson: after changing a merge rule, grep EVERY suite that calls `recordDelta`, not only the ones named after the feature.
-**CI round 2 on 34bc69a: ALL GREEN, 3528/3528** (QML 2442, Functions 877, Rules 106, E2E 103). Sweep DONE. Open for a human: device checks 8, 15, 16 in the test plan; veto K11-K14; decide the derived-floors slice (KNOWN-ISSUES).
+## S7 RESULT (observed, CI run 40805804603 on b0c9616)
+- **ALL GREEN, 3528/3528** (QML 2442, Functions 877, Rules 106, E2E 103). `Deploy Check`, `Deploy to Firebase`, `Record Deployed Commit` all **skipped** on the PR (= test-plan R1 observed). The `pr-comment` step that runs the script glob (`node --test .github/scripts/__tests__/*.test.js`) is green in CI; its count (274 in the sandbox) is not printed in the comment, so 274 is sandbox-observed, "green" is CI-observed.
+- PR #173 body refreshed (219 -> 274, sweep summary, setup order, "Environment does not exist today").
+- **SWEEP DONE. Nothing left for code.** Open for a human (Taher), in order: (1) create Environment `firebase-deploy` with a reviewer + main-only BEFORE merging; (2) decide whether to adopt the stricter WIF condition (design doc step 3) when doing GCP setup; (3) first-run checks R0, N3, N6-N10, E5-E6; (4) optional: branch protection on `main`, `dependabot.yml` for `github-actions` (KNOWN-ISSUES).
+- **Not done / out of scope (scoped for next session if wanted):** pre-existing unpinned `npm install -g firebase-tools` in `firestore-rules-tests`; `npm audit` shows advisories in `functions/` deps (not triaged); no `dependabot.yml`.
