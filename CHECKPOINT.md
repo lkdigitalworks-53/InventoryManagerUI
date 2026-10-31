@@ -43,6 +43,6 @@ Skills to run: requesting-code-review, qt-qml-review (N/A unless QML appears in 
 - [x] S3-4. Code + tests pushed as `2369e90`: `counterRegistry.js` (MAX_COUNTER), `operationLogic.js` (`has(used, name)`, ceiling guard in the mint loop). Functions 937/937 locally, 100% line and branch on both libs.
 - [x] S3-5. e2e pushed as `533ade3`: `trackResult` before assertions, +2 wire cases (counter at 2^53-1, unused `toString` bind). CI only, not runnable here.
 - [x] S3-6. Docs: design section 8, test plan section 5, KNOWN-ISSUES (+2), SKILLS 145 rules 11-12, README paragraph.
-- [ ] S3-7. READ CI on the docs push head (QML / Functions / Rules / E2E). Expected E2E 110. Record the observed numbers in the test plan section 5.
+- [x] S3-7. CI on `be205f5`: ALL GREEN 3660/3660 (QML 2505, Functions 937, Rules 108, E2E 110). Recorded in the test plan section 5.
 - [ ] S3-8. Then R3 (new branch off this one or main after merge): `restockKey`, `RestockPlan`, apply-from-results hooks, FailureCause wording for the new server codes.
-**Resume rule:** if S3-7 shows red, read the failing job log first; do not re-review.
+**Resume rule:** PR #172 is review-complete and green; the next work item is S3-8 (R3). Only touch #172 again if Taher asks for changes in review.
