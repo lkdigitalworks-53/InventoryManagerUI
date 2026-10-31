@@ -34,7 +34,9 @@ function problems(src) {
   if (!src.includes('import "../helper/BulkApproveProgress.js" as BAP')) out.push('import');
   if (firstLine !== 'if (!BAP.canStart(root._approveState)) return') out.push('guard-first-line');
   if (!/root\._approveState = BAP\.start\(toApprove\.length\)/.test(fn)) out.push('start');
-  if (!/BAP\.step\(root\._approveState, "locked"\)/.test(fn)) out.push('step-locked');
+  // two sites: the lock stage and `_skipRest` (the shared drain after a 403 or after 3 no-answers: a loop, never one
+  // recursive _next() per order, so stack depth does not grow with the batch)
+  if ((fn.match(/BAP\.step\(root\._approveState, "locked"\)/g) || []).length !== 2) out.push('step-locked');
   if (!/BAP\.step\(root\._approveState, success \? "ok" : "failed"\)/.test(fn)) out.push('step-result');
   if (!/if \(root\._approveState\.phase === "done"\) approveHold\.restart\(\)/.test(fn)) out.push('hold-start');
   if (!/enabled: BAP\.canStart\(root\._approveState\)/.test(src)) out.push('button-enabled');

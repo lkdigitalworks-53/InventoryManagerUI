@@ -3,12 +3,13 @@
 // Runs every test_* function of a TestCase in a .qml test against a .pragma library file.
 // Usage: node scripts/probes/qtest-shim.cjs tests/tst_SheetFooter.qml qml/helper/SheetFooter.js SF
 // Limits: no _data rows, no signals, no tryCompare; compare() is fuzzy for numbers only.
+// `[readonly] property T name: expr` lines are turned into `var name = expr` (single-line values only).
 const fs = require('fs'), vm = require('vm');
 const [,, qmlPath, jsPath, alias] = process.argv;
 const qml = fs.readFileSync(qmlPath, 'utf8');
 const start = qml.indexOf('TestCase {');
 let body = qml.slice(qml.indexOf('{', start) + 1, qml.lastIndexOf('}'));
-body = body.replace(/^\s*name:.*$/m, '');
+body = body.replace(/^\s*name:.*$/m, '').replace(/^\s*(?:readonly )?property \w+ (\w+): (.*)$/gm, 'var $1 = $2;');
 const fnNames = [...body.matchAll(/function (\w+)\(/g)].map(m => m[1]);
 const js = fs.readFileSync(jsPath, 'utf8').replace(/^\.pragma library/m, '');
 const ctx = vm.createContext({ console });

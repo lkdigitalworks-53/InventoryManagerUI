@@ -620,6 +620,26 @@ for (const status of ["suspended", undefined]) {
     });
 }
 
+// S2f-3: the app's login reads the member doc of the signed-in user and shows "removed" for HTTP 404 and
+// "suspended" for a doc whose status is not active (qml/helper/AccessState.js). Both depend on this read
+// being ALLOWED: a denied read would be HTTP 403, which the app treats as "could not check".
+test("S2f-3 a REMOVED member (no member doc) can read its own member path and gets 'does not exist' (HTTP 404 in the app), nobody else's", async () => {
+    const db = testEnv.authenticatedContext("gone").firestore();
+    const snap = await assertSucceeds(getDoc(mRef(db, "gone")));
+    assert.equal(snap.exists(), false);
+    await assertFails(getDoc(mRef(db, MEMBER_UID)));
+    await assertFails(getDoc(doc(db, `tenants/${TENANT}`)));
+});
+
+test("S2f-3 a SUSPENDED member reads its own doc with status and role intact (the app needs both to pick the screen)", async () => {
+    for (const role of ROSTER_ROLES) {
+        const db = await dbWith("sx", role, "suspended");
+        const snap = await assertSucceeds(getDoc(mRef(db, "sx")));
+        assert.equal(snap.data().status, "suspended");
+        assert.equal(snap.data().role, role);
+    }
+});
+
 test("F2 control: re-activating the member restores access at once (no caching across requests)", async () => {
     const su = await dbWith("sx", "staff", "suspended");
     await assertFails(getDoc(doc(su, `tenants/${TENANT}/orders/ORD-1`)));

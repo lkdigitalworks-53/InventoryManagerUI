@@ -14,8 +14,9 @@
 // answer must never show as approved).
 //
 // shortcut: no watchdog. If a completion callback never fires the state stays "running" and
-// the button stays disabled until the page is rebuilt; upgrade when LockManager or
-// DataModel.tryCompleteOrder can be shown to hang.
+// the button stays disabled until the page is rebuilt; upgrade when
+// DataModel.tryCompleteOrder can be shown to hang. (LockManager is covered: every lock request now has a
+// 15 s timeout, so an acquire always answers; PR #174 sweep, D16.)
 
 function newState() { return { phase: "idle", total: 0, done: 0, failed: 0, lockedOut: 0 } }
 

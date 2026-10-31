@@ -87,6 +87,44 @@ TestCase {
     function test_classifyAcquireResponse_403_no_tenant_context_is_error_not_denied() {
         var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context" })
         compare(result.reason, "error")
+        compare(result.granted, false)
+        compare(result.holder, null)
+    }
+
+    // PR #171 device test (2026-10-31): a suspended member's bulk Approve said "Being edited
+    // elsewhere, try again shortly". The 403 must be told apart (noAccess) so no caller words it as
+    // a lock denial or as a connection problem. Only the exact status + code pair counts.
+    function test_classifyAcquireResponse_403_no_tenant_context_sets_noAccess() {
+        var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context" })
+        compare(result.noAccess, true)
+    }
+
+    function test_classifyAcquireResponse_noAccess_is_only_the_exact_403_pair() {
+        var others = [
+            [403, { ok: false, error: "not-authorized" }],
+            [403, { ok: false }],
+            [403, { ok: false, error: "no-tenant-context-x" }],
+            [403, { ok: false, error: " no-tenant-context" }],
+            [401, { ok: false, error: "no-tenant-context" }],
+            [400, { ok: false, error: "no-tenant-context" }],
+            [500, { ok: false, error: "no-tenant-context" }],
+            [409, { ok: false, error: "no-tenant-context", holder: { name: "A" } }],
+            [200, { ok: true }],
+            [0, null],
+            [403, null],
+            [403, "no-tenant-context"]
+        ]
+        for (var i = 0; i < others.length; ++i) {
+            var r = LockManager._classifyAcquireResponse(others[i][0], others[i][1])
+            verify(r.noAccess !== true, "case " + i + " must not be noAccess")
+        }
+    }
+
+    function test_classifyAcquireResponse_403_pair_wins_over_a_stray_holder_field() {
+        var result = LockManager._classifyAcquireResponse(403, { ok: false, error: "no-tenant-context", holder: { name: "Zed" } })
+        compare(result.noAccess, true)
+        compare(result.holder, null, "a refused member is never shown as someone else's lock")
+        compare(result.reason, "error")
     }
 
     function test_classifyAcquireResponse_500_lock_failed_is_error_not_denied() {
@@ -109,5 +147,48 @@ TestCase {
         verify(received !== null, "callback must fire synchronously when there's no token to even try with")
         compare(received.granted, false)
         compare(received.reason, "error", "not being signed in yet is not the same as someone else holding the lock")
+    }
+
+    // ---- PR #174 sweep, D-E / F2: request timeout + renewal rule ----
+    // The XHR itself (timeout, QTBUG-49896 snapshot, answer-once) has no mock HTTP layer here; it is run on
+    // the real text in .github/scripts/__tests__/lockTransportBehavior.test.js. These two are pure.
+    function test_requestTimeoutMs_is_bounded_and_shorter_than_the_renew_heartbeat() {
+        verify(LockManager.requestTimeoutMs > 0, "0 would mean no timeout at all")
+        verify(LockManager.requestTimeoutMs < LockManager.renewIntervalMs, "two renewals must never overlap")
+        compare(LockManager.requestTimeoutMs, 15000)
+    }
+
+    function test_renewalLost_a_no_answer_keeps_the_hold() {
+        // status 0 = timeout or offline: the lock may well still be ours; the next heartbeat retries
+        var none = LockManager._classifyAcquireResponse(0, null)
+        compare(LockManager._renewalLost(0, null, none), false)
+    }
+
+    function test_renewalLost_a_real_refusal_drops_the_hold() {
+        var cases = [
+            [409, { ok: false, holder: { name: "A" } }],
+            [403, { ok: false, error: "no-tenant-context" }],
+            [500, { ok: false, error: "lock-failed" }],
+            [409, { ok: false, holder: null }]
+        ]
+        for (var i = 0; i < cases.length; ++i) {
+            var c = LockManager._classifyAcquireResponse(cases[i][0], cases[i][1])
+            compare(LockManager._renewalLost(cases[i][0], cases[i][1], c), true, "case " + i)
+        }
+    }
+
+    function test_renewalLost_an_unreadable_answer_keeps_the_hold() {
+        // an HTML 502, an empty body, JSON without a boolean `ok`: same as no answer
+        var cases = [[502, null], [200, null], [200, {}], [500, { ok: "no" }], [500, [] ], [500, "x"]]
+        for (var i = 0; i < cases.length; ++i) {
+            var c = LockManager._classifyAcquireResponse(cases[i][0], cases[i][1])
+            compare(LockManager._renewalLost(cases[i][0], cases[i][1], c), false, "case " + i)
+        }
+    }
+
+    function test_renewalLost_a_granted_renewal_is_never_lost() {
+        var ok = LockManager._classifyAcquireResponse(200, { ok: true })
+        compare(LockManager._renewalLost(200, { ok: true }, ok), false)
+        compare(LockManager._renewalLost(0, { ok: true }, ok), false)
     }
 }

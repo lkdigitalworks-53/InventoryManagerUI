@@ -118,14 +118,18 @@ App {
                 return
             }
         }
-        // 2. Full-screen overlay visible → close back to Dashboard.
-        if (profilePage.visible)         { profilePage.close();         return }
-        if (staffPageOverlay.visible)    { staffPageOverlay.close();    return }
-        if (activityPageOverlay.visible) { activityPageOverlay.close(); return }
-        // 3. Not on Home tab → go to Home.
-        if (navigation.visible && navigation.currentIndex !== 0) {
-            navigation.currentIndex = 0
-            return
+        // The access-blocked screen (S2f-3) covers the whole app: nothing behind it may react to Back
+        // (no overlay closing, no tab change out of sight); Back goes straight to the double-tap exit.
+        if (!accessBlockedPage.visible) {
+            // 2. Full-screen overlay visible → close back to Dashboard.
+            if (profilePage.visible)         { profilePage.close();         return }
+            if (staffPageOverlay.visible)    { staffPageOverlay.close();    return }
+            if (activityPageOverlay.visible) { activityPageOverlay.close(); return }
+            // 3. Not on Home tab → go to Home.
+            if (navigation.visible && navigation.currentIndex !== 0) {
+                navigation.currentIndex = 0
+                return
+            }
         }
         // 4. Home root → double-tap to exit.
         if (_exitArmed) { Qt.quit(); return }
@@ -284,10 +288,6 @@ App {
 
         function onRefreshAuthToken() {
             AuthService.refreshIdToken()
-        }
-
-        function onSetTenantContext(tenantId, tenantName, role) {
-            AuthService.setTenantContext(tenantId, tenantName, role)
         }
 
         function onInviteMember(uid, email, displayName, role) {
@@ -735,6 +735,28 @@ App {
         onCreateTenantRequested: function(tenantName) {
             authErrorMessage = ""
             AuthService.createTenantForCurrentUser(tenantName)
+        }
+        onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })
+    }
+
+    // Replaces the app for a signed-in user whose own member doc says removed / suspended / invalid
+    // role, or could not be read (S2f-3). z 300: above the z 200 full-screen overlays. Popups (dialogs,
+    // sheets) still draw above it, which is what the sign-out sheet needs.
+    AccessBlockedPage {
+        id: accessBlockedPage
+        anchors.fill: parent
+        visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0
+        z: 300
+        checking: !AuthService.profileResolved
+        reason: AuthService.accessBlock
+        tenantName: AuthService.accessTenantName
+        userEmail: AuthStore.email
+        onRetryRequested: {
+            if (!AuthService.isOnline) {
+                Toast.show(qsTr("You are offline. Connect to the internet and try again"))
+                return
+            }
+            AuthService.recheckAccess()
         }
         onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })
     }

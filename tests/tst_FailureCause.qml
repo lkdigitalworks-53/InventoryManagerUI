@@ -125,11 +125,14 @@ TestCase {
         }
     }
 
-    function test_U14_no_tenant_context_says_access_may_have_changed_and_never_asserts_one_cause() {
+    function test_U14_no_tenant_context_says_removed_or_suspended_most_likely_and_never_asserts_one_cause() {
         var r = FC.forWriteError("no-tenant-context", 403)
         compare(r.kind, "access")
-        compare(r.text, "The server no longer accepts your access to this shop. Your account may have been changed or deactivated. Ask the shop owner")
-        verify(r.text.indexOf("may have been") >= 0, "must hedge: the code cannot know which cause")
+        compare(r.text, "The server no longer accepts your access to this shop. It was most likely removed or suspended. Ask the shop owner or an admin to restore it")
+        verify(r.text.indexOf("most likely") >= 0, "must hedge: the code cannot know which cause")
+        verify(r.text.indexOf("removed") >= 0 && r.text.indexOf("suspended") >= 0, "names the two usual causes")
+        verify(r.text.indexOf("owner or an admin") >= 0, "names who can fix it (an admin can restore members)")
+        verify(r.text.indexOf("deactivated") < 0, "S2f-3 wording replaced 'changed or deactivated'")
         verify(r.text.indexOf("403") < 0, "the status is not echoed when the code is known")
     }
 
@@ -157,5 +160,40 @@ TestCase {
             verify(typeof b.text === "string" && b.text.length > 0, "write run " + i)
             verify(typeof a.kind === "string" && typeof b.kind === "string")
         }
+    }
+
+    // ---- S2f-3 sweep (PR #171 device test): lock acquire results ----
+    function test_U17_forAccess_is_the_one_wording_shared_with_the_403_stuck_write() {
+        var a = FC.forAccess()
+        compare(a.kind, "access")
+        compare(a.text, FC.forWriteError("no-tenant-context", 403).text)
+        verify(a.text.indexOf("try again") < 0, "retrying cannot help a removed or suspended member")
+        verify(a.text.indexOf("elsewhere") < 0, "never reads as a lock denial")
+        verify(a.text.indexOf("connection") < 0, "never reads as a network problem")
+        verify(a.text.indexOf("owner or an admin") >= 0)
+    }
+
+    function test_U18_lockState_maps_each_acquire_result_to_one_state() {
+        compare(FC.lockState({ granted: true, holder: null, reason: null }), "granted")
+        compare(FC.lockState({ granted: false, holder: { name: "A" }, reason: "denied" }), "denied")
+        compare(FC.lockState({ granted: false, holder: null, reason: "denied" }), "denied")
+        compare(FC.lockState({ granted: false, holder: null, reason: "error", noAccess: true }), "no-access")
+        compare(FC.lockState({ granted: false, holder: null, reason: "error" }), "error")
+    }
+
+    function test_U19_lockState_never_reads_junk_as_granted_denied_or_no_access() {
+        var junk = [null, undefined, 0, 1, "", "granted", "denied", true, false, [], {},
+                    { granted: "true" }, { granted: 1 }, { granted: false, reason: "Denied" },
+                    { granted: false, reason: "weird" }, { granted: false, noAccess: "true" },
+                    { granted: false, noAccess: 1 }, { reason: "denied", granted: undefined, noAccess: false }]
+        var expect = ["error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error",
+                      "error", "error", "error", "error", "error", "error", "denied"]
+        for (var i = 0; i < junk.length; ++i)
+            compare(FC.lockState(junk[i]), expect[i], "case " + i)
+    }
+
+    function test_U20_lockState_granted_beats_a_stray_noAccess_flag_and_noAccess_beats_denied() {
+        compare(FC.lockState({ granted: true, noAccess: true }), "granted")
+        compare(FC.lockState({ granted: false, noAccess: true, reason: "denied" }), "no-access")
     }
 }

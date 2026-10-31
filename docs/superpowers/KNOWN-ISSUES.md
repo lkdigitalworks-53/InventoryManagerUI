@@ -5,6 +5,28 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Bulk Approve: a `tryCompleteOrder` that never calls back keeps the banner "running" — FOUND 2026-10-31 (PR #174 sweep), NOT FIXED
+
+**Where:** `OrdersPage._approveAllPending` + `BulkApproveProgress` (the `shortcut: no watchdog` comment). The lock request can no longer hang (D16: 15 s timeout, circuit breaker after 3 no-answers), but the completion step (`DataModel.tryCompleteOrder`, the Gateway write) has no watchdog of its own here: if its callback never fires the state stays "running" and the Approve button stays disabled until the page is rebuilt.
+**Why deferred:** nothing shows it hanging (Gateway's own send timeouts, 10 s / 30 s, answer every request), and a page-level watchdog would need a cancel/abandon design for an in-flight write.
+**Lead:** if a device ever shows the banner stuck, add a per-order timer in the loop that records the order as failed after `SendPolicy.TIMEOUT_AWAIT_MS` x 2 and ignores the late callback (answer-once guard, Skill 144 rule 2).
+**Also unmeasured:** `LockManager.requestTimeoutMs` (15 s) is a starting value; read `acquireLock` latency (cold start) and tune.
+
+---
+
+## Access-blocked screen: a failed "Try again" says nothing — FOUND 2026-10-28 (S2f-3 review pass), NOT FIXED
+
+**Where:** `AuthService._verifyMembership` / `AccessState.outcome` (D11). When the retry cannot reach the server the spinner ends and the same screen stays; nothing tells the user the check failed (offline is covered by a toast, a server error is not). **Why not fixed:** it needs AuthService to report the outcome of a recheck (a signal or a `lastCheckFailed` flag) and a second wording; the safe behaviour (stay blocked) is already right. **Lead:** emit one signal from the `unverified`-while-blocked branch and let Main show the same toast style as the offline case.
+
+## Cold start vs retry differ when BOTH the member doc and the users doc are gone — FOUND 2026-10-29 (S2f-3 fifth-session sweep), by design (D13), NOT FIXED
+A removed member whose `users/{uid}` doc was also deleted (the staff cleanup `cleanupStaffAuthDocs` deletes both) sees \"Create your workspace\" on a cold start (a 404 on the users doc is indistinguishable from a brand-new account) but keeps the \"Your access was removed\" screen when they tap Try again while already blocked (D13). Both are safe: the new workspace is the idempotent `t_<uid>` of their own, never the old shop. Fix would need a server-side marker of \"was removed\" (L1/L3 of the multi-role design). Test plan E12.
+
+## Mid-session membership changes are noticed late — KNOWN 2026-10-28 (S2f-3), L3 of the multi-role design
+
+A member suspended or removed while the app is open keeps the old UI until the next reconnect or launch (`onIsOnlineChanged` re-runs the profile load). **Update 2026-10-31 (D15):** the first thing such a member does that needs the lock service (Approve on Orders, Edit on an order, product or staff) now shows the removed-or-suspended sentence instead of "edited elsewhere" / "connection issue", but the access-blocked screen still does NOT open on that 403: opening it from a lock or write 403 (a `recheckAccess` trigger with storm control for bulk actions) belongs to L3. There is no re-check on token refresh or app resume, and the server answers one code (`no-tenant-context`) for every cause, so the 403 text says "most likely". Dialogs and sheets that are open when the access-blocked screen appears stay above it (Qt popups draw above every item); they cannot expose data (reads are refused) and their writes are refused. A cold start OFFLINE after being blocked reopens the app from the saved session (the block is in memory only); it is re-applied at the next online profile load.
+
+---
+
 ## Staff add: link lost on 409, and two roster entries can share one login — FOUND 2026-10-26 (PR #165 sweep), NOT FIXED
 
 **Where:** `AuthService.provisionStaffCredentials` (stamps `appUid` only when the call returns `ok`), `StaffStore.setAppUid`, `AuthService.cleanupStaffAuthDocs`, `functions/index.js` `provisionMember` (409 `member-exists`, no `uid` in the body). Dormant: `Gateway.provisioningAvailable` is `false`.

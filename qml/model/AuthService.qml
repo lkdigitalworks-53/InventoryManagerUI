@@ -3,6 +3,7 @@ import QtQuick
 
 import "../helper/ProfileSettingsMath.js" as ProfileSettingsMath
 import "../helper/MemberPolicy.js" as MemberPolicy
+import "../helper/AccessState.js" as AccessState
 
 QtObject {
     id: root
@@ -17,6 +18,12 @@ QtObject {
     property bool tenantCreateBusy: false
     property bool profileResolved: false
     property bool onboardingNeeded: false
+    // "" while the signed-in user may use the app; otherwise why not: "removed" | "suspended" | "role" |
+    // "unverified" (AccessState). Main.qml shows AccessBlockedPage while this is non-empty (S2f-3).
+    property string accessBlock: ""
+    property string accessTenantName: ""
+    // Bumped by every profile load and by sign-out: a late answer from an older load must not apply.
+    property int _profileSeq: 0
     property int lastStatusCode: 0
     property string lastError: ""
     property var tenantMembers: []
@@ -187,30 +194,49 @@ QtObject {
         })
     }
 
-    function _loadMembership(tenantId, onDone) {
-        if (!tenantId) {
-            if (onDone) onDone(false)
+    // The member doc is the only authority for tenant access and role (S2f-1, S2f-2); users/{uid} is only
+    // a pointer to the tenant to open, writable by the user, and is never used for the role. Reads the
+    // signed-in user's OWN member doc (the rules allow it even when suspended; a removed member gets 404)
+    // and either opens the app with the role found there or shows the access-blocked screen.
+    // Design: docs/superpowers/specs/2026-10-28-s2f3-access-wording-design.md
+    function _verifyMembership(seq, tenantId, tenantName) {
+        FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data, status) {
+            if (seq !== _profileSeq) return
+            _applyAccess(tenantId, tenantName, ok, data, status)
+        })
+    }
+
+    // The one place that turns an access answer into "open the app with this role" or "show the blocked
+    // screen". Reached from the member-doc answer and from an unreadable users doc (ok = false, status
+    // never 404 there), so both decide the same way: only a definitive answer clears or sets a block, and
+    // an inconclusive one keeps the block that is showing or lets a member this device already verified in
+    // the same tenant keep working (AccessState.outcome).
+    function _applyAccess(tenantId, tenantName, ok, data, status) {
+        var held = tenantId && AuthStore.tenantId === tenantId ? AuthStore.role : ""
+        var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)
+        onboardingNeeded = false
+        profileResolved = true
+
+        if (out.action === "block") {
+            accessTenantName = tenantName || AuthStore.tenantName
+            accessBlock = out.reason
             return
         }
 
-        FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data) {
-            if (!ok || !data) {
-                if (onDone) onDone(false)
-                return
-            }
+        accessBlock = ""
+        var name = tenantName || (data && data.tenantName) || AuthStore.tenantName
+        AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: name, role: out.role })
+        // Backfill workspace name from canonical tenant doc when missing.
+        if (!name) _ensureTenantName(tenantId)
+        loadTenantMembers()
+        tenantContextReady(AuthStore.tenantId, AuthStore.role)
+    }
 
-            AuthStore.applyTenantContext({
-                tenantId: tenantId,
-                tenantName: data.tenantName || AuthStore.tenantName,
-                role: data.role || "staff"
-            })
-            // Backfill workspace name from canonical tenant doc when missing.
-            if (!AuthStore.tenantName || AuthStore.tenantName.length === 0)
-                _ensureTenantName(tenantId)
-            loadTenantMembers()
-            tenantContextReady(AuthStore.tenantId, AuthStore.role)
-            if (onDone) onDone(true)
-        })
+    // "Try again" on the access-blocked screen. Offline there is nothing to ask, and _loadUserProfile
+    // would reopen the app from the saved session, so the screen stays as it is.
+    function recheckAccess() {
+        if (!isOnline) return
+        _loadUserProfile()
     }
 
     function loadTenantMembers() {
@@ -220,8 +246,12 @@ QtObject {
             return
         }
 
+        var tid = AuthStore.tenantId
         membersBusy = true
-        FirebaseService.get("tenants/" + AuthStore.tenantId + "/members", function(ok, data) {
+        FirebaseService.get("tenants/" + tid + "/members", function(ok, data) {
+            // A roster that arrives after sign-out or a tenant change must not replace the current one
+            // (names and emails of another shop). The newer load, or signOut, resets membersBusy.
+            if (AuthStore.tenantId !== tid) return
             membersBusy = false
             if (!ok) {
                 memberOperationFailed("Failed to load tenant members")
@@ -238,10 +268,14 @@ QtObject {
     }
 
     function _loadUserProfile() {
+        var seq = ++_profileSeq
         profileResolved = false
         onboardingNeeded = false
+        // accessBlock is NOT cleared here: a "Try again" must keep the blocked screen up while it checks.
+        // It is cleared only by a definitive answer: no uid, no tenant on the users doc, member verified.
 
         if (!AuthStore.uid) {
+            accessBlock = ""
             onboardingNeeded = true
             profileResolved = true
             onboardingRequired()
@@ -250,11 +284,26 @@ QtObject {
 
         if (!isOnline) { profileResolved = true; return; }
 
-        FirebaseService.get("users/" + AuthStore.uid, function(ok, data) {
+        FirebaseService.get("users/" + AuthStore.uid, function(ok, data, status) {
+            if (seq !== _profileSeq) return
             if (!ok || !data) {
-                onboardingNeeded = true
-                profileResolved = true
-                onboardingRequired()
+                if (!ok && status === 404) {
+                    // A block that is showing stays (D5/D13): a removed or suspended member is never offered
+                    // "Create your workspace" from the blocked screen, and onboarding must not start hidden behind it.
+                    if (accessBlock.length > 0) {
+                        profileResolved = true
+                        return
+                    }
+                    // Definitively no users doc: a new account, so onboarding.
+                    onboardingNeeded = true
+                    profileResolved = true
+                    onboardingRequired()
+                    return
+                }
+                // Could not READ it (offline blip, 5xx, expired token, empty body): that is not "no workspace".
+                // Never offer to create one; decide like an unreadable member doc against the tenant this
+                // device already holds: keep a verified member working, keep a showing block, else "unverified".
+                _applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)
                 return
             }
 
@@ -273,41 +322,17 @@ QtObject {
             })
 
             var tenantId = data.tenantId || ""
-            var tenantName = data.tenantName || ""
-            var role = data.role || ""
 
             if (!tenantId) {
+                accessBlock = ""
                 onboardingNeeded = true
                 profileResolved = true
                 onboardingRequired()
                 return
             }
 
-            AuthStore.applyTenantContext({ tenantId: tenantId, tenantName: tenantName, role: role })
-
-            // If the user doc didn't carry a tenant name, fetch the canonical
-            // tenant doc so the workspace name shows in the header.
-            if (!tenantName || tenantName.length === 0)
-                _ensureTenantName(tenantId)
-
-            if (role && role.length > 0) {
-                onboardingNeeded = false
-                profileResolved = true
-                loadTenantMembers()
-                tenantContextReady(tenantId, role)
-                return
-            }
-
-            _loadMembership(tenantId, function(found) {
-                if (!found) {
-                    onboardingNeeded = true
-                    profileResolved = true
-                    onboardingRequired()
-                } else {
-                    onboardingNeeded = false
-                    profileResolved = true
-                }
-            })
+            // Tenant and role are applied only after the member doc has been read (S2f-3).
+            _verifyMembership(seq, tenantId, data.tenantName || "")
         })
     }
 
@@ -315,6 +340,8 @@ QtObject {
         if (!tenantId) return
         FirebaseService.get("tenants/" + tenantId, function(ok, data) {
             if (!ok || !data) return
+            // A late answer must not write into a session that moved on (signed out, or another tenant).
+            if (AuthStore.tenantId !== tenantId) return
             var name = data.name || data.tenantName || ""
             if (name && name.length > 0) {
                 AuthStore.applyTenantContext({
@@ -461,18 +488,6 @@ QtObject {
             refreshIdToken()
     }
 
-    function setTenantContext(tenantId, tenantName, role) {
-        AuthStore.applyTenantContext({
-            tenantId: tenantId,
-            tenantName: tenantName,
-            role: role
-        })
-        onboardingNeeded = false
-        profileResolved = true
-        loadTenantMembers()
-        tenantContextReady(AuthStore.tenantId, AuthStore.role)
-    }
-
     function createTenantForCurrentUser(tenantName) {
         if (tenantCreateBusy || busy) {
             authFailed("Tenant setup already in progress")
@@ -489,7 +504,7 @@ QtObject {
         }
 
         if (AuthStore.tenantId && AuthStore.tenantId.length > 0) {
-            tenantContextReady(AuthStore.tenantId, AuthStore.role || "owner")
+            _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)
             return
         }
 
@@ -538,17 +553,20 @@ QtObject {
             createdAt: nowIso
         }
 
-        FirebaseService.get("users/" + AuthStore.uid, function(okExisting, existingUser) {
+        FirebaseService.get("users/" + AuthStore.uid, function(okExisting, existingUser, statusExisting) {
             if (okExisting && existingUser && existingUser.tenantId) {
-                AuthStore.applyTenantContext({
-                    tenantId: existingUser.tenantId,
-                    tenantName: existingUser.tenantName || safeName,
-                    role: existingUser.role || "owner"
-                })
                 busy = false
                 tenantCreateBusy = false
-                loadTenantMembers()
-                tenantContextReady(AuthStore.tenantId, AuthStore.role)
+                _loadUserProfile()   // the member doc decides the role, never a default (S2f-3)
+                return
+            }
+
+            // A users doc that could not be read is not a missing one: writing now could replace the pointer
+            // to the shop this user already belongs to. Only a 404 (a new account) may go on to create.
+            if (!okExisting && statusExisting !== 404) {
+                busy = false
+                tenantCreateBusy = false
+                authFailed("Could not check your account. Check your connection and try again.")
                 return
             }
 
@@ -866,8 +884,13 @@ QtObject {
     }
 
     function signOut() {
+        _profileSeq++
         profileResolved = true
         onboardingNeeded = false
+        accessBlock = ""
+        accessTenantName = ""
+        tenantMembers = []
+        membersBusy = false
         AuthStore.clear()
         AuthStore.saveSession()
         // Clear activity log to prevent cross-tenant data leakage. The log is
@@ -899,12 +922,20 @@ QtObject {
         var uid = AuthStore.uid
 
         // Clear the tenant pointer on the user's OWN doc FIRST. Removing only
-        // the member doc isn't enough: _loadUserProfile reads tenantId/role
+        // the member doc isn't enough: _loadUserProfile reads the tenantId
         // from users/{uid} on the next login and would walk straight back into
         // the (now membership-less) workspace — showing no data. We read-modify
         // -write so other fields (and other-tenant ownership) are preserved.
-        FirebaseService.get("users/" + uid, function(okGet, userDoc) {
-            var doc = (okGet && userDoc) ? userDoc : {}
+        FirebaseService.get("users/" + uid, function(okGet, userDoc, statusGet) {
+            // A users doc that could not be READ is not a missing one: writing now would replace the whole doc
+            // with blanks and lose the user's profile and the other shops they own (same rule as D12). Only a
+            // 404 (nothing there to lose) may go on with an empty doc.
+            var missing = !okGet && statusGet === 404
+            if (!missing && !(okGet && userDoc)) {
+                authFailed("Could not check your account. Check your connection and try again.")
+                return
+            }
+            var doc = missing ? {} : userDoc
             doc.tenantId = ""
             doc.tenantName = ""
             doc.role = ""
