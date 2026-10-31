@@ -5,6 +5,15 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Bulk Approve: a `tryCompleteOrder` that never calls back keeps the banner "running" — FOUND 2026-10-31 (PR #174 sweep), NOT FIXED
+
+**Where:** `OrdersPage._approveAllPending` + `BulkApproveProgress` (the `shortcut: no watchdog` comment). The lock request can no longer hang (D16: 15 s timeout, circuit breaker after 3 no-answers), but the completion step (`DataModel.tryCompleteOrder`, the Gateway write) has no watchdog of its own here: if its callback never fires the state stays "running" and the Approve button stays disabled until the page is rebuilt.
+**Why deferred:** nothing shows it hanging (Gateway's own send timeouts, 10 s / 30 s, answer every request), and a page-level watchdog would need a cancel/abandon design for an in-flight write.
+**Lead:** if a device ever shows the banner stuck, add a per-order timer in the loop that records the order as failed after `SendPolicy.TIMEOUT_AWAIT_MS` x 2 and ignores the late callback (answer-once guard, Skill 143 rule 2).
+**Also unmeasured:** `LockManager.requestTimeoutMs` (15 s) is a starting value; read `acquireLock` latency (cold start) and tune.
+
+---
+
 ## Access-blocked screen: a failed "Try again" says nothing — FOUND 2026-10-28 (S2f-3 review pass), NOT FIXED
 
 **Where:** `AuthService._verifyMembership` / `AccessState.outcome` (D11). When the retry cannot reach the server the spinner ends and the same screen stays; nothing tells the user the check failed (offline is covered by a toast, a server error is not). **Why not fixed:** it needs AuthService to report the outcome of a recheck (a signal or a `lastCheckFailed` flag) and a second wording; the safe behaviour (stay blocked) is already right. **Lead:** emit one signal from the `unverified`-while-blocked branch and let Main show the same toast style as the offline case.
