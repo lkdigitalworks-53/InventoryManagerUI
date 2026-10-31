@@ -152,3 +152,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 142: Authority is the record the server trusts, not the pointer the user can write: verify the member doc before applying role or tenant, and tell "gone" from "could not read"
 - 143: A refused membership shows up at the first server call a user makes, not only at login: classify it once, name it once, and never let a catch-all bucket describe it
 - 144: Every raw XHR wrapper needs three things: the status snapshot, a timeout, and an answer-once guard; a new timeout must not change what "no answer" does to existing state
+- 145: Prove an absence claim with a caller grep, list what a "noisy" path also does before silencing it, and never carry a refusal's detail by changing a falsy sentinel
