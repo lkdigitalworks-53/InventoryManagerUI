@@ -161,7 +161,7 @@ TestCase {
     function test_renewalLost_a_no_answer_keeps_the_hold() {
         // status 0 = timeout or offline: the lock may well still be ours; the next heartbeat retries
         var none = LockManager._classifyAcquireResponse(0, null)
-        compare(LockManager._renewalLost(0, none), false)
+        compare(LockManager._renewalLost(0, null, none), false)
     }
 
     function test_renewalLost_a_real_refusal_drops_the_hold() {
@@ -169,18 +169,26 @@ TestCase {
             [409, { ok: false, holder: { name: "A" } }],
             [403, { ok: false, error: "no-tenant-context" }],
             [500, { ok: false, error: "lock-failed" }],
-            [502, null],
-            [200, null]
+            [409, { ok: false, holder: null }]
         ]
         for (var i = 0; i < cases.length; ++i) {
             var c = LockManager._classifyAcquireResponse(cases[i][0], cases[i][1])
-            compare(LockManager._renewalLost(cases[i][0], c), true, "case " + i)
+            compare(LockManager._renewalLost(cases[i][0], cases[i][1], c), true, "case " + i)
+        }
+    }
+
+    function test_renewalLost_an_unreadable_answer_keeps_the_hold() {
+        // an HTML 502, an empty body, JSON without a boolean `ok`: same as no answer
+        var cases = [[502, null], [200, null], [200, {}], [500, { ok: "no" }], [500, [] ], [500, "x"]]
+        for (var i = 0; i < cases.length; ++i) {
+            var c = LockManager._classifyAcquireResponse(cases[i][0], cases[i][1])
+            compare(LockManager._renewalLost(cases[i][0], cases[i][1], c), false, "case " + i)
         }
     }
 
     function test_renewalLost_a_granted_renewal_is_never_lost() {
         var ok = LockManager._classifyAcquireResponse(200, { ok: true })
-        compare(LockManager._renewalLost(200, ok), false)
-        compare(LockManager._renewalLost(0, ok), false)
+        compare(LockManager._renewalLost(200, { ok: true }, ok), false)
+        compare(LockManager._renewalLost(0, { ok: true }, ok), false)
     }
 }

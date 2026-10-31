@@ -53,21 +53,21 @@ Runs the REAL text of `LockManager._classifyAcquireResponse`, `OrdersPage._appro
 - Mutants: 4 on the classifier, 23 on the page (recursion back, drain skips progress, drain drops orders, wrong skip list, breaker removed / at 2 / at 4 / never resets / counts a denial / wrong list, id list uncapped / no tail), 5 per dialog; every one is caught.
 Not covered here (device only): that the dialog text is drawn where the user sees it, the real 403 from the server, timing.
 
-## 2e. Lock transport (Node, `.github/scripts/__tests__/lockTransportBehavior.test.js`, 20 tests; QML `tst_LockManager` +4)
+## 2e. Lock transport (Node, `.github/scripts/__tests__/lockTransportBehavior.test.js`, 22 tests; QML `tst_LockManager` +5)
 Runs the REAL text of `LockManager._post`, `_captureBeforeStatusIsLost`, `_onRenewTick` and `_renewalLost` against a scripted fake `XMLHttpRequest` (the real classifier decides what each answer means).
 - Request shape: POST, url, `Content-Type`, `Authorization: Bearer <token>`, `env` + payload in one envelope, `timeout` = 15000 set before `send`, no callback before an answer.
 - QTBUG-49896 (F2): HEADERS(403) -> LOADING(403, body) -> DONE(status 0) is delivered as 403 + body and classifies as `noAccess`; the same for a 409 with a holder (`denied`); headers only (no body seen) keeps status 403 with a null body, which is still NOT `noAccess` (never guess); a later state with status 0 never wipes the snapshot; a real status at DONE wins over an older snapshot; a genuine network failure (no headers ever) stays status 0.
 - Timeout (D-E): the timeout answers once with (0, null) = `reason "error"`; a late DONE after it, a timeout after DONE, and two DONEs each answer once; empty / HTML / truncated / `null` bodies read as no body and never throw; no callback given never throws.
-- Renewal: a granted renewal and a no-answer (status 0) keep the hold and do not stop the heartbeat; 409, 403, 500, a 502 HTML page and a 200 without `ok` drop it; nothing held stops the timer and sends nothing; a failing OLD renewal never drops a NEWER lock taken while it was in flight.
-- QML `tst_LockManager`: `requestTimeoutMs` is 15000 and shorter than `renewIntervalMs`; `_renewalLost` rule for no-answer, real refusals and a granted renewal.
-- Mutants (13): snapshot call removed, DONE status always used, snapshot overwritten with 0, timeout 0 / wrong value / `ontimeout` removed, answer-once guard removed, JSON parse unguarded, callback unguarded, auth header dropped, renewal drops on no-answer, renewal never drops, renewal rule unused; every one is caught.
+- Renewal: a granted renewal, a no-answer (status 0) and an UNREADABLE answer (502 HTML page, empty 200, JSON without a boolean `ok`) keep the hold and do not stop the heartbeat; a readable refusal (409, 403, 500 with `ok:false`) drops it; nothing held stops the timer and sends nothing; a failing OLD renewal never drops a NEWER lock taken while it was in flight.
+- QML `tst_LockManager`: `requestTimeoutMs` is 15000 and shorter than `renewIntervalMs`; `_renewalLost` rule for no-answer, readable refusals, unreadable answers and a granted renewal.
+- Mutants (15): snapshot call removed, DONE status always used, snapshot overwritten with 0, timeout 0 / wrong value / `ontimeout` removed, answer-once guard removed, JSON parse unguarded, callback unguarded, auth header dropped, renewal drops on no-answer, drops on an unreadable answer, ignores the `ok` flag, never drops, renewal rule unused; every one is caught.
 Not covered here (device only): that Qt really delivers `ontimeout` / the status loss on this device and Qt version, the real 15 s against the real function (cold start), what the user sees.
 
 ## 5. Regression
 Owner login and first sign-up unchanged in the happy path (device R1, R2). `FirebaseService.get` callers ignore the new third argument. Existing script tests (271 incl. these) pass locally. QML suites run only in CI.
 
 ## 6. Verification status
-Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (357/357, of which 72 AuthService behaviour tests, 42 wiring, 52 lock no-access, 20 lock transport), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
+Run here: Node shim for `tst_AccessState` (49/49), helper mutants (62/63), `.github/scripts/__tests__` (359/359, of which 72 AuthService behaviour tests, 42 wiring, 52 lock no-access, 22 lock transport), `node --check` on the rules test. CI only: all QML tests (`tst_AccessState`, `tst_FailureCause`, `tst_Gateway`, `tst_LockManager`), rules tests, functions tests. Not verifiable without a device: layout, z-order, back button, the login cover timing.
 
 ## On-device test plan
 ### Prerequisites
@@ -147,6 +147,6 @@ Cycle active -> suspended -> removed -> invalid role -> active, force-stopping b
 | `qml/pages/AccessBlockedPage.qml`, `qml/Main.qml` | wiring pins only | all, N2-N3, N4, N6-N7, E3-E4 |
 | `qml/model/FirebaseService.qml` `get` | wiring pin | H1 (every login reads it) |
 | `qml/helper/FailureCause.js` | tst_FailureCause U14, U17-U20; real-text node tests | H8, N8-N11 |
-| `qml/model/LockManager.qml` | tst_LockManager (+7), node classifier + 4 mutants, 20 transport/renewal tests + 13 mutants | N8-N12, N14, E14, E15 |
+| `qml/model/LockManager.qml` | tst_LockManager (+8), node classifier + 4 mutants, 22 transport/renewal tests + 15 mutants | N8-N12, N14, E14, E15 |
 | `qml/pages/OrdersPage.qml` (bulk Approve) | real-text node run, 23 mutants, monkey (with breaker model), 5000-order stack-depth probe | N8, N12, N13, N14, E14, E15 |
 | `qml/pages/OrderDetailDialog.qml`, `EditProductDialog.qml`, `StaffDetailDialog.qml` | source pins + 5 mutants each | N9-N11 |
