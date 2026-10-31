@@ -89,8 +89,24 @@ function runBulk(src, orders, opts) {
   assert.ok(text, '_approveAllPending text found');
   const fn = new Function('root', 'BAP', 'LockManager', 'dataModel', 'FailureCause', 'qsTr', 'stockErrorDlg',
     'approveHold', '_scopedOrders', `${text}\n;return _approveAllPending`);
-  const rec = { acquires: [], completes: [], releases: [], dialogs: [], holds: 0 };
+  const rec = { acquires: [], completes: [], releases: [], dialogs: [], holds: 0, maxDepth: 0 };
   const root = { _approveState: BAP.newState() };
+  // Call-stack depth at every progress step: the QML engine caps call depth (V4, ~1200 by default
+  // in release builds, I believe), so a loop that recurses once per order throws on a big batch and
+  // leaves the busy overlay up forever. Depth must not grow with the number of orders.
+  const bapProbe = Object.assign({}, BAP, {
+    step(st, outcome) {
+      // Sampled (every 500th step and the last one) so a 5000-order run stays cheap: a recursing loop is
+      // deepest at the end, so sampling still sees it. Node keeps only 10 frames by default: lift the limit.
+      if (st.done % 500 === 0 || st.done === st.total - 1) {
+        const lim = Error.stackTraceLimit;
+        Error.stackTraceLimit = Infinity;
+        rec.maxDepth = Math.max(rec.maxDepth, new Error().stack.split('\n').length);
+        Error.stackTraceLimit = lim;
+      }
+      return BAP.step(st, outcome);
+    },
+  });
   const pending = [];
   const LockManager = {
     acquire(entity, id, cb) {
@@ -107,7 +123,7 @@ function runBulk(src, orders, opts) {
   const stockErrorDlg = { show(o) { rec.dialogs.push({ title: String(o.title), message: String(o.message), variant: o.variant }); } };
   const approveHold = { restart() { rec.holds++; } };
   const orderList = orders.map((id) => ({ orderId: id, status: 'pending' }));
-  fn(root, BAP, LockManager, dataModel, FC, qsTr, stockErrorDlg, approveHold, () => orderList)();
+  fn(root, bapProbe, LockManager, dataModel, FC, qsTr, stockErrorDlg, approveHold, () => orderList)();
   while (pending.length) pending.shift()();
   rec.state = root._approveState;
   return rec;
@@ -165,6 +181,20 @@ function bulkProblems(src) {
     if (f.completes.join() !== 'o1') out.push('mixed-completes');
     if (!/elsewhere.*o2/.test(mf) || !/1 order\(s\).*o3/.test(mf) || !mf.includes('2 not approved.')) out.push('mixed-text');
     if (f.state.phase !== 'done' || BAP.approved(f.state) !== 1) out.push('mixed-progress');
+
+    // a big batch for a suspended member: one request, constant stack depth, every order accounted for
+    const big = Array.from({ length: 5000 }, (_, i) => `b${i}`);
+    const bs = runBulk(src, big, { acquire: () => NOACC });
+    if (bs.acquires.length !== 1) out.push('big-fail-fast');
+    if (bs.maxDepth > 40) out.push('big-stack-grows');
+    if (bs.state.phase !== 'done' || bs.state.done !== 5000) out.push('big-progress');
+    if (!(bs.dialogs[0] && bs.dialogs[0].message.startsWith('5000 not approved.'))) out.push('big-count');
+    // same after earlier orders were approved: the 403 arrives mid-batch (suspended during the run)
+    const mid = runBulk(src, big, { acquire: (id) => (['b0', 'b1', 'b2'].includes(id) ? GRANT : NOACC) });
+    if (mid.completes.join() !== 'b0,b1,b2' || mid.acquires.length !== 4) out.push('big-mid-batch');
+    if (mid.maxDepth > 40) out.push('big-mid-stack-grows');
+    if (BAP.approved(mid.state) !== 3 || mid.state.done !== 5000) out.push('big-mid-progress');
+    if (!(mid.dialogs[0] && mid.dialogs[0].message.startsWith('4997 not approved.'))) out.push('big-mid-count');
 
     // nothing pending: no dialog, no throw
     const g = runBulk(src, [], { acquire: () => GRANT });
@@ -279,6 +309,9 @@ const MUT_PAGE = [
   ['a 403 counted as unchecked', '(lockSt === "no-access" ? noAccess : unchecked)', '(lockSt === "no-access" ? unchecked : unchecked)'],
   ['fail-fast removed', 'if (noAccess.length > 0) {\n                noAccess.push(orderId)', 'if (false) {\n                noAccess.push(orderId)'],
   ['fail-fast skips the progress step', 'noAccess.push(orderId)\n                root._approveState = BAP.step(root._approveState, "locked")', 'noAccess.push(orderId)'],
+  ['fail-fast skip recurses per order again (stack grows with the batch)', 'while (idx < toApprove.length) {\n                    noAccess.push(toApprove[idx++])\n                    root._approveState = BAP.step(root._approveState, "locked")\n                }\n                _next()\n                return', '_next()\n                return'],
+  ['fail-fast drain skips the progress step', 'noAccess.push(toApprove[idx++])\n                    root._approveState = BAP.step(root._approveState, "locked")', 'noAccess.push(toApprove[idx++])'],
+  ['fail-fast drain drops the remaining orders', 'noAccess.push(toApprove[idx++])', 'idx++'],
   ['dialog not shown for access-only', 'lockedOut.length > 0 || noAccess.length > 0 || unchecked.length > 0', 'lockedOut.length > 0 || unchecked.length > 0'],
   ['dialog not shown for error-only', 'lockedOut.length > 0 || noAccess.length > 0 || unchecked.length > 0', 'lockedOut.length > 0 || noAccess.length > 0'],
   ['access text replaced by the elsewhere text', 'parts.push(qsTr("%1 not approved. %2").arg(noAccess.length).arg(FailureCause.forAccess().text))', 'parts.push(qsTr("Being edited elsewhere, try again shortly: %1").arg(noAccess.join(", ")))'],

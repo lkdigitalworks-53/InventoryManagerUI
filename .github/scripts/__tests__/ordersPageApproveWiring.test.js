@@ -34,8 +34,9 @@ function problems(src) {
   if (!src.includes('import "../helper/BulkApproveProgress.js" as BAP')) out.push('import');
   if (firstLine !== 'if (!BAP.canStart(root._approveState)) return') out.push('guard-first-line');
   if (!/root\._approveState = BAP\.start\(toApprove\.length\)/.test(fn)) out.push('start');
-  // two sites since the PR #171 lock-no-access fix: the lock stage and the fail-fast skip after a 403
-  if ((fn.match(/BAP\.step\(root\._approveState, "locked"\)/g) || []).length !== 2) out.push('step-locked');
+  // three sites since the PR #171 lock-no-access fix: the lock stage, the fail-fast skip after a 403, and the
+  // loop that drains the remaining orders after it (a loop, not recursion: stack depth must not grow with the batch)
+  if ((fn.match(/BAP\.step\(root\._approveState, "locked"\)/g) || []).length !== 3) out.push('step-locked');
   if (!/BAP\.step\(root\._approveState, success \? "ok" : "failed"\)/.test(fn)) out.push('step-result');
   if (!/if \(root\._approveState\.phase === "done"\) approveHold\.restart\(\)/.test(fn)) out.push('hold-start');
   if (!/enabled: BAP\.canStart\(root\._approveState\)/.test(src)) out.push('button-enabled');
