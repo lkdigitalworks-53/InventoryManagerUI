@@ -196,6 +196,41 @@ function bulkProblems(src) {
     if (BAP.approved(mid.state) !== 3 || mid.state.done !== 5000) out.push('big-mid-progress');
     if (!(mid.dialogs[0] && mid.dialogs[0].message.startsWith('4997 not approved.'))) out.push('big-mid-count');
 
+    // D-E breaker: 3 CONSECUTIVE no-answers stop the run (the 4th..nth order is never asked), the rest are
+    // listed as "couldn't confirm" with a capped id list, progress still ends full
+    const ids10 = Array.from({ length: 10 }, (_, i) => `o${i + 1}`);
+    const br = runBulk(src, ids10, { acquire: () => ERR });
+    const mbr = br.dialogs[0] ? br.dialogs[0].message : '';
+    if (br.acquires.length !== 3) out.push('breaker-stops-after-3');
+    if (!mbr.startsWith("Couldn't confirm 10 order(s)")) out.push('breaker-count');
+    if (!mbr.includes('o1, o2, o3, o4, o5 and 5 more') || mbr.includes('o6,')) out.push('breaker-id-list-capped');
+    if (/elsewhere/i.test(mbr) || mbr.includes(ACCESS)) out.push('breaker-wording');
+    if (br.state.phase !== 'done' || br.state.done !== 10 || BAP.approved(br.state) !== 0) out.push('breaker-progress');
+    if (br.completes.length !== 0 || br.dialogs.length !== 1) out.push('breaker-nothing-completes');
+    // a real answer in between resets the run: E,E,G,E,E,D,E,E never trips (no 3 in a row)
+    const seq = [ERR, ERR, GRANT, ERR, ERR, DEN, ERR, ERR];
+    const noTrip = runBulk(src, seq.map((_, i) => `s${i}`), { acquire: (id) => seq[Number(id.slice(1))] });
+    if (noTrip.acquires.length !== 8) out.push('breaker-reset-by-real-answer');
+    // exactly 3 in a row after a reset trips on the 3rd: G,E,E,E -> 4 asked, the rest skipped
+    const seq2 = [GRANT, ERR, ERR, ERR, GRANT, GRANT];
+    const trip = runBulk(src, seq2.map((_, i) => `t${i}`), { acquire: (id) => seq2[Number(id.slice(1))] });
+    if (trip.acquires.length !== 4 || trip.completes.join() !== 't0') out.push('breaker-trips-on-third');
+    if (!/Couldn't confirm 5 order\(s\)/.test(trip.dialogs[0] ? trip.dialogs[0].message : '')) out.push('breaker-trip-count');
+    // a 403 inside an error run wins and says access, with the run counter irrelevant
+    const seq3 = [ERR, ERR, NOACC, GRANT];
+    const mix = runBulk(src, seq3.map((_, i) => `u${i}`), { acquire: (id) => seq3[Number(id.slice(1))] });
+    if (mix.acquires.length !== 3 || !mix.dialogs[0].message.includes(ACCESS)) out.push('breaker-403-inside-run');
+    // two errors only: nothing is skipped, both are named in full
+    const two = runBulk(src, ['p1', 'p2'], { acquire: () => ERR });
+    if (two.acquires.length !== 2 || !two.dialogs[0].message.endsWith('p1, p2')) out.push('breaker-not-tripped-by-two');
+    // a big offline batch: 3 requests, constant stack depth, every order accounted for
+    const offline = runBulk(src, big, { acquire: () => ERR });
+    if (offline.acquires.length !== 3 || offline.maxDepth > 40 || offline.state.done !== 5000) out.push('breaker-big');
+    if (!(offline.dialogs[0] && offline.dialogs[0].message.includes('and 4995 more'))) out.push('breaker-big-text');
+    // asynchronous answers trip it the same way
+    const aOff = runBulk(src, ids10, { acquire: () => ERR, async: true });
+    if (aOff.acquires.length !== 3 || aOff.state.done !== 10) out.push('breaker-async');
+
     // nothing pending: no dialog, no throw
     const g = runBulk(src, [], { acquire: () => GRANT });
     if (g.dialogs.length !== 0 || g.acquires.length !== 0) out.push('empty');
@@ -216,18 +251,24 @@ function bulkProblems(src) {
       const r = runBulk(src, ids, { acquire: (id) => plan[id], complete: (id) => comp[id] });
       const st = (x) => FC.lockState(x);
       const firstNo = ids.findIndex((id) => st(plan[id]) === 'no-access');
-      const reached = firstNo < 0 ? n : firstNo + 1;
+      // reference model: ask in order; stop at the first 403 or after 3 consecutive no-answers
+      let reached = n; let streak = 0;
+      for (let i = 0; i < n; i++) {
+        const k = st(plan[ids[i]]);
+        streak = k === 'error' ? streak + 1 : 0;
+        if (k === 'no-access' || streak >= 3) { reached = i + 1; break; }
+      }
       if (r.acquires.length !== reached) { out.push('monkey-acquire-count'); break; }
       const granted = ids.slice(0, reached).filter((id) => st(plan[id]) === 'granted');
       if (r.completes.join() !== granted.join()) { out.push('monkey-completes'); break; }
       if (n > 0 && r.state.phase !== 'done') { out.push('monkey-progress-ends'); break; }
       const bad = r.completes.filter((id) => !comp[id]).length;
-      const lockBad = n - granted.length;
+      const lockBad = n - granted.length; // skipped orders count as not approved too
       if (n > 0 && BAP.approved(r.state) !== granted.length - bad) { out.push('monkey-approved'); break; }
       const msg = r.dialogs[0] ? r.dialogs[0].message : '';
       const kinds = ids.slice(0, reached).map((id) => st(plan[id]));
       if (/elsewhere/i.test(msg) !== kinds.includes('denied')) { out.push('monkey-elsewhere-iff-denied'); break; }
-      if (msg.includes(ACCESS) !== (firstNo >= 0)) { out.push('monkey-access-iff-403'); break; }
+      if (msg.includes(ACCESS) !== (firstNo >= 0 && firstNo < reached)) { out.push('monkey-access-iff-403'); break; }
       if (/connection issue/.test(msg) !== kinds.includes('error')) { out.push('monkey-connection-iff-error'); break; }
       if ((r.dialogs.length === 1) !== (bad + lockBad > 0)) { out.push('monkey-dialog-iff-something-failed'); break; }
       if (r.dialogs.length > 1) { out.push('monkey-one-dialog'); break; }
@@ -307,11 +348,20 @@ const MUT_PAGE = [
   ['the old bug: every non-granted acquire is "edited elsewhere"', '(lockSt === "denied" ? lockedOut : (lockSt === "no-access" ? noAccess : unchecked)).push(orderId)', 'lockedOut.push(orderId)'],
   ['a connection error counted as no-access', '(lockSt === "no-access" ? noAccess : unchecked)', '(lockSt === "no-access" ? noAccess : noAccess)'],
   ['a 403 counted as unchecked', '(lockSt === "no-access" ? noAccess : unchecked)', '(lockSt === "no-access" ? unchecked : unchecked)'],
-  ['fail-fast removed', 'if (noAccess.length > 0) {\n                noAccess.push(orderId)', 'if (false) {\n                noAccess.push(orderId)'],
-  ['fail-fast skips the progress step', 'noAccess.push(orderId)\n                root._approveState = BAP.step(root._approveState, "locked")', 'noAccess.push(orderId)'],
-  ['fail-fast skip recurses per order again (stack grows with the batch)', 'while (idx < toApprove.length) {\n                    noAccess.push(toApprove[idx++])\n                    root._approveState = BAP.step(root._approveState, "locked")\n                }\n                _next()\n                return', '_next()\n                return'],
-  ['fail-fast drain skips the progress step', 'noAccess.push(toApprove[idx++])\n                    root._approveState = BAP.step(root._approveState, "locked")', 'noAccess.push(toApprove[idx++])'],
-  ['fail-fast drain drops the remaining orders', 'noAccess.push(toApprove[idx++])', 'idx++'],
+  ['fail-fast removed (a 403 does not skip the rest)', 'if (lockSt === \"no-access\") _skipRest(noAccess)', 'if (false) _skipRest(noAccess)'],
+  ['fail-fast skip recurses per order again (stack grows with the batch)', 'while (idx < toApprove.length) {\n                list.push(toApprove[idx++])\n                root._approveState = BAP.step(root._approveState, \"locked\")\n            }', 'if (idx < toApprove.length) {\n                list.push(toApprove[idx++])\n                root._approveState = BAP.step(root._approveState, \"locked\")\n                _skipRest(list)\n            }'],
+  ['lock stage skips the progress step', 'root._approveState = BAP.step(root._approveState, "locked")\n                    // Stop asking', '// Stop asking'],
+  ['skip drain skips the progress step', 'list.push(toApprove[idx++])\n                root._approveState = BAP.step(root._approveState, \"locked\")', 'list.push(toApprove[idx++])'],
+  ['skip drain drops the remaining orders', 'list.push(toApprove[idx++])', 'idx++'],
+  ['skip list is the wrong one for a 403', '_skipRest(noAccess)', '_skipRest(unchecked)'],
+  ['breaker removed', 'else if (noAnswerRun >= maxNoAnswerRun) _skipRest(unchecked)', ''],
+  ['breaker trips on 2', 'var maxNoAnswerRun = 3', 'var maxNoAnswerRun = 2'],
+  ['breaker trips on 4', 'var maxNoAnswerRun = 3', 'var maxNoAnswerRun = 4'],
+  ['breaker never resets on a real answer', 'noAnswerRun = lockSt === \"error\" ? noAnswerRun + 1 : 0', 'noAnswerRun = lockSt === \"error\" ? noAnswerRun + 1 : noAnswerRun'],
+  ['breaker counts a denial as a no-answer', 'noAnswerRun = lockSt === \"error\" ? noAnswerRun + 1 : 0', 'noAnswerRun = lockSt !== \"granted\" ? noAnswerRun + 1 : 0'],
+  ['breaker skipped orders filed under the real-holder list', 'else if (noAnswerRun >= maxNoAnswerRun) _skipRest(unchecked)', 'else if (noAnswerRun >= maxNoAnswerRun) _skipRest(lockedOut)'],
+  ['id list not capped', 'unchecked.slice(0, 5)', 'unchecked.slice(0, 5000)'],
+  ['id list cap without the \"and N more\" tail', 'unchecked.length > 5 ? qsTr(\" and %1 more\").arg(unchecked.length - 5) : \"\"', '\"\"'],
   ['dialog not shown for access-only', 'lockedOut.length > 0 || noAccess.length > 0 || unchecked.length > 0', 'lockedOut.length > 0 || unchecked.length > 0'],
   ['dialog not shown for error-only', 'lockedOut.length > 0 || noAccess.length > 0 || unchecked.length > 0', 'lockedOut.length > 0 || noAccess.length > 0'],
   ['access text replaced by the elsewhere text', 'parts.push(qsTr("%1 not approved. %2").arg(noAccess.length).arg(FailureCause.forAccess().text))', 'parts.push(qsTr("Being edited elsewhere, try again shortly: %1").arg(noAccess.join(", ")))'],
