@@ -1,6 +1,7 @@
-# Test plan — L3 session lifecycle (PLANNED, written before implementation, NOTHING RUN)
+# Test plan — L3 session lifecycle (slice A BUILT 2026-10-31, CI unverified; slices B and C still PLANNED)
 
 Design: `docs/superpowers/specs/2026-10-31-l3-session-lifecycle-design.md` (L3-D1c, D2a, D5b decided 2026-10-31; D3, D4, D6, D7 open). Branch of this PR: `docs/2026-10-31-l3-session-lifecycle-design` (docs only, no behaviour). Standard format (Skill 49). Slices: **A** client silent re-check + resume (no deploy), **B** server `reason` (deploy), **C** client consumes `reason`. Slice A rows are final (L3-D1c, D2a, D5b decided). Slice B and C rows assume the recommended answers (D3b, D4b, D6c) until Taher decides; if Taher answers differently the affected rows change and the plan is edited in the same commit as the design.
+**Slice A as built (2026-10-31, branch `feat/2026-10-31-l3a-silent-recheck`; numbers are what ran in the sandbox, CI is the QML oracle):** `SessionRecheck.js` unit 37 tests (33 hand mutants, all caught) in `sessionRecheck.test.js`; behaviour on the REAL `AuthService` text 84 tests in `sessionRecheckBehavior.test.js` (41 scenarios, 38 hand mutants all caught, 4 seeded monkeys x 6000 steps against a reference model, minimum coverage pinned per seed); wiring 40 tests in `sessionRecheckWiring.test.js` (rules + 36 mutants); `tests/tst_SessionRecheck.qml` 25 test functions (CI only). Whole script suite 623 of 623 (462 before this slice). The existing S2f-3 pins were updated to the new call shapes (and now also pin the `silent`/`quiet` pass-through). **Deviations from the rows below, all deliberate:** (1) no `tst_AuthService_silentRecheck.qml` or `tst_Main_resume`: `AuthService` cannot be instantiated under `qmltestrunner` (Felgo), so those cases are the Node behaviour test on the real function text; (2) a lost silent check is replaced after 120 s (`STALE_MS`) because `FirebaseService` reads have no timeout; (3) a refresh answer that lands after sign-out or an account switch is dropped (`sentWith` guard), a pre-existing race that resume would have made likelier; (4) L3-D5b: no tab is role-gated, so there is no tab to jump to; the only role-gated screen is the Staff overlay, which closes on a role change when `!canViewStaff`; (5) only a session that is already open is re-checked silently, cold start, sign-in, onboarding and Try again stay full loads that always emit `tenantContextReady`; and the first answer of every sign-in counts as a change (`_contextSynced`, kind `first`) because the saved session already holds tenant and role, so "nothing changed" would otherwise skip the first store sync. **An independent review found this after the first version of the slice had it wrong:** at cold start `init()` resolves OFFLINE (`isOnline` is still false), then `Main.qml` sets `isOnline = true` and the silent check found "no change", so no store ever synced. The test harness had always started online, which is why 600 tests missed it; the scenarios now replay the real order.
 Tooling truth: no Qt in the sandbox, so every `tst_*.qml` is verified by CI only; pure JS, script tests and `functions/` tests run in Node here. Counts below are PLANNED; the observed CI numbers replace them when each slice lands.
 
 ## 1. Unit tests (planned)
@@ -16,7 +17,7 @@ Tooling truth: no Qt in the sandbox, so every `tst_*.qml` is verified by CI only
 - **A, wiring pins** (`sessionRecheckWiring.test.js`): the `LoginPage` `visible:` expression no longer depends on a value a silent check flips; resume hook present and calls the throttled entry only; no other writer of `profileResolved = false` on the refresh path.
 - **B, handler tests** (`functions/test/`): 10 endpoints x 3 reasons (30) -> 403, `error` unchanged, correct `reason`; owner/admin/manager/staff active -> success body byte-identical to today (4 roles x 10 endpoints); structural test: every `deriveContext(` call site builds its 403 through the shared function; **fail-open guard:** `deriveContext` still returns `null` (not an object) on refusal.
 - **C:** `LockManager` and bulk Approve with each reason; storm control (100 refused requests in a row -> one `recheckAccess`; second one after 30 s); old-server answer (no `reason`) behaves exactly as PR #171.
-- **QML (CI only):** `tst_SessionRecheck.qml` (helper, same cases as 1), `tst_AuthService_silentRecheck.qml` (cover flag, signals, no store sync), `tst_Main_resume` where the harness allows, extended `tst_LockManager`.
+- **QML (CI only):** `tst_SessionRecheck.qml` (helper, same cases as 1), `tst_Main_resume` where the harness allows, extended `tst_LockManager`.
 
 ## 3. Rules tests
 None planned: `firestore.rules` does not change in any slice. The existing 108 rules tests stay green as regression (they pin the suspended member's own-doc read that the re-check depends on).
@@ -47,6 +48,8 @@ None planned: `firestore.rules` does not change in any slice. The existing 108 r
 - H4 (A) Console: delete the member doc, background and return: the "removed" screen.
 - H5 (A) Re-create or set `active`, tap Try again: the app opens, lists load once.
 - H6 (A) Console: change role admin -> staff while open, background and return: toast "Your role is now staff"; manager-only controls gone; if you were on a manager-only tab you land on an allowed one (L3-D5b).
+  - As built (L3-D5b): tabs are not role-gated, so the check is the Staff overlay: as a manager open Team members, change the role to staff in the console, background and return: toast "Your role is now staff" and the overlay closes (Home, Orders, Stock, Analysis stay).
+
 - H7 (C) Suspended member presses Approve: access screen opens after the refused request, not just a sentence.
 
 **Negative**
@@ -57,6 +60,12 @@ None planned: `firestore.rules` does not change in any slice. The existing 108 r
 - N5 Blocked and still suspended, resume: stays blocked, no flicker.
 - N6 (B) `curl` a gateway endpoint with the suspended member's token: 403 with `reason: "member-not-active"` and `error: "no-tenant-context"` unchanged.
 - N7 Old app build against the new server (B deployed first): D15 wording still correct.
+
+- N12 (A) Cold start, online: kill the app and relaunch. Orders, Stock, Analysis and Team load exactly as before this slice (this is the path the first version broke). Repeat with the phone offline at launch, then go online: the lists load once the phone is online.
+- N8 (A) Turn on airplane mode while a resume check is out, then off: no sign-in form, no blank lists; the next resume after 2 minutes checks again (a lost check does not stop checks).
+- N9 (A) Resume with the phone asleep for over an hour (token expired): one silent check after the refresh, no sign-in form, no error toast.
+- N10 (A, iOS) Pull down the notification centre and release 5 times quickly: at most one check (log), no visible effect.
+- N11 (A) Sign out while a token refresh is in flight (resume, then tap Sign out at once): the sign-in form stays, the old user does not come back.
 
 **Edge cases**
 - E1 Resume at the moment the token is about to expire: one refresh, one check, no double flash.
@@ -84,3 +93,6 @@ None planned: `firestore.rules` does not change in any slice. The existing 108 r
 - R2 PR #171 E12/E13 (users doc gone): unchanged.
 - R3 Sign-out sheet with unsent changes still warns.
 - R4 A flaky network never blocks a signed-in owner.
+
+## 8. Slice A as built: what is NOT proven here
+Real `Qt.application.state` transitions (Android, iOS, Felgo), the property bindings and what the screen draws, real token expiry timing, and the on-device baseline B0 that confirms Finding F2 (nothing was seen on a device; F2 is read from code). The hook in `Main.qml` is a thin binding over a tested function so that the untested part is one line. Owners with two phones lose the accidental hourly refresh until L4 (accepted at L3-D1c).

@@ -4,6 +4,7 @@ import QtQuick
 import "../helper/ProfileSettingsMath.js" as ProfileSettingsMath
 import "../helper/MemberPolicy.js" as MemberPolicy
 import "../helper/AccessState.js" as AccessState
+import "../helper/SessionRecheck.js" as SessionRecheck
 
 QtObject {
     id: root
@@ -24,6 +25,15 @@ QtObject {
     property string accessTenantName: ""
     // Bumped by every profile load and by sign-out: a late answer from an older load must not apply.
     property int _profileSeq: 0
+    // True while a SILENT re-check (resume, token refresh, reconnect) is out. Unlike profileResolved it covers
+    // nothing: no sign-in form, no blanked lists, no spinner on the access screen (L3 slice A, design L3-D1c).
+    property bool checking: false
+    // True once this sign-in has emitted tenantContextReady (the stores have synced). A silent check treats
+    // the first answer as a change whatever AuthStore already holds from the saved session.
+    property bool _contextSynced: false
+    // Date.now() of the last automatic check and of the last resume reaction (ms, so real, not int).
+    property real _lastRecheckMs: 0
+    property real _lastResumeMs: 0
     property int lastStatusCode: 0
     property string lastError: ""
     property var tenantMembers: []
@@ -32,6 +42,8 @@ QtObject {
     signal signupSucceeded()
     signal onboardingRequired()
     signal tenantContextReady(string tenantId, string role)
+    // A silent re-check found another role for the same workspace (L3-D5b): Main.qml shows a toast.
+    signal roleChanged(string role)
     signal tenantMembersLoaded()
     signal memberOperationSucceeded(string message)
     signal memberOperationFailed(string reason)
@@ -47,9 +59,46 @@ QtObject {
             if (!AuthStore.isAuthenticated) {
                 init()
             } else if (profileResolved) {
-                _loadUserProfile()
+                _recheckOrLoad()
             }
         }
+    }
+
+    // An automatic trigger (reconnect, token refresh). A session that is already open is re-checked silently
+    // and throttled; any other state (cold start, onboarding, sign-in in progress) loads exactly as before,
+    // because only a non-silent load always emits tenantContextReady and AuthStore already holds the saved
+    // tenant and role at cold start, so a silent one would find "nothing changed" and skip the store sync.
+    function _recheckOrLoad() {
+        if (_sessionOpen()) requestRecheck()
+        else _loadUserProfile()
+    }
+
+    function _sessionOpen() {
+        return AuthStore.isAuthenticated && profileResolved && !onboardingNeeded && AuthStore.tenantId.length > 0
+    }
+
+    // The one gate for an automatic check: the session is open, the phone is online, one at a time, at least
+    // 60 s apart. A trigger that does not pass is dropped, not queued. "Try again" (recheckAccess) never comes
+    // through here: it always runs and supersedes whatever is in flight.
+    function requestRecheck() {
+        if (!isOnline || !_sessionOpen()) return false
+        var now = Date.now()
+        if (!SessionRecheck.canStart(checking, _lastRecheckMs, now)) return false
+        _lastRecheckMs = now
+        _loadUserProfile(true)
+        return true
+    }
+
+    // Main.qml calls this when the app comes back to the foreground. While the app was suspended nothing ticked,
+    // and an hour in the background leaves the id token expired (every read would answer 401), so an expiring
+    // token is refreshed first and its success runs the check. At most one reaction per 60 s.
+    function onAppResumed() {
+        if (!AuthStore.isAuthenticated || !isOnline) return
+        var now = Date.now()
+        if (!SessionRecheck.canStart(false, _lastResumeMs, now)) return
+        _lastResumeMs = now
+        if (_tokenExpiring()) refreshIdToken()
+        else requestRecheck()
     }
 
     function init() {
@@ -199,10 +248,10 @@ QtObject {
     // signed-in user's OWN member doc (the rules allow it even when suspended; a removed member gets 404)
     // and either opens the app with the role found there or shows the access-blocked screen.
     // Design: docs/superpowers/specs/2026-10-28-s2f3-access-wording-design.md
-    function _verifyMembership(seq, tenantId, tenantName) {
+    function _verifyMembership(seq, tenantId, tenantName, silent) {
         FirebaseService.get("tenants/" + tenantId + "/members/" + AuthStore.uid, function(ok, data, status) {
             if (seq !== _profileSeq) return
-            _applyAccess(tenantId, tenantName, ok, data, status)
+            _applyAccess(tenantId, tenantName, ok, data, status, silent)
         })
     }
 
@@ -211,9 +260,17 @@ QtObject {
     // never 404 there), so both decide the same way: only a definitive answer clears or sets a block, and
     // an inconclusive one keeps the block that is showing or lets a member this device already verified in
     // the same tenant keep working (AccessState.outcome).
-    function _applyAccess(tenantId, tenantName, ok, data, status) {
+    function _applyAccess(tenantId, tenantName, ok, data, status, silent) {
         var held = tenantId && AuthStore.tenantId === tenantId ? AuthStore.role : ""
         var out = AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)
+        // A silent re-check is judged against what the device holds BEFORE the answer is applied, and an answer
+        // that changes nothing touches nothing: no store resync, no sign-in cover (L3-D1c). Every non-silent
+        // load is "open": it applies and emits exactly as it always did.
+        var kind = silent === true
+            ? SessionRecheck.changeKind(AuthStore.tenantId, AuthStore.role, accessBlock.length > 0, tenantId, out, _contextSynced)
+            : "open"
+        checking = false
+        if (kind === "none") return
         onboardingNeeded = false
         profileResolved = true
 
@@ -229,13 +286,17 @@ QtObject {
         // Backfill workspace name from canonical tenant doc when missing.
         if (!name) _ensureTenantName(tenantId)
         loadTenantMembers()
+        _contextSynced = true
         tenantContextReady(AuthStore.tenantId, AuthStore.role)
+        if (kind === "role") roleChanged(AuthStore.role)
     }
 
     // "Try again" on the access-blocked screen. Offline there is nothing to ask, and _loadUserProfile
-    // would reopen the app from the saved session, so the screen stays as it is.
+    // would reopen the app from the saved session, so the screen stays as it is. Never throttled: it
+    // supersedes an automatic check in flight, and it counts as the latest check for the 60 s spacing.
     function recheckAccess() {
         if (!isOnline) return
+        _lastRecheckMs = Date.now()
         _loadUserProfile()
     }
 
@@ -267,14 +328,21 @@ QtObject {
         return MemberPolicy.canAssignRole(AuthStore.role, targetRole)
     }
 
-    function _loadUserProfile() {
+    // silent = true is the automatic re-check of a session that is already open (requestRecheck): it never
+    // flips profileResolved, never opens onboarding, and ends with `checking = false` on every path.
+    function _loadUserProfile(silent) {
+        var quiet = silent === true
         var seq = ++_profileSeq
-        profileResolved = false
-        onboardingNeeded = false
+        checking = quiet
+        if (!quiet) {
+            profileResolved = false
+            onboardingNeeded = false
+        }
         // accessBlock is NOT cleared here: a "Try again" must keep the blocked screen up while it checks.
         // It is cleared only by a definitive answer: no uid, no tenant on the users doc, member verified.
 
         if (!AuthStore.uid) {
+            if (quiet) { checking = false; return }
             accessBlock = ""
             onboardingNeeded = true
             profileResolved = true
@@ -282,12 +350,19 @@ QtObject {
             return
         }
 
-        if (!isOnline) { profileResolved = true; return; }
+        if (!isOnline) {
+            checking = false
+            if (!quiet) profileResolved = true
+            return
+        }
 
         FirebaseService.get("users/" + AuthStore.uid, function(ok, data, status) {
             if (seq !== _profileSeq) return
             if (!ok || !data) {
                 if (!ok && status === 404) {
+                    // A pointer that vanished while the app is open is no reason to leave it: only a cold
+                    // start decides "Create your workspace" (design E2). The member doc stays the authority.
+                    if (quiet) { checking = false; return }
                     // A block that is showing stays (D5/D13): a removed or suspended member is never offered
                     // "Create your workspace" from the blocked screen, and onboarding must not start hidden behind it.
                     if (accessBlock.length > 0) {
@@ -303,7 +378,7 @@ QtObject {
                 // Could not READ it (offline blip, 5xx, expired token, empty body): that is not "no workspace".
                 // Never offer to create one; decide like an unreadable member doc against the tenant this
                 // device already holds: keep a verified member working, keep a showing block, else "unverified".
-                _applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)
+                _applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status, quiet)
                 return
             }
 
@@ -324,6 +399,7 @@ QtObject {
             var tenantId = data.tenantId || ""
 
             if (!tenantId) {
+                if (quiet) { checking = false; return }
                 accessBlock = ""
                 onboardingNeeded = true
                 profileResolved = true
@@ -332,7 +408,7 @@ QtObject {
             }
 
             // Tenant and role are applied only after the member doc has been read (S2f-3).
-            _verifyMembership(seq, tenantId, data.tenantName || "")
+            _verifyMembership(seq, tenantId, data.tenantName || "", quiet)
         })
     }
 
@@ -459,10 +535,14 @@ QtObject {
             return
         }
         var url = tokenBaseUrl + "/token?key=" + encodeURIComponent(apiKey)
+        var sentWith = AuthStore.refreshToken
         _postJson(url, {
             grant_type: "refresh_token",
-            refresh_token: AuthStore.refreshToken
+            refresh_token: sentWith
         }, function(ok, data) {
+            // An answer that arrives after sign-out, or after another account signed in, belongs to a session
+            // that is gone: applying it would revive the old user. Resume makes refreshes frequent (L3 slice A).
+            if (AuthStore.refreshToken !== sentWith) return
             if (!ok) {
                 authFailed(_parseErrorReason())
                 return
@@ -474,18 +554,18 @@ QtObject {
                 uid: data.user_id || AuthStore.uid,
                 expiresAtEpochSec: _nowEpochSec() + (isNaN(expiresIn) ? 3600 : expiresIn)
             })
-            profileResolved = false
-            onboardingNeeded = false
-            _loadUserProfile()
+            _recheckOrLoad()
             tokenRefreshed()
         })
     }
 
+    function _tokenExpiring() {
+        return AuthStore.expiresAtEpochSec <= (_nowEpochSec() + 5 * 60)
+    }
+
     function ensureFreshToken() {
         if (!AuthStore.isAuthenticated) return
-        var thresholdSec = 5 * 60
-        if (AuthStore.expiresAtEpochSec <= (_nowEpochSec() + thresholdSec))
-            refreshIdToken()
+        if (_tokenExpiring()) refreshIdToken()
     }
 
     function createTenantForCurrentUser(tenantName) {
@@ -613,6 +693,7 @@ QtObject {
                         busy = false
                         tenantCreateBusy = false
                         loadTenantMembers()
+                        _contextSynced = true
                         tenantContextReady(AuthStore.tenantId, AuthStore.role)
                     })
                 })
@@ -670,6 +751,7 @@ QtObject {
             }
             loadTenantMembers()
             memberOperationSucceeded("Member invited")
+            _contextSynced = true
             tenantContextReady(AuthStore.tenantId, AuthStore.role)
         })
     }
@@ -885,6 +967,8 @@ QtObject {
 
     function signOut() {
         _profileSeq++
+        checking = false
+        _contextSynced = false
         profileResolved = true
         onboardingNeeded = false
         accessBlock = ""

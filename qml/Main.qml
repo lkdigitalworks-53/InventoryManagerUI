@@ -169,6 +169,16 @@ App {
         onTriggered: AuthService.ensureFreshToken()
     }
 
+    // Back in the foreground (L3-D2a): while the app was suspended the Timer above did not tick, so an access
+    // change made meanwhile (suspended, removed, another role) would otherwise surface only when a write fails.
+    // The check is silent and throttled inside AuthService; this hook only reports the transition.
+    Connections {
+        target: Qt.application
+        function onStateChanged() {
+            if (Qt.application.state === Qt.ApplicationActive) AuthService.onAppResumed()
+        }
+    }
+
     Timer {
         id: successToastTimer
         interval: 2200
@@ -309,6 +319,13 @@ App {
 
         function onOnboardingRequired() {
             authErrorMessage = ""
+        }
+
+        // A silent re-check found another role for the same workspace (L3-D5b). The tabs are not role-gated, so
+        // the one screen a role can lose is the staff overlay: it closes when the new role may not see it.
+        function onRoleChanged(role) {
+            Toast.show(qsTr("Your role is now %1").arg(role))
+            if (!AuthStore.canViewStaff) staffPageOverlay.close()
         }
 
         function onTenantContextReady(tenantId, role) {
