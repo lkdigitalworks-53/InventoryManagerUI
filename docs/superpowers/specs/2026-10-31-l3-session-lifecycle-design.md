@@ -85,4 +85,8 @@ Found while building, all read from code, none seen on a device:
 - **F10 (changes L3-D5b)** no tab is role-gated, so "jump to the first allowed tab" has nothing to jump from. The one role-gated screen is the Staff overlay (`AuthStore.canViewStaff`), which closes on a role change. `canViewStaff` has no other consumer: the overlay is reachable by any role through activity routing (pre-existing, recorded in KNOWN-ISSUES, not changed here).
 - **F11** `AuthService` cannot run under `qmltestrunner`; its tests run the real function text in Node.
 - **F12** a refresh answer that arrived after sign-out re-authenticated the old user and reloaded their profile (pre-existing). Resume makes refreshes more frequent, so the callback now ignores an answer when the refresh token changed since it was sent.
+- **F13 (PR #180, Q2, owner default)** a silent workspace change shows the `moved` access screen instead of switching the stores; `Main.qml` closes every popup and overlay when it appears; Continue is a full load. Rejected: the cheaper "close overlays and toast" (stores would still switch under any form that survived).
+- **F14 (Q1)** a silent check ignores an unreadable member answer for a workspace this device never verified; full loads still block.
+- **F15 (Q3)** `ensureFreshToken` refreshes silently for its five callers, none of which reads a failure.
+- **F16 (Q4)** the role toast uses `AccessState.roleLabel`.
 Not done in slice A: L4 (resume sync, pull to refresh), slices B and C, any change to what the server refuses.

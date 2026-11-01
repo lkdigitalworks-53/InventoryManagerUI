@@ -97,6 +97,11 @@ None planned: `firestore.rules` does not change in any slice. The existing 108 r
 - R2 PR #171 E12/E13 (users doc gone): unchanged.
 - R3 Sign-out sheet with unsent changes still warns.
 - R4 A flaky network never blocks a signed-in owner.
+- N17 (Q2) Moved screen: with the app open on phone A, accept an invite into another shop (or change `users/{uid}.tenantId` in the console) so the account points at a different workspace, then background and return on A. The "Your workspace changed" screen shows with the NEW shop name (or "a different shop"), button "Continue"; lists behind it are unchanged.
+- N18 (Q2) Open an Add order form (and a product edit, Staff detail, Return confirm) on A before N17: they are closed when the screen appears; after Continue none of them reappears.
+- N19 (Q2) Continue: the app reloads into the new shop, lists show the new shop's data, no role toast. Continue offline or on a flaky network keeps the screen and the shop name (never opens silently).
+- N20 (Q1) Open session, switch to airplane mode right as a resume check goes out for an account whose users doc points elsewhere, or throttle the network: no access screen appears; the app keeps working in the old shop.
+- N21 (Q3, Q4) Let the token expire in the background with the network blocked while an Add staff / Invite dialog is open: no error text appears in the dialog. Change a member's role to admin and manager on another phone: the toast reads "Your role is now Admin" / "Manager".
 
 ## 8. Slice A as built: what is NOT proven here
 Real `Qt.application.state` transitions (Android, iOS, Felgo), the property bindings and what the screen draws, real token expiry timing, and the on-device baseline B0 that confirms Finding F2 (nothing was seen on a device; F2 is read from code). The hook in `Main.qml` is a thin binding over a tested function so that the untested part is one line. Owners with two phones lose the accidental hourly refresh until L4 (accepted at L3-D1c).
@@ -112,3 +117,15 @@ Findings and the fixes made in the same PR. Every row has a happy path, a negati
 | F4 sign-out forgets both spacing windows | R180-6 (resume, sign out, other account signs in, resume 1 s later: checks) | `signOut` resets both model windows | 2 | `auth-signout-windows` | N16 |
 
 Unit (`SessionRecheck.js` unchanged: its 37 Node tests and the 25 QML test functions still apply). Functional/regression: the whole earlier scenario set (41) passes unchanged, which shows the fixes only change the unreadable-answer, refresh-failure and sign-out paths. Not proven here: the QML suite in CI and everything in the device steps. Decisions NOT taken in the sweep (need the owner): see KNOWN-ISSUES, entries dated 2026-11-01 (PR #180 review).
+
+## 10. PR #180 decisions Q1-Q4 folded in (2026-11-01): what each is covered by
+Owner took the default recommendation for all four. Client only; no rules or server change, so no rules tests or emulator e2e (suites unaffected, must stay green).
+
+| Change | Unit (Node, QML twin) | Behaviour scenarios (real `AuthService` text) | Monkey | Hand mutants | Wiring pin | Device |
+|---|---|---|---|---|---|---|
+| Q1 silent check ignores an unreadable answer for another workspace | `sessionRecheck.test.js` battery (any sync mark, any workspace, junk `wasBlocked`, exact reason; 6 mutants), `tst_SessionRecheck.qml` | 6 Q1 scenarios: statuses 0/401/403/500/503, junk bodies, refusals still block, before first sync, full load still blocks, showing block kept | model ignores and frees the window; workspace profile reaches it 3+ times per seed | 3 | `changeKind` text pinned by the battery | N20 |
+| Q2 workspace change = "moved" screen, nothing switched | `accessStateMoved.test.js` (state, copy with and without name, outcome keeps it; 10 mutants), `tst_AccessState.qml` | 15 Q2 scenarios: nothing applied, name rules, all 16 role pairs, Continue ok / unreadable / offline, unblock on next check, moved back, refusal in new shop, window kept, first resolve opens, sign-out | model predicts `moved`; second monkey profile (4 seeds x 6000) reaches 7+ per seed | 9 | `auth-moved-branch`, `auth-moved-only-in-apply`, `auth-block-name`, `main-moved-closes-forms`, `main-close-all-dialogs`, `main-close-all-overlays`, `main-popups-complete`, `main-back-uses-list`, `ui-moved-button-label` | N17-N19 |
+| Q3 `ensureFreshToken` silent | n/a | 6 Q3 scenarios: signed out, margin edges (299, 300, 301 s), failures 0/400/401/500/503 silent, no refresh token, success path, late failure after sign-out, explicit refresh still reports | unchanged | 4 | `auth-ensure-silent`, `q3-callers-silent` (each of 5 callers), `q3-main-explicit-only` | N21 |
+| Q4 role label | `accessStateMoved.test.js` (`roleLabel`: four roles, junk, inherited keys, fallback) | n/a (label applied in `Main.qml`) | n/a | 4 | `main-role-toast` | N21 |
+
+Also changed: the access screen no longer falls back to the OLD shop name for a refusal about another workspace (scenarios, 2 mutants, `auth-block-name`). Sign-out guard rule `back-list-first` now reads the list from `_allDialogs()`. Not proven here: QML suites in CI, what the screen draws, N17-N21.

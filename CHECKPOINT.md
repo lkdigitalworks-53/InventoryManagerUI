@@ -1,11 +1,22 @@
-# CHECKPOINT — 2026-11-01 L3 slice A (silent session re-check + resume): BUILT, pushed, CI UNVERIFIED (resume here)
+# CHECKPOINT — 2026-11-01 L3 slice A (silent session re-check + resume): PR #180 Q1-Q4 folded in, pushed, CI UNVERIFIED (resume here)
 
 **Branch:** `feat/2026-10-31-l3a-silent-recheck`, rebased on `main` after PR #175 was squash-merged (`main` @ 8de6fa2); PR targets `main`. Skill renumbered 146 -> 149 at rebase (main took 145-148).
 **Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`. PAT only through `git -c http.extraHeader`, never in the remote URL or repo.
 **Rules in force:** no build or run; no Qt in the sandbox (CI is the QML oracle); branch always; push without asking; scope short enough for one chat turn; honest trade-offs; tests plus test plan for every change.
 **Design:** `docs/superpowers/specs/2026-10-31-l3-session-lifecycle-design.md` (section 8 = as built). **Test plan:** `docs/superpowers/test-plans/2026-10-31-l3-session-lifecycle-test-plan.md`. **Skill 149.**
 
-## 2026-11-01 PR #180 review sweep (this session; resume here)
+## 2026-11-01 PR #180 Q1-Q4 fold-in (latest session; resume here)
+**Owner took the default recommendation for Q1-Q4.** Same branch/PR. **Commit identity this session:** `Taher (via Claude session) <lkdwtaher@gmail.com>`. Sandbox clone at `/home/claude/InventoryManagerUI` (resets between sessions: clone again and `git checkout feat/2026-10-31-l3a-silent-recheck`).
+- [x] Q1 `SessionRecheck.changeKind`: unreadable (`unverified`) answer with no block showing -> `none` (silent only; full loads still block).
+- [x] Q2 `AccessState.STATE_MOVED` + copy; `AuthService._applyAccess` `kind === "tenant"` -> `accessBlock = "moved"`, switches nothing; `Main.qml` `_allDialogs()` / `_closeAllForWorkspaceChange()` (also `confirmReturnSheet`, `staffActionSheet`, 3 overlays) on `onAccessBlockChanged`; `AccessBlockedPage` button "Continue" for moved.
+- [x] Q3 `ensureFreshToken` -> `refreshIdToken(true)`. Q4 `AccessState.roleLabel` in the role toast.
+- [x] Extra fix: blocked screen no longer falls back to the OLD shop name for a refusal about another workspace.
+- [x] Tests: script suite 741 of 741 in the sandbox (new `accessStateMoved.test.js`, 22 Q scenarios, workspace monkey profile, 28 mutants and wiring rules); QML tests `tst_SessionRecheck.qml`, `tst_AccessState.qml` updated, NOT RUN (CI only).
+- [x] Docs: KNOWN-ISSUES (Q1-Q3 closed, 2 new entries), test plan section 10 + N17-N21, design F13-F16, Skill 149 items 15-17, README, AGENTS, SKILLS-INDEX.
+- [x] Commit d329c2c (code + tests) pushed; docs commit follows.
+**NEXT:** read CI on PR #180 (QML Tests is the first real run of the new QML test functions; fix any failure on the same branch); then device steps B0, H1-H6, N8-N21 by the owner; then L4 design. Open (KNOWN-ISSUES): Back list misses 2 popups; in-flight write around a workspace change.
+
+## 2026-11-01 PR #180 review sweep (earlier session)
 **Scope:** full review of PR #180 (requesting-code-review + qt-qml-review + ponytail-audit), fixes added to the SAME branch (no new branch: the PR is the branch). **Commit identity this session:** `tsadmin <tsadmin@gmail.com>` (owner's instruction); the PAT goes only through `git -c http.extraHeader`, never the remote URL.
 - [x] Cloned repo, read AGENTS/CHECKPOINT/SKILLS-INDEX, read the full diff (17 files), ran the Qt QML linter on the 4 changed QML/JS files (nothing new vs `main` apart from the `var` style the files already use; `!==` flagged as loose equality is a linter false positive), traced every emitter, sign-out path, seq bump and token-refresh consumer by grep.
 - [x] F1 an unreadable answer used up the 60 s window, so an expired-token 401 check followed by the refresh success dropped the real check. Fixed in `_applyAccess` (window freed only for an answer that decided nothing).

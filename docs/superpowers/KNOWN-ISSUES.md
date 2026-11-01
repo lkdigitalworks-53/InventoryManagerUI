@@ -839,18 +839,32 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 
 ---
 
-## Automatic token refreshes report failure inside open dialogs — FOUND 2026-11-01 (PR #180 review, read from code), PARTLY FIXED
+## Automatic token refreshes report failure inside open dialogs — FOUND 2026-11-01 (PR #180 review, read from code), FIXED 2026-11-01 (Q3)
 
-**Where:** `AuthService.refreshIdToken` raised `authFailed` on every failure. `AddStaffDialog` listens while `_provisioning` (shows the error and frees the busy flag, so the owner can submit again mid-provisioning); `Main.qml` `onAuthFailed` writes into the Invite and Forgot-password dialogs when they are visible. **Fixed in the review sweep:** the refresh that a resume starts is silent (`refreshIdToken(true)`). **Still open:** the 120 s timer and `ensureFreshToken()` callers (`Gateway`, `PhotoQueue`, `LockManager`, `AnalysisService`) call `refreshIdToken()` loudly; none of them reads the failure. **Lead:** make `ensureFreshToken` pass `true` (one pinned test per caller). **Owner decision Q3.**
-
----
-
-## A silent check can switch workspace under open screens — FOUND 2026-11-01 (PR #180 review, read from code), NOT FIXED
-
-**Where:** `SessionRecheck.changeKind` returns `"tenant"`, `_applyAccess` resyncs every store through `tenantContextReady`, nothing closes open forms or tells the user. **Effect:** if `users/{uid}.tenantId` changes while the app is open (an invite accepted on another phone), an order form for workspace A can be saved after the stores already hold workspace B. **Lead:** treat a silent workspace change like a block (a screen that says the workspace changed, then reopen), or at least close overlays and toast. **Owner decision Q2.**
+**Where:** `AuthService.refreshIdToken` raised `authFailed` on every failure. `AddStaffDialog` listens while `_provisioning` (shows the error and frees the busy flag, so the owner can submit again mid-provisioning); `Main.qml` `onAuthFailed` writes into the Invite and Forgot-password dialogs when they are visible. **Fixed in the review sweep:** the refresh that a resume starts is silent (`refreshIdToken(true)`). **Fixed (Q3, owner took the default):** `ensureFreshToken()` now passes `true`, so the 120 s timer, `Gateway`, `PhotoQueue`, `LockManager` and `AnalysisService` refresh silently; wiring rules pin every caller. **Cost:** a refresh that keeps failing is invisible until the request that needed the token gets a 401, which each caller already handles. The explicit `onRefreshAuthToken` in `Main.qml` still reports.
 
 ---
 
-## An unreadable member doc for a DIFFERENT workspace blocks "unverified" even in a silent check — FOUND 2026-11-01 (PR #180 review), NOT CHANGED (pinned by an existing scenario)
+## A silent check can switch workspace under open screens — FOUND 2026-11-01 (PR #180 review, read from code), FIXED 2026-11-01 (Q2)
 
-**Where:** `AccessState.outcome` has no held role for a workspace the device has not verified, and a silent check applies its answer. **Effect:** a flaky network at that moment puts an open session behind the access screen until "Try again". **Trade-off:** blocking is safe (server and rules decide every request anyway) but contradicts "a failed check never locks out a verified member"; ignoring it keeps the member working in the old workspace while the pointer says otherwise. **Owner decision Q1.** Related nit (Q4): the role toast prints the raw role id ("Your role is now admin").
+**Fixed (Q2, owner took the default):** a silent workspace change now shows the "Your workspace changed" access screen (`accessBlock = "moved"`) and switches nothing; `Main.qml` closes every dialog, sheet and overlay first; Continue is a full load that applies the new workspace and syncs once. **Costs:** unsaved input in a closed form is lost; a write already sent when the pointer changed is still decided by the server from the users doc (not fixable client side). **Was:** `SessionRecheck.changeKind` returns `"tenant"`, `_applyAccess` resyncs every store through `tenantContextReady`, nothing closes open forms or tells the user. **Effect:** if `users/{uid}.tenantId` changes while the app is open (an invite accepted on another phone), an order form for workspace A can be saved after the stores already hold workspace B. **Lead:** treat a silent workspace change like a block (a screen that says the workspace changed, then reopen), or at least close overlays and toast. 
+
+---
+
+## An unreadable member doc for a DIFFERENT workspace blocks "unverified" even in a silent check — FOUND 2026-11-01 (PR #180 review), CHANGED 2026-11-01 (Q1)
+
+**Changed (Q1, owner took the default):** a SILENT check ignores an unreadable member answer for a workspace this device never verified (nothing applied, 60 s window freed); full loads (sign-in, Try again) still block "unverified". A block that is already showing is kept. The old scenario was rewritten, not loosened. **Was:**
+
+**Where (before):** `AccessState.outcome` has no held role for a workspace the device has not verified, and a silent check applies its answer. **Effect:** a flaky network at that moment puts an open session behind the access screen until "Try again". **Trade-off:** blocking is safe (server and rules decide every request anyway) but contradicts "a failed check never locks out a verified member"; ignoring it keeps the member working in the old workspace while the pointer says otherwise. Q4 (role toast printed the raw id) is fixed too: `AccessState.roleLabel` gives "Admin", "Manager"..., and "a new role" for any other value.
+
+---
+
+## Back does not close `confirmReturnSheet` and `staffActionSheet` — FOUND 2026-11-01 (PR #180 Q2 fold-in, read from code), NOT FIXED
+
+**Where:** `Main.qml` `_allDialogs()` (the Back list) lacks these two popups, so a Back press with one open falls through to the overlays under it. **Not changed** (a Back behaviour change needs its own device check). The workspace change closes both (`_closeAllForWorkspaceChange`), and wiring rule `main-popups-complete` fails when any popup declared in `Main.qml` is in neither list. **Lead:** add both to `_allDialogs()` and run the Back steps on a device.
+
+---
+
+## A write sent just before a workspace change is decided by the server — FOUND 2026-11-01 (PR #180 Q2), NOT FIXED
+
+**Effect:** closing a busy form does not cancel its request; the gateway derives the workspace from the users doc, so a request sent in the seconds around a change can land in the new workspace. Rare (an invite accepted on another phone at that moment). **Lead:** send the workspace id with gateway writes and refuse a mismatch on the server (a server slice, own design).
