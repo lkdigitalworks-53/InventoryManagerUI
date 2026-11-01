@@ -68,7 +68,7 @@ function violations(auth, main, files) {
   if (!/!isOnline \|\| !_sessionOpen\(\)/.test(rr)) out.push('auth-recheck-gates');
   if (!/return AuthStore\.isAuthenticated && profileResolved && !onboardingNeeded && AuthStore\.tenantId\.length > 0/.test(fnBody(A, '_sessionOpen'))) out.push('auth-session-open');
   const resumed = fnBody(A, 'onAppResumed');
-  if (!/SessionRecheck\.canStart\(false, _lastResumeMs, now\)/.test(resumed) || !/if \(_tokenExpiring\(\)\) refreshIdToken\(\)\s*else requestRecheck\(\)/.test(resumed)) out.push('auth-resume-throttle');
+  if (!/SessionRecheck\.canStart\(false, _lastResumeMs, now\)/.test(resumed) || !/if \(_tokenExpiring\(\)\) refreshIdToken\(true\)\s*else requestRecheck\(\)/.test(resumed)) out.push('auth-resume-throttle');
   if (!/_lastRecheckMs = Date\.now\(\)\s*_loadUserProfile\(\)/.test(fnBody(A, 'recheckAccess'))) out.push('auth-tryagain-full');
 
   // 4. an answer that changes nothing touches nothing; only a changed answer emits
@@ -99,11 +99,27 @@ function violations(auth, main, files) {
   if (!/checking = false\s*_contextSynced = false\s*profileResolved = true/.test(so)) out.push('auth-signout-synced');
   // 6b. every function that emits tenantContextReady (Main.qml then syncs ~10 stores) marks the session synced right before it:
   // otherwise the next silent check treats the first answer as a change again, or (worse) never does
-  for (const fn of ['_applyAccess', 'createTenantForCurrentUser', 'inviteMemberToCurrentTenant']) {
+  // _applyAccess marks it only for a VERIFIED answer (an unreadable one opens the app with the held role but must not stop
+  // the next definitive answer from syncing); the two functions that create the membership themselves always mark it.
+  const MARK = { _applyAccess: /_contextSynced = _contextSynced \|\| out\.verified === true\s*tenantContextReady\(/g, createTenantForCurrentUser: /_contextSynced = true\s*tenantContextReady\(/g, inviteMemberToCurrentTenant: /_contextSynced = true\s*tenantContextReady\(/g };
+  for (const [fn, re] of Object.entries(MARK)) {
     const b = fnBody(A, fn);
-    if ((b.match(/_contextSynced = true\s*tenantContextReady\(/g) || []).length !== 1 || (b.match(/tenantContextReady\(/g) || []).length !== 1) { out.push('auth-synced-before-emit'); break; }
+    if ((b.match(re) || []).length !== 1 || (b.match(/tenantContextReady\(/g) || []).length !== 1) { out.push('auth-synced-before-emit'); break; }
   }
-  if (callers(auth, '_contextSynced = true').join() !== '_applyAccess,createTenantForCurrentUser,inviteMemberToCurrentTenant') out.push('auth-synced-set');
+  if (callers(auth, '_contextSynced = true').join() !== 'createTenantForCurrentUser,inviteMemberToCurrentTenant') out.push('auth-synced-set');
+  if (callers(auth, '_contextSynced || out.verified === true').join() !== '_applyAccess') out.push('auth-synced-verified-only');
+
+  // 6c. (PR #180 sweep) an answer that decided nothing frees the 60 s window, before the early return
+  if (!/if \(kind === "none" && \(!out \|\| out\.verified !== true\)\) _lastRecheckMs = 0\s*checking = false\s*if \(kind === "none"\) return/.test(apply)) out.push('auth-unreadable-frees-window');
+  // 6d. a refresh nobody asked for fails silently; every other caller still reports: only onAppResumed passes true
+  if (!/function refreshIdToken\(silent\)/.test(A)) out.push('auth-refresh-silent-param');
+  if ((refresh.match(/\bauthFailed\(/g) || []).length !== 2 || (refresh.match(/if \(silent !== true\) authFailed\(/g) || []).length !== 2) out.push('auth-refresh-quiet-guard');
+  if (callers(auth, 'refreshIdToken(true)').join() !== 'onAppResumed') out.push('auth-refresh-quiet-callers');
+  for (const [f, src] of files) {
+    if (!f.endsWith('AuthService.qml') && /refreshIdToken\(\s*(true|silent)/.test(strip(src))) { out.push('auth-refresh-quiet-callers'); break; }
+  }
+  // 6e. sign-out forgets both spacing windows (the next account must not inherit them)
+  if (!/_lastRecheckMs = 0\s*_lastResumeMs = 0\s*_profileSeq\+\+/.test(so)) out.push('auth-signout-windows');
 
   // 7. declarations
   if (!/import "\.\.\/helper\/SessionRecheck\.js" as SessionRecheck/.test(A)) out.push('auth-import');
@@ -167,7 +183,18 @@ const MUTANTS = [
   ['auth', '            if (AuthStore.refreshToken !== sentWith) return\n            if (!ok) {', '            if (!ok) {\n            if (AuthStore.refreshToken !== sentWith) return\n', 'auth-refresh-guard'],
   ['auth', '        _profileSeq++\n        checking = false\n        _contextSynced = false\n        profileResolved = true', '        _profileSeq++\n        _contextSynced = false\n        profileResolved = true', 'auth-signout-checking'],
   ['auth', '        checking = false\n        _contextSynced = false\n        profileResolved = true', '        checking = false\n        profileResolved = true', 'auth-signout-synced'],
-  ['auth', '        loadTenantMembers()\n        _contextSynced = true\n        tenantContextReady(', '        loadTenantMembers()\n        tenantContextReady(', 'auth-synced-before-emit'],
+  ['auth', '        _contextSynced = _contextSynced || out.verified === true\n        tenantContextReady(', '        tenantContextReady(', 'auth-synced-before-emit'],
+  ['auth', '_contextSynced = _contextSynced || out.verified === true', '_contextSynced = true', 'auth-synced-before-emit'],
+  ['auth', '_contextSynced = _contextSynced || out.verified === true', '_contextSynced = _contextSynced || out.verified !== false', 'auth-synced-before-emit'],
+  ['auth', '        if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0\n', '', 'auth-unreadable-frees-window'],
+  ['auth', 'if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0\n        checking = false', 'checking = false\n        if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0', 'auth-unreadable-frees-window'],
+  ['auth', 'function refreshIdToken(silent) {', 'function refreshIdToken() {', 'auth-refresh-silent-param'],
+  ['auth', 'if (silent !== true) authFailed("Missing refresh token")', 'authFailed("Missing refresh token")', 'auth-refresh-quiet-guard'],
+  ['auth', 'if (silent !== true) authFailed(_parseErrorReason())', 'authFailed(_parseErrorReason())', 'auth-refresh-quiet-guard'],
+  ['auth', 'if (_tokenExpiring()) refreshIdToken(true)\n        else requestRecheck()', 'if (_tokenExpiring()) refreshIdToken()\n        else requestRecheck()', 'auth-resume-throttle'],
+  ['auth', 'if (_tokenExpiring()) refreshIdToken()\n    }', 'if (_tokenExpiring()) refreshIdToken(true)\n    }', 'auth-refresh-quiet-callers'],
+  ['auth', '        _lastResumeMs = 0\n        _profileSeq++', '        _profileSeq++', 'auth-signout-windows'],
+  ['auth', '        _lastRecheckMs = 0   // the next account starts with no spacing window left by the last one\n', '', 'auth-signout-windows'],
   ['auth', '                        _contextSynced = true\n                        tenantContextReady(', '                        tenantContextReady(', 'auth-synced-before-emit'],
   ['auth', '            _contextSynced = true\n            tenantContextReady(AuthStore.tenantId, AuthStore.role)\n        })', '            tenantContextReady(AuthStore.tenantId, AuthStore.role)\n        })', 'auth-synced-before-emit'],
   ['auth', '    property bool _contextSynced: false', '    property bool _contextSynced: true', 'auth-declarations'],

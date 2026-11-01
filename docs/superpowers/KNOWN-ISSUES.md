@@ -836,3 +836,21 @@ Seen while moving the runtime to Node 24; not changed in that PR. A pre-release 
 ## Deploy IAM role list — CLOSED 2026-11-01
 
 Two gaps were found by the first live deploys (actAs on the App Engine default SA, `roles/firebase.viewer`); after both grants and the Node 24 runtime the deploy succeeded end to end, so no further role was needed. Left open as a choice, not a bug: the compute-SA `serviceAccountUser` grant may be unnecessary (see the design doc).
+
+---
+
+## Automatic token refreshes report failure inside open dialogs — FOUND 2026-11-01 (PR #180 review, read from code), PARTLY FIXED
+
+**Where:** `AuthService.refreshIdToken` raised `authFailed` on every failure. `AddStaffDialog` listens while `_provisioning` (shows the error and frees the busy flag, so the owner can submit again mid-provisioning); `Main.qml` `onAuthFailed` writes into the Invite and Forgot-password dialogs when they are visible. **Fixed in the review sweep:** the refresh that a resume starts is silent (`refreshIdToken(true)`). **Still open:** the 120 s timer and `ensureFreshToken()` callers (`Gateway`, `PhotoQueue`, `LockManager`, `AnalysisService`) call `refreshIdToken()` loudly; none of them reads the failure. **Lead:** make `ensureFreshToken` pass `true` (one pinned test per caller). **Owner decision Q3.**
+
+---
+
+## A silent check can switch workspace under open screens — FOUND 2026-11-01 (PR #180 review, read from code), NOT FIXED
+
+**Where:** `SessionRecheck.changeKind` returns `"tenant"`, `_applyAccess` resyncs every store through `tenantContextReady`, nothing closes open forms or tells the user. **Effect:** if `users/{uid}.tenantId` changes while the app is open (an invite accepted on another phone), an order form for workspace A can be saved after the stores already hold workspace B. **Lead:** treat a silent workspace change like a block (a screen that says the workspace changed, then reopen), or at least close overlays and toast. **Owner decision Q2.**
+
+---
+
+## An unreadable member doc for a DIFFERENT workspace blocks "unverified" even in a silent check — FOUND 2026-11-01 (PR #180 review), NOT CHANGED (pinned by an existing scenario)
+
+**Where:** `AccessState.outcome` has no held role for a workspace the device has not verified, and a silent check applies its answer. **Effect:** a flaky network at that moment puts an open session behind the access screen until "Try again". **Trade-off:** blocking is safe (server and rules decide every request anyway) but contradicts "a failed check never locks out a verified member"; ignoring it keeps the member working in the old workspace while the pointer says otherwise. **Owner decision Q1.** Related nit (Q4): the role toast prints the raw role id ("Your role is now admin").

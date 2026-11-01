@@ -596,6 +596,108 @@ const SCENARIOS = {
     assert.equal(y.scope.onboardingNeeded, true);
     assert.equal(y.calls.onboardingRequired, 1);
   },
+
+  // ---- PR #180 review sweep (2026-11-01) ---------------------------------------------------------------
+  'R180-1: an unreadable answer is not a check: it frees the 60 s window; a healthy answer or a refusal keeps it'(h, make) {
+    assert.equal(h.scope.requestRecheck(), true);
+    h.users('t1'); h.memberFails(401);
+    assert.equal(h.scope.requestRecheck(), true, 'member doc unreadable (401): the window is free');
+    h.users('t1'); h.memberFails(500);
+    assert.equal(h.scope.requestRecheck(), true, 'member doc unreadable (500): the window is free');
+    h.users('t1'); h.member('junk');                          // a body that is not a member doc is unreadable, not a refusal
+    h.tick(60000);
+    assert.equal(h.scope.requestRecheck(), true);
+    h.usersFails(500);
+    assert.equal(h.scope.requestRecheck(), true, 'users doc unreadable: the window is free');
+    h.users('t1'); h.member(active('owner'));
+    assert.equal(h.scope.requestRecheck(), false, 'a healthy answer keeps the window');
+    assert.equal(h.scope.checking, false);
+    const x = make({});
+    assert.equal(x.scope.requestRecheck(), true);
+    x.users('t1'); x.member({ status: 'suspended', role: 'owner' });
+    assert.equal(x.scope.accessBlock, 'suspended');
+    assert.equal(x.scope.requestRecheck(), false, 'a refusal is a real answer: it keeps the window');
+  },
+
+  'R180-2: expired-token 401, then the refresh lands seconds later: the refresh success runs the check at once'(h) {
+    assert.equal(h.scope.requestRecheck(), true);            // a reconnect check goes out with the expired token
+    h.usersFails(401);
+    h.tick(2000);
+    h.AuthStore.expiresAtEpochSec = Math.floor(h.clock.t / 1000) + 60;
+    h.scope.onAppResumed();                                   // the resume refreshes first
+    assert.equal(h.calls.post, 1);
+    h.answer('POST', true, { expires_in: '3600', id_token: 'new', refresh_token: 'rt', user_id: 'u1' });
+    assert.equal(h.usersReads(), 2, 'the check after the refresh is not dropped by the 401 one');
+    assert.equal(h.scope.checking, true);
+    h.users('t1'); h.member(active('admin'));
+    assert.deepEqual(h.calls.roleChanged, ['admin'], 'the access change is seen');
+  },
+
+  'R180-3: first resolve with an unreadable answer opens the app but is not "synced": the next definitive answer syncs once, no toast'(h, make) {
+    const a = make({ state: { _contextSynced: false } });
+    silentWith(a, 't1', (y) => y.memberFails(500));
+    assert.deepEqual(a.calls.tenantContextReady.map((c) => c.r), ['owner']);
+    assert.equal(a.scope._contextSynced, false, 'an unreadable answer does not count as synced');
+    a.tick(60000);
+    silentWith(a, 't1', (y) => y.member(active('owner')));
+    assert.equal(a.calls.tenantContextReady.length, 2, 'the first definitive answer syncs the stores again');
+    assert.equal(a.scope._contextSynced, true);
+    assert.deepEqual(a.calls.roleChanged, [], 'not announced as a role change');
+    a.tick(60000);
+    silentWith(a, 't1', (y) => y.member(active('owner')));
+    assert.equal(a.calls.tenantContextReady.length, 2, 'and then an unchanged answer touches nothing');
+    const b = make({ state: { _contextSynced: false } });    // still unreadable: each check may retry, none marks synced
+    for (let i = 0; i < 3; i++) { silentWith(b, 't1', (y) => y.memberFails(503)); b.tick(60000); }
+    assert.equal(b.calls.tenantContextReady.length, 3);
+    assert.equal(b.scope._contextSynced, false);
+  },
+
+  'R180-4: a full load with an unreadable answer opens the app but does not mark synced; a verified one marks it and an unreadable one never un-marks it'(h, make) {
+    const b = make({ state: { _contextSynced: false } });
+    b.scope.recheckAccess(); b.usersFails(500);
+    assert.deepEqual(b.calls.tenantContextReady.map((c) => c.r), ['owner']);
+    assert.equal(b.scope._contextSynced, false);
+    b.tick(60000);
+    silentWith(b, 't1', (y) => y.member(active('owner')));
+    assert.equal(b.calls.tenantContextReady.length, 2, 'the later definitive answer syncs');
+    assert.equal(b.scope._contextSynced, true);
+    const c = make({});                                       // synced already
+    c.scope.recheckAccess(); c.usersFails(500);
+    assert.equal(c.calls.tenantContextReady.length, 1, 'a full load always emits');
+    assert.equal(c.scope._contextSynced, true, 'an unreadable answer never un-marks');
+  },
+
+  'R180-5: a refresh nobody asked for (resume) fails silently; a refresh somebody asked for still reports'(h, make) {
+    h.AuthStore.expiresAtEpochSec = Math.floor(h.clock.t / 1000) + 60;
+    h.scope.onAppResumed();
+    assert.equal(h.calls.post, 1);
+    h.answer('POST', false, null, 400);
+    assert.deepEqual(h.calls.authFailed, [], 'no sign-in error pops up inside an open dialog');
+    assert.equal(h.calls.tokenRefreshed, 0);
+    assert.equal(h.usersReads(), 0, 'a failed refresh runs no check');
+    const x = make({ store: { refreshToken: '', expiresAtEpochSec: Math.floor(T0 / 1000) + 60 } });
+    x.scope.onAppResumed();
+    assert.equal(x.calls.post, 0, 'nothing to send without a refresh token');
+    assert.deepEqual(x.calls.authFailed, [], 'and nothing reported');
+    const y = make({}); y.scope.refreshIdToken(); y.answer('POST', false, null, 400);
+    assert.deepEqual(y.calls.authFailed, ['refresh failed'], 'an explicit refresh still reports a failure');
+    const z = make({ store: { refreshToken: '' } }); z.scope.refreshIdToken();
+    assert.deepEqual(z.calls.authFailed, ['Missing refresh token'], 'and a missing token');
+    const w = make({}); w.scope.refreshIdToken(false); w.answer('POST', false, null, 400);
+    assert.deepEqual(w.calls.authFailed, ['refresh failed'], 'only an explicit true silences it');
+  },
+
+  'R180-6: sign-out forgets the spacing windows of the account that left'(h) {
+    h.scope.onAppResumed();                                   // opens the resume window and the check window
+    assert.equal(h.usersReads(), 1);
+    h.scope.signOut();
+    Object.assign(h.AuthStore, { isAuthenticated: true, uid: 'u2', tenantId: 't1', role: 'owner', refreshToken: 'rt2', idToken: 'tok2' });
+    h.scope.profileResolved = true;
+    h.tick(1000);
+    h.scope.onAppResumed();
+    assert.equal(h.usersReads(), 2, 'the next account is not held back by the last one\'s windows');
+    assert.equal(h.scope.checking, true);
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------
@@ -644,11 +746,11 @@ function runMonkey(src, seed, steps) {
   // The decision, from the design: only a conclusive answer changes the screen; an unreadable one keeps a showing block or lets a verified member stay.
   function decide(pre, X) {
     const m = truth.member;
-    if (m.startsWith('active:')) return { a: 'enter', role: m.slice(7) };
+    if (m.startsWith('active:')) return { a: 'enter', role: m.slice(7), v: true };
     if (m === 'suspended' || m === 'removed' || m === 'badrole') return { a: 'block', reason: m === 'badrole' ? 'role' : m };
     if (pre.block) return { a: 'block', reason: pre.block };
     const held = X === pre.tenant ? pre.role : '';
-    return held ? { a: 'enter', role: held } : { a: 'block', reason: 'unverified' };
+    return held ? { a: 'enter', role: held, v: false } : { a: 'block', reason: 'unverified' };
   }
 
   function expectAnswer(pend, pre) {
@@ -660,7 +762,8 @@ function runMonkey(src, seed, steps) {
       if (silent) {
         e.checking = false;
         // only an unreadable users doc reaches the access decision; before the first sync it still opens the app with the held role
-        if (u === '500' && !pre.block && !synced) { e.block = ''; e.emits = 1; e.roster = 1; }
+        if (u === '500' && !pre.block && !synced) { e.block = ''; e.emits = 1; e.roster = 1; e.unv = true; }
+        else if (u === '500' && !pre.block) lastStart = 0;     // unreadable decided nothing: the 60 s window is free again
         return e;
       }
       e.resolved = true;
@@ -671,7 +774,7 @@ function runMonkey(src, seed, steps) {
       }
       // 500: an unreadable users doc decides against the workspace this device holds
       if (pre.block) return e;
-      if (pre.role) { e.block = ''; e.emits = 1; e.roster = 1; return e; }
+      if (pre.role) { e.block = ''; e.emits = 1; e.roster = 1; e.unv = true; return e; }
       e.block = 'unverified'; return e;
     }
     if (MEMBER_DOC.test(pend.p)) {
@@ -681,14 +784,15 @@ function runMonkey(src, seed, steps) {
         e.checking = false;
         if (d.a === 'block') { e.block = d.reason; return e; }
         if (pre.block) { e.block = ''; e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; return e; }
-        if (!synced) { e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; return e; }   // first resolve: always a change, never a toast
+        if (!synced) { e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; e.unv = !d.v; return e; }   // first resolve: always a change, never a toast; an unreadable answer does not count as synced
         if (X !== pre.tenant) { e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; return e; }
         if (d.role !== pre.role) { e.role = d.role; e.emits = 1; e.roster = 1; e.toasts = 1; return e; }
+        if (!d.v) lastStart = 0;                                  // unreadable and nothing changed: the window is free again
         return e;
       }
       e.resolved = true; e.onboarding = false;
       if (d.a === 'block') { e.block = d.reason; return e; }
-      e.block = ''; e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; return e;
+      e.block = ''; e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; e.unv = !d.v; return e;
     }
     return e;
   }
@@ -753,6 +857,7 @@ function runMonkey(src, seed, steps) {
         if (!A.isAuthenticated) break;
         sc.signOut();
         synced = false;
+        lastStart = 0; lastResume = 0;                   // the next account starts with no spacing window left by this one
         exp = { ...exp, block: '', tenant: '', role: '', resolved: true, onboarding: false, checking: false };
         break;
       }
@@ -783,7 +888,7 @@ function runMonkey(src, seed, steps) {
         exp = expectAnswer(pend, pre);
         h.answerAt(idx, ok, data, status);
         if (path.startsWith('users/') && (truth.users === 'ok1' || truth.users === 'ok2')) exp.users = 0;
-        if (exp.emits > 0) synced = true;                 // the model learns of the emission before the system is compared with it
+        if (exp.emits > 0 && !exp.unv) synced = true;    // only a verified answer counts as synced; the model learns of it before the system is compared with it
         check(`answer ${path} silent=${pend.silent}`, pre, exp, pend.silent ? 'none' : 'answer');
         continue;
       }
@@ -861,13 +966,13 @@ const MUTANTS = [
   ['        _lastResumeMs = now\n', '', 'resume never starts its window'],
   ['if (!AuthStore.isAuthenticated || !isOnline) return\n        var now = Date.now()', 'if (!AuthStore.isAuthenticated) return\n        var now = Date.now()', 'resume goes out offline'],
   ['if (!AuthStore.isAuthenticated || !isOnline) return\n        var now = Date.now()', 'if (!isOnline) return\n        var now = Date.now()', 'resume runs signed out'],
-  ['if (_tokenExpiring()) refreshIdToken()\n        else requestRecheck()', 'requestRecheck()', 'resume sends reads with an expiring token'],
-  ['if (_tokenExpiring()) refreshIdToken()\n        else requestRecheck()', 'refreshIdToken()', 'resume always refreshes the token'],
+  ['if (_tokenExpiring()) refreshIdToken(true)\n        else requestRecheck()', 'requestRecheck()', 'resume sends reads with an expiring token'],
+  ['if (_tokenExpiring()) refreshIdToken(true)\n        else requestRecheck()', 'refreshIdToken(true)', 'resume always refreshes the token'],
   ['if (_sessionOpen()) requestRecheck()\n        else _loadUserProfile()', 'requestRecheck()', 'a cold-start refresh is silent (stores never sync)'],
   ['if (_sessionOpen()) requestRecheck()\n        else _loadUserProfile()', '_loadUserProfile()', 'every refresh still flashes the sign-in form'],
   ['accessBlock.length > 0, tenantId, out, _contextSynced)', 'false, tenantId, out, _contextSynced)', 'a reinstated member is never let back in silently'],
   ['accessBlock.length > 0, tenantId, out, _contextSynced)', 'accessBlock.length > 0, tenantId, out, true)', 'the first answer is not counted as a change (no store ever syncs at cold start)'],
-  ['        _contextSynced = true\n        tenantContextReady(AuthStore.tenantId, AuthStore.role)\n        if (kind', '        tenantContextReady(AuthStore.tenantId, AuthStore.role)\n        if (kind', 'the session is never marked synced, so every check resyncs'],
+  ['        _contextSynced = _contextSynced || out.verified === true\n        tenantContextReady(AuthStore.tenantId, AuthStore.role)\n        if (kind', '        tenantContextReady(AuthStore.tenantId, AuthStore.role)\n        if (kind', 'the session is never marked synced, so every check resyncs'],
   ['        checking = false\n        _contextSynced = false\n        profileResolved = true', '        checking = false\n        profileResolved = true', 'sign-out keeps the synced mark for the next account'],
   ['        if (kind === "role") roleChanged(AuthStore.role)\n', '', 'a role change is never announced'],
   ['if (kind === "role") roleChanged(AuthStore.role)', 'if (kind !== "none") roleChanged(AuthStore.role)', 'every change is announced as a role change'],
@@ -883,6 +988,18 @@ const MUTANTS = [
   ['            if (AuthStore.refreshToken !== sentWith) return\n', '', 'a refresh answer after sign-out revives the old user'],
   ['        _lastRecheckMs = Date.now()\n        _loadUserProfile()\n    }', '        _lastRecheckMs = Date.now()\n        _loadUserProfile(true)\n    }', 'Try again becomes silent (the access screen would never spin)'],
   ['        var held = tenantId && AuthStore.tenantId === tenantId ? AuthStore.role : ""', '        var held = AuthStore.role', 'a role held for another workspace is reused'],
+  // PR #180 review sweep
+  ['_contextSynced = _contextSynced || out.verified === true', '_contextSynced = true', 'an unreadable answer counts as synced (stores never resync after a flaky first answer)'],
+  ['_contextSynced = _contextSynced || out.verified === true', '_contextSynced = out.verified === true', 'an unreadable answer un-marks the synced stores'],
+  ['        if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0\n', '', 'an unreadable answer uses up the 60 s window'],
+  ['if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0', 'if (kind === "none") _lastRecheckMs = 0', 'every unchanged answer frees the window (the throttle is gone)'],
+  ['if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0', 'if (kind !== "open" && (!out || out.verified !== true)) _lastRecheckMs = 0', 'a refused answer frees the window'],
+  ['refreshIdToken(true)\n        else requestRecheck()', 'refreshIdToken()\n        else requestRecheck()', 'a resume refresh reports its failure inside open dialogs'],
+  ['if (silent !== true) authFailed("Missing refresh token")', 'authFailed("Missing refresh token")', 'a resume without a refresh token reports an error'],
+  ['if (silent !== true) authFailed(_parseErrorReason())', 'authFailed(_parseErrorReason())', 'a resume refresh failure is reported'],
+  ['if (silent !== true) authFailed(_parseErrorReason())', 'if (silent === true) authFailed(_parseErrorReason())', 'an explicit refresh failure is hidden'],
+  ['        _lastResumeMs = 0\n        _profileSeq++', '        _profileSeq++', 'sign-out keeps the resume window of the account that left'],
+  ['        _lastRecheckMs = 0   // the next account starts with no spacing window left by the last one\n', '', 'sign-out keeps the check window of the account that left'],
 ];
 
 function failsSomewhere(src) {

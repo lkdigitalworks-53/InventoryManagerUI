@@ -97,7 +97,7 @@ QtObject {
         var now = Date.now()
         if (!SessionRecheck.canStart(false, _lastResumeMs, now)) return
         _lastResumeMs = now
-        if (_tokenExpiring()) refreshIdToken()
+        if (_tokenExpiring()) refreshIdToken(true)
         else requestRecheck()
     }
 
@@ -269,6 +269,9 @@ QtObject {
         var kind = silent === true
             ? SessionRecheck.changeKind(AuthStore.tenantId, AuthStore.role, accessBlock.length > 0, tenantId, out, _contextSynced)
             : "open"
+        // An answer that could not decide (unreadable) is not a check: it must not use up the 60 s window, or the
+        // token refresh that follows an expired-token 401 would be dropped and the access change would go unseen.
+        if (kind === "none" && (!out || out.verified !== true)) _lastRecheckMs = 0
         checking = false
         if (kind === "none") return
         onboardingNeeded = false
@@ -286,7 +289,9 @@ QtObject {
         // Backfill workspace name from canonical tenant doc when missing.
         if (!name) _ensureTenantName(tenantId)
         loadTenantMembers()
-        _contextSynced = true
+        // An unreadable answer still opens the app with the held role (and the stores try to sync), but it does not
+        // count as synced: the next definitive answer must sync again, or the lists stay stale until a relaunch.
+        _contextSynced = _contextSynced || out.verified === true
         tenantContextReady(AuthStore.tenantId, AuthStore.role)
         if (kind === "role") roleChanged(AuthStore.role)
     }
@@ -529,9 +534,11 @@ QtObject {
         })
     }
 
-    function refreshIdToken() {
+    // silent = true is a refresh nobody asked for (the resume hook): a failure is dropped instead of being reported
+    // through authFailed, which would show a sign-in error inside whatever dialog is open (Add staff, Invite).
+    function refreshIdToken(silent) {
         if (!AuthStore.refreshToken || AuthStore.refreshToken.length === 0) {
-            authFailed("Missing refresh token")
+            if (silent !== true) authFailed("Missing refresh token")
             return
         }
         var url = tokenBaseUrl + "/token?key=" + encodeURIComponent(apiKey)
@@ -544,7 +551,7 @@ QtObject {
             // that is gone: applying it would revive the old user. Resume makes refreshes frequent (L3 slice A).
             if (AuthStore.refreshToken !== sentWith) return
             if (!ok) {
-                authFailed(_parseErrorReason())
+                if (silent !== true) authFailed(_parseErrorReason())
                 return
             }
             var expiresIn = parseInt(data.expires_in || "3600", 10)
@@ -966,6 +973,8 @@ QtObject {
     }
 
     function signOut() {
+        _lastRecheckMs = 0   // the next account starts with no spacing window left by the last one
+        _lastResumeMs = 0
         _profileSeq++
         checking = false
         _contextSynced = false
