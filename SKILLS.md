@@ -4685,3 +4685,14 @@ Review sweep of the R2 mint op (2026-10-29). Each point was reproduced against t
 4. GitHub hides job logs from signed-out readers (the web page shows only the failed step name), so ask for the error lines instead of guessing which of five permissions failed.
 5. The error moves forward as each gap is closed: a new error text after a fix means the fix worked, not that it failed. Record each confirmed role in the design doc and leave the unconfirmed ones marked unverified.
 
+
+## Skill 148: Prove an absence claim with a caller grep, list what a "noisy" path also does before silencing it, and never carry a refusal's detail by changing a falsy sentinel
+
+L3 design sweep (2026-10-31). Three docs (KNOWN-ISSUES, the S2f-3 design, the multi-role draft) said "no re-check on token refresh". `AuthService.refreshIdToken` has always called `_loadUserProfile()`; nobody grepped the caller. The same path also raises the sign-in cover, blanks `OrdersStore` and re-syncs about ten stores, and that is the app's only periodic data refresh.
+Rules:
+1. Before a doc says "there is no X" or "nothing calls Y", grep the function that would do X and every caller of it, and write the grep in the doc. Three independent docs repeating a claim are one unchecked claim.
+2. Before making a noisy path silent or cheaper, list every side effect it has and ask who relies on each (`git grep` the signals it emits). Here the cover and the blanked list are bugs, the hourly refetch is a feature by accident. Put the removed side effect to the owner as a decision, with its replacement (L4), instead of deleting it inside a "fix".
+3. A flag that gates a full-screen cover (`profileResolved`) must flip only on transitions the user should see. "Is this being checked right now" is a different fact: give it its own flag.
+4. Do not add detail to a refusal by changing `deriveContext`'s `null` return to an object: ten callers test `!ctx`, and a truthy refusal fails OPEN. Add the detail in one shared body builder and pin with a structural test that every call site uses it, plus a test that the return is still `null`.
+5. A server error contract that clients in the field match exactly (status + `error`, see Skill 143) changes by ADDING a field. A new client must also work against a server that has not deployed yet.
+6. A decision that says "recommended" is not an answer. Leave the `Taher:` line empty until it is answered, and do not build behind it.
