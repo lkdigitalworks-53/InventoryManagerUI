@@ -22,10 +22,10 @@ Node 24 (reply "Go" to my default). Trade-off shown: 22 = lowest risk but a seco
 - [x] 4. Pins changed: `firebase.json` runtime `nodejs24`, `functions/package.json` engines.node `"24"`, 6x `node-version: '24'` in `checks.yml`.
 - [x] 5. New drift guard `.github/scripts/__tests__/runtimeVersion.test.js` (8 tests, 3 rules, 3 mutants). Script suite 470/470 on Node 24.
 - [x] 6. Docs: test plan, Skill 147 + SKILLS-INDEX, README (deploy section + test-plan index), design doc addendum (real IAM findings), KNOWN-ISSUES.
-- [x] 7. Committed and pushed (branch only; open the PR on GitHub).
+- [x] 7. Committed and pushed; merged as PR #176 (`dd56cac`).
+- [x] 8. Taher re-ran from `main` after a stale-run mix-up (a re-run reuses the OLD commit and kept failing on Node 20): deploy succeeded end to end, 2026-11-01. IAM list in the design doc updated.
 
 ## Open for a human / next account
-- Read CI on the PR: all four test jobs now run on Node 24. Not run in the sandbox: QML (Qt 6.8, independent of Node), Rules, E2E (emulator).
-- Merge, approve the `firebase-deploy` Environment, read the deploy log. More missing IAM roles are still possible (unverified: storage bucket for function source, Cloud Build / compute SA actAs, Artifact Registry policy). Paste each error; grant only the role it names.
-- After the first green deploy: move the confirmed roles into the design doc's setup block (done only for the two seen so far).
+- Run the on-device steps in `docs/superpowers/test-plans/2026-11-01-functions-node-24-runtime-test-plan.md` (first step: console shows Node.js 24 on every function).
+- Optional: test removing the compute-SA `serviceAccountUser` grant (least privilege); one deploy proves it.
 - Not done on purpose: `firebase-functions` is pinned to a release candidate (`^7.3.2-rc.0`), see KNOWN-ISSUES; own PR.

@@ -76,7 +76,7 @@ The role list is my best reading of what a Functions v2 + scheduler + rules + in
 1. `iam.serviceAccounts.ActAs` on `<project>@appspot.gserviceaccount.com` (the App Engine default SA, which the CLI checks), not only the compute SA. Fix, on that SA only: `gcloud iam service-accounts add-iam-policy-binding <project>@appspot.gserviceaccount.com --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser`.
 2. `firebase.projects.get` (`adminSdkConfig` 403). Fix: `roles/firebase.viewer` at project level.
 3. Not IAM: "Runtime Node.js 20 was decommissioned on 2026-10-30". Runtime moved to Node 24 (`firebase.json`, `functions/package.json`, `checks.yml`), guarded by `runtimeVersion.test.js`.
-Still unverified until a deploy gets past the upload step: storage access for the function source bucket, actAs on the Cloud Build SA, the Artifact Registry cleanup policy. Whether the compute-SA grant is still needed is unknown; keep it until a deploy succeeds, then remove what was not used.
+**Result: the deploy then succeeded end to end (Taher, 2026-11-01).** The working set is the seven project roles in the setup block, plus `roles/firebase.viewer`, plus `roles/iam.serviceAccountUser` on the App Engine default SA and on the compute SA. No storage, Cloud Build or Artifact Registry role was needed beyond that list. Not proven: whether the compute-SA grant is needed (it was granted before the first run and never removed). Least privilege says test its removal with one deploy; the cost is one approval tap and a possible failed run.
 
 **Step 4 — GitHub variables:** Environment `firebase-deploy` -> variables: `GCP_WORKLOAD_IDENTITY_PROVIDER` = the `provider:` line printed above; `GCP_DEPLOY_SERVICE_ACCOUNT` = the `sa:` line.
 
