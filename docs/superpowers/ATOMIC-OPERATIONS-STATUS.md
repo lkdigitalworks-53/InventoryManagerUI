@@ -75,3 +75,10 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
 - R1 evidence (counter doc shape, formats, doc id = entity id) is in that design, section 1; a source guard test pins it.
 - Next: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), then R4 (`InventoryStore.restock` rewrite + latch + picker hide), R5 (dialog, `FailureCause`, `activity_log` id). Deploy functions BEFORE the client.
 
+
+## 8. Update 2026-11-01 (R3 built, dormant)
+- Merged and deployed since section 7: #172 (R1+R2 server `mint` op; Taher confirmed deploy and device test), #175 (L3 design), #176 (Node 24), #177 (IAM docs).
+- **Built (branch `feat/2026-11-01-r3-restock-plan`, client pure layer, nothing calls it):** `OperationKeys.restockNonce/restockKey/isRestockKey/purchaseTxId`, `qml/helper/RestockPlan.js` (`build` and `reflect`), `FailureCause.forRestock` (+ the R2 codes as app problems in `forRejection`), the restock label in `DescribeItem`, `SupplierStore.addLocalSupplier`, `InventoryStore.applyRestockResults`. Design `specs/2026-11-01-r3-restock-plan-design.md` (T1-T10, vetoable in the PR), test plan `test-plans/2026-11-01-r3-restock-plan-test-plan.md`, Skill 149.
+- Evidence: the planner runs in Node against the REAL server code (`functions/test/testSupport/qmlHelpers.js` loads the `.pragma library` helpers), so "the client plans what the server accepts" is tested, not assumed. QML tests are CI-only.
+- G4 still open (sign-out clears the outbox, so a queued restock abandoned by sign-out is gone); R4 decides how the sign-out sheet reports it.
+- Next: R4 (`InventoryStore.restock` rewrite with the key made at the tap, a synchronous per-product latch, picker hide for a queued restock, a `DataModel` route for `operationApplied` with opType `restock` into `applyRestockResults(results, {replay})`; refresh the product's stock after a replay), then R5 (dialog wording, `activity_log` entity inside the operation, `ActivityLog.record` id parameter), then R6 (docs and device test). Deploy status: functions already deployed.

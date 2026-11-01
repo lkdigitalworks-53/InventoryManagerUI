@@ -12,10 +12,10 @@
 ## Steps
 - [x] 1. Read memory, cloned fresh into `/home/claude/repo-2026-11-01` (first attempt used `rm -rf`, the sandbox denied it, cloned into a new directory instead), read the atomic-ops status, restock design v2, R2 design, `operationLogic.js`, `InventoryStore.restock`, the existing apply-from-results hooks, `FailureCause`, `DescribeItem`, `SignOutGuard`.
 - [x] 2. Branch created, previous checkpoint archived, this file written.
-- [ ] 3. Slice design `docs/superpowers/specs/2026-11-01-r3-restock-plan-design.md` (decisions T1-T10, vetoable in the PR).
+- [x] 3. Slice design `docs/superpowers/specs/2026-11-01-r3-restock-plan-design.md` (decisions T1-T10, vetoable in the PR).
 - [x] 4. `OperationKeys` restock ids (`restockNonce`, `restockKey`, `isRestockKey`, `purchaseTxId`), `qml/helper/RestockPlan.js` (`build` + `reflect`), `functions/test/restockPlan.test.js` (26 tests, run locally: plan goes through the REAL `validateOperationRequest` + `applyOperation` on the strict fake DB, then `reflect` is compared with the stored docs; seeded monkey 400 inputs; drift guard on the QML doc builders) + `functions/test/testSupport/qmlHelpers.js` (loads QML pragma-library helpers into Node). Hand mutants: 21 of 23 killed alone; the 2 survivors are the redundant pair `qty <= 0` / `SM.validate` (each alone suffices), killed together.
-- [ ] 5. `FailureCause.forRestock`, `DescribeItem` restock label, `SupplierStore.addLocalSupplier`, `InventoryStore.applyRestockResults`, QML tests (CI only).
-- [ ] 6. Test plan, README index row, Skill 149 + `SKILLS-INDEX.md`, AGENTS pointer, status doc section 8, KNOWN-ISSUES.
+- [x] 5. `FailureCause.forRestock`, `DescribeItem` restock label, `SupplierStore.addLocalSupplier`, `InventoryStore.applyRestockResults` + `functions/test/restockSurface.test.js` (15, RUN; 18 of 18 hand mutants killed after two survivors got stronger tests). QML tests written, CI only: `tst_RestockPlan.qml`, additions to `tst_FailureCause.qml` and `tst_DescribeItem.qml`, `tst_SupplierStore_addLocal.qml`, `tst_InventoryStore_applyRestockResults.qml` (the key tests live in `tst_RestockPlan.qml`, not `tst_OperationKeys.qml`).
+- [x] 6. Test plan, README index row, Skill 149 + `SKILLS-INDEX.md` (150 skills), AGENTS pointer, status doc section 8. KNOWN-ISSUES: no entry (G4 already tracked in the status doc). Local runs: `functions` 979/979 after `npm ci` (before it, 9 files failed on a missing `node-mocks-http`: environment, not code), `.github/scripts` 470/470.
 - [ ] 7. Push, read CI, record the observed counts here.
 
 ## NEXT (after this slice)

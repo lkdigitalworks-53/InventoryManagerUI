@@ -211,4 +211,46 @@ TestCase {
         }
         compare(DI.describe({ opType: "completeOrder", ops: [{ entity: "order", entityId: 5 }] }).detail, "5")
     }
+
+    // ── restock label (atomic-ops R3) ────────────────────────────────────
+
+    function _restockOps(name, qty) {
+        return [
+            { kind: "mint", counter: "stock_batch", bind: "batch" },
+            { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: qty } },
+            { kind: "mutation", entity: "transaction", entityId: "tx-p-{{batch}}", after: { productName: name } }
+        ]
+    }
+
+    function test_restock_reads_title_quantity_and_product_name() {
+        var d = DI.describe({ opType: "restock", ops: _restockOps("Tomato", 3) })
+        compare(d.title, "Restock")
+        compare(d.detail, "3 × Tomato")
+    }
+
+    function test_restock_falls_back_to_the_product_id_then_to_nothing() {
+        compare(DI.describe({ opType: "restock", ops: _restockOps("", 3) }).detail, "3 × p1")
+        compare(DI.describe({ opType: "restock", ops: _restockOps("Tomato", 3).slice(0, 2) }).detail, "3 × p1")
+        compare(DI.describe({ opType: "restock", ops: [{ kind: "mint", counter: "stock_batch", bind: "batch" }] }).detail, "")
+    }
+
+    function test_restock_does_not_show_a_zero_or_negative_quantity() {
+        compare(DI.describe({ opType: "restock", ops: [{ entity: "inventory", entityId: "p9", deltas: { stock: -2 } }] }).detail, "p9")
+        compare(DI.describe({ opType: "restock", ops: [{ entity: "inventory", entityId: "p9", deltas: { stock: 0 } }] }).detail, "p9")
+    }
+
+    function test_restock_malformed_ops_never_throw() {
+        var shapes = [[null], [undefined, 1, "x", []], [{ entity: "inventory", deltas: null }],
+                      [{ entity: "inventory", deltas: { stock: "3" }, entityId: 5 }], [{ entity: "transaction", after: null }]]
+        for (var i = 0; i < shapes.length; ++i) {
+            var d = DI.describe({ opType: "restock", ops: shapes[i] })
+            compare(d.title, "Restock", "shape " + i)
+            verify(typeof d.detail === "string", "shape " + i)
+        }
+    }
+
+    function test_restock_label_leaves_completeOrder_and_unknown_types_alone() {
+        compare(DI.describe({ opType: "completeOrder", ops: [{ entity: "order", entityId: "o1", after: { customer: "Ann" } }] }).title, "Order completion")
+        compare(DI.describe({ opType: "mystery", ops: [{ entity: "order", entityId: "o1" }] }).title, "Multi-step change")
+    }
 }
