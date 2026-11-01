@@ -13,7 +13,7 @@
 - [x] F3 a failed refresh started by a resume reported through `authFailed`, which writes into Add staff (while provisioning) and Invite/Forgot dialogs. Fixed: `refreshIdToken(silent)`, only `onAppResumed` passes true.
 - [x] F4 sign-out now resets both spacing windows.
 - [x] Tests: 6 scenarios, 11 behaviour mutants, 11 wiring mutants, 6 wiring rules, monkey model updated (4 seeds x 6000 steps agree); whole script suite 659 of 659. Test plan section 9 + device steps N13-N16. Skill 149 items 11-13. KNOWN-ISSUES 4 entries.
-- [ ] CI result for the push (read it first next session). QML suites and device steps NOT run.
+- [x] CI on `55a9cd7`: QML Tests, E2E Tests, Firestore + Storage Rules Tests, Functions Tests all success (read 2026-11-01); Deploy jobs skipped as designed. Review report posted as a PR comment. Device steps B0, H1-H6, N8-N16 NOT run (owner).
 **Decisions left for the owner (not changed, see KNOWN-ISSUES 2026-11-01):** Q1 unreadable member doc for a DIFFERENT workspace blocks "unverified" even silently (pinned by an existing scenario); Q2 a silent workspace switch resyncs stores under open forms with no notice; Q3 make `ensureFreshToken` (timer, Gateway, PhotoQueue, LockManager, AnalysisService) silent on failure too; Q4 role toast shows the raw role id.
 **NEXT:** read CI on PR #180; then L4 design (unchanged from below).
 
