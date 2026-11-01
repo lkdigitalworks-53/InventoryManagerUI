@@ -115,6 +115,8 @@ The `tenants/{t}` update rule now requires `request.resource.data.ownerId == res
 
 ## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
 
+**Status 2026-10-28:** server half built (R2: `mint` op, `restock` opType, PR on `feat/2026-10-28-r2-mint-engine`). The client rewrite (R3 `RestockPlan`, R4 `InventoryStore.restock`, R5 dialog and `activity_log`) is still NOT BUILT, so this bug is still live in the app.
+
 **Found on-device (Taher, PR #97 test).** Member `status` set to suspended, then restock a product: toast "Could not
 restock", the stuck list showed one write. After setting the member active and tapping Retry now, the stock batch
 appeared but the product's `stock` in Firestore did not change. Batch and stock disagree.
@@ -791,4 +793,18 @@ Related, same cause class: `PrimaryButton` draws its busy spinner at the left ed
 - No `dependabot.yml` for `github-actions`: the SHA-pinned `google-github-actions/auth` (`v2.1.13`) is bumped by hand.
 - `main` has no branch protection (API check 2026-10-29). The approval gate protects the deploy, not the merge.
 - The root `firestore-rules-tests` job still runs an unpinned `npm install -g firebase-tools` (pre-existing, not in this PR).
+## `mint` placeholders replace user text that equals a bound name — FOUND 2026-10-28 (R2 design M6), ACCEPTED
 
+In an operation with a mint op, a string inside `after` that contains `{{name}}` for a name bound EARLIER is replaced by the minted id, even when a user typed it (a supplier called `{{batch}}` gets the batch id in its name). Cosmetic, same caller, never another tenant or counter. Other brace text is kept as typed. Cost of the alternative (reject any brace text): a supplier typed `{{x}}` could never be restocked.
+
+## Server mint registry holds only supplier and batch counters — BY DESIGN 2026-10-28
+
+`counters` stays client-writable and product / order / staff ids are still minted by the client until each consumer migrates (atomic design 7b). F7 (a member can burn ids) stays open until the last caller moves; then the rules pin flips in its own PR.
+
+## Mint seed lists the whole collection once per counter per year — FOUND 2026-10-31 (R2 sweep 2), ACCEPTED
+
+When a counter doc is missing or damaged (first restock ever, and every January for the year-scoped batch counter) the server lists all doc ids of `suppliers` or `stock_batches` once to seed the counter. For a tenant with tens of thousands of batches that is that many document reads, once. A document-id range query on the year prefix would cut it, but could not be verified without the emulator in the chat sandbox. Revisit if a tenant ever passes ~10k batches.
+
+## A member can still set a counter to any value up to 999,999,999 — FOUND 2026-10-31, OPEN until the rules pin
+
+F9 closed the worst case (a value near 2^53 killed minting for the tenant). A member can still move a counter forward by hand, burning ids up to the ceiling; they cannot lock the tenant out any more because an out-of-range value is re-seeded. The real fix remains the `counters` rules pin at the end of the atomic arc (F7 above).

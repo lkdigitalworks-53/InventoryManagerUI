@@ -191,3 +191,54 @@ test("recordOperation: transient (unavailable) Firestore error -> still 500, err
         cached.applyOperation = original;
     }
 });
+
+// ---- mint op (R2): the real validator runs in front of the mocked applyOperation ----
+
+function restockBody(ops) {
+    return { env: "test", requestId: "restock:dev1-1", opType: "restock", clientTimestamp: 1, ops: ops };
+}
+const mintOp = (counter, bind) => ({ kind: "mint", counter: counter, bind: bind });
+
+test("recordOperation: a restock operation with mint ops passes validation and its mint results are forwarded", async () => {
+    seedHappyPathAuth(mockState);
+    const results = [{ kind: "mint", counter: "stock_batch", bind: "b", id: "BAT-2026-001" },
+                     { entity: "stock_batch", entityId: "BAT-2026-001", kind: "mutation", after: { batchId: "BAT-2026-001" } }];
+    mockState.applyOperationResult = { ok: true, results: results };
+    const res = mockRes();
+    await handlers.recordOperation(mockReq({ body: restockBody([mintOp("stock_batch", "b"),
+        { kind: "mutation", entity: "stock_batch", entityId: "{{b}}", action: "create", before: null, after: { batchId: "{{b}}" } }]) }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res), { ok: true, entryId: "restock:dev1-1", results: results, idempotentReplay: false });
+});
+
+test("recordOperation: invalid mint requests are 400 with the op index (0 survives) and never reach applyOperation", async () => {
+    for (const c of [
+        { ops: [mintOp("product", "p")], error: "unknown-counter", opIndex: 0 },
+        { ops: [mintOp("supplier", "a"), mintOp("supplier", "a")], error: "duplicate-bind-name", opIndex: 1 },
+        { ops: [mintOp("supplier", "a")], error: "unused-mint", opIndex: 0 },
+        { ops: [mintOp("supplier", "a"), { kind: "mutation", entity: "stock_batch", entityId: "{{a}}", action: "create", before: null, after: {} }],
+          error: "placeholder-entity-mismatch", opIndex: 1 },
+        { ops: [mintOp("supplier", "A")], error: "invalid-bind-name", opIndex: 0 },
+        { ops: [{ kind: "mutation", entity: "supplier", entityId: "{{x}}", action: "create", before: null, after: {} }, mintOp("supplier", "x")],
+          error: "unbound-placeholder", opIndex: 0 }
+    ]) {
+        seedHappyPathAuth(mockState);
+        mockState.applyOperationResult = { ok: true, results: [] };
+        const res = mockRes();
+        await handlers.recordOperation(mockReq({ body: restockBody(c.ops) }), res);
+        assert.equal(res.statusCode, 400, c.error);
+        assert.equal(jsonBody(res).error, c.error);
+        assert.equal(jsonBody(res).opIndex, c.opIndex);
+    }
+});
+
+test("recordOperation: mint-exhausted is forwarded as 409 with its op index", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.applyOperationResult = { ok: false, status: 409, error: "mint-exhausted", opIndex: 0 };
+    const res = mockRes();
+    await handlers.recordOperation(mockReq({ body: restockBody([mintOp("stock_batch", "b"),
+        { kind: "mutation", entity: "stock_batch", entityId: "{{b}}", action: "create", before: null, after: {} }]) }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(jsonBody(res).error, "mint-exhausted");
+    assert.equal(jsonBody(res).opIndex, 0);
+});

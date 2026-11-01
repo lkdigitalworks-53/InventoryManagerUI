@@ -20,8 +20,20 @@ function findUndefined(value, path) {
 function strictDb(docs) {
     const store = Object.assign({}, docs || {});
     const writes = [];
+    const listCalls = [];
     return {
-        store, writes,
+        store, writes, listCalls,
+        // Admin SDK CollectionReference#listDocuments(): the direct children (ids only) of a collection.
+        collection(path) {
+            return {
+                async listDocuments() {
+                    listCalls.push(path);
+                    return Object.keys(store)
+                        .filter((k) => k.indexOf(path + "/") === 0 && k.indexOf("/", path.length + 1) < 0)
+                        .map((k) => ({ id: k.substring(path.length + 1), path: k }));
+                }
+            };
+        },
         doc(path) {
             const seg = path.split("/");
             if (seg.length % 2 !== 0 || seg.some((s) => s === "")) throw new Error("bad document path: " + path);
