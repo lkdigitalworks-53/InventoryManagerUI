@@ -561,7 +561,7 @@ const MUTANTS = [
   ['if (!missing && !(okGet && userDoc)) {', 'if (!missing && !okGet) {', 'leave workspace accepts an empty body as a users doc'],
   ['var missing = !okGet && statusGet === 404', 'var missing = !okGet', 'leave workspace treats any failed read as a missing doc'],
   ['if (accessBlock.length > 0) {\n                        profileResolved = true\n                        return\n                    }', '', 'a users doc 404 while blocked opens onboarding behind the block (D13)'],
-  ['accessTenantName = tenantName || AuthStore.tenantName\n            accessBlock = out.reason', 'accessBlock = out.reason', 'the block screen loses the shop name'],
+  ['            if (out.reason !== AccessState.STATE_MOVED)\n                accessTenantName = tenantName || (tenantId === AuthStore.tenantId ? AuthStore.tenantName : \"\")\n            accessBlock = out.reason', '            accessBlock = out.reason', 'the block screen loses the shop name'],
   ['            if (quiet) { checking = false; return }\n            accessBlock = ""\n            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', '            if (quiet) { checking = false; return }\n            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', 'no-uid keeps the block'],
 ];
 

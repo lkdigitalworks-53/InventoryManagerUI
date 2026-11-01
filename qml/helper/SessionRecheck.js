@@ -34,12 +34,19 @@ function canStart(inFlight, lastStartMs, nowMs) {
 //   "first"   this session has not synced the stores yet (synced is not exactly true): open like a fresh
 //             sign-in. At cold start AuthStore already holds the saved tenant and role, so without this a
 //             silent check would find "nothing changed" and no store would ever sync.
-//   "tenant"  another workspace
+//   "tenant"  another workspace: AuthService shows the "moved" access screen (decision Q2) instead of switching
+//             the stores under open forms
+//   "none" also covers an answer that could not be read for a workspace this device never verified (Q1): a
+//             silent check never locks out a member, the full loads (sign-in, "Try again") still block it
 //   "role"    another role (staff scope depends on it)
 //   "none"    nothing changed: touch nothing, and no store resync
 // A malformed answer is "none": a check that could not decide must not lock out a member who was verified.
 function changeKind(prevTenantId, prevRole, wasBlocked, tenantId, out, synced) {
     if (out === null || typeof out !== "object") return "none"
+    // Q1: nothing was verified for that workspace and the answer was unreadable (flaky network). The server and the
+    // rules decide every request anyway; blocking an open session for it would lock out a member who may be fine.
+    // A block that is already showing keeps its own handling (wasBlocked).
+    if (out.action === "block" && out.reason === "unverified" && wasBlocked !== true) return "none"
     if (out.action === "block") return "block"
     if (out.action !== "enter" || typeof out.role !== "string" || out.role.length === 0) return "none"
     if (wasBlocked === true) return "unblock"

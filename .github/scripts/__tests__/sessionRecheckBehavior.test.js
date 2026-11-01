@@ -22,7 +22,7 @@ const ACCESS_SRC = lib('AccessState.js');
 const RECHECK_SRC = lib('SessionRecheck.js');
 
 const FNS = ['_loadUserProfile', '_verifyMembership', '_applyAccess', 'recheckAccess', 'signOut', '_recheckOrLoad',
-  '_sessionOpen', 'requestRecheck', 'onAppResumed', '_tokenExpiring', 'refreshIdToken', 'loadTenantMembers', '_ensureTenantName'];
+  '_sessionOpen', 'requestRecheck', 'onAppResumed', '_tokenExpiring', 'refreshIdToken', 'ensureFreshToken', 'loadTenantMembers', '_ensureTenantName'];
 const ROLES = ['owner', 'admin', 'manager', 'staff'];
 const MEMBER_DOC = /^tenants\/[^/]+\/members\/[^/]+$/;
 const ROSTER = /^tenants\/[^/]+\/members$/;
@@ -79,7 +79,7 @@ function makeHarness(authSrc, init = {}) {
   };
   const noop = new Proxy(function () {}, { get: (t, k) => (k === Symbol.toPrimitive ? () => '' : noop), apply: () => noop });
   const own = {
-    ...state, AuthStore, FirebaseService, AccessState: loadLib(ACCESS_SRC, 'classify, outcome, copy, isValidRole'),
+    ...state, AuthStore, FirebaseService, AccessState: loadLib(ACCESS_SRC, 'classify, outcome, copy, isValidRole, STATE_MOVED'),
     SessionRecheck: loadLib(RECHECK_SRC, 'canStart, changeKind, AUTO_SPACING_MS, STALE_MS'),
     Date: { now: () => clock.t },
     _nowEpochSec: () => Math.floor(clock.t / 1000),
@@ -176,12 +176,174 @@ const SCENARIOS = {
     }
   },
 
-  'another workspace: resync once, no role toast'(h) {
+  'Q2: another workspace shows the "moved" screen and switches NOTHING (no resync, no roster, no toast, no cover, no new tenant or role)'(h) {
+    const m = h.mark();
+    assert.equal(h.scope.requestRecheck(), true);
+    h.users('t2', 'Beta Traders');
+    h.member(active('staff'));
+    assert.equal(h.scope.accessBlock, 'moved');
+    assert.equal(h.scope.accessTenantName, 'Beta Traders', 'the screen names the NEW workspace');
+    assert.equal(h.AuthStore.tenantId, 't1', 'stores keep the workspace the open forms belong to');
+    assert.equal(h.AuthStore.role, 'owner');
+    assert.equal(h.AuthStore.tenantName, 'Al Shop');
+    nothingApplied(h);
+    assert.equal(h.falseWrites(m), 0, 'no sign-in cover');
+    assert.equal(h.scope.checking, false);
+    assert.equal(h.scope.profileResolved, true);
+    assert.equal(h.scope._contextSynced, true, 'the stores are still synced for the old workspace');
+    assert.equal(h.pendingCount(), 0);
+  },
+
+  'Q2: the moved screen never names the old shop when the users doc carries no workspace name'(h) {
+    assert.equal(h.scope.requestRecheck(), true);
+    h.users('t2', '');
+    h.member(active('owner'));
+    assert.equal(h.scope.accessBlock, 'moved');
+    assert.equal(h.scope.accessTenantName, '', 'empty, so the screen says "a different shop"');
+    assert.notEqual(h.scope.accessTenantName, 'Al Shop');
+  },
+
+  'Q2: a role change together with a workspace change is a workspace change (moved, no toast)'(h) {
     silentWith(h, 't2', (y) => y.member(active('staff')));
+    assert.equal(h.scope.accessBlock, 'moved');
+    assert.deepEqual(h.calls.roleChanged, []);
+  },
+
+  'Q2: every role in the old workspace and every role in the new one ends on the moved screen'(h, make) {
+    for (const from of ROLES) for (const to of ROLES) {
+      const x = make({ store: { role: from } });
+      silentWith(x, 't2', (y) => y.member(active(to)));
+      assert.equal(x.scope.accessBlock, 'moved', `${from} -> ${to}`);
+      assert.equal(x.AuthStore.role, from, `${from} -> ${to}: the held role is not rewritten`);
+      nothingApplied(x);
+    }
+  },
+
+  'Q2: Continue (a full load) opens the new workspace once: stores sync once, the screen clears, no role toast'(h) {
+    silentWith(h, 't2', (y) => y.member(active('staff')));
+    assert.equal(h.scope.accessBlock, 'moved');
+    h.scope.recheckAccess();
+    assert.equal(h.scope.accessBlock, 'moved', 'the screen stays up while the full load is out');
+    h.users('t2', 'Beta Traders');
+    h.member(active('staff'));
+    assert.equal(h.scope.accessBlock, '');
     assert.equal(h.AuthStore.tenantId, 't2');
     assert.equal(h.AuthStore.role, 'staff');
+    assert.equal(h.AuthStore.tenantName, 'Beta Traders');
+    assert.deepEqual(h.calls.tenantContextReady.map((c) => [c.t, c.r]), [['t2', 'staff']]);
+    assert.equal(h.calls.tenantContextReady[0].blockAtEmit, '', 'the screen is already down when the stores sync');
+    assert.deepEqual(h.calls.roleChanged, []);
+    assert.equal(h.rosterReads(), 1);
+  },
+
+  'Q2: Continue that cannot read keeps the moved screen exactly as it was (and the name it shows), a flaky network never switches silently'(h) {
+    assert.equal(h.scope.requestRecheck(), true);
+    h.users('t2', 'Beta Traders');
+    h.member(active('staff'));
+    assert.equal(h.scope.accessTenantName, 'Beta Traders');
+    for (const status of [0, 401, 403, 500, 503]) {
+      h.scope.recheckAccess();
+      h.users('t2', '');
+      h.memberFails(status);
+      assert.equal(h.scope.accessBlock, 'moved', `member status ${status}`);
+      assert.equal(h.AuthStore.tenantId, 't1');
+      assert.equal(h.scope.accessTenantName, 'Beta Traders', 'neither the old shop nor an empty name replaces it');
+    }
+    h.scope.recheckAccess();
+    h.usersFails(500);
+    assert.equal(h.scope.accessBlock, 'moved', 'an unreadable users doc keeps it too');
+    assert.equal(h.scope.accessTenantName, 'Beta Traders');
+    assert.equal(h.AuthStore.tenantId, 't1');
+    assert.equal(h.calls.tenantContextReady.length, 0);
+  },
+
+  'Q2: Continue offline does nothing (the moved screen stays, no read goes out)'(h) {
+    silentWith(h, 't2', (y) => y.member(active('staff')));
+    h.scope.isOnline = false;
+    h.scope.recheckAccess();
+    assert.equal(h.scope.accessBlock, 'moved');
+    assert.equal(h.pendingCount(), 0);
+  },
+
+  'Q2: while moved, the next silent check that lets the member in opens like a fresh sign-in (once), the screen clears'(h) {
+    silentWith(h, 't2', (y) => y.member(active('staff')));
+    h.tick(61000);
+    silentWith(h, 't2', (y) => y.member(active('staff')));
+    assert.equal(h.scope.accessBlock, '');
+    assert.equal(h.AuthStore.tenantId, 't2');
     assert.deepEqual(h.calls.tenantContextReady.map((c) => [c.t, c.r]), [['t2', 'staff']]);
     assert.deepEqual(h.calls.roleChanged, []);
+  },
+
+  'Q2: while moved, the server moves the account back: the silent check still opens the old workspace like a fresh sign-in'(h) {
+    silentWith(h, 't2', (y) => y.member(active('owner')));
+    h.tick(61000);
+    silentWith(h, 't1', (y) => y.member(active('owner')));
+    assert.equal(h.scope.accessBlock, '');
+    assert.equal(h.AuthStore.tenantId, 't1');
+    assert.equal(h.calls.tenantContextReady.length, 1, 'unblock resyncs once even though nothing changed');
+  },
+
+  'Q2: while moved, a refusal in the new workspace replaces the screen and names that workspace, never the old shop'(h, make) {
+    const answers = { suspended: (y) => y.member({ status: 'suspended', role: 'staff' }), removed: (y) => y.memberGone(), role: (y) => y.member({ status: 'active', role: 'viewer' }) };
+    for (const [reason, answer] of Object.entries(answers)) {
+      const x = make({});
+      silentWith(x, 't2', (y) => y.member(active('staff')));
+      x.tick(61000);
+      assert.equal(x.scope.requestRecheck(), true);
+      x.users('t2', '');
+      answer(x);
+      assert.equal(x.scope.accessBlock, reason);
+      assert.equal(x.scope.accessTenantName, '', `${reason}: the new workspace has no name here, so none is shown (not "Al Shop")`);
+    }
+  },
+
+  'Q2: the moved answer is a decision, so it keeps the 60 s window (a storm of resumes cannot re-run it)'(h) {
+    silentWith(h, 't2', (y) => y.member(active('staff')));
+    assert.equal(h.scope.requestRecheck(), false, 'inside the window');
+    h.tick(59999);
+    assert.equal(h.scope.requestRecheck(), false);
+    h.tick(1);
+    assert.equal(h.scope.requestRecheck(), true);
+  },
+
+  'Q2: only an open, synced session can be moved: at the first resolve the other workspace just opens (nothing is open to protect)'(h, make) {
+    const x = make({ state: { _contextSynced: false } });
+    silentWith(x, 't2', (y) => y.member(active('staff')));
+    assert.equal(x.scope.accessBlock, '');
+    assert.equal(x.AuthStore.tenantId, 't2');
+    assert.deepEqual(x.calls.tenantContextReady.map((c) => [c.t, c.r]), [['t2', 'staff']]);
+    assert.deepEqual(x.calls.roleChanged, []);
+  },
+
+  'Q2: a refusal for another workspace is a plain refusal (no moved screen), and the name is the new workspace'(h) {
+    silentWith(h, 't2', (y) => y.member({ status: 'suspended', role: 'staff' }));
+    assert.equal(h.scope.accessBlock, 'suspended');
+    assert.equal(h.scope.accessTenantName, 'Al Shop', 'the users doc named it');
+    assert.equal(h.AuthStore.tenantId, 't1');
+  },
+
+  'Q2: a workspace named by nobody never inherits the old name on a refusal for another workspace'(h) {
+    assert.equal(h.scope.requestRecheck(), true);
+    h.users('t2', '');
+    h.member({ status: 'suspended', role: 'staff' });
+    assert.equal(h.scope.accessBlock, 'suspended');
+    assert.equal(h.scope.accessTenantName, '');
+  },
+
+  'Q2: a refusal for the SAME workspace with no name on the users doc still names the shop this device holds'(h) {
+    assert.equal(h.scope.requestRecheck(), true);
+    h.users('t1', '');
+    h.member({ status: 'suspended', role: 'owner' });
+    assert.equal(h.scope.accessBlock, 'suspended');
+    assert.equal(h.scope.accessTenantName, 'Al Shop');
+  },
+
+  'Q2: sign-out while the moved screen is up clears it (the next account starts clean)'(h) {
+    silentWith(h, 't2', (y) => y.member(active('staff')));
+    h.scope.signOut();
+    assert.equal(h.scope.accessBlock, '');
+    assert.equal(h.scope._contextSynced, false);
   },
 
   'refused silent check (suspended / removed / invalid role) shows the access screen without touching the cover or the app state'(h, make) {
@@ -211,10 +373,71 @@ const SCENARIOS = {
     }
   },
 
-  'an unreadable member answer for a DIFFERENT workspace has nothing verified to fall back on: unverified'(h) {
-    silentWith(h, 't2', (y) => y.memberFails(500));
+  'Q1: an unreadable member answer for a DIFFERENT workspace is ignored by a silent check (no block, nothing applied) and frees the 60 s window'(h, make) {
+    for (const status of [0, 401, 403, 500, 503]) {
+      const x = make({});
+      const m = x.mark();
+      silentWith(x, 't2', (y) => y.memberFails(status));
+      assert.equal(x.scope.accessBlock, '', `status ${status}`);
+      assert.equal(x.AuthStore.tenantId, 't1', 'the device still holds the verified workspace');
+      assert.equal(x.AuthStore.role, 'owner');
+      nothingApplied(x);
+      assert.equal(x.falseWrites(m), 0);
+      assert.equal(x.scope.checking, false);
+      assert.equal(x.scope.requestRecheck(), true, 'an answer that decided nothing does not use up the window');
+    }
+  },
+
+  'Q1: a junk member body for a different workspace is ignored too (string, array, null, empty object)'(h, make) {
+    for (const body of ['junk', [], null, 5]) {
+      const x = make({});
+      silentWith(x, 't2', (y) => y.answer(MEMBER_DOC, true, body, 200));
+      assert.equal(x.scope.accessBlock, '', JSON.stringify(body));
+      nothingApplied(x);
+    }
+  },
+
+  'Q1: the ignore is only for unreadable answers: a refusal for a different workspace still shows the screen'(h, make) {
+    const answers = { suspended: (y) => y.member({ status: 'suspended', role: 'staff' }), removed: (y) => y.memberGone(), role: (y) => y.member({ status: 'active', role: 'viewer' }) };
+    for (const [reason, answer] of Object.entries(answers)) {
+      const x = make({});
+      silentWith(x, 't2', answer);
+      assert.equal(x.scope.accessBlock, reason);
+    }
+  },
+
+  'Q1: before the first sync an unreadable answer for another workspace is ignored too and does not mark the stores synced; the next verified one opens it once'(h, make) {
+    const x = make({ state: { _contextSynced: false } });
+    silentWith(x, 't2', (y) => y.memberFails(500));
+    assert.equal(x.scope.accessBlock, '');
+    nothingApplied(x);
+    assert.equal(x.scope._contextSynced, false);
+    x.tick(1000);
+    silentWith(x, 't2', (y) => y.member(active('staff')));
+    assert.equal(x.AuthStore.tenantId, 't2');
+    assert.deepEqual(x.calls.tenantContextReady.map((c) => [c.t, c.r]), [['t2', 'staff']]);
+    assert.equal(x.scope._contextSynced, true);
+  },
+
+  'Q1: a FULL load (Try again, sign-in) still blocks "unverified" when nothing was verified for the workspace it found'(h) {
+    h.scope.recheckAccess();
+    h.users('t2');
+    h.memberFails(500);
     assert.equal(h.scope.accessBlock, 'unverified');
-    assert.equal(h.AuthStore.tenantId, 't1', 'the device still holds the verified workspace');
+    assert.equal(h.AuthStore.tenantId, 't1');
+  },
+
+  'Q1: an unverified screen that is already showing is kept by a silent check that cannot read (never cleared, never changed)'(h) {
+    const x = h;
+    x.scope.recheckAccess();
+    x.users('t2');
+    x.memberFails(500);
+    assert.equal(x.scope.accessBlock, 'unverified');
+    x.tick(61000);
+    const m = x.mark();
+    silentWith(x, 't2', (y) => y.memberFails(500));
+    assert.equal(x.scope.accessBlock, 'unverified');
+    assert.equal(x.writes.slice(m).filter((w) => w[0] === 'accessBlock' && w[1] === '').length, 0, 'never written to ""');
   },
 
   'an unreadable users doc never blocks or changes a verified member'(h, make) {
@@ -598,6 +821,73 @@ const SCENARIOS = {
   },
 
   // ---- PR #180 review sweep (2026-11-01) ---------------------------------------------------------------
+  'Q3: ensureFreshToken refreshes only a signed-in session whose token is near expiry (once per call)'(h, make) {
+    const out = make({ store: { isAuthenticated: false, expiresAtEpochSec: Math.floor(T0 / 1000) + 60 } });
+    out.scope.ensureFreshToken();
+    assert.equal(out.calls.post, 0, 'signed out: nothing sent');
+    const fresh = make({});
+    fresh.scope.ensureFreshToken();
+    assert.equal(fresh.calls.post, 0, 'a token with an hour left is not refreshed');
+    for (const secs of [299, 300, 1, 0, -3600]) {
+      const x = make({ store: { expiresAtEpochSec: Math.floor(T0 / 1000) + secs } });
+      x.scope.ensureFreshToken();
+      assert.equal(x.calls.post, secs <= 300 ? 1 : 0, `${secs} s left`);
+    }
+    const edge = make({ store: { expiresAtEpochSec: Math.floor(T0 / 1000) + 301 } });
+    edge.scope.ensureFreshToken();
+    assert.equal(edge.calls.post, 0, '301 s left is outside the 5 minute margin');
+  },
+
+  'Q3: a failed ensureFreshToken refresh is silent (no authFailed into an open dialog), whatever the failure'(h, make) {
+    for (const status of [0, 400, 401, 500, 503]) {
+      const x = make({ store: { expiresAtEpochSec: Math.floor(T0 / 1000) + 60 } });
+      x.scope.ensureFreshToken();
+      assert.equal(x.calls.post, 1);
+      x.answer('POST token', false, null, status);
+      assert.deepEqual(x.calls.authFailed, [], `status ${status}`);
+      assert.equal(x.calls.tokenRefreshed, 0);
+      assert.equal(x.pendingCount(), 0);
+    }
+  },
+
+  'Q3: ensureFreshToken with no refresh token fails silently too (nothing sent, no authFailed)'(h, make) {
+    const x = make({ store: { refreshToken: '', expiresAtEpochSec: Math.floor(T0 / 1000) + 60 } });
+    x.scope.ensureFreshToken();
+    assert.equal(x.calls.post, 0);
+    assert.deepEqual(x.calls.authFailed, []);
+  },
+
+  'Q3: a good ensureFreshToken refresh still applies the new token, re-checks silently and announces tokenRefreshed'(h, make) {
+    const x = make({ store: { expiresAtEpochSec: Math.floor(T0 / 1000) + 60 } });
+    x.scope.ensureFreshToken();
+    x.answer('POST token', true, { expires_in: '3600', id_token: 'new', refresh_token: 'rt2', user_id: 'u1' }, 200);
+    assert.equal(x.AuthStore.idToken, 'new');
+    assert.equal(x.AuthStore.refreshToken, 'rt2');
+    assert.equal(x.calls.tokenRefreshed, 1);
+    assert.deepEqual(x.calls.authFailed, []);
+    assert.equal(x.pendingCount(), 1, 'one silent check went out');
+    assert.equal(x.scope.checking, true);
+  },
+
+  'Q3: a late failure after sign-out or after another account signed in reports nothing'(h, make) {
+    const x = make({ store: { expiresAtEpochSec: Math.floor(T0 / 1000) + 60 } });
+    x.scope.ensureFreshToken();
+    x.scope.signOut();
+    x.answer('POST token', false, null, 400);
+    assert.deepEqual(x.calls.authFailed, []);
+    assert.equal(x.calls.tokenRefreshed, 0);
+  },
+
+  'Q3: the explicit refreshIdToken() (no argument) still reports a failure; only the silent callers hide it'(h, make) {
+    const x = make({});
+    x.scope.refreshIdToken();
+    x.answer('POST token', false, null, 400);
+    assert.deepEqual(x.calls.authFailed, ['refresh failed']);
+    const y = make({ store: { refreshToken: '' } });
+    y.scope.refreshIdToken();
+    assert.deepEqual(y.calls.authFailed, ['Missing refresh token']);
+  },
+
   'R180-1: an unreadable answer is not a check: it frees the 60 s window; a healthy answer or a refusal keeps it'(h, make) {
     assert.equal(h.scope.requestRecheck(), true);
     h.users('t1'); h.memberFails(401);
@@ -704,7 +994,9 @@ const SCENARIOS = {
 // Seeded monkey: a random sequence of everything that can happen, checked step by step against a reference model
 // written from the design (not from the code). Each step compares what the system started, what an answer changed
 // and what it emitted with what the design says must happen.
-function runMonkey(src, seed, steps) {
+// profile 'ws' (workspace profile) steers the monkey to workspace changes and unreadable member answers, the states of PR #180 Q1/Q2,
+// which the default mix reaches only a handful of times.
+function runMonkey(src, seed, steps, profile) {
   let s = seed;
   const rnd = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
   const pick = (a) => a[Math.floor(rnd() * a.length)];
@@ -712,12 +1004,12 @@ function runMonkey(src, seed, steps) {
   const { AuthStore: A, scope: sc, calls, pending, clock } = h;
   const truth = { users: 'ok1', member: 'active:owner' };
   // Sessions must stay open long enough for the silent path to matter: mostly healthy answers, with the odd bad one.
-  const USERS = ['ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok2', '404', '500', 'notenant'];
-  const MEMBERS = ['active:owner', 'active:owner', 'active:admin', 'active:admin', 'active:manager', 'active:manager', 'active:staff', 'active:staff', 'suspended', 'removed', 'badrole', '500', 'junk'];
+  const USERS = profile === 'ws' ? ['ok1', 'ok1', 'ok1', 'ok2', 'ok2', 'ok2', '404', '500'] : ['ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok1', 'ok2', 'ok2', 'ok2', '404', '500', 'notenant'];
+  const MEMBERS = profile === 'ws' ? ['active:owner', 'active:owner', 'active:admin', 'active:staff', 'active:staff', 'active:manager', '500', '500', '500', 'junk', 'junk', 'suspended'] : ['active:owner', 'active:owner', 'active:admin', 'active:admin', 'active:manager', 'active:manager', 'active:staff', 'active:staff', 'suspended', 'removed', 'badrole', '500', 'junk'];
   let lastStart = 0, lastResume = 0;       // model's own clocks for the 60 s spacing and the resume spacing
   let synced = true;                       // model's own record of "the stores have synced for this sign-in" (the harness starts an open, synced session)
   const log = [];
-  const stats = { silent: 0, full: 0, refresh: 0, stale: 0, answers: 0 };
+  const stats = { silent: 0, full: 0, refresh: 0, stale: 0, answers: 0, moved: 0, ignored: 0 };
 
   const refCan = (inFlight, last, now) => (inFlight ? now - last >= 120000 : (now - last < 0 || now - last >= 60000));
   const sessionOpen = () => A.isAuthenticated && sc.profileResolved && !sc.onboardingNeeded && A.tenantId.length > 0;
@@ -782,10 +1074,15 @@ function runMonkey(src, seed, steps) {
       const d = decide(pre, X);
       if (silent) {
         e.checking = false;
-        if (d.a === 'block') { e.block = d.reason; return e; }
+        if (d.a === 'block') {
+          // Q1: an unreadable answer for a workspace this device never verified is ignored by a silent check unless a block is already showing; it decided nothing, so the 60 s window is free again
+          if (d.reason === 'unverified' && !pre.block) { lastStart = 0; stats.ignored++; return e; }
+          e.block = d.reason; return e;
+        }
         if (pre.block) { e.block = ''; e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; return e; }
         if (!synced) { e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; e.unv = !d.v; return e; }   // first resolve: always a change, never a toast; an unreadable answer does not count as synced
-        if (X !== pre.tenant) { e.tenant = X; e.role = d.role; e.emits = 1; e.roster = 1; return e; }
+        // Q2: another workspace under an open, synced session: the "moved" screen, nothing is switched, resynced or announced
+        if (X !== pre.tenant) { e.block = 'moved'; stats.moved++; return e; }
         if (d.role !== pre.role) { e.role = d.role; e.emits = 1; e.roster = 1; e.toasts = 1; return e; }
         if (!d.v) lastStart = 0;                                  // unreadable and nothing changed: the window is free again
         return e;
@@ -807,7 +1104,10 @@ function runMonkey(src, seed, steps) {
     if (expectStart !== 'full') assert.equal(h.falseWrites(h._m), 0, `only a full load may flip the cover: ${where}`);
   }
 
-  const ACTIONS = [
+  const ACTIONS = profile === 'ws' ? [
+    ['answer', 40], ['tick', 20], ['resume', 24], ['serverChange', 20], ['tryAgain', 3], ['offline', 1], ['online', 2],
+    ['refresh', 3], ['expiryToggle', 1], ['signOut', 1], ['signIn', 2],
+  ] : [
     ['answer', 34], ['tick', 18], ['resume', 16], ['serverChange', 12], ['tryAgain', 3], ['offline', 2], ['online', 3],
     ['refresh', 4], ['expiryToggle', 2], ['signOut', 1], ['signIn', 2],
   ];
@@ -917,7 +1217,7 @@ function runMonkey(src, seed, steps) {
   assert.equal(sc.checking, false, `seed ${seed}: nothing is checking after the drain`);
   const acc = h.writes.filter((w) => w[0] === 'accessBlock');
   return { n: log.length, ...stats, toasts: calls.roleChanged.length, emits: calls.tenantContextReady.length, onboarding: calls.onboardingRequired,
-    blocks: acc.filter((w) => w[1] !== '').length, unblocks: acc.filter((w) => w[1] === '').length, refreshed: calls.tokenRefreshed, signOuts: calls.signedOut };
+    movedWrites: acc.filter((w) => w[1] === 'moved').length, blocks: acc.filter((w) => w[1] !== '').length, unblocks: acc.filter((w) => w[1] === '').length, refreshed: calls.tokenRefreshed, signOuts: calls.signedOut };
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -944,6 +1244,16 @@ for (const seed of [1, 7, 42, 2026]) {
     assert.ok(r.blocks >= 15 && r.unblocks >= 15, `blocks ${r.blocks} unblocks ${r.unblocks}`);
     assert.ok(r.emits >= 30, `tenantContextReady ${r.emits}`);
     assert.ok(r.signOuts >= 8, `sign-outs ${r.signOuts}`);
+    assert.ok(r.moved >= 3 && r.movedWrites >= 3, `moved screens ${r.moved}/${r.movedWrites}`);
+    assert.ok(r.ignored >= 1, `unreadable answers for another workspace ignored ${r.ignored}`);
+  });
+  test(`S-A monkey, workspace profile (seed ${seed}, 6000 steps) agrees with the reference model at every step`, () => {
+    const r = runMonkey(AUTH_SRC, seed, 6000, 'ws');
+    assert.equal(r.n, 6000);
+    assert.ok(r.silent >= 60, `silent starts ${r.silent}`);
+    assert.ok(r.moved >= 5 && r.movedWrites >= 5, `moved screens ${r.moved}/${r.movedWrites}`);
+    assert.ok(r.ignored >= 3, `unreadable answers for another workspace ignored ${r.ignored}`);
+    assert.ok(r.unblocks >= 20, `unblocks ${r.unblocks}`);
   });
 }
 
@@ -1000,6 +1310,21 @@ const MUTANTS = [
   ['if (silent !== true) authFailed(_parseErrorReason())', 'if (silent === true) authFailed(_parseErrorReason())', 'an explicit refresh failure is hidden'],
   ['        _lastResumeMs = 0\n        _profileSeq++', '        _profileSeq++', 'sign-out keeps the resume window of the account that left'],
   ['        _lastRecheckMs = 0   // the next account starts with no spacing window left by the last one\n', '', 'sign-out keeps the check window of the account that left'],
+  // PR #180 decisions Q1-Q3 (fold-in)
+  ['        if (kind === "tenant") {\n            accessTenantName = tenantName || ""\n            accessBlock = AccessState.STATE_MOVED\n            return\n        }\n\n', '', 'Q2: a workspace change switches the stores under open forms again'],
+  ['            accessBlock = AccessState.STATE_MOVED\n            return', '            accessBlock = AccessState.STATE_MOVED', 'Q2: the moved screen is shown and the workspace is switched anyway'],
+  ['            accessBlock = AccessState.STATE_MOVED', '            accessBlock = "suspended"', 'Q2: a workspace change shows the suspended screen'],
+  ['            accessTenantName = tenantName || ""\n            accessBlock = AccessState.STATE_MOVED', '            accessTenantName = tenantName || AuthStore.tenantName\n            accessBlock = AccessState.STATE_MOVED', 'Q2: the moved screen names the old shop'],
+  ['            accessTenantName = tenantName || ""\n            accessBlock = AccessState.STATE_MOVED', '            accessBlock = AccessState.STATE_MOVED', 'Q2: the moved screen keeps whatever name was showing'],
+  ['if (kind === "tenant") {\n            accessTenantName', 'if (kind === "tenant" || kind === "role") {\n            accessTenantName', 'Q2: a role change is also a moved screen'],
+  ['if (kind === "tenant") {\n            accessTenantName', 'if (kind === "tenant" || kind === "first") {\n            accessTenantName', 'Q2: the first resolve is also a moved screen (cold start never opens)'],
+  ['            if (out.reason !== AccessState.STATE_MOVED)\n                accessTenantName', '            accessTenantName', 'Q2: a kept moved screen loses the name it shows'],
+  ['tenantName || (tenantId === AuthStore.tenantId ? AuthStore.tenantName : "")', 'tenantName || AuthStore.tenantName', 'a refusal for another workspace names the old shop'],
+  ['tenantName || (tenantId === AuthStore.tenantId ? AuthStore.tenantName : "")', 'tenantName || ""', 'a refusal for the same workspace loses the shop name'],
+  ['        if (_tokenExpiring()) refreshIdToken(true)\n    }', '        if (_tokenExpiring()) refreshIdToken()\n    }', 'Q3: ensureFreshToken reports its failure inside open dialogs again'],
+  ['        if (_tokenExpiring()) refreshIdToken(true)\n    }', '        refreshIdToken(true)\n    }', 'Q3: ensureFreshToken refreshes a token that is not expiring'],
+  ['        if (!AuthStore.isAuthenticated) return\n        if (_tokenExpiring()) refreshIdToken(true)', '        if (_tokenExpiring()) refreshIdToken(true)', 'Q3: ensureFreshToken refreshes while signed out'],
+  ['        if (!AuthStore.isAuthenticated) return\n        if (_tokenExpiring()) refreshIdToken(true)', '        if (!AuthStore.isAuthenticated) return\n        if (false) refreshIdToken(true)', 'Q3: ensureFreshToken never refreshes'],
 ];
 
 function failsSomewhere(src) {
@@ -1008,6 +1333,9 @@ function failsSomewhere(src) {
   }
   for (const seed of [1, 7]) {
     try { runMonkey(src, seed, 1500); } catch (e) { return `monkey seed ${seed}`; }
+  }
+  for (const seed of [3, 11]) {
+    try { runMonkey(src, seed, 1500, 'ws'); } catch (e) { return `workspace monkey seed ${seed}`; }
   }
   return '';
 }

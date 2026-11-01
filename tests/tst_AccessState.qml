@@ -37,8 +37,8 @@ TestCase {
         for (var j = 0; j < bad.length; j++) verify(!AS.isValidRole(bad[j]), "junk role " + j)
     }
 
-    function test_isBlockedState_is_the_four_blocked_states_only() {
-        var blocked = ["removed", "suspended", "role", "unverified"]
+    function test_isBlockedState_is_the_five_blocked_states_only() {
+        var blocked = ["removed", "suspended", "role", "unverified", "moved"]
         for (var i = 0; i < blocked.length; i++) verify(AS.isBlockedState(blocked[i]), blocked[i])
         var other = ["ok", "", "Removed", "unknown", null, undefined, 1, {}]
         for (var j = 0; j < other.length; j++) verify(!AS.isBlockedState(other[j]), "other " + j)
@@ -289,6 +289,35 @@ TestCase {
         compare(c.body, "The app could not confirm your access to Aurora Coffee. Check your internet connection and try again.")
     }
 
+    function test_copy_moved_names_the_new_shop_or_says_a_different_shop() {
+        var c = AS.copy("moved", "Beta Traders")
+        compare(c.title, "Your workspace changed")
+        verify(c.body.indexOf("Your account now uses Beta Traders. Tap Continue") === 0)
+        var blanks = [undefined, null, "", " ", "\n\t", 0, {}]
+        for (var i = 0; i < blanks.length; i++)
+            verify(AS.copy("moved", blanks[i]).body.indexOf("Your account now uses a different shop. Tap Continue") === 0, "blank " + i)
+    }
+
+    function test_moved_is_never_classified_and_a_failed_check_keeps_it() {
+        compare(AS.STATE_MOVED, "moved")
+        var cls = [AS.classify(false, 500, null), AS.classify(false, 0, null), AS.classify(true, 200, "junk")]
+        for (var i = 0; i < cls.length; i++) {
+            compare(cls[i].state, "unverified")
+            compare(AS.outcome(cls[i], "owner", "moved").reason, "moved")
+            compare(AS.outcome(cls[i], "", "moved").action, "block")
+        }
+        compare(AS.outcome(AS.classify(true, 200, { status: "active", role: "staff" }), "owner", "moved").action, "enter")
+    }
+
+    function test_roleLabel_four_roles_and_never_a_raw_value() {
+        compare(AS.roleLabel("owner"), "Owner")
+        compare(AS.roleLabel("admin"), "Admin")
+        compare(AS.roleLabel("manager"), "Manager")
+        compare(AS.roleLabel("staff"), "Staff")
+        var bad = ["", "viewer", "Owner", " owner", null, undefined, 0, 1, {}, [], ["owner"], "<b>x</b>"]
+        for (var i = 0; i < bad.length; i++) compare(AS.roleLabel(bad[i]), "a new role", "bad " + i)
+    }
+
     function test_copy_other_states_are_empty_never_undefined() {
         var other = ["ok", "", "Removed", null, undefined, 1, {}]
         for (var i = 0; i < other.length; i++) {
@@ -326,7 +355,7 @@ TestCase {
     }
 
     function test_copy_never_returns_empty_text_for_a_blocked_state() {
-        var blocked = ["removed", "suspended", "role", "unverified"]
+        var blocked = ["removed", "suspended", "role", "unverified", "moved"]
         for (var i = 0; i < blocked.length; i++) {
             var c = AS.copy(blocked[i], "x")
             verify(c.title.length > 0 && c.body.length > 0, blocked[i])

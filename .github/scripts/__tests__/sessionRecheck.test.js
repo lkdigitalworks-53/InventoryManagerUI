@@ -74,8 +74,11 @@ function battery(m) {
     check('was blocked and let in -> unblock even if nothing else changed: ' + r, () => ck('t1', r, true, 't1', enter(r)) === 'unblock');
     check('was blocked, let in as another role/tenant -> unblock: ' + r, () => ck('t1', r, true, 't2', enter('staff')) === 'unblock');
     for (const was of [false, true]) {
-      for (const reason of ['removed', 'suspended', 'role', 'unverified']) {
-        check(`block ${reason} (wasBlocked ${was}) -> block: ${r}`, () => ck('t1', r, was, 't1', block(reason)) === 'block');
+      for (const reason of ['removed', 'suspended', 'role', 'unverified', 'moved']) {
+        // Q1 (PR #180): an unreadable answer for a workspace this device never verified is ignored by a silent check,
+        // unless a block is already showing (then it is the block that stays).
+        const want = reason === 'unverified' && was === false ? 'none' : 'block';
+        check(`block ${reason} (wasBlocked ${was}) -> ${want}: ${r}`, () => ck('t1', r, was, 't1', block(reason)) === want);
       }
     }
   }
@@ -95,7 +98,15 @@ function battery(m) {
   check('only exactly true counts as synced', () => [undefined, null, false, 0, 1, 'true', 'yes', {}, [], NaN].every((v) => ck('t1', 'owner', false, 't1', enter('owner'), v) === 'first'));
   check('first beats a tenant or role change (no role toast at first resolve)', () => ck('t1', 'owner', false, 't2', enter('staff'), false) === 'first' && ck('t1', 'admin', false, 't1', enter('staff'), false) === 'first');
   check('unblock beats first', () => ck('t1', 'owner', true, 't1', enter('owner'), false) === 'unblock' && ck('t1', 'owner', true, 't1', enter('owner'), undefined) === 'unblock');
-  check('a refusal is block whether or not synced', () => ['removed', 'suspended', 'role', 'unverified'].every((rs) => ck('t1', 'owner', false, 't1', block(rs), false) === 'block' && ck('t1', 'owner', true, 't1', block(rs), undefined) === 'block'));
+  check('a refusal is block whether or not synced', () => ['removed', 'suspended', 'role', 'unverified', 'moved'].every((rs) => (rs === 'unverified' || ck('t1', 'owner', false, 't1', block(rs), false) === 'block') && ck('t1', 'owner', true, 't1', block(rs), undefined) === 'block'));
+  // Q1: the ignore holds whatever the sync mark and whichever workspace the answer was for; it is only for the
+  // exact reason \"unverified\" with no block showing.
+  check('Q1 unreadable answer, nothing verified, no block showing -> none (any sync mark, any workspace)', () => [true, false, undefined, null, 'yes'].every((sy) => ['t1', 't2', '', undefined].every((t) => ck('t1', 'owner', false, t, block('unverified'), sy) === 'none')));
+  check('Q1 does not swallow a conclusive refusal for another workspace', () => ['removed', 'suspended', 'role'].every((rs) => ck('t1', 'owner', false, 't2', block(rs), true) === 'block' && ck('t1', 'owner', false, 't2', block(rs), false) === 'block'));
+  check('Q1 only for exactly wasBlocked !== true: a showing unverified block is kept', () => ck('t1', 'owner', true, 't2', block('unverified'), true) === 'block' && ck('t1', 'owner', true, 't1', block('unverified'), false) === 'block');
+  check('Q1 any wasBlocked that is not exactly true counts as no block showing', () => ['yes', 1, {}, [], 'true', undefined, null, 0, false].every((w) => ck('t1', 'owner', w, 't2', block('unverified'), true) === 'none'));
+  check('Q1 reason match is exact', () => ['Unverified', 'UNVERIFIED', ' unverified', 'unverified ', '', undefined, null, 5].every((rs) => ck('t1', 'owner', false, 't2', { action: 'block', reason: rs }, true) === 'block'));
+  check('Q1 does not turn an enter into none', () => ck('t1', 'owner', false, 't2', enter('staff', false), true) === 'tenant' && ck('t1', 'owner', false, 't2', enter('owner'), true) === 'tenant');
   check('a malformed answer is none even when not synced', () => [...JUNK, 'enter', 5].every((j) => ck('t1', 'owner', false, 't1', j, false) === 'none') && ck('t1', 'owner', false, 't1', { action: 'enter', role: '' }, false) === 'none');
   check('wasBlocked must be exactly true', () => ['yes', 1, {}, [], 'true'].every((w) => ck('t1', 'owner', w, 't1', enter('owner')) === 'none'));
   return fails;
@@ -177,6 +188,12 @@ const MUTANTS = {
   'role compare inverted': (s) => s.replace('out.role !== prevRole', 'out.role === prevRole'),
   'role compare dropped': (s) => s.replace('if (out.role !== prevRole) return "role"', ''),
   'tenant compare dropped': (s) => s.replace('if (tenantId !== prevTenantId) return "tenant"', ''),
+  'Q1 ignore lost': (s) => s.replace('    if (out.action === "block" && out.reason === "unverified" && wasBlocked !== true) return "none"\n', ''),
+  'Q1 ignores even when a block is showing': (s) => s.replace('out.reason === "unverified" && wasBlocked !== true', 'out.reason === "unverified"'),
+  'Q1 ignores a showing block only for explicit true': (s) => s.replace('wasBlocked !== true) return "none"', 'wasBlocked === false) return "none"'),
+  'Q1 ignores every refusal': (s) => s.replace('out.action === "block" && out.reason === "unverified" && wasBlocked !== true', 'out.action === "block" && wasBlocked !== true'),
+  'Q1 reason compare loosened': (s) => s.replace('out.reason === "unverified" && wasBlocked !== true', '(out.reason === "unverified" || out.reason === "suspended") && wasBlocked !== true'),
+  'Q1 runs after the block answer': (s) => s.replace('    if (out.action === "block" && out.reason === "unverified" && wasBlocked !== true) return "none"\n    if (out.action === "block") return "block"\n', '    if (out.action === "block") return "block"\n    if (out.action === "block" && out.reason === "unverified" && wasBlocked !== true) return "none"\n'),
   'block answered as none': (s) => s.replace('if (out.action === "block") return "block"', 'if (out.action === "block") return "none"'),
   'malformed answer guard removed': (s) => s.replace('if (out === null || typeof out !== "object") return "none"\n', ''),
   'malformed answer blocks': (s) => s.replace('if (out === null || typeof out !== "object") return "none"', 'if (out === null || typeof out !== "object") return "block"'),

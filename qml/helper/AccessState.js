@@ -17,6 +17,10 @@ var STATE_REMOVED = "removed"
 var STATE_SUSPENDED = "suspended"
 var STATE_ROLE = "role"
 var STATE_UNVERIFIED = "unverified"
+// Never produced by classify(): a SILENT re-check of an open session found the account now points at another
+// workspace (L3 slice A, PR #180 decision Q2). The screen asks for one tap before the app reloads, so no form
+// that was opened for the old workspace can be saved after the stores switched to the new one.
+var STATE_MOVED = "moved"
 
 var MAX_NAME = 60
 var FALLBACK_NAME = "this shop"
@@ -28,7 +32,15 @@ function isValidRole(role) {
 
 function isBlockedState(state) {
     return state === STATE_REMOVED || state === STATE_SUSPENDED
-        || state === STATE_ROLE || state === STATE_UNVERIFIED
+        || state === STATE_ROLE || state === STATE_UNVERIFIED || state === STATE_MOVED
+}
+
+// What the owner sees for each role id (PR #180 decision Q4). A value outside the four is never echoed raw
+// into a sentence: it reads "a new role", so a corrupted or future role cannot put odd text in a toast.
+var ROLE_LABELS = { owner: "Owner", admin: "Admin", manager: "Manager", staff: "Staff" }
+
+function roleLabel(role) {
+    return isValidRole(role) ? ROLE_LABELS[role] : "a new role"
 }
 
 // ok / status: what FirebaseService.get reports (ok flag, HTTP status). doc: the decoded member doc.
@@ -81,6 +93,10 @@ function _shopName(name) {
     return s.length > MAX_NAME ? s.slice(0, MAX_NAME - 1).trim() + "\u2026" : s
 }
 
+function _hasName(name) {
+    return typeof name === "string" && name.replace(/[\u0000-\u001f\u007f\s]+/g, "").length > 0
+}
+
 // { title, body } for a blocked state; both "" for any other value, so a caller can bind without a check.
 function copy(state, shopName) {
     var shop = _shopName(shopName)
@@ -96,6 +112,12 @@ function copy(state, shopName) {
     case STATE_ROLE:
         return { title: "Your role is not valid",
                  body: "Your account in " + shop + " has a role this app does not recognise, so access is blocked. Ask the shop owner or an admin to fix your role." }
+    case STATE_MOVED:
+        return { title: "Your workspace changed",
+                 body: (_hasName(shopName)
+                        ? "Your account now uses " + shop + ". "
+                        : "Your account now uses a different shop. ")
+                       + "Tap Continue to reload the app with it. Anything open for the old shop was closed so it cannot be saved into the new one." }
     case STATE_UNVERIFIED:
         return { title: "Could not check your access",
                  body: "The app could not confirm your access to " + shop + ". Check your internet connection and try again." }

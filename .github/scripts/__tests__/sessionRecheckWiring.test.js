@@ -15,6 +15,7 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (p) => fs.readFileSync(path.join(REPO, p), 'utf8');
 const AUTH = read('qml/model/AuthService.qml');
 const MAIN = read('qml/Main.qml');
+const PAGE = read('qml/pages/AccessBlockedPage.qml');
 
 const strip = (src) => src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
 
@@ -37,7 +38,7 @@ const callers = (src, needle) => fnNames(src).filter((n) => fnBody(src, n).inclu
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
 const QML_FILES = walk(path.join(REPO, 'qml')).filter((f) => /\.(qml|js)$/.test(f)).map((f) => [path.relative(REPO, f), fs.readFileSync(f, 'utf8')]);
 
-function violations(auth, main, files) {
+function violations(auth, main, files, page = PAGE) {
   const out = [];
   const A = strip(auth);
   const M = strip(main);
@@ -114,7 +115,9 @@ function violations(auth, main, files) {
   // 6d. a refresh nobody asked for fails silently; every other caller still reports: only onAppResumed passes true
   if (!/function refreshIdToken\(silent\)/.test(A)) out.push('auth-refresh-silent-param');
   if ((refresh.match(/\bauthFailed\(/g) || []).length !== 2 || (refresh.match(/if \(silent !== true\) authFailed\(/g) || []).length !== 2) out.push('auth-refresh-quiet-guard');
-  if (callers(auth, 'refreshIdToken(true)').join() !== 'onAppResumed') out.push('auth-refresh-quiet-callers');
+  if (callers(auth, 'refreshIdToken(true)').join() !== 'ensureFreshToken,onAppResumed') out.push('auth-refresh-quiet-callers');
+  // 6d+ (Q3) ensureFreshToken is the one door for every caller that does not read a failure, and it is silent
+  if (!/function ensureFreshToken\(\)\s*\{\s*if \(!AuthStore\.isAuthenticated\) return\s*if \(_tokenExpiring\(\)\) refreshIdToken\(true\)\s*\}/.test(A)) out.push('auth-ensure-silent');
   for (const [f, src] of files) {
     if (!f.endsWith('AuthService.qml') && /refreshIdToken\(\s*(true|silent)/.test(strip(src))) { out.push('auth-refresh-quiet-callers'); break; }
   }
@@ -140,7 +143,39 @@ function violations(auth, main, files) {
     if (v.trim() !== 'AuthStore.isAuthenticated') { out.push('ui-tab-role-gated'); break; }
   }
   const rc = block(M, 'function onRoleChanged(');
-  if (!/Toast\.show\(qsTr\("Your role is now %1"\)\.arg\(role\)\)/.test(rc) || !/if \(!AuthStore\.canViewStaff\) staffPageOverlay\.close\(\)/.test(rc)) out.push('main-role-toast');
+  if (!/Toast\.show\(qsTr\("Your role is now %1"\)\.arg\(AccessState\.roleLabel\(role\)\)\)/.test(rc) || !/if \(!AuthStore\.canViewStaff\) staffPageOverlay\.close\(\)/.test(rc)) out.push('main-role-toast');
+
+  // 10. (PR #180 Q2) a workspace change under an open session is a screen, never a silent switch
+  const movedAt = apply.indexOf('if (kind === "tenant")');
+  const applyAt = apply.indexOf('AuthStore.applyTenantContext');
+  if (!/if \(kind === "tenant"\) \{\s*accessTenantName = tenantName \|\| ""\s*accessBlock = AccessState\.STATE_MOVED\s*return\s*\}/.test(apply) || movedAt < 0 || applyAt < 0 || movedAt > applyAt) out.push('auth-moved-branch');
+  if (callers(auth, 'AccessState.STATE_MOVED').join() !== '_applyAccess') out.push('auth-moved-only-in-apply');
+  if (!/if \(out\.reason !== AccessState\.STATE_MOVED\)\s*accessTenantName = tenantName \|\| \(tenantId === AuthStore\.tenantId \? AuthStore\.tenantName : ""\)/.test(apply)) out.push('auth-block-name');
+  const bc = block(M, 'function onAccessBlockChanged(');
+  if (!/if \(AuthService\.accessBlock === AccessState\.STATE_MOVED\) app\._closeAllForWorkspaceChange\(\)/.test(bc)) out.push('main-moved-closes-forms');
+  const closeAll = fnBody(M, '_closeAllForWorkspaceChange');
+  if (!/var dialogs = _allDialogs\(\)\.concat\(\[confirmReturnSheet, staffActionSheet\]\)/.test(closeAll) || !/dialogs\[i\]\.opened\) dialogs\[i\]\.close\(\)/.test(closeAll) || /busy/.test(closeAll)) out.push('main-close-all-dialogs');
+  for (const o of ['profilePage', 'staffPageOverlay', 'activityPageOverlay']) {
+    if (!new RegExp(`if \\(${o}\\.visible\\)\\s*${o}\\.close\\(\\)`).test(closeAll)) { out.push('main-close-all-overlays'); break; }
+  }
+  // every popup declared in Main.qml is closed by the workspace change (Back's own list is _allDialogs)
+  const listed = ((fnBody(M, '_allDialogs').match(/\[([\s\S]*)\]/) || [])[1] || '').split(',').map((x) => x.trim()).filter(Boolean).concat(['confirmReturnSheet', 'staffActionSheet']);
+  const popups = [...M.matchAll(/\b(\w+(?:Dialog|Sheet))\s*\{\s*id:\s*(\w+)/g)].map((m) => m[2]);
+  if (popups.length < 25 || popups.some((id) => !listed.includes(id))) out.push('main-popups-complete');
+  if (!/var dialogs = _allDialogs\(\)/.test(fnBody(M, '_handleBack'))) out.push('main-back-uses-list');
+  // the access screen's button says Continue only for the moved state, and the page knows the state
+  if (!/text: root\.reason === AccessState\.STATE_MOVED \? qsTr\("Continue"\) : qsTr\("Try again"\)/.test(page)) out.push('ui-moved-button-label');
+  if (!/import "\.\.\/helper\/AccessState\.js" as AccessState/.test(page)) out.push('ui-page-import');
+  if (!/import "helper\/AccessState\.js" as AccessState/.test(main)) out.push('main-access-import');
+
+  // 11. (PR #180 Q3) the callers that read no failure go through ensureFreshToken and never call refreshIdToken themselves
+  const qCallers = { 'qml/model/Gateway.qml': 2, 'qml/model/LockManager.qml': 1, 'qml/model/AnalysisService.qml': 1, 'qml/model/PhotoQueue.qml': 1 };
+  for (const [f, n] of Object.entries(qCallers)) {
+    const src = strip(files.find((x) => x[0] === f)?.[1] || '');
+    if ((src.match(/AuthService\.ensureFreshToken\(\)/g) || []).length !== n || /refreshIdToken/.test(src)) { out.push('q3-callers-silent'); break; }
+  }
+  const mainCalls = (M.match(/AuthService\.refreshIdToken\(/g) || []).length;
+  if (mainCalls !== 1 || !/function onRefreshAuthToken\(\)\s*\{\s*AuthService\.refreshIdToken\(\)\s*\}/.test(M)) out.push('q3-main-explicit-only');
   return out;
 }
 
@@ -192,7 +227,9 @@ const MUTANTS = [
   ['auth', 'if (silent !== true) authFailed("Missing refresh token")', 'authFailed("Missing refresh token")', 'auth-refresh-quiet-guard'],
   ['auth', 'if (silent !== true) authFailed(_parseErrorReason())', 'authFailed(_parseErrorReason())', 'auth-refresh-quiet-guard'],
   ['auth', 'if (_tokenExpiring()) refreshIdToken(true)\n        else requestRecheck()', 'if (_tokenExpiring()) refreshIdToken()\n        else requestRecheck()', 'auth-resume-throttle'],
-  ['auth', 'if (_tokenExpiring()) refreshIdToken()\n    }', 'if (_tokenExpiring()) refreshIdToken(true)\n    }', 'auth-refresh-quiet-callers'],
+  ['auth', '        if (_tokenExpiring()) refreshIdToken(true)\n    }', '        if (_tokenExpiring()) refreshIdToken()\n    }', 'auth-refresh-quiet-callers'],
+  ['auth', '        if (_tokenExpiring()) refreshIdToken(true)\n    }', '        if (_tokenExpiring()) refreshIdToken()\n    }', 'auth-ensure-silent'],
+  ['auth', '        if (!AuthStore.isAuthenticated) return\n        if (_tokenExpiring()) refreshIdToken(true)', '        if (_tokenExpiring()) refreshIdToken(true)', 'auth-ensure-silent'],
   ['auth', '        _lastResumeMs = 0\n        _profileSeq++', '        _profileSeq++', 'auth-signout-windows'],
   ['auth', '        _lastRecheckMs = 0   // the next account starts with no spacing window left by the last one\n', '', 'auth-signout-windows'],
   ['auth', '                        _contextSynced = true\n                        tenantContextReady(', '                        tenantContextReady(', 'auth-synced-before-emit'],
@@ -204,8 +241,24 @@ const MUTANTS = [
   ['main', 'visible: !AuthStore.isAuthenticated || (AuthStore.isAuthenticated && !AuthService.profileResolved)', 'visible: !AuthStore.isAuthenticated || (AuthStore.isAuthenticated && (!AuthService.profileResolved || AuthService.checking))', 'ui-cover-binding'],
   ['main', 'checking: !AuthService.profileResolved', 'checking: AuthService.checking', 'ui-access-spinner-binding'],
   ['main', '            title: qsTr("Stock")\n            iconType: IconType.archive\n            visible: AuthStore.isAuthenticated', '            title: qsTr("Stock")\n            iconType: IconType.archive\n            visible: AuthStore.isAuthenticated && AuthStore.canViewFinancials', 'ui-tab-role-gated'],
-  ['main', '            Toast.show(qsTr("Your role is now %1").arg(role))\n', '', 'main-role-toast'],
+  ['main', '            Toast.show(qsTr("Your role is now %1").arg(AccessState.roleLabel(role)))\n', '', 'main-role-toast'],
+  ['main', '.arg(AccessState.roleLabel(role))', '.arg(role)', 'main-role-toast'],
   ['main', '            if (!AuthStore.canViewStaff) staffPageOverlay.close()', '            staffPageOverlay.close()', 'main-role-toast'],
+  // PR #180 Q2 / Q3
+  ['auth', '        if (kind === "tenant") {\n            accessTenantName = tenantName || ""\n            accessBlock = AccessState.STATE_MOVED\n            return\n        }\n\n', '', 'auth-moved-branch'],
+  ['auth', '            accessBlock = AccessState.STATE_MOVED\n            return', '            accessBlock = AccessState.STATE_MOVED', 'auth-moved-branch'],
+  ['auth', 'accessTenantName = tenantName || ""\n            accessBlock', 'accessTenantName = tenantName || AuthStore.tenantName\n            accessBlock', 'auth-moved-branch'],
+  ['auth', '    function recheckAccess() {', '    function sneakyMoved() { accessBlock = AccessState.STATE_MOVED }\n    function recheckAccess() {', 'auth-moved-only-in-apply'],
+  ['auth', 'tenantName || (tenantId === AuthStore.tenantId ? AuthStore.tenantName : "")', 'tenantName || AuthStore.tenantName', 'auth-block-name'],
+  ['auth', '            if (out.reason !== AccessState.STATE_MOVED)\n                accessTenantName', '            accessTenantName', 'auth-block-name'],
+  ['main', '            if (AuthService.accessBlock === AccessState.STATE_MOVED) app._closeAllForWorkspaceChange()', '            if (AuthService.accessBlock === "suspended") app._closeAllForWorkspaceChange()', 'main-moved-closes-forms'],
+  ['main', '            if (AuthService.accessBlock === AccessState.STATE_MOVED) app._closeAllForWorkspaceChange()', '', 'main-moved-closes-forms'],
+  ['main', '_allDialogs().concat([confirmReturnSheet, staffActionSheet])', '_allDialogs()', 'main-close-all-dialogs'],
+  ['main', 'if (dialogs[i] && dialogs[i].opened) dialogs[i].close()\n        }\n        if (profilePage', 'if (dialogs[i] && dialogs[i].opened && !dialogs[i].busy) dialogs[i].close()\n        }\n        if (profilePage', 'main-close-all-dialogs'],
+  ['main', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n        if (activityPageOverlay.visible) activityPageOverlay.close()\n    }', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n    }', 'main-close-all-overlays'],
+  ['main', '                importDlg]\n    }', '                ]\n    }', 'main-popups-complete'],
+  ['main', '        var dialogs = _allDialogs()\n        for (var i = 0; i < dialogs.length; ++i) {\n            if (dialogs[i] && dialogs[i].opened) {', '        var dialogs = [signOutSheet]\n        for (var i = 0; i < dialogs.length; ++i) {\n            if (dialogs[i] && dialogs[i].opened) {', 'main-back-uses-list'],
+  ['main', 'import "helper/AccessState.js" as AccessState\n', '', 'main-access-import'],
 ];
 
 for (const [which, from, to, rule] of MUTANTS) {
@@ -222,4 +275,37 @@ for (const [which, from, to, rule] of MUTANTS) {
 test('S-A wiring mutant -> ui-binds-checking: another file reading AuthService.checking is flagged', () => {
   const files = [...QML_FILES, ['qml/pages/Fake.qml', 'Item { visible: AuthService.checking }']];
   assert.ok(violations(AUTH, MAIN, files).includes('ui-binds-checking'));
+});
+
+test('S-A wiring mutant -> ui-moved-button-label: the page loses the Continue label (or the import)', () => {
+  for (const [from, to, rule] of [
+    ['qsTr("Continue")', 'qsTr("Try again")', 'ui-moved-button-label'],
+    ['root.reason === AccessState.STATE_MOVED ? ', 'false ? ', 'ui-moved-button-label'],
+    ['import "../helper/AccessState.js" as AccessState\n', '', 'ui-page-import'],
+  ]) {
+    assert.equal(PAGE.split(from).length - 1, 1, `anchor ${from}`);
+    const got = violations(AUTH, MAIN, QML_FILES, PAGE.replace(from, to));
+    assert.ok(got.includes(rule), `expected ${rule}, got [${got}]`);
+  }
+});
+
+test('S-A wiring mutant -> q3-callers-silent: a caller that refreshes itself (or stops asking) is flagged', () => {
+  const clean = (f) => QML_FILES.find((x) => x[0] === f)[1];
+  for (const f of ['qml/model/Gateway.qml', 'qml/model/LockManager.qml', 'qml/model/AnalysisService.qml', 'qml/model/PhotoQueue.qml']) {
+    const loud = QML_FILES.map(([n, s]) => (n === f ? [n, s + '\nQtObject { function x() { AuthService.refreshIdToken() } }'] : [n, s]));
+    assert.ok(violations(AUTH, MAIN, loud).includes('q3-callers-silent'), `${f} loud`);
+    const none = QML_FILES.map(([n, s]) => (n === f ? [n, s.split('AuthService.ensureFreshToken()').join('void 0')] : [n, s]));
+    assert.ok(violations(AUTH, MAIN, none).includes('q3-callers-silent'), `${f} no longer asks`);
+    assert.ok(clean(f).includes('ensureFreshToken'), `${f} real source asks`);
+  }
+});
+
+test('S-A wiring mutant -> q3-main-explicit-only: a second explicit refresh in Main.qml is flagged', () => {
+  const got = violations(AUTH, MAIN + '\n// x\nItem { Component.onCompleted: AuthService.refreshIdToken() }', QML_FILES);
+  assert.ok(got.includes('q3-main-explicit-only'), `got [${got}]`);
+});
+
+test('S-A wiring mutant -> main-popups-complete: a new popup that the workspace change does not close is flagged', () => {
+  const got = violations(AUTH, MAIN + '\nNewThingSheet { id: newThingSheet }\n', QML_FILES);
+  assert.ok(got.includes('main-popups-complete'), `got [${got}]`);
 });

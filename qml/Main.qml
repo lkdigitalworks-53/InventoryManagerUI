@@ -9,6 +9,7 @@ import "logic"
 import "pages"
 import "helper"
 import "components"
+import "helper/AccessState.js" as AccessState
 
 App {
     id: app
@@ -96,6 +97,33 @@ App {
             GoogleAuthService.handleRedirect(appLinkUrl)
     }
 
+    // Every dialog and sheet that can be open, in Back-press order. One list for Back and for the workspace
+    // change below, so a new dialog added here is covered by both.
+    function _allDialogs() {
+        return [signOutSheet, stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
+                newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
+                memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
+                manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
+                forgotPasswordDlg, confirmDlg, stockErrorDlg, actionBlockedDlg,
+                importDlg]
+    }
+
+    // The account now points at another workspace (AuthService.accessBlock = "moved", PR #180 Q2). Popups draw
+    // above the access screen, so a form opened for the old shop would stay usable behind the "moved" screen and
+    // could be saved after the app reloads into the new one. Closes every dialog, sheet and full-screen overlay,
+    // busy ones included (a write already sent is not cancelled by closing its form). Unsaved input is lost.
+    function _closeAllForWorkspaceChange() {
+        // confirmReturnSheet and staffActionSheet are not in the Back list (found while writing this: Back does not
+        // close them, KNOWN-ISSUES), but a return confirmed from an old-shop order must not run after the switch.
+        var dialogs = _allDialogs().concat([confirmReturnSheet, staffActionSheet])
+        for (var i = 0; i < dialogs.length; ++i) {
+            if (dialogs[i] && dialogs[i].opened) dialogs[i].close()
+        }
+        if (profilePage.visible)         profilePage.close()
+        if (staffPageOverlay.visible)    staffPageOverlay.close()
+        if (activityPageOverlay.visible) activityPageOverlay.close()
+    }
+
     function _handleBack() {
         // 1. Open modal sheet / dialog → close the first open one, unless
         // it's busy with an operation in flight — then swallow the back
@@ -106,12 +134,7 @@ App {
         // read as undefined here, which is falsy, so they close exactly as
         // before — this only changes behavior for dialogs that actually
         // have something to guard.
-        var dialogs = [signOutSheet, stuckWritesSheet, photoSourceSheet, addProductDlg, editProductDlg,
-                       newOrderDlg, orderDetail, restockDlg, addStaffDlg, inviteMemberDlg,
-                       memberMgmtDlg, staffDetailDlg, profileDlg, manageCategoriesDlg,
-                       manageChannelsDlg, notificationsSheet, filterSheet, exportSheet,
-                       forgotPasswordDlg, confirmDlg, stockErrorDlg, actionBlockedDlg,
-                       importDlg]
+        var dialogs = _allDialogs()
         for (var i = 0; i < dialogs.length; ++i) {
             if (dialogs[i] && dialogs[i].opened) {
                 if (!dialogs[i].busy) dialogs[i].close()
@@ -321,10 +344,16 @@ App {
             authErrorMessage = ""
         }
 
+        // A silent re-check found the account in another workspace (PR #180 Q2): close every form first, the
+        // access screen then asks for one tap before the stores switch.
+        function onAccessBlockChanged() {
+            if (AuthService.accessBlock === AccessState.STATE_MOVED) app._closeAllForWorkspaceChange()
+        }
+
         // A silent re-check found another role for the same workspace (L3-D5b). The tabs are not role-gated, so
         // the one screen a role can lose is the staff overlay: it closes when the new role may not see it.
         function onRoleChanged(role) {
-            Toast.show(qsTr("Your role is now %1").arg(role))
+            Toast.show(qsTr("Your role is now %1").arg(AccessState.roleLabel(role)))
             if (!AuthStore.canViewStaff) staffPageOverlay.close()
         }
 

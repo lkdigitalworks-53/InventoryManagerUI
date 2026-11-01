@@ -20,7 +20,7 @@ QtObject {
     property bool profileResolved: false
     property bool onboardingNeeded: false
     // "" while the signed-in user may use the app; otherwise why not: "removed" | "suspended" | "role" |
-    // "unverified" (AccessState). Main.qml shows AccessBlockedPage while this is non-empty (S2f-3).
+    // "unverified" | "moved" (AccessState). Main.qml shows AccessBlockedPage while this is non-empty (S2f-3).
     property string accessBlock: ""
     property string accessTenantName: ""
     // Bumped by every profile load and by sign-out: a late answer from an older load must not apply.
@@ -42,7 +42,7 @@ QtObject {
     signal signupSucceeded()
     signal onboardingRequired()
     signal tenantContextReady(string tenantId, string role)
-    // A silent re-check found another role for the same workspace (L3-D5b): Main.qml shows a toast.
+    // A silent re-check found another role for the same workspace (L3-D5b): Main.qml shows a toast (role label via AccessState.roleLabel).
     signal roleChanged(string role)
     signal tenantMembersLoaded()
     signal memberOperationSucceeded(string message)
@@ -277,8 +277,22 @@ QtObject {
         onboardingNeeded = false
         profileResolved = true
 
+        // Q2 (PR #180): the account now points at another workspace while the app is open. Switching the stores
+        // here would let a form opened for the old shop be saved after they hold the new one, so the app waits
+        // behind the "moved" screen (Main.qml also closes every form); its Continue button is a full load, which
+        // applies the new workspace and syncs once. The name shown is the NEW workspace's: no fallback to the old.
+        if (kind === "tenant") {
+            accessTenantName = tenantName || ""
+            accessBlock = AccessState.STATE_MOVED
+            return
+        }
+
         if (out.action === "block") {
-            accessTenantName = tenantName || AuthStore.tenantName
+            // The name shown is the workspace the answer was about. The old fallback to AuthStore.tenantName named
+            // the wrong shop when the refusal was for another workspace (a "moved" screen, then suspended there).
+            // A kept "moved" block (an unreadable Try again) leaves the name it already shows.
+            if (out.reason !== AccessState.STATE_MOVED)
+                accessTenantName = tenantName || (tenantId === AuthStore.tenantId ? AuthStore.tenantName : "")
             accessBlock = out.reason
             return
         }
@@ -534,7 +548,7 @@ QtObject {
         })
     }
 
-    // silent = true is a refresh nobody asked for (the resume hook): a failure is dropped instead of being reported
+    // silent = true is a refresh nobody asked for (the resume hook, ensureFreshToken): a failure is dropped instead of being reported
     // through authFailed, which would show a sign-in error inside whatever dialog is open (Add staff, Invite).
     function refreshIdToken(silent) {
         if (!AuthStore.refreshToken || AuthStore.refreshToken.length === 0) {
@@ -570,9 +584,13 @@ QtObject {
         return AuthStore.expiresAtEpochSec <= (_nowEpochSec() + 5 * 60)
     }
 
+    // Called by the 120 s timer, Gateway, PhotoQueue, LockManager and AnalysisService before they send. None of
+    // them reads a refresh failure, and authFailed would write a sign-in error into whatever dialog is open (Add
+    // staff, Invite, Forgot password), so the refresh is silent (PR #180 decision Q3). A failure shows up as the
+    // 401 on the request that needed the token, which each caller already handles.
     function ensureFreshToken() {
         if (!AuthStore.isAuthenticated) return
-        if (_tokenExpiring()) refreshIdToken()
+        if (_tokenExpiring()) refreshIdToken(true)
     }
 
     function createTenantForCurrentUser(tenantName) {

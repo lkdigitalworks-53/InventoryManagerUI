@@ -179,7 +179,8 @@ TestCase {
         compare(SR.changeKind("t1", "owner", true, "t1", _enter("owner"), undefined), "unblock")
         var reasons = ["removed", "suspended", "role", "unverified"]
         for (var i = 0; i < reasons.length; i++) {
-            compare(_ck("t1", "owner", false, "t1", _block(reasons[i]), false), "block")
+            // Q1 (PR #180): an unreadable answer with no block showing is ignored by a silent check
+            compare(_ck("t1", "owner", false, "t1", _block(reasons[i]), false), reasons[i] === "unverified" ? "none" : "block")
             compare(SR.changeKind("t1", "owner", true, "t1", _block(reasons[i]), undefined), "block")
         }
     }
@@ -201,9 +202,21 @@ TestCase {
         var reasons = ["removed", "suspended", "role", "unverified"]
         for (var i = 0; i < roles.length; i++)
             for (var r = 0; r < reasons.length; r++) {
-                compare(_ck("t1", roles[i], false, "t1", _block(reasons[r])), "block")
+                compare(_ck("t1", roles[i], false, "t1", _block(reasons[r])), reasons[r] === "unverified" ? "none" : "block")
                 compare(_ck("t1", roles[i], true, "t1", _block(reasons[r])), "block")
             }
+    }
+
+    function test_q1_unreadable_answer_for_another_workspace_is_ignored_unless_a_block_shows() {
+        var syncs = [true, false, undefined]
+        for (var i = 0; i < syncs.length; i++) {
+            compare(SR.changeKind("t1", "owner", false, "t2", _block("unverified"), syncs[i]), "none")
+            compare(SR.changeKind("t1", "owner", true, "t2", _block("unverified"), syncs[i]), "block")
+        }
+        var refusals = ["removed", "suspended", "role"]
+        for (var r = 0; r < refusals.length; r++)
+            compare(SR.changeKind("t1", "owner", false, "t2", _block(refusals[r]), true), "block")
+        compare(SR.changeKind("t1", "owner", true, "t1", _block("moved"), true), "block")
     }
 
     function test_a_malformed_answer_is_none_and_never_blocks() {
