@@ -23,6 +23,7 @@ PR #171's checkpoint NEXT: "L3 session lifecycle (refresh/resume re-check + dist
 - [x] 10. Taher answered in chat 2026-10-31: L3-D1 = (c) resync only when tenant or role changed, L3-D2 = (a) add resume, L3-D5 = (b) toast + jump to first allowed tab. Recorded in the design `Taher:` lines, the test plan header, the AGENTS pointer and this file. PR #175 raised from this branch (docs only).
 - [ ] 11. Still open: L3-D3, D4, D6 (not needed for slice A), D7 (read `Gateway` in slice C step 0). Taher may run device step B0 (baseline, confirms or refutes F2); if nothing flashes, slice A shrinks to the resume trigger and the plan is edited.
 
+- [x] 12. 2026-11-01 rebased on `main` @ 3c98409 (taher asked). Conflicts: test-plans README (kept both rows), SKILLS.md (main took 145-147, branch skill renumbered 145 -> 148), SKILLS-INDEX (regenerated, check passes), AGENTS.md (branch L3 line kept, Skill 148), CHECKPOINT (branch version). Docs only, nothing run.
 ## Decisions
 DECIDED (2026-10-31): L3-D1c silent check, resync only on tenant or role change or first resolve, L4 right after slice A (the hourly accidental refresh loss was stated and accepted). L3-D2a resume trigger, 60 s throttle, drop not queue, Try again bypasses. L3-D5b toast and jump to first allowed tab.
 OPEN: L3-D3 additive `reason` (rec b), L3-D4 silent `recheckAccess` on a refused request (rec b), L3-D6 leave stays roster-only (rec c, question: should on-leave ever block login, rec no), L3-D7 parked writes (question, read first). The refused-request trigger of D2(b) waits on D4.
