@@ -2,7 +2,7 @@
   "name": "businessmanagement-functions",
   "description": "Compliance gateway Cloud Functions for the BusinessManagement App_UI (P0).",
   "engines": {
-    "node": "20"
+    "node": "24"
   },
   "main": "index.js",
   "scripts": {

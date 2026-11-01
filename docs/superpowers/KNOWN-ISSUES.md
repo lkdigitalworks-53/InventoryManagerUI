@@ -808,3 +808,12 @@ When a counter doc is missing or damaged (first restock ever, and every January 
 ## A member can still set a counter to any value up to 999,999,999 — FOUND 2026-10-31, OPEN until the rules pin
 
 F9 closed the worst case (a value near 2^53 killed minting for the tenant). A member can still move a counter forward by hand, burning ids up to the ceiling; they cannot lock the tenant out any more because an out-of-range value is re-seeded. The real fix remains the `counters` rules pin at the end of the atomic arc (F7 above).
+
+## `firebase-functions` is pinned to a release candidate (`^7.3.2-rc.0`) — FOUND 2026-11-01, OPEN
+
+Seen while moving the runtime to Node 24; not changed in that PR. A pre-release in the deployed functions can change without a version bump of ours. Fix is its own PR: move to the current stable `firebase-functions` 7.x, run the full functions suite and the emulator e2e, then deploy.
+
+## More deploy IAM roles may still be missing — FOUND 2026-11-01, OPEN until a deploy succeeds
+
+Two real gaps were found by the first live deploy (App Engine default SA actAs, `roles/firebase.viewer`). The steps after the upload (function source bucket, Cloud Build SA, Artifact Registry policy) have not run yet. Grant only the role each error names; record it in the design doc.
+

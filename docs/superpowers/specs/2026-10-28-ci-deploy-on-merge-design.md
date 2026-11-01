@@ -72,6 +72,12 @@ echo "provider: projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/
 ```
 The role list is my best reading of what a Functions v2 + scheduler + rules + indexes deploy needs; **not verified against a live deploy**. If the first deploy fails with a permission error, add the role it names (on the runtime SA if it is an "act as" error, not project-wide). The blunt fallback is `roles/firebase.admin` (broader).
 
+**First live deploy, 2026-11-01 (what the logs proved).** The role list above was incomplete, and each gap showed as one error per run:
+1. `iam.serviceAccounts.ActAs` on `<project>@appspot.gserviceaccount.com` (the App Engine default SA, which the CLI checks), not only the compute SA. Fix, on that SA only: `gcloud iam service-accounts add-iam-policy-binding <project>@appspot.gserviceaccount.com --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser`.
+2. `firebase.projects.get` (`adminSdkConfig` 403). Fix: `roles/firebase.viewer` at project level.
+3. Not IAM: "Runtime Node.js 20 was decommissioned on 2026-10-30". Runtime moved to Node 24 (`firebase.json`, `functions/package.json`, `checks.yml`), guarded by `runtimeVersion.test.js`.
+Still unverified until a deploy gets past the upload step: storage access for the function source bucket, actAs on the Cloud Build SA, the Artifact Registry cleanup policy. Whether the compute-SA grant is still needed is unknown; keep it until a deploy succeeds, then remove what was not used.
+
 **Step 4 — GitHub variables:** Environment `firebase-deploy` -> variables: `GCP_WORKLOAD_IDENTITY_PROVIDER` = the `provider:` line printed above; `GCP_DEPLOY_SERVICE_ACCOUNT` = the `sa:` line.
 
 **Step 5 (optional):** if `main` is already deployed, skip the first deploy by seeding the tag: `git tag deployed-main <deployed-sha> && git push origin deployed-main`. Without it the first merge after this PR deploys everything (after your approval).

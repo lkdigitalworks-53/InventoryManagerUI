@@ -56,7 +56,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: functions/package-lock.json
 
@@ -94,7 +94,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -143,7 +143,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -206,7 +206,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       # continue-on-error: a job that crashed before its own upload step ran (e.g. npm ci
       # failure, Qt install failure) won't have produced an artifact at all. That's a real,
@@ -255,7 +255,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       # Compare against the LAST DEPLOYED commit (tag `deployed-main`), not against this push: a pending
       # approval can be superseded by a newer run, and a push-only diff would then lose its changes.
@@ -310,7 +310,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: functions/package-lock.json
 
