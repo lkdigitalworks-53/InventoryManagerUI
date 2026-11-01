@@ -147,8 +147,8 @@ TestCase {
     }
 
     function test_B6_long_reason_is_cut_for_the_ledger_row_only() {
-        var long = new Array(601).join("r")
-        var p = RP.build(_input({ reason: long }))
+        var text = new Array(601).join("r")
+        var p = RP.build(_input({ reason: text }))
         verify(p.ok)
         compare(p.ops[4].movements[0].reason.length, 500)
         compare(p.ops[3].after.note.length, 600)
