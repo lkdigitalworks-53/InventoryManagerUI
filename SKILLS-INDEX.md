@@ -154,3 +154,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 144: Every raw XHR wrapper needs three things: the status snapshot, a timeout, and an answer-once guard; a new timeout must not change what "no answer" does to existing state
 - 145: Mint ids inside the transaction: validate the template, resolve inside, re-validate the result; a boundary test needs the state that makes the boundary reachable
 - 146: A shared read-set is not a write-set; a rejected-never-writes counter needs a heal path; a test that mints must clean up in its own finally
+- 147: A runtime pin lives in three files and the cloud can retire it under you; a permissions list written without a live run needs a live run before it is trusted

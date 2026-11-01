@@ -4676,3 +4676,12 @@ Review sweep of the R2 mint op (2026-10-29). Each point was reproduced against t
 5. `out[k] = v` on an object built from JSON keys turns a `__proto__` key into the prototype. Copy with `Object.defineProperty` wherever user keys are copied, so a feature flag (here: the mint op) does not change what is stored.
 6. A shared-tenant e2e test that mints an id and restores the counter must also delete the doc it minted, in the same `finally`. Deleting at the end of the file leaves an occupied id exactly where the next test's counter points, and the server is right to skip it. The failure looks like a server bug and is a test bug.
 7. Do not write predicted CI counts from memory of another job: `106` was the Rules count, E2E was 96. Read the PR comment, then write the number.
+
+## Skill 147: A runtime pin lives in three files and the cloud can retire it under you; a permissions list written without a live run needs a live run before it is trusted
+
+1. Node for the functions is named in `firebase.json` (what Google runs), `functions/package.json` engines.node and every `node-version` in `checks.yml`. Change them together and keep a test that fails when they differ or fall at or below the last decommissioned major (`runtimeVersion.test.js`). Node 20 was decommissioned 2026-10-30 and the deploy refused to start.
+2. Before choosing a runtime read the pinned CLI, not a blog: `npm pack firebase-tools@<pinned>` and read `lib/deploy/functions/runtimes/supported/types.js` (status GA or beta, deprecation and decommission dates). A sandbox can run a newer Node for real with `npm i node@<major>`: it gave 937/937 on Node 24 before any file changed.
+3. An IAM role list written without a live deploy is a guess. The first deploy found the gaps one per run: actAs on the App Engine default SA (the CLI checks that one, not only the compute SA), then `roles/firebase.viewer` for the Admin SDK config read. Grant `serviceAccountUser` on the single SA the error names, never project-wide.
+4. GitHub hides job logs from signed-out readers (the web page shows only the failed step name), so ask for the error lines instead of guessing which of five permissions failed.
+5. The error moves forward as each gap is closed: a new error text after a fix means the fix worked, not that it failed. Record each confirmed role in the design doc and leave the unconfirmed ones marked unverified.
+
