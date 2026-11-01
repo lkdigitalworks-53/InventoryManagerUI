@@ -1,7 +1,7 @@
 # Test plan: R3, the client planner for the atomic restock operation (dormant)
 
 Branch `feat/2026-11-01-r3-restock-plan`. Design: `specs/2026-11-01-r3-restock-plan-design.md` (T1-T10). Standard format (Skill 49).
-Honesty note: this slice changes no behaviour a person can see. Nothing calls `RestockPlan.build` or `InventoryStore.applyRestockResults` yet (test P-1 pins that). Every Node test below was RUN in the sandbox (functions suite 979/979 after `npm ci`). The QML tests were written but NOT run here (no Qt toolchain in the sandbox); CI's `qmltestrunner` is their only oracle. CI observed counts: see the line "CI OBSERVED" at the end of section 1, filled in after the first push.
+Honesty note: this slice changes no behaviour a person can see. Nothing calls `RestockPlan.build` or `InventoryStore.applyRestockResults` yet (test P-1 pins that). Every Node test below was RUN in the sandbox (functions suite 979/979 after `npm ci`). The QML tests were written but NOT run here (no Qt toolchain in the sandbox); CI's `qmltestrunner` is their only oracle. CI observed counts: see the line "CI OBSERVED" at the end of section 1.
 
 ## 1. Unit tests
 
@@ -17,7 +17,7 @@ Honesty note: this slice changes no behaviour a person can see. Nothing calls `R
 
 Mutation checks (by hand, in the sandbox, scripts not committed): planner and keys 21 of 23 mutants killed alone (the 2 survivors are the redundant pair `qty <= 0` / `SM.validate`, killed together); client surface 16 of 18 first, the two survivors (exact conflict text, zero quantity label) got stronger tests, then 18 of 18.
 
-CI OBSERVED: (filled in after the first push, see CHECKPOINT.md step 7).
+CI OBSERVED: first push (3e8fbac) QML red on ONE compile error in `tst_RestockPlan.qml` (`var long`, a reserved word; the other 2561 passed); fixed in 7081f82, which is ALL GREEN: QML 2634/2634, Functions, Rules and E2E green. This is the failure a Node run cannot see (the QML engine rejects words the Node twin accepts), which is why the QML copies exist.
 
 ## 2. Functional / rules / e2e
 - Functional: the "plan through the real server code" tests (S-1..S-7) are the functional layer; they exercise the real transaction logic, counters and the strict fake DB.
