@@ -298,6 +298,20 @@ QtObject {
         })
     }
 
+    // Adds a supplier doc the server already created (a restock's new supplier, atomic-ops R3) to local
+    // state WITHOUT sending anything. A no-op when the id is already present, so the replay of an
+    // operation cannot duplicate it. Keeps the list sorted by name like addSupplier. Returns true if added.
+    function addLocalSupplier(doc) {
+        if (!doc || !doc.supplierId) return false
+        for (var i = 0; i < suppliers.length; ++i)
+            if (suppliers[i].supplierId === doc.supplierId) return false
+        var arr = suppliers.slice()
+        arr.push(doc)
+        arr.sort(function(a, b) { return (a.name || "").localeCompare(b.name || "") })
+        suppliers = arr
+        return true
+    }
+
     // Patch an existing supplier — only the keys present in `fields` are
     // touched, so callers can update name without clobbering contact info.
     function updateSupplier(supplierId, fields) {

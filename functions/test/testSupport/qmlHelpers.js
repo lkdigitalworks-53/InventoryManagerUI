@@ -26,4 +26,17 @@ function load(file) {
 
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
-module.exports = { load, plain, HELPER_DIR };
+// Source text of `function <name>(...) { ... }` from a QML file under qml/, by brace matching from the
+// first "{" after the signature (fine for bodies with no brace inside a string or comment; the caller
+// asserts what it needs from the result). Lets a test run the REAL body of a QML function in a sandbox.
+function extractFunction(relPath, name) {
+    const src = fs.readFileSync(path.join(HELPER_DIR, "..", relPath), "utf8");
+    const at = src.indexOf("function " + name + "(");
+    if (at < 0) throw new Error("function " + name + " not found in " + relPath);
+    const open = src.indexOf("{", src.indexOf(")", at));
+    let depth = 0, i = open;
+    for (; i < src.length; i++) { if (src[i] === "{") depth++; else if (src[i] === "}" && --depth === 0) break; }
+    return src.substring(at, i + 1);
+}
+
+module.exports = { load, plain, extractFunction, HELPER_DIR };

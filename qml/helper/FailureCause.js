@@ -19,6 +19,20 @@ function _safeCode(code) {
     return (typeof code === "string" && /^[a-z0-9_-]{1,40}$/i.test(code)) ? code : ""
 }
 
+// Codes that mean the app built a request the server's rules can never accept (never the user's doing,
+// and retrying the same request cannot help). Includes the `mint` / placeholder codes of atomic-ops R2.
+var _BUG_CODES = {
+    "missing-fields": true, "unsupported-op-type": true, "invalid-request-id": true, "empty-operation": true,
+    "unsupported-kind": true, "invalid-entity-id": true, "cascade-delete-not-allowed": true,
+    "too-many-mints": true, "unknown-counter": true, "invalid-bind-name": true, "duplicate-bind-name": true,
+    "unused-mint": true, "unbound-placeholder": true, "placeholder-not-allowed": true,
+    "placeholder-entity-mismatch": true, "movement-qty-mismatch": true
+}
+function _isBugCode(code) { return Object.prototype.hasOwnProperty.call(_BUG_CODES, code) }
+function _bug(code) {
+    return { kind: "bug", text: "The server cannot accept this request. This is an app problem, please report it (" + code + ")" }
+}
+
 // An operation rejection body ({ error, opIndex, current, conflict }) as the
 // server's recordOperation answers it. `name` = the product / record name the
 // rejected op touches ("" when unknown).
@@ -36,17 +50,31 @@ function forRejection(rejection, name) {
         return { kind: "limit", text: "This order has too many items to complete in one step. Move some lines, or part of a line's quantity, to a second order, then complete both" }
     case "request-id-in-use":
         return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
-    case "missing-fields":
-    case "unsupported-op-type":
-    case "invalid-request-id":
-    case "empty-operation":
-    case "unsupported-kind":
-    case "invalid-entity-id":
-    case "cascade-delete-not-allowed":
-        return { kind: "bug", text: "The server cannot accept this request. This is an app problem, please report it (" + code + ")" }
     }
+    if (_isBugCode(code)) return _bug(code)
     var safe = _safeCode(code)
     return { kind: "unknown", text: safe ? GENERIC_REJECT + " (" + safe + ")" : GENERIC_REJECT }
+}
+
+// Same as forRejection, for a rejected RESTOCK operation (atomic-ops R3). A rejection writes nothing, so every
+// text here may say "nothing was added". `name` = the product name ("" when unknown).
+function forRestock(rejection, name) {
+    var code = (rejection && typeof rejection === "object") ? _str(rejection.error) : ""
+    var who = _str(name)
+    switch (code) {
+    case "not-found":
+        return { kind: "missing", text: (who ? who + ": " : "") + "this product is no longer on the server (probably deleted on another device). Nothing was added" }
+    case "conflict":
+        return { kind: "conflict", text: "Another device changed this at the same time. Nothing was added. Try again" }
+    case "mint-exhausted":
+        return { kind: "limit", text: "The server could not reserve a new batch number. Nothing was added. Try again in a moment; if it keeps failing, please report it (mint-exhausted)" }
+    case "request-id-in-use":
+        return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
+    case "insufficient-quantity":
+    case "operation-too-large":
+        return _bug(code)
+    }
+    return forRejection(rejection, name)
 }
 
 // The one wording for "the server refused your membership" (HTTP 403 `no-tenant-context`), shared by a
