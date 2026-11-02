@@ -308,16 +308,14 @@ Item {
                 dispatcher.errorOccurred("auth", "Only owner/admin can restock products")
                 return
             }
-            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, supplierFailed, refusal) {
+            InventoryStore.restock(productId, amount, undefined, undefined, undefined, function(ok, queued, refusal) {
                 if (!ok) {
                     if (refusal) dispatcher.errorOccurred("inventory", refusal)
                     else dispatcher.errorOccurred("network", "Could not restock — try again")
                     return
                 }
-                dispatcher.productRestocked(productId)
-                if (supplierFailed) {
-                    dispatcher.errorOccurred("network", "Restocked, but the supplier could not be recorded — edit it manually if needed")
-                }
+                // Queued: not applied yet, so no "restocked" signal; onOperationApplied settles it later.
+                if (!queued) dispatcher.productRestocked(productId)
             })
         }
 
@@ -629,10 +627,17 @@ Item {
         function onOperationApplied(requestId, opType, results, replay) {
             var open = dataModel._openCompletions[requestId]
             if (opType === "completeOrder" && open && open.undo) dataModel._settleApplied(requestId, results)
+            // R4: a restock confirmed after its caller left (queued offline, slow, relaunch, replay).
+            else if (opType === "restock") InventoryStore.onRestockApplied(requestId, results, replay)
         }
         function onOperationRejected(requestId, opType, rejection) {
             var open = dataModel._openCompletions[requestId]
             if (opType === "completeOrder" && open && open.undo) dataModel._onCompletionRejected(requestId, rejection)
+            else if (opType === "restock") {
+                var failure = InventoryStore.onRestockRejected(requestId, rejection)
+                if (failure.length > 0 && dispatcher && typeof dispatcher.errorOccurred === "function")
+                    dispatcher.errorOccurred("inventory", failure)
+            }
         }
         // A write got parked, or Retry/Discard/prune un-parked one: the caption must follow.
         function onStuckTerminalCountChanged() { dataModel._refreshSyncing() }
@@ -805,6 +810,7 @@ Item {
         // both apply (it needs the user's action; a plain unsynced edit just needs to finish).
         var parkedNames = []
         var unsyncedNames = []
+        var restockNames = []
         var parkedSeen = {}
         var checkLines = o.products || []
         for (var pi = 0; pi < checkLines.length; ++pi) {
@@ -816,12 +822,18 @@ Item {
             } else if (InventoryStore.hasUnsyncedEdit(parkedInv.productId)) {
                 parkedSeen[parkedInv.productId] = true
                 unsyncedNames.push(checkLines[pi].name)
+            } else if (InventoryStore.hasQueuedRestock(parkedInv.productId)) {
+                // R4 (Q-A2): a queued restock has no local batch yet, so the stock figure on this device
+                // is not what the server will hold. Same family as the unsynced-edit refusal.
+                parkedSeen[parkedInv.productId] = true
+                restockNames.push(checkLines[pi].name)
             }
         }
-        if (parkedNames.length > 0 || unsyncedNames.length > 0) {
+        if (parkedNames.length > 0 || unsyncedNames.length > 0 || restockNames.length > 0) {
             var msgs = []
             if (parkedNames.length > 0) msgs.push(parkedNames.join(", ") + ": " + InventoryStore.parkedWriteMessage)
             if (unsyncedNames.length > 0) msgs.push(unsyncedNames.join(", ") + ": " + InventoryStore.unsyncedEditMessage)
+            if (restockNames.length > 0) msgs.push(restockNames.join(", ") + ": " + InventoryStore.restockPendingSaleMessage)
             dataModel.stockErrorMsg = msgs.join("; ")
             if (callback) callback(false)
             return

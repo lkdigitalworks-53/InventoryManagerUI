@@ -189,18 +189,23 @@ test("H-5 applyRestockResults: an answer that is not exactly one restock applies
 
 const qml = (f) => fs.readFileSync(path.join(__dirname, "..", "..", "qml", f), "utf8");
 
-test("P-1 InventoryStore imports RestockPlan and exposes applyRestockResults; nothing calls it yet (dormant)", () => {
+test("P-1 R4 wiring: restock is the ONLY caller of the planner and goes through one operation, no legacy writes", () => {
     assert.match(qml("model/InventoryStore.qml"), /import "\.\.\/helper\/RestockPlan\.js" as RestockPlan/);
     const callers = [];
     const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((e) => {
         const p = path.join(dir, e.name);
         if (e.isDirectory()) walk(p);
-        else if (/\.(qml|js)$/.test(e.name) && /applyRestockResults|RestockPlan\.build/.test(fs.readFileSync(p, "utf8"))) callers.push(path.relative(path.join(__dirname, "..", ".."), p));
+        else if (/\.(qml|js)$/.test(e.name) && /RestockPlan\.build\(/.test(fs.readFileSync(p, "utf8"))) callers.push(path.relative(path.join(__dirname, "..", ".."), p));
     });
     walk(path.join(__dirname, "..", "..", "qml"));
-    assert.deepEqual(callers, ["qml/model/InventoryStore.qml"],
-        "R3 is dormant: only the definition mentions these (R4 changes this expectation on purpose)");
+    assert.deepEqual(callers, ["qml/model/InventoryStore.qml"]);
+    const body = extractFunction("model/InventoryStore.qml", "restock");
+    assert.match(body, /RestockPlan\.build\(/);
+    assert.match(body, /Gateway\.recordOperation\("restock"/);
+    for (const legacy of [/Gateway\.recordDelta/, /StockBatchStore\.addBatch\(/, /_resolveSupplierId\(/, /TransactionStore\.recordPurchase\(/, /SupplierStore\.addSupplier\(/])
+        assert.doesNotMatch(body, legacy, "the two-write path is gone: " + legacy);
 });
+
 
 test("P-2 RestockPlan and OperationKeys stay QML pragma-library files (no QML/singleton imports)", () => {
     for (const f of ["helper/RestockPlan.js", "helper/OperationKeys.js"]) {

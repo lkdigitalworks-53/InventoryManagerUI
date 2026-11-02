@@ -95,12 +95,13 @@ BottomSheet {
         var unitCost = parseFloat(unitCostField.text)
         if (isNaN(unitCost) || unitCost < 0) unitCost = 0
         busy = true
-        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim(), function(ok, supplierFailed, refusal) {
+        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim(), function(ok, queued, refusal) {
             busy = false
             if (!ok) { Toast.show(refusal || "Could not restock — try again"); return }
             restockConfirmed(productId, qtyField.value)
-            Toast.show(supplierFailed
-                ? "Restocked +" + qtyField.value + " units, but supplier could not be recorded"
+            // Queued = saved, but stock changes only once the server confirms (offline or slow link).
+            Toast.show(queued
+                ? "Restock saved. Stock updates when it syncs"
                 : "Restocked +" + qtyField.value + " units")
             dlg.close()
         })

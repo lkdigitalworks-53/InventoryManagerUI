@@ -397,6 +397,20 @@ QtObject {
         return false
     }
 
+    // R4: is an operation item of `opType` still queued (waiting, in flight or parked) that touches this
+    // entity+entityId? Derived from the durable outbox on purpose: it survives a relaunch and needs no
+    // second copy of "what is in flight" that could drift. InventoryStore uses it as the restock latch
+    // and for the picker/sale hide (design R4-D1, R4-D4).
+    function hasQueuedOperationFor(opType, entity, entityId) {
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (it.opType !== opType || !it.ops) continue
+            for (var j = 0; j < it.ops.length; ++j)
+                if (it.ops[j].entity === entity && it.ops[j].entityId === entityId) return true
+        }
+        return false
+    }
+
     // Soonest nextAttemptAt across all items, or -1 if empty. Gateway uses
     // this to schedule its drain timer without busy-polling.
     function nextDueInMs() {

@@ -9,6 +9,8 @@ import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
 import "../helper/PhotoQueueLogic.js" as PQL
 import "../helper/StockMovements.js" as StockMovements
 import "../helper/RestockPlan.js" as RestockPlan
+import "../helper/RestockFlow.js" as RestockFlow
+import "../helper/FailureCause.js" as FailureCause
 
 QtObject {
     id: root
@@ -1264,7 +1266,7 @@ QtObject {
 
     // Shown when a restock quantity is not a positive number (callback's 3rd argument, so the
     // dialog and the dispatcher show it instead of "try again": retrying cannot help).
-    readonly property string restockQtyRefusal: "Quantity must be greater than zero"
+    readonly property string restockQtyRefusal: RestockFlow.refusalText("bad-quantity")
 
     // P1 S2d: the ledger LABEL may degrade, the stock change may not. Builds the one-row
     // `movements` for a stock delta of `signedQty`, or undefined (the server then derives an
@@ -1283,94 +1285,100 @@ QtObject {
         return movements
     }
 
-    // `party` may be a supplierId, an existing supplier name, or a brand-new
-    // name we'll auto-promote. `unitCost` is cost-per-unit at receipt time
-    // and defaults to the product's cost field (`changed.price`) when the
-    // caller didn't capture it (e.g. legacy restock paths).
+    // atomic-ops R4 (design 2026-11-02-r4-restock-wire-design.md). A queued restock is not a second copy of
+    // state: the durable outbox item IS the latch. The product stays out of the order picker and out of sales
+    // until it applies or is discarded (Q-A2), and a second restock of it is refused meanwhile (R4-D1).
+    readonly property string restockPendingMessage: "A restock for this product is still syncing. Wait for it to finish first"
+    readonly property string restockPendingSaleMessage: "A restock for this product is still syncing. Sell it after it syncs"
+    readonly property string restockDiscardedMessage: "This restock was discarded, so nothing was added"
+    function hasQueuedRestock(productId) { return OutboxStore.hasQueuedOperationFor("restock", "inventory", productId) }
+
+    // key -> true while a live callback has already settled the operation, so the Gateway signal that
+    // always follows (see onRestockApplied/onRestockRejected) does not repeat the effects. key -> name is
+    // this launch only: after a relaunch a rejection text simply has no product name.
+    property var _restockSettled: ({})
+    property var _restockNames: ({})
+
+    // One tap = one atomic operation (supplier + batch + stock + purchase in ONE server transaction, the
+    // server mints the ids). `party` may be "", a supplierId, an existing supplier name or a brand-new name
+    // (RestockFlow.supplierFor decides). `unitCost` that is not a number defaults to the product's cost.
+    // callback(ok, queued, refusal), exactly once:
+    //   (true,  false)           the server applied it; stock, batch, purchase and Activity are updated
+    //   (true,  true)            saved but not answered yet (offline or slow); nothing changes locally until
+    //                            the server confirms, the product is held back from sales meanwhile
+    //   (false, false, message)  nothing was saved; `message` is the cause, show it instead of "try again"
     function restock(productId, amount, party, unitCost, reason, callback) {
-        var arr = _clone();
-        var current = null;
-        var addedQty = amount || 10;
-        for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].productId === productId) { current = arr[i]; break; }
-        }
-        if (!current) { if (callback) callback(false); return }
-        // P1 S2d: the receipt row needs a positive finite qty. Refuse BEFORE the supplier
-        // auto-promote and the batch write: the batch is fired in parallel with the delta
-        // below, so a delta refused later would leave a batch without its stock.
-        if (typeof addedQty !== "number" || !isFinite(addedQty) || addedQty <= 0) {
-            console.warn("[InventoryStore] restock: bad quantity", amount)
-            if (callback) callback(false, false, restockQtyRefusal)
+        function finish(ok, queued, refusal) { if (callback) callback(ok, queued, refusal) }
+        var current = getById(productId)
+        if (!current) { finish(false, false); return }
+        // Pure checks first: a refusal queues nothing and burns no key.
+        var made = RestockFlow.makeInput({
+            key: RestockFlow.newKey(Date.now(), Math.random), product: current, qty: amount, unitCost: unitCost,
+            reason: reason, party: party, suppliers: SupplierStore.suppliers, now: new Date() })
+        var plan = made.ok ? RestockPlan.build(made.input) : made
+        if (!plan.ok) {
+            console.warn("[InventoryStore] restock refused:", plan.reason, amount)
+            finish(false, false, RestockFlow.refusalText(plan.reason))
             return
         }
-        // D2: refuse before the supplier auto-promote and the batch write, so nothing drifts.
-        // callback(false, false, message): callers show `message` instead of "try again".
-        if (hasParkedWrite(productId)) { if (callback) callback(false, false, parkedWriteMessage); return }
+        // D2: a parked write for this product would hold `inventory/<id>` and the restock could never be
+        // sent. R4-D1: nor can a second restock start while one is still queued or in flight.
+        if (hasParkedWrite(productId)) { finish(false, false, parkedWriteMessage); return }
+        if (hasQueuedRestock(productId)) { finish(false, false, restockPendingMessage); return }
 
-        _resolveSupplierId(party, function(supplierId, supplierFailed) {
-            var supplierName = supplierId ? SupplierStore.nameOf(supplierId) : "";
-            var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (current.price || 0);
-            var reasonText = (reason || "").trim();
-
-            // 2026-09-14, on-device (Taher): fires immediately here, in
-            // PARALLEL with the stock delta below -- not nested inside its
-            // callback the way it used to be. Nothing here depends on the
-            // delta's result (productId/supplierId/addedQty/batchCost/
-            // reasonText are all already known); the old nesting was
-            // incidental, not a real dependency. It mattered because the
-            // delta can be slow or, with no timeout anywhere in
-            // FirebaseService's request path (separate, already-flagged gap
-            // — see the roadmap), can hang outright: nesting the batch
-            // inside that callback meant a hung delta silently blocked the
-            // batch from ever being attempted at all, which meant item 1's
-            // whole retry-on-reconnect mechanism never got a chance to
-            // engage in the first place. A FIFO batch also doesn't need the
-            // stock counter to have landed to be correct — it's the ledger's
-            // own ground truth (see this file's header comment on why a
-            // pooled stock count is a derived value, not the source of
-            // truth), unlike ActivityLog/TransactionStore below, which stay
-            // gated on delta confirmation deliberately (C4) since THEY
-            // should not record something that might not have landed.
-            StockBatchStore.addBatch(productId, supplierId, addedQty, batchCost, reasonText);
-
-            // Atomic server-side delta (Component 4) instead of the old
-            // optimistic-local-then-whole-record-CAS-mutation pattern —
-            // same fix and reasoning as deductStock above. review finding
-            // C4 (2026-08-06): restock() was the one Component-4 caller
-            // the design doc called for that was never actually converted
-            // — two staff restocking the same product close together used
-            // to compute the new stock value from a stale local snapshot,
-            // which (combined with the now-fixed C3/C1 gaps) could get
-            // silently stuck retrying forever on the resulting conflict.
-            // Local products[] is now updated only once the server confirms
-            // (result.after.stock), not optimistically — so the ActivityLog/
-            // TransactionStore side effects below also wait for that
-            // confirmation, rather than firing for a write that might not
-            // have actually landed. (StockBatchStore.addBatch used to be
-            // gated here too — moved above, see that comment.)
-            Gateway.recordDelta("inventory", productId, { stock: addedQty }, {}, {}, function(result) {
-                if (!result || !result.ok || !result.after || result.after.stock === undefined) {
-                    console.warn("[InventoryStore] restock: recordDelta failed for", productId, result && result.error)
-                    if (callback) callback(false, supplierFailed)
-                    return
-                }
-                var arr2 = _clone();
-                for (var j = 0; j < arr2.length; ++j) {
-                    if (arr2[j].productId === productId) { arr2[j].stock = result.after.stock; break }
-                }
-                products = arr2;
-
-                ActivityLog.record("product_restocked",
-                                   "Restocked: " + current.name,
-                                   "+" + addedQty + " · now " + result.after.stock + " in stock"
-                                       + (supplierName ? " · from " + supplierName : "")
-                                       + (reasonText ? " · " + reasonText : ""),
-                                   productId);
-                TransactionStore.recordPurchase(productId, addedQty, batchCost, current.name, supplierId, reasonText, current.category);
-
-                if (callback) callback(true, supplierFailed)
-            }, [StockMovements.make("receipt", addedQty, reasonText)])   // P1 S2d: typed ledger row
+        _restockNames[plan.key] = current.name
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        Gateway.recordOperation("restock", plan.ops, plan.key, { awaitServer: online }, function(res) {
+            var kind = RestockFlow.classify(res)
+            if (kind === "queued") { finish(true, true); return }
+            _restockSettled[plan.key] = true
+            if (kind === "applied") {
+                _applyRestock(plan.key, res.results, res.idempotentReplay === true)
+                finish(true, false)
+                return
+            }
+            finish(false, false, _restockFailureText(plan.key, res))
         })
+    }
+
+    function _restockFailureText(key, rejection) {
+        var name = _restockNames[key] || ""
+        delete _restockNames[key]
+        if (rejection && rejection.discarded === true) return restockDiscardedMessage
+        return FailureCause.forRestock(rejection, name).text
+    }
+
+    // The ONE place a confirmed restock reaches the local stores, whether the answer arrived to a waiting
+    // caller or later through Gateway.operationApplied (queued offline, await window over, or after a
+    // relaunch). A replayed answer carries the stock as of the FIRST application (review O3), so it leaves
+    // stock alone and re-reads the inventory and the batches. An answer that cannot be read as exactly one
+    // restock changes nothing locally and re-reads everything the operation could have touched.
+    function _applyRestock(key, results, replay) {
+        delete _restockNames[key]
+        var out = applyRestockResults(results, { replay: replay })
+        if (out.ok) {
+            var text = RestockFlow.activityText(out, out.supplierId ? SupplierStore.nameOf(out.supplierId) : "")
+            ActivityLog.record("product_restocked", text.title, text.subtitle, out.productId)
+        }
+        if (out.ok && !replay) return
+        syncFromFirebase()
+        StockBatchStore.syncFromFirebase()
+        if (!out.ok) { SupplierStore.syncFromFirebase(); TransactionStore.syncFromFirebase() }
+    }
+
+    // DataModel routes Gateway.operationApplied / operationRejected for opType "restock" here. Both are
+    // no-ops when the live callback already settled the same key.
+    function onRestockApplied(requestId, results, replay) {
+        if (_restockSettled[requestId]) { delete _restockSettled[requestId]; return }
+        _applyRestock(requestId, results, replay === true)
+    }
+
+    // -> the message to announce, or "" (settled live already, or the person discarded it on purpose).
+    // Nothing exists server-side after a rejection and nothing was applied locally, so there is nothing to undo.
+    function onRestockRejected(requestId, rejection) {
+        if (_restockSettled[requestId]) { delete _restockSettled[requestId]; return "" }
+        var text = _restockFailureText(requestId, rejection)
+        return (rejection && rejection.discarded === true) ? "" : "A queued restock was not saved. " + text
     }
 
     function stockStatus(p) {
@@ -1487,7 +1495,7 @@ QtObject {
         return undefined;
     }
 
-    // atomic-ops R3 (dormant until R4 calls it): reflects a server-confirmed restock, a live answer or a stored
+    // atomic-ops R3/R4: reflects a server-confirmed restock, a live answer or a stored
     // replay, into the local stores WITHOUT sending anything. Returns RestockPlan.reflect's outcome; when the
     // answer is not exactly one restock ({ ok: false }) NOTHING is applied. Idempotent: the supplier, batch and
     // purchase are skipped when already present. `opts.replay === true` leaves product.stock alone: a replayed
