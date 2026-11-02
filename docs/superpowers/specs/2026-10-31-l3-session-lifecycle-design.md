@@ -1,4 +1,4 @@
-# L3 session lifecycle — DESIGN (decisions OPEN, nothing built)
+# L3 session lifecycle — DESIGN (slice A BUILT 2026-10-31, CI unverified; B and C decisions still OPEN)
 
 **Status:** 2026-10-31. Brainstorming path: **architectural** (a new client re-check flow, a server error contract, a new trigger). No code in this PR; every `L3-Dn` below has options, trade-offs, a recommendation and an empty `Taher:` line. **Decided so far: L3-D1c, L3-D2a, L3-D5b (2026-10-31). Still open: L3-D3, D4, D6 (slices B, C, and a docs pin), D7 (a question, read first).** Slice A is unblocked; a decision with an empty `Taher:` line is not approved.
 **Why now:** PR #171's checkpoint named L3 next. Source: `2026-10-25-multi-role-login-design.md` section 3 D6/D7 and section 4 L3, a DRAFT whose D6/D7 were never answered. Reading the code to design it overturned two of that draft's premises (section 3), so this spec supersedes the L3 bullet there.
@@ -75,3 +75,18 @@ R1 removing the accidental hourly freshness (L3-D1). R2 resume storm (throttle, 
 
 ## 7. Test strategy (details in the test plan)
 Pure helper unit tests plus hand mutants in a Node shim; behaviour tests that run the REAL `AuthService` function text against fakes (the `accessBlockBehavior.test.js` pattern); wiring pins on `Main.qml` (cover condition, resume hook, throttle constants); QML tests in CI; server handler tests across all ten endpoints and three reasons; emulator e2e for the reasons; no rules change (existing 108 stay as regression); seeded monkey over the trigger sequence against a reference model; on-device steps with a baseline step (B0) that confirms F2 before any fix.
+
+## 8. Slice A as built (2026-10-31, branch `feat/2026-10-31-l3a-silent-recheck`)
+What shipped: `qml/helper/SessionRecheck.js` (pure throttle and change decision), `AuthService` silent path (`checking` flag, `requestRecheck` is the one door, `onAppResumed`, `roleChanged` signal), the resume hook and role toast in `Main.qml`. Behaviour follows L3-D1c (silent; resync only on first resolve, tenant change, role change or unblock), D2a (resume trigger; one in flight, 60 s apart, dropped not queued, Try again bypasses and counts as the latest check) and D5b (toast).
+Found while building, all read from code, none seen on a device:
+- **F7** `onIsOnlineChanged` is a third source of the flash; it now goes through the same silent decision.
+- **F8** `AuthStore` restores tenant and role from the saved session at cold start, so a silent check at first resolve would see "nothing changed" and skip the store sync. Two guards: only an already open session (`_sessionOpen`) is re-checked silently, every other entry is a full load that always emits; and `_contextSynced` (false until this sign-in has emitted `tenantContextReady`, cleared by sign-out) makes the first silent answer count as a change (kind `first`, no role toast). The second guard is needed because at cold start `init()` resolves offline (`isOnline` is still false) and the later offline-to-online flip then looks like an open session. First built without it; an independent review caught it.
+- **F9** `FirebaseService` has no token refresh and no XHR timeout. Resume refreshes an expiring token first and lets the refresh success run the check; an in-flight check older than 120 s is treated as lost and replaced (`STALE_MS`), and `_profileSeq` drops its late answer.
+- **F10 (changes L3-D5b)** no tab is role-gated, so "jump to the first allowed tab" has nothing to jump from. The one role-gated screen is the Staff overlay (`AuthStore.canViewStaff`), which closes on a role change. `canViewStaff` has no other consumer: the overlay is reachable by any role through activity routing (pre-existing, recorded in KNOWN-ISSUES, not changed here).
+- **F11** `AuthService` cannot run under `qmltestrunner`; its tests run the real function text in Node.
+- **F12** a refresh answer that arrived after sign-out re-authenticated the old user and reloaded their profile (pre-existing). Resume makes refreshes more frequent, so the callback now ignores an answer when the refresh token changed since it was sent.
+- **F13 (PR #180, Q2, owner default)** a silent workspace change shows the `moved` access screen instead of switching the stores; `Main.qml` closes every popup and overlay when it appears; Continue is a full load. Rejected: the cheaper "close overlays and toast" (stores would still switch under any form that survived).
+- **F14 (Q1)** a silent check ignores an unreadable member answer for a workspace this device never verified; full loads still block.
+- **F15 (Q3)** `ensureFreshToken` refreshes silently for its five callers, none of which reads a failure.
+- **F16 (Q4)** the role toast uses `AccessState.roleLabel`.
+Not done in slice A: L4 (resume sync, pull to refresh), slices B and C, any change to what the server refuses.

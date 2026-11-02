@@ -71,7 +71,7 @@ function problems(src) {
   if (/\|\|\s*"(owner|staff|admin|manager)"/.test(auth)) out.push('role-default');
   if (/_loadMembership/.test(auth)) out.push('old-loadMembership');
   if (!/FirebaseService\.get\("tenants\/" \+ tenantId \+ "\/members\/" \+ AuthStore\.uid,/.test(verify)) out.push('verify-reads-own-member-doc');
-  if (!/_applyAccess\(tenantId, tenantName, ok, data, status\)/.test(verify)) out.push('verify-no-apply-access');
+  if (!/_applyAccess\(tenantId, tenantName, ok, data, status, silent\)/.test(verify)) out.push('verify-no-apply-access');
   if (!/AccessState\.outcome\(AccessState\.classify\(ok, status, data\), held, accessBlock\)/.test(apply)) out.push('apply-no-classify');
   if (!/AuthStore\.tenantId === tenantId \? AuthStore\.role : ""/.test(apply)) out.push('apply-held-role-same-tenant-only');
   if (!/tenantId && AuthStore\.tenantId === tenantId/.test(apply)) out.push('apply-held-role-needs-tenant');
@@ -119,7 +119,7 @@ function problems(src) {
   // 3c. a users doc that could not be READ is not "no workspace": only a 404 goes to onboarding, anything else
   // takes the same access decision as an unreadable member doc; and create-workspace never writes after one
   if (!/function\(ok, data, status\)/.test(load) || !/if \(!ok && status === 404\)/.test(load)) out.push('load-usersdoc-404-only');
-  if (!/_applyAccess\(AuthStore\.tenantId, AuthStore\.tenantName, false, null, status\)/.test(load)) out.push('load-usersdoc-unreadable-decides');
+  if (!/_applyAccess\(AuthStore\.tenantId, AuthStore\.tenantName, false, null, status, quiet\)/.test(load)) out.push('load-usersdoc-unreadable-decides');
   if ((load.match(/onboardingRequired\(\)/g) || []).length !== 3) out.push('load-onboarding-sites');
   const createFn = bodyOf(auth, 'createTenantForCurrentUser');
   const iGuard = createFn.indexOf('if (!okExisting && statusExisting !== 404)');
@@ -198,27 +198,27 @@ const MUTANTS = [
   ['auth', 'accessBlock = out.reason', 'accessBlockX = out.reason', 'apply-no-block'],
   ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, 0, data), held, accessBlock)', 'apply-no-classify'],
   ['auth', 'AccessState.outcome(AccessState.classify(ok, status, data), held, accessBlock)', 'AccessState.outcome(AccessState.classify(ok, status, data), held)', 'apply-no-classify'],
-  ['auth', 'var seq = ++_profileSeq\n        profileResolved = false\n', 'var seq = ++_profileSeq\n        profileResolved = false\n        accessBlock = ""\n', 'load-clears-block-upfront'],
-  ['auth', '        if (!AuthStore.uid) {\n            accessBlock = ""\n', '        if (!AuthStore.uid) {\n', 'load-definitive-clears'],
-  ['auth', '            if (!tenantId) {\n                accessBlock = ""\n', '            if (!tenantId) {\n', 'load-definitive-clears'],
+  ['auth', 'var seq = ++_profileSeq\n        checking = quiet\n', 'var seq = ++_profileSeq\n        accessBlock = ""\n        checking = quiet\n', 'load-clears-block-upfront'],
+  ['auth', '            if (quiet) { checking = false; return }\n            accessBlock = ""\n            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', '            if (quiet) { checking = false; return }\n            onboardingNeeded = true\n            profileResolved = true\n            onboardingRequired()\n            return\n        }\n\n        if (!isOnline)', 'load-definitive-clears'],
+  ['auth', '                if (quiet) { checking = false; return }\n                accessBlock = ""\n', '                if (quiet) { checking = false; return }\n', 'load-definitive-clears'],
   ['auth', '            if (!ok || !data) {\n                if (!ok && status === 404) {', '            if (!ok || !data) {\n                accessBlock = ""\n                if (!ok && status === 404) {', 'load-usersdoc-failure-keeps-block'],
   ['auth', '                    if (accessBlock.length > 0) {\n                        profileResolved = true\n                        return\n                    }\n', '', 'load-usersdoc-404-keeps-block'],
   ['auth', 'if (!missing && !(okGet && userDoc)) {', 'if (false) {', 'leave-unreadable-guard'],
   ['auth', 'var missing = !okGet && statusGet === 404', 'var missing = !okGet', 'leave-unreadable-guard'],
-  ['auth', 'if (!isOnline) { profileResolved = true; return; }', 'if (!isOnline) { accessBlock = ""; profileResolved = true; return; }', 'load-offline-keeps-block'],
+  ['auth', '            checking = false\n            if (!quiet) profileResolved = true\n            return', '            checking = false\n            accessBlock = ""\n            if (!quiet) profileResolved = true\n            return', 'load-offline-keeps-block'],
   ['auth', '        accessBlock = ""\n        var name = tenantName', '        var name = tenantName', 'apply-enter-no-clear'],
   ['auth', 'AuthStore.tenantId === tenantId ? AuthStore.role : ""', 'AuthStore.role', 'apply-held-role-same-tenant-only'],
   ['auth', 'role: out.role', 'role: data.role', 'apply-not-member-role'],
-  ['auth', '            // Tenant and role are applied only after the member doc has been read (S2f-3).\n            _verifyMembership(seq, tenantId, data.tenantName || "")', '            AuthStore.applyTenantContext({ tenantId: tenantId, role: data.role })\n            _verifyMembership(seq, tenantId, data.tenantName || "")', 'load-applies-context'],
+  ['auth', '            // Tenant and role are applied only after the member doc has been read (S2f-3).\n            _verifyMembership(seq, tenantId, data.tenantName || "", quiet)', '            AuthStore.applyTenantContext({ tenantId: tenantId, role: data.role })\n            _verifyMembership(seq, tenantId, data.tenantName || "", quiet)', 'load-applies-context'],
   ['auth', 'var seq = ++_profileSeq', 'var seq = _profileSeq', 'load-no-seq'],
-  ['auth', '        _profileSeq++\n        profileResolved = true', '        profileResolved = true', 'signout-no-seq'],
-  ['auth', 'if (!isOnline) return\n        _loadUserProfile()', '_loadUserProfile()\n        if (!isOnline) return', 'recheck-offline-guard'],
+  ['auth', '        _profileSeq++\n        checking = false\n        _contextSynced = false\n        profileResolved = true', '        checking = false\n        _contextSynced = false\n        profileResolved = true', 'signout-no-seq'],
+  ['auth', 'if (!isOnline) return\n        _lastRecheckMs = Date.now()\n        _loadUserProfile()', '_lastRecheckMs = Date.now()\n        _loadUserProfile()\n        if (!isOnline) return', 'recheck-offline-guard'],
   ['auth', '    property string accessBlock: ""', '    property string accessBlock: ""\n    function _x() { return role || "owner" }', 'role-default'],
   ['auth', '_loadUserProfile()   // the member doc decides the role, never a default (S2f-3)', 'AuthStore.applyTenantContext({ role: existingUser.role })', 'create-reverify'],
   ['auth', 'tenantId && AuthStore.tenantId === tenantId', 'AuthStore.tenantId === tenantId', 'apply-held-role-needs-tenant'],
-  ['auth', '            _applyAccess(tenantId, tenantName, ok, data, status)', '            void 0', 'verify-no-apply-access'],
+  ['auth', '            _applyAccess(tenantId, tenantName, ok, data, status, silent)', '            void 0', 'verify-no-apply-access'],
   ['auth', 'if (!ok && status === 404) {', 'if (!ok) {', 'load-usersdoc-404-only'],
-  ['auth', '_applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status)', 'onboardingRequired()', 'load-usersdoc-unreadable-decides'],
+  ['auth', '_applyAccess(AuthStore.tenantId, AuthStore.tenantName, false, null, status, quiet)', 'onboardingRequired()', 'load-usersdoc-unreadable-decides'],
   ['auth', 'if (!okExisting && statusExisting !== 404) {', 'if (false) {', 'create-unreadable-guard'],
   ['main', 'z: 300', 'z: 150', 'page-z-above-overlays'],
   ['main', 'visible: AuthStore.isAuthenticated && AuthService.accessBlock.length > 0', 'visible: AuthStore.isAuthenticated && AuthService.profileResolved && AuthService.accessBlock.length > 0', 'page-visible'],

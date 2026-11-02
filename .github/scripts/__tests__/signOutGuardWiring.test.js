@@ -90,7 +90,9 @@ function problems(s) {
   if (!ask.includes('signOutSheet.ask({ leaving: opts.leaving === true, proceed: opts.proceed })')) out.push('askLeave-sheet-ask');
   if (!/else if \(opts\.title\)/.test(ask) || !/onConfirm: opts\.proceed/.test(ask)) out.push('askLeave-plain-confirm');
   if (!/else \{\s*opts\.proceed\(\)\s*\}/.test(ask)) out.push('askLeave-no-title-proceeds');
-  if (!/var dialogs = \[signOutSheet,/.test(main)) out.push('back-list-first');
+  // The dialog list moved into _allDialogs() (PR #180 Q2): Back and the workspace-change close read the same list,
+  // and the sign-out sheet must still be first in it.
+  if (!/function _allDialogs\(\)\s*\{\s*return \[signOutSheet,/.test(main) || !/var dialogs = _allDialogs\(\)/.test(main)) out.push('back-list-first');
   if (/confirmDlg\.ask\(\{\s*title:\s*(qsTr\()?"(Sign out\?|Leave workspace\?)"/.test(main)) out.push('no-direct-confirm');
   if (!/onSignOutRequested:\s*\{[^}]*?app\.askLeave\(\{\s*title:\s*"Sign out\?"/s.test(main)) out.push('entry-profile-signout');
   if (!/onLeaveWorkspaceRequested:\s*\{[^}]*?app\.askLeave\(\{\s*leaving:\s*true,/s.test(main)) out.push('entry-leave');
@@ -240,7 +242,7 @@ const MUTANTS = [
   ['main', 'askLeave-sheet-ask', 'signOutSheet.ask({ leaving: opts.leaving === true, proceed: opts.proceed })', 'signOutSheet.ask({})'],
   ['main', 'askLeave-plain-confirm', 'onConfirm: opts.proceed })', 'onConfirm: function() {} })'],
   ['main', 'askLeave-no-title-proceeds', '} else {\n            opts.proceed()\n        }', '} else {\n        }'],
-  ['main', 'back-list-first', 'var dialogs = [signOutSheet, ', 'var dialogs = ['],
+  ['main', 'back-list-first', 'return [signOutSheet, ', 'return ['],
   ['main', 'no-direct-confirm', 'app.askLeave({\n                title: "Sign out?",', 'confirmDlg.ask({\n                title: "Sign out?",'],
   ['main', 'entry-leave', 'app.askLeave({\n                leaving: true,', 'app.askLeave({\n                leaving: false,'],
   ['main', 'entry-tenant-setup', 'onSignOutRequested: app.askLeave({ proceed: function() { logic.signOutRequested() } })', 'onSignOutRequested: logic.signOutRequested()'],

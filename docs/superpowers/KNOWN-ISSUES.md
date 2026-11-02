@@ -23,15 +23,27 @@ A removed member whose `users/{uid}` doc was also deleted (the staff cleanup `cl
 
 ## Mid-session membership changes are noticed late — KNOWN 2026-10-28 (S2f-3), L3 of the multi-role design
 
-A member suspended or removed while the app is open keeps the old UI until the next token refresh (about hourly: `refreshIdToken` re-runs the profile load), reconnect (`onIsOnlineChanged`) or launch; **not** at an app resume (nothing listens to `Qt.application.state`). **Update 2026-10-31 (D15):** the first thing such a member does that needs the lock service (Approve on Orders, Edit on an order, product or staff) now shows the removed-or-suspended sentence instead of "edited elsewhere" / "connection issue", but the access-blocked screen still does NOT open on that 403: opening it from a lock or write 403 (a `recheckAccess` trigger with storm control for bulk actions) belongs to L3. **Corrected 2026-10-31:** this entry used to say there is no re-check on token refresh; there is (F1 of `specs/2026-10-31-l3-session-lifecycle-design.md`), but it is not silent (see the next entry). There is no re-check on app resume, and the server answers one code (`no-tenant-context`) for every cause, so the 403 text says "most likely". Dialogs and sheets that are open when the access-blocked screen appears stay above it (Qt popups draw above every item); they cannot expose data (reads are refused) and their writes are refused. A cold start OFFLINE after being blocked reopens the app from the saved session (the block is in memory only); it is re-applied at the next online profile load.
+A member suspended or removed while the app is open keeps the old UI until the next token refresh (about hourly: `refreshIdToken` re-runs the profile load), reconnect (`onIsOnlineChanged`) or launch; **not** at an app resume (nothing listens to `Qt.application.state`). **Update 2026-10-31 (D15):** the first thing such a member does that needs the lock service (Approve on Orders, Edit on an order, product or staff) now shows the removed-or-suspended sentence instead of "edited elsewhere" / "connection issue", but the access-blocked screen still does NOT open on that 403: opening it from a lock or write 403 (a `recheckAccess` trigger with storm control for bulk actions) belongs to L3. **Corrected 2026-10-31:** this entry used to say there is no re-check on token refresh; there is (F1 of `specs/2026-10-31-l3-session-lifecycle-design.md`), but it is not silent (see the next entry). There is no re-check on app resume, and the server answers one code (`no-tenant-context`) for every cause, so the 403 text says "most likely". Dialogs and sheets that are open when the access-blocked screen appears stay above it (Qt popups draw above every item); they cannot expose data (reads are refused) and their writes are refused. A cold start OFFLINE after being blocked reopens the app from the saved session (the block is in memory only); it is re-applied at the next online profile load. **Update 2026-11-01 (L3 slice A, CI unverified, device steps H3-H5 pending):** returning to the foreground now re-checks silently (60 s throttle, one in flight) and a refused member sees the access screen at the next resume instead of at the next failed write; the 403-triggered re-check (L3-D4, slice C) and distinct server reasons (slice B) are still open.
 
 ---
 
-## A healthy re-check shows the sign-in form and blanks lists — FOUND 2026-10-31 (L3 design, read from code, NOT seen on a device), NOT FIXED
+## A healthy re-check shows the sign-in form and blanks lists — FOUND 2026-10-31 (L3 design, read from code, NOT seen on a device), FIXED IN L3 SLICE A (CI unverified; device steps B0 and H1 pending)
 
 **Where:** `AuthService._loadUserProfile` (`profileResolved = false`), `Main.qml` L693 (`LoginPage` at z 100 while `!profileResolved`), `Main.qml` L314 (`onTenantContextReady` re-syncs about ten stores), `OrdersStore._resetAndFetch` (`orders = []` before the refetch). **Trigger:** every token refresh (about hourly, from the 120 s timer in `Main.qml` or any gateway call near expiry) and every offline to online flip, for EVERY signed-in user including owners.
 **Effect (expected from the code):** the sign-in form and empty lists show for the length of two Firestore reads plus the refetch, mid-task; the same path is the app's only periodic data refresh, so a fix removes that side effect unless the resume sync (L4) lands with it. Test-plan step B0 confirms or refutes this on a device before any fix.
-**Fix:** slice A of `specs/2026-10-31-l3-session-lifecycle-design.md` (decision L3-D1).
+**Fix:** slice A of `specs/2026-10-31-l3-session-lifecycle-design.md` (decision L3-D1c), built 2026-11-01: an open session is re-checked silently (own `checking` flag, no cover, no resync unless tenant or role changed or the screen was blocked). **Cost accepted by Taher (L3-D1c):** an owner on two phones loses the accidental hourly refresh until L4 (resume sync, pull to refresh) lands.
+
+---
+
+## The Staff overlay is not gated by role — FOUND 2026-11-01 (L3 slice A, read from code), NOT FIXED
+
+**Where:** `Main.qml` `staffPageOverlay` (opened by Home "navigateToStaff", Profile "Team members" and `_routeActivity` for `staff_added` / `staff_updated`), `AuthStore.canViewStaff`. **Effect:** `canViewStaff` (owner, admin, manager) has no consumer in `qml/`; a staff-role user can open the overlay through activity routing. The server and rules still refuse what staff may not read or write. L3 slice A closes the overlay when a role change leaves `!canViewStaff`, nothing more. **Lead:** gate `_routeActivity` and the Home tile on `canViewStaff`, then decide what the overlay shows for staff.
+
+---
+
+## A read with no answer leaves the sign-in cover up for good — FOUND 2026-11-01 (L3 slice A, read from code), NOT FIXED
+
+**Where:** `FirebaseService._request` sets no `xhr.timeout` (Skill 144), so a Firestore read can fail to call back at all. A FULL profile load (cold start, sign-in, Try again) that hits one leaves `profileResolved = false`, so `LoginPage` stays at z 100. **Silent re-checks are protected:** a check out for 120 s is replaced (`SessionRecheck.STALE_MS`) and its late answer dropped. **Lead:** a timeout in `_request` with the same answer-once guard as `LockManager._post`; every caller then needs a look at what an error does (Skill 144 rule 3).
 
 ---
 
@@ -824,3 +836,35 @@ Seen while moving the runtime to Node 24; not changed in that PR. A pre-release 
 ## Deploy IAM role list — CLOSED 2026-11-01
 
 Two gaps were found by the first live deploys (actAs on the App Engine default SA, `roles/firebase.viewer`); after both grants and the Node 24 runtime the deploy succeeded end to end, so no further role was needed. Left open as a choice, not a bug: the compute-SA `serviceAccountUser` grant may be unnecessary (see the design doc).
+
+---
+
+## Automatic token refreshes report failure inside open dialogs — FOUND 2026-11-01 (PR #180 review, read from code), FIXED 2026-11-01 (Q3)
+
+**Where:** `AuthService.refreshIdToken` raised `authFailed` on every failure. `AddStaffDialog` listens while `_provisioning` (shows the error and frees the busy flag, so the owner can submit again mid-provisioning); `Main.qml` `onAuthFailed` writes into the Invite and Forgot-password dialogs when they are visible. **Fixed in the review sweep:** the refresh that a resume starts is silent (`refreshIdToken(true)`). **Fixed (Q3, owner took the default):** `ensureFreshToken()` now passes `true`, so the 120 s timer, `Gateway`, `PhotoQueue`, `LockManager` and `AnalysisService` refresh silently; wiring rules pin every caller. **Cost:** a refresh that keeps failing is invisible until the request that needed the token gets a 401, which each caller already handles. The explicit `onRefreshAuthToken` in `Main.qml` still reports.
+
+---
+
+## A silent check can switch workspace under open screens — FOUND 2026-11-01 (PR #180 review, read from code), FIXED 2026-11-01 (Q2)
+
+**Fixed (Q2, owner took the default):** a silent workspace change now shows the "Your workspace changed" access screen (`accessBlock = "moved"`) and switches nothing; `Main.qml` closes every dialog, sheet and overlay first; Continue is a full load that applies the new workspace and syncs once. **Costs:** unsaved input in a closed form is lost; a write already sent when the pointer changed is still decided by the server from the users doc (not fixable client side). **Was:** `SessionRecheck.changeKind` returns `"tenant"`, `_applyAccess` resyncs every store through `tenantContextReady`, nothing closes open forms or tells the user. **Effect:** if `users/{uid}.tenantId` changes while the app is open (an invite accepted on another phone), an order form for workspace A can be saved after the stores already hold workspace B. **Lead:** treat a silent workspace change like a block (a screen that says the workspace changed, then reopen), or at least close overlays and toast. 
+
+---
+
+## An unreadable member doc for a DIFFERENT workspace blocks "unverified" even in a silent check — FOUND 2026-11-01 (PR #180 review), CHANGED 2026-11-01 (Q1)
+
+**Changed (Q1, owner took the default):** a SILENT check ignores an unreadable member answer for a workspace this device never verified (nothing applied, 60 s window freed); full loads (sign-in, Try again) still block "unverified". A block that is already showing is kept. The old scenario was rewritten, not loosened. **Was:**
+
+**Where (before):** `AccessState.outcome` has no held role for a workspace the device has not verified, and a silent check applies its answer. **Effect:** a flaky network at that moment puts an open session behind the access screen until "Try again". **Trade-off:** blocking is safe (server and rules decide every request anyway) but contradicts "a failed check never locks out a verified member"; ignoring it keeps the member working in the old workspace while the pointer says otherwise. Q4 (role toast printed the raw id) is fixed too: `AccessState.roleLabel` gives "Admin", "Manager"..., and "a new role" for any other value.
+
+---
+
+## Back does not close `confirmReturnSheet` and `staffActionSheet` — FOUND 2026-11-01 (PR #180 Q2 fold-in, read from code), NOT FIXED
+
+**Where:** `Main.qml` `_allDialogs()` (the Back list) lacks these two popups, so a Back press with one open falls through to the overlays under it. **Not changed** (a Back behaviour change needs its own device check). The workspace change closes both (`_closeAllForWorkspaceChange`), and wiring rule `main-popups-complete` fails when any popup declared in `Main.qml` is in neither list. **Lead:** add both to `_allDialogs()` and run the Back steps on a device.
+
+---
+
+## A write sent just before a workspace change is decided by the server — FOUND 2026-11-01 (PR #180 Q2), NOT FIXED
+
+**Effect:** closing a busy form does not cancel its request; the gateway derives the workspace from the users doc, so a request sent in the seconds around a change can land in the new workspace. Rare (an invite accepted on another phone at that moment). **Lead:** send the workspace id with gateway writes and refuse a mismatch on the server (a server slice, own design).

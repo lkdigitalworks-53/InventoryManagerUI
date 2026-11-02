@@ -12,7 +12,7 @@ import "../helper/AccessState.js" as AccessState
 Item {
     id: root
 
-    // "removed" | "suspended" | "role" | "unverified"
+    // "removed" | "suspended" | "role" | "unverified" | "moved"
     property string reason: ""
     property string tenantName: ""
     property string userEmail: ""
@@ -101,7 +101,7 @@ Item {
 
                 PrimaryButton {
                     Layout.fillWidth: true
-                    text: qsTr("Try again")
+                    text: root.reason === AccessState.STATE_MOVED ? qsTr("Continue") : qsTr("Try again")
                     loading: root.checking
                     enabled: !root.checking
                     onClicked: root.retryRequested()
