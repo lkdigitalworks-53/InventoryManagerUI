@@ -56,9 +56,9 @@ TestCase {
         return OutboxStore.items.filter(function(i) { return i.entity === entity && i.action === action }).length
     }
     function _restock(id) {
-        var out = { called: 0, ok: null, supplierFailed: null, refusal: undefined }
-        InventoryStore.restock(id, 3, "", 10, "", function(ok, sf, refusal) {
-            out.called++; out.ok = ok; out.supplierFailed = sf; out.refusal = refusal })
+        var out = { called: 0, ok: null, queued: null, refusal: undefined }
+        InventoryStore.restock(id, 3, "", 10, "", function(ok, queued, refusal) {
+            out.called++; out.ok = ok; out.queued = queued; out.refusal = refusal })
         return out
     }
 
@@ -132,7 +132,7 @@ TestCase {
 
         compare(r.called, 1)
         compare(r.ok, false)
-        compare(r.supplierFailed, false)
+        compare(r.queued, false)
         compare(r.refusal, InventoryStore.parkedWriteMessage)
         compare(StockBatchStore.batches.length, batchesBefore, "no batch written (no drift)")
         compare(OutboxStore.items.length, outboxBefore, "no delta queued")
