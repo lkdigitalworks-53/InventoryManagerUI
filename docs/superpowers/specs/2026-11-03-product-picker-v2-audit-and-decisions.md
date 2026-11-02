@@ -1,7 +1,7 @@
 # Product picker v2: audit of the July design, constraints on main, and open decisions
 
 **Date:** 2026-11-03
-**Status:** DRAFT. Decisions D1 to D4 are open (Taher to answer); D5 and D6 carry a default that Taher can veto. No code has been written, by design: nothing is built until the design is approved.
+**Status:** DRAFT. Decisions D1 to D4 were answered by Taher on 2026-11-03 (section 8); D5 to D7 carry a default he can veto. The whole design is not yet approved, and no code has been written: nothing is built until it is.
 **Branch:** `docs/2026-11-03-product-picker-v2-design` (docs only)
 **Replaces:** `docs/superpowers/specs/2026-07-15-product-picker-search-design.md`, which exists only on the stale branch `origin/feature/product-picker-search` (see section 2). That branch is left untouched.
 
@@ -37,7 +37,7 @@ What it decided with Taher on 2026-07-15: a nested "Select product" sheet opened
 
 ## 4. Guards that decide whether a row can be added
 
-Today these guards are scattered across two dialogs and two stores. v2 puts them in one pure, tested predicate (`ProductPickability.js`) so the picker and the dialogs cannot disagree.
+Today these guards are scattered across two dialogs and two stores. v2 puts them in one pure, tested predicate (`ProductPickability.js`) so the picker and the dialogs cannot disagree. It returns a `visibility` (`hidden`, `disabled`, `enabled`) and a reason code per row (D2, D7).
 
 1. Available units, with the dialog's own formula: new order is on-hand stock minus units already in the cart; edit of a pending or processing order is on-hand minus units on the order; edit of a completed order is on-hand plus the original quantity minus the current one (`OrderDetailDialog._availableStock`, lines 194 to 214).
 2. A batch-id mint is outstanding (`StockBatchStore.hasPendingMint`).
@@ -54,7 +54,7 @@ Today these guards are scattered across two dialogs and two stores. v2 puts them
 - Quantity: stepper per row, plus tap on the number to type it. Whole units only (to confirm, see section 11). Capped at available with a visible "max" state.
 - The draft is keyed by product ID, never by the visible rows, so changing the search text never loses a quantity the person already set.
 - A footer shows the running total (items and amount) and the commit button; closing with a non-empty draft asks for confirmation.
-- Live refresh while open; an unavailable row shows its reason in words, never colour alone.
+- Live refresh while open; a disabled row shows its reason in words, never colour alone; products hidden for sync reasons are counted in a footer line (D2, D7).
 - Touch targets at least 48dp with 8dp between them; works at the largest system font size; both themes; keyboard does not cover the footer.
 
 ## 6. UI shape (D1)
@@ -80,17 +80,20 @@ QML (Felgo-dependent, painting only): `qml/components/ProductPickerSheet.qml`, `
 
 ## 8. Decisions
 
-**D1. Interaction model.** Options A, B, C in section 6. Recommendation B. OPEN.
+**D1. Interaction model.** Options A, B, C in section 6. **DECIDED 2026-11-03: B** (the sheet stays open, one quantity stepper per row, one commit button), as recommended.
 
-**D2. Unavailable products: hide or show disabled with a reason.** Today two accepted decisions hide products from the picker: pending mint (Decision 1) and queued restock (Q-A2). Once search exists, hiding becomes a trap: the person searches for an SKU they know, nothing appears, and they conclude the product was lost. Recommendation: show every product and disable the unavailable ones with a plain reason ("Stock is syncing, try again shortly", "Out of stock", "Has changes still syncing"). This reverses the "hidden" part of two earlier decisions, so it is Taher's call. Cost: one more row state. Safety is unchanged, because a disabled row cannot be added. OPEN.
+**D2. Unavailable products: hide or show disabled with a reason.** Today two accepted decisions hide products from the picker: pending mint (Decision 1) and queued restock (Q-A2). Once search exists, hiding becomes a trap: the person searches for an SKU they know, nothing appears, and they conclude the product was lost. Recommendation: show every product and disable the unavailable ones with a plain reason ("Stock is syncing, try again shortly", "Out of stock", "Has changes still syncing"). This reverses the "hidden" part of two earlier decisions, so it is Taher's call. Cost: one more row state. Safety is unchanged, because a disabled row cannot be added.
+**DECIDED 2026-11-03: hybrid, not the recommendation.** Taher keeps his earlier decisions: a product with a batch-id mint outstanding, or (once R4 lands) a queued restock, stays **hidden**. Out-of-stock products are shown **disabled** with a reason. Interpretation to confirm in the PR: a product with a queued or parked unsynced edit was not named in the answer, so it is shown **disabled** with the reason "Has changes still syncing" (completion refuses such a line anyway, so the reason explains the refusal early), not hidden. The cost Taher accepted: searching for a product that is hidden while syncing finds nothing. D7 softens that.
 
-**D3. Row detail and filters.** Recommended set is in section 5. Options to trim or extend: drop the photo (saves a network image per row on a weak connection, the avatar initial remains), add sorting, add a barcode scan. Barcode needs a barcode field on the product record, camera access and possibly rules changes, so it is a separate arc. Recommendation: the section 5 set, no sort, no scan. OPEN.
+**D3. Row detail and filters.** Recommended set is in section 5. Options to trim or extend: drop the photo (saves a network image per row on a weak connection, the avatar initial remains), add sorting, add a barcode scan. Barcode needs a barcode field on the product record, camera access and possibly rules changes, so it is a separate arc. Recommendation: the section 5 set, no sort, no scan. **DECIDED 2026-11-03:** photo in each row, category chips and the in-stock-only toggle are in; sort and barcode scan are out of v1.
 
-**D4. What does a row quantity mean: "add N more" or "set the total"?** "Add N more" starts every row at 0 and only ever adds to the order. The cart stays the only editor of existing lines, and the picker can never delete a line or its discount. "Set the total" shows the quantity already on the order and edits it, which is intuitive but makes the picker a second editor of the same state, and setting 0 deletes a line together with its discount and booked tax. Recommendation: **add N more**. The "in this order: N" pill tells the person what is already there. OPEN.
+**D4. What does a row quantity mean: "add N more" or "set the total"?** "Add N more" starts every row at 0 and only ever adds to the order. The cart stays the only editor of existing lines, and the picker can never delete a line or its discount. "Set the total" shows the quantity already on the order and edits it, which is intuitive but makes the picker a second editor of the same state, and setting 0 deletes a line together with its discount and booked tax. Recommendation: **add N more**. The "in this order: N" pill tells the person what is already there. **DECIDED 2026-11-03: add N more**, as recommended. The picker never removes or reduces a line.
 
 **D5. How the sheet gets a non-scrolling body.** Recommendation: add an opt-in `scrollBody: true` property to `BottomSheet` (default unchanged, so the other 20 sheets are untouched), and set it to false for the picker so a `ListView` owns its scrolling and the footer stays pinned. The alternative, a separate sheet type, duplicates the sheet chrome. Veto if you disagree. DEFAULT TAKEN.
 
 **D6. Order of delivery.** Pure helpers first (dormant, nothing calls them), then the component (dormant), then the two dialogs one at a time. Each slice merges on its own and changes no behaviour until a dialog is wired. DEFAULT TAKEN.
+
+**D7. Explaining hidden products.** Follows from the D2 answer. When the guards hide products (pending mint, queued restock), the list ends with one quiet line, for example "2 products hidden while their stock syncs", so a missing product is explained instead of looking lost. The count comes from `ProductPickability`, which returns each row's `visibility` (`hidden`, `disabled`, `enabled`). Cost: one footer line and one test per case. DEFAULT TAKEN.
 
 Also taken by default (veto in the PR): the line-cap check asks `CompletionPlan`; the pending-mint guard is kept and moved into `ProductPickability`; the July branch is not touched.
 

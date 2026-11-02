@@ -15,18 +15,19 @@ Product picker in New Order and Edit Order: detailed, searchable, editable item 
 - [x] 3. Audited it against `main` (13 claims, table in the brief section 3). Verdict: direction reusable, NOT safe to implement as written (it would delete the pending-mint guard), and it does not cover the new requirements.
 - [x] 4. Read the current pickers: `NewOrderDialog.qml` (`_pickerProducts`, `_rebuildPickerNames`, `addSelectedProduct`, `changeQty`) and `OrderDetailDialog.qml` (`_rebuildCatalog`, `_availableStock`, the add handler); `BottomSheet.qml`; `SearchField.qml`; `ChipScroller.qml`; `AvatarBadge.qml`; `InventoryPage._filteredProducts`.
 - [x] 5. Wrote `docs/superpowers/specs/2026-11-03-product-picker-v2-audit-and-decisions.md`: audit, guard inventory, requirements, UI options, units, decisions D1 to D6, slices S0 to S5, test strategy, risks, not-checked list. Every checkable claim re-verified against the code before commit (one count corrected).
-- [x] 6. Skill 152 added, `SKILLS-INDEX.md` regenerated, script tests run.
-- [ ] 7. Taher answers D1 to D4 (and the commit-identity and whole-units questions). Until then nothing below can start.
-- [ ] 8. Record the decisions in the brief, write the approved design (`specs/<date>-product-picker-v2-design.md`) and the test plan in the standard format, then S1.
+- [x] 6. Skill 151 added, `SKILLS-INDEX.md` regenerated, script tests run.
+- [x] 7. Taher answered D1 to D4 on 2026-11-03 and the answers are recorded in the brief section 8 (pushed).
+- [ ] 8. Still open, to ask Taher: (a) which commit email is right, (b) whole units only or do any products sell by weight or length, (c) confirm the D2 interpretation that a product with an unsynced edit is shown disabled, not hidden, (d) approve the design as a whole.
+- [ ] 9. After (d): write the approved design (`specs/<date>-product-picker-v2-design.md`) and the test plan in the standard format (Skill 49), then S1.
 
-## Open decisions (full text and trade-offs in the brief, section 8)
-- D1 interaction model: A single tap, B open sheet with steppers (recommended), C inline.
-- D2 unavailable products: hide (current) or show disabled with a reason (recommended).
-- D3 row detail and filters: recommended set in brief section 5; photo, sort and barcode are the trim or extend points.
-- D4 quantity meaning: "add N more" (recommended) or "set the total".
-- D5 `BottomSheet` `scrollBody` opt-in and D6 helpers-first delivery: defaults taken, vetoable.
+## Decisions (full text and trade-offs in the brief, section 8)
+- D1 = B: sheet stays open, quantity stepper per row, one commit button.
+- D2 = hybrid: pending-mint and queued-restock products hidden (earlier decisions kept); out-of-stock shown disabled with a reason; unsynced-edit products shown disabled (my interpretation, to confirm).
+- D3: photo in each row, category chips, in-stock-only toggle. No sort, no barcode scan in v1.
+- D4 = add N more: the picker only adds, never removes or reduces a line.
+- D5 `BottomSheet` `scrollBody` opt-in, D6 helpers-first delivery, D7 footer line counting hidden products: defaults taken, vetoable.
 
 ## NEXT (resume rule)
-1. Read the brief. If Taher has answered D1 to D4, record them, write the design and the test plan, and start S1 (pure helpers: `ProductSearch.js`, `ProductPickability.js`, `PickerDraft.js`) on a new branch off `main`, dormant, pinned by a caller grep. S1 first steps: check whether `InventoryStore.products` excludes products with a delete in flight, and read `CompletionPlan` for the per-line change cost the cap check needs.
-2. If he has not answered, ask again; do not write code.
+1. Read the brief. Ask Taher the step 8 questions. Do not write code before he approves the design.
+2. When approved: write the design and the test plan, then start S1 (pure helpers: `ProductSearch.js`, `ProductPickability.js` with `visibility`, `PickerDraft.js`) on a new branch off `main`, dormant, pinned by a caller grep. S1 first steps: check whether `InventoryStore.products` excludes products with a delete in flight, and read `CompletionPlan` for the per-line change cost the cap check needs.
 3. Do not touch `origin/feature/product-picker-search`.
