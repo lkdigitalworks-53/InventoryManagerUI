@@ -1,56 +1,38 @@
-# CHECKPOINT — 2026-11-01 L3 slice A (silent session re-check + resume): PR #180 Q1-Q4 folded in, pushed, CI UNVERIFIED (resume here)
+# CHECKPOINT — 2026-11-01 R3 restock plan (atomic-ops arc, client pure layer, dormant) — resume here
 
-**Branch:** `feat/2026-10-31-l3a-silent-recheck`, rebased on `main` after PR #175 was squash-merged (`main` @ 8de6fa2); PR targets `main`. Skill renumbered 146 -> 149 at rebase (main took 145-148).
-**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`. PAT only through `git -c http.extraHeader`, never in the remote URL or repo.
-**Rules in force:** no build or run; no Qt in the sandbox (CI is the QML oracle); branch always; push without asking; scope short enough for one chat turn; honest trade-offs; tests plus test plan for every change.
-**Design:** `docs/superpowers/specs/2026-10-31-l3-session-lifecycle-design.md` (section 8 = as built). **Test plan:** `docs/superpowers/test-plans/2026-10-31-l3-session-lifecycle-test-plan.md`. **Skill 149.**
+**Branch:** `feat/2026-11-01-r3-restock-plan`, cut from `main` @ `8de6fa2` (PR #172 R1+R2 merged, deployed and device-tested by Taher; #175 L3 design merged; #176 Node 24 and #177 IAM docs merged).
+**Commit identity:** the five feature commits used `lkdwtaher@gmail.com`; from the review sweep on (2026-11-01 session 2) Taher's current instruction applies: `taher.lkdw@gmail.com`. History is not rewritten (the PR is open and reviewed in GitHub). The PAT comes from the chat prompt only and is passed per command with `git -c http.extraHeader=...`, never in a remote URL, `.git/config`, the repo, or memory. After a push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; short scope per chat turn; honest trade-offs; tests and a test plan for every change; update skills, AGENTS, README as needed; caveman FULL in chat only, documents in normal prose; do not touch other PRs or branches.
+**Skills used:** `brainstorming` not re-run (the architecture was approved when #147 merged; this slice only implements section 7 step R3 of that design), `qt-qml` (read and applied to the QML hook code), `ponytail` (hook output applied: smallest complete change, shortcuts named).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-01-l3-docs-merged-prev-CHECKPOINT.md`. The L3 slice A work (silent re-check, resume hook) is a separate arc; its next step is recorded in that archive and is untouched here.
 
-## 2026-11-01 PR #180 Q1-Q4 fold-in (latest session; resume here)
-**Owner took the default recommendation for Q1-Q4.** Same branch/PR. **Commit identity this session:** `Taher (via Claude session) <lkdwtaher@gmail.com>`. Sandbox clone at `/home/claude/InventoryManagerUI` (resets between sessions: clone again and `git checkout feat/2026-10-31-l3a-silent-recheck`).
-- [x] Q1 `SessionRecheck.changeKind`: unreadable (`unverified`) answer with no block showing -> `none` (silent only; full loads still block).
-- [x] Q2 `AccessState.STATE_MOVED` + copy; `AuthService._applyAccess` `kind === "tenant"` -> `accessBlock = "moved"`, switches nothing; `Main.qml` `_allDialogs()` / `_closeAllForWorkspaceChange()` (also `confirmReturnSheet`, `staffActionSheet`, 3 overlays) on `onAccessBlockChanged`; `AccessBlockedPage` button "Continue" for moved.
-- [x] Q3 `ensureFreshToken` -> `refreshIdToken(true)`. Q4 `AccessState.roleLabel` in the role toast.
-- [x] Extra fix: blocked screen no longer falls back to the OLD shop name for a refusal about another workspace.
-- [x] Tests: script suite 741 of 741 in the sandbox (new `accessStateMoved.test.js`, 22 Q scenarios, workspace monkey profile, 28 mutants and wiring rules); QML tests `tst_SessionRecheck.qml`, `tst_AccessState.qml` updated, NOT RUN (CI only).
-- [x] Docs: KNOWN-ISSUES (Q1-Q3 closed, 2 new entries), test plan section 10 + N17-N21, design F13-F16, Skill 149 items 15-17, README, AGENTS, SKILLS-INDEX.
-- [x] Commit d329c2c (code + tests) pushed; docs commit follows.
-**NEXT:** read CI on PR #180 (QML Tests is the first real run of the new QML test functions; fix any failure on the same branch); then device steps B0, H1-H6, N8-N21 by the owner; then L4 design. Open (KNOWN-ISSUES): Back list misses 2 popups; in-flight write around a workspace change.
+## Why this slice
+`docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 7: "Next: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), then R4 (`InventoryStore.restock` rewrite + latch + picker hide), R5 (dialog, `FailureCause`, `activity_log` id). Deploy functions BEFORE the client." The previous checkpoint's resume rule says the same (S3-8). R3 is dormant by design: nothing calls it yet, so merging it changes no behaviour.
 
-## 2026-11-01 PR #180 review sweep (earlier session)
-**Scope:** full review of PR #180 (requesting-code-review + qt-qml-review + ponytail-audit), fixes added to the SAME branch (no new branch: the PR is the branch). **Commit identity this session:** `tsadmin <tsadmin@gmail.com>` (owner's instruction); the PAT goes only through `git -c http.extraHeader`, never the remote URL.
-- [x] Cloned repo, read AGENTS/CHECKPOINT/SKILLS-INDEX, read the full diff (17 files), ran the Qt QML linter on the 4 changed QML/JS files (nothing new vs `main` apart from the `var` style the files already use; `!==` flagged as loose equality is a linter false positive), traced every emitter, sign-out path, seq bump and token-refresh consumer by grep.
-- [x] F1 an unreadable answer used up the 60 s window, so an expired-token 401 check followed by the refresh success dropped the real check. Fixed in `_applyAccess` (window freed only for an answer that decided nothing).
-- [x] F2 an unreadable first answer marked the stores synced, so a later definitive answer saw "nothing changed" and the lists stayed stale until a relaunch (main re-synced on every trigger). Fixed: only a verified answer marks synced.
-- [x] F3 a failed refresh started by a resume reported through `authFailed`, which writes into Add staff (while provisioning) and Invite/Forgot dialogs. Fixed: `refreshIdToken(silent)`, only `onAppResumed` passes true.
-- [x] F4 sign-out now resets both spacing windows.
-- [x] Tests: 6 scenarios, 11 behaviour mutants, 11 wiring mutants, 6 wiring rules, monkey model updated (4 seeds x 6000 steps agree); whole script suite 659 of 659. Test plan section 9 + device steps N13-N16. Skill 149 items 11-13. KNOWN-ISSUES 4 entries.
-- [x] CI on `55a9cd7`: QML Tests, E2E Tests, Firestore + Storage Rules Tests, Functions Tests all success (read 2026-11-01); Deploy jobs skipped as designed. Review report posted as a PR comment. Device steps B0, H1-H6, N8-N16 NOT run (owner).
-**Decisions left for the owner (not changed, see KNOWN-ISSUES 2026-11-01):** Q1 unreadable member doc for a DIFFERENT workspace blocks "unverified" even silently (pinned by an existing scenario); Q2 a silent workspace switch resyncs stores under open forms with no notice; Q3 make `ensureFreshToken` (timer, Gateway, PhotoQueue, LockManager, AnalysisService) silent on failure too; Q4 role toast shows the raw role id.
-**NEXT:** read CI on PR #180; then L4 design (unchanged from below).
+## Steps
+- [x] 1. Read memory, cloned fresh into `/home/claude/repo-2026-11-01` (first attempt used `rm -rf`, the sandbox denied it, cloned into a new directory instead), read the atomic-ops status, restock design v2, R2 design, `operationLogic.js`, `InventoryStore.restock`, the existing apply-from-results hooks, `FailureCause`, `DescribeItem`, `SignOutGuard`.
+- [x] 2. Branch created, previous checkpoint archived, this file written.
+- [x] 3. Slice design `docs/superpowers/specs/2026-11-01-r3-restock-plan-design.md` (decisions T1-T10, vetoable in the PR).
+- [x] 4. `OperationKeys` restock ids (`restockNonce`, `restockKey`, `isRestockKey`, `purchaseTxId`), `qml/helper/RestockPlan.js` (`build` + `reflect`), `functions/test/restockPlan.test.js` (26 tests, run locally: plan goes through the REAL `validateOperationRequest` + `applyOperation` on the strict fake DB, then `reflect` is compared with the stored docs; seeded monkey 400 inputs; drift guard on the QML doc builders) + `functions/test/testSupport/qmlHelpers.js` (loads QML pragma-library helpers into Node). Hand mutants: 21 of 23 killed alone; the 2 survivors are the redundant pair `qty <= 0` / `SM.validate` (each alone suffices), killed together.
+- [x] 5. `FailureCause.forRestock`, `DescribeItem` restock label, `SupplierStore.addLocalSupplier`, `InventoryStore.applyRestockResults` + `functions/test/restockSurface.test.js` (15, RUN; 18 of 18 hand mutants killed after two survivors got stronger tests). QML tests written, CI only: `tst_RestockPlan.qml`, additions to `tst_FailureCause.qml` and `tst_DescribeItem.qml`, `tst_SupplierStore_addLocal.qml`, `tst_InventoryStore_applyRestockResults.qml` (the key tests live in `tst_RestockPlan.qml`, not `tst_OperationKeys.qml`).
+- [x] 6. Test plan, README index row, Skill 150 (renumbered from 149 at rebase; main took 149 for L3 slice A) + `SKILLS-INDEX.md` (150 skills), AGENTS pointer, status doc section 8. KNOWN-ISSUES: no entry (G4 already tracked in the status doc). Local runs: `functions` 979/979 after `npm ci` (before it, 9 files failed on a missing `node-mocks-http`: environment, not code), `.github/scripts` 470/470.
+- [x] 7. Pushed, PR #181 raised. CI first run (3e8fbac): QML red on one compile error in `tst_RestockPlan.qml` (`var long`: `long` is a reserved word; 2561 others passed). Fixed in 7081f82. CI OBSERVED on 7081f82: ALL GREEN. QML 2634/2634 (the new QML tests are in it), Functions, Rules and E2E green (E2E log total 71 in this job's output).
+- [ ] 8. Taher reviews PR #181 (T1-T10 vetoable), merges. Then R4.
 
-## Done
-- [x] `qml/helper/SessionRecheck.js`: `canStart` (60 s spacing, one in flight, a check out for 120 s is lost and replaceable) and `changeKind` (block / unblock / tenant / role / none).
-- [x] `AuthService.qml`: `checking` flag (bound by no UI), `requestRecheck` = the only door to `_loadUserProfile(true)`, `_sessionOpen`, `_recheckOrLoad` (open session silent, else full load), `onAppResumed` (refreshes an expiring token first), `roleChanged` signal, silent branches in `_loadUserProfile` / `_verifyMembership` / `_applyAccess` (answer that changes nothing touches nothing), sign-out clears `checking`, refresh answer dropped when the refresh token changed since it was sent.
-- [x] `Main.qml`: `Connections { target: Qt.application }` resume hook (thin), role toast, Staff overlay closes on a role change when `!canViewStaff`.
-- [x] Tests (sandbox: whole script suite 659 of 659; 631 as the PR was opened, 462 before slice A): `sessionRecheck.test.js` 37 (33 mutants), `sessionRecheckBehavior.test.js` 101 (47 scenarios, 49 mutants, 4 seeded monkeys x 6000 steps with pinned coverage), `sessionRecheckWiring.test.js` 51 (47 mutants), `tests/tst_SessionRecheck.qml` 25 functions (CI only; its model-style test was replayed in Node). Existing `accessBlockBehavior` / `accessBlockWiring` pins moved to the new call shapes.
-- [x] Docs: test plan (as built + N8-N11), design section 8, KNOWN-ISSUES (updated 2 entries, added 2), AGENTS, README, Skill 149, SKILLS-INDEX regenerated.
-- [x] Lint: no new findings except `var` style that the file already uses and a linter false positive on strict `!==`. Brackets balanced in all touched files.
+## REVIEW SWEEP 2026-11-01 (session 2, same PR, no stacked PR) - resume here
+Ask: deep full-sweep review of PR #181 (requesting-code-review, qt-qml-review, ponytail-audit); fixes in this PR; out-of-scope observations go to the roadmap (`docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 9); split so one chat turn finishes it. Baseline CI on `7e9f16d`: ALL GREEN, 3831/3831 (QML 2634, Functions 979, Rules 108, E2E 110).
+- [x] RV-1. Cloned fresh into `/home/claude/repo`, checked out the PR branch, read memory, design T1-T10, `RestockPlan.js`, `OperationKeys.js`, `FailureCause.js`, `DescribeItem.js`, the three store hooks, the server `validateOperationRequest` + placeholder rules, the legacy `restock` / `recordPurchase` / `addSupplier` / `_buildBatchDoc`, all Node tests, the dormancy and apply tests.
+- [x] RV-2. Fix F1: planner accepted a total that overflows to Infinity (JSON turns it into null in the stored purchase). The QML monkey even feeds `1e308`. Refuse `bad-cost`.
+- [x] RV-3. Fix F2: planner had no size guard (RestockDialog reason is a free single-line field, a paste can pass Firestore's 1 MiB). Refuse `too-large` with `DocLimits.exceedsDoc` on every doc it creates.
+- [x] RV-4. Fix F3: `FailureCause` left 13 server validator codes (delta, movement, entity, action) as "unknown"; every one is an app bug. Add them, plus a Node drift guard that fails when a new server error code is neither a person-facing cause nor classified.
+- [x] RV-5. Fix F4/F5 docs: `OperationKeys` comment said ~50 bits (it is two 31-bit draws, ~62); design T7 said "equals" but the code (correctly) refuses text that CONTAINS a token.
+- [x] RV-6. Tests for F1-F4 (Node: restockPlan R-4..R-6, failureCauseCodes C-1..C-3; QML twins), test plan, design T11/T12 + section 8, Skill 150 rules 9-11, status doc section 9 (O1-O4 R4, R5 wording), AGENTS pointer. Local: functions 985/985, scripts 470/470, 6/6 mutants killed, QML functions pass in a throwaway Node harness.
+- [x] RV-7. Pushed `b87f1a4`. CI on it: ALL GREEN, 3857/3857 (QML 2654 = +20, Functions 985 = +6, Rules 108, E2E 110). Both real QML-engine runs agree with the Node harness. PR #181 is ready for Taher's review in GitHub; next slice is R4 (see NEXT below).
 
-## Bug caught before commit (independent review)
-The first version never synced the stores at cold start: `init()` resolves offline, then `isOnline` flips true, and the silent check saw "no change". Fixed with `_contextSynced` (first answer of a sign-in always counts as a change, no toast) and every emitter marks it; scenarios now replay the real order and a mutant reverts the bug. Device step N12 checks it.
+## NEXT (after this slice)
+R4: `InventoryStore.restock` rewrite (key at tap, synchronous per-product latch, parked-write refusal kept, `Gateway.recordOperation("restock", plan.ops, plan.key, {awaitServer: online})`, apply through `applyRestockResults`, Activity text kept inline until R5), picker hide for a queued restock (Q-A2), and a `Connections` in `DataModel` that routes `Gateway.operationApplied` for opType `restock` to `applyRestockResults(results, {replay})` for the relaunch case. Then R5 (dialog wording, `activity_log` entity inside the operation, `ActivityLog.record` id parameter). Deploy functions (R2) before R4 reaches a device: Taher confirmed the deploy for #172.
 
-## NOT proven (needs CI or a device)
-`qmltestrunner` results for `tst_SessionRecheck.qml`; the real foreground transition on Android / iOS / Felgo; what the screen draws; test-plan B0 (does the flash exist at all on `main`?), H1-H6, N8-N11. Nothing was built or run.
-
-## Decisions made by Claude while building (flag if you disagree)
-1. L3-D5b: no tab is role-gated, so no tab jump; only the Staff overlay closes. `canViewStaff` has no other consumer (KNOWN-ISSUES).
-2. A lost silent check is replaced after 120 s (no XHR timeout exists).
-3. Refresh-answer-after-sign-out guard added in this slice (it is a pre-existing race that resume makes likelier).
-4. Only an already-open session is re-checked silently; cold start, sign-in, onboarding and Try again stay full loads.
-
-## NEXT
-1. Read CI on the slice A PR; fix whatever `tst_SessionRecheck.qml` or the QML suites report. Taher: device steps B0 first (does the flash exist?), then H1-H6, N8-N11.
-2. L4 (resume sync, pull to refresh): replaces the accidental hourly refresh that slice A removed (accepted at L3-D1c). Own design first.
-3. Answer L3-D3 (additive server `reason`), D4 (silent `recheckAccess` on a refused request), D6, D7, then slice B (server, deploy first) and C (client).
-4. Separate follow-ups recorded in KNOWN-ISSUES: Staff overlay not role-gated; no timeout on `FirebaseService` reads (a hung read in a FULL load keeps the sign-in cover up).
-5. S2f-6 only together with the restock `mint` design approval (unchanged).
+## Rebase onto main (session 2026-11-02)
+- [x] Rebased on main 5309608 (L3 slice A, #180). CHECKPOINT.md conflicts: kept this branch's. AGENTS.md/SKILLS.md/SKILLS-INDEX.md: kept both sides.
+- [x] Main took Skill 149 (L3 slice A), so R3 skill renumbered 149 -> 150 in SKILLS.md, SKILLS-INDEX.md, AGENTS.md, status doc.
+- [ ] CI on the new head not yet seen. Next session: check PR #181 CI, fix only what the rebase broke. Not built or run locally.

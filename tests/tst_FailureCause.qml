@@ -196,4 +196,112 @@ TestCase {
         compare(FC.lockState({ granted: true, noAccess: true }), "granted")
         compare(FC.lockState({ granted: false, noAccess: true, reason: "denied" }), "no-access")
     }
+
+    // ── forRestock (atomic-ops R3) ───────────────────────────────────────
+
+    function test_R3_forRejection_old_bug_codes_keep_their_wording_data() {
+        return [
+            { tag: "missing-fields", code: "missing-fields" }, { tag: "unsupported-op-type", code: "unsupported-op-type" },
+            { tag: "invalid-request-id", code: "invalid-request-id" }, { tag: "empty-operation", code: "empty-operation" },
+            { tag: "unsupported-kind", code: "unsupported-kind" }, { tag: "invalid-entity-id", code: "invalid-entity-id" },
+            { tag: "cascade-delete-not-allowed", code: "cascade-delete-not-allowed" }
+        ]
+    }
+
+    function test_R3_forRejection_old_bug_codes_keep_their_wording(data) {
+        var r = FC.forRejection({ error: data.code }, "x")
+        compare(r.kind, "bug")
+        compare(r.text, "The server cannot accept this request. This is an app problem, please report it (" + data.code + ")")
+    }
+
+    function test_R3_forRejection_mint_and_placeholder_codes_are_app_problems_data() {
+        return [
+            { tag: "too-many-mints", code: "too-many-mints" }, { tag: "unknown-counter", code: "unknown-counter" },
+            { tag: "invalid-bind-name", code: "invalid-bind-name" }, { tag: "duplicate-bind-name", code: "duplicate-bind-name" },
+            { tag: "unused-mint", code: "unused-mint" }, { tag: "unbound-placeholder", code: "unbound-placeholder" },
+            { tag: "placeholder-not-allowed", code: "placeholder-not-allowed" },
+            { tag: "placeholder-entity-mismatch", code: "placeholder-entity-mismatch" },
+            { tag: "movement-qty-mismatch", code: "movement-qty-mismatch" }
+        ]
+    }
+
+    function test_R3_forRejection_mint_and_placeholder_codes_are_app_problems(data) {
+        var r = FC.forRejection({ error: data.code }, "")
+        compare(r.kind, "bug")
+        verify(r.text.indexOf("(" + data.code + ")") === r.text.length - data.code.length - 2)
+    }
+
+    function test_R3_forRejection_unchanged_for_completion_causes_and_hostile_codes() {
+        compare(FC.forRejection({ error: "insufficient-quantity" }, "W").text, "W: stock ran out before this order could complete")
+        compare(FC.forRejection({ error: "conflict" }).kind, "conflict")
+        compare(FC.forRejection({ error: "not-found" }).kind, "missing")
+        compare(FC.forRejection({ error: "mint-exhausted" }).kind, "unknown")
+        compare(FC.forRejection({ error: "<script>alert(1)</script>" }).text, "The server rejected this change")
+        compare(FC.forRejection({ error: "toString" }).kind, "unknown", "an inherited property name is not a bug code")
+        compare(FC.forRejection({ error: "constructor" }).kind, "unknown")
+        compare(FC.forRejection(null).text, "The server rejected this change")
+    }
+
+    function test_R3_forRestock_not_found_names_the_product_and_says_nothing_was_added() {
+        var r = FC.forRestock({ error: "not-found" }, "Tomato")
+        compare(r.kind, "missing")
+        verify(r.text.indexOf("Tomato: ") === 0)
+        verify(r.text.slice(-"Nothing was added".length) === "Nothing was added")
+        verify(FC.forRestock({ error: "not-found" }, "").text.indexOf("this product") === 0)
+    }
+
+    function test_R3_forRestock_conflict_text_is_exact() {
+        var r = FC.forRestock({ error: "conflict" })
+        compare(r.kind, "conflict")
+        compare(r.text, "Another device changed this at the same time. Nothing was added. Try again")
+    }
+
+    function test_R3_forRestock_mint_exhausted_is_a_limit_that_names_its_code() {
+        var r = FC.forRestock({ error: "mint-exhausted" })
+        compare(r.kind, "limit")
+        verify(r.text.indexOf("(mint-exhausted)") >= 0)
+        verify(r.text.indexOf("Nothing was added") >= 0)
+    }
+
+    function test_R3_forRestock_request_id_in_use_is_a_duplicate() {
+        compare(FC.forRestock({ error: "request-id-in-use" }).kind, "duplicate")
+    }
+
+    function test_R3_forRestock_stock_and_size_codes_are_app_problems_without_order_wording() {
+        var codes = ["insufficient-quantity", "operation-too-large"]
+        for (var i = 0; i < codes.length; ++i) {
+            var r = FC.forRestock({ error: codes[i] })
+            compare(r.kind, "bug", codes[i])
+            verify(!/order/i.test(r.text), "no order wording: " + r.text)
+        }
+    }
+
+    function test_R3_forRestock_falls_back_to_forRejection_and_never_returns_empty_text() {
+        compare(JSON.stringify(FC.forRestock({ error: "unused-mint" }, "x")), JSON.stringify(FC.forRejection({ error: "unused-mint" }, "x")))
+        var junk = [null, undefined, 0, "", "x", [], {}, { error: 5 }, { error: {} }, { error: "  " }, { error: new Array(201).join("A") }]
+        for (var i = 0; i < junk.length; ++i) {
+            var r = FC.forRestock(junk[i], junk[i])
+            verify(typeof r.text === "string" && r.text.length > 0, "case " + i)
+            verify(typeof r.kind === "string", "case " + i)
+        }
+    }
+
+    // ── PR #181 sweep F3: delta / movement / entity validator codes are app problems ──────────
+
+    function test_R3b_validator_codes_are_app_problems_data() {
+        var codes = ["unsupported-entity", "unsupported-action", "missing-deltas", "invalid-delta-value", "invalid-movements",
+                     "too-many-movements", "invalid-movement-kind", "invalid-movement-qty", "invalid-movement-value",
+                     "invalid-movement-reason", "movements-not-supported", "movements-require-inventory",
+                     "movements-require-stock-delta"]
+        return codes.map(function(c) { return { tag: c, code: c } })
+    }
+
+    function test_R3b_validator_codes_are_app_problems(data) {
+        var a = FC.forRejection({ error: data.code }, "x")
+        var b = FC.forRestock({ error: data.code }, "x")
+        compare(a.kind, "bug")
+        compare(b.kind, "bug")
+        compare(b.text, "The server cannot accept this request. This is an app problem, please report it (" + data.code + ")")
+        compare(a.text, b.text)
+    }
 }

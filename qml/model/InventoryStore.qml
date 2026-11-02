@@ -8,6 +8,7 @@ import "../helper/DocLimits.js" as DocLimits
 import "../helper/UnsyncedOverlay.js" as UnsyncedOverlay
 import "../helper/PhotoQueueLogic.js" as PQL
 import "../helper/StockMovements.js" as StockMovements
+import "../helper/RestockPlan.js" as RestockPlan
 
 QtObject {
     id: root
@@ -1424,6 +1425,25 @@ QtObject {
             return previous;
         }
         return undefined;
+    }
+
+    // atomic-ops R3 (dormant until R4 calls it): reflects a server-confirmed restock, a live answer or a stored
+    // replay, into the local stores WITHOUT sending anything. Returns RestockPlan.reflect's outcome; when the
+    // answer is not exactly one restock ({ ok: false }) NOTHING is applied. Idempotent: the supplier, batch and
+    // purchase are skipped when already present. `opts.replay === true` leaves product.stock alone: a replayed
+    // answer carries the stock as of the FIRST application, which can be older than what this device already
+    // knows; the caller (R4) re-reads the inventory instead.
+    function applyRestockResults(results, opts) {
+        var out = RestockPlan.reflect(results)
+        if (!out.ok) {
+            console.warn("[InventoryStore] restock results not applied:", out.detail)
+            return out
+        }
+        if (out.supplier) SupplierStore.addLocalSupplier(out.supplier)
+        StockBatchStore.addLocalBatch(out.batch)
+        TransactionStore.addLocalEntries([out.purchase])
+        if (!(opts && opts.replay === true)) applyRemoteStock(out.productId, out.stock)
+        return out
     }
 
     function findIndexById(productId) {
