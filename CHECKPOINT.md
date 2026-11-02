@@ -22,11 +22,11 @@
 ## REVIEW SWEEP 2026-11-01 (session 2, same PR, no stacked PR) - resume here
 Ask: deep full-sweep review of PR #181 (requesting-code-review, qt-qml-review, ponytail-audit); fixes in this PR; out-of-scope observations go to the roadmap (`docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 9); split so one chat turn finishes it. Baseline CI on `7e9f16d`: ALL GREEN, 3831/3831 (QML 2634, Functions 979, Rules 108, E2E 110).
 - [x] RV-1. Cloned fresh into `/home/claude/repo`, checked out the PR branch, read memory, design T1-T10, `RestockPlan.js`, `OperationKeys.js`, `FailureCause.js`, `DescribeItem.js`, the three store hooks, the server `validateOperationRequest` + placeholder rules, the legacy `restock` / `recordPurchase` / `addSupplier` / `_buildBatchDoc`, all Node tests, the dormancy and apply tests.
-- [ ] RV-2. Fix F1: planner accepted a total that overflows to Infinity (JSON turns it into null in the stored purchase). The QML monkey even feeds `1e308`. Refuse `bad-cost`.
-- [ ] RV-3. Fix F2: planner had no size guard (RestockDialog reason is a free single-line field, a paste can pass Firestore's 1 MiB). Refuse `too-large` with `DocLimits.exceedsDoc` on every doc it creates.
-- [ ] RV-4. Fix F3: `FailureCause` left 13 server validator codes (delta, movement, entity, action) as "unknown"; every one is an app bug. Add them, plus a Node drift guard that fails when a new server error code is neither a person-facing cause nor classified.
-- [ ] RV-5. Fix F4/F5 docs: `OperationKeys` comment said ~50 bits (it is two 31-bit draws, ~62); design T7 said "equals" but the code (correctly) refuses text that CONTAINS a token.
-- [ ] RV-6. Tests for F1-F4 (Node + QML), test plan, design T11/T12, Skill 149 rules, status doc section 9 (roadmap observations O1-O6), AGENTS pointer.
+- [x] RV-2. Fix F1: planner accepted a total that overflows to Infinity (JSON turns it into null in the stored purchase). The QML monkey even feeds `1e308`. Refuse `bad-cost`.
+- [x] RV-3. Fix F2: planner had no size guard (RestockDialog reason is a free single-line field, a paste can pass Firestore's 1 MiB). Refuse `too-large` with `DocLimits.exceedsDoc` on every doc it creates.
+- [x] RV-4. Fix F3: `FailureCause` left 13 server validator codes (delta, movement, entity, action) as "unknown"; every one is an app bug. Add them, plus a Node drift guard that fails when a new server error code is neither a person-facing cause nor classified.
+- [x] RV-5. Fix F4/F5 docs: `OperationKeys` comment said ~50 bits (it is two 31-bit draws, ~62); design T7 said "equals" but the code (correctly) refuses text that CONTAINS a token.
+- [x] RV-6. Tests for F1-F4 (Node: restockPlan R-4..R-6, failureCauseCodes C-1..C-3; QML twins), test plan, design T11/T12 + section 8, Skill 149 rules 9-11, status doc section 9 (O1-O4 R4, R5 wording), AGENTS pointer. Local: functions 985/985, scripts 470/470, 6/6 mutants killed, QML functions pass in a throwaway Node harness.
 - [ ] RV-7. Push, read CI, report done / next.
 
 ## NEXT (after this slice)

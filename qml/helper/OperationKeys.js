@@ -41,7 +41,7 @@ function repairBatchId(orderId, epoch, lineIndex) {
 var MAX_NONCE = 100
 var _NONCE = /^[A-Za-z0-9._-]+$/
 
-// Time plus two independent random draws (~50 bits): two taps in the same millisecond must not
+// Time plus two independent random draws (each below 36^6, about 31 bits, so about 62 bits together): two taps in the same millisecond must not
 // share a key, because the server would answer the second with the first one's result and the second
 // restock would silently not exist. `random` returns a number in [0, 1) (Math.random in the app).
 function restockNonce(nowMs, random) {

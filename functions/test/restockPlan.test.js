@@ -146,7 +146,7 @@ test("R-1 every refusal reason, each reachable, none builds ops", () => {
         ["bad-key", { key: "" }], ["bad-key", { key: undefined }], ["bad-key", { key: "completeOrder:o:1" }], ["bad-key", { key: "restock:a/b" }],
         ["bad-product", { productId: "" }], ["bad-product", { productId: 7 }], ["bad-product", { productId: undefined }],
         ["bad-quantity", { qty: 0 }], ["bad-quantity", { qty: -1 }], ["bad-quantity", { qty: NaN }], ["bad-quantity", { qty: Infinity }], ["bad-quantity", { qty: "5" }], ["bad-quantity", { qty: undefined }],
-        ["bad-cost", { unitCost: -0.01 }], ["bad-cost", { unitCost: NaN }], ["bad-cost", { unitCost: "1" }], ["bad-cost", { unitCost: undefined }], ["bad-cost", { unitCost: Infinity }],
+        ["bad-cost", { unitCost: -0.01 }], ["bad-cost", { unitCost: NaN }], ["bad-cost", { unitCost: "1" }], ["bad-cost", { unitCost: undefined }], ["bad-cost", { unitCost: Infinity }], ["bad-cost", { unitCost: 1e308 }], ["bad-cost", { qty: 1e308, unitCost: 5 }], ["bad-cost", { qty: 1e200, unitCost: 1e200 }],
         ["bad-time", { now: "" }], ["bad-time", { now: undefined }], ["bad-time", { date: "2026-6-1" }], ["bad-time", { date: "15/06/2026" }], ["bad-time", { date: undefined }],
         ["bad-supplier", { supplier: {} }], ["bad-supplier", { supplier: { newName: "   " } }], ["bad-supplier", { supplier: { id: "" } }], ["bad-supplier", { supplier: "SUP-1" }], ["bad-supplier", { supplier: 5 }], ["bad-supplier", { supplier: { id: 5 } }],
     ];
@@ -301,6 +301,65 @@ test("S-7 the write count stays far under the budget (six ops)", async () => {
     assert.ok(db.writes.length < 20, String(db.writes.length));
 });
 
+// ---------------------------------------------------------------------------- review F1/F2 (PR #181 sweep)
+
+test("R-4 a total that overflows is refused, a large finite one is built and stored as a number (design T12)", async () => {
+    // F1: 5 * 1e308 is Infinity; JSON would store null in the purchase doc and break every ledger sum.
+    for (const over of [{ unitCost: 1e308 }, { qty: 1e308, unitCost: 5 }, { qty: 1e200, unitCost: 1e200 }])
+        assert.deepEqual(plain(RP.build(input(over))), { ok: false, reason: "bad-cost" }, JSON.stringify(over));
+    // the biggest honest case still works end to end: the server stores a finite total, reflect returns it
+    const plan = plain(RP.build(input({ qty: 1e6, unitCost: 1e9 })));
+    assert.equal(plan.ok, true);
+    assert.equal(plan.ops[plan.at.purchase].after.total, 1e15);
+    const db = baseDb();
+    const { result } = await send(db, plan);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const out = plain(RP.reflect(result.results));
+    assert.equal(out.purchase.total, 1e15);
+    assert.equal(typeof out.purchase.total, "number");
+    // zero cost with a huge quantity has a finite total (0) and is not refused by this check
+    assert.equal(RP.build(input({ qty: 1e300, unitCost: 0 })).ok, true);
+    // the check is on the product, so it never changes an ordinary plan
+    for (const v of [{}, { unitCost: 0 }, { qty: 2.5 }, { unitCost: 0.1 + 0.2 }]) assert.equal(RP.build(input(v)).ok, true, JSON.stringify(v));
+});
+
+test("R-5 a doc over the Firestore size limit is refused before anything is queued, in every doc and every typed field (design T11)", async () => {
+    const big = "x".repeat(1100000);       // 1.05 MiB of ASCII: over the 1 MiB limit on its own
+    const cases = [
+        { reason: big }, { productName: big }, { category: big }, { supplier: { newName: big } },
+        // the new-supplier doc is the only one that carries the name, the other two carry the id token
+    ];
+    for (const over of cases)
+        assert.deepEqual(plain(RP.build(input(over))), { ok: false, reason: "too-large" }, Object.keys(over)[0]);
+    // a known supplier id as big text: the batch and purchase docs carry it
+    assert.deepEqual(plain(RP.build(input({ supplier: { id: big } }))), { ok: false, reason: "too-large" });
+    // big but legal text (200 KB in three docs) is built, accepted by the server and read back exactly
+    const ok200 = "y".repeat(200000);
+    const plan = plain(RP.build(input({ reason: ok200 })));
+    assert.equal(plan.ok, true);
+    const db = baseDb();
+    const { result } = await send(db, plan);
+    assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
+    const out = plain(RP.reflect(result.results));
+    assert.equal(out.ok, true);
+    assert.equal(out.batch.note.length, 200000);
+    assert.equal(plan.ops[plan.at.delta].movements[0].reason.length, 500, "the ledger row still carries only 500 characters");
+    // multi-byte text counts in BYTES: 400k three-byte characters (1.2 MB) is over, 400k ASCII is under
+    assert.equal(RP.build(input({ reason: "\u65e5".repeat(400000) })).reason, "too-large");
+    assert.equal(RP.build(input({ reason: "z".repeat(400000) })).ok, true);
+});
+
+test("R-6 the size check sits exactly at the edge the shared helper uses (one character under passes, one over is refused)", () => {
+    const DL = load("DocLimits.js");
+    // the reason sits in the batch doc and the purchase doc alike, so the larger of the two decides
+    const p0 = plain(RP.build(input({ reason: "", supplier: null })));
+    const base = Math.max.apply(null, p0.ops.filter((o) => o.after).map((o) => DL.docBytes(o.after)));
+    const edge = DL.LIMIT_BYTES - base;
+    assert.ok(edge > 1000000 && edge < DL.LIMIT_BYTES, String(edge));
+    assert.equal(RP.build(input({ reason: "a".repeat(edge), supplier: null })).ok, true);
+    assert.deepEqual(plain(RP.build(input({ reason: "a".repeat(edge + 1), supplier: null }))), { ok: false, reason: "too-large" });
+});
+
 // ---------------------------------------------------------------------------- reflect: refusals
 
 async function goodResults() {
@@ -366,7 +425,7 @@ function prng(seed) { let s = seed >>> 0; return () => { s = (Math.imul(s, 16645
 test("M-1 seeded monkey (400 inputs): a plan is either refused with a known reason or accepted by the server, and what comes back is exactly what was stored", async () => {
     const rnd = prng(20261101);
     const pick = (a) => a[Math.floor(rnd() * a.length)];
-    const REASONS = new Set(["bad-key", "bad-product", "bad-quantity", "bad-cost", "bad-supplier", "bad-time", "reserved-text"]);
+    const REASONS = new Set(["bad-key", "bad-product", "bad-quantity", "bad-cost", "bad-supplier", "bad-time", "reserved-text", "too-large"]);
     // Mostly valid values, a few hostile ones each, so the accepted path is exercised as hard as the refusals.
     const okTexts = ["", "Tomato", "  padded  ", "日本語", "emoji 🍅", "a/b", "x~y", "q\"uote'", "{single}", "{{other}}", "}}{{", "\n", "r".repeat(700), "<b>x</b>", "\\\\"];
     const badTexts = ["{{sup}}", "a{{batch}}b"];

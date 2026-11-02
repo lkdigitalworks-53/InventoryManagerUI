@@ -285,4 +285,23 @@ TestCase {
             verify(typeof r.kind === "string", "case " + i)
         }
     }
+
+    // ── PR #181 sweep F3: delta / movement / entity validator codes are app problems ──────────
+
+    function test_R3b_validator_codes_are_app_problems_data() {
+        var codes = ["unsupported-entity", "unsupported-action", "missing-deltas", "invalid-delta-value", "invalid-movements",
+                     "too-many-movements", "invalid-movement-kind", "invalid-movement-qty", "invalid-movement-value",
+                     "invalid-movement-reason", "movements-not-supported", "movements-require-inventory",
+                     "movements-require-stock-delta"]
+        return codes.map(function(c) { return { tag: c, code: c } })
+    }
+
+    function test_R3b_validator_codes_are_app_problems(data) {
+        var a = FC.forRejection({ error: data.code }, "x")
+        var b = FC.forRestock({ error: data.code }, "x")
+        compare(a.kind, "bug")
+        compare(b.kind, "bug")
+        compare(b.text, "The server cannot accept this request. This is an app problem, please report it (" + data.code + ")")
+        compare(a.text, b.text)
+    }
 }

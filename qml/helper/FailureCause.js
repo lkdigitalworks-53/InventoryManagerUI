@@ -26,7 +26,14 @@ var _BUG_CODES = {
     "unsupported-kind": true, "invalid-entity-id": true, "cascade-delete-not-allowed": true,
     "too-many-mints": true, "unknown-counter": true, "invalid-bind-name": true, "duplicate-bind-name": true,
     "unused-mint": true, "unbound-placeholder": true, "placeholder-not-allowed": true,
-    "placeholder-entity-mismatch": true, "movement-qty-mismatch": true
+    "placeholder-entity-mismatch": true, "movement-qty-mismatch": true,
+    // delta / movement / mutation validators (functions/lib/gatewayLogic.js, movementLogic.js): a request
+    // the client built wrongly. functions/test/failureCauseCodes.test.js fails when the server gains a
+    // code that is neither a person-facing cause below nor listed here.
+    "unsupported-entity": true, "unsupported-action": true, "missing-deltas": true, "invalid-delta-value": true,
+    "invalid-movements": true, "too-many-movements": true, "invalid-movement-kind": true,
+    "invalid-movement-qty": true, "invalid-movement-value": true, "invalid-movement-reason": true,
+    "movements-not-supported": true, "movements-require-inventory": true, "movements-require-stock-delta": true
 }
 function _isBugCode(code) { return Object.prototype.hasOwnProperty.call(_BUG_CODES, code) }
 function _bug(code) {

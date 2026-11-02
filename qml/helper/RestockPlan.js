@@ -1,6 +1,7 @@
 .pragma library
 .import "OperationKeys.js" as Keys
 .import "StockMovements.js" as SM
+.import "DocLimits.js" as DocLimits
 
 // Pure planner for the atomic restock operation (atomic-ops R3). Designs:
 // docs/superpowers/specs/2026-10-16-restock-atomic-operation-design.md (section 4) and
@@ -42,13 +43,17 @@ function _create(entity, entityId, after) {
 // }
 // Returns { ok: true, key, opType: "restock", ops, at }  (`at` = index of each op, -1 when absent)
 //      or { ok: false, reason } with reason one of: bad-key, bad-product, bad-quantity, bad-cost,
-//         bad-supplier, bad-time, reserved-text. Nothing is built for a refused input.
+//         bad-supplier, bad-time, reserved-text, too-large. Nothing is built for a refused input.
 function build(input) {
     var inp = (input && typeof input === "object") ? input : {}
     if (!Keys.isRestockKey(inp.key)) return _refuse("bad-key")
     if (typeof inp.productId !== "string" || inp.productId.length === 0) return _refuse("bad-product")
     if (!_isNum(inp.qty) || inp.qty <= 0) return _refuse("bad-quantity")
     if (!_isNum(inp.unitCost) || inp.unitCost < 0) return _refuse("bad-cost")
+    // Each factor is finite but the product can overflow (1e308 * 5): JSON turns Infinity into null, so
+    // the stored purchase would carry total = null and every sum over the ledger would break. Whichever
+    // factor is the huge one, it is a cost problem (design T12).
+    if (!_isNum(inp.qty * inp.unitCost)) return _refuse("bad-cost")
     if (typeof inp.now !== "string" || inp.now.length === 0 || typeof inp.date !== "string" || !_DATE.test(inp.date))
         return _refuse("bad-time")
 
@@ -116,6 +121,12 @@ function build(input) {
         quantity: inp.qty, unitCost: inp.unitCost, unitPrice: 0, total: inp.qty * inp.unitCost,
         orderId: "", reason: reason
     }))
+
+    // Firestore refuses a doc over 1 MiB, and a rejected operation queued in the outbox would retry or
+    // park for nothing. The free-text reason sits in three docs, so a pasted wall of text is the real
+    // risk. Refuse before anything is queued (design T11); the server stays the authority.
+    for (var d = 0; d < ops.length; ++d)
+        if (ops[d].kind === "mutation" && DocLimits.exceedsDoc(ops[d].after)) return _refuse("too-large")
 
     return { ok: true, key: inp.key, opType: "restock", ops: ops, at: at }
 }

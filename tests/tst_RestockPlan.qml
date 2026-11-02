@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import "../qml/helper/RestockPlan.js" as RP
 import "../qml/helper/OperationKeys.js" as OK
+import "../qml/helper/DocLimits.js" as DL
 
 // Headless tests for the pure restock planner (atomic-ops R3). Pure JS, no singletons.
 // Design: docs/superpowers/specs/2026-11-01-r3-restock-plan-design.md
@@ -183,6 +184,9 @@ TestCase {
             { tag: "cost NaN", reason: "bad-cost", over: { unitCost: NaN } },
             { tag: "cost string", reason: "bad-cost", over: { unitCost: "1" } },
             { tag: "cost undefined", reason: "bad-cost", over: { unitCost: undefined } },
+            { tag: "cost overflows the total", reason: "bad-cost", over: { unitCost: 1e308 } },
+            { tag: "qty overflows the total", reason: "bad-cost", over: { qty: 1e308, unitCost: 5 } },
+            { tag: "both huge", reason: "bad-cost", over: { qty: 1e200, unitCost: 1e200 } },
             { tag: "now empty", reason: "bad-time", over: { now: "" } },
             { tag: "now undefined", reason: "bad-time", over: { now: undefined } },
             { tag: "date short", reason: "bad-time", over: { date: "2026-6-1" } },
@@ -223,6 +227,43 @@ TestCase {
             }
         }
         verify(RP.build(_input({ reason: "{{other}} and {single}" })).ok, "other brace text is left alone")
+    }
+
+    // PR #181 sweep F1 (design T12): a total that overflows is refused, the biggest honest one is not.
+    function test_R4_overflowing_total_is_refused_but_a_large_finite_one_builds() {
+        var p = RP.build(_input({ qty: 1e6, unitCost: 1e9 }))
+        verify(p.ok)
+        compare(p.ops[p.at.purchase].after.total, 1e15)
+        verify(RP.build(_input({ qty: 1e300, unitCost: 0 })).ok, "zero cost: the total is 0, finite")
+        compare(RP.build(_input({ unitCost: 0.1 + 0.2 })).ok, true)
+    }
+
+    // PR #181 sweep F2 (design T11): a doc over the Firestore size limit is refused before it is queued.
+    function test_R5_oversize_text_is_refused_in_every_typed_field() {
+        var big = "x".repeat(1100000)
+        var overs = [{ reason: big }, { productName: big }, { category: big }, { supplier: { newName: big } }, { supplier: { id: big } }]
+        for (var i = 0; i < overs.length; ++i) {
+            var p = RP.build(_input(overs[i]))
+            compare(p.ok, false, Object.keys(overs[i])[0])
+            compare(p.reason, "too-large")
+            verify(p.ops === undefined)
+        }
+    }
+
+    function test_R6_size_edge_is_exactly_the_shared_doc_limit() {
+        var p0 = RP.build(_input({ reason: "", supplier: null }))
+        var base = 0
+        for (var i = 0; i < p0.ops.length; ++i)
+            if (p0.ops[i].after) base = Math.max(base, DL.docBytes(p0.ops[i].after))
+        var edge = DL.LIMIT_BYTES - base
+        verify(edge > 1000000)
+        verify(RP.build(_input({ reason: "a".repeat(edge), supplier: null })).ok, "one character under the limit builds")
+        compare(RP.build(_input({ reason: "a".repeat(edge + 1), supplier: null })).reason, "too-large")
+    }
+
+    function test_R7_multibyte_text_counts_in_bytes() {
+        compare(RP.build(_input({ reason: "\u65e5".repeat(400000) })).reason, "too-large")
+        verify(RP.build(_input({ reason: "z".repeat(400000) })).ok)
     }
 
     // ── reflect ───────────────────────────────────────────────────────────
@@ -322,7 +363,7 @@ TestCase {
 
     function test_M1_seeded_monkey_never_throws_and_every_result_is_ok_or_a_known_reason() {
         var rnd = _rng(20261101)
-        var reasons = { "bad-key": 1, "bad-product": 1, "bad-quantity": 1, "bad-cost": 1, "bad-supplier": 1, "bad-time": 1, "reserved-text": 1 }
+        var reasons = { "bad-key": 1, "bad-product": 1, "bad-quantity": 1, "bad-cost": 1, "bad-supplier": 1, "bad-time": 1, "reserved-text": 1, "too-large": 1 }
         var junk = [undefined, null, NaN, -1, 0, "", " ", "x", "{{sup}}", {}, [], 1e308, -0]
         var applied = 0, refused = 0
         for (var i = 0; i < 400; ++i) {
