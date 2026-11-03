@@ -36,7 +36,7 @@ Ask: full deep review of PR #182 (requesting-code-review, qt-qml-review, ponytai
 - [x] EH-2. `LockManager.editHolds` / `anyEditing` / `holdForEdit` / `releaseEdit` (clamped) / `resetEditHolds`; `BottomSheet.holdsRefresh` (took via `.connect` on aboutToShow, released on closed and on destruction, idempotent); nine forms opt in; `DataModel._onEditHoldsChanged` asks once as a resume when the last hold goes; sign-out resets the holds.
 - [x] EH-3. Tests: policy (Node + QML), coordinator behaviour (+8), wiring (+12: counter, base sheet, exact form list, read-only sheets, close trigger, sign-out reset, 10 mutants + 2 flag-flip tests), `tst_LockManager.qml` +1 (CI only). Script suite 905/905 run locally.
 - [x] EH-4. Docs: design L4-D10 + limits, test plan (counts, step 6 reworded, device steps 17-19), KNOWN-ISSUES entry, Skill 151 rule 11.
-- [ ] EH-5. Push, read CI on the new head. If QML is red look first at `BottomSheet.qml` (new `import "../model"`, `Component.onCompleted` on the root) and at `test_edit_holds_count_overlap_and_never_go_negative`.
+- [x] EH-5. Pushed `1c4d23e`. CI OBSERVED on it: ALL GREEN 3911/3911 (QML 2708 = +1, the new hold-counter test ran in the real engine and the `BottomSheet` change compiled; Functions 985, Rules 108, E2E 110). This line was pushed after it (docs only).
 
 ## NEXT
 1. CI is green (see step 10). Only re-check CI if something is pushed on top.
