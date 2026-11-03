@@ -50,6 +50,9 @@ TestCase {
                  price: 12.5, sellingPrice: 20, stock: 10, minStock: 0 }
     }
     function _stock(id) { return InventoryStore.getById(id).stock }
+    // After a re-read (replay or unreadable answer) the list is emptied until the fetch answers, so the
+    // product may be gone: "10 or cleared" proves the replayed 15 was not written; 15 would not.
+    function _stockOrCleared(id) { var p = InventoryStore.getById(id); return p ? p.stock : null }
     function _items() { return OutboxStore.items.filter(function(i) { return i.opType === "restock" }) }
     // The answer the server gives for a restock of 5 (new supplier SUP-001 when `fresh`).
     function _answer(fresh) {
@@ -190,15 +193,17 @@ TestCase {
         AuthService.isOnline = false
         _tap()
         Gateway._finishOperation(_items()[0], { ok: true, results: _answer(false), idempotentReplay: true })
-        compare(_stock("p1"), 10, "replayed stock is as of the first application; the inventory is re-read instead")
-        compare(StockBatchStore.batches.length, 1)
+        var s = _stockOrCleared("p1")
+        verify(s === null || s === 10, "replayed stock is as of the first application; the inventory is re-read instead, got " + s)
+        // The batch list is re-read too (emptied until the fetch answers), so its content is asserted in Node (W-4).
         compare(ActivityLog.entries.length, 1)
     }
     function test_an_unreadable_answer_applies_nothing() {
         AuthService.isOnline = false
         _tap()
         Gateway._finishOperation(_items()[0], { ok: true, results: [], idempotentReplay: false })
-        compare(_stock("p1"), 10)
+        var s = _stockOrCleared("p1")
+        verify(s === null || s === 10, "an unreadable answer must not change stock, got " + s)
         compare(StockBatchStore.batches.length, 0)
         compare(ActivityLog.entries.length, 0)
     }
