@@ -1,7 +1,7 @@
 # Product picker v2: audit of the July design, constraints on main, and open decisions
 
 **Date:** 2026-11-03
-**Status:** DRAFT. Decisions D1 to D4 were answered by Taher on 2026-11-03 (section 8); D5 to D7 carry a default he can veto. The whole design is not yet approved, and no code has been written: nothing is built until it is.
+**Status:** APPROVED by Taher on 2026-11-03 ("Yes i approve design as a whole"). D1 to D4 answered, D5 to D7 defaults accepted with the approval. The build spec is `2026-11-03-product-picker-v2-design.md`; this file keeps the audit and the trade-offs.
 **Branch:** `docs/2026-11-03-product-picker-v2-design` (docs only)
 **Replaces:** `docs/superpowers/specs/2026-07-15-product-picker-search-design.md`, which exists only on the stale branch `origin/feature/product-picker-search` (see section 2). That branch is left untouched.
 
@@ -51,7 +51,7 @@ Today these guards are scattered across two dialogs and two stores. v2 puts them
 - Search: case-insensitive, trimmed, multi-word (every word must match somewhere), over name, product ID, SKU and category. Ranking: exact ID or SKU first, then prefix, then substring.
 - Row detail: photo or initial avatar, name, `productId · SKU`, category, selling price, availability pill (N left, Out of stock, Low), "in this order: N" pill when the product is already on the order.
 - Filters: category chips (`ChipScroller` exists) and an "In stock only" toggle. No sorting and no barcode scan in v1.
-- Quantity: stepper per row, plus tap on the number to type it. Whole units only (to confirm, see section 11). Capped at available with a visible "max" state.
+- Quantity: stepper per row, plus tap on the number to type it. Whole units only (confirmed 2026-11-03, section 11). Capped at available with a visible "max" state.
 - The draft is keyed by product ID, never by the visible rows, so changing the search text never loses a quantity the person already set.
 - A footer shows the running total (items and amount) and the commit button; closing with a non-empty draft asks for confirmation.
 - Live refresh while open; a disabled row shows its reason in words, never colour alone; products hidden for sync reasons are counted in a footer line (D2, D7).
@@ -83,7 +83,7 @@ QML (Felgo-dependent, painting only): `qml/components/ProductPickerSheet.qml`, `
 **D1. Interaction model.** Options A, B, C in section 6. **DECIDED 2026-11-03: B** (the sheet stays open, one quantity stepper per row, one commit button), as recommended.
 
 **D2. Unavailable products: hide or show disabled with a reason.** Today two accepted decisions hide products from the picker: pending mint (Decision 1) and queued restock (Q-A2). Once search exists, hiding becomes a trap: the person searches for an SKU they know, nothing appears, and they conclude the product was lost. Recommendation: show every product and disable the unavailable ones with a plain reason ("Stock is syncing, try again shortly", "Out of stock", "Has changes still syncing"). This reverses the "hidden" part of two earlier decisions, so it is Taher's call. Cost: one more row state. Safety is unchanged, because a disabled row cannot be added.
-**DECIDED 2026-11-03: hybrid, not the recommendation.** Taher keeps his earlier decisions: a product with a batch-id mint outstanding, or (once R4 lands) a queued restock, stays **hidden**. Out-of-stock products are shown **disabled** with a reason. Interpretation to confirm in the PR: a product with a queued or parked unsynced edit was not named in the answer, so it is shown **disabled** with the reason "Has changes still syncing" (completion refuses such a line anyway, so the reason explains the refusal early), not hidden. The cost Taher accepted: searching for a product that is hidden while syncing finds nothing. D7 softens that.
+**DECIDED 2026-11-03: hybrid first, then made uniform.** Taher first kept his earlier decisions (pending mint and queued restock stay hidden; out-of-stock shown disabled with a reason). My interpretation was that a product with a queued or parked unsynced edit would be shown disabled. Taher corrected that the same day: "Hide all these, keep behaviour same across all use cases." **FINAL:** every product that cannot be sold yet is hidden, the same way in New Order and Edit Order: pending mint, queued restock, queued or parked unsynced edit, delete in flight. Out-of-stock products stay shown, disabled, with the reason "Out of stock". The cost Taher accepted: searching for a product that is hidden while it syncs finds nothing. D7 softens that with the footer line.
 
 **D3. Row detail and filters.** Recommended set is in section 5. Options to trim or extend: drop the photo (saves a network image per row on a weak connection, the avatar initial remains), add sorting, add a barcode scan. Barcode needs a barcode field on the product record, camera access and possibly rules changes, so it is a separate arc. Recommendation: the section 5 set, no sort, no scan. **DECIDED 2026-11-03:** photo in each row, category chips and the in-stock-only toggle are in; sort and barcode scan are out of v1.
 
@@ -93,7 +93,7 @@ QML (Felgo-dependent, painting only): `qml/components/ProductPickerSheet.qml`, `
 
 **D6. Order of delivery.** Pure helpers first (dormant, nothing calls them), then the component (dormant), then the two dialogs one at a time. Each slice merges on its own and changes no behaviour until a dialog is wired. DEFAULT TAKEN.
 
-**D7. Explaining hidden products.** Follows from the D2 answer. When the guards hide products (pending mint, queued restock), the list ends with one quiet line, for example "2 products hidden while their stock syncs", so a missing product is explained instead of looking lost. The count comes from `ProductPickability`, which returns each row's `visibility` (`hidden`, `disabled`, `enabled`). Cost: one footer line and one test per case. DEFAULT TAKEN.
+**D7. Explaining hidden products.** Follows from the D2 answer. When the guards hide products (pending mint, queued restock, unsynced edit, delete in flight), the list ends with one quiet line, for example "2 products hidden while their stock syncs", so a missing product is explained instead of looking lost. The count comes from `ProductPickability`, which returns each row's `visibility` (`hidden`, `disabled`, `enabled`). Cost: one footer line and one test per case. DEFAULT TAKEN.
 
 Also taken by default (veto in the PR): the line-cap check asks `CompletionPlan`; the pending-mint guard is kept and moved into `ProductPickability`; the July branch is not touched.
 
@@ -123,11 +123,11 @@ Every slice ships with a test plan in the standard format and these layers, as f
 ## 11. Risks, pushback and assumptions
 
 - **"100% of the code" is not reachable for the view layer.** Section 10 says what is covered instead. This is the main place the stated testing goal cannot be met literally.
-- **D2 reverses two earlier decisions.** If Taher wants to keep hiding, the cost is the "where did my product go" confusion once search exists.
+- **D2 keeps hiding, now for every sync case.** The cost, accepted by Taher: the "where did my product go" confusion once search exists. D7's footer line is the only mitigation.
 - **Thumbnails and weak networks.** Each row would request an image. The avatar falls back to the initial offline. Dropping the photo is an option under D3.
-- **Whole units only.** Products carry a `unit` (default "pcs"). The order flow today uses whole numbers. If any product is sold by weight or length, say so now, because it changes the stepper, the cap and the ledger.
+- **Whole units only.** CONFIRMED 2026-11-03: weight, length and other units come in a later release, not now. All quantity rules live in `PickerDraft.parseQty` and the `_whole` rounding of `maxQty`, so that release changes those two places.
 - **Free-plan budget.** The slices are small on purpose. If a slice runs long, the branch is pushed and the checkpoint says exactly where to resume.
-- **Commit identity.** The R3 checkpoint recorded `taher.lkdw@gmail.com` as the current commit identity; this session's project instructions say `lkdwtaher@gmail.com`. This branch follows the project instructions. Say which is right.
+- **Commit identity.** CONFIRMED 2026-11-03: `lkdwtaher@gmail.com`, in the commit message text, for this account.
 
 ## 12. Not checked
 
