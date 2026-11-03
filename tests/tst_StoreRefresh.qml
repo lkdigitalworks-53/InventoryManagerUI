@@ -95,4 +95,15 @@ TestCase {
         compare(TransactionStore.entries[2].txId, "1")
         TransactionStore.entries = []
     }
+
+    // Review F1: a Transaction backoff retry must not outlive a committed refresh (it would re-read pages the
+    // list already holds and append them again).
+    function test_transaction_commit_stops_a_pending_retry_timer() {
+        TransactionStore._scheduleRetry()
+        verify(TransactionStore._retryTimer !== null)
+        verify(TransactionStore._retryTimer.running)
+        TransactionStore._commitRefresh([{ txId: "1", timestamp: "1" }], null)
+        compare(TransactionStore._retryTimer.running, false)
+        TransactionStore.entries = []
+    }
 }

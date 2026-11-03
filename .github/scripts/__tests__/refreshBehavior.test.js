@@ -2,7 +2,7 @@
 
 // L4a: behaviour tests that run the REAL function bodies from the six store files and from DataModel.qml in a vm
 // sandbox with fakes for FirebaseService, OutboxStore, Gateway and the rest. No Qt. The same scenarios exist as
-// QML tests only for OrdersStore (tests/tst_OrdersStore_refresh.qml, CI). Design:
+// QML tests only for the parts that need no network (tests/tst_StoreRefresh.qml, CI). Design:
 // docs/superpowers/specs/2026-11-02-l4a-resume-refresh-design.md.
 
 const { test } = require('node:test');
@@ -35,6 +35,7 @@ function makeStore(name, opts = {}) {
     [c.list]: [{ id: 'old1' }, { id: 'old2' }],
     hasMore: false, _cursor: 'oldCursor', revision: 0, loadingMore: false, _resetPending: false,
     refreshing: false, _refreshSeq: 0, _refreshDone: null, _pageSize: 50, _retryAttempt: 3, _loadedTenant: '',
+    _retryTimer: opts.timer === undefined ? null : opts.timer,
     AuthStore: { tenantId: 't1' }, AuthService: { isOnline: opts.online !== false },
     FirebaseService: { lastStatusCode: 0, lastError: '', query(coll, q, cb) { calls.query.push({ coll, q, cb }); } },
     _refreshCounts() { calls.counts++; }, _rebuildActivities() { calls.rebuild++; },
@@ -120,6 +121,28 @@ for (const name of Object.keys(STORES)) {
       const s = makeStore(name); s.ctx[k] = true;
       assert.equal(s.ctx.refreshFromFirebase(() => true, () => {}), false); assert.equal(s.calls.query.length, 0);
     }
+  });
+
+  test(`${name}: a load that started during the refresh (loadingMore or _resetPending) at commit time -> discarded, list intact (review F1)`, () => {
+    for (const k of ['loadingMore', '_resetPending']) {
+      const s = makeStore(name); const seen = []; const before = s.list();
+      s.ctx.refreshFromFirebase(() => true, (x) => seen.push(x));
+      answer(s, 0, true, page(['a'], true, 'c1'));
+      s.ctx[k] = true;                                      // e.g. a Transaction backoff retry fired and is now paging
+      answer(s, 1, true, page(['b'], false, 'c2'));
+      assert.deepEqual(seen, ['discarded'], k); assert.equal(s.list(), before, k + ': list untouched');
+      assert.equal(s.ctx._cursor, 'oldCursor', k + ': cursor untouched'); assert.equal(s.ctx.refreshing, false);
+      s.ctx[k] = false;
+      assert.equal(s.ctx.refreshFromFirebase(() => true, () => {}), true, k + ': can refresh again once idle');
+    }
+  });
+
+  test(`${name}: busy flag set only while an EARLIER page is in flight does not matter, only the state at commit does`, () => {
+    const s = makeStore(name); const seen = [];
+    s.ctx.refreshFromFirebase(() => true, (x) => seen.push(x));
+    s.ctx.loadingMore = true; answer(s, 0, true, page(['a'], true, 'c1'));   // busy mid-way: paging goes on
+    s.ctx.loadingMore = false; answer(s, 1, true, page(['b'], false, 'c2'));
+    assert.deepEqual(seen, ['committed']); assert.equal(s.list().length, 2);
   });
 
   test(`${name}: a cancelled run then a new run: only the new run commits`, () => {
@@ -341,4 +364,29 @@ test('coordinator monkey: 6 seeds x 3000 steps keep the invariants', () => {
     k.tick(60000);
     assert.equal(k.ctx.requestRefresh('manual'), 'run', 'seed ' + seed0 + ': coordinator not wedged');
   }
+});
+
+test('TransactionStore: commit stops a pending retry timer so it cannot re-read pages the list already holds (review F1)', () => {
+  let stopped = 0; const timer = { stop() { stopped++; } };
+  const s = makeStore('TransactionStore', { timer }); const seen = [];
+  s.ctx.refreshFromFirebase(() => true, (x) => seen.push(x));
+  answer(s, 0, true, page(['b', 'a'], false, 'c'));
+  assert.deepEqual(seen, ['committed']); assert.equal(stopped, 1); assert.equal(s.ctx._retryAttempt, 0);
+});
+
+test('TransactionStore: a discarded or failed refresh leaves the retry timer alone (the live load still needs it)', () => {
+  for (const mode of ['guard', 'fail', 'busy']) {
+    let stopped = 0; const timer = { stop() { stopped++; } };
+    const s = makeStore('TransactionStore', { timer });
+    s.ctx.refreshFromFirebase(() => mode !== 'guard', () => {});
+    if (mode === 'busy') s.ctx.loadingMore = true;
+    answer(s, 0, mode !== 'fail', mode === 'fail' ? null : page(['a'], false, null));
+    assert.equal(stopped, 0, mode);
+  }
+});
+
+test('TransactionStore: no retry timer yet (null) -> commit still works', () => {
+  const s = makeStore('TransactionStore'); const seen = [];
+  s.ctx.refreshFromFirebase(() => true, (x) => seen.push(x)); answer(s, 0, true, page(['a'], false, null));
+  assert.deepEqual(seen, ['committed']);
 });

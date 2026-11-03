@@ -884,3 +884,6 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 
 `FirebaseService` sets no request timeout. A hung refresh read keeps `refreshing` up; the next trigger after 3 minutes cancels it (`RefreshPolicy.runLost`). The older sign-in sync has no such watchdog (existing issue, unchanged).
 
+## L4a review: three unconfirmed risks, left on purpose — FOUND 2026-11-03 (review sweep of PR #182), NOT FIXED
+
+(1) The refresh swap does not compare the workspace id; it relies on every workspace change resetting the stores, which cancels a running refresh first. (2) A resume refresh that waits for a token refresh can run out its 2 minute wait if the token refresh is late; the next trigger covers it. (3) Swapping a whole list may reset a list's scroll position; only a device shows it. Details and the reasons they were not fixed: design doc section 6 (I1 to I3). The duplicate-row race between a Transaction retry and a refresh commit WAS fixed in the same PR (L4-D9).

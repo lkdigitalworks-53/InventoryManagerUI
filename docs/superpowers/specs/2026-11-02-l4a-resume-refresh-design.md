@@ -39,6 +39,8 @@ Out of scope and unchanged: what the server refuses, the sign-in sync (`tenantCo
 
 **L4-D8 Where the state lives.** The pure decisions are `qml/helper/RefreshPolicy.js` (no stores, no clock reads, tested in Node and in Qt). `DataModel.qml` reads the live state into one snapshot and drives the stores; it is the only caller of `refreshFromFirebase` (pinned). Not a new singleton: no CMake or qmldir change.
 
+**L4-D9 A load that started during the refresh blocks the swap (added in the 2026-11-03 review sweep, finding F1).** The gate at the swap (`swapOk`) looks at the outbox, the lock, photos and the block state, but not at whether a store's own load is running, because the refreshing store reports itself as busy. A load can start during the copy's read: `TransactionStore` retries a failed sign-in page on a backoff timer (3 s doubling to 30 s) and nothing stops that timer from firing mid-refresh. If the copy then replaced the list, the retry's next page would be appended on top of rows the copy already holds: duplicate transactions, wrong totals. Built: each store's `_refreshPage` drops the copy (`discarded`, which re-arms one wait) when `loadingMore` or `_resetPending` is true at commit time, and `TransactionStore._commitRefresh` stops the retry timer because the list is complete. Alternative rejected: refuse to start while a retry is pending. That would leave a half-loaded Transactions list unhealed for as long as the retry loop lives, and the refresh is exactly what heals it. Cost: one dropped copy (a re-read of one collection) in a rare overlap.
+
 **Open question for Taher (not built):** should an open edit dialog (not only a held lock) also hold the refresh? Today only a held lock does. An open New Order dialog keeps its own copy of what you typed; the lists under it may change, which is the point of a refresh. Say if you want it stricter.
 
 ## 4. Known limits (also in KNOWN-ISSUES)
@@ -52,3 +54,21 @@ Out of scope and unchanged: what the server refuses, the sign-in sync (`tenantCo
 ## 5. Build notes
 
 Six stores each gain `refreshing`, `_refreshSeq`, `_refreshDone`, `refreshFromFirebase(guard, done)`, `_finishRefresh`, `_cancelRefresh`, `_refreshPage`, `_commitRefresh`, and a first line `_cancelRefresh()` in `_resetAndFetch()` and `clear()`. `LockManager.anyHeld`, `AuthService.isSessionOpen()` and `tokenNeedsRefresh()` expose existing facts. `Main.qml`'s resume hook calls `dataModel.requestRefresh("resume")` after `AuthService.onAppResumed()`. `sessionRecheckWiring.test.js` was updated for the hook's new shape and now allows `DataModel` (logic, not UI) to read `AuthService.checking`.
+
+## 6. Review sweep 2026-11-03 (requesting-code-review, qt-qml-review, ponytail-audit, qt-ui-design)
+
+Scope: the whole PR (27 files, read in full: policy, coordinator, six stores against their original fetch paths, hooks, tests, docs). Lint: 52 hits on changed lines, triaged below. CI on the head before the sweep: all green, 3910/3910.
+
+**Fixed in this PR**
+- F1 (must fix, confidence 85): refresh commit versus a running or timer-started load duplicates rows (L4-D9). Tests: behaviour tests for all six stores (busy at commit, busy only mid-way, can refresh again), three Transaction timer tests, 5 wiring mutants, one QML test. Three hand mutants of the fix are killed.
+- F2 (should fix): `refreshBehavior.test.js` header named a QML file that does not exist (`tst_OrdersStore_refresh.qml`); now names `tst_StoreRefresh.qml`.
+
+**Lint triage (qt_qml_lint.py, changed lines only):** 52 hits, none needs a change. `var` (JS-1, 33) and `property var` (BND-1, 8) match the house style of every store (the functions hold arrays and a callback, which need `var`). JS-2 (6) are false positives: the lines use `!==`. ORD-1 (3) and STY-6 (1, `_refreshWaitTimer`) follow the layout the files already have (properties declared next to the code that owns them, `_logicBus` style ids). Moving them would add merge noise in six hot files for no behaviour gain.
+
+**Investigated, not fixed (need a device or a decision)**
+- I1 (65): the swap does not compare the tenant id. Today a workspace change calls every store's `_resetAndFetch`, which cancels first, so no stale copy can land. A path that changes the workspace without a reset would be missed. Cheap to add later (snapshot key plus a start value), but it touches the policy contract and three test suites; no concrete path found, so left.
+- I2 (62): a refresh waiting on `tokenNeedsRefresh()` depends on the token refresh that `onAppResumed` or the 120 s timer starts. If the refresh is throttled and the timer fires late, the 2 minute wait can end first and the resume refresh is forgotten (the next trigger covers it). Device-only to confirm.
+- I3 (60): replacing a whole list array may reset a `ListView`'s scroll position even though the list never blanks. Which pages bind to the arrays directly, and what the delegates keep, is only visible on a device (test plan step 1 already asks for "scroll position kept"; treat a failure there as a finding for L4b).
+- Lean (ponytail): six near-copies of about 58 lines each (about 300 lines) could shrink to one pure paging helper plus a few lines per store. Not done: it rewrites six stores whose behaviour is now pinned by 130 tests, and the wiring test would need a new shape. Honest trade-off: copy cost now versus refactor risk in a slice that is already green. Candidate for L4c, where the sign-in sync moves to the shadow fetch and the helper pays for itself twice.
+
+**qt-ui-design audit (PR has no screen):** nothing to critique on screen. Two carry-overs for L4b: (1) a silent swap gives no cue; the "last updated" caption and pull-to-refresh are the planned answer (wayfinding, feedback within 400 ms); (2) reduced motion and keyboard reach are not affected by this change.

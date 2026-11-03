@@ -213,6 +213,10 @@ QtObject {
             }
             var next = acc.concat(result.items)
             if (result.hasMore) { _refreshPage(seq, next, result.nextCursor, guard); return }
+            // A load that started while this copy was being read (a Transaction retry, a reset that raced the cancel)
+            // is appending pages to the live list. Swapping now and letting its next page land on top would
+            // duplicate rows, so the copy is dropped; the refresh asks again once the store is idle (review F1).
+            if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }
             var allowed = false
             try { allowed = (typeof guard === "function") ? guard() === true : false } catch (e) { allowed = false }
             if (!allowed) { _finishRefresh("discarded"); return }
@@ -226,6 +230,7 @@ QtObject {
         entries = all
         hasMore = false
         _cursor = nextCursor
+        if (_retryTimer) _retryTimer.stop()   // the list is complete now: a backoff retry would re-read pages it already holds
         _retryAttempt = 0
         revision++
     }

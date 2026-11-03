@@ -46,7 +46,10 @@ function check(f) {
     if (!/property int _refreshSeq: 0/.test(s)) v.push(k + ': _refreshSeq property');
     // the paging function never touches live state: no list, no hasMore, no cursor, no loadingMore, no revision
     if (new RegExp('(^|[^_\\w.])' + list + '\\s*=[^=]').test(page)) v.push(k + ': _refreshPage assigns the live list');
-    for (const bad of ['loadingMore', 'revision']) if (page.includes(bad)) v.push(k + ': _refreshPage touches ' + bad);
+    if (page.includes('revision')) v.push(k + ': _refreshPage touches revision');
+    if (/(^|[^.\w])loadingMore\s*=[^=]/.test(page)) v.push(k + ': _refreshPage assigns loadingMore');
+    // review F1: a load that started during the refresh blocks the swap (READ only), and the check sits before the guard
+    if (!/if \(loadingMore \|\| _resetPending\) \{ _finishRefresh\(\"discarded\"\); return \}/.test(page) || page.indexOf('loadingMore ||') > page.indexOf('allowed')) v.push(k + ': no busy check before the guard');
     for (const bad of ['hasMore', '_cursor']) if (new RegExp('(^|[^.\\w])' + bad + '\\s*=[^=]').test(page)) v.push(k + ': _refreshPage assigns ' + bad);
     if (!/if \(seq !== _refreshSeq\) return\s*\n\s*if \(!ok/.test(page)) v.push(k + ': stale answer is not ignored first');
     if (!/typeof guard === "function"\) \? guard\(\) === true : false/.test(page) || !/catch \(e\) \{ allowed = false \}/.test(page)) v.push(k + ': guard not strict/try-wrapped');
@@ -68,6 +71,7 @@ function check(f) {
     }
     // exactly one place starts a refresh and it is not a UI file (checked below)
   }
+  if (!/if \(_retryTimer\) _retryTimer\.stop\(\)/.test(body(f.TransactionStore, '_commitRefresh') || '')) v.push('TransactionStore: commit does not stop the retry timer');
   // coordinator
   const dm = f.dm;
   const snapBody = body(dm, '_refreshSnapshot') || '';
@@ -134,5 +138,10 @@ const MUT = [
   rep('lock', 'readonly property bool anyHeld: _held !== null', 'readonly property bool anyHeld: false && _held !== null'),
   rep('auth', 'function tokenNeedsRefresh() { return _tokenExpiring() }', 'function tokenNeedsRefresh() { return false }'),
   rep('policy', 'var STALE_MS = 300000', 'var STALE_MS = 300000\nvar t = Date.now()'),
+  rep('OrdersStore', 'if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }', ''),
+  rep('TransactionStore', 'if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }', ''),
+  rep('StaffStore', 'if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }', 'if (loadingMore) { _finishRefresh("discarded"); return }'),
+  rep('InventoryStore', '            if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }\n            var allowed = false\n', '            var allowed = false\n'),
+  rep('TransactionStore', 'if (_retryTimer) _retryTimer.stop()   // the list is complete now', 'void 0   // the list is complete now'),
 ];
 for (const [name, fn] of MUT) test('wiring mutant killed: ' + name, () => { const f = snapshot(); fn(f); assert.ok(check(f).length > 0, 'not noticed'); });

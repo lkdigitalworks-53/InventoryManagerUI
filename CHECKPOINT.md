@@ -21,6 +21,16 @@ Next planned item after PR #180 (L3 slice A): "L4 resume sync / pull to refresh"
 - [x] 9. Sandbox runs: script suite 862/862, `functions` 985/985 (untouched).
 - [x] 10. Pushed `8c4942e`, PR #182 raised. CI on it: ALL GREEN 3910/3910 (QML 2707, Functions 985, Rules 108, E2E 110). First QML-engine contact of the six edited stores and both new QML tests passed.
 
+## REVIEW SWEEP 2026-11-03 (same PR, no stacked PR) - resume here
+Ask: full deep review of PR #182 (requesting-code-review, qt-qml-review, ponytail-audit, qt-ui-design), fixes in the same PR. Baseline CI on `559e980`: ALL GREEN 3910/3910. Commit messages carry tsadmin@gmail.com.
+- [x] RV-1. Cloned fresh into `/home/claude/InventoryManagerUI` (PAT via per-command header only), checked out the PR branch, read the full diff: policy, DataModel coordinator, six stores against their original fetch paths, hooks, tests, docs.
+- [x] RV-2. qt-qml-review phase 1: linter run on the whole files, filtered to changed lines: 52 hits, triaged, none needs a change (design section 6). qmllint not available in the sandbox (CI is the oracle). Phase 2 agents were done as one sequential read in this chat turn (no subagent tool).
+- [x] RV-3. Fix F1: a Transaction backoff retry (or any load started mid-refresh) could append pages on top of a committed copy and duplicate rows. Store check at commit (`loadingMore || _resetPending` -> discarded), retry timer stopped on commit. Design L4-D9, Skill 151 rule 10.
+- [x] RV-4. Tests: behaviour 57 -> 72, wiring 24 -> 29, QML +1 function (CI only). Script suite 882/882 run locally. Three hand mutants of the fix killed.
+- [x] RV-5. Fix F2: stale file name in the behaviour test header.
+- [x] RV-6. Docs: design section 6 (findings, lint triage, I1-I3, lean note, ui-design audit), test plan (counts, device step 16), KNOWN-ISSUES entry, Skill 151 rule 10.
+- [ ] RV-7. Push, then read CI on the new head. If QML is red, the likely place is `test_transaction_commit_stops_a_pending_retry_timer` in `tests/tst_StoreRefresh.qml` (creates the retry timer through `_scheduleRetry()`); fix only that.
+
 ## NEXT
 1. CI is green (see step 10). Only re-check CI if something is pushed on top.
 2. Taher: veto or accept L4-D1..D8 and answer the open question (should an open edit dialog, not only a held lock, hold the refresh?). Device steps in the test plan (two phones).
