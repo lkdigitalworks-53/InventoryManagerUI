@@ -6,7 +6,7 @@
 //
 // Pure: no QML, no stores, never throws. DataModel.qml reads the live state into a `snap` object and asks.
 //
-//   snap = { online, sessionOpen, accessBlock, checking, outboxPending, gatewayInFlight, lockHeld,
+//   snap = { online, sessionOpen, accessBlock, checking, outboxPending, gatewayInFlight, lockHeld, editOpen,
 //            photoPending, storeBusy, refreshing }
 //
 // Why the gate is strict: a refresh replaces whole lists with what the server holds. A write that is
@@ -43,6 +43,7 @@ function softBlock(snap) {
     if (!(snap.outboxPending === 0)) return "outbox"          // anything queued, in flight or parked
     if (!(snap.gatewayInFlight === 0)) return "in-flight"
     if (snap.lockHeld !== false) return "lock"                // someone is mid-edit on a locked record
+    if (snap.editOpen !== false) return "edit-dialog"         // an edit form is open on this device: the lists under it must not change (Taher, 2026-11-03)
     if (!(snap.photoPending === 0)) return "photos"
     return ""
 }
@@ -84,7 +85,7 @@ function swapOk(startRevision, snap) {
     if (hardBlock(snap).length > 0) return false
     if (!isNum(startRevision) || !isNum(snap.outboxRevision) || snap.outboxRevision !== startRevision) return false
     if (!(snap.outboxPending === 0) || !(snap.gatewayInFlight === 0)) return false
-    if (snap.lockHeld !== false || !(snap.photoPending === 0)) return false
+    if (snap.lockHeld !== false || snap.editOpen !== false || !(snap.photoPending === 0)) return false
     return true
 }
 

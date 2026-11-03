@@ -16,6 +16,7 @@ BottomSheet {
     id: root
 
     sheetTitle: editMode ? "Edit staff member" : "Staff profile"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: editMode ? "Save changes" : (AuthStore.canManageStaff ? "Edit" : "")
     secondaryAction: editMode ? "Cancel" : "Close"
     primaryPalette: editMode ? Constants.gradHero : ({ start: Constants.brand1, end: Constants.brand2 })

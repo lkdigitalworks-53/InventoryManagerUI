@@ -12,6 +12,7 @@ BottomSheet {
     id: dlg
 
     sheetTitle: "New order"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Place order"
     secondaryAction: "Cancel"
 

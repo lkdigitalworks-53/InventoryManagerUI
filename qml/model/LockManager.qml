@@ -40,6 +40,14 @@ QtObject {
     property var _held: null
     // True while THIS device holds a lock (someone is mid-edit on a record). DataModel's refresh gate (L4a) waits on it.
     readonly property bool anyHeld: _held !== null && _held !== undefined
+    // Edit forms (BottomSheet with holdsRefresh) open on this device. DataModel's refresh gate waits on it so the
+    // lists under a form never change (L4a review, Taher's decision 2026-11-03). A count, not a flag: two sheets can
+    // overlap for a moment (order detail hands over to the confirm-return sheet).
+    property int editHolds: 0
+    readonly property bool anyEditing: editHolds > 0
+    function holdForEdit() { editHolds++ }
+    function releaseEdit() { if (editHolds > 0) editHolds-- }   // never below zero: a double release must not hide a later hold
+    function resetEditHolds() { editHolds = 0 }                 // sign-out: no form survives it
     property var _renewTimer: null
     property int _requestSeq: 0
 

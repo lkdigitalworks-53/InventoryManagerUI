@@ -13,6 +13,7 @@ BottomSheet {
     id: dlg
 
     sheetTitle: "Add product"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Save"
     secondaryAction: "Cancel"
 

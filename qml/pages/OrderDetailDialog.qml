@@ -19,6 +19,7 @@ BottomSheet {
     id: dlg
 
     sheetTitle: "Edit order " + (orderId.length > 0 ? "#" + orderId : "")
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Save changes"
     secondaryAction: "Close"
 

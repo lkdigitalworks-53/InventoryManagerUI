@@ -887,3 +887,7 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 ## L4a review: three unconfirmed risks, left on purpose — FOUND 2026-11-03 (review sweep of PR #182), NOT FIXED
 
 (1) The refresh swap does not compare the workspace id; it relies on every workspace change resetting the stores, which cancels a running refresh first. (2) A resume refresh that waits for a token refresh can run out its 2 minute wait if the token refresh is late; the next trigger covers it. (3) Swapping a whole list may reset a list's scroll position; only a device shows it. Details and the reasons they were not fixed: design doc section 6 (I1 to I3). The duplicate-row race between a Transaction retry and a refresh commit WAS fixed in the same PR (L4-D9).
+
+## An open edit form stops the automatic list refresh while it is open — BY DESIGN 2026-11-03 (L4-D10, Taher's decision)
+
+Nine forms hold the refresh (Add/Edit product, New order, Order detail, Restock, Add staff, Staff detail, Import preview, Confirm return). A form left open for a long time means lists under it can be older than the server's; closing the last form asks for one refresh (resume rules: 5 minute staleness, 15 s spacing, waits for the outbox). Read-only sheets, the staff action sheet and the category and channel managers do not hold. If a form is ever missed, a wiring test lists the exact set.

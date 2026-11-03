@@ -6,14 +6,15 @@ Branch `feat/2026-11-02-l4a-resume-refresh`. Design: `specs/2026-11-02-l4a-resum
 
 | File | Cases | Run? | Covers |
 |---|---|---|---|
-| `.github/scripts/__tests__/refreshPolicy.test.js` | 40 (battery of checks, 20000-step seeded monkey, 37 hand mutants) | RUN | `decide` matrix (run / wait / drop, per trigger, staleness, spacing, every hard and soft blocker, order of reasons, junk in every field fails closed), `swapOk` (revision, outbox, in-flight, lock, photos, block, offline, junk revisions), `wantExpired`, `runLost`, `allCommitted`. |
-| `.github/scripts/__tests__/refreshBehavior.test.js` | 72 (57 + 15 from the 2026-11-03 review: busy at commit, busy only mid-way, Transaction retry timer) | RUN | REAL function bodies of the six stores and of `DataModel` in a vm sandbox: paging into a buffer, list untouched until the commit, guard refusal / throw / non-true, failed first or later page, cancel mid-flight (answers once, late page ignored), refusal to start while loading / resetting / refreshing, cancel-then-new-run, per-store commit details (sort, counts, activities, tombstones, overlay, mints), coordinator run / wait / expire / rearm once / partial / skipped store / superseded / hung run, 6 seeds x 3000-step monkey with invariants. 24 hand mutants on the real files, 0 survivors. |
-| `.github/scripts/__tests__/refreshWiring.test.js` | 29 (24 + 5 mutants: busy check removed or weakened in four stores, timer stop removed) | RUN | Source rules: the paging function never touches the live list, `hasMore`, `_cursor`, `loadingMore` or `revision`; stale answers ignored first; guard strict and try-wrapped; commit only after the guard; reset and clear cancel first; snapshot keys equal the keys the policy reads; each key read from its real source; only `DataModel` calls `refreshFromFirebase`; resume hook; sign-out resets; helper is pure. 22 wiring mutants. |
+| `.github/scripts/__tests__/refreshPolicy.test.js` | 43 (battery of checks, 20000-step seeded monkey, 40 hand mutants; includes the edit-dialog blocker) | RUN | `decide` matrix (run / wait / drop, per trigger, staleness, spacing, every hard and soft blocker, order of reasons, junk in every field fails closed), `swapOk` (revision, outbox, in-flight, lock, photos, block, offline, junk revisions), `wantExpired`, `runLost`, `allCommitted`. |
+| `.github/scripts/__tests__/refreshBehavior.test.js` | 80 (57 + 15 from the 2026-11-03 review: busy at commit, busy only mid-way, Transaction retry timer; + 8 for the edit-form hold: wait, swap guard, close trigger, hold counter and its 5000-step monkey) | RUN | REAL function bodies of the six stores and of `DataModel` in a vm sandbox: paging into a buffer, list untouched until the commit, guard refusal / throw / non-true, failed first or later page, cancel mid-flight (answers once, late page ignored), refusal to start while loading / resetting / refreshing, cancel-then-new-run, per-store commit details (sort, counts, activities, tombstones, overlay, mints), coordinator run / wait / expire / rearm once / partial / skipped store / superseded / hung run, 6 seeds x 3000-step monkey with invariants. 24 hand mutants on the real files, 0 survivors. |
+| `.github/scripts/__tests__/refreshWiring.test.js` | 41 (24 + 5 busy-check mutants + 10 edit-hold mutants + 2 tests that flip the flag on every one of the nine forms and on seven read-only sheets) | RUN | Source rules: the paging function never touches the live list, `hasMore`, `_cursor`, `loadingMore` or `revision`; stale answers ignored first; guard strict and try-wrapped; commit only after the guard; reset and clear cancel first; snapshot keys equal the keys the policy reads; each key read from its real source; only `DataModel` calls `refreshFromFirebase`; resume hook; sign-out resets; helper is pure. 22 wiring mutants. |
 | `tests/tst_RefreshPolicy.qml` | 13 functions | CI only | Policy contract in the real Qt JS engine. |
+| `tests/tst_LockManager.qml` | +1 function | CI only | Edit-hold counter in the real engine (count, overlap, never negative, reset). |
 | `tests/tst_StoreRefresh.qml` | 6 functions (+ Transaction commit stops a pending retry timer) | CI only | All six singletons compile with the new members; refusal to start; cancel answers once; commit replaces and sorts. No network. |
 | `.github/scripts/__tests__/sessionRecheckWiring.test.js` | updated | RUN | Resume-hook pin follows the new block shape; `DataModel` allowed to read `AuthService.checking`. |
 
-Suites after the change: script suite 882/882 (862 before the review sweep), `functions` 985/985 (untouched).
+Suites after the change: script suite 905/905 (862 before the review sweep, 882 after fix F1), `functions` 985/985 (untouched).
 
 ## 2. Functional / rules / e2e
 - Functional: the behaviour tests above are the functional layer (real function bodies, fake edges).
@@ -37,7 +38,7 @@ Prerequisites: P1 dev functions deployed (unchanged), P2 both phones signed in a
 
 ### Negative
 5. On A create an order offline, then resume with the network back. Expect: the order stays visible all the time, is sent, and a refresh follows after it is acknowledged (the lists then show the server copy). No row ever disappears.
-6. On A open an order for editing (lock held), resume from the background while B changed another order. Expect: no refresh while the dialog is open; after closing it, the next resume refreshes.
+6. On A open an order for editing (lock held), resume from the background while B changed another order. Expect: no refresh while the dialog is open; once it is closed (and the lists are more than 5 minutes old) they refresh on their own, without another resume.
 7. Suspend the member on B (Firestore console `members/<uid>.status = suspended`) and resume A. Expect: the access screen (existing L3 behaviour) and no data read errors.
 8. Kill the network in the middle of a refresh (resume, then airplane mode within a second). Expect: lists unchanged, no toast, no crash; the next resume refreshes.
 
@@ -53,6 +54,10 @@ Prerequisites: P1 dev functions deployed (unchanged), P2 both phones signed in a
 15. Rapid app switching (monkey): switch to another app and back 30 times with orders being completed on B. Expect: no crash, no blank list, numbers settle to the server's after the last resume + 5 minutes.
 
 16. (Review F1, Transactions) Start A with the network off, sign in from the saved session so the Transactions list stays partial and retries in the background, then turn the network on and resume after 5 minutes. Expect: History shows each transaction once; the totals on Dashboard and Analysis equal the server's, not doubled.
+
+17. (L4-D10, edit forms) On A open New order, type a customer name and add a product, then on B add a product and an order. Put A in the background for 6 minutes and resume with the form still open. Expect: nothing changes under the form (the new product is not in its picker), no toast. Close the form without saving: the lists refresh within a few seconds and B's rows appear.
+18. (L4-D10) Repeat step 17 with Add product, Edit product, Restock, Add staff, Staff detail, Import preview and the order Return confirmation. Expect: the same hold each time. Then open Filter, Export and Notifications and resume after 6 minutes: these do NOT hold, the refresh runs behind them.
+19. (L4-D10) Open a form, sign out through the profile menu, sign in again, wait 6 minutes and resume. Expect: the refresh runs (the hold did not survive the sign-out). Also: open and close Order detail 20 times quickly (monkey), then resume after 6 minutes: the refresh runs (no hold left behind).
 
 ### Affected areas
 Orders, Inventory, Staff roster, Suppliers, Dashboard / Analysis (derived), stock batches (FIFO ledger), Transactions (history), the resume hook, the stuck-writes caption.

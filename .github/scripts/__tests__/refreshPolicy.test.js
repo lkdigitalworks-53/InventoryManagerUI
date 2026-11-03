@@ -22,7 +22,7 @@ function load(src) {
 }
 
 const QUIET = () => ({ online: true, sessionOpen: true, accessBlock: '', checking: false, refreshing: false,
-  storeBusy: false, outboxPending: 0, outboxRevision: 7, gatewayInFlight: 0, lockHeld: false, photoPending: 0 });
+  storeBusy: false, outboxPending: 0, outboxRevision: 7, gatewayInFlight: 0, lockHeld: false, editOpen: false, photoPending: 0 });
 const with_ = (o) => Object.assign(QUIET(), o);
 const JUNK = [undefined, null, NaN, Infinity, -Infinity, '', 'x', '1', true, false, {}, [], () => 1, -1];
 const NOW = 1_700_000_000_000;
@@ -71,9 +71,12 @@ function battery(m) {
 
   // soft blockers wait, one reason each, in the documented order
   const soft = [['checking', { checking: true }], ['refreshing', { refreshing: true }], ['store-loading', { storeBusy: true }],
-    ['outbox', { outboxPending: 1 }], ['in-flight', { gatewayInFlight: 2 }], ['lock', { lockHeld: true }], ['photos', { photoPending: 1 }]];
+    ['outbox', { outboxPending: 1 }], ['in-flight', { gatewayInFlight: 2 }], ['lock', { lockHeld: true }], ['edit-dialog', { editOpen: true }], ['photos', { photoPending: 1 }]];
   for (const [r, o] of soft) { eq('wait ' + r, why('resume', with_(o), NOW, 0, 0), r); eq('wait act ' + r, act('manual', with_(o), NOW, 0, 0), 'wait'); }
   eq('order checking first', why('resume', with_({ checking: true, outboxPending: 5, lockHeld: true }), NOW, 0, 0), 'checking');
+  eq('order lock before edit-dialog', why('resume', with_({ lockHeld: true, editOpen: true }), NOW, 0, 0), 'lock');
+  eq('order edit-dialog before photos', why('resume', with_({ editOpen: true, photoPending: 3 }), NOW, 0, 0), 'edit-dialog');
+  eq('edit dialog alone waits for every trigger', ['resume', 'reconnect', 'manual'].map(x => act(x, with_({ editOpen: true }), NOW, 0, 0)).join(), 'wait,wait,wait');
   eq('order outbox before lock', why('resume', with_({ outboxPending: 5, lockHeld: true }), NOW, 0, 0), 'outbox');
   // fresh/too-soon drop BEFORE a soft wait (nothing to wait for)
   eq('fresh beats wait', act('resume', with_({ outboxPending: 2 }), NOW, NOW - 1000, 0), 'drop');
@@ -81,7 +84,7 @@ function battery(m) {
 
   // junk in any snapshot field never runs (fails closed), never throws
   for (const k of ['online', 'sessionOpen']) for (const j of JUNK) if (j !== true) eq('junk ' + k, act('resume', with_({ [k]: j }), NOW, 0, 0), 'drop');
-  for (const k of ['checking', 'refreshing', 'storeBusy', 'lockHeld']) for (const j of JUNK) if (j !== false) eq('junk ' + k, act('resume', with_({ [k]: j }), NOW, 0, 0), 'wait');
+  for (const k of ['checking', 'refreshing', 'storeBusy', 'lockHeld', 'editOpen']) for (const j of JUNK) if (j !== false) eq('junk ' + k, act('resume', with_({ [k]: j }), NOW, 0, 0), 'wait');
   for (const k of ['outboxPending', 'gatewayInFlight', 'photoPending']) for (const j of JUNK) if (j !== 0) eq('junk ' + k, act('resume', with_({ [k]: j }), NOW, 0, 0), 'wait');
   for (const j of JUNK) if (j !== '') eq('junk accessBlock', act('resume', with_({ accessBlock: j }), NOW, 0, 0), 'drop');
 
@@ -92,6 +95,8 @@ function battery(m) {
   eq('swap outbox', m.swapOk(7, with_({ outboxPending: 1 })), false);
   eq('swap in-flight', m.swapOk(7, with_({ gatewayInFlight: 1 })), false);
   eq('swap lock', m.swapOk(7, with_({ lockHeld: true })), false);
+  eq('swap edit dialog', m.swapOk(7, with_({ editOpen: true })), false);
+  for (const j of JUNK) if (j !== false) eq('swap junk editOpen', m.swapOk(7, with_({ editOpen: j })), false);
   eq('swap photos', m.swapOk(7, with_({ photoPending: 1 })), false);
   eq('swap offline', m.swapOk(7, with_({ online: false })), false);
   eq('swap blocked', m.swapOk(7, with_({ accessBlock: 'removed' })), false);
@@ -138,7 +143,7 @@ test('monkey: 20000 random decisions agree with an independent model', () => {
   for (let i = 0; i < 20000; i++) {
     const snap = { online: rnd() > 0.1, sessionOpen: rnd() > 0.1, accessBlock: rnd() > 0.9 ? 'removed' : '', checking: rnd() > 0.85,
       refreshing: rnd() > 0.9, storeBusy: rnd() > 0.9, outboxPending: rnd() > 0.7 ? 2 : 0, outboxRevision: 3,
-      gatewayInFlight: rnd() > 0.9 ? 1 : 0, lockHeld: rnd() > 0.9, photoPending: rnd() > 0.9 ? 1 : 0 };
+      gatewayInFlight: rnd() > 0.9 ? 1 : 0, lockHeld: rnd() > 0.9, editOpen: rnd() > 0.9, photoPending: rnd() > 0.9 ? 1 : 0 };
     const trig = pick(['resume', 'reconnect', 'manual']);
     const sync = pick([0, NOW - 1000, NOW - 299999, NOW - 300000, NOW - 900000]);
     const start = pick([0, NOW - 1000, NOW - 14999, NOW - 15000, NOW - 99999]);
@@ -146,7 +151,7 @@ test('monkey: 20000 random decisions agree with an independent model', () => {
     if (!snap.online) want = 'drop'; else if (!snap.sessionOpen) want = 'drop'; else if (snap.accessBlock) want = 'drop';
     else if (trig !== 'manual' && sync > 0 && NOW - sync < 300000) want = 'drop';
     else if (start > 0 && NOW - start < 15000) want = 'drop';
-    else if (snap.checking || snap.refreshing || snap.storeBusy || snap.outboxPending > 0 || snap.gatewayInFlight > 0 || snap.lockHeld || snap.photoPending > 0) want = 'wait';
+    else if (snap.checking || snap.refreshing || snap.storeBusy || snap.outboxPending > 0 || snap.gatewayInFlight > 0 || snap.lockHeld || snap.editOpen || snap.photoPending > 0) want = 'wait';
     else want = 'run';
     const got = m.decide(trig, snap, NOW, sync, start).action;
     assert.equal(got, want, JSON.stringify({ trig, snap, sync, start }));
@@ -190,7 +195,10 @@ const MUTANTS = [
   ['swap ignores revision', 'snap.outboxRevision !== startRevision) return false', 'false) return false'],
   ['swap accepts junk revision', '!isNum(startRevision) || !isNum(snap.outboxRevision) || ', ''],
   ['swap ignores outbox', 'if (!(snap.outboxPending === 0) || !(snap.gatewayInFlight === 0)) return false', 'if (!(snap.gatewayInFlight === 0)) return false'],
-  ['swap ignores lock', 'if (snap.lockHeld !== false || !(snap.photoPending === 0)) return false', 'if (!(snap.photoPending === 0)) return false'],
+  ['swap ignores lock', 'if (snap.lockHeld !== false || snap.editOpen !== false || !(snap.photoPending === 0)) return false', 'if (snap.editOpen !== false || !(snap.photoPending === 0)) return false'],
+  ['swap ignores edit dialog', 'if (snap.lockHeld !== false || snap.editOpen !== false || !(snap.photoPending === 0)) return false', 'if (snap.lockHeld !== false || !(snap.photoPending === 0)) return false'],
+  ['edit dialog ignored', 'if (snap.editOpen !== false) return "edit-dialog"', ''],
+  ['edit dialog truthy test (junk passes)', 'if (snap.editOpen !== false) return "edit-dialog"', 'if (snap.editOpen === true) return "edit-dialog"'],
   ['swap ignores block', 'if (hardBlock(snap).length > 0) return false', ''],
   ['want never expires on bad clock', 'if (!isNum(wantSinceMs) || !isNum(nowMs)) return true', 'if (!isNum(wantSinceMs) || !isNum(nowMs)) return false'],
   ['want backwards kept', 'return age < 0 || age >= WANT_TTL_MS', 'return age >= WANT_TTL_MS'],

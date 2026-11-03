@@ -11,6 +11,7 @@ BottomSheet {
     id: dlg
 
     sheetTitle: "Restock"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Confirm"
     secondaryAction: "Cancel"
     primaryPalette: ({ start: Constants.brand4, end: Constants.brand5 })

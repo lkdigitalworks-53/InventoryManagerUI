@@ -434,6 +434,7 @@ Item {
             outboxRevision: OutboxStore.revision,
             gatewayInFlight: Gateway.inFlight,
             lockHeld: LockManager.anyHeld,
+            editOpen: LockManager.anyEditing,
             photoPending: PhotoQueue.pendingCount
         }
     }
@@ -516,6 +517,16 @@ Item {
         }
     }
 
+    // The last edit form closed: the refresh that was held off (or forgotten after WANT_TTL_MS) gets one chance now.
+    // Treated as a resume, so the 5 minute staleness and 15 s spacing rules still apply; a form that saved leaves the
+    // outbox busy, so the gate then waits for the write to be acknowledged.
+    function _onEditHoldsChanged() { if (LockManager.editHolds === 0) requestRefresh("resume") }
+
+    Connections {
+        target: LockManager
+        function onEditHoldsChanged() { dataModel._onEditHoldsChanged() }
+    }
+
     Timer {
         id: _refreshWaitTimer
         interval: RefreshPolicy.POLL_MS
@@ -532,6 +543,7 @@ Item {
         function onSignedOut() {
             dataModel._clearWant()
             dataModel._lastSyncMs = 0
+            LockManager.resetEditHolds()
         }
         function onIsOnlineChanged() { if (AuthService.isOnline) dataModel.requestRefresh("reconnect") }
     }

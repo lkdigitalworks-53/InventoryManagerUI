@@ -16,6 +16,7 @@ BottomSheet {
     id: root
 
     sheetTitle: editMode ? "Edit product" : "Product details"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: editMode ? "Save changes" : (AuthStore.canManageInventory ? "Edit" : "")
     secondaryAction: editMode ? "Cancel" : "Close"
 

@@ -186,7 +186,7 @@ test('store specifics: sorting, hooks, normalisers', () => {
 });
 
 // ── coordinator (DataModel.qml) ───────────────────────────────────────────────────────────────────────────
-const CFNS = ['_refreshStoreList', '_refreshSnapshot', 'requestRefresh', '_clearWant', '_cancelLostRun', '_pollWant', '_startRefresh', '_onStoreRefreshed'];
+const CFNS = ['_refreshStoreList', '_refreshSnapshot', 'requestRefresh', '_clearWant', '_cancelLostRun', '_pollWant', '_startRefresh', '_onStoreRefreshed', '_onEditHoldsChanged'];
 
 function makeCoordinator(over = {}) {
   const log = { timer: [], guards: [] };
@@ -199,7 +199,7 @@ function makeCoordinator(over = {}) {
     __now: 1_700_000_000_000,
     OrdersStore: stores[0], InventoryStore: stores[1], StockBatchStore: stores[2], SupplierStore: stores[3], StaffStore: stores[4], TransactionStore: stores[5],
     AuthService: { isOnline: true, isSessionOpen: () => true, accessBlock: '', checking: false, tokenNeedsRefresh: () => false },
-    OutboxStore: { items: [], revision: 7 }, Gateway: { inFlight: 0 }, LockManager: { anyHeld: false }, PhotoQueue: { pendingCount: 0 },
+    OutboxStore: { items: [], revision: 7 }, Gateway: { inFlight: 0 }, LockManager: { anyHeld: false, anyEditing: false, editHolds: 0 }, PhotoQueue: { pendingCount: 0 },
     _refreshWaitTimer: { restart() { log.timer.push('restart'); }, stop() { log.timer.push('stop'); } },
     _lastSyncMs: 0, _lastRefreshStartMs: 0, _wantSinceMs: 0, _wantTrigger: '', _wantRearmed: false, _refreshRunning: false,
     _refreshOutstanding: 0, _refreshResults: [], _refreshTrigger: '', lastRefreshAction: 0, lastRefreshOutcome: '',
@@ -389,4 +389,74 @@ test('TransactionStore: no retry timer yet (null) -> commit still works', () => 
   const s = makeStore('TransactionStore'); const seen = [];
   s.ctx.refreshFromFirebase(() => true, (x) => seen.push(x)); answer(s, 0, true, page(['a'], false, null));
   assert.deepEqual(seen, ['committed']);
+});
+
+// -- edit forms hold the refresh (Taher's decision 2026-11-03, L4-D10) ---------------------------------------
+test('coordinator: an open edit form makes every trigger wait, and the snapshot reads LockManager.anyEditing', () => {
+  for (const trig of ['resume', 'reconnect', 'manual']) {
+    const k = makeCoordinator(); k.ctx.LockManager.anyEditing = true;
+    assert.equal(k.ctx.requestRefresh(trig), 'wait', trig); assert.ok(k.stores.every(s => s.started === 0), 'nothing started under a form');
+    assert.equal(k.ctx._refreshSnapshot().editOpen, true);
+  }
+});
+
+test('coordinator: the swap guard refuses when a form opens during the fetch, and allows again once it closes', () => {
+  const k = makeCoordinator(); k.ctx.requestRefresh('resume'); const g = k.stores[0].guard;
+  assert.equal(g(), true);
+  k.ctx.LockManager.anyEditing = true; assert.equal(g(), false, 'a form opened mid-fetch');
+  k.ctx.LockManager.anyEditing = false; assert.equal(g(), true);
+});
+
+test('coordinator: a waiting refresh starts when the form closes while it is still within its wait', () => {
+  const k = makeCoordinator(); k.ctx.LockManager.anyEditing = true;
+  assert.equal(k.ctx.requestRefresh('resume'), 'wait');
+  k.tick(5000); k.ctx.LockManager.anyEditing = false; k.ctx._pollWant();
+  assert.ok(k.stores.every(s => s.started === 1), 'poll after the form closed runs it');
+});
+
+test('coordinator: a form closing after the wait expired gives the refresh one new chance (close trigger)', () => {
+  const k = makeCoordinator(); k.ctx.LockManager.anyEditing = true;
+  assert.equal(k.ctx.requestRefresh('resume'), 'wait');
+  k.tick(130000); k.ctx._pollWant();                          // the wish is forgotten after 2 minutes
+  assert.equal(k.ctx._wantTrigger, ''); assert.ok(k.stores.every(s => s.started === 0));
+  k.ctx.LockManager.anyEditing = false; k.ctx.LockManager.editHolds = 0;
+  k.ctx._onEditHoldsChanged();
+  assert.ok(k.stores.every(s => s.started === 1), 'close trigger runs it (lists are stale, gate quiet)');
+});
+
+test('coordinator: closing a form does not refresh when other forms are still open, when the lists are fresh, or when offline', () => {
+  let k = makeCoordinator(); k.ctx.LockManager.editHolds = 1; k.ctx.LockManager.anyEditing = true; k.ctx._onEditHoldsChanged();
+  assert.ok(k.stores.every(s => s.started === 0), 'another form is still open');
+  k = makeCoordinator({ _lastSyncMs: 1_700_000_000_000 - 1000 }); k.ctx._onEditHoldsChanged();
+  assert.ok(k.stores.every(s => s.started === 0), 'lists are fresh: staleness rule applies');
+  k = makeCoordinator(); k.ctx.AuthService.isOnline = false; k.ctx._onEditHoldsChanged();
+  assert.ok(k.stores.every(s => s.started === 0), 'offline');
+});
+
+test('coordinator: a form that saved leaves the outbox busy, so the close trigger waits for the acknowledgement', () => {
+  const k = makeCoordinator(); k.ctx.OutboxStore.items = [{ requestId: 'r1' }]; k.ctx._onEditHoldsChanged();
+  assert.ok(k.stores.every(s => s.started === 0)); assert.equal(k.ctx._wantTrigger, 'resume');
+});
+
+// the hold counter itself: the real function bodies from LockManager.qml
+function makeHolds() {
+  const ctx = { editHolds: 0 }; vm.createContext(ctx);
+  for (const fn of ['holdForEdit', 'releaseEdit', 'resetEditHolds']) vm.runInContext(extractFunction('model/LockManager.qml', fn).replace(/^function /, 'this.' + fn + ' = function '), ctx);
+  return ctx;
+}
+test('edit holds: count up and down, overlap of two sheets keeps the hold, never below zero, reset on sign-out', () => {
+  const h = makeHolds();
+  h.holdForEdit(); h.holdForEdit(); assert.equal(h.editHolds, 2);
+  h.releaseEdit(); assert.equal(h.editHolds, 1, 'overlap: still held'); h.releaseEdit(); assert.equal(h.editHolds, 0);
+  h.releaseEdit(); h.releaseEdit(); assert.equal(h.editHolds, 0, 'a double release cannot go negative');
+  h.holdForEdit(); assert.equal(h.editHolds, 1, 'and a later hold still counts');
+  h.holdForEdit(); h.resetEditHolds(); assert.equal(h.editHolds, 0);
+});
+
+test('edit holds: seeded monkey of 5000 hold/release/reset steps keeps the count equal to a reference and >= 0', () => {
+  let seed = 42; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const h = makeHolds(); let ref = 0;
+  for (let i = 0; i < 5000; i++) { const r = rnd();
+    if (r < 0.45) { h.holdForEdit(); ref++; } else if (r < 0.9) { h.releaseEdit(); if (ref > 0) ref--; } else { h.resetEditHolds(); ref = 0; }
+    assert.equal(h.editHolds, ref); assert.ok(h.editHolds >= 0); }
 });

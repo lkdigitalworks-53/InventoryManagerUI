@@ -3,6 +3,7 @@ import QtQuick.Controls as QQC
 import QtQuick.Layouts
 
 import "../helper"
+import "../model"
 import "../helper/SheetFooter.js" as SheetFooter
 
 // Modal bottom sheet matching the prototype.
@@ -39,6 +40,24 @@ QQC.Dialog {
     // secondary label took the room first. Math in SheetFooter.js (tested headlessly).
     readonly property real _primaryFloor: SheetFooter.primaryFloor(
         primaryMetrics.advanceWidth, primaryButton.leftPadding + primaryButton.rightPadding, footerRow.width)
+
+    // Set true by sheets that EDIT data: while one is open the background list refresh waits (LockManager.anyEditing,
+    // read by DataModel). Read-only sheets (filters, export, notifications, sign-out) leave it false.
+    property bool holdsRefresh: false
+    property bool _holding: false
+    function _setHold(on) {
+        if (on === _holding) return        // idempotent: open twice or close twice never skews the count
+        _holding = on
+        if (on) LockManager.holdForEdit()
+        else LockManager.releaseEdit()
+    }
+    // .connect, not onAboutToShow / onClosed: sheets that derive from this one declare their own onOpened / onClosed
+    // and must not be able to replace these.
+    Component.onCompleted: {
+        aboutToShow.connect(function() { root._setHold(root.holdsRefresh) })
+        closed.connect(function() { root._setHold(false) })
+    }
+    Component.onDestruction: _setHold(false)   // a sheet destroyed while open (Loader, page change) still lets go
 
     signal primaryClicked()
     signal secondaryClicked()

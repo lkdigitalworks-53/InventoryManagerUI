@@ -31,6 +31,8 @@ function snapshot() {
   for (const [k, p] of Object.entries(STORE_FILES)) o[k] = rd(p);
   o.dm = rd('qml/model/DataModel.qml'); o.main = rd('qml/Main.qml'); o.lock = rd('qml/model/LockManager.qml');
   o.auth = rd('qml/model/AuthService.qml'); o.policy = rd('qml/helper/RefreshPolicy.js');
+  o.sheet = rd('qml/components/BottomSheet.qml');
+  o.pages = {}; for (const e of fs.readdirSync(path.join(REPO, 'qml/pages'))) if (/\.qml$/.test(e)) o.pages[e] = rd('qml/pages/' + e);
   return o;
 }
 
@@ -79,7 +81,7 @@ function check(f) {
   const dmKeys = [...new Set([...snapBody.matchAll(/^\s+(\w+):/gm)].map(m => m[1]))].sort();
   if (JSON.stringify(policyKeys) !== JSON.stringify(dmKeys)) v.push('snapshot keys differ: policy ' + policyKeys + ' vs DataModel ' + dmKeys);
   for (const [key, src] of [['outboxPending', 'OutboxStore.items.length'], ['outboxRevision', 'OutboxStore.revision'], ['gatewayInFlight', 'Gateway.inFlight'],
-    ['lockHeld', 'LockManager.anyHeld'], ['photoPending', 'PhotoQueue.pendingCount'], ['sessionOpen', 'AuthService.isSessionOpen()'], ['accessBlock', 'AuthService.accessBlock']])
+    ['lockHeld', 'LockManager.anyHeld'], ['editOpen', 'LockManager.anyEditing'], ['photoPending', 'PhotoQueue.pendingCount'], ['sessionOpen', 'AuthService.isSessionOpen()'], ['accessBlock', 'AuthService.accessBlock']])
     if (!new RegExp(key + ':\\s*' + src.replace(/[().]/g, '\\$&')).test(snapBody)) v.push('snapshot ' + key + ' not read from ' + src);
   if (!/checking: AuthService\.checking === true \|\| AuthService\.tokenNeedsRefresh\(\)/.test(snapBody)) v.push('snapshot: token expiry not part of checking');
   if (!/_cancelLostRun\(now\)/.test(body(dm, 'requestRefresh') || '') || !/_cancelLostRun\(now\)/.test(body(dm, '_pollWant') || '')) v.push('watchdog not run by both entry points');
@@ -97,6 +99,22 @@ function check(f) {
   if (!/Qt\.application\.state === Qt\.ApplicationActive\) \{[\s\S]*?AuthService\.onAppResumed\(\)[\s\S]*?dataModel\.requestRefresh\("resume"\)/.test(f.main)) v.push('Main: resume hook');
   if (!/readonly property bool anyHeld: _held !== null/.test(f.lock)) v.push('LockManager.anyHeld');
   if (!/function isSessionOpen\(\) \{ return _sessionOpen\(\) \}/.test(f.auth) || !/function tokenNeedsRefresh\(\) \{ return _tokenExpiring\(\) \}/.test(f.auth)) v.push('AuthService readers');
+  // edit forms hold the refresh (L4-D10): counter, base sheet hook, the nine opt-in forms and nobody else, sign-out reset, close trigger
+  if (!/readonly property bool anyEditing: editHolds > 0/.test(f.lock) || !/function holdForEdit\(\) \{ editHolds\+\+ \}/.test(f.lock) || !/function releaseEdit\(\) \{ if \(editHolds > 0\) editHolds-- \}/.test(f.lock) || !/function resetEditHolds\(\) \{ editHolds = 0 \}/.test(f.lock)) v.push('LockManager edit-hold counter');
+  const sh = f.sheet;
+  if (!/property bool holdsRefresh: false/.test(sh) || !/if \(on === _holding\) return/.test(sh)) v.push('BottomSheet: holdsRefresh / idempotent hold');
+  if (!/aboutToShow\.connect\(function\(\) \{ root\._setHold\(root\.holdsRefresh\) \}\)/.test(sh) || !/closed\.connect\(function\(\) \{ root\._setHold\(false\) \}\)/.test(sh)) v.push('BottomSheet: hold not taken on show / released on close');
+  if (!/Component\.onDestruction: _setHold\(false\)/.test(sh)) v.push('BottomSheet: no release on destruction');
+  if (!/LockManager\.holdForEdit\(\)/.test(sh) || !/LockManager\.releaseEdit\(\)/.test(sh)) v.push('BottomSheet: does not call the counter');
+  const FORMS = ['AddProductDialog', 'EditProductDialog', 'NewOrderDialog', 'OrderDetailDialog', 'RestockDialog', 'AddStaffDialog', 'StaffDetailDialog', 'ImportPreviewDialog', 'ConfirmReturnSheet'].map(n => n + '.qml');
+  for (const n of Object.keys(f.pages)) {
+    const has = /^\s*holdsRefresh:\s*true/m.test(f.pages[n]);
+    if (FORMS.includes(n) && !has) v.push(n + ': edit form does not hold the refresh');
+    if (!FORMS.includes(n) && has) v.push(n + ': holds the refresh but is not on the edit-form list');
+  }
+  for (const n of FORMS) if (!(n in f.pages)) v.push(n + ': listed form is missing');
+  if (!/function _onEditHoldsChanged\(\) \{ if \(LockManager\.editHolds === 0\) requestRefresh\("resume"\) \}/.test(dm) || !/target: LockManager\s*function onEditHoldsChanged\(\) \{ dataModel\._onEditHoldsChanged\(\) \}/.test(dm)) v.push('DataModel: close trigger');
+  if (!/dataModel\._lastSyncMs = 0\s*LockManager\.resetEditHolds\(\)/.test(dm)) v.push('DataModel: sign-out does not reset the edit holds');
   // purity of the helper
   if (/\bQt\b|^import |Date\.now|Math\.random/m.test(f.policy.replace(/\/\/.*$/gm, ''))) v.push('RefreshPolicy is not pure');
   return v;
@@ -138,6 +156,16 @@ const MUT = [
   rep('lock', 'readonly property bool anyHeld: _held !== null', 'readonly property bool anyHeld: false && _held !== null'),
   rep('auth', 'function tokenNeedsRefresh() { return _tokenExpiring() }', 'function tokenNeedsRefresh() { return false }'),
   rep('policy', 'var STALE_MS = 300000', 'var STALE_MS = 300000\nvar t = Date.now()'),
+  rep('dm', 'editOpen: LockManager.anyEditing,', 'editOpen: false,'),
+  rep('dm', '            LockManager.resetEditHolds()\n', ''),
+  rep('dm', 'if (LockManager.editHolds === 0) requestRefresh("resume")', 'requestRefresh("resume")'),
+  rep('dm', 'function onEditHoldsChanged() { dataModel._onEditHoldsChanged() }', 'function onEditHoldsChanged() { }'),
+  rep('lock', 'function releaseEdit() { if (editHolds > 0) editHolds-- }', 'function releaseEdit() { editHolds-- }'),
+  rep('lock', 'readonly property bool anyEditing: editHolds > 0', 'readonly property bool anyEditing: false'),
+  rep('sheet', 'closed.connect(function() { root._setHold(false) })', 'void 0'),
+  rep('sheet', 'aboutToShow.connect(function() { root._setHold(root.holdsRefresh) })', 'void 0'),
+  rep('sheet', '    Component.onDestruction: _setHold(false)', ''),
+  rep('sheet', 'if (on === _holding) return', 'if (false) return'),
   rep('OrdersStore', 'if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }', ''),
   rep('TransactionStore', 'if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }', ''),
   rep('StaffStore', 'if (loadingMore || _resetPending) { _finishRefresh("discarded"); return }', 'if (loadingMore) { _finishRefresh("discarded"); return }'),
@@ -145,3 +173,17 @@ const MUT = [
   rep('TransactionStore', 'if (_retryTimer) _retryTimer.stop()   // the list is complete now', 'void 0   // the list is complete now'),
 ];
 for (const [name, fn] of MUT) test('wiring mutant killed: ' + name, () => { const f = snapshot(); fn(f); assert.ok(check(f).length > 0, 'not noticed'); });
+
+test('wiring mutant killed: an edit form loses its holdsRefresh opt-in', () => {
+  for (const n of ['AddProductDialog.qml', 'EditProductDialog.qml', 'NewOrderDialog.qml', 'OrderDetailDialog.qml', 'RestockDialog.qml', 'AddStaffDialog.qml', 'StaffDetailDialog.qml', 'ImportPreviewDialog.qml', 'ConfirmReturnSheet.qml']) {
+    const f = snapshot(); assert.ok(/holdsRefresh: true/.test(f.pages[n]), 'anchor ' + n);
+    f.pages[n] = f.pages[n].replace(/holdsRefresh: true/, 'holdsRefresh: false'); assert.ok(check(f).length > 0, n);
+  }
+});
+
+test('wiring mutant killed: a read-only sheet starts holding the refresh', () => {
+  for (const n of ['FilterSheet.qml', 'ExportSheet.qml', 'NotificationsSheet.qml', 'SignOutSheet.qml', 'StuckWritesSheet.qml', 'StaffActionSheet.qml', 'AnalysisFilterSheet.qml']) {
+    const f = snapshot(); assert.ok(n in f.pages, 'anchor ' + n);
+    f.pages[n] = f.pages[n] + '\n    holdsRefresh: true\n'; assert.ok(check(f).length > 0, n);
+  }
+});

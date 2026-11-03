@@ -15,7 +15,7 @@ TestCase {
 
     function _quiet() {
         return { online: true, sessionOpen: true, accessBlock: "", checking: false, refreshing: false,
-                 storeBusy: false, outboxPending: 0, outboxRevision: 7, gatewayInFlight: 0, lockHeld: false, photoPending: 0 }
+                 storeBusy: false, outboxPending: 0, outboxRevision: 7, gatewayInFlight: 0, lockHeld: false, editOpen: false, photoPending: 0 }
     }
     function _with(o) {
         var s = _quiet()
@@ -68,7 +68,7 @@ TestCase {
 
     function test_soft_blockers_wait_in_order() {
         var cases = [["checking", { checking: true }], ["refreshing", { refreshing: true }], ["store-loading", { storeBusy: true }],
-                     ["outbox", { outboxPending: 1 }], ["in-flight", { gatewayInFlight: 2 }], ["lock", { lockHeld: true }], ["photos", { photoPending: 1 }]]
+                     ["outbox", { outboxPending: 1 }], ["in-flight", { gatewayInFlight: 2 }], ["lock", { lockHeld: true }], ["edit-dialog", { editOpen: true }], ["photos", { photoPending: 1 }]]
         for (var i = 0; i < cases.length; ++i) {
             compare(RP.decide("resume", _with(cases[i][1]), now, 0, 0).reason, cases[i][0])
             compare(RP.decide("manual", _with(cases[i][1]), now, 0, 0).action, "wait")
@@ -94,6 +94,8 @@ TestCase {
         verify(!RP.swapOk(7, _with({ outboxPending: 1 })))
         verify(!RP.swapOk(7, _with({ gatewayInFlight: 1 })))
         verify(!RP.swapOk(7, _with({ lockHeld: true })))
+        verify(!RP.swapOk(7, _with({ editOpen: true })))
+        verify(!RP.swapOk(7, _with({ editOpen: 1 })))
         verify(!RP.swapOk(7, _with({ photoPending: 1 })))
         verify(!RP.swapOk(7, _with({ online: false })))
         verify(!RP.swapOk(7, _with({ accessBlock: "removed" })))
@@ -135,7 +137,7 @@ TestCase {
         for (var i = 0; i < 4000; ++i) {
             var snap = { online: rnd() > 0.1, sessionOpen: rnd() > 0.1, accessBlock: rnd() > 0.9 ? "removed" : "", checking: rnd() > 0.85,
                          refreshing: rnd() > 0.9, storeBusy: rnd() > 0.9, outboxPending: rnd() > 0.7 ? 2 : 0, outboxRevision: 3,
-                         gatewayInFlight: rnd() > 0.9 ? 1 : 0, lockHeld: rnd() > 0.9, photoPending: rnd() > 0.9 ? 1 : 0 }
+                         gatewayInFlight: rnd() > 0.9 ? 1 : 0, lockHeld: rnd() > 0.9, editOpen: rnd() > 0.9, photoPending: rnd() > 0.9 ? 1 : 0 }
             var d = RP.decide(["resume", "reconnect", "manual"][Math.floor(rnd() * 3)], snap, now, 0, 0)
             if (d.action === "run") { runs++; verify(RP.swapOk(3, snap)) }
         }

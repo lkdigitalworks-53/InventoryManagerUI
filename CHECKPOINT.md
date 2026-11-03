@@ -31,6 +31,13 @@ Ask: full deep review of PR #182 (requesting-code-review, qt-qml-review, ponytai
 - [x] RV-6. Docs: design section 6 (findings, lint triage, I1-I3, lean note, ui-design audit), test plan (counts, device step 16), KNOWN-ISSUES entry, Skill 151 rule 10.
 - [x] RV-7. Pushed `4980971`. CI OBSERVED on it: QML, Functions, Rules and E2E all success, including the new QML test. This checkpoint line was pushed after it (docs only; do not wait for a second CI read).
 
+## EDIT-FORM HOLD 2026-11-03 (Taher answered the open question: yes, an open edit dialog holds the refresh) - resume here
+- [x] EH-1. Design L4-D10 (replaces the open question), gate input `editOpen` in `RefreshPolicy.js` (soft blocker "edit-dialog" after "lock", also refuses the swap), snapshot key `editOpen: LockManager.anyEditing`.
+- [x] EH-2. `LockManager.editHolds` / `anyEditing` / `holdForEdit` / `releaseEdit` (clamped) / `resetEditHolds`; `BottomSheet.holdsRefresh` (took via `.connect` on aboutToShow, released on closed and on destruction, idempotent); nine forms opt in; `DataModel._onEditHoldsChanged` asks once as a resume when the last hold goes; sign-out resets the holds.
+- [x] EH-3. Tests: policy (Node + QML), coordinator behaviour (+8), wiring (+12: counter, base sheet, exact form list, read-only sheets, close trigger, sign-out reset, 10 mutants + 2 flag-flip tests), `tst_LockManager.qml` +1 (CI only). Script suite 905/905 run locally.
+- [x] EH-4. Docs: design L4-D10 + limits, test plan (counts, step 6 reworded, device steps 17-19), KNOWN-ISSUES entry, Skill 151 rule 11.
+- [ ] EH-5. Push, read CI on the new head. If QML is red look first at `BottomSheet.qml` (new `import "../model"`, `Component.onCompleted` on the root) and at `test_edit_holds_count_overlap_and_never_go_negative`.
+
 ## NEXT
 1. CI is green (see step 10). Only re-check CI if something is pushed on top.
 2. Taher: veto or accept L4-D1..D8 and answer the open question (should an open edit dialog, not only a held lock, hold the refresh?). Device steps in the test plan (two phones).
