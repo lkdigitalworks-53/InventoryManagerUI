@@ -29,7 +29,7 @@ Ask: full deep review of PR #182 (requesting-code-review, qt-qml-review, ponytai
 - [x] RV-4. Tests: behaviour 57 -> 72, wiring 24 -> 29, QML +1 function (CI only). Script suite 882/882 run locally. Three hand mutants of the fix killed.
 - [x] RV-5. Fix F2: stale file name in the behaviour test header.
 - [x] RV-6. Docs: design section 6 (findings, lint triage, I1-I3, lean note, ui-design audit), test plan (counts, device step 16), KNOWN-ISSUES entry, Skill 151 rule 10.
-- [ ] RV-7. Push, then read CI on the new head. If QML is red, the likely place is `test_transaction_commit_stops_a_pending_retry_timer` in `tests/tst_StoreRefresh.qml` (creates the retry timer through `_scheduleRetry()`); fix only that.
+- [x] RV-7. Pushed `4980971`. CI OBSERVED on it: QML, Functions, Rules and E2E all success, including the new QML test. This checkpoint line was pushed after it (docs only; do not wait for a second CI read).
 
 ## NEXT
 1. CI is green (see step 10). Only re-check CI if something is pushed on top.
