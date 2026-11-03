@@ -19,10 +19,10 @@ Next planned item after PR #180 (L3 slice A): "L4 resume sync / pull to refresh"
 - [x] 7. QML twins `tests/tst_RefreshPolicy.qml` (13 functions), `tests/tst_StoreRefresh.qml` (5): written, CI only.
 - [x] 8. Test plan, README update, AGENTS pointer, KNOWN-ISSUES (3 entries), Skill 151 + `SKILLS-INDEX.md`.
 - [x] 9. Sandbox runs: script suite 862/862, `functions` 985/985 (untouched).
-- [ ] 10. Pushed, PR raised, CI result read (see below / next session).
+- [x] 10. Pushed `8c4942e`, PR #182 raised. CI on it: ALL GREEN 3910/3910 (QML 2707, Functions 985, Rules 108, E2E 110). First QML-engine contact of the six edited stores and both new QML tests passed.
 
 ## NEXT
-1. Read CI on the PR head; fix only what it shows (QML is unrun here: `tst_StoreRefresh.qml` and the six edited stores are the first QML-engine contact).
+1. CI is green (see step 10). Only re-check CI if something is pushed on top.
 2. Taher: veto or accept L4-D1..D8 and answer the open question (should an open edit dialog, not only a held lock, hold the refresh?). Device steps in the test plan (two phones).
 3. L4b: pull-to-refresh on the lists + "last updated" caption, calls `DataModel.requestRefresh("manual")` (returns run/wait/drop for the toast). Needs a qt-ui-design pass first.
 4. L4c: incremental refresh, refresh of ActivityLog / categories / channels, move the sign-in sync to the shadow fetch (KNOWN-ISSUES).
@@ -30,4 +30,4 @@ Next planned item after PR #180 (L3 slice A): "L4 resume sync / pull to refresh"
 
 ## Not done / honest gaps
 - Nothing built or run on a device; the foreground transition and what lists draw are device-only.
-- QML tests are unrun here (CI only).
+- QML tests ran in CI only (green), never locally.
