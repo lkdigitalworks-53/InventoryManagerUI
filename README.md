@@ -324,6 +324,13 @@ returns the same ids. `restock` is now an allowed `opType`. Nothing in the app c
 atomic-operations arc). Design `docs/superpowers/specs/2026-10-28-r2-mint-engine-design.md`; deploy with
 `firebase deploy --only functions`. 60 new Node tests (functions suite 937), 7 emulator e2e cases (CI). Review sweep 2026-10-29 (design section 7): a skipped id is no longer rewritten, a counter far behind the data heals in one operation, an unused mint or a cross-entity id is a 400. Second sweep 2026-10-31 (design section 8): a bind named like an `Object.prototype` member can no longer dodge the unused-mint check, and ids/counters above 999,999,999 are treated as damaged (a counter hand-set to 2^53-1 used to kill minting for the tenant).
 
+**Update 2026-11-02 (R4, restock is one operation):** `InventoryStore.restock` now plans with `RestockPlan` and sends ONE `recordOperation("restock")`
+(supplier, batch, stock, purchase and ledger row in one server transaction; the server mints the ids). The queued outbox item is the per-product latch,
+and the product is hidden from the New Order picker and refused at completion until the restock settles. A late answer (offline, slow, relaunch,
+replay) is applied once through the `DataModel` route. The restock toast says "Restock saved. Stock updates when it syncs" when it is only queued;
+the old silent default quantity of 10 is gone. Design `docs/superpowers/specs/2026-11-02-r4-restock-wire-design.md`, test plan
+`docs/superpowers/test-plans/2026-11-02-r4-restock-wire-test-plan.md`, open items in `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 10. Next: R5.
+
 **Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
 same transaction as every stock change on `inventory`: explicit `movements` on `recordDelta` (signed quantities must sum to the
 applied delta) or a server-derived default row (`adjustment`; `sale` inside `completeOrder`; `receipt` on create), so product create,

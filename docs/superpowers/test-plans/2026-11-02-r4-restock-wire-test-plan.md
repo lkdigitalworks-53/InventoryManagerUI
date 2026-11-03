@@ -35,7 +35,7 @@ Prerequisites: P1 signed in as owner on a dev tenant (new user and tenant); P2 p
 
 ### Happy path
 1. Restock A by 5, supplier `Acme` (pick it), cost 12, reason `box 7`. Expect the toast "Restocked +5 units", stock 15, ONE new batch (supplier `Acme`, qty 5, remaining 5, cost 12, note `box 7`), one purchase row `tx-p-<batch id>`, one `receipt` movement, one Activity entry "Restocked: A" with `+5 · now 15 in stock · from Acme · box 7`.
-2. Restock A by 2 with a NEW supplier name typed in the dialog's party field path you use today (`Zed`). Expect stock 17, a supplier `Zed` exists once, the batch points to it.
+2. Use the dialog's add-new-party path to create `Zed`, then restock A by 2 with it. Expect stock 17, a supplier `Zed` exists once, the batch points to it. (The dialog still creates the supplier first through the old mint; the atomic new-name path is covered by the tests and moves into the dialog in R5.)
 3. Restock B by 3 with no supplier. Expect stock 7, batch with empty supplier, purchase row with empty party.
 4. Complete an order of 1 x A. Expect stock 16 and the order Completed.
 5. Open the stuck-writes caption. Expect nothing stuck.
