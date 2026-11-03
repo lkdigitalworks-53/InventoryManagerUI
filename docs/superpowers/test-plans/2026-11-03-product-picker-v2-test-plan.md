@@ -34,7 +34,7 @@ Design: `specs/2026-11-03-product-picker-v2-design.md` (approved 2026-11-03). Au
 
 Mutation checks, by hand in a Node shim, run per slice (scripts not committed, results written here): every precedence swap in `classify`, every dropped fail-closed branch, the clamp, the zero-delete, the digit rule, the 6-digit cap, the sort order, the NFC step, the lower-case step, the token rule (any versus every), the `MAX_LINES` value, the `bumps` versus `adds` split. A mutant that survives gets a new test before the slice merges. Target: all killable mutants killed, survivors listed with the reason.
 
-CI OBSERVED (S1): first push run: Functions 1083/1083, Rules 108/108, E2E 110/110 green; QML 2743/2744 red on ONE compile error, `tst_ProductSearch` had a method named `P` (QML refuses a method name starting with an upper-case letter). Fixed by renaming to `prod` in the Node file and regenerating the twin; `PAIR-03` added so Node catches it from now on (functions suite 1084, 97 picker tests). Second run: see the next line once CI answers.
+CI OBSERVED (S1): first push run: Functions 1083/1083, Rules 108/108, E2E 110/110 green; QML 2743/2744 red on ONE compile error, `tst_ProductSearch` had a method named `P` (QML refuses a method name starting with an upper-case letter). Fixed by renaming to `prod` in the Node file and regenerating the twin; `PAIR-03` added so Node catches it from now on (functions suite 1084, 97 picker tests). Second run (`ef2cd2a`): ALL GREEN. QML 2772/2772 (the three twins ran in the real QML engine and passed), Functions 1084/1084, Rules 108/108, E2E 110/110.
 
 ## 2. Functional, rules, e2e
 
@@ -121,7 +121,7 @@ Run the existing New Order, Edit Order, approve-all and restock checks from the 
 
 | Slice | Node RUN | QML CI | Mutants | Coverage | On-device |
 |---|---|---|---|---|---|
-| S1 | 96/96 (`node --test functions/test/picker*.test.js`); functions suite 1083/1083 and script suite 741/741 after `npm ci` | written, CI only | 53 of 55 killed; 2 equivalent survivors (tie-break behind a stable sort; `__proto__` guard is a no-op for number values) | V8 block coverage 100% of the three helpers (a preload gives the vm-loaded text a filename; per-process JSON merged by union) | n/a (dormant) |
+| S1 | 97/97 (`node --test functions/test/picker*.test.js`); functions suite 1083/1083 and script suite 741/741 after `npm ci` | QML 2772/2772 green on `ef2cd2a` (first push red on one compile error, fixed) | 53 of 55 killed; 2 equivalent survivors (tie-break behind a stable sort; `__proto__` guard is a no-op for number values) | V8 block coverage 100% of the three helpers (a preload gives the vm-loaded text a filename; per-process JSON merged by union) | n/a (dormant) |
 | S2 | not yet | not yet | not yet | not yet | n/a (dormant) |
 | S3 | not yet | not yet | n/a | n/a (view layer) | not yet |
 | S4 | not yet | not yet | n/a | n/a (view layer) | not yet |

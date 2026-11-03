@@ -1,4 +1,4 @@
-# CHECKPOINT: 2026-11-03 product picker v2, S1 (pure helpers) built, awaiting CI - resume here
+# CHECKPOINT: 2026-11-03 product picker v2, S1 (pure helpers) done and green - resume here
 
 **Branch:** `docs/2026-11-03-product-picker-v2-design`, cut from `main` @ `4c88ed9` (PR #181, R3 restock plan, merged).
 **Commit identity:** author `Taher <lkdwtaher@gmail.com>`, and that email is also in every commit message, as this session's project instructions say. Confirmed by Taher 2026-11-03. The PAT comes from the chat prompt only and is passed per command with `git -c http.extraHeader=...`, never in a remote URL, `.git/config`, the repo or memory. After a push `grep -c ghp_ .git/config` must print 0.
@@ -21,7 +21,7 @@ Product picker in New Order and Edit Order: detailed, searchable, editable item 
 - [x] 9. Wrote the approved design (`specs/2026-11-03-product-picker-v2-design.md`), the S1 plan (`plans/2026-11-03-product-picker-v2-s1-pure-helpers.md`) and the test plan (`test-plans/2026-11-03-product-picker-v2-test-plan.md`); audit brief synced to the final answers; README index row added.
 - [x] 10. Docs committed and pushed on `docs/2026-11-03-product-picker-v2-design` (6f038c1).
 - [x] 11. S1 built on `feat/2026-11-03-picker-s1-pure-helpers` (stacked on the docs branch, because the plan lives there): `ProductSearch.js`, `ProductPickability.js`, `PickerDraft.js`, `tests/pickerFixtures.js`, Node tests (96/96 RUN: SRCH 28, PICK 25, DRFT 30, FLOW 8, DORM+PAIR 5), QML twins DERIVED by `functions/test/testSupport/pickerTwin.js`, 53/55 hand mutants killed (2 equivalent), V8 block coverage 100%, functions suite 1083/1083, scripts 741/741. Skill 152 added.
-- [ ] 12. Push S1, read CI. QML twins are unrun until CI answers; fix any QML-only failure and record it in the test plan "CI OBSERVED".
+- [x] 12. S1 pushed (PR #185, stacked on docs PR #184). CI first run red on one QML compile error (method `P`), fixed in `ef2cd2a`, second run ALL GREEN (QML 2772, Functions 1084, Rules 108, E2E 110). Recorded in the test plan.
 - [ ] 13. Plan S2 (PickerRowGeometry.js, ProductPickerSheet.qml, ProductPickerRow.qml, BottomSheet.scrollBody) in its own plan file, after S1 merges.
 
 Deviations from the S1 plan, on purpose: (a) SRCH-04 expected order was wrong in the plan (equal score, so name order: `PRD-001`, `PRD-002`); (b) helpers also reject `[]` and id-less objects as products; (c) added SRCH-10b, FLOW-01..08, PAIR-01..02 and the derived-twin mechanism; (d) the S1 branch is stacked on the docs branch.
@@ -35,6 +35,5 @@ Deviations from the S1 plan, on purpose: (a) SRCH-04 expected order was wrong in
 - Units: whole numbers only in v1.
 
 ## NEXT (resume rule)
-1. Read CI for the S1 branch. Fix anything red (QML-only differences are likely: reserved words, number handling), regenerate twins with `node functions/test/testSupport/pickerTwin.js --write`, push.
-2. Open PRs: docs branch to `main`, S1 branch stacked on it (or retarget to `main` once the docs merge).
+1. Taher reviews PR #184 (docs) and #185 (S1, stacked on #184; retarget to `main` after #184 merges).
 3. Write the S2 plan, then build S2. S3 New Order, S4 Edit Order, S5 sweep. Do not touch `origin/feature/product-picker-search`.
