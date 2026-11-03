@@ -17,8 +17,10 @@ R4 = `InventoryStore.restock` rewrite onto `RestockPlan` + `Gateway.recordOperat
 - [x] 5. `OutboxStore.hasQueuedOperationFor`, `InventoryStore.restock` rewrite + settle hooks, `DataModel` route + sale guard, `NewOrderDialog` picker filter, `RestockDialog` wording.
 - [x] 6. QML tests (CI only): rewrite restock tests in `tst_InventoryStore_movementKinds`, `tst_ParkedWriteGuard`; new `tst_InventoryStore_restock`, `tst_DataModel_restockRoute`, `tst_OutboxStore_queuedOperation`, `tst_RestockFlow`.
 - [x] 7. Test plan, Skill 151, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
-- [ ] 8. Push, open PR, read CI, fix only what CI shows.
+- [x] 8. Pushed, PR #183 opened, CI read, two test-only fixes (c4575cb, f61396b). CI ALL GREEN on f61396b: 3968/3968.
 
 ## State at push
 Node: functions 1029/1029, scripts 741/741, 23/23 hand mutants killed. QML tests and the emulator e2e case are CI-only and UNSEEN. Open items P1-P6 are in `ATOMIC-OPERATIONS-STATUS.md` section 10.
 **Resume:** read CI for the PR; fix only what CI shows (QML compile errors are the likeliest: the new QML tests were never run). Then Taher's veto window for R4-D1 and R4-D4, then R5.
+
+**Final:** PR #183 green. No product code changed after CI turned up red; the fixes were test fixtures (emulator URL, a re-read race in one QML test, the R4-D1 wait in one e2e test). Waiting for Taher's review and vetoes (R4-D1, R4-D2, R4-D4), device test, then R5.
