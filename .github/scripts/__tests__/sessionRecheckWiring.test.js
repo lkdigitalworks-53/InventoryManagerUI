@@ -132,7 +132,8 @@ function violations(auth, main, files, page = PAGE) {
   if (!/visible: !AuthStore\.isAuthenticated \|\| \(AuthStore\.isAuthenticated && !AuthService\.profileResolved\)/.test(M)) out.push('ui-cover-binding');
   if (!/checking: !AuthService\.profileResolved/.test(M)) out.push('ui-access-spinner-binding');
   for (const [f, src] of files) {
-    if (!f.endsWith('AuthService.qml') && /AuthService\.checking/.test(strip(src))) { out.push('ui-binds-checking'); break; }
+    // L4a: DataModel (logic, not UI) reads the flag as one input of the refresh gate; its exact shape is pinned in refreshWiring.test.js
+    if (!f.endsWith('AuthService.qml') && !f.endsWith('model/DataModel.qml') && /AuthService\.checking/.test(strip(src))) { out.push('ui-binds-checking'); break; }
   }
 
   // 9. L3-D5b: no tab is role-gated, so there is nothing to jump from; if one ever is, the jump must be built
@@ -194,9 +195,10 @@ test('S-A wiring: every full-load entry point still calls _loadUserProfile() wit
 });
 
 const MUTANTS = [
-  ['main', '            if (Qt.application.state === Qt.ApplicationActive) AuthService.onAppResumed()', '            AuthService.onAppResumed()', 'main-resume-hook'],
-  ['main', '            if (Qt.application.state === Qt.ApplicationActive) AuthService.onAppResumed()', '            if (Qt.application.state === Qt.ApplicationActive) AuthService.requestRecheck()', 'main-resume-hook'],
-  ['main', '            if (Qt.application.state === Qt.ApplicationActive) AuthService.onAppResumed()', '            if (Qt.application.state === Qt.ApplicationActive) { AuthService.onAppResumed(); AuthService.recheckAccess() }', 'main-resume-only-reports'],
+  // L4a: the hook is now a block (resume check, then the data refresh request); the mutants follow its new shape
+  ['main', '            if (Qt.application.state === Qt.ApplicationActive) {', '            if (true) {', 'main-resume-hook'],
+  ['main', '                AuthService.onAppResumed()', '                AuthService.requestRecheck()', 'main-resume-hook'],
+  ['main', '                AuthService.onAppResumed()', '                AuthService.onAppResumed(); AuthService.recheckAccess()', 'main-resume-only-reports'],
   ['main', 'onTriggered: AuthService.ensureFreshToken()\n    }\n\n    // Back in', 'onTriggered: AuthService.refreshIdToken()\n    }\n\n    // Back in', 'main-timer-unchanged'],
   ['auth', '            } else if (profileResolved) {\n                _recheckOrLoad()', '            } else if (profileResolved) {\n                _loadUserProfile()', 'auth-online-silent'],
   ['auth', '            _recheckOrLoad()\n            tokenRefreshed()', '            profileResolved = false\n            _recheckOrLoad()\n            tokenRefreshed()', 'auth-refresh-silent'],

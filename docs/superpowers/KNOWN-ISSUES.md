@@ -868,3 +868,19 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 ## A write sent just before a workspace change is decided by the server — FOUND 2026-11-01 (PR #180 Q2), NOT FIXED
 
 **Effect:** closing a busy form does not cancel its request; the gateway derives the workspace from the users doc, so a request sent in the seconds around a change can land in the new workspace. Rare (an invite accepted on another phone at that moment). **Lead:** send the workspace id with gateway writes and refuse a mismatch on the server (a server slice, own design).
+
+---
+
+## Resume and reconnect now refresh the lists quietly — BUILT 2026-11-02 (L4a, CI unverified, device steps pending)
+
+**What changed:** returning to the app, or the network coming back, re-reads the six paged lists (orders, inventory, stock batches, suppliers, staff, transactions) into a private buffer and replaces the lists in one step, only when the lists are at least 5 minutes old, nothing is queued, in flight or locked, no photo is uploading and the account is not blocked. Nothing blanks or flashes. Design `specs/2026-11-02-l4a-resume-refresh-design.md` (L4-D1..D8), test plan `test-plans/2026-11-02-l4a-resume-refresh-test-plan.md`.
+**Limits (known, by design):** (1) A parked write blocks automatic refresh for that user until Retry or Discard. (2) If the sign-in sync fails, the lists count as current for up to 5 minutes. (3) `ActivityLog`, categories and order channels are not refreshed. (4) Every refresh re-reads every document (no incremental read). All four are L4c. (5) Pull-to-refresh and a "last updated" caption are L4b.
+
+## Sign-in sync and discard resync still blank the list and drop rows that exist only on this device — FOUND 2026-11-02 (L4a design, read from code), NOT FIXED
+
+**Where:** every store's `_resetAndFetch` (`orders = []`, then paging), used by `onTenantContextReady` and the discard resync. **Effect:** a row created offline and still queued is missing from the list until it is sent and a later sync reads it back; the data is safe in the outbox. A sign-in sync with queued writes is rare (queued writes survive a restart, so it is possible). L4a deliberately does NOT use this path on resume (the reason for the shadow fetch). **Fix idea:** move the sign-in sync to the same shadow fetch once L4a has been seen on a device (needs a decision on what the sign-in cover shows during the fetch).
+
+## A read with no answer can hold a refresh for up to 3 minutes — FOUND 2026-11-02 (L4a, read from code), MITIGATED
+
+`FirebaseService` sets no request timeout. A hung refresh read keeps `refreshing` up; the next trigger after 3 minutes cancels it (`RefreshPolicy.runLost`). The older sign-in sync has no such watchdog (existing issue, unchanged).
+

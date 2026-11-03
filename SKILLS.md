@@ -4734,3 +4734,16 @@ Rules:
 10. A planner refuses a doc the server cannot store before anything is queued (`DocLimits.exceedsDoc`, bytes not characters), because a refused write sits in the outbox retrying for nothing. Pin the EXACT edge with the shared helper (the longest text that fits builds, one more character is refused) and run the oversize case through every typed field (R3 review F2).
 11. When the client classifies server error codes, a test reads the server's own code list from its source and fails on any code that is neither a person-facing cause nor classified, and pins the scan itself so a regex that stops matching cannot pass (`failureCauseCodes.test.js`, R3 review F3).
 
+## Skill 151: Refresh a list without blanking it: shadow fetch, swap behind a gate, and a gate that is re-checked at the swap
+
+L4a (2026-11-02). A background refresh of lists that people are looking at and editing must never blank them and must never replace rows that this device changed and the server has not seen. Rules:
+1. Page the collection into a private buffer and replace the list in ONE assignment. Do not reuse `_resetAndFetch` (it sets the list to `[]` first) and do not reuse `loadingMore` or `hasMore` for the background run: `listComplete` is `!hasMore && !loadingMore`, so reusing them flips it to false across the app. Give the refresh its own `refreshing` flag.
+2. Decide start and swap in a pure helper (`RefreshPolicy.js`) over one snapshot object that the caller fills from live state. Fail closed: a missing or junk field is "do not run" (`=== false` / `=== 0` tests, not truthiness).
+3. Check the gate again at swap time, and also require that the outbox revision equals the one seen at the start. An empty outbox at the end is not proof: a write can be queued, sent and acknowledged during the fetch, and the fetched copy then predates it. A refused swap costs reads, not data.
+4. A reset or `clear()` cancels a running refresh first (bump a sequence number, answer "superseded"); every callback starts with `if (seq !== _refreshSeq) return`. Cancel answers exactly once.
+5. The caller counts its answers up front (`outstanding = stores.length`), so a store that refuses to start or answers synchronously can never push the counter to zero early. Only "all committed" resets the staleness clock.
+6. No request timeout exists, so give every background run a lifetime (3 minutes) and cancel it from the next trigger.
+7. One caller starts refreshes (pinned by a grep test) and the snapshot keys are pinned equal to the keys the policy reads, so a new gate input cannot be added on one side only.
+8. Test the REAL function bodies of the QML files in a Node `vm` sandbox with fakes at the edges (`extractFunction`), then hand-mutate the real files and fix every survivor. This run found a redundant helper (the swap snapshot overrides did nothing: swapOk never read those fields) and anchors that hit the first of two identical lines; mutate the LAST occurrence when a block was inserted after existing code.
+9. A pin that says "no UI reads X" needs a named exception when logic code legitimately reads X; edit the pin and say why (here `AuthService.checking` read by `DataModel`).
+

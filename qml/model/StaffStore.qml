@@ -357,6 +357,7 @@ QtObject {
     }
 
     function clear() {
+        _cancelRefresh()
         staff = []
         activities = []
         removedNames = ({})
@@ -416,6 +417,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        _cancelRefresh()
         if (loadingMore) { _resetPending = true; return }
         staff = []
         activities = []
@@ -487,6 +489,62 @@ QtObject {
                 console.log("[StaffStore] Synced", staff.length, "staff from Firestore (all pages)")
             }
         })
+    }
+
+    // ── L4a non-blanking refresh (docs/superpowers/specs/2026-11-02-l4a-resume-refresh-design.md) ──
+    // Pages the whole collection into a private buffer and replaces `staff` only if guard() still allows it.
+    // The list on screen is never blanked; loadingMore / hasMore are not touched (listComplete stays true).
+    // done(kind): "committed" | "discarded" (guard said no) | "failed" (read failed, live list kept) |
+    // "superseded" (a reset or clear took over). Returns false when it did not start.
+    property bool refreshing: false
+    property int _refreshSeq: 0
+    property var _refreshDone: null
+
+    function refreshFromFirebase(guard, done) {
+        if (refreshing || loadingMore || _resetPending) return false
+        refreshing = true
+        _refreshDone = done
+        _refreshPage(++_refreshSeq, [], null, guard)
+        return true
+    }
+
+    function _finishRefresh(kind) {
+        refreshing = false
+        var d = _refreshDone
+        _refreshDone = null
+        if (typeof d === "function") d(kind)
+    }
+
+    function _cancelRefresh() {
+        if (!refreshing) return
+        _refreshSeq++
+        _finishRefresh("superseded")
+    }
+
+    function _refreshPage(seq, acc, cursor, guard) {
+        FirebaseService.query("staff", { limit: _pageSize, startAfter: cursor }, function(ok, result) {
+            if (seq !== _refreshSeq) return
+            if (!ok || !result) {
+                console.warn("[StaffStore] refresh failed, keeping the list", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                _finishRefresh("failed")
+                return
+            }
+            var next = acc.concat(result.items)
+            if (result.hasMore) { _refreshPage(seq, next, result.nextCursor, guard); return }
+            var allowed = false
+            try { allowed = (typeof guard === "function") ? guard() === true : false } catch (e) { allowed = false }
+            if (!allowed) { _finishRefresh("discarded"); return }
+            _commitRefresh(next, result.nextCursor)
+            _finishRefresh("committed")
+        })
+    }
+
+    function _commitRefresh(all, nextCursor) {
+        staff = all
+        hasMore = false
+        _cursor = nextCursor
+        _rebuildActivities()
+        _fetchRemovedFromFirebase(true)
     }
 
     function syncFromFirebase() { _resetAndFetch() }

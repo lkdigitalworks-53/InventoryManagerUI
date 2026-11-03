@@ -198,7 +198,10 @@ App {
     Connections {
         target: Qt.application
         function onStateChanged() {
-            if (Qt.application.state === Qt.ApplicationActive) AuthService.onAppResumed()
+            if (Qt.application.state === Qt.ApplicationActive) {
+                AuthService.onAppResumed()
+                dataModel.requestRefresh("resume")   // L4a: non-blanking, gated, at most every STALE_MS
+            }
         }
     }
 

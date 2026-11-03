@@ -38,6 +38,8 @@ QtObject {
 
     // The lock this device currently holds, or null. { entity, entityId, requestId }
     property var _held: null
+    // True while THIS device holds a lock (someone is mid-edit on a record). DataModel's refresh gate (L4a) waits on it.
+    readonly property bool anyHeld: _held !== null && _held !== undefined
     property var _renewTimer: null
     property int _requestSeq: 0
 

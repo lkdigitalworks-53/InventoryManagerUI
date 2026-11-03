@@ -73,6 +73,11 @@ QtObject {
         else _loadUserProfile()
     }
 
+    // Public readers for DataModel's refresh gate (L4a): the same two facts AuthService itself uses, without
+    // other files calling underscore functions.
+    function isSessionOpen() { return _sessionOpen() }
+    function tokenNeedsRefresh() { return _tokenExpiring() }
+
     function _sessionOpen() {
         return AuthStore.isAuthenticated && profileResolved && !onboardingNeeded && AuthStore.tenantId.length > 0
     }

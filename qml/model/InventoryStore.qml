@@ -132,6 +132,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        _cancelRefresh()
         if (loadingMore) { _resetPending = true; return }
         products = [];
         hasMore = true;
@@ -193,6 +194,60 @@ QtObject {
         });
     }
 
+    // ── L4a non-blanking refresh (docs/superpowers/specs/2026-11-02-l4a-resume-refresh-design.md) ──
+    // Pages the whole collection into a private buffer and replaces `products` only if guard() still allows it.
+    // The list on screen is never blanked; loadingMore / hasMore are not touched (listComplete stays true).
+    // done(kind): "committed" | "discarded" (guard said no) | "failed" (read failed, live list kept) |
+    // "superseded" (a reset or clear took over). Returns false when it did not start.
+    property bool refreshing: false
+    property int _refreshSeq: 0
+    property var _refreshDone: null
+
+    function refreshFromFirebase(guard, done) {
+        if (refreshing || loadingMore || _resetPending) return false
+        refreshing = true
+        _refreshDone = done
+        _refreshPage(++_refreshSeq, [], null, guard)
+        return true
+    }
+
+    function _finishRefresh(kind) {
+        refreshing = false
+        var d = _refreshDone
+        _refreshDone = null
+        if (typeof d === "function") d(kind)
+    }
+
+    function _cancelRefresh() {
+        if (!refreshing) return
+        _refreshSeq++
+        _finishRefresh("superseded")
+    }
+
+    function _refreshPage(seq, acc, cursor, guard) {
+        FirebaseService.query("inventory", { limit: _pageSize, startAfter: cursor }, function(ok, result) {
+            if (seq !== _refreshSeq) return
+            if (!ok || !result) {
+                console.warn("[InventoryStore] refresh failed, keeping the list", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                _finishRefresh("failed")
+                return
+            }
+            var next = acc.concat(_overlayUnsynced(_normalizeProducts(result.items)))
+            if (result.hasMore) { _refreshPage(seq, next, result.nextCursor, guard); return }
+            var allowed = false
+            try { allowed = (typeof guard === "function") ? guard() === true : false } catch (e) { allowed = false }
+            if (!allowed) { _finishRefresh("discarded"); return }
+            _commitRefresh(next, result.nextCursor)
+            _finishRefresh("committed")
+        })
+    }
+
+    function _commitRefresh(all, nextCursor) {
+        products = all
+        hasMore = false
+        _cursor = nextCursor
+    }
+
     function syncFromFirebase() { _resetAndFetch(); }
 
     // PR #122 S4. { productId: "pending" | "parked" } for products with an unsynced write,
@@ -225,6 +280,7 @@ QtObject {
     }
 
     function clear() {
+        _cancelRefresh()
         products = []
         hasMore = true   // nothing is loaded now, so hasProduct() must answer "unknown", not "absent"
     }

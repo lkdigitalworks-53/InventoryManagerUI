@@ -92,6 +92,7 @@ QtObject {
     }
 
     function _resetAndFetch() {
+        _cancelRefresh()
         // A retry scheduled by an earlier, now-superseded fetch attempt must
         // not survive a fresh reset -- left running, it would fire later and
         // call _fetchFromFirebase() against whatever _cursor/entries this
@@ -172,6 +173,63 @@ QtObject {
         })
     }
 
+    // ── L4a non-blanking refresh (docs/superpowers/specs/2026-11-02-l4a-resume-refresh-design.md) ──
+    // Pages the whole collection into a private buffer and replaces `entries` only if guard() still allows it.
+    // The list on screen is never blanked; loadingMore / hasMore are not touched (listComplete stays true).
+    // done(kind): "committed" | "discarded" (guard said no) | "failed" (read failed, live list kept) |
+    // "superseded" (a reset or clear took over). Returns false when it did not start.
+    property bool refreshing: false
+    property int _refreshSeq: 0
+    property var _refreshDone: null
+
+    function refreshFromFirebase(guard, done) {
+        if (refreshing || loadingMore || _resetPending) return false
+        refreshing = true
+        _refreshDone = done
+        _refreshPage(++_refreshSeq, [], null, guard)
+        return true
+    }
+
+    function _finishRefresh(kind) {
+        refreshing = false
+        var d = _refreshDone
+        _refreshDone = null
+        if (typeof d === "function") d(kind)
+    }
+
+    function _cancelRefresh() {
+        if (!refreshing) return
+        _refreshSeq++
+        _finishRefresh("superseded")
+    }
+
+    function _refreshPage(seq, acc, cursor, guard) {
+        FirebaseService.query("transactions", { limit: _pageSize, startAfter: cursor }, function(ok, result) {
+            if (seq !== _refreshSeq) return
+            if (!ok || !result) {
+                console.warn("[TransactionStore] refresh failed, keeping the list", FirebaseService.lastStatusCode, FirebaseService.lastError)
+                _finishRefresh("failed")
+                return
+            }
+            var next = acc.concat(result.items)
+            if (result.hasMore) { _refreshPage(seq, next, result.nextCursor, guard); return }
+            var allowed = false
+            try { allowed = (typeof guard === "function") ? guard() === true : false } catch (e) { allowed = false }
+            if (!allowed) { _finishRefresh("discarded"); return }
+            _commitRefresh(next, result.nextCursor)
+            _finishRefresh("committed")
+        })
+    }
+
+    function _commitRefresh(all, nextCursor) {
+        all.sort(function(a, b) { return (b.timestamp || "").localeCompare(a.timestamp || "") })
+        entries = all
+        hasMore = false
+        _cursor = nextCursor
+        _retryAttempt = 0
+        revision++
+    }
+
     function syncFromFirebase() {
         console.debug("[TransactionStore.syncFromFirebase]", "TransactionStore.hasMore =",
                             hasMore, " loadingMore =", loadingMore,
@@ -182,6 +240,7 @@ QtObject {
     // Drop in-memory state. Used on sign-out so the next user never briefly
     // sees the previous account's transactions before the next sync lands.
     function clear() {
+        _cancelRefresh()
         entries = []
         revision++
     }

@@ -1,38 +1,33 @@
-# CHECKPOINT — 2026-11-01 R3 restock plan (atomic-ops arc, client pure layer, dormant) — resume here
+# CHECKPOINT — 2026-11-02 L4a non-blanking data refresh on resume and reconnect — resume here
 
-**Branch:** `feat/2026-11-01-r3-restock-plan`, cut from `main` @ `8de6fa2` (PR #172 R1+R2 merged, deployed and device-tested by Taher; #175 L3 design merged; #176 Node 24 and #177 IAM docs merged).
-**Commit identity:** the five feature commits used `lkdwtaher@gmail.com`; from the review sweep on (2026-11-01 session 2) Taher's current instruction applies: `taher.lkdw@gmail.com`. History is not rewritten (the PR is open and reviewed in GitHub). The PAT comes from the chat prompt only and is passed per command with `git -c http.extraHeader=...`, never in a remote URL, `.git/config`, the repo, or memory. After a push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; short scope per chat turn; honest trade-offs; tests and a test plan for every change; update skills, AGENTS, README as needed; caveman FULL in chat only, documents in normal prose; do not touch other PRs or branches.
-**Skills used:** `brainstorming` not re-run (the architecture was approved when #147 merged; this slice only implements section 7 step R3 of that design), `qt-qml` (read and applied to the QML hook code), `ponytail` (hook output applied: smallest complete change, shortcuts named).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-01-l3-docs-merged-prev-CHECKPOINT.md`. The L3 slice A work (silent re-check, resume hook) is a separate arc; its next step is recorded in that archive and is untouched here.
+**Branch:** `feat/2026-11-02-l4a-resume-refresh`, cut from `main` @ `4c88ed9` (PR #180 L3 slice A and PR #181 R3 merged).
+**Commit identity:** `taher.lkdw@gmail.com` (named in every commit message too, per Taher's standing rule).
+**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; one focused slice per chat turn; honest trade-offs; tests and a test plan for every change; caveman-full replies.
+**Skills used:** `brainstorming` (design with decisions L4-D1..D8, defaults built, all vetoable in the PR), `qt-qml` (store and DataModel glue read against existing patterns), `qt-ui-design` (consulted; L4a has no UI, pull-to-refresh UI is L4b), `ponytail` (smallest design that is robust: pure policy + identical store block + one coordinator; a redundant swap snapshot was removed after a mutant survived).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-02-r3-merged-prev-CHECKPOINT.md` (R3 restock plan, PR #181 merged; its NEXT is R4).
 
 ## Why this slice
-`docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 7: "Next: R3 (`OperationKeys.restockKey`, pure `RestockPlan.build`, apply-from-results hooks), then R4 (`InventoryStore.restock` rewrite + latch + picker hide), R5 (dialog, `FailureCause`, `activity_log` id). Deploy functions BEFORE the client." The previous checkpoint's resume rule says the same (S3-8). R3 is dormant by design: nothing calls it yet, so merging it changes no behaviour.
+Next planned item after PR #180 (L3 slice A): "L4 resume sync / pull to refresh", own design first. Slice A removed the accidental hourly refresh on purpose (Taher accepted that cost in L3-D1c). L4 is the replacement. Read from code: the stores' only refresh is `_resetAndFetch` (blank, then refill), which would lose queued rows and blank lists on a resume. So L4a builds a non-blanking shadow refresh. Pull-to-refresh UI is L4b, incremental refresh L4c.
 
 ## Steps
-- [x] 1. Read memory, cloned fresh into `/home/claude/repo-2026-11-01` (first attempt used `rm -rf`, the sandbox denied it, cloned into a new directory instead), read the atomic-ops status, restock design v2, R2 design, `operationLogic.js`, `InventoryStore.restock`, the existing apply-from-results hooks, `FailureCause`, `DescribeItem`, `SignOutGuard`.
-- [x] 2. Branch created, previous checkpoint archived, this file written.
-- [x] 3. Slice design `docs/superpowers/specs/2026-11-01-r3-restock-plan-design.md` (decisions T1-T10, vetoable in the PR).
-- [x] 4. `OperationKeys` restock ids (`restockNonce`, `restockKey`, `isRestockKey`, `purchaseTxId`), `qml/helper/RestockPlan.js` (`build` + `reflect`), `functions/test/restockPlan.test.js` (26 tests, run locally: plan goes through the REAL `validateOperationRequest` + `applyOperation` on the strict fake DB, then `reflect` is compared with the stored docs; seeded monkey 400 inputs; drift guard on the QML doc builders) + `functions/test/testSupport/qmlHelpers.js` (loads QML pragma-library helpers into Node). Hand mutants: 21 of 23 killed alone; the 2 survivors are the redundant pair `qty <= 0` / `SM.validate` (each alone suffices), killed together.
-- [x] 5. `FailureCause.forRestock`, `DescribeItem` restock label, `SupplierStore.addLocalSupplier`, `InventoryStore.applyRestockResults` + `functions/test/restockSurface.test.js` (15, RUN; 18 of 18 hand mutants killed after two survivors got stronger tests). QML tests written, CI only: `tst_RestockPlan.qml`, additions to `tst_FailureCause.qml` and `tst_DescribeItem.qml`, `tst_SupplierStore_addLocal.qml`, `tst_InventoryStore_applyRestockResults.qml` (the key tests live in `tst_RestockPlan.qml`, not `tst_OperationKeys.qml`).
-- [x] 6. Test plan, README index row, Skill 150 (renumbered from 149 at rebase; main took 149 for L3 slice A) + `SKILLS-INDEX.md` (150 skills), AGENTS pointer, status doc section 8. KNOWN-ISSUES: no entry (G4 already tracked in the status doc). Local runs: `functions` 979/979 after `npm ci` (before it, 9 files failed on a missing `node-mocks-http`: environment, not code), `.github/scripts` 470/470.
-- [x] 7. Pushed, PR #181 raised. CI first run (3e8fbac): QML red on one compile error in `tst_RestockPlan.qml` (`var long`: `long` is a reserved word; 2561 others passed). Fixed in 7081f82. CI OBSERVED on 7081f82: ALL GREEN. QML 2634/2634 (the new QML tests are in it), Functions, Rules and E2E green (E2E log total 71 in this job's output).
-- [ ] 8. Taher reviews PR #181 (T1-T10 vetoable), merges. Then R4.
+- [x] 1. Read memory, cloned fresh into `/home/claude/repo` (PAT stripped from `.git/config` right after the clone), read AGENTS/CHECKPOINT/L3 design/stores/Gateway/Outbox/LockManager/AuthService.
+- [x] 2. Branch created, previous checkpoint archived, design `specs/2026-11-02-l4a-resume-refresh-design.md` written (facts F1-F6, decisions L4-D1..D8, one open question).
+- [x] 3. `qml/helper/RefreshPolicy.js` (pure) + `refreshPolicy.test.js` (40 tests, 37 mutants, 20000-step monkey).
+- [x] 4. Six stores: `refreshFromFirebase(guard, done)` block, `_cancelRefresh()` first in `_resetAndFetch` and `clear`.
+- [x] 5. `DataModel` coordinator (snapshot, requestRefresh, wait/poll, rearm once, watchdog), `LockManager.anyHeld`, `AuthService.isSessionOpen()` / `tokenNeedsRefresh()`, `Main.qml` resume hook.
+- [x] 6. `refreshBehavior.test.js` (57 tests on the REAL function bodies, 24 mutants all killed) and `refreshWiring.test.js` (24 tests, 22 mutants). Updated `sessionRecheckWiring.test.js` for the hook's new shape.
+- [x] 7. QML twins `tests/tst_RefreshPolicy.qml` (13 functions), `tests/tst_StoreRefresh.qml` (5): written, CI only.
+- [x] 8. Test plan, README update, AGENTS pointer, KNOWN-ISSUES (3 entries), Skill 151 + `SKILLS-INDEX.md`.
+- [x] 9. Sandbox runs: script suite 862/862, `functions` 985/985 (untouched).
+- [ ] 10. Pushed, PR raised, CI result read (see below / next session).
 
-## REVIEW SWEEP 2026-11-01 (session 2, same PR, no stacked PR) - resume here
-Ask: deep full-sweep review of PR #181 (requesting-code-review, qt-qml-review, ponytail-audit); fixes in this PR; out-of-scope observations go to the roadmap (`docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 9); split so one chat turn finishes it. Baseline CI on `7e9f16d`: ALL GREEN, 3831/3831 (QML 2634, Functions 979, Rules 108, E2E 110).
-- [x] RV-1. Cloned fresh into `/home/claude/repo`, checked out the PR branch, read memory, design T1-T10, `RestockPlan.js`, `OperationKeys.js`, `FailureCause.js`, `DescribeItem.js`, the three store hooks, the server `validateOperationRequest` + placeholder rules, the legacy `restock` / `recordPurchase` / `addSupplier` / `_buildBatchDoc`, all Node tests, the dormancy and apply tests.
-- [x] RV-2. Fix F1: planner accepted a total that overflows to Infinity (JSON turns it into null in the stored purchase). The QML monkey even feeds `1e308`. Refuse `bad-cost`.
-- [x] RV-3. Fix F2: planner had no size guard (RestockDialog reason is a free single-line field, a paste can pass Firestore's 1 MiB). Refuse `too-large` with `DocLimits.exceedsDoc` on every doc it creates.
-- [x] RV-4. Fix F3: `FailureCause` left 13 server validator codes (delta, movement, entity, action) as "unknown"; every one is an app bug. Add them, plus a Node drift guard that fails when a new server error code is neither a person-facing cause nor classified.
-- [x] RV-5. Fix F4/F5 docs: `OperationKeys` comment said ~50 bits (it is two 31-bit draws, ~62); design T7 said "equals" but the code (correctly) refuses text that CONTAINS a token.
-- [x] RV-6. Tests for F1-F4 (Node: restockPlan R-4..R-6, failureCauseCodes C-1..C-3; QML twins), test plan, design T11/T12 + section 8, Skill 150 rules 9-11, status doc section 9 (O1-O4 R4, R5 wording), AGENTS pointer. Local: functions 985/985, scripts 470/470, 6/6 mutants killed, QML functions pass in a throwaway Node harness.
-- [x] RV-7. Pushed `b87f1a4`. CI on it: ALL GREEN, 3857/3857 (QML 2654 = +20, Functions 985 = +6, Rules 108, E2E 110). Both real QML-engine runs agree with the Node harness. PR #181 is ready for Taher's review in GitHub; next slice is R4 (see NEXT below).
+## NEXT
+1. Read CI on the PR head; fix only what it shows (QML is unrun here: `tst_StoreRefresh.qml` and the six edited stores are the first QML-engine contact).
+2. Taher: veto or accept L4-D1..D8 and answer the open question (should an open edit dialog, not only a held lock, hold the refresh?). Device steps in the test plan (two phones).
+3. L4b: pull-to-refresh on the lists + "last updated" caption, calls `DataModel.requestRefresh("manual")` (returns run/wait/drop for the toast). Needs a qt-ui-design pass first.
+4. L4c: incremental refresh, refresh of ActivityLog / categories / channels, move the sign-in sync to the shadow fetch (KNOWN-ISSUES).
+5. Atomic-ops arc: R4 (`InventoryStore.restock` rewrite) is still next there.
 
-## NEXT (after this slice)
-R4: `InventoryStore.restock` rewrite (key at tap, synchronous per-product latch, parked-write refusal kept, `Gateway.recordOperation("restock", plan.ops, plan.key, {awaitServer: online})`, apply through `applyRestockResults`, Activity text kept inline until R5), picker hide for a queued restock (Q-A2), and a `Connections` in `DataModel` that routes `Gateway.operationApplied` for opType `restock` to `applyRestockResults(results, {replay})` for the relaunch case. Then R5 (dialog wording, `activity_log` entity inside the operation, `ActivityLog.record` id parameter). Deploy functions (R2) before R4 reaches a device: Taher confirmed the deploy for #172.
-
-## Rebase onto main (session 2026-11-02)
-- [x] Rebased on main 5309608 (L3 slice A, #180). CHECKPOINT.md conflicts: kept this branch's. AGENTS.md/SKILLS.md/SKILLS-INDEX.md: kept both sides.
-- [x] Main took Skill 149 (L3 slice A), so R3 skill renumbered 149 -> 150 in SKILLS.md, SKILLS-INDEX.md, AGENTS.md, status doc.
-- [ ] CI on the new head not yet seen. Next session: check PR #181 CI, fix only what the rebase broke. Not built or run locally.
+## Not done / honest gaps
+- Nothing built or run on a device; the foreground transition and what lists draw are device-only.
+- QML tests are unrun here (CI only).
