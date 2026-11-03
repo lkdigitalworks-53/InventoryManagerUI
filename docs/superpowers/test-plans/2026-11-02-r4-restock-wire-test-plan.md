@@ -18,7 +18,7 @@ Honesty note: this is the first slice where the app behaves differently. Every N
 
 Mutation checks (by hand, scripts not committed): 23 mutants over `InventoryStore.qml`, `RestockFlow.js`, `DataModel.qml`, `OutboxStore.qml` (drop the latch, drop the parked check, drop or invert the settled mark in either handler, replay applies stock, drop a resync, drop the discard text or silence, wrong `awaitServer`, a queued answer reported as done, wrong Activity guard, leaked name, classify shortcuts, UTC date, case-sensitive name match, empty-name check removed, cost default zero, supplier text dropped, route removed, opType check removed). All 23 killed after three survivors got new tests (UTC date, DataModel route, outbox type check).
 
-CI OBSERVED: not yet (see PR).
+CI OBSERVED: first push (e9299b5) QML 2719/2720 (one test read a product the replay re-read had just emptied: test fixed) and E2E 69/71 (`tst_InventoryE2E` did not point `Gateway.operationFunctionUrl` at the emulator; the second restock test tapped again while the first was still queued, which R4-D1 refuses: both fixed in the test files, no product change). Fix push c4575cb: QML 2720/2720, Functions 1029/1029, rules 108/108, E2E 70/71 (the second-tap test); final push see the PR.
 
 ## 2. Functional / rules / e2e
 - Functional: `restockFlow.test.js` E-1 to E-3 and `restockWire.test.js` run the plan through the real transaction logic and the strict fake DB.

@@ -300,6 +300,9 @@ TestCase {
         _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000, "product doc never appeared before the restocks")
         lastConflict = null
         _restock(id, 3, "first")
+        // R4-D1: one open restock per product. The first callback can return as soon as the restock is
+        // QUEUED, and a second tap is then refused until it leaves the outbox, so wait for that.
+        tryVerify(function() { return !InventoryStore.hasQueuedRestock(id) }, 8000, "the first restock never left the outbox")
         _restock(id, 2, "second")
         var doc = _pollEmulatorDoc(docPath, id, function(d) {
             return d !== null && Number(d.fields.stock.integerValue) === 15
