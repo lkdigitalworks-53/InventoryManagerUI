@@ -160,3 +160,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 150: Prove a client planner against the real server code, pin the answer you apply as one whole or nothing, and pin "dormant" with a caller grep
 - 151: Refresh a list without blanking it: shadow fetch, swap behind a gate, and a gate that is re-checked at the swap
 - 152: A design written before a guard existed will delete the guard; audit an old spec by listing the guards added since, and keep every per-row guard in one tested predicate
+- 153: Derive the QML twin of a Node test from the Node file, so the two engines run the same bodies and cannot drift
