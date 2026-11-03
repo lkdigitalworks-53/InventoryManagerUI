@@ -78,3 +78,11 @@ test("PAIR-02 each twin has one function per Node case, and the Node-only case i
         assert.equal(new Set(nodeIds).size, nodeIds.length, "duplicate case id in " + spec.node);
     }
 });
+
+test("PAIR-03 no QML twin method starts with an upper-case letter (the QML engine refuses it at compile time)", () => {
+    for (const spec of TWINS) {
+        const qml = fs.readFileSync(qmlPath(spec), "utf8");
+        const bad = [...qml.matchAll(/^\s*function ([A-Z]\w*)\(/gm)].map((m) => m[1]);
+        assert.deepEqual(bad, [], spec.qml);
+    }
+});

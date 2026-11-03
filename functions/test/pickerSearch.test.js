@@ -8,7 +8,7 @@ const { FX, eq, ok, noThrow } = require("./testSupport/pickerSupport");
 const PS = load("ProductSearch.js");
 
 // QML-PRELUDE-BEGIN
-function P(productId, name, sku, category) { return FX.P(productId, name, sku, category); }
+function prod(productId, name, sku, category) { return FX.P(productId, name, sku, category); }
 function ids(list) { return FX.ids(list); }
 // QML-PRELUDE-END
 
@@ -42,29 +42,29 @@ test("SRCH-09 a word that matches nothing gives nothing", () => {
     eq(ids(PS.filter(FX.CATALOG, "cherry banana")), []);
 });
 test("SRCH-10 exact id ranks above a name word match", () => {
-    const list = [P("A", "prd-1 special"), P("prd-1", "Other")];
+    const list = [prod("A", "prd-1 special"), prod("prd-1", "Other")];
     eq(ids(PS.filter(list, "prd-1")), ["prd-1", "A"]);
 });
 test("SRCH-10b a name word ranks above a match buried in the id", () => {
-    const list = [P("1abc2", "Other"), P("2", "abc thing")];
+    const list = [prod("1abc2", "Other"), prod("2", "abc thing")];
     eq(ids(PS.filter(list, "abc")), ["2", "1abc2"]);
 });
 test("SRCH-11 exact sku ranks above a sku prefix", () => {
-    const list = [P("X1", "n1", "abc"), P("X2", "n2", "ab")];
+    const list = [prod("X1", "n1", "abc"), prod("X2", "n2", "ab")];
     eq(ids(PS.filter(list, "ab")), ["X2", "X1"]);
 });
 test("SRCH-12 a name word prefix ranks above a substring", () => {
-    const list = [P("1", "Tomato"), P("2", "Matcha")];
+    const list = [prod("1", "Tomato"), prod("2", "Matcha")];
     eq(ids(PS.filter(list, "mat")), ["2", "1"]);
-    const apart = [P("1", "Amat"), P("2", "Zeta Matcha")];
+    const apart = [prod("1", "Amat"), prod("2", "Zeta Matcha")];
     eq(ids(PS.filter(apart, "mat")), ["2", "1"]);
 });
 test("SRCH-13 ties go by name, then catalog order", () => {
-    const list = [P("1", "b", undefined, "xcat"), P("2", "a", undefined, "xcat"), P("3", "a", undefined, "xcat")];
+    const list = [prod("1", "b", undefined, "xcat"), prod("2", "a", undefined, "xcat"), prod("3", "a", undefined, "xcat")];
     eq(ids(PS.filter(list, "xcat")), ["2", "3", "1"]);
 });
 test("SRCH-14 regex characters are plain text", () => {
-    const list = FX.CATALOG.concat([P("RX", "a.b(c")]);
+    const list = FX.CATALOG.concat([prod("RX", "a.b(c")]);
     noThrow(() => PS.filter(list, ".*"));
     noThrow(() => PS.filter(list, "("));
     noThrow(() => PS.filter(list, "["));
@@ -75,12 +75,12 @@ test("SRCH-14 regex characters are plain text", () => {
     eq(ids(PS.filter(list, "\\")), []);
 });
 test("SRCH-15 Devanagari prefix", () => {
-    const list = [P("D1", "टमाटर"), P("D2", "Other")];
+    const list = [prod("D1", "टमाटर"), prod("D2", "Other")];
     eq(ids(PS.filter(list, "टमा")), ["D1"]);
 });
 test("SRCH-16 precomposed and decomposed accents find each other", () => {
-    const pre = [P("C1", "Café")];
-    const dec = [P("C2", "Café")];
+    const pre = [prod("C1", "Café")];
+    const dec = [prod("C2", "Café")];
     eq(ids(PS.filter(pre, "café")), ["C1"]);
     eq(ids(PS.filter(dec, "café")), ["C2"]);
 });
@@ -93,7 +93,7 @@ test("SRCH-18 numeric product id", () => {
     eq(ids(PS.filter([{ productId: 1001, name: "x" }], "100")), [1001]);
 });
 test("SRCH-19 junk entries are skipped, valid ones returned", () => {
-    const list = [null, undefined, 5, "x", [], {}, P("OK1", "Tomato")];
+    const list = [null, undefined, 5, "x", [], {}, prod("OK1", "Tomato")];
     eq(ids(PS.filter(list, "")), ["OK1"]);
     eq(ids(PS.filter(list, "tom")), ["OK1"]);
 });
@@ -115,7 +115,7 @@ test("SRCH-22 a very long query is cut to 200 characters and finishes fast", () 
     const t0 = Date.now();
     eq(ids(PS.filter(FX.CATALOG, q)), []);
     ok(Date.now() - t0 < 50, "took too long");
-    const longName = [P("L1", q.substring(0, 200))];
+    const longName = [prod("L1", q.substring(0, 200))];
     eq(ids(PS.filter(longName, q + "b")), ["L1"]);
 });
 test("SRCH-23 a products argument that is not an array gives an empty list", () => {
@@ -125,13 +125,13 @@ test("SRCH-23 a products argument that is not an array gives an empty list", () 
     eq(PS.filter(undefined, "x"), []);
 });
 test("SRCH-24 input is never changed", () => {
-    const list = FX.freeze([P("A", "Tomato", "t1", "Veg"), P("B", "Pear", "p1", "Fruit")]);
+    const list = FX.freeze([prod("A", "Tomato", "t1", "Veg"), prod("B", "Pear", "p1", "Fruit")]);
     noThrow(() => PS.filter(list, "to"));
     noThrow(() => PS.filter(list, "", { category: "Veg" }));
     eq(ids(list), ["A", "B"]);
 });
 test("SRCH-25 two products with the same name are both returned, in catalog order", () => {
-    const list = [P("1", "Tea"), P("2", "Tea")];
+    const list = [prod("1", "Tea"), prod("2", "Tea")];
     eq(ids(PS.filter(list, "tea")), ["1", "2"]);
 });
 test("SRCH-26 the same call twice gives the same answer", () => {

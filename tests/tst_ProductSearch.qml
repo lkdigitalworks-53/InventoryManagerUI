@@ -15,7 +15,7 @@ TestCase {
     function ok(cond, msg) { verify(cond, msg) }
     function noThrow(fn) { try { fn() } catch (e) { fail("threw: " + e) } }
 
-    function P(productId, name, sku, category) { return FX.P(productId, name, sku, category); }
+    function prod(productId, name, sku, category) { return FX.P(productId, name, sku, category); }
     function ids(list) { return FX.ids(list); }
 
     function test_SRCH_01_empty_query_returns_all_in_catalog_order() {
@@ -57,29 +57,29 @@ TestCase {
     }
 
     function test_SRCH_10_exact_id_ranks_above_a_name_word_match() {
-        const list = [P("A", "prd-1 special"), P("prd-1", "Other")];
+        const list = [prod("A", "prd-1 special"), prod("prd-1", "Other")];
         eq(ids(PS.filter(list, "prd-1")), ["prd-1", "A"]);
     }
 
     function test_SRCH_11_exact_sku_ranks_above_a_sku_prefix() {
-        const list = [P("X1", "n1", "abc"), P("X2", "n2", "ab")];
+        const list = [prod("X1", "n1", "abc"), prod("X2", "n2", "ab")];
         eq(ids(PS.filter(list, "ab")), ["X2", "X1"]);
     }
 
     function test_SRCH_12_a_name_word_prefix_ranks_above_a_substring() {
-        const list = [P("1", "Tomato"), P("2", "Matcha")];
+        const list = [prod("1", "Tomato"), prod("2", "Matcha")];
         eq(ids(PS.filter(list, "mat")), ["2", "1"]);
-        const apart = [P("1", "Amat"), P("2", "Zeta Matcha")];
+        const apart = [prod("1", "Amat"), prod("2", "Zeta Matcha")];
         eq(ids(PS.filter(apart, "mat")), ["2", "1"]);
     }
 
     function test_SRCH_13_ties_go_by_name_then_catalog_order() {
-        const list = [P("1", "b", undefined, "xcat"), P("2", "a", undefined, "xcat"), P("3", "a", undefined, "xcat")];
+        const list = [prod("1", "b", undefined, "xcat"), prod("2", "a", undefined, "xcat"), prod("3", "a", undefined, "xcat")];
         eq(ids(PS.filter(list, "xcat")), ["2", "3", "1"]);
     }
 
     function test_SRCH_14_regex_characters_are_plain_text() {
-        const list = FX.CATALOG.concat([P("RX", "a.b(c")]);
+        const list = FX.CATALOG.concat([prod("RX", "a.b(c")]);
         noThrow(() => PS.filter(list, ".*"));
         noThrow(() => PS.filter(list, "("));
         noThrow(() => PS.filter(list, "["));
@@ -91,13 +91,13 @@ TestCase {
     }
 
     function test_SRCH_15_devanagari_prefix() {
-        const list = [P("D1", "टमाटर"), P("D2", "Other")];
+        const list = [prod("D1", "टमाटर"), prod("D2", "Other")];
         eq(ids(PS.filter(list, "टमा")), ["D1"]);
     }
 
     function test_SRCH_16_precomposed_and_decomposed_accents_find_each_other() {
-        const pre = [P("C1", "Café")];
-        const dec = [P("C2", "Café")];
+        const pre = [prod("C1", "Café")];
+        const dec = [prod("C2", "Café")];
         eq(ids(PS.filter(pre, "café")), ["C1"]);
         eq(ids(PS.filter(dec, "café")), ["C2"]);
     }
@@ -113,7 +113,7 @@ TestCase {
     }
 
     function test_SRCH_19_junk_entries_are_skipped_valid_ones_returned() {
-        const list = [null, undefined, 5, "x", [], {}, P("OK1", "Tomato")];
+        const list = [null, undefined, 5, "x", [], {}, prod("OK1", "Tomato")];
         eq(ids(PS.filter(list, "")), ["OK1"]);
         eq(ids(PS.filter(list, "tom")), ["OK1"]);
     }
@@ -138,7 +138,7 @@ TestCase {
         const t0 = Date.now();
         eq(ids(PS.filter(FX.CATALOG, q)), []);
         ok(Date.now() - t0 < 50, "took too long");
-        const longName = [P("L1", q.substring(0, 200))];
+        const longName = [prod("L1", q.substring(0, 200))];
         eq(ids(PS.filter(longName, q + "b")), ["L1"]);
     }
 
@@ -150,14 +150,14 @@ TestCase {
     }
 
     function test_SRCH_24_input_is_never_changed() {
-        const list = FX.freeze([P("A", "Tomato", "t1", "Veg"), P("B", "Pear", "p1", "Fruit")]);
+        const list = FX.freeze([prod("A", "Tomato", "t1", "Veg"), prod("B", "Pear", "p1", "Fruit")]);
         noThrow(() => PS.filter(list, "to"));
         noThrow(() => PS.filter(list, "", { category: "Veg" }));
         eq(ids(list), ["A", "B"]);
     }
 
     function test_SRCH_25_two_products_with_the_same_name_are_both_returned_in_catalog() {
-        const list = [P("1", "Tea"), P("2", "Tea")];
+        const list = [prod("1", "Tea"), prod("2", "Tea")];
         eq(ids(PS.filter(list, "tea")), ["1", "2"]);
     }
 
