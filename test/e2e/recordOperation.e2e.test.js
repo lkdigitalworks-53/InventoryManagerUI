@@ -720,3 +720,56 @@ test("mint: a bind named after an Object.prototype member and never used is a cl
         await restoreCounter(before);
     }
 });
+
+// ---- R4: a plan built by the CLIENT code (RestockFlow + RestockPlan, loaded as real text) against real Firestore ----
+{
+    const { load, plain } = require("../../functions/test/testSupport/qmlHelpers");
+    const RF = load("RestockFlow.js");
+    const RP = load("RestockPlan.js");
+
+    test("R4: the client-built new-supplier restock lands supplier, batch, stock and purchase in ONE operation; reflect reads it; a replay is identical", async () => {
+        const before = await counterSnapshot();
+        const supBefore = await read("counters/suppliers");
+        let supplierId = null;
+        try {
+            const product = { productId: "opE2E-pc", name: "Client Plan E2E", category: "E2E", price: 4 };
+            await seed("inventory/opE2E-pc", Object.assign({ stock: 10 }, product));
+            const made = RF.makeInput({ key: "restock:opE2E-c1", product, qty: 3, unitCost: 2, reason: "e2e", party: "opE2E Newco", suppliers: [], now: new Date() });
+            assert.equal(made.ok, true);
+            const plan = plain(RP.build(made.input));
+            assert.equal(plan.ok, true, JSON.stringify(plan));
+            const body = { requestId: plan.key, opType: plan.opType, clientTimestamp: new Date().toISOString(), ops: plan.ops };
+            const r = await post(body);
+            trackResult(r);
+            assert.equal(r.status, 200, JSON.stringify(r.body));
+            const out = plain(RP.reflect(r.body.results));
+            assert.equal(out.ok, true, JSON.stringify(out));
+            supplierId = out.supplierId;
+            assert.match(supplierId, /^SUP-\d+$/);
+            assert.equal(out.stock, 13);
+            assert.equal((await read("inventory/opE2E-pc")).stock, 13);
+            assert.equal((await read("suppliers/" + supplierId)).name, "opE2E Newco");
+            const batch = await read("stock_batches/" + out.batchId);
+            assert.equal(batch.supplierId, supplierId);
+            assert.equal(batch.qtyReceived, 3);
+            assert.equal(batch.note, "e2e");
+            const tx = await read("transactions/tx-p-" + out.batchId);
+            assert.equal(tx.total, 6);
+            assert.equal(tx.party, supplierId);
+            assert.equal(RF.activityText(out, "opE2E Newco").subtitle, "+3 · now 13 in stock · from opE2E Newco · e2e");
+
+            const again = await post(body);
+            assert.equal(again.status, 200);
+            assert.equal(again.body.idempotentReplay, true);
+            const out2 = plain(RP.reflect(again.body.results));
+            assert.equal(out2.batchId, out.batchId);
+            assert.equal(out2.supplierId, supplierId);
+            assert.equal((await read("inventory/opE2E-pc")).stock, 13, "applied once");
+        } finally {
+            await restoreCounter(before);
+            if (supplierId) await db.doc(T + "suppliers/" + supplierId).delete();
+            if (supBefore === null) await db.doc(T + "counters/suppliers").delete();
+            else await db.doc(T + "counters/suppliers").set(supBefore);
+        }
+    });
+}
