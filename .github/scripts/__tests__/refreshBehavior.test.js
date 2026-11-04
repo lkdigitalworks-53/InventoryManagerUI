@@ -188,7 +188,7 @@ test('store specifics: sorting, hooks, normalisers', () => {
 // ── coordinator (DataModel.qml) ───────────────────────────────────────────────────────────────────────────
 const CFNS = ['_refreshStoreList', '_refreshSnapshot', '_request', 'requestRefresh', 'manualRefresh', '_clearWant', '_abandonWant', '_cancelLostRun', '_pollWant', '_startRefresh', '_onStoreRefreshed', '_onEditHoldsChanged'];
 
-function makeCoordinator(over = {}) {
+function makeCoordinator(over = {}, mutate = null) {
   const log = { timer: [], guards: [], unfinished: [] };
   const mkStore = (n) => ({ n, loadingMore: false, _resetPending: false, refreshing: false, started: 0, refuse: false,
     _cancelRefresh() { if (this.done) { const d = this.done; this.done = null; d('superseded'); } },
@@ -207,7 +207,7 @@ function makeCoordinator(over = {}) {
   };
   Object.assign(ctx, over);
   vm.createContext(ctx);
-  for (const fn of CFNS) vm.runInContext(extractFunction('model/DataModel.qml', fn).replace(/^function /, 'this.' + fn + ' = function '), ctx);
+  for (const fn of CFNS) vm.runInContext((mutate ? mutate(fn, extractFunction('model/DataModel.qml', fn)) : extractFunction('model/DataModel.qml', fn)).replace(/^function /, 'this.' + fn + ' = function '), ctx);
   return { ctx, stores, log, tick: (ms) => { ctx.__now += ms; } };
 }
 const answerAll = (st, kind) => st.forEach(s => s.done(kind));
@@ -463,3 +463,169 @@ test('edit holds: seeded monkey of 5000 hold/release/reset steps keeps the count
     if (r < 0.45) { h.holdForEdit(); ref++; } else if (r < 0.9) { h.releaseEdit(); if (ref > 0) ref--; } else { h.resetEditHolds(); ref = 0; }
     assert.equal(h.editHolds, ref); assert.ok(h.editHolds >= 0); }
 });
+
+// ── L4b: the refresh row's side of the coordinator (design 2026-11-04-l4b-refresh-row-design.md, B-D5, B-D6) ─────
+const timerOn = (k) => k.log.timer.at(-1) === 'restart';
+let MK = (o) => makeCoordinator(o);   // the mutant tests below swap this for a maker that runs a mutated DataModel
+const L4B = [];
+function l4bTest(name, fn) { L4B.push([name, fn]); test(name, () => fn()); }
+
+l4bTest('L4b manualRefresh: answers { action, reason }; requestRefresh still answers the plain action', () => {
+  let k = MK();
+  assert.deepEqual(k.ctx.manualRefresh(), { action: 'run', reason: '' });
+  assert.ok(k.stores.every(s => s.started === 1), 'a manual tap on quiet lists really starts the run (staleness is ignored)');
+  k.tick(1000); assert.deepEqual(k.ctx.manualRefresh(), { action: 'drop', reason: 'too-soon' });
+  assert.equal(typeof k.ctx.requestRefresh('manual'), 'string', 'requestRefresh keeps returning the bare action');
+  k = MK(); k.ctx.OutboxStore.items = [{}];
+  assert.deepEqual(k.ctx.manualRefresh(), { action: 'wait', reason: 'outbox' }); assert.equal(k.ctx._wantTrigger, 'manual');
+  k = MK(); k.ctx.AuthService.isOnline = false;
+  assert.deepEqual(k.ctx.manualRefresh(), { action: 'drop', reason: 'offline' }); assert.equal(k.ctx._wantTrigger, '');
+  k = MK(); k.ctx.LockManager.anyEditing = true;
+  assert.deepEqual(k.ctx.manualRefresh(), { action: 'wait', reason: 'edit-dialog' });
+  k = MK(); k.ctx._lastSyncMs = k.ctx.__now - 1000;
+  assert.equal(k.ctx.manualRefresh().action, 'run', 'fresh lists do not stop a manual refresh');
+  k = MK(); k.ctx.requestRefresh('resume'); k.tick(20000);
+  assert.deepEqual(k.ctx.manualRefresh(), { action: 'wait', reason: 'refreshing' }, 'a run is out: the tap waits');
+});
+
+l4bTest('L4b: a manual wish that waits out its time tells the user once; a resume wish stays silent', () => {
+  let k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.manualRefresh();
+  k.tick(120000); k.ctx._pollWant();
+  assert.deepEqual(k.log.unfinished, ['gave-up']); assert.equal(k.ctx._wantTrigger, ''); assert.equal(timerOn(k), false);
+  k.ctx._pollWant(); assert.deepEqual(k.log.unfinished, ['gave-up'], 'a second poll says nothing more');
+  k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.requestRefresh('resume');
+  k.tick(120000); k.ctx._pollWant(); assert.deepEqual(k.log.unfinished, []);
+  k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.requestRefresh('reconnect');
+  k.tick(120000); k.ctx._pollWant(); assert.deepEqual(k.log.unfinished, []);
+});
+
+l4bTest('L4b: a manual wish dropped while waiting (offline, blocked) tells the user; too-soon keeps waiting quietly', () => {
+  for (const [key, val] of [['isOnline', false], ['accessBlock', 'suspended']]) {
+    let k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.manualRefresh();
+    k.ctx.AuthService[key] = val; k.tick(5000); k.ctx._pollWant();
+    assert.deepEqual(k.log.unfinished, ['gave-up'], key); assert.equal(k.ctx._wantTrigger, '');
+    k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.requestRefresh('resume');
+    k.ctx.AuthService[key] = val; k.tick(5000); k.ctx._pollWant();
+    assert.deepEqual(k.log.unfinished, [], key + ' (resume stays silent)');
+  }
+  // a wish that is waiting and meets "too-soon" (a run started a moment ago) keeps waiting, quietly
+  const k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.manualRefresh(); k.ctx._lastRefreshStartMs = k.ctx.__now - 1000;
+  k.tick(2000); k.ctx._pollWant(); assert.equal(k.ctx._wantTrigger, 'manual', 'too-soon: still waiting'); assert.deepEqual(k.log.unfinished, []);
+});
+
+l4bTest('L4b: a manual wish that gets to run says nothing', () => {
+  const k = MK(); k.ctx.OutboxStore.items = [{}]; k.ctx.manualRefresh();
+  k.ctx.OutboxStore.items = []; k.tick(5000); k.ctx._pollWant();
+  assert.ok(k.stores.every(s => s.started === 1)); answerAll(k.stores, 'committed');
+  assert.deepEqual(k.log.unfinished, []);
+});
+
+l4bTest('L4b: a manual run that ends without the lists updated says "partial", unless a retry is coming or a reset took over', () => {
+  const run = (trigger, kinds, tweak) => {
+    const k = MK();
+    k.ctx.requestRefresh(trigger); if (tweak) tweak(k);   // the tweak lands while the run is out
+    k.stores.forEach((s, i) => s.done(kinds[i % kinds.length])); return k;
+  };
+  assert.deepEqual(run('manual', ['committed']).log.unfinished, [], 'all committed: silent (the row flips to "Updated just now")');
+  assert.deepEqual(run('manual', ['committed', 'failed']).log.unfinished, ['partial']);
+  assert.deepEqual(run('manual', ['skipped', 'committed']).log.unfinished, ['partial']);
+  assert.deepEqual(run('resume', ['committed', 'failed']).log.unfinished, [], 'automatic runs stay silent');
+  assert.deepEqual(run('reconnect', ['failed']).log.unfinished, []);
+  let k = run('manual', ['committed', 'discarded']);
+  assert.deepEqual(k.log.unfinished, [], 'a discarded copy re-arms one retry: quiet until that retry ends'); assert.equal(k.ctx._wantTrigger, 'manual');
+  k.tick(16000); k.ctx._pollWant(); assert.ok(k.stores.every(s => s.started === 2), 'the retry runs'); k.stores.forEach(s => s.done('failed'));
+  assert.deepEqual(k.log.unfinished, ['partial'], 'the retry also failed: now tell the user (one rearm per trigger)');
+  assert.deepEqual(run('manual', ['committed', 'superseded']).log.unfinished, [], 'a reset or sign-out cancelled it: that path loads everything itself');
+  assert.deepEqual(run('manual', ['committed', 'failed'], (c) => { c.ctx.AuthService.isSessionOpen = () => false; }).log.unfinished, [], 'no open session: no toast on the sign-in screen');
+});
+
+l4bTest('L4b: a hung manual run cancelled as lost IS reported (it is a failure, not a reset)', () => {
+  const k = MK(); k.ctx.manualRefresh(); k.tick(180000); k.ctx._pollWant();
+  assert.equal(k.ctx._refreshRunning, false); assert.deepEqual(k.log.unfinished, ['partial']);
+  assert.equal(k.ctx._lostCancelled, true); k.tick(20000); k.ctx.manualRefresh(); assert.equal(k.ctx._lostCancelled, false, 'a new run clears the flag');
+});
+
+l4bTest('L4b watchdog: the poll timer stays on while a run is out, so a hung read cannot leave the row stuck on "Refreshing..."', () => {
+  const k = MK(); k.ctx.manualRefresh();
+  assert.equal(timerOn(k), true, 'run started: timer on');
+  k.tick(5000); k.ctx._pollWant(); assert.equal(k.ctx._refreshRunning, true); assert.equal(timerOn(k), true, 'a poll with a live run keeps the timer');
+  k.tick(176000); k.ctx._pollWant();
+  assert.equal(k.ctx._refreshRunning, false, 'the poll cancelled the lost run on its own, no trigger needed'); assert.equal(timerOn(k), false);
+  // a wish that is abandoned while a run is out must not stop the watchdog
+  const j = MK(); j.ctx.requestRefresh('resume'); j.tick(20000); j.ctx.OutboxStore.items = [{}]; j.ctx.manualRefresh();
+  assert.equal(j.ctx._wantTrigger, 'manual'); j.ctx._abandonWant();
+  assert.equal(j.ctx._refreshRunning, true); assert.equal(timerOn(j), true, 'abandon keeps the timer while running'); assert.deepEqual(j.log.unfinished, ['gave-up']);
+  answerAll(j.stores, 'committed'); assert.equal(timerOn(j), false, 'run over, nothing waiting: off');
+  // run ends while a wish is pending: the timer stays on for that wish
+  const w = MK(); w.ctx.requestRefresh('resume'); w.tick(20000); w.ctx.requestRefresh('manual');
+  assert.equal(w.ctx._wantTrigger, 'manual'); answerAll(w.stores, 'committed'); assert.equal(timerOn(w), true);
+});
+
+l4bTest('L4b: refreshState and lastSyncMs are read-only views, evaluated from the real expressions in DataModel.qml', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '..', '..', '..', 'qml', 'model', 'DataModel.qml'), 'utf8');
+  const expr = (name) => { const m = new RegExp('readonly property (?:real|string) ' + name + ': ([^\\n]+)').exec(src); assert.ok(m, name + ' not declared readonly'); return m[1]; };
+  const ev = (e, ctx) => vm.runInNewContext(e, ctx);
+  const states = [[false, '', 'idle'], [true, '', 'running'], [false, 'resume', 'waiting'], [true, 'manual', 'running']];
+  for (const [running, want, out] of states) assert.equal(ev(expr('refreshState'), { _refreshRunning: running, _wantTrigger: want }), out);
+  assert.equal(ev(expr('lastSyncMs'), { _lastSyncMs: 123 }), 123);
+});
+
+l4bTest('L4b monkey: 6 seeds x 3000 steps, manual taps included: timer on <=> (run out or wish waiting); state follows; toasts only for manual', () => {
+  for (const seed0 of [1, 2, 3, 4, 5, 6]) {
+    let seed = seed0 * 104729; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const k = MK(); const c = k.ctx; let unfinishedSeen = 0;
+    for (let i = 0; i < 3000; i++) {
+      const r = rnd();
+      if (r < 0.14) c.OutboxStore.items = rnd() > 0.5 ? [{}] : [];
+      else if (r < 0.18) c.OutboxStore.revision++;
+      else if (r < 0.22) c.AuthService.isOnline = rnd() > 0.2;
+      else if (r < 0.25) c.AuthService.accessBlock = rnd() > 0.7 ? 'removed' : '';
+      else if (r < 0.29) c.LockManager.anyHeld = rnd() > 0.6;
+      else if (r < 0.32) c.LockManager.anyEditing = rnd() > 0.7;
+      else if (r < 0.36) { c._clearWant(); for (const s of k.stores) s._cancelRefresh(); }            // sign-out
+      else if (r < 0.46) c.manualRefresh();
+      else if (r < 0.54) c.requestRefresh(['resume', 'reconnect'][Math.floor(rnd() * 2)]);
+      else if (r < 0.66) c._pollWant();
+      else if (r < 0.84) for (const s of k.stores) if (s.done) { const d = s.done; s.done = null; d(['committed', 'committed', 'discarded', 'failed', 'superseded'][Math.floor(rnd() * 5)]); }
+      k.tick(Math.floor(rnd() * 70000));
+      const want = c._wantTrigger !== '', running = c._refreshRunning;
+      assert.equal(timerOn(k), running || want, 'seed ' + seed0 + ' step ' + i + ': timer must be on exactly while a run is out or a wish waits');
+      if (!running) assert.equal(c._refreshOutstanding, 0);
+      assert.ok(k.log.unfinished.length >= unfinishedSeen); unfinishedSeen = k.log.unfinished.length;
+      for (const w of k.log.unfinished) assert.ok(w === 'gave-up' || w === 'partial');
+    }
+  }
+});
+
+// ── L4b mutants on the real DataModel.qml function bodies: every scenario above runs against each mutant; at least one must fail ──
+const DM_SRC = require('fs').readFileSync(path.join(__dirname, '..', '..', '..', 'qml', 'model', 'DataModel.qml'), 'utf8');
+const L4B_MUTANTS = [
+  ['a resume wish that is abandoned also toasts', 'if (manual) manualRefreshUnfinished("gave-up")', 'manualRefreshUnfinished("gave-up")'],
+  ['an abandoned manual wish never toasts', 'if (manual) manualRefreshUnfinished("gave-up")', ''],
+  ['an expired wish is cleared silently', '{ _abandonWant(); return }', '{ _clearWant(); return }'],
+  ['a wish dropped by offline or block is cleared silently', '_abandonWant()   // blocked', '_clearWant()   // blocked'],
+  ['clearing a wish always stops the timer', 'if (!_refreshRunning) _refreshWaitTimer.stop()', '_refreshWaitTimer.stop()'],
+  ['a run does not keep the watchdog timer on', '_refreshWaitTimer.restart()   // polls for a hung read', ''],
+  ['the timer never stops after a run', 'if (_wantTrigger === "") _refreshWaitTimer.stop()', ''],
+  ['automatic runs toast too', '_refreshTrigger === "manual" && !cancelledByReset', '!cancelledByReset'],
+  ['a re-armed retry toasts early', '!all && !rearm &&', '!all &&'],
+  ['a reset or sign-out cancel toasts', ' && !cancelledByReset', ''],
+  ['a lost run is not marked lost', '_lostCancelled = true', ''],
+  ['the lost flag is never cleared', '_lostCancelled = false', ''],
+  ['a toast with no open session', ' && AuthService.isSessionOpen())', ')'],
+  ['requestRefresh leaks the whole decision', 'return _request(trigger).action', 'return _request(trigger)'],
+  ['manualRefresh runs as a resume', 'return _request("manual")', 'return _request("resume")'],
+  ['the decision loses its reason', '        return d\\n    }', '        return { action: d.action }\\n    }'],
+  ['a manual run leaves the old trigger behind', '_refreshTrigger = trigger\n        _refreshRunning = true', '_refreshRunning = true'],
+];
+for (const [name, from, to] of L4B_MUTANTS) {
+  test('L4b mutant killed: ' + name, () => {
+    assert.ok(DM_SRC.includes(from.replace(/\\n/g, '\n')), 'mutant anchor not found in DataModel.qml: ' + from.slice(0, 60));
+    const f = from.replace(/\\n/g, '\n'), t = to.replace(/\\n/g, '\n');
+    const saved = MK;
+    MK = (o) => makeCoordinator(o, (fn, text) => text.includes(f) ? text.replace(f, t) : text);
+    let killed = false;
+    try { for (const [, scenario] of L4B) { try { scenario(); } catch (e) { killed = true; break; } } } finally { MK = saved; }
+    assert.ok(killed, 'no L4b scenario noticed this mutant');
+  });
+}
