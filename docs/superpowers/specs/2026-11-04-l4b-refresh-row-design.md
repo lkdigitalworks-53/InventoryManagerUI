@@ -47,6 +47,8 @@ A pull gesture can be added later on top of the same `DataModel.manualRefresh()`
 
 **B-D9 Touch target and accessibility.** The row is 48 dp high (Material minimum) and the whole row is the target; `Accessible.role: Button`, the name is the visible text plus "Tap to refresh" when it is tappable, `Accessible.onPressAction` triggers it. No looping custom animation (reduced-motion safe); the only motion is `BusyIndicator`'s own, and only while busy.
 
+**B-D10 A hung read must not leave the row stuck (found while designing the row; fixes an L4a gap).** L4a cancelled a run older than 3 minutes only when the *next trigger or poll* looked at it, and the poll timer ran only while a wish was waiting. Invisible before; with the row it would read "Refreshing..." and be untappable until the next app resume. Built: the poll timer (5 s) now also runs while a run is out (`_startRefresh` restarts it, `_clearWant` keeps it while running, the end of a run stops it unless a wish is waiting), so a lost run is cancelled by its own watchdog. A manual run cancelled that way tells the user (`partial`); a run cancelled by a reset or sign-out stays silent (those load everything themselves), told apart by `_lostCancelled`. Cost: one 5 s timer tick while a refresh is running (seconds, normally). Pinned by the monkey invariant "timer on exactly while a run is out or a wish waits".
+
 ## 4. Known limits (also in KNOWN-ISSUES)
 
 - A tap, not a pull: the user must scroll to the top to see the row.

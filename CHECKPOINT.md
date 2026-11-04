@@ -10,15 +10,24 @@
 L4a NEXT item 3: "L4b: pull-to-refresh on the lists + last updated caption, calls `DataModel.requestRefresh("manual")`. Needs a qt-ui-design pass first."
 
 ## Steps
-- [x] 1. Read memory, cloned fresh into `/home/claude/InventoryManagerUI`, read L4a design, coordinator, pages, GlassHeader, Toast, Icon, AppScrollView.
+- [x] 1. Read memory, cloned fresh, read L4a design, coordinator, pages, GlassHeader, Toast, Icon, AppScrollView.
 - [x] 2. Branch created, previous checkpoint archived.
-- [ ] 3. Design doc `specs/2026-11-04-l4b-refresh-row-design.md` (facts, decisions B-D1..B-D9).
-- [ ] 4. Pure helper `qml/helper/RefreshCaption.js` + Node tests + mutants.
-- [ ] 5. `DataModel`: `lastSyncMs`, `refreshState`, `manualRefresh()`, `manualRefreshUnfinished` signal.
-- [ ] 6. `RefreshRow.qml` component, wired into 5 pages, `Main.qml` glue + toasts.
-- [ ] 7. Tests: Node behaviour + wiring, QML twins (CI only).
-- [ ] 8. Test plan, README, AGENTS, KNOWN-ISSUES, Skill 152 + index.
-- [ ] 9. Sandbox runs, push, open PR.
+- [x] 3. Design `specs/2026-11-04-l4b-refresh-row-design.md` (facts F1-F9, decisions B-D1..B-D10). B-D1 departs from the plan: a tap row, not a pull gesture (StopAtBounds, untestable gesture, Sales swipe handler).
+- [x] 4. `qml/helper/RefreshCaption.js` (pure) + `refreshCaption.test.js` (35 tests, 33 mutants killed).
+- [x] 5. `DataModel`: `lastSyncMs`, `refreshState`, `_request`/`manualRefresh()`, `_abandonWant`, signal `manualRefreshUnfinished`, hung-read watchdog (poll timer on while a run is out), `_lostCancelled`.
+- [x] 6. `qml/components/RefreshRow.qml`; first child on Inventory, Orders, Staff, Dashboard, Sales (not Activity); `Main.qml` props, `requestManualRefresh()`, toasts.
+- [x] 7. Tests: coordinator scenarios + 17 mutants in `refreshBehavior.test.js`, `refreshRowWiring.test.js` (28), one L4a rule repointed (`_request`), one L4a assertion changed on purpose (timer stays on while running), QML twins `tst_RefreshCaption.qml` (8) and `tst_DataModel_refreshRow.qml` (6), CI only.
+- [x] 8. Test plan, README, AGENTS, KNOWN-ISSUES (new entry + L4a hung-read entry updated), Skill 156 + index (renumbered from 152 on rebase: main took 152-155).
+- [x] 9. Sandbox: script suite 994/994, `functions` untouched.
+- [ ] 10. Push, open PR, read CI (next session).
 
 ## NEXT
-(filled at the end)
+1. Read CI on the PR head (QML twins and the `DataModel`/page edits compile only in CI). Fix anything it shows.
+2. Taher: veto or accept B-D1..B-D10 (first: tap row instead of pull gesture; Dashboard included although its activity feed is not refreshed). Device steps in the test plan.
+3. L4c: add `ActivityLog`, categories, channels to the refresh; incremental refresh; sign-in sync on the shadow fetch; consider the one-helper refactor of the six store copies.
+4. Atomic-ops arc: R4 (`InventoryStore.restock` rewrite) is still next there.
+
+## Not done / honest gaps
+- Nothing built or run on a device; the row's look, spacing and feel are device-only.
+- QML tests and the page edits ran in CI only (not yet read).
+- Pull gesture not built (B-D1).
