@@ -132,3 +132,6 @@ Every slice ships with a test plan in the standard format and these layers, as f
 ## 12. Not checked
 
 Whether a PR exists for the July branch; real catalog sizes (which decide whether list reuse is needed); keyboard behaviour over a nested `BottomSheet` on a device (the July checkpoint called it plausible, never verified); the Qt version available to Felgo for `ListView.reuseItems`; whether `InventoryStore.products` already excludes products with a delete in flight. Each is a first step of S1 or S2, not an assumption.
+
+**Answered in the S1 review sweep (2026-11-04, read from code).** `InventoryStore.deleteProduct` splices the product out of `products` synchronously, and `_pendingDeletes` has no accessor, so there is nothing to inject as `isDeleting`; after a refetch the product returns with an unsynced edit state, which `unsyncedState` already hides. The hook is optional in `ProductPickability` and S3 should drop it unless a real accessor appears. The hook for `unsyncedState` is `InventoryStore.syncStateOf(id)` (a string), not `OutboxStore.unsyncedByEntity` (an object per id).
+

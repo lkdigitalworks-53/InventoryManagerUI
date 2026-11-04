@@ -891,3 +891,16 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 ## An open edit form stops the automatic list refresh while it is open — BY DESIGN 2026-11-03 (L4-D10, Taher's decision)
 
 Nine forms hold the refresh (Add/Edit product, New order, Order detail, Restock, Add staff, Staff detail, Import preview, Confirm return). A form left open for a long time means lists under it can be older than the server's; closing the last form asks for one refresh (resume rules: 5 minute staleness, 15 s spacing, waits for the outbox). Read-only sheets, the staff action sheet and the category and channel managers do not hold. If a form is ever missed, a wiring test lists the exact set.
+
+---
+
+## Product picker v2: carried requirements for S3 and S4 — FOUND 2026-11-04 (S1 review sweep of PR #185, read from code), NOT FIXED (dormant helpers only)
+
+**Where:** `qml/helper/PickerDraft.js` (`MAX_LINES`), `ProductPickability.js` (hook contract), the future wiring in `NewOrderDialog` and `OrderDetailDialog`.
+1. **`MAX_LINES = 60` is only an early stop.** A line that spans two FIFO batches costs 4 operations, so 50 such lines give 201 and `CompletionPlan` refuses with `too-many-ops` (pinned by `FLOW-09`). The dialogs must run `CompletionPlan.build` as a dry run (it is pure) before enabling "Add to order", and keep `PickerDraft.canCommit` as the cheap first gate. The audit brief said the cap "asks CompletionPlan"; the code hard-codes 60 until S3.
+2. **Completed-order edit does not use `CompletionPlan`** (`DataModel._tryAdjustOrder` uses the legacy per-line deduct), so the 60-line cap is only an early stop there; S4 decides whether to apply it.
+3. **Parity gap to verify before S3:** `OutboxStore.hasParkedForEntity` counts held `dependsOn` rows, `unsyncedByEntity` skips them. If a held row can be parked, completion refuses a product the picker shows enabled.
+4. **Guards that stay in the dialogs** because they are about the order, not the row: the order lock, `busy`, the `TransactionStore.hasMore` refusal for completed-order edits, the booked-tax rule on re-add, and a valid selling price (`PickerDraft.totals` counts a missing price as 0).
+5. **Ids:** draft and plan ids are strings; an order line may hold a numeric id. Match plan entries to lines with `String(line.productId) === entry.productId`.
+6. **Pre-existing, not S1:** `NewOrderDialog` skips the stock check at submit when the product is gone (`inv` null), so it fails open there.
+7. **Unverified:** whether `StockBatchStore._pendingMints` and `InventoryStore.syncStates` publish a revision signal a live-refreshing sheet can bind to (check first in the S2 plan).
