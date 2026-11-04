@@ -101,7 +101,7 @@ Also taken by default (veto in the PR): the line-cap check asks `CompletionPlan`
 
 | Slice | Branch (date prefix at the time) | Content | Behaviour change |
 |---|---|---|---|
-| S0 | `docs/2026-11-03-product-picker-v2-design` | This brief, checkpoint, Skill 151. Then the approved design and the test plan in the standard format (Skill 49). | None |
+| S0 | `docs/2026-11-03-product-picker-v2-design` | This brief, checkpoint, Skill 152. Then the approved design and the test plan in the standard format (Skill 49). | None |
 | S1 | `feat/…-picker-s1-pure-helpers` | `ProductSearch.js`, `ProductPickability.js`, `PickerDraft.js` with Node parity runs, QML tests, seeded monkey, hand mutants | None (dormant, pinned by a caller grep, as R3 did) |
 | S2 | `feat/…-picker-s2-sheet-component` | `BottomSheet` `scrollBody` opt-in, `PickerRowGeometry.js`, `ProductPickerSheet.qml`, `ProductPickerRow.qml`, wiring tests | None (not instantiated) |
 | S3 | `feat/…-picker-s3-new-order` | Wire `NewOrderDialog`; delete `productNames`, `_pickerProducts`, `_rebuildPickerNames`, the combo and the add button | New Order picker |

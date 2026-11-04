@@ -578,7 +578,7 @@ Any survivor means a missing test: add it, rerun, and note it.
 
 - [ ] **Step 3: Skill, index, README, test plan**
 
-Add `## Skill 152: ...` to `SKILLS.md` only if a real lesson came out of S1 (a survivor, a QML-vs-Node difference). If none, skip it and say so in the checkpoint. If added: `node .github/scripts/skills-index.js --write`. Add one dated line to the README status area and one row to `docs/superpowers/test-plans/README.md` for the new plan. Fill the verification block of the test plan with numbers recounted by `grep -c "function test_" tests/tst_ProductSearch.qml tests/tst_ProductPickability.qml tests/tst_PickerDraft.qml` and the Node `# pass` lines.
+Add `## Skill 153: ...` to `SKILLS.md` only if a real lesson came out of S1 (a survivor, a QML-vs-Node difference). If none, skip it and say so in the checkpoint. If added: `node .github/scripts/skills-index.js --write`. Add one dated line to the README status area and one row to `docs/superpowers/test-plans/README.md` for the new plan. Fill the verification block of the test plan with numbers recounted by `grep -c "function test_" tests/tst_ProductSearch.qml tests/tst_ProductPickability.qml tests/tst_PickerDraft.qml` and the Node `# pass` lines.
 
 - [ ] **Step 4: Run the full local suites**
 
