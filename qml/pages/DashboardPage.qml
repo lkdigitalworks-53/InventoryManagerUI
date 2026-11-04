@@ -299,12 +299,20 @@ Item {
             width: root.width
             spacing: dp(Constants.space5)
 
+            RefreshRow {
+                Layout.fillWidth: true
+                Layout.topMargin: dp(Constants.space2)
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            }
+
             // ── KPI grid (2×2) ──
             GridLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
-                Layout.topMargin: dp(Constants.space4)
                 columns: 2
                 columnSpacing: dp(Constants.space2 + 2)
                 rowSpacing: dp(Constants.space2 + 2)

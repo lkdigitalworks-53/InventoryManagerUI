@@ -186,10 +186,10 @@ test('store specifics: sorting, hooks, normalisers', () => {
 });
 
 // ── coordinator (DataModel.qml) ───────────────────────────────────────────────────────────────────────────
-const CFNS = ['_refreshStoreList', '_refreshSnapshot', 'requestRefresh', '_clearWant', '_cancelLostRun', '_pollWant', '_startRefresh', '_onStoreRefreshed', '_onEditHoldsChanged'];
+const CFNS = ['_refreshStoreList', '_refreshSnapshot', '_request', 'requestRefresh', 'manualRefresh', '_clearWant', '_abandonWant', '_cancelLostRun', '_pollWant', '_startRefresh', '_onStoreRefreshed', '_onEditHoldsChanged'];
 
 function makeCoordinator(over = {}) {
-  const log = { timer: [], guards: [] };
+  const log = { timer: [], guards: [], unfinished: [] };
   const mkStore = (n) => ({ n, loadingMore: false, _resetPending: false, refreshing: false, started: 0, refuse: false,
     _cancelRefresh() { if (this.done) { const d = this.done; this.done = null; d('superseded'); } },
     refreshFromFirebase(guard, done) { if (this.refuse) return false; this.started++; this.guard = guard; this.done = done; return true; } });
@@ -203,6 +203,7 @@ function makeCoordinator(over = {}) {
     _refreshWaitTimer: { restart() { log.timer.push('restart'); }, stop() { log.timer.push('stop'); } },
     _lastSyncMs: 0, _lastRefreshStartMs: 0, _wantSinceMs: 0, _wantTrigger: '', _wantRearmed: false, _refreshRunning: false,
     _refreshOutstanding: 0, _refreshResults: [], _refreshTrigger: '', lastRefreshAction: 0, lastRefreshOutcome: '',
+    _lostCancelled: false, manualRefreshUnfinished: (why) => log.unfinished.push(why),
   };
   Object.assign(ctx, over);
   vm.createContext(ctx);
@@ -240,7 +241,9 @@ test('coordinator: outbox busy -> wait; poll runs it when the outbox drains', ()
   assert.equal(k.ctx.requestRefresh('resume'), 'wait'); assert.equal(k.ctx._wantTrigger, 'resume'); assert.deepEqual(k.log.timer, ['restart']);
   k.tick(5000); k.ctx._pollWant(); assert.ok(k.stores.every(s => s.started === 0), 'still waiting');
   k.ctx.OutboxStore.items = []; k.tick(5000); k.ctx._pollWant();
-  assert.ok(k.stores.every(s => s.started === 1)); assert.equal(k.ctx._wantTrigger, ''); assert.equal(k.log.timer.at(-1), 'stop');
+  assert.ok(k.stores.every(s => s.started === 1)); assert.equal(k.ctx._wantTrigger, '');
+  assert.equal(k.log.timer.at(-1), 'restart', 'L4b: the timer stays on while the run is out (it is also the hung-read watchdog)');
+  answerAll(k.stores, 'committed'); assert.equal(k.log.timer.at(-1), 'stop', 'run over and nothing waiting: the timer stops');
 });
 
 test('coordinator: a waiting refresh expires after the TTL and when the account gets blocked or offline', () => {
