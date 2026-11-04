@@ -158,3 +158,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 148: Prove an absence claim with a caller grep, list what a "noisy" path also does before silencing it, and never carry a refusal's detail by changing a falsy sentinel
 - 149: A silent check needs its own flag, one door, a rule for a request that never answers, and a model that predicts before it acts
 - 150: Prove a client planner against the real server code, pin the answer you apply as one whole or nothing, and pin "dormant" with a caller grep
+- 151: Refresh a list without blanking it: shadow fetch, swap behind a gate, and a gate that is re-checked at the swap

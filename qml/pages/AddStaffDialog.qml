@@ -12,6 +12,7 @@ BottomSheet {
     id: dlg
 
     sheetTitle: "Add staff member"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Save"
     secondaryAction: "Cancel"
     primaryPalette: ({ start: Constants.brand2, end: Constants.brand3 })

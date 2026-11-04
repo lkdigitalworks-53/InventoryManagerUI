@@ -5,6 +5,7 @@ import "../helper/OrderMath.js" as OrderMath
 import "../helper/CompletionPlan.js" as CompletionPlan
 import "../helper/OperationKeys.js" as OperationKeys
 import "../helper/FailureCause.js" as FailureCause
+import "../helper/RefreshPolicy.js" as RefreshPolicy
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataModel.qml  –  Orchestrator / single source of truth
@@ -394,6 +395,157 @@ Item {
             StaffStore.deleteStaff(staffId)
             dispatcher.staffDeleted(staffId)
         }
+    }
+
+    // ── L4a: non-blanking data refresh (resume / reconnect / later pull-to-refresh) ─────────────────────────
+    // Design: docs/superpowers/specs/2026-11-02-l4a-resume-refresh-design.md. The decisions (when to start, when the
+    // fetched copy may replace the lists, how long a waiting refresh lives) are the pure RefreshPolicy.js; this block
+    // only reads live state into a snapshot and drives the six stores' refreshFromFirebase().
+    property real _lastSyncMs: 0          // lists last known complete and current (login sync start, or a refresh in which every store committed)
+    property real _lastRefreshStartMs: 0
+    property real _wantSinceMs: 0
+    property string _wantTrigger: ""
+    property bool _wantRearmed: false     // a discarded refresh may wait again once per trigger, so a stream of writes cannot loop it
+    property bool _refreshRunning: false
+    property int _refreshOutstanding: 0
+    property var _refreshResults: []
+    property string _refreshTrigger: ""
+    property int lastRefreshAction: 0     // bumped when a refresh run ends (tests and later UI read it)
+    property string lastRefreshOutcome: "" // "committed" | "partial" | ""
+
+    function _refreshStoreList() {
+        return [OrdersStore, InventoryStore, StockBatchStore, SupplierStore, StaffStore, TransactionStore]
+    }
+
+    function _refreshSnapshot() {
+        var stores = _refreshStoreList()
+        var busy = false
+        for (var i = 0; i < stores.length; ++i)
+            if (stores[i].loadingMore === true || stores[i]._resetPending === true || stores[i].refreshing === true) busy = true
+        return {
+            online: AuthService.isOnline === true,
+            sessionOpen: AuthService.isSessionOpen(),
+            accessBlock: AuthService.accessBlock,
+            // A silent access check, or a token about to expire (its refresh runs a check), decides first.
+            checking: AuthService.checking === true || AuthService.tokenNeedsRefresh(),
+            refreshing: _refreshRunning,
+            storeBusy: busy,
+            outboxPending: OutboxStore.items.length,
+            outboxRevision: OutboxStore.revision,
+            gatewayInFlight: Gateway.inFlight,
+            lockHeld: LockManager.anyHeld,
+            editOpen: LockManager.anyEditing,
+            photoPending: PhotoQueue.pendingCount
+        }
+    }
+
+    // trigger: "resume" | "reconnect" | "manual". Returns "run" | "wait" | "drop" (a later UI reads the answer).
+    function requestRefresh(trigger) {
+        var now = Date.now()
+        _cancelLostRun(now)
+        var d = RefreshPolicy.decide(trigger, _refreshSnapshot(), now, _lastSyncMs, _lastRefreshStartMs)
+        if (d.action === "run") {
+            _clearWant()
+            _startRefresh(trigger)
+        } else if (d.action === "wait") {
+            _wantTrigger = trigger
+            _wantSinceMs = now
+            _wantRearmed = false
+            _refreshWaitTimer.restart()
+        }
+        return d.action
+    }
+
+    function _clearWant() {
+        _wantTrigger = ""
+        _wantSinceMs = 0
+        _refreshWaitTimer.stop()
+    }
+
+    // FirebaseService has no request timeout, so a hung read would leave "refreshing" up for good. A run older than
+    // RUN_TTL_MS is cancelled: each store answers "superseded" and the run ends without marking the lists current.
+    function _cancelLostRun(now) {
+        if (!_refreshRunning || !RefreshPolicy.runLost(_lastRefreshStartMs, now)) return
+        var stores = _refreshStoreList()
+        for (var i = 0; i < stores.length; ++i) stores[i]._cancelRefresh()
+    }
+
+    function _pollWant() {
+        var now = Date.now()
+        _cancelLostRun(now)
+        if (_wantTrigger === "" || RefreshPolicy.wantExpired(_wantSinceMs, now)) { _clearWant(); return }
+        var d = RefreshPolicy.decide(_wantTrigger, _refreshSnapshot(), now, _lastSyncMs, _lastRefreshStartMs)
+        if (d.action === "run") {
+            var t = _wantTrigger
+            _clearWant()
+            _startRefresh(t)
+        } else if (d.action === "drop" && d.reason !== "too-soon") {
+            _clearWant()   // blocked, offline, or the lists became fresh another way: nothing left to wait for
+        }
+    }
+
+    function _startRefresh(trigger) {
+        _lastRefreshStartMs = Date.now()
+        _refreshTrigger = trigger
+        _refreshRunning = true
+        _refreshResults = []
+        var rev = OutboxStore.revision
+        var guard = function() { return RefreshPolicy.swapOk(rev, _refreshSnapshot()) }
+        var stores = _refreshStoreList()
+        _refreshOutstanding = stores.length   // counted up front: an answer can never reach zero early
+        for (var i = 0; i < stores.length; ++i) {
+            if (!stores[i].refreshFromFirebase(guard, _onStoreRefreshed))
+                _onStoreRefreshed("skipped")
+        }
+    }
+
+    function _onStoreRefreshed(kind) {
+        _refreshResults.push(kind)
+        _refreshOutstanding--
+        if (_refreshOutstanding > 0) return
+        _refreshRunning = false
+        var all = RefreshPolicy.allCommitted(_refreshResults)
+        if (all) _lastSyncMs = Date.now()
+        lastRefreshOutcome = all ? "committed" : "partial"
+        lastRefreshAction++
+        // A copy dropped because writes happened meanwhile is worth one more try once things are quiet.
+        if (!all && _refreshResults.indexOf("discarded") !== -1 && !_wantRearmed && _refreshTrigger !== "") {
+            _wantTrigger = _refreshTrigger
+            _wantSinceMs = Date.now()
+            _wantRearmed = true
+            _refreshWaitTimer.restart()
+        }
+    }
+
+    // The last edit form closed: the refresh that was held off (or forgotten after WANT_TTL_MS) gets one chance now.
+    // Treated as a resume, so the 5 minute staleness and 15 s spacing rules still apply; a form that saved leaves the
+    // outbox busy, so the gate then waits for the write to be acknowledged.
+    function _onEditHoldsChanged() { if (LockManager.editHolds === 0) requestRefresh("resume") }
+
+    Connections {
+        target: LockManager
+        function onEditHoldsChanged() { dataModel._onEditHoldsChanged() }
+    }
+
+    Timer {
+        id: _refreshWaitTimer
+        interval: RefreshPolicy.POLL_MS
+        repeat: true
+        running: false
+        onTriggered: dataModel._pollWant()
+    }
+
+    Connections {
+        target: AuthService
+        // A full sync just started (sign-in, cold start, workspace change): treat the lists as current from now.
+        // If that sync fails the lists stay stale for up to STALE_MS; a manual refresh covers it.
+        function onTenantContextReady(tenantId, role) { dataModel._lastSyncMs = Date.now() }
+        function onSignedOut() {
+            dataModel._clearWant()
+            dataModel._lastSyncMs = 0
+            LockManager.resetEditHolds()
+        }
+        function onIsOnlineChanged() { if (AuthService.isOnline) dataModel.requestRefresh("reconnect") }
     }
 
     // ── Discarded parked write -> re-read the affected stores (S3, P2) ──────────

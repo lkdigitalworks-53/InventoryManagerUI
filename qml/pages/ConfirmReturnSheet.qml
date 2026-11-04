@@ -12,6 +12,7 @@ import "../model"
 BottomSheet {
     id: root
     sheetTitle: qsTr("Confirm changes")
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: qsTr("Confirm & save")
     secondaryAction: qsTr("Cancel")
 

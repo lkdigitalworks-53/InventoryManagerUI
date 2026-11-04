@@ -20,6 +20,7 @@ BottomSheet {
     id: root
 
     sheetTitle: mode === "products" ? "Import products" : "Import orders"
+    holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Import " + _effectiveCount() + " row" + (_effectiveCount() === 1 ? "" : "s")
     primaryEnabled: _effectiveCount() > 0 && !busy
     secondaryAction: "Cancel"

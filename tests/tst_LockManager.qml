@@ -191,4 +191,26 @@ TestCase {
         compare(LockManager._renewalLost(200, { ok: true }, ok), false)
         compare(LockManager._renewalLost(0, { ok: true }, ok), false)
     }
+
+    // Edit forms hold the background list refresh (L4a review, 2026-11-03). BottomSheet takes and releases the hold;
+    // here the counter itself runs in the real engine.
+    function test_edit_holds_count_overlap_and_never_go_negative() {
+        LockManager.resetEditHolds()
+        compare(LockManager.anyEditing, false)
+        LockManager.holdForEdit()
+        LockManager.holdForEdit()
+        compare(LockManager.editHolds, 2)
+        compare(LockManager.anyEditing, true)
+        LockManager.releaseEdit()
+        compare(LockManager.anyEditing, true)
+        LockManager.releaseEdit()
+        compare(LockManager.anyEditing, false)
+        LockManager.releaseEdit()
+        compare(LockManager.editHolds, 0)
+        LockManager.holdForEdit()
+        compare(LockManager.editHolds, 1)
+        LockManager.resetEditHolds()
+        compare(LockManager.editHolds, 0)
+        compare(LockManager.anyEditing, false)
+    }
 }
