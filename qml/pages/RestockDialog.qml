@@ -92,8 +92,8 @@ BottomSheet {
         var supplierId = partyCombo.currentIndex > 0
                 ? dlg._supplierIds[partyCombo.currentIndex]
                 : ""
-        var unitCost = parseFloat(unitCostField.text)
-        if (isNaN(unitCost) || unitCost < 0) unitCost = 0
+        // Blank = the product's recorded cost; a typo or a negative is refused by the plan, not booked as 0 (review D-2).
+        var unitCost = RestockFlow.costFromText(unitCostField.text)
         busy = true
         InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim(), function(ok, queued, refusal) {
             busy = false

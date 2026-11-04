@@ -249,3 +249,42 @@ test("M-1 monkey: 600 random taps never throw; a made input is either planned or
         else assert.equal(Keys.isRestockKey(plan.key), true);
     }
 });
+
+// ---------------------------------------------------------------------------------- review D-2: the cost field's text
+
+test("D2-1 costFromText: blank / not-a-string = NaN (not given); a number is itself; junk = -1; never a silent 0", () => {
+    for (const blank of ["", "   ", undefined, null, 12, {}, []]) assert.ok(Number.isNaN(RF.costFromText(blank)), String(blank));
+    assert.equal(RF.costFromText("0"), 0, "a typed zero is a free sample and stays 0");
+    assert.equal(RF.costFromText("0.0"), 0);
+    assert.equal(RF.costFromText(" 7.25 "), 7.25);
+    assert.equal(RF.costFromText("1e2"), 100);
+    assert.equal(RF.costFromText("-3"), -3, "a negative is passed on so the plan can refuse it");
+    for (const junk of ["abc", "12abc", "1,5", "Infinity", "-Infinity", "1e999", "NaN", "--1", "1.2.3"]) assert.equal(RF.costFromText(junk), -1, junk);
+});
+
+test("D2-2 end to end: what costFromText yields is booked, defaulted or refused by the REAL plan", () => {
+    const build = (text) => {
+        const m = RF.makeInput(args({ unitCost: RF.costFromText(text) }));
+        assert.equal(m.ok, true);
+        return plain(RP.build(m.input));
+    };
+    const costOf = (r) => r.ops.find((o) => o.entity === "stock_batch").after.unitCost;
+    assert.equal(build("").ok, true);
+    assert.equal(costOf(build("")), 12.5, "blank books the product's recorded cost, not 0");
+    assert.equal(costOf(build("0")), 0);
+    assert.equal(costOf(build("9.5")), 9.5);
+    for (const bad of ["-3", "abc", "1,5", "Infinity", "1e999"]) {
+        const r = build(bad);
+        assert.equal(r.ok, false, bad);
+        assert.equal(r.reason, "bad-cost", bad);
+        assert.equal(RF.refusalText(r.reason), "Unit cost is not a valid amount");
+    }
+});
+
+test("D2-3 the dialog hands the cost text to costFromText and no longer coerces a bad cost to 0", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "..", "qml", "pages", "RestockDialog.qml"), "utf8");
+    assert.ok(src.includes("RestockFlow.costFromText(unitCostField.text)"));
+    assert.ok(!/unitCost\s*=\s*0\b/.test(src), "no 'unitCost = 0' fallback may come back");
+    assert.ok(!src.includes("parseFloat(unitCostField.text)"));
+});
+

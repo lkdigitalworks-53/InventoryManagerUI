@@ -96,4 +96,28 @@ TestCase {
         compare(RF.activityText({ stock: 15, batch: { qtyReceived: 2.5, note: "" }, purchase: { productName: "T" } }, "").subtitle, "+2.5 · now 15 in stock")
         compare(RF.activityText({ stock: 3 }, "").title, "Restocked: ")
     }
+
+    // -- review D-2: the cost field's text ----------------------------------
+    function test_costFromText() {
+        verify(isNaN(RF.costFromText("")))
+        verify(isNaN(RF.costFromText("   ")))
+        verify(isNaN(RF.costFromText(undefined)))
+        verify(isNaN(RF.costFromText(null)))
+        verify(isNaN(RF.costFromText(12)), "not a string = not given")
+        compare(RF.costFromText("0"), 0)
+        compare(RF.costFromText(" 7.25 "), 7.25)
+        compare(RF.costFromText("-3"), -3)
+        compare(RF.costFromText("abc"), -1)
+        compare(RF.costFromText("12abc"), -1)
+        compare(RF.costFromText("1,5"), -1)
+        compare(RF.costFromText("Infinity"), -1)
+        compare(RF.costFromText("1e999"), -1)
+    }
+
+    function test_costFromText_blank_falls_back_to_the_product_cost_and_junk_is_refused() {
+        compare(RF.makeInput(_args({ unitCost: RF.costFromText("") })).input.unitCost, 12.5)
+        compare(RF.makeInput(_args({ unitCost: RF.costFromText("0") })).input.unitCost, 0)
+        compare(RF.makeInput(_args({ unitCost: RF.costFromText("9.5") })).input.unitCost, 9.5)
+        compare(RF.makeInput(_args({ unitCost: RF.costFromText("abc") })).input.unitCost, -1, "makeInput passes it on; the plan refuses it")
+    }
 }

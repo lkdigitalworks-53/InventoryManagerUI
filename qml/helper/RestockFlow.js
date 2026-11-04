@@ -6,6 +6,20 @@
 // asks this file; every branch here runs in Node (functions/test/restockFlow.test.js) and in
 // tests/tst_RestockFlow.qml. Nothing here reads a store, a clock or a random source.
 
+// Review D-2 (PR #183 sweep). The cost field's text -> the `unitCost` to hand to makeInput. The dialog used to
+// turn a blank, a typo or a negative into 0 before the plan could see it, so the plan's bad-cost refusal never
+// ran and a mistyped cost was booked as a free batch (skews the batch cost and the profit). Now:
+//   blank       -> NaN : "not given", makeInput falls back to the product's recorded cost (the field's own default)
+//   a number    -> that number, negative included: the plan refuses it as bad-cost
+//   anything else (letters, "1,5", "Infinity") -> -1 : the plan refuses it as bad-cost. Never silently 0.
+// A typed 0 is still 0 (a free sample is a real case).
+function costFromText(text) {
+    var t = (typeof text === "string") ? text.trim() : ""
+    if (t === "") return NaN
+    var n = Number(t)
+    return (isNaN(n) || !isFinite(n)) ? -1 : n
+}
+
 // The key made at the tap. "" only if the nonce is not a plain token (cannot happen with restockNonce).
 function newKey(nowMs, random) {
     return Keys.restockKey(Keys.restockNonce(nowMs, random))
