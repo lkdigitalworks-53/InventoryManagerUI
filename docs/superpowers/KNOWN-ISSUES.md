@@ -934,7 +934,7 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 
 ## A read with no answer can hold a refresh for up to 3 minutes — FOUND 2026-11-02 (L4a, read from code), MITIGATED
 
-`FirebaseService` sets no request timeout. A hung refresh read keeps `refreshing` up; the next trigger after 3 minutes cancels it (`RefreshPolicy.runLost`). The older sign-in sync has no such watchdog (existing issue, unchanged).
+`FirebaseService` sets no request timeout. A hung refresh read keeps `refreshing` up; since L4b the 5 s poll timer also runs while a run is out, so the run is cancelled by its own watchdog about 3 minutes after it started (`RefreshPolicy.runLost`), and a manual one tells the user (before L4b only the next trigger cancelled it). The older sign-in sync has no such watchdog (existing issue, unchanged).
 
 ## L4a review: three unconfirmed risks, left on purpose — FOUND 2026-11-03 (review sweep of PR #182), NOT FIXED
 
@@ -956,3 +956,14 @@ Nine forms hold the refresh (Add/Edit product, New order, Order detail, Restock,
 5. **Ids:** draft and plan ids are strings; an order line may hold a numeric id. Match plan entries to lines with `String(line.productId) === entry.productId`.
 6. **Pre-existing, not S1:** `NewOrderDialog` skips the stock check at submit when the product is gone (`inv` null), so it fails open there.
 7. **Unverified:** whether `StockBatchStore._pendingMints` and `InventoryStore.syncStates` publish a revision signal a live-refreshing sheet can bind to (check first in the S2 plan).
+
+---
+
+## L4b refresh row: BUILT 2026-11-04 (CI unverified, device steps pending); four known limits
+`RefreshRow` (first child of the content column on Inventory, Orders, Staff, Dashboard, Sales) shows "Updated N min ago" and a tap starts a manual refresh (`DataModel.manualRefresh()`). Design `specs/2026-11-04-l4b-refresh-row-design.md`, test plan `test-plans/2026-11-04-l4b-refresh-row-test-plan.md`.
+- **A tap, not a pull gesture (B-D1).** Pages scroll in `AppScrollView`, pinned to `StopAtBounds` on purpose (Android free-drag bug), so an overscroll pull has nothing to read; a custom gesture cannot be verified in the sandbox or in CI and competes with `SalesPage`'s swipe handler. The row sits where a pull indicator would. A pull gesture can be added later on `manualRefresh()` if the device test says the row is not enough.
+- **Dashboard's recent-activity feed is not refreshed (B-D2).** Its KPIs and orders are; the `ActivityLog` rows catch up at the next sign-in sync until L4c adds `ActivityLog` to the refresh. The row says "Updated" for the whole page.
+- **"Updated" can be the sign-in sync start even if that sync failed (B-D3, L4a limit).** A manual tap fixes it.
+- **Strings are English literals** in `RefreshCaption.js` and `RefreshRow.qml`, like `FailureCause.js`; not in `qsTr`.
+- **The row is not unit-testable in CI** (needs Felgo `dp`, `sp`, `Icon`); it is pinned by `refreshRowWiring.test.js` and checked on a device.
+
