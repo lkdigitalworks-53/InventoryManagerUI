@@ -33,6 +33,6 @@ Ask (Taher): deep full-sweep review of PR #183 (requesting-code-review, qt-qml-r
 - [x] RV-4. Node suites on merged tree: functions 1029/1029, scripts 905/905 (after D-1: functions 1043/1043).
 - [x] RV-5. D-1 fixed: `restockHoldMessage`, `updateRefusal` + `deleteProduct` refuse while a restock is queued. Node `functions/test/restockHold.test.js` (14, 7/7 mutants killed, real-server 409 proof), QML twin `tests/tst_InventoryStore_restockHold.qml` (CI only).
 - [x] RV-5b. D-2 fixed: RestockDialog turned a blank/typo/negative cost into 0 before RestockPlan's bad-cost refusal could run (free batches). New pure `RestockFlow.costFromText` (blank = product cost, number = itself, junk = -1 so the plan refuses). Node D2-1..3 (6/6 mutants killed) + QML twin in tst_RestockFlow.qml. Commit after f1ab2f3.
-- [ ] RV-6. qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
-- [ ] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 152, README, AGENTS.
+- [x] RV-6 (read-based, no Qt toolchain): qml-review checks on changed QML (brace/paren balance, no new bindings/loaders), ponytail-audit: nothing to delete; `supplierFor.newName` has no app caller until R5 (kept, tested). qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
+- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 152, README, AGENTS.
 - [ ] RV-8. Push, read CI, record the result.

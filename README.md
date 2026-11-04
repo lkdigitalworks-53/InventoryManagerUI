@@ -328,7 +328,7 @@ atomic-operations arc). Design `docs/superpowers/specs/2026-10-28-r2-mint-engine
 (supplier, batch, stock, purchase and ledger row in one server transaction; the server mints the ids). The queued outbox item is the per-product latch,
 and the product is hidden from the New Order picker and refused at completion until the restock settles. A late answer (offline, slow, relaunch,
 replay) is applied once through the `DataModel` route. The restock toast says "Restock saved. Stock updates when it syncs" when it is only queued;
-the old silent default quantity of 10 is gone. Design `docs/superpowers/specs/2026-11-02-r4-restock-wire-design.md`, test plan
+the old silent default quantity of 10 is gone. Review sweep (PR #183): while a restock of a product is queued its edit and delete are refused (a stale `before` would get 409 and park), and a blank restock cost now means the product's recorded cost while a mistyped one is refused instead of booked as 0. Design `docs/superpowers/specs/2026-11-02-r4-restock-wire-design.md`, test plan
 `docs/superpowers/test-plans/2026-11-02-r4-restock-wire-test-plan.md`, open items in `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 10. Next: R5.
 
 **Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
