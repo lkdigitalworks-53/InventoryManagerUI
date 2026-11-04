@@ -20,9 +20,11 @@ function tokenize(query) {
     return out
 }
 
-// A product is a plain object that has an id. Arrays and id-less objects are junk, never matches.
+// A product is a plain object with a non-empty STRING productId (every store and PickerDraft key by string
+// ids). Arrays, id-less objects and numeric or empty ids are junk, never matches: a row the draft would
+// silently refuse to step is worse than a missing row.
 function _isProduct(p) {
-    return !!p && typeof p === "object" && p.productId !== undefined && p.productId !== null
+    return !!p && typeof p === "object" && typeof p.productId === "string" && p.productId.length > 0
 }
 
 function _fields(p) {

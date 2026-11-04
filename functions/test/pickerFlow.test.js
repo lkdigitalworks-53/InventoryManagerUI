@@ -2,7 +2,7 @@
 // Functional layer for the picker helpers: search -> pickability -> draft -> commit plan -> the REAL
 // CompletionPlan.build (qml/helper/CompletionPlan.js, loaded as text). Proves a picker commit makes an
 // order the planner accepts, and that MAX_LINES keeps a typical order under the server's change cap.
-// Cases FLOW-01..08. Node only (the QML twins cover the pure cases; this one needs two helpers at once).
+// Cases FLOW-01..10. Node only (the QML twins cover the pure cases; this one needs two helpers at once).
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { load } = require("./testSupport/qmlHelpers");
@@ -38,7 +38,7 @@ function plan(orderLines, products, batchesPerProduct) {
 const ctxFor = (products, extra) => {
     const byId = {};
     products.forEach((p) => { byId[p.productId] = p; });
-    const c = { availableFor: (p) => byId[p.productId].stock };
+    const c = { availableFor: (p) => byId[p.productId].stock, hasPendingMint: () => false, unsyncedState: () => "" };
     for (const k in (extra || {})) c[k] = extra[k];
     return c;
 };
@@ -54,6 +54,7 @@ test("FLOW-01 happy path: search, set quantities, commit, the planner accepts th
     d = PD.setQty(d, rows[2].product.productId, "999", rows[2].maxQty);
     const cp = PD.commitPlan(d, []);
     assert.equal(cp.adds.length, 3);
+    assert.equal(PD.canCommit([], d).ok, true);
     const lines = cp.adds.map((a) => ({ productId: a.productId, name: a.productId, qty: a.qty }));
     const r = plan(lines, products, 1);
     assert.equal(r.ok, true);
@@ -109,4 +110,26 @@ test("FLOW-08 two commits of the same product make one line, the second a bump",
     const second = PD.commitPlan({ P0001: 3 }, [{ productId: "P0001", quantity: 2 }]);
     assert.equal(second.adds.length, 0);
     assert.equal(second.bumps.length, 1);
+});
+test("FLOW-09 canCommit alone is not enough: 50 lines of 2 batches pass the cap but the planner refuses (dialogs must dry-run CompletionPlan)", () => {
+    const products = catalog(50);
+    products.forEach((p) => { p.stock = 10; });
+    let d = {};
+    products.forEach((p) => { d = PD.setQty(d, p.productId, "10", 10); });
+    assert.equal(PD.canCommit([], d).ok, true);
+    const lines = PD.commitPlan(d, []).adds.map((a) => ({ productId: a.productId, name: a.productId, qty: a.qty }));
+    const r = plan(lines, products, 2);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, "too-many-ops");
+    // the same 50 lines on one batch each are fine
+    assert.equal(plan(lines, products, 1).ok, true);
+});
+test("FLOW-10 a numeric product id on the order bumps through the whole chain", () => {
+    const products = catalog(5);
+    const orderLines = [{ productId: 1, qty: 1 }];
+    const d = PD.setQty({}, "1", "2", 5);
+    const cp = PD.commitPlan(d, orderLines);
+    assert.deepEqual(JSON.parse(JSON.stringify(cp)), { adds: [], bumps: [{ productId: "1", qty: 2 }] });
+    assert.equal(PD.lineCountAfter(orderLines, cp), 1);
+    assert.equal(products.length, 5);
 });

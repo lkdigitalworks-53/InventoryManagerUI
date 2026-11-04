@@ -1,5 +1,5 @@
 "use strict";
-// PickerDraft (qml/helper/PickerDraft.js). Cases DRFT-01..30, plan:
+// PickerDraft (qml/helper/PickerDraft.js). Cases DRFT-01..42, plan:
 // docs/superpowers/plans/2026-11-03-product-picker-v2-s1-pure-helpers.md. The QML twin
 // tests/tst_PickerDraft.qml is derived from these bodies, except DRFT-26 which needs the file system
 // (PAIR-01 in pickerDormancy.test.js).
@@ -64,6 +64,17 @@ test("DRFT-10 hostile ids leave the draft alone", () => {
     }
     eq(({}).polluted, undefined);
     eq(Object.prototype.hasOwnProperty.call(Object.prototype, "3"), false);
+});
+test("DRFT-10b an own __proto__ key in a draft never reaches a result", () => {
+    const d = JSON.parse('{"__proto__":{"polluted":1},"A":1}');
+    const a = PD.setQty(d, "A", "2", 9);
+    eq(a, { A: 2 });
+    eq(a.polluted, undefined);
+    eq(PD.step(d, "A", 1, 9).polluted, undefined);
+    eq(PD.reconcile(d, () => 9).polluted, undefined);
+    eq(PD.reconcile(d, () => 9), { A: 1 });
+    eq(PD.totals(d, () => 2), { items: 1, lines: 1, amount: 2 });
+    eq(PD.commitPlan(d, []), { adds: [{ productId: "A", qty: 1 }], bumps: [] });
 });
 test("DRFT-11 step up from nothing", () => {
     eq(PD.step({}, "A", 1, 5), { A: 1 });
@@ -171,8 +182,9 @@ test("DRFT-29 reconcile of a draft within limits returns an equal new object", (
 test("DRFT-30 seeded monkey, 400 rounds", () => {
     const rand = FX.rng(11);
     const texts = ["1", "5", "0", "abc", "2.5", "", "999999", "1000000", " 3 "];
-    const pids = ["A", "B", "C", "__proto__", "", "D"];
+    const pids = ["A", "B", "C", "__proto__", "", "D", "10", "9"];
     const pick = (list) => list[Math.floor(rand() * list.length)];
+    let nonEmpty = 0;
     for (let round = 0; round < 400; ++round) {
         let d = PD.empty();
         const lines = rand() < 0.5 ? [{ productId: "B" }] : [];
@@ -189,6 +201,10 @@ test("DRFT-30 seeded monkey, 400 rounds", () => {
             sum += d[k];
         }
         const plan = PD.commitPlan(d, lines);
+        if (sum > 0) nonEmpty++;
+        const gate = PD.canCommit(lines, d);
+        eq(gate.ok, sum > 0);
+        eq(gate.reason, sum > 0 ? "" : "empty");
         let planSum = 0;
         const seen = {};
         const all = plan.adds.concat(plan.bumps);
@@ -199,4 +215,111 @@ test("DRFT-30 seeded monkey, 400 rounds", () => {
         const sortedBumps = plan.bumps.map((e) => e.productId).slice().sort();
         eq(plan.bumps.map((e) => e.productId), sortedBumps);
     }
+    ok(nonEmpty > 100, "the monkey rarely built a draft: " + nonEmpty);
+});
+test("DRFT-31 nothing changes an unfrozen input, and every success path returns a new object", () => {
+    const d = { A: 2, B: 1 };
+    const lines = [{ productId: "A", qty: 1 }];
+    const results = [PD.setQty(d, "A", "4", 9), PD.step(d, "B", 1, 9), PD.reconcile(d, () => 1)];
+    PD.totals(d, () => 1);
+    PD.commitPlan(d, lines);
+    PD.canCommit(lines, d);
+    PD.lineLimitReached(lines, d);
+    PD.lineCountAfter(lines, { adds: [] });
+    eq(d, { A: 2, B: 1 });
+    eq(lines, [{ productId: "A", qty: 1 }]);
+    for (let i = 0; i < results.length; ++i) ok(results[i] !== d, "returned the input object");
+    eq(results[0], { A: 4, B: 1 });
+    eq(results[1], { A: 2, B: 2 });
+    eq(results[2], { A: 1, B: 1 });
+});
+test("DRFT-32 MAX_LINES is 60 and the limit is exact at the edge", () => {
+    eq(PD.MAX_LINES, 60);
+    const l58 = [];
+    for (let i = 0; i < 58; ++i) l58.push({ productId: "L" + i });
+    eq(PD.lineLimitReached(l58, { NEW: 1 }), false);
+    eq(PD.lineLimitReached(l58.concat([{ productId: "L58" }]), {}), false);
+    eq(PD.lineLimitReached(l58.concat([{ productId: "L58" }]), { NEW: 1 }), true);
+    eq(PD.lineLimitReached(l58.concat([{ productId: "L58" }, { productId: "L59" }]), {}), true);
+});
+test("DRFT-33 step ignores a corrupt stored value and starts from nothing", () => {
+    eq(PD.step({ A: "3" }, "A", 1, 9), { A: 1 });
+    eq(PD.step({ A: 2.5 }, "A", 1, 9), { A: 1 });
+    eq(PD.step({ A: Infinity }, "A", 1, 9), { A: 1 });
+    eq(PD.step({ A: -2 }, "A", 1, 9), { A: 1 });
+    eq(PD.step({ A: 2 }, "A", "1", 9), { A: 2 });
+    eq(PD.step({ A: 2 }, "A", 1, 9, 5), { A: 3 });
+});
+test("DRFT-34 the maximum is whole and finite, an infinite one is refused", () => {
+    eq(PD.setQty({}, "A", "3", Infinity), {});
+    eq(PD.setQty({}, "A", "9", 3.7), { A: 3 });
+    eq(PD.step({}, "A", 1, Infinity), {});
+    eq(PD.reconcile({ A: Infinity }, () => 9), {});
+    eq(PD.reconcile({ A: 3 }, () => Infinity), {});
+    eq(PD.reconcile({ A: 5 }, () => 3.9), { A: 3 });
+});
+test("DRFT-35 totals: price rules and the two-decimal amount", () => {
+    eq(PD.totals({ A: 1 }, () => Infinity), { items: 1, lines: 1, amount: 0 });
+    eq(PD.totals({ A: 1 }, () => 0), { items: 1, lines: 1, amount: 0 });
+    eq(PD.totals({ A: 1 }, () => 0.15).amount, 0.15);
+    eq(PD.totals({ A: 3 }, () => 0.335).amount, 1.01);
+    const asked = [];
+    PD.totals({ A: 1, B: 2 }, (id) => { asked.push(id); return 1; });
+    eq(asked.sort(), ["A", "B"]);
+});
+test("DRFT-36 a throwing price counts as 0 and a throwing maximum drops only that product", () => {
+    eq(PD.totals({ A: 2, B: 1 }, (id) => { if (id === "A") throw new Error("boom"); return 5; }), { items: 3, lines: 2, amount: 5 });
+    eq(PD.reconcile({ A: 1, B: 2 }, (id) => { if (id === "A") throw new Error("boom"); return 9; }), { B: 2 });
+});
+test("DRFT-37 order lines: junk, null ids and look-alike ids", () => {
+    eq(PD.commitPlan({ A: 1 }, [{ productId: null }]), { adds: [{ productId: "A", qty: 1 }], bumps: [] });
+    eq(PD.commitPlan({ A: 1 }, [null, undefined, 5, "A", []]), { adds: [{ productId: "A", qty: 1 }], bumps: [] });
+    eq(PD.commitPlan({ A: 1 }, { length: 1, 0: { productId: "A" } }), { adds: [{ productId: "A", qty: 1 }], bumps: [] });
+    // a numeric id on the order matches the string id in the draft
+    eq(PD.commitPlan({ "1": 2 }, [{ productId: 1 }]), { adds: [], bumps: [{ productId: "1", qty: 2 }] });
+    // ids that are also Object.prototype names never collide
+    eq(PD.commitPlan({ toString: 1 }, [{ productId: "toString" }]), { adds: [], bumps: [{ productId: "toString", qty: 1 }] });
+    eq(PD.commitPlan({ A: 1 }, [{ productId: "hasOwnProperty" }]), { adds: [{ productId: "A", qty: 1 }], bumps: [] });
+    eq(PD.commitPlan({ constructor: 1 }, []), { adds: [{ productId: "constructor", qty: 1 }], bumps: [] });
+});
+test("DRFT-38 integer-like ids sort as text, in every engine", () => {
+    eq(PD.commitPlan({ "10": 1, "9": 1, "2": 1 }, []).adds.map((e) => e.productId), ["10", "2", "9"]);
+    eq(PD.totals({ "10": 1, "9": 2, "2": 3 }, (id) => Number(id)), { items: 6, lines: 3, amount: 10 + 18 + 6 });
+    eq(PD.setQty({ "10": 1 }, "9", "2", 5), { "10": 1, "9": 2 });
+});
+test("DRFT-39 legacy lines without a product id each count on their own", () => {
+    eq(PD.lineCountAfter([{ productId: "" }, { productId: "" }, { productId: "A" }], null), 3);
+    eq(PD.lineCountAfter([{ productId: null }, {}, { productId: "A" }], null), 3);
+    eq(PD.lineCountAfter([null, undefined, 5, "x", []], null), 0);
+    eq(PD.lineCountAfter([{ productId: "A" }, { productId: "A" }], { adds: [{ productId: "B" }] }), 2);
+    const legacy = [];
+    for (let i = 0; i < 59; ++i) legacy.push({ productId: "" });
+    eq(PD.lineLimitReached(legacy, { NEW: 1 }), true);
+    eq(PD.lineLimitReached(legacy, {}), false);
+});
+test("DRFT-40 canCommit: empty, within the limit, and over it", () => {
+    eq(PD.canCommit([], {}), { ok: false, reason: "empty" });
+    eq(PD.canCommit([], null), { ok: false, reason: "empty" });
+    eq(PD.canCommit([], { A: 0, B: -1, C: "2" }), { ok: false, reason: "empty" });
+    eq(PD.canCommit([], { A: 1 }), { ok: true, reason: "" });
+    const l60 = [];
+    for (let i = 0; i < 60; ++i) l60.push({ productId: "L" + i });
+    eq(PD.canCommit(l60, { L3: 2 }), { ok: true, reason: "" });
+    eq(PD.canCommit(l60, { NEW: 1 }), { ok: false, reason: "too-many-lines" });
+    eq(PD.canCommit(l60.slice(0, 59), { NEW: 1 }), { ok: true, reason: "" });
+    eq(PD.canCommit(l60.slice(0, 59), { NEW: 1, NEW2: 1 }), { ok: false, reason: "too-many-lines" });
+    eq(PD.canCommit(l60.concat([{ productId: "" }]), { L3: 1 }), { ok: false, reason: "too-many-lines" });
+});
+test("DRFT-41 a stale draft over the cap is caught by canCommit, not by step or setQty", () => {
+    let d = {};
+    for (let i = 0; i < 64; ++i) d = PD.setQty(d, "N" + i, "1", 5);
+    eq(Object.keys(d).length, 64);
+    eq(PD.canCommit([], d), { ok: false, reason: "too-many-lines" });
+});
+test("DRFT-42 parseQty keeps its exact limits", () => {
+    eq(PD.parseQty("000001"), { ok: true, qty: 1 });
+    eq(PD.parseQty("0000001"), { ok: false, qty: 0 });
+    eq(PD.parseQty("\t5\n"), { ok: true, qty: 5 });
+    eq(PD.parseQty(1000000), { ok: false, qty: 0 });
+    eq(PD.parseQty(999999), { ok: true, qty: 999999 });
 });

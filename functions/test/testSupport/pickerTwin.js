@@ -28,11 +28,14 @@ function slug(title) {
 
 function parseCases(src) {
     const cases = [];
-    const re = /^test\("([A-Z]+-\d+) ([^"]*)", \(\) => \{\n([\s\S]*?)^\}\);$/gm;
+    const re = /^test\("([A-Z]+-\d+[a-z]?) ([^"]*)", \(\) => \{\n([\s\S]*?)^\}\);$/gm;
     let m;
     while ((m = re.exec(src)) !== null) cases.push({ id: m[1], title: m[2], body: m[3] });
     return cases;
 }
+
+// A body copied into QML must not touch Node-only names; the QML engine would fail at run time, in CI only.
+const NODE_ONLY = /\b(require|process|Buffer|assert|__dirname|__filename)\b|\bfs\.|\bpath\./;
 
 function derive(spec) {
     const src = fs.readFileSync(path.join(NODE, spec.node), "utf8");
@@ -55,9 +58,13 @@ function derive(spec) {
     out.push("    function eq(actual, expected) { compare(FX.canon(actual), FX.canon(expected)) }");
     out.push("    function ok(cond, msg) { verify(cond, msg) }");
     out.push('    function noThrow(fn) { try { fn() } catch (e) { fail("threw: " + e) } }');
-    if (pre) { out.push(""); out.push(indent(pre[1].replace(/\n+$/, ""), 4)); }
+    if (pre) {
+        if (NODE_ONLY.test(pre[1])) throw new Error(spec.node + ": QML-PRELUDE uses a Node-only name");
+        out.push(""); out.push(indent(pre[1].replace(/\n+$/, ""), 4));
+    }
     for (const c of parseCases(src)) {
         if (/\(Node only\)$/.test(c.title)) continue;
+        if (NODE_ONLY.test(c.body)) throw new Error(spec.node + " " + c.id + ": body uses a Node-only name; end the title with (Node only) or rewrite it");
         out.push("");
         out.push("    function test_" + c.id.replace("-", "_") + "_" + slug(c.title) + "() {");
         out.push(indent(c.body.replace(/\n+$/, ""), 4));

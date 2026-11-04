@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { TWINS, derive, qmlPath } = require("./testSupport/pickerTwin");
+const { TWINS, derive, qmlPath, parseCases } = require("./testSupport/pickerTwin");
 
 const ROOT = path.join(__dirname, "..", "..");
 const HELPERS = ["ProductSearch", "ProductPickability", "PickerDraft"];
@@ -70,10 +70,14 @@ test("PAIR-01 every QML twin is exactly what the Node test derives", () => {
 test("PAIR-02 each twin has one function per Node case, and the Node-only case is the only gap", () => {
     for (const spec of TWINS) {
         const node = fs.readFileSync(path.join(__dirname, spec.node), "utf8");
-        const nodeIds = [...node.matchAll(/^test\("([A-Z]+-\d+) /gm)].map((m) => m[1]);
-        const nodeOnly = [...node.matchAll(/^test\("([A-Z]+-\d+) [^"]*\(Node only\)"/gm)].map((m) => m[1]);
+        const nodeIds = [...node.matchAll(/^test\("([A-Z]+-\d+[a-z]?) /gm)].map((m) => m[1]);
+        const nodeOnly = [...node.matchAll(/^test\("([A-Z]+-\d+[a-z]?) [^"]*\(Node only\)"/gm)].map((m) => m[1]);
         const qml = fs.readFileSync(qmlPath(spec), "utf8");
-        const qmlIds = [...qml.matchAll(/function test_([A-Z]+_\d+)_/g)].map((m) => m[1].replace("_", "-"));
+        const qmlIds = [...qml.matchAll(/function test_([A-Z]+_\d+[a-z]?)_/g)].map((m) => m[1].replace("_", "-"));
+        // Every `test(` line must be a case the twin parser understood: a title it skips would vanish silently.
+        const rawCount = (node.match(/^test\(/gm) || []).length;
+        assert.equal(parseCases(node).length, rawCount, spec.node + ": a test( the twin parser cannot read");
+        assert.equal(rawCount, nodeIds.length, spec.node + ": a test( title without a CASE-ID");
         assert.deepEqual(qmlIds, nodeIds.filter((id) => !nodeOnly.includes(id)));
         assert.equal(new Set(nodeIds).size, nodeIds.length, "duplicate case id in " + spec.node);
     }

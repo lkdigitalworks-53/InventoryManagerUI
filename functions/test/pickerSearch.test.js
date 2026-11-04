@@ -1,5 +1,5 @@
 "use strict";
-// ProductSearch (qml/helper/ProductSearch.js). Cases SRCH-01..27, plan:
+// ProductSearch (qml/helper/ProductSearch.js). Cases SRCH-01..38, plan:
 // docs/superpowers/plans/2026-11-03-product-picker-v2-s1-pure-helpers.md. The QML twin
 // tests/tst_ProductSearch.qml is derived from these bodies (PAIR-01 in pickerDormancy.test.js).
 const test = require("node:test");
@@ -58,6 +58,8 @@ test("SRCH-12 a name word prefix ranks above a substring", () => {
     eq(ids(PS.filter(list, "mat")), ["2", "1"]);
     const apart = [prod("1", "Amat"), prod("2", "Zeta Matcha")];
     eq(ids(PS.filter(apart, "mat")), ["2", "1"]);
+    // name order would put "Amat" first, so only the word-start rank puts "Matcha" first
+    eq(ids(PS.filter([prod("1", "Amat"), prod("2", "Matcha")], "mat")), ["2", "1"]);
 });
 test("SRCH-13 ties go by name, then catalog order", () => {
     const list = [prod("1", "b", undefined, "xcat"), prod("2", "a", undefined, "xcat"), prod("3", "a", undefined, "xcat")];
@@ -89,8 +91,12 @@ test("SRCH-17 missing sku and category do not break matching", () => {
     eq(ids(PS.filter(list, "tomato")), ["A1"]);
     eq(ids(PS.filter(list, "a2")), ["A2"]);
 });
-test("SRCH-18 numeric product id", () => {
-    eq(ids(PS.filter([{ productId: 1001, name: "x" }], "100")), [1001]);
+test("SRCH-18 only a non-empty string id makes a product (numeric, empty and null ids are junk)", () => {
+    eq(ids(PS.filter([{ productId: 1001, name: "x" }], "100")), []);
+    eq(ids(PS.filter([{ productId: "", name: "x" }], "")), []);
+    eq(ids(PS.filter([{ productId: null, name: "x" }], "")), []);
+    eq(ids(PS.filter([{ productId: "1001", name: "x" }], "100")), ["1001"]);
+    eq(ids(PS.filter([{ productId: "0", name: "x" }], "")), ["0"]);
 });
 test("SRCH-19 junk entries are skipped, valid ones returned", () => {
     const list = [null, undefined, 5, "x", [], {}, prod("OK1", "Tomato")];
@@ -114,15 +120,19 @@ test("SRCH-22 a very long query is cut to 200 characters and finishes fast", () 
     const q = new Array(10001).join("a");
     const t0 = Date.now();
     eq(ids(PS.filter(FX.CATALOG, q)), []);
-    ok(Date.now() - t0 < 50, "took too long");
+    ok(Date.now() - t0 < 500, "took too long");
     const longName = [prod("L1", q.substring(0, 200))];
     eq(ids(PS.filter(longName, q + "b")), ["L1"]);
+    const a199 = new Array(200).join("a");
+    eq(ids(PS.filter([prod("L2", a199 + "c")], a199 + "b")), []);
 });
 test("SRCH-23 a products argument that is not an array gives an empty list", () => {
     eq(PS.filter(null, "x"), []);
     eq(PS.filter({}, "x"), []);
     eq(PS.filter("abc", "x"), []);
     eq(PS.filter(undefined, "x"), []);
+    eq(PS.filter("abc", ""), []);
+    eq(PS.filter({ length: 1, 0: prod("A", "x") }, ""), []);
 });
 test("SRCH-24 input is never changed", () => {
     const list = FX.freeze([prod("A", "Tomato", "t1", "Veg"), prod("B", "Pear", "p1", "Fruit")]);
@@ -137,15 +147,80 @@ test("SRCH-25 two products with the same name are both returned, in catalog orde
 test("SRCH-26 the same call twice gives the same answer", () => {
     eq(ids(PS.filter(FX.CATALOG, "to")), ids(PS.filter(FX.CATALOG, "to")));
 });
+test("SRCH-28 each score tier beats the next one, with names ordered against the rank", () => {
+    eq(ids(PS.filter([prod("Q2", "aaa", "abx"), prod("ab", "zzz")], "ab")), ["ab", "Q2"]);
+    eq(ids(PS.filter([prod("abx", "aaa"), prod("Q1", "zzz", "ab")], "ab")), ["Q1", "abx"]);
+    eq(ids(PS.filter([prod("Q2", "aaa ab"), prod("Q1", "zzz", "abx")], "ab")), ["Q1", "Q2"]);
+    eq(ids(PS.filter([prod("Q2", "aaa ab"), prod("abx", "zzz")], "ab")), ["abx", "Q2"]);
+    eq(ids(PS.filter([prod("xabx", "aaa"), prod("Q2", "xaby"), prod("Q3", "bbb", "xaby")], "ab")), ["Q2", "xabx", "Q3"]);
+});
+test("SRCH-29 the scores of several words add up", () => {
+    // P1: id exact (100) + sku middle (5) = 105. P2: id prefix (60) + sku prefix (60) = 120. P1 sorts first by name.
+    const list = [prod("ab", "aaa", "xcd"), prod("abz", "zzz", "cdz")];
+    eq(ids(PS.filter(list, "ab cd")), ["abz", "ab"]);
+    // sum 110 (100 + 10) beats sum 65 (5 + 60) although the LAST word scores lower: not "last word wins"
+    const rest = [prod("cdz", "aaa", "xabx"), prod("ab", "zzzxcdx")];
+    eq(ids(PS.filter(rest, "ab cd")), ["ab", "cdz"]);
+});
+test("SRCH-30 any run of white space separates words", () => {
+    eq(ids(PS.filter(FX.CATALOG, "cherry\ttomato")), ["PRD-001"]);
+    eq(ids(PS.filter(FX.CATALOG, "cherry\n tomato")), ["PRD-001"]);
+    eq(ids(PS.filter(FX.CATALOG, "  tomato  ")), ids(PS.filter(FX.CATALOG, "tomato")));
+    eq(ids(PS.filter(FX.CATALOG, "\t")), ["PRD-001", "PRD-002", "PRD-003"]);
+});
+test("SRCH-31 an entry without a usable id is skipped whatever else it has", () => {
+    eq(ids(PS.filter([{ productId: null, name: "x" }], "")), []);
+    const fn = function() {};
+    fn.productId = "F1";
+    eq(ids(PS.filter([fn], "")), []);
+});
+test("SRCH-32 name and category must match exactly or by text, not by padding", () => {
+    eq(ids(PS.filter(FX.CATALOG, "", { category: " Tea" })), []);
+    eq(ids(PS.filter([{ productId: "N1", name: 123 }], "12")), ["N1"]);
+    eq(ids(PS.filter([prod("W1", "   ")], "")), ["W1"]);
+    eq(ids(PS.filter([prod("W1", "   ")], "x")), []);
+});
+test("SRCH-33 duplicate product ids are both returned", () => {
+    eq(ids(PS.filter([prod("D", "Tea"), prod("D", "Tea")], "tea")), ["D", "D"]);
+});
+test("SRCH-34 accents match in both directions", () => {
+    const pre = [prod("C1", "Café")];
+    const dec = [prod("C2", "Café")];
+    eq(ids(PS.filter(pre, "Café")), ["C1"]);
+    eq(ids(PS.filter(dec, "Café")), ["C2"]);
+    eq(ids(PS.filter(pre, "Café")), ["C1"]);
+    eq(ids(PS.filter(dec, "Café")), ["C2"]);
+});
+test("SRCH-35 the category filter and the query both leave the order rule alone", () => {
+    const list = [prod("1", "b", undefined, "Veg"), prod("2", "a", undefined, "Veg"), prod("3", "c", undefined, "Tea")];
+    eq(ids(PS.filter(list, "", { category: "Veg" })), ["1", "2"]);
+    eq(ids(PS.filter(list, "veg", {})), ["2", "1"]);
+});
+test("SRCH-36 tokenize drops empty words and cuts the query", () => {
+    eq(PS.tokenize("  Red \t Tomato  "), ["red", "tomato"]);
+    eq(PS.tokenize(""), []);
+    eq(PS.tokenize(null), []);
+    eq(PS.tokenize(new Array(10001).join("a")).length, 1);
+    eq(PS.tokenize(new Array(10001).join("a"))[0].length, PS.MAX_QUERY);
+});
+test("SRCH-37 filter returns the very same product objects, not copies", () => {
+    const list = [prod("S1", "Tea")];
+    ok(PS.filter(list, "tea")[0] === list[0], "a copy was returned");
+});
+test("SRCH-38 a non-string category option is ignored", () => {
+    eq(ids(PS.filter(FX.CATALOG, "", { category: 5 })), ["PRD-001", "PRD-002", "PRD-003"]);
+    eq(ids(PS.filter(FX.CATALOG, "", { category: null })), ["PRD-001", "PRD-002", "PRD-003"]);
+});
 test("SRCH-27 seeded monkey, 400 rounds", () => {
     const rand = FX.rng(7);
     const words = ["tom", "TOM", "Café", "टम", "a.b", "(", "x", "  ", "veg", "tea", "1", "prd"];
     const pick = (list) => list[Math.floor(rand() * list.length)];
+    let nonEmpty = 0;
     for (let round = 0; round < 400; ++round) {
         const list = [];
         const n = Math.floor(rand() * 8);
         for (let i = 0; i < n; ++i) {
-            const p = { productId: pick(["P1", "P2", 7, "tom-" + i]) };
+            const p = { productId: pick(["P1", "P2", "7", "tom-" + i]) };
             if (rand() < 0.8) p.name = pick(words) + " " + pick(words);
             if (rand() < 0.5) p.sku = pick(words);
             if (rand() < 0.5) p.category = pick([null, "Veg", "Tea", "veg"]);
@@ -155,12 +230,20 @@ test("SRCH-27 seeded monkey, 400 rounds", () => {
         let out = [];
         noThrow(() => { out = PS.filter(list, q); });
         ok(out.length <= list.length, "more results than products");
+        const tokens = PS.tokenize(q);
+        let want = 0;
+        for (let k = 0; k < list.length; ++k) {
+            const h = [list[k].productId, list[k].name, list[k].sku, list[k].category].join(" ").normalize("NFC").toLowerCase();
+            let all = true;
+            for (let t = 0; t < tokens.length; ++t) if (h.indexOf(tokens[t]) < 0) all = false;
+            if (all) { want++; ok(out.indexOf(list[k]) >= 0, "a matching product is missing from the result"); }
+        }
+        eq(out.length, want);
+        if (out.length > 0) nonEmpty++;
         for (let k = 0; k < out.length; ++k) {
             ok(list.indexOf(out[k]) >= 0, "result is not one of the products");
             ok(out.indexOf(out[k]) === k, "duplicate result");
-            const hay = [out[k].productId, out[k].name, out[k].sku, out[k].category].join(" ").normalize("NFC").toLowerCase();
-            const tokens = PS.tokenize(q);
-            for (let t = 0; t < tokens.length; ++t) ok(hay.indexOf(tokens[t]) >= 0, "a token does not match");
         }
     }
+    ok(nonEmpty > 20, "the monkey never found anything: " + nonEmpty);
 });

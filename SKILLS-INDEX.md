@@ -161,3 +161,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 151: Refresh a list without blanking it: shadow fetch, swap behind a gate, and a gate that is re-checked at the swap
 - 152: A design written before a guard existed will delete the guard; audit an old spec by listing the guards added since, and keep every per-row guard in one tested predicate
 - 153: Derive the QML twin of a Node test from the Node file, so the two engines run the same bodies and cannot drift
+- 154: A generated test twin must fail loudly on a case its parser skips, and a monkey test must prove it reached every outcome
