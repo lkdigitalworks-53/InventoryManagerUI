@@ -29,9 +29,9 @@ Node: functions 1029/1029, scripts 741/741, 23/23 hand mutants killed. QML tests
 Ask (Taher): deep full-sweep review of PR #183 (requesting-code-review, qt-qml-review, ponytail-audit), fixes in the SAME PR, work split to finish in one chat turn, robustness first. Commit identity `taher.lkdw@gmail.com`, named in every commit message. Baseline: PR was `dirty` against `main` (L4a #182 merged after it was cut).
 - [x] RV-1. Fresh clone into `/home/claude/repo`, PAT only per command (never in `.git/config`). Read memory + the three review skills.
 - [x] RV-2. Merged `origin/main` (17db878) into the branch. Conflicts only in docs: AGENTS.md (kept R4 + R3 + L4a entries), SKILLS-INDEX.md and SKILLS.md (main keeps Skill 151 = L4a; this PR's skill renumbered to **Skill 152**), CHECKPOINT.md (branch version kept). Code files auto-merged. Merge commit `5dd45dc`.
-- [ ] RV-3. Read the merged code against L4a: `InventoryStore.restock`, `_applyRestock`, `DataModel` route, `OutboxStore.hasQueuedOperationFor`, `RestockFlow.js`, dialogs.
-- [ ] RV-4. Run Node suites on the merged tree (functions + scripts).
-- [ ] RV-5. Finding D-1 (edit/delete of a product with a queued restock).
+- [x] RV-3. Read the merged code against L4a: `InventoryStore.restock`, `_applyRestock`, `DataModel` route, `OutboxStore.hasQueuedOperationFor`, `RestockFlow.js`, dialogs.
+- [x] RV-4. Node suites on merged tree: functions 1029/1029, scripts 905/905 (after D-1: functions 1043/1043).
+- [x] RV-5. D-1 fixed: `restockHoldMessage`, `updateRefusal` + `deleteProduct` refuse while a restock is queued. Node `functions/test/restockHold.test.js` (14, 7/7 mutants killed, real-server 409 proof), QML twin `tests/tst_InventoryStore_restockHold.qml` (CI only).
 - [ ] RV-6. qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
 - [ ] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 152, README, AGENTS.
 - [ ] RV-8. Push, read CI, record the result.

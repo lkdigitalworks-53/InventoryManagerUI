@@ -277,11 +277,14 @@ QtObject {
     // anything is queued (nothing local changes, no ledger row, no retry loop).
     readonly property string tooLargeMessage: "This product is too large to save (over 1 MiB). Shorten the description."
 
-    // "" = fits, otherwise the message to show. Used by the dialogs before they close and by
-    // updateProduct/addProduct as the last line of defence.
+    // "" = the edit may go ahead, otherwise the message to show: a restock of this product is still queued
+    // (restockHoldMessage, review D-1) or the product is over the doc limit. Used by the dialogs before they
+    // close and by updateProduct as the last line of defence.
     function updateRefusal(productId, fields) {
         var idx = findIndexById(productId)
         if (idx < 0) return ""
+        var held = restockHoldMessage(productId)
+        if (held !== "") return held
         return DocLimits.exceedsDoc(Object.assign({}, products[idx], fields || {})) ? tooLargeMessage : ""
     }
 
@@ -1145,9 +1148,10 @@ QtObject {
     readonly property string unsyncedEditMessage: "This product has a change that hasn't synced yet. Wait for it to sync first"
     function hasUnsyncedEdit(productId) { return OutboxStore.hasUnsyncedEditForEntity("inventory", productId) }
 
-    // Returns parkedWriteMessage when refused (nothing changed), otherwise undefined.
+    // Returns parkedWriteMessage or restockPendingMessage when refused (nothing changed), otherwise undefined.
     function deleteProduct(productId) {
         if (hasParkedWrite(productId)) return parkedWriteMessage
+        if (hasQueuedRestock(productId)) return restockPendingMessage   // review D-1, see restockHoldMessage
         var arr = _clone();
         var before = null
         var found = false
@@ -1292,6 +1296,17 @@ QtObject {
     readonly property string restockPendingSaleMessage: "A restock for this product is still syncing. Sell it after it syncs"
     readonly property string restockDiscardedMessage: "This restock was discarded, so nothing was added"
     function hasQueuedRestock(productId) { return OutboxStore.hasQueuedOperationFor("restock", "inventory", productId) }
+
+    // Review D-1 (PR #183 sweep). An edit or a delete of the product is a whole-record write: its `before` is the
+    // local copy, which does not hold a queued restock's stock yet (nothing is applied locally until the server
+    // answers). Queued behind the restock, it is sent after the restock landed, the server's compare-and-swap
+    // (applyMutation, deep equality on `before`) no longer matches and answers 409, and the person is left with a
+    // stuck change. So both are refused up front while the restock is queued, the same family as the sale hide
+    // (R4-D4). "" = no hold. A restock that is itself parked is a stuck change: say so, waiting will not clear it.
+    function restockHoldMessage(productId) {
+        if (!hasQueuedRestock(productId)) return ""
+        return hasParkedWrite(productId) ? parkedWriteMessage : restockPendingMessage
+    }
 
     // key -> true while a live callback has already settled the operation, so the Gateway signal that
     // always follows (see onRestockApplied/onRestockRejected) does not repeat the effects. key -> name is

@@ -294,8 +294,9 @@ Item {
             var oldStock = before ? before.stock : undefined
             var refusal = InventoryStore.updateProduct(productId, fields, reason)
             if (refusal) {
-                // Over the 1 MiB doc limit: nothing changed, so no batch reconcile and no
-                // productUpdated. The dialogs pre-check, this is the backstop (e.g. import).
+                // Over the 1 MiB doc limit, or a restock of this product is still queued (review D-1): nothing
+                // changed, so no batch reconcile and no productUpdated. The dialogs pre-check, this is the
+                // backstop (e.g. import).
                 dispatcher.errorOccurred("inventory", refusal)
                 return
             }
