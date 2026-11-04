@@ -4784,7 +4784,7 @@ Rules:
 6. A hook that "defaults to open when missing" is a hole: a mistyped context key silently removed the pending-mint guard. Only a guard that may legitimately not exist yet (queued restock before R4) may default open, and an unknown answer from a guard hook (an object, a typo) must hide, not show.
 7. Keep an explicit mutant list in a script and re-run it after each test change; classify every survivor as equivalent (write the reason) or a test gap (add the case). This run: 99 mutants, 10 survivors; 6 were redundant code that was deleted, 1 was a real gap (`score = s` instead of `score += s`, caught only with a case where the sum and the last word disagree), 3 are equivalent (`n >= 0` before a `<= 0` check, a `__proto__` id guard whose assignment is already a no-op, a zero price adding 0).
 
-## Skill 151: Use the durable queue as the latch, settle an answer in exactly one place, and run the real function bodies of QML glue in Node
+## Skill 155: Use the durable queue as the latch, settle an answer in exactly one place, and run the real function bodies of QML glue in Node
 
 Atomic-ops R4 (2026-11-02). `InventoryStore.restock` moved from four writes to one `recordOperation`. The risks were a double tap, an answer applied twice (the waiting caller and the signal that always follows), an answer applied for a request whose caller is gone, and glue the sandbox cannot run.
 Rules:

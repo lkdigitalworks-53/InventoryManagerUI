@@ -16,7 +16,7 @@ R4 = `InventoryStore.restock` rewrite onto `RestockPlan` + `Gateway.recordOperat
 - [x] 4. Pure `qml/helper/RestockFlow.js` + Node tests (run locally).
 - [x] 5. `OutboxStore.hasQueuedOperationFor`, `InventoryStore.restock` rewrite + settle hooks, `DataModel` route + sale guard, `NewOrderDialog` picker filter, `RestockDialog` wording.
 - [x] 6. QML tests (CI only): rewrite restock tests in `tst_InventoryStore_movementKinds`, `tst_ParkedWriteGuard`; new `tst_InventoryStore_restock`, `tst_DataModel_restockRoute`, `tst_OutboxStore_queuedOperation`, `tst_RestockFlow`.
-- [x] 7. Test plan, Skill 153, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
+- [x] 7. Test plan, Skill 155, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
 - [x] 8. Pushed, PR #183 opened, CI read, two test-only fixes (c4575cb, f61396b). CI ALL GREEN on f61396b: 3968/3968.
 
 ## State at push
@@ -34,7 +34,8 @@ Ask (Taher): deep full-sweep review of PR #183 (requesting-code-review, qt-qml-r
 - [x] RV-5. D-1 fixed: `restockHoldMessage`, `updateRefusal` + `deleteProduct` refuse while a restock is queued. Node `functions/test/restockHold.test.js` (14, 7/7 mutants killed, real-server 409 proof), QML twin `tests/tst_InventoryStore_restockHold.qml` (CI only).
 - [x] RV-5b. D-2 fixed: RestockDialog turned a blank/typo/negative cost into 0 before RestockPlan's bad-cost refusal could run (free batches). New pure `RestockFlow.costFromText` (blank = product cost, number = itself, junk = -1 so the plan refuses). Node D2-1..3 (6/6 mutants killed) + QML twin in tst_RestockFlow.qml. Commit after f1ab2f3.
 - [x] RV-6 (read-based, no Qt toolchain): qml-review checks on changed QML (brace/paren balance, no new bindings/loaders), ponytail-audit: nothing to delete; `supplierFor.newName` has no app caller until R5 (kept, tested). qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
-- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 153, README, AGENTS.
+- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 155, README, AGENTS.
 - [x] RV-2b. 2026-11-04: `main` moved again (#184, picker v2 docs took Skill 152). Merged it; this PR's skill is now **Skill 153**. Branch CHECKPOINT kept. Pushes while the PR was `dirty` ran NO CI (GitHub does not run pull_request workflows on a conflicting PR), so CI evidence starts after this merge.
 - [x] RV-8. Pushed `45f0143`; PR #183 `mergeable: clean`; CI all green: QML 2761/2761 (incl. the new tst_InventoryStore_restockHold + tst_RestockFlow cases), Functions 1046/1046, Rules 108/108, E2E 111/111 = 4026/4026.
+- [x] RV-2c. 2026-11-04: Taher asked to REBASE the branch onto `main` (#185 picker S1 now at the tip, skills up to 154). Merge commits dropped, history linear, CHECKPOINT.md kept as this branch's version, other docs unioned. This PR's skill is now **Skill 155**. Pushed with --force-with-lease (history rewritten, old tip b54c5b3).
 - [ ] RV-9 (open, for Taher): veto window on D-1 (edit/delete held while restock queued) and D-2 (blank cost = recorded cost). Then merge #183; next slice R5.
