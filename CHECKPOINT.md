@@ -16,7 +16,7 @@ R4 = `InventoryStore.restock` rewrite onto `RestockPlan` + `Gateway.recordOperat
 - [x] 4. Pure `qml/helper/RestockFlow.js` + Node tests (run locally).
 - [x] 5. `OutboxStore.hasQueuedOperationFor`, `InventoryStore.restock` rewrite + settle hooks, `DataModel` route + sale guard, `NewOrderDialog` picker filter, `RestockDialog` wording.
 - [x] 6. QML tests (CI only): rewrite restock tests in `tst_InventoryStore_movementKinds`, `tst_ParkedWriteGuard`; new `tst_InventoryStore_restock`, `tst_DataModel_restockRoute`, `tst_OutboxStore_queuedOperation`, `tst_RestockFlow`.
-- [x] 7. Test plan, Skill 151, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
+- [x] 7. Test plan, Skill 153, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
 - [x] 8. Pushed, PR #183 opened, CI read, two test-only fixes (c4575cb, f61396b). CI ALL GREEN on f61396b: 3968/3968.
 
 ## State at push
@@ -28,11 +28,13 @@ Node: functions 1029/1029, scripts 741/741, 23/23 hand mutants killed. QML tests
 ## REVIEW SWEEP 2026-11-04 (same PR, no stacked PR) - resume here
 Ask (Taher): deep full-sweep review of PR #183 (requesting-code-review, qt-qml-review, ponytail-audit), fixes in the SAME PR, work split to finish in one chat turn, robustness first. Commit identity `taher.lkdw@gmail.com`, named in every commit message. Baseline: PR was `dirty` against `main` (L4a #182 merged after it was cut).
 - [x] RV-1. Fresh clone into `/home/claude/repo`, PAT only per command (never in `.git/config`). Read memory + the three review skills.
-- [x] RV-2. Merged `origin/main` (17db878) into the branch. Conflicts only in docs: AGENTS.md (kept R4 + R3 + L4a entries), SKILLS-INDEX.md and SKILLS.md (main keeps Skill 151 = L4a; this PR's skill renumbered to **Skill 152**), CHECKPOINT.md (branch version kept). Code files auto-merged. Merge commit `5dd45dc`.
+- [x] RV-2. Merged `origin/main` (17db878) into the branch. Conflicts only in docs: AGENTS.md (kept R4 + R3 + L4a entries), SKILLS-INDEX.md and SKILLS.md (main keeps Skill 151 = L4a; this PR's skill renumbered to **Skill 153**), CHECKPOINT.md (branch version kept). Code files auto-merged. Merge commit `5dd45dc`.
 - [x] RV-3. Read the merged code against L4a: `InventoryStore.restock`, `_applyRestock`, `DataModel` route, `OutboxStore.hasQueuedOperationFor`, `RestockFlow.js`, dialogs.
 - [x] RV-4. Node suites on merged tree: functions 1029/1029, scripts 905/905 (after D-1: functions 1043/1043).
 - [x] RV-5. D-1 fixed: `restockHoldMessage`, `updateRefusal` + `deleteProduct` refuse while a restock is queued. Node `functions/test/restockHold.test.js` (14, 7/7 mutants killed, real-server 409 proof), QML twin `tests/tst_InventoryStore_restockHold.qml` (CI only).
 - [x] RV-5b. D-2 fixed: RestockDialog turned a blank/typo/negative cost into 0 before RestockPlan's bad-cost refusal could run (free batches). New pure `RestockFlow.costFromText` (blank = product cost, number = itself, junk = -1 so the plan refuses). Node D2-1..3 (6/6 mutants killed) + QML twin in tst_RestockFlow.qml. Commit after f1ab2f3.
 - [x] RV-6 (read-based, no Qt toolchain): qml-review checks on changed QML (brace/paren balance, no new bindings/loaders), ponytail-audit: nothing to delete; `supplierFor.newName` has no app caller until R5 (kept, tested). qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
-- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 152, README, AGENTS.
-- [ ] RV-8. Push, read CI, record the result.
+- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 153, README, AGENTS.
+- [x] RV-2b. 2026-11-04: `main` moved again (#184, picker v2 docs took Skill 152). Merged it; this PR's skill is now **Skill 153**. Branch CHECKPOINT kept. Pushes while the PR was `dirty` ran NO CI (GitHub does not run pull_request workflows on a conflicting PR), so CI evidence starts after this merge.
+- [x] RV-8. Pushed `45f0143`; PR #183 `mergeable: clean`; CI all green: QML 2761/2761 (incl. the new tst_InventoryStore_restockHold + tst_RestockFlow cases), Functions 1046/1046, Rules 108/108, E2E 111/111 = 4026/4026.
+- [ ] RV-9 (open, for Taher): veto window on D-1 (edit/delete held while restock queued) and D-2 (blank cost = recorded cost). Then merge #183; next slice R5.
