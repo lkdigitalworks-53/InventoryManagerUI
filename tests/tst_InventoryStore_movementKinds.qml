@@ -3,7 +3,7 @@ import QtTest
 import "../qml/model"
 
 // P1 S2d-1: the three InventoryStore stock-delta paths now describe themselves to the ledger:
-// restock -> `receipt`, deductStock(kind) -> e.g. `sale`, creditStockNoBatch(kind) -> `sales_return`.
+// restock -> `receipt` (inside the restock operation since R4), deductStock(kind) -> e.g. `sale`, creditStockNoBatch(kind) -> `sales_return`.
 // They only QUEUE the delta here (AuthStore.idToken empty keeps the network shut), so every assertion
 // reads the outbox item the call produced. Clamp mode must NEVER carry explicit movements: the server
 // cannot match a row to a clamped quantity and would reject the deduction outright.
@@ -35,42 +35,60 @@ TestCase {
         return OutboxStore.items.filter(function(i) { return i.entity === "inventory" && i.entityId === id && i.deltas })
     }
 
+    function _restockItems() { return OutboxStore.items.filter(function(i) { return i.opType === "restock" }) }
+    // The stock delta op of the one restock operation a call queued.
+    function _restockDelta(productId) {
+        var items = _restockItems()
+        for (var i = 0; i < items.length; ++i) {
+            var ops = items[i].ops.filter(function(o) { return o.kind === "delta" && o.entityId === productId })
+            if (ops.length > 0) return ops[0]
+        }
+        return null
+    }
+
     // ── restock -> receipt ───────────────────────────────────────────────
     function test_restock_queues_a_receipt_movement_with_the_reason() {
         InventoryStore.restock("SKU-1", 3, "", 10, "  box 7  ", function() {})
-        var items = _inv("SKU-1")
-        compare(items.length, 1)
-        compare(items[0].deltas.stock, 3)
-        compare(items[0].movements.length, 1)
-        compare(items[0].movements[0].kind, "receipt")
-        compare(items[0].movements[0].qty, 3)
-        compare(items[0].movements[0].reason, "box 7")
-        compare(items[0].movements[0].valueAtCost, undefined)
+        compare(_restockItems().length, 1, "one operation, not separate delta + batch writes")
+        compare(_inv("SKU-1").length, 0, "no stand-alone delta item any more")
+        var op = _restockDelta("SKU-1")
+        compare(op.deltas.stock, 3)
+        compare(op.movements.length, 1)
+        compare(op.movements[0].kind, "receipt")
+        compare(op.movements[0].qty, 3)
+        compare(op.movements[0].reason, "box 7")
+        compare(op.movements[0].valueAtCost, undefined)
     }
-    function test_restock_default_quantity_is_ten_and_still_a_receipt() {
-        InventoryStore.restock("SKU-1", 0, "", 10, "", function() {})
-        var it = _inv("SKU-1")[0]
-        compare(it.deltas.stock, 10)
-        compare(it.movements[0].qty, 10)
+    function test_restock_of_zero_is_refused_there_is_no_default_quantity_any_more() {
+        // R4-D2: the old `amount || 10` turned a 0 into 10 silently. A zero is a mistake, say so.
+        var out = { ok: null, refusal: null }
+        InventoryStore.restock("SKU-1", 0, "", 10, "", function(ok, queued, refusal) { out.ok = ok; out.refusal = refusal })
+        compare(out.ok, false)
+        compare(out.refusal, InventoryStore.restockQtyRefusal)
+        compare(OutboxStore.pendingCount, 0)
     }
     function test_restock_a_fractional_quantity_is_a_valid_receipt() {
         InventoryStore.restock("SKU-1", 2.5, "", 10, "", function() {})
-        compare(_inv("SKU-1")[0].movements[0].qty, 2.5)
+        compare(_restockDelta("SKU-1").movements[0].qty, 2.5)
     }
     function test_restock_with_a_very_long_reason_still_queues_a_valid_row() {
         InventoryStore.restock("SKU-1", 3, "", 10, new Array(901).join("x"), function() {})
-        var it = _inv("SKU-1")[0]
-        compare(it.movements[0].reason.length, 500)
+        compare(_restockDelta("SKU-1").movements[0].reason.length, 500, "the ledger row is cut, the batch note is not")
     }
-    function test_two_restocks_coalesce_into_one_item_with_two_receipts() {
+    function test_a_second_restock_of_the_same_product_is_refused_while_the_first_is_queued() {
+        // R4-D1: the queued operation is the latch (this also covers a double tap in one tick).
+        var out = { ok: null, queued: null, refusal: null }
         InventoryStore.restock("SKU-1", 3, "", 10, "a", function() {})
-        InventoryStore.restock("SKU-1", 4, "", 10, "b", function() {})
-        var items = _inv("SKU-1")
-        compare(items.length, 1)
-        compare(items[0].deltas.stock, 7)
-        compare(items[0].movements.length, 2)
-        compare(items[0].movements[0].reason, "a")
-        compare(items[0].movements[1].reason, "b")
+        InventoryStore.restock("SKU-1", 4, "", 10, "b", function(ok, queued, refusal) { out.ok = ok; out.queued = queued; out.refusal = refusal })
+        compare(_restockItems().length, 1)
+        compare(out.ok, false)
+        compare(out.refusal, InventoryStore.restockPendingMessage)
+        compare(_restockDelta("SKU-1").deltas.stock, 3)
+    }
+    function test_a_restock_of_another_product_is_not_blocked_by_a_queued_one() {
+        InventoryStore.restock("SKU-1", 3, "", 10, "a", function() {})
+        InventoryStore.restock("SKU-2", 4, "", 10, "b", function() {})
+        compare(_restockItems().length, 2)
     }
     function test_a_negative_restock_is_refused_before_any_side_effect() {
         var out = { ok: null, calls: 0 }
@@ -133,39 +151,33 @@ TestCase {
         compare(OutboxStore.pendingCount, 0)
     }
     function test_a_restock_then_a_floored_sale_deduction_queue_as_two_items() {
-        // One merged item keeps ONE floor map: the sale's `stock >= 0` floor would be dropped
-        // (stock could go negative) or the restock rejected together with the sale.
         InventoryStore.restock("SKU-1", 10, "", 10, "", function() {})
         InventoryStore.deductStock("SKU-1", 3, function() {}, false, "sale", "o")
+        compare(_restockItems().length, 1)
         var items = _inv("SKU-1")
-        compare(items.length, 2)
-        compare(items[0].deltas.stock, 10)
-        compare(items[0].floors.stock, undefined)
-        compare(items[0].movements.length, 1)
-        compare(items[0].movements[0].kind, "receipt")
-        compare(items[1].deltas.stock, -3)
-        compare(items[1].floors.stock, 0)
-        compare(items[1].movements.length, 1)
-        compare(items[1].movements[0].kind, "sale")
+        compare(items.length, 1, "the sale delta is its own item, never merged into the operation")
+        compare(items[0].deltas.stock, -3)
+        compare(items[0].floors.stock, 0)
+        compare(items[0].movements[0].kind, "sale")
+        compare(_restockDelta("SKU-1").floors.stock, undefined)
+        compare(_restockDelta("SKU-1").movements[0].kind, "receipt")
     }
-    function test_two_restocks_around_a_failed_send_never_share_an_item() {
+    function test_a_restock_whose_send_failed_once_stays_queued_and_still_latches() {
         InventoryStore.restock("SKU-1", 3, "", 10, "a", function() {})
-        OutboxStore.markFailed(_inv("SKU-1")[0].requestId)   // sent once, reply may have been lost
-        InventoryStore.restock("SKU-1", 4, "", 10, "b", function() {})
-        var items = _inv("SKU-1")
-        compare(items.length, 2)
-        compare(items[0].deltas.stock, 3)
-        compare(items[0].movements.length, 1)
-        compare(items[1].deltas.stock, 4)
-        compare(items[1].movements[0].reason, "b")
+        OutboxStore.markFailed(_restockItems()[0].requestId)   // sent once, reply may have been lost
+        var out = { refusal: null }
+        InventoryStore.restock("SKU-1", 4, "", 10, "b", function(ok, queued, refusal) { out.refusal = refusal })
+        compare(_restockItems().length, 1)
+        compare(out.refusal, InventoryStore.restockPendingMessage)
     }
     function test_a_clamped_deduction_queues_next_to_an_explicit_restock_not_into_it() {
         InventoryStore.restock("SKU-1", 10, "", 10, "", function() {})
         InventoryStore.deductStock("SKU-1", 3, function() {}, true)
+        compare(_restockItems().length, 1)
         var items = _inv("SKU-1")
-        compare(items.length, 2)
-        compare(items[0].movements.length, 1)
-        compare(items[1].movements, undefined)
+        compare(items.length, 1)
+        compare(items[0].movements, undefined)
+        compare(_restockDelta("SKU-1").movements.length, 1)
     }
 
     // ── creditStockNoBatch(kind) ─────────────────────────────────────────
@@ -267,24 +279,26 @@ TestCase {
 
     // ── restock refusal tells the user why ───────────────────────────────
     function test_a_refused_restock_answers_with_the_quantity_message_not_try_again() {
-        var out = { ok: null, supplierFailed: null, refusal: null }
-        InventoryStore.restock("SKU-1", -3, "", 10, "", function(ok, sf, refusal) { out.ok = ok; out.supplierFailed = sf; out.refusal = refusal })
+        var out = { ok: null, queued: null, refusal: null }
+        InventoryStore.restock("SKU-1", -3, "", 10, "", function(ok, queued, refusal) { out.ok = ok; out.queued = queued; out.refusal = refusal })
         compare(out.ok, false)
-        compare(out.supplierFailed, false)
+        compare(out.queued, false)
         compare(out.refusal, "Quantity must be greater than zero")
         compare(out.refusal, InventoryStore.restockQtyRefusal)
     }
     function test_a_text_quantity_is_refused_with_the_same_message_and_no_side_effect() {
         var out = { ok: null, refusal: null }
-        InventoryStore.restock("SKU-1", "5", "", 10, "", function(ok, sf, refusal) { out.ok = ok; out.refusal = refusal })
+        InventoryStore.restock("SKU-1", "5", "", 10, "", function(ok, queued, refusal) { out.ok = ok; out.refusal = refusal })
         compare(out.ok, false)
         compare(out.refusal, InventoryStore.restockQtyRefusal)
         compare(OutboxStore.pendingCount, 0)
         compare(StockBatchStore._pendingMints.length, 0)
     }
-    function test_a_nan_quantity_falls_back_to_the_default_ten_like_before() {
-        InventoryStore.restock("SKU-1", NaN, "", 10, "", function() {})
-        compare(_inv("SKU-1")[0].deltas.stock, 10)
-        compare(_inv("SKU-1")[0].movements[0].qty, 10)
+    function test_a_nan_quantity_is_refused_not_defaulted() {
+        var out = { ok: null, refusal: null }
+        InventoryStore.restock("SKU-1", NaN, "", 10, "", function(ok, queued, refusal) { out.ok = ok; out.refusal = refusal })
+        compare(out.ok, false)
+        compare(out.refusal, InventoryStore.restockQtyRefusal)
+        compare(OutboxStore.pendingCount, 0)
     }
 }

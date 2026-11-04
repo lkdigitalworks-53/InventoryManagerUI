@@ -387,7 +387,7 @@ TestCase {
         OutboxStore.clear()
         _parkEditFor(productId)
         var result = null
-        InventoryStore.restock(productId, 5, "", 10, "", function(ok, sf, refusal) { result = { ok: ok, refusal: refusal } })
+        InventoryStore.restock(productId, 5, "", 10, "", function(ok, queued, refusal) { result = { ok: ok, refusal: refusal } })
 
         verify(result !== null, "the refusal must answer synchronously, not hang")
         compare(result.ok, false)

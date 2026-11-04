@@ -37,6 +37,7 @@ TestCase {
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     readonly property string realDeltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
+    readonly property string realOperationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
 
     property var fixture: null
     // seed.js and this file both live in test/e2e/ (moved here 2026-08-14 —
@@ -190,6 +191,9 @@ TestCase {
         // P1 S2d-1: restock goes through recordDelta, which this file never used before; without this the
         // delta hit the REAL cloud URL and was refused (restock callback false).
         Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
+        // atomic-ops R4: restock is one recordOperation now (not recordDelta); without this it hit the REAL
+        // cloud URL and the callback never reported the server's answer.
+        Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
@@ -203,6 +207,7 @@ TestCase {
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
         Gateway.deltaFunctionUrl = realDeltaFunctionUrl
+        Gateway.operationFunctionUrl = realOperationFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
@@ -264,10 +269,10 @@ TestCase {
         compare(Number(doc.fields.stock.integerValue), 25)
     }
 
-    // P1 S2d-1: restock now sends an explicit `receipt` movement. The real recordDelta function
-    // rejects (409) a movements list whose qtys do not sum to the applied delta, which would leave
-    // stock unchanged and fire Gateway.mutationConflicted, so "stock rose by the restock qty" is the
-    // end-to-end proof that the client payload is accepted. (The returned-stock path with
+    // P1 S2d-1 / R4: restock sends an explicit `receipt` movement inside ONE recordOperation. The real
+    // function rejects (409) a movements list whose qtys do not sum to the applied delta, which would
+    // leave stock unchanged, so "stock rose by the restock qty" is the end-to-end proof that the client
+    // payload is accepted. (The returned-stock path with
     // `sales_return` is exercised by tst_ReturnAfterMetadataEditE2E.)
     function _restock(id, qty, reason) {
         var done = false, okResult = false
@@ -289,12 +294,15 @@ TestCase {
         compare(lastConflict, null, "the explicit receipt must not conflict")
     }
 
-    function test_two_back_to_back_restocks_coalesce_into_one_valid_delta() {
+    function test_two_back_to_back_restocks_both_apply_as_separate_operations() {
         var id = _createProduct("E2E Widget Restock 2", "SKU-E2E-R2", 10)
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + id
         _pollEmulatorDoc(docPath, id, function(d) { return d !== null }, 5000, "product doc never appeared before the restocks")
         lastConflict = null
         _restock(id, 3, "first")
+        // R4-D1: one open restock per product. The first callback can return as soon as the restock is
+        // QUEUED, and a second tap is then refused until it leaves the outbox, so wait for that.
+        tryVerify(function() { return !InventoryStore.hasQueuedRestock(id) }, 8000, "the first restock never left the outbox")
         _restock(id, 2, "second")
         var doc = _pollEmulatorDoc(docPath, id, function(d) {
             return d !== null && Number(d.fields.stock.integerValue) === 15

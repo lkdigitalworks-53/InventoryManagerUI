@@ -99,6 +99,8 @@ BottomSheet {
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
             if (StockBatchStore.hasPendingMint(p.productId)) continue
+            // R4 (Q-A2): a queued restock has no local batch yet; sell it once the restock has synced.
+            if (InventoryStore.hasQueuedRestock(p.productId)) continue
 
             var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             var productId = p.productId ? "[" + p.productId + "] " : ""
