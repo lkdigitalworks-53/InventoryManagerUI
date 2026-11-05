@@ -10,6 +10,7 @@ import "pages"
 import "helper"
 import "components"
 import "helper/AccessState.js" as AccessState
+import "helper/RefreshCaption.js" as RefreshCaption
 
 App {
     id: app
@@ -29,6 +30,15 @@ App {
     readonly property int syncStuckTerminalCount: Gateway.stuckTerminalCount
     // GlassHeader's caption calls this when tapped.
     function openStuckWrites() { stuckWritesSheet.open() }
+
+    // L4b: the refresh row on each page reads these (the same app.* pattern as above). `dataModel` owns the state.
+    readonly property real refreshLastSyncMs: dataModel.lastSyncMs
+    readonly property string refreshState: dataModel.refreshState
+    // The row's tap. A run explains itself (the row flips to "Refreshing..."); a wait or a refusal gets one sentence.
+    function requestManualRefresh() {
+        var msg = RefreshCaption.requestMessage(dataModel.manualRefresh(), app.syncStuckCount)
+        if (msg.length > 0) Toast.show(msg)
+    }
 
     // The one way to sign out or leave a workspace from the UI. Signing out empties the
     // outbox and the photo queue, so when anything is queued the person gets SignOutSheet
@@ -240,6 +250,15 @@ App {
     DataModel {
         id: dataModel
         dispatcher: logic
+    }
+
+    // L4b: a manual refresh that ended without the lists updated (waited out, went offline, or some lists failed).
+    Connections {
+        target: dataModel
+        function onManualRefreshUnfinished(why) {
+            var msg = RefreshCaption.unfinishedMessage(why, app.syncStuckCount)
+            if (msg.length > 0) Toast.show(msg)
+        }
     }
 
     // ── Layer 4: View Helpers ─────────────────────────────────────────────────

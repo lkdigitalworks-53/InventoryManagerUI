@@ -1,42 +1,61 @@
-# CHECKPOINT — 2026-11-02 R4 restock wiring (atomic-ops arc) — resume here
+# CHECKPOINT — 2026-11-04 L4b refresh row ("last updated" + tap to refresh) — resume here
 
-**Branch:** `feat/2026-11-02-r4-restock-wire`, cut from `main` @ `4c88ed9` (PR #181 R3 merged, deployed and device-tested by Taher).
-**Commit identity:** author email `dextran52@gmail.com` and the same address in every commit message (Taher's instruction of 2026-11-02, replaces earlier identities). The PAT comes from the chat prompt only; pass it per command with `git -c http.extraHeader=...`, never in a URL, `.git/config`, the repo, or memory. After a push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; short scope per chat turn; honest trade-offs; tests and a test plan for every change; update skills, AGENTS, README as needed; caveman FULL in chat only, documents in normal prose; out-of-scope findings go to the roadmap doc (status doc section 10), not into code.
-**Skills used:** `brainstorming` (design section 2 of the R4 design doc; the architecture was approved with #147, this slice makes the wiring decisions R4-D1..D10, vetoable in the PR), `qt-qml`, `qt-ui-design` (one dialog wording change only), `ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-02-r3-merged-prev-CHECKPOINT.md`.
+**Branch:** `feat/2026-11-04-l4b-refresh-row`, cut from `main` @ `17db878` (PR #182 L4a merged and device tested).
+**Commit identity:** every commit message names `dextran52@gmail.com` (Taher's standing rule); git author set to the same.
+**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; one focused slice per chat turn; honest trade-offs; tests and a test plan for every change; caveman-full replies.
+**Skills used:** `brainstorming` (decisions B-D1..B-D9, defaults built, all vetoable in the PR), `qt-qml`, `qt-ui-design` (+ ux pass), `ponytail` (smallest design that is robust).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-04-l4a-merged-prev-CHECKPOINT.md` (L4a + review sweep + edit-form hold; its NEXT item 3 is this slice).
 
-## Scope (from status doc section 8 + 9)
-R4 = `InventoryStore.restock` rewrite onto `RestockPlan` + `Gateway.recordOperation`, durable per-product latch, parked-write refusal kept, picker hide + sale refusal for a queued restock (Q-A2), `DataModel` route for `operationApplied/Rejected` opType `restock` (relaunch case), replay re-read (O3), O1 supplier resolution, O2 `amount || 10` removed, O4 one `Date` for `now`/`date`. NOT in R4: dialog redesign, `activity_log` entity inside the op, `ActivityLog.record` id param, wording for too-large/reserved-text (all R5); deploy is already done (R2).
+## Why this slice
+L4a NEXT item 3: "L4b: pull-to-refresh on the lists + last updated caption, calls `DataModel.requestRefresh("manual")`. Needs a qt-ui-design pass first."
 
 ## Steps
-- [x] 1. Read memory, skills, status doc, restock design v2, R3 design, `InventoryStore.restock`, `RestockPlan`, `Gateway.recordOperation`, `DataModel` completion wiring, `OutboxStore`, `RestockDialog`, `NewOrderDialog` picker.
-- [x] 2. Branch, checkpoint archived, this file written.
-- [x] 3. Design doc `specs/2026-11-02-r4-restock-wire-design.md` (decisions R4-D1..D10).
-- [x] 4. Pure `qml/helper/RestockFlow.js` + Node tests (run locally).
-- [x] 5. `OutboxStore.hasQueuedOperationFor`, `InventoryStore.restock` rewrite + settle hooks, `DataModel` route + sale guard, `NewOrderDialog` picker filter, `RestockDialog` wording.
-- [x] 6. QML tests (CI only): rewrite restock tests in `tst_InventoryStore_movementKinds`, `tst_ParkedWriteGuard`; new `tst_InventoryStore_restock`, `tst_DataModel_restockRoute`, `tst_OutboxStore_queuedOperation`, `tst_RestockFlow`.
-- [x] 7. Test plan, Skill 155, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
-- [x] 8. Pushed, PR #183 opened, CI read, two test-only fixes (c4575cb, f61396b). CI ALL GREEN on f61396b: 3968/3968.
+- [x] 1. Read memory, cloned fresh, read L4a design, coordinator, pages, GlassHeader, Toast, Icon, AppScrollView.
+- [x] 2. Branch created, previous checkpoint archived.
+- [x] 3. Design `specs/2026-11-04-l4b-refresh-row-design.md` (facts F1-F9, decisions B-D1..B-D10). B-D1 departs from the plan: a tap row, not a pull gesture (StopAtBounds, untestable gesture, Sales swipe handler).
+- [x] 4. `qml/helper/RefreshCaption.js` (pure) + `refreshCaption.test.js` (35 tests, 33 mutants killed).
+- [x] 5. `DataModel`: `lastSyncMs`, `refreshState`, `_request`/`manualRefresh()`, `_abandonWant`, signal `manualRefreshUnfinished`, hung-read watchdog (poll timer on while a run is out), `_lostCancelled`.
+- [x] 6. `qml/components/RefreshRow.qml`; first child on Inventory, Orders, Staff, Dashboard, Sales (not Activity); `Main.qml` props, `requestManualRefresh()`, toasts.
+- [x] 7. Tests: coordinator scenarios + 17 mutants in `refreshBehavior.test.js`, `refreshRowWiring.test.js` (28), one L4a rule repointed (`_request`), one L4a assertion changed on purpose (timer stays on while running), QML twins `tst_RefreshCaption.qml` (8) and `tst_DataModel_refreshRow.qml` (6), CI only.
+- [x] 8. Test plan, README, AGENTS, KNOWN-ISSUES (new entry + L4a hung-read entry updated), Skill 156 + index (renumbered from 152 on rebase: main took 152-155).
+- [x] 9. Sandbox: script suite 994/994, `functions` untouched.
+- [x] 10. Pushed, PR #186 opened.
 
-## State at push
-Node: functions 1029/1029, scripts 741/741, 23/23 hand mutants killed. QML tests and the emulator e2e case are CI-only and UNSEEN. Open items P1-P6 are in `ATOMIC-OPERATIONS-STATUS.md` section 10.
-**Resume:** read CI for the PR; fix only what CI shows (QML compile errors are the likeliest: the new QML tests were never run). Then Taher's veto window for R4-D1 and R4-D4, then R5.
+## NEXT
+1. Read CI on the PR head (QML twins and the `DataModel`/page edits compile only in CI). Fix anything it shows.
+2. Taher: veto or accept B-D1..B-D10 (first: tap row instead of pull gesture; Dashboard included although its activity feed is not refreshed). Device steps in the test plan.
+3. L4c: add `ActivityLog`, categories, channels to the refresh; incremental refresh; sign-in sync on the shadow fetch; consider the one-helper refactor of the six store copies.
+4. Atomic-ops arc: R4 (`InventoryStore.restock` rewrite) is still next there.
 
-**Final:** PR #183 green. No product code changed after CI turned up red; the fixes were test fixtures (emulator URL, a re-read race in one QML test, the R4-D1 wait in one e2e test). Waiting for Taher's review and vetoes (R4-D1, R4-D2, R4-D4), device test, then R5.
+## Not done / honest gaps
+- Nothing built or run on a device; the row's look, spacing and feel are device-only.
+- QML tests and the page edits ran in CI only (not yet read).
+- Pull gesture not built (B-D1).
 
-## REVIEW SWEEP 2026-11-04 (same PR, no stacked PR) - resume here
-Ask (Taher): deep full-sweep review of PR #183 (requesting-code-review, qt-qml-review, ponytail-audit), fixes in the SAME PR, work split to finish in one chat turn, robustness first. Commit identity `taher.lkdw@gmail.com`, named in every commit message. Baseline: PR was `dirty` against `main` (L4a #182 merged after it was cut).
-- [x] RV-1. Fresh clone into `/home/claude/repo`, PAT only per command (never in `.git/config`). Read memory + the three review skills.
-- [x] RV-2. Merged `origin/main` (17db878) into the branch. Conflicts only in docs: AGENTS.md (kept R4 + R3 + L4a entries), SKILLS-INDEX.md and SKILLS.md (main keeps Skill 151 = L4a; this PR's skill renumbered to **Skill 153**), CHECKPOINT.md (branch version kept). Code files auto-merged. Merge commit `5dd45dc`.
-- [x] RV-3. Read the merged code against L4a: `InventoryStore.restock`, `_applyRestock`, `DataModel` route, `OutboxStore.hasQueuedOperationFor`, `RestockFlow.js`, dialogs.
-- [x] RV-4. Node suites on merged tree: functions 1029/1029, scripts 905/905 (after D-1: functions 1043/1043).
-- [x] RV-5. D-1 fixed: `restockHoldMessage`, `updateRefusal` + `deleteProduct` refuse while a restock is queued. Node `functions/test/restockHold.test.js` (14, 7/7 mutants killed, real-server 409 proof), QML twin `tests/tst_InventoryStore_restockHold.qml` (CI only).
-- [x] RV-5b. D-2 fixed: RestockDialog turned a blank/typo/negative cost into 0 before RestockPlan's bad-cost refusal could run (free batches). New pure `RestockFlow.costFromText` (blank = product cost, number = itself, junk = -1 so the plan refuses). Node D2-1..3 (6/6 mutants killed) + QML twin in tst_RestockFlow.qml. Commit after f1ab2f3.
-- [x] RV-6 (read-based, no Qt toolchain): qml-review checks on changed QML (brace/paren balance, no new bindings/loaders), ponytail-audit: nothing to delete; `supplierFor.newName` has no app caller until R5 (kept, tested). qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
-- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 155, README, AGENTS.
-- [x] RV-2b. 2026-11-04: `main` moved again (#184, picker v2 docs took Skill 152). Merged it; this PR's skill is now **Skill 153**. Branch CHECKPOINT kept. Pushes while the PR was `dirty` ran NO CI (GitHub does not run pull_request workflows on a conflicting PR), so CI evidence starts after this merge.
-- [x] RV-8. Pushed `45f0143`; PR #183 `mergeable: clean`; CI all green: QML 2761/2761 (incl. the new tst_InventoryStore_restockHold + tst_RestockFlow cases), Functions 1046/1046, Rules 108/108, E2E 111/111 = 4026/4026.
-- [x] RV-2c. 2026-11-04: Taher asked to REBASE the branch onto `main` (#185 picker S1 now at the tip, skills up to 154). Merge commits dropped, history linear, CHECKPOINT.md kept as this branch's version, other docs unioned. This PR's skill is now **Skill 155**. Pushed with --force-with-lease (history rewritten, old tip b54c5b3).
-- [x] RV-2d. Rebased tip `4015b12` pushed; PR #183 `mergeable: clean`; CI green (QML, Functions, Rules, E2E).
-- [ ] RV-9 (open, for Taher): veto window on D-1 (edit/delete held while restock queued) and D-2 (blank cost = recorded cost). Then merge #183; next slice R5.
+---
+
+# Review session of PR #186 (tsadmin@gmail.com) - resume here
+
+**Rules in force (this account):** clone fresh every session; always a branch; push without asking; no build or run until told; no Qt in the sandbox (CI is the QML oracle); `tsadmin@gmail.com` in every commit message; tests + test plan for every change; update skills/agents/readme as needed; short scope per chat turn; caveman-full replies; honest trade-offs.
+**Skills used:** `requesting-code-review` (no subagent tool here: reviewed inline), `qt-qml-review` (lint run, filtered to added lines; the six agent missions done inline), `ponytail-audit` (scoped to the PR and what it touches, not the whole repo).
+
+## Steps
+- [x] R1. Cloned, fetched the PR branch, rebased onto `main` @ `415b11c`. Conflicts: CHECKPOINT (kept the branch version) and four docs (AGENTS, SKILLS, SKILLS-INDEX, KNOWN-ISSUES: both sides kept). **L4b skill renumbered 152 -> 156** (main took 152-155). Force-pushed with lease (`0f4d123`).
+- [x] R2. Lint: 960 hits on the 10 QML files, 17 on added lines; 16 are repo convention (`var`, attribute order, test ids) and 1 is a false positive (`!==`). qmllint not available.
+- [x] R3. Finding 1 fixed: a waiting manual wish was replaced by any automatic wait (`_onEditHoldsChanged` makes a resume request when a form closes), so its toast was lost. `DataModel._request` keeps it. 5 scenarios + 4 mutants (red first, then green).
+- [x] R4. Finding 2 fixed: with a stuck write the gate waits forever and the toast said "Sending your changes first". `RefreshCaption.requestMessage/unfinishedMessage` take an optional `stuckCount`; `Main.qml` passes `app.syncStuckCount`. +17 checks, +6 mutants, 2 wiring mutants, QML twin +1.
+- [x] R5. Finding 3 fixed: `RefreshRow` text had `elide` but no `Layout.maximumWidth`, so it never elided. Cap added, wiring rule + mutant.
+- [x] R6. Docs: test plan (new steps 19-22), KNOWN-ISSUES (3 entries), Skill 156 rules 8-12, AGENTS line.
+- [x] R7. Sandbox: script suite 1012/1012. `functions` not run this session (untouched by the PR; main added `restockWire` tests there).
+- [ ] R8. Read CI on the PR head (the QML twins and page edits compile only in CI). Fix anything it shows.
+
+## NEXT
+1. Read CI on PR #186. The QML twins (`tst_RefreshCaption.qml` 9 functions, `tst_DataModel_refreshRow.qml` 7) and `RefreshRow.qml`'s new `Layout.maximumWidth` have never run.
+2. DECIDED by Taher (recommended defaults kept): D-1 offline row stays disabled; D-2 a reset-superseded manual run stays silent (no L4a rule change); D-3 old commits keep `dextran52@gmail.com`, new ones carry `tsadmin@gmail.com`. No code change; revisit D-1 only if the device test shows people tapping the offline row.
+3. Device steps in the test plan, including 19-22.
+4. L4c as listed above.
+
+## Not done / honest gaps
+- Nothing built or run on a device. Layout cap, spacing and feel are device-only.
+- Whole-repo `ponytail-audit` not run (scoped to this PR). `qmllint` and the real six-agent fan-out were not available.
+- `functions` suite not run; no QML test run.
