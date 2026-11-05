@@ -76,8 +76,8 @@ function check(f) {
   if (!main.includes('import "helper/RefreshCaption.js" as RefreshCaption')) add('Main.qml must import RefreshCaption.js');
   if (!/readonly property real refreshLastSyncMs: dataModel\.lastSyncMs/.test(main)) add('Main.qml: refreshLastSyncMs');
   if (!/readonly property string refreshState: dataModel\.refreshState/.test(main)) add('Main.qml: refreshState');
-  if (!/function requestManualRefresh\(\) \{\s*var msg = RefreshCaption\.requestMessage\(dataModel\.manualRefresh\(\)\)\s*if \(msg\.length > 0\) Toast\.show\(msg\)\s*\}/.test(main)) add('Main.qml: requestManualRefresh must toast requestMessage(manualRefresh())');
-  if (!/Connections \{\s*target: dataModel\s*function onManualRefreshUnfinished\(why\) \{\s*var msg = RefreshCaption\.unfinishedMessage\(why\)\s*if \(msg\.length > 0\) Toast\.show\(msg\)/.test(main)) add('Main.qml: the unfinished signal must become a toast');
+  if (!/function requestManualRefresh\(\) \{\s*var msg = RefreshCaption\.requestMessage\(dataModel\.manualRefresh\(\), app\.syncStuckCount\)\s*if \(msg\.length > 0\) Toast\.show\(msg\)\s*\}/.test(main)) add('Main.qml: requestManualRefresh must toast requestMessage(manualRefresh(), app.syncStuckCount)');
+  if (!/Connections \{\s*target: dataModel\s*function onManualRefreshUnfinished\(why\) \{\s*var msg = RefreshCaption\.unfinishedMessage\(why, app\.syncStuckCount\)\s*if \(msg\.length > 0\) Toast\.show\(msg\)/.test(main)) add('Main.qml: the unfinished signal must become a toast');
   if (count(main, 'manualRefresh()') !== 1) add('Main.qml: manualRefresh() must have exactly one caller');
 
   // DataModel
@@ -123,6 +123,8 @@ const MUT = [
   ['the row gains an animation', (f) => { f.row = f.row.replace('Timer {', 'NumberAnimation on opacity { from: 0; to: 1 }\n    Timer {'); }],
   ['the spinner runs always', (f) => { f.row = f.row.replace('running: root._view.busy', 'running: true'); }],
   ['Main drops the toast on a refusal', (f) => { f.main = f.main.replace('if (msg.length > 0) Toast.show(msg)\n    }', '}'); }],
+  ['Main forgets the stuck count on a refusal toast (review #186)', (f) => { f.main = f.main.replace('manualRefresh(), app.syncStuckCount)', 'manualRefresh())'); }],
+  ['Main forgets the stuck count on the unfinished toast (review #186)', (f) => { f.main = f.main.replace('unfinishedMessage(why, app.syncStuckCount)', 'unfinishedMessage(why)'); }],
   ['Main stops listening for the unfinished signal', (f) => { f.main = f.main.replace('function onManualRefreshUnfinished(why)', 'function onSomethingElse(why)'); }],
   ['Main has a second manual caller', (f) => { f.main = f.main.replace('function openStuckWrites()', 'function again() { dataModel.manualRefresh() }\n    function openStuckWrites()'); }],
   ['DataModel emits from a third place', (f) => { f.dm = f.dm.replace('function _clearWant() {', 'function _clearWant() {\n        manualRefreshUnfinished("partial")'); }],

@@ -81,4 +81,17 @@ TestCase {
         compare(RC.unfinishedMessage("partial"), "Some lists could not be updated. Tap the refresh row to try again.")
         compare(RC.unfinishedMessage("zzz"), "")
     }
+
+    // Review of PR #186: stuck writes (the optional second argument) change what a wait on the outbox says.
+    function test_stuck_writes_change_the_outbox_wait_and_the_gave_up_message() {
+        var stuck = "Some changes are not syncing, so the refresh waits. Open the sync message at the top to fix or discard them."
+        compare(RC.requestMessage({ action: "wait", reason: "outbox" }, 2), stuck)
+        compare(RC.requestMessage({ action: "wait", reason: "outbox" }, 0), "Sending your changes first. The refresh follows.")
+        compare(RC.requestMessage({ action: "wait", reason: "outbox" }, undefined), "Sending your changes first. The refresh follows.")
+        compare(RC.requestMessage({ action: "wait", reason: "in-flight" }, 2), "Sending your changes first. The refresh follows.")
+        compare(RC.requestMessage({ action: "run", reason: "" }, 2), "")
+        compare(RC.unfinishedMessage("gave-up", 1), "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh row.")
+        compare(RC.unfinishedMessage("gave-up", 0), "Couldn't refresh. Tap the refresh row to try again.")
+        compare(RC.unfinishedMessage("partial", 3), "Some lists could not be updated. Tap the refresh row to try again.")
+    }
 }

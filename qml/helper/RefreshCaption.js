@@ -12,7 +12,13 @@ var DAY_MS = 86400000
 
 var OFFLINE_TOAST = "You are offline. Connect to the internet and try again"   // same sentence Main.qml already uses
 
+// Review of PR #186: a queued write that keeps failing (Gateway.stuckCount > 0) holds every refresh until the user
+// fixes or discards it (the gate counts parked writes), so "Sending your changes first" would be a promise nobody keeps.
+var STUCK_WAIT = "Some changes are not syncing, so the refresh waits. Open the sync message at the top to fix or discard them."
+var STUCK_GAVE_UP = "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh row."
+
 function isNum(n) { return typeof n === "number" && isFinite(n) }
+function hasStuck(n) { return isNum(n) && n > 0 }
 
 // "just now" | "N min ago" | "N h ago" | "N d ago" | "" (never synced or an unreadable time).
 // A clock that went backwards (age < 0) reads "just now": never a time in the future.
@@ -46,10 +52,12 @@ function accessibleName(v) {
 
 // What a tap answers. d = { action: "run" | "wait" | "drop", reason } from DataModel.manualRefresh().
 // "" means: say nothing (a run is its own feedback: the row flips to "Refreshing…").
-function requestMessage(d) {
+// stuckCount (optional, Gateway.stuckCount): writes that keep failing; when > 0 a wait on the outbox says so.
+function requestMessage(d, stuckCount) {
     if (d === null || typeof d !== "object") return ""
     if (d.action === "run") return ""
     if (d.action === "wait") {
+        if (d.reason === "outbox" && hasStuck(stuckCount)) return STUCK_WAIT
         if (d.reason === "outbox" || d.reason === "in-flight" || d.reason === "photos")
             return "Sending your changes first. The refresh follows."
         if (d.reason === "lock" || d.reason === "edit-dialog")
@@ -67,7 +75,9 @@ function requestMessage(d) {
 
 // A manual refresh that ended without the lists being updated. why: "gave-up" (waited its 2 minutes, or the
 // phone went offline / the account was blocked while it waited) | "partial" (some lists were not updated).
-function unfinishedMessage(why) {
+// stuckCount (optional): when > 0 the likely reason a wait ran out is the stuck writes, so say that instead.
+function unfinishedMessage(why, stuckCount) {
+    if (why === "gave-up" && hasStuck(stuckCount)) return STUCK_GAVE_UP
     if (why === "gave-up") return "Couldn't refresh. Tap the refresh row to try again."
     if (why === "partial") return "Some lists could not be updated. Tap the refresh row to try again."
     return ""

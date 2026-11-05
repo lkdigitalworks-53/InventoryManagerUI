@@ -629,3 +629,72 @@ for (const [name, from, to] of L4B_MUTANTS) {
     assert.ok(killed, 'no L4b scenario noticed this mutant');
   });
 }
+
+// ── review of PR #186: a waiting MANUAL wish must not be taken over by an automatic trigger ──────────────────
+// Only a manual wish tells the user how it ended (toast). If a resume or reconnect request replaced it while it
+// waited (a saved edit form closing makes exactly such a request), the wish would later run or expire in silence.
+// Each scenario takes a coordinator maker so the same scenarios also run against mutants of the real DataModel text.
+const stale = (k) => { k.ctx.OutboxStore.items = [{}]; k.ctx._lastSyncMs = k.ctx.__now - 600000; return k; };
+
+const REVIEW = [
+  ['an automatic wait does not replace a waiting manual wish (trigger, start time and re-arm flag stay)', (mk) => {
+    for (const auto of ['resume', 'reconnect']) {
+      const k = stale(mk());
+      assert.equal(k.ctx.manualRefresh().action, 'wait');
+      const since = k.ctx._wantSinceMs; k.ctx._wantRearmed = true;
+      k.tick(30000);
+      assert.equal(k.ctx.requestRefresh(auto), 'wait', auto);
+      assert.equal(k.ctx._wantTrigger, 'manual', auto + ': still the user\'s wish');
+      assert.equal(k.ctx._wantSinceMs, since, auto + ': the wait clock is not restarted');
+      assert.equal(k.ctx._wantRearmed, true, auto + ': flag untouched');
+      assert.equal(k.log.timer.at(-1), 'restart', auto + ': the poll timer keeps running');
+    }
+  }],
+  ['the manual wish still ends with its toast after an automatic request touched it', (mk) => {
+    const k = stale(mk());
+    k.ctx.manualRefresh(); k.tick(30000); k.ctx.requestRefresh('resume');
+    k.tick(90000); k.ctx._pollWant();
+    assert.deepEqual(k.log.unfinished, ['gave-up']);
+    assert.equal(k.ctx._wantTrigger, '');
+  }],
+  ['the manual wish still RUNS as manual when the outbox drains after an automatic request', (mk) => {
+    const k = stale(mk());
+    k.ctx.manualRefresh(); k.tick(5000); k.ctx.requestRefresh('resume');
+    k.ctx.OutboxStore.items = []; k.tick(15000); k.ctx._pollWant();
+    assert.ok(k.stores.every(s => s.started === 1)); assert.equal(k.ctx._refreshTrigger, 'manual');
+    k.stores[0].done('committed'); k.stores[1].done('failed'); k.stores.slice(2).forEach(s => s.done('committed'));
+    assert.deepEqual(k.log.unfinished, ['partial'], 'a run that started as manual keeps its partial toast');
+  }],
+  ['the other replacements still work (manual replaces automatic, a repeated tap restarts the clock, automatic replaces automatic)', (mk) => {
+    let k = stale(mk()); k.ctx.requestRefresh('resume'); assert.equal(k.ctx._wantTrigger, 'resume');
+    k.tick(10000); k.ctx.manualRefresh(); assert.equal(k.ctx._wantTrigger, 'manual'); assert.equal(k.ctx._wantSinceMs, k.ctx.__now);
+    k.tick(10000); k.ctx.manualRefresh(); assert.equal(k.ctx._wantSinceMs, k.ctx.__now, 'a new tap restarts the clock');
+    k = stale(mk()); k.ctx.requestRefresh('resume'); k.tick(10000); k.ctx.requestRefresh('reconnect');
+    assert.equal(k.ctx._wantTrigger, 'reconnect'); assert.equal(k.ctx._wantSinceMs, k.ctx.__now);
+  }],
+  ['an automatic request that is dropped or runs never touches a waiting manual wish', (mk) => {
+    let k = stale(mk()); k.ctx.manualRefresh(); k.ctx._lastSyncMs = k.ctx.__now - 1000;   // lists look fresh
+    assert.equal(k.ctx.requestRefresh('resume'), 'drop'); assert.equal(k.ctx._wantTrigger, 'manual');
+    k = stale(mk()); k.ctx.manualRefresh(); k.ctx.OutboxStore.items = []; k.tick(20000);
+    assert.equal(k.ctx.requestRefresh('resume'), 'run'); assert.equal(k.ctx._wantTrigger, '', 'a run consumes the wish');
+  }],
+];
+for (const [name, scenario] of REVIEW) test('review: ' + name, () => scenario(() => makeCoordinator()));
+
+const REVIEW_MUTANTS = [
+  ['the guard is removed: any wait replaces the wish', 'if (_wantTrigger !== "manual" || trigger === "manual") {', 'if (true) {'],
+  ['the guard is inverted', '_wantTrigger !== "manual" || trigger === "manual"', '_wantTrigger === "manual" || trigger !== "manual"'],
+  ['a manual tap can no longer replace a manual wish', '_wantTrigger !== "manual" || trigger === "manual"', '_wantTrigger !== "manual"'],
+  // Equivalent, not listed: restarting the poll timer when the wish is NOT replaced (the timer is already running; restart only re-phases the 5 s poll).
+  ['the guard also blocks an automatic wish from replacing an automatic one', '_wantTrigger !== "manual" || trigger === "manual"', '_wantTrigger === ""'],
+];
+for (const [name, from, to] of REVIEW_MUTANTS) {
+  test('review mutant killed: ' + name, () => {
+    const f = from.replace(/\\n/g, '\n'), t = to.replace(/\\n/g, '\n');
+    assert.ok(DM_SRC.includes(f), 'mutant anchor not found in DataModel.qml: ' + from.slice(0, 60));
+    const mk = () => makeCoordinator({}, (fn, text) => text.includes(f) ? text.replace(f, t) : text);
+    let killed = false;
+    for (const [, scenario] of REVIEW) { try { scenario(mk); } catch (e) { killed = true; break; } }
+    assert.ok(killed, 'no review scenario noticed this mutant');
+  });
+}
