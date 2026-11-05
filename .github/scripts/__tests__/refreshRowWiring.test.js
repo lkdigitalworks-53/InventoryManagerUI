@@ -66,6 +66,7 @@ function check(f) {
   if (!/Accessible\.onPressAction: if \(root\._view\.enabled\) root\.refreshRequested\(\)/.test(row)) add('the accessible press must honour enabled');
   if (!/MouseArea \{\s*anchors\.fill: parent\s*enabled: root\._view\.enabled\s*onClicked: root\.refreshRequested\(\)/.test(row)) add('the whole row must be the tap target, enabled only when the view says so');
   if (!/implicitHeight: dp\(48\)/.test(row)) add('the row must be 48 dp high');
+  if (!/elide: Text\.ElideRight[\s\S]*Layout\.maximumWidth: Math\.max\(0, root\.width/.test(row)) add('the text must have a width cap, or elide never fires inside the RowLayout (review of #186)');
   if (!/Timer \{\s*interval: 30000\s*repeat: true\s*running: root\.visible\s*onTriggered: root\._tick\(\)/.test(row)) add('the age timer must tick every 30 s and only while visible');
   if (!/onLastSyncMsChanged: _tick\(\)/.test(row) || !/onVisibleChanged: if \(visible\) _tick\(\)/.test(row) || !/onRefreshStateChanged: _tick\(\)/.test(row)) add('the age must refresh on sync, state change and becoming visible');
   if (/Animation|Animator|Behavior on|SequentialAnimation/.test(row)) add('no animation of its own (reduced motion): only the BusyIndicator moves, and only while busy');
@@ -123,6 +124,7 @@ const MUT = [
   ['the row gains an animation', (f) => { f.row = f.row.replace('Timer {', 'NumberAnimation on opacity { from: 0; to: 1 }\n    Timer {'); }],
   ['the spinner runs always', (f) => { f.row = f.row.replace('running: root._view.busy', 'running: true'); }],
   ['Main drops the toast on a refusal', (f) => { f.main = f.main.replace('if (msg.length > 0) Toast.show(msg)\n    }', '}'); }],
+  ['RefreshRow text loses its width cap (review #186)', (f) => { f.row = f.row.replace('Layout.maximumWidth: Math.max(0, root.width', 'Layout.minimumWidth: Math.max(0, root.width'); }],
   ['Main forgets the stuck count on a refusal toast (review #186)', (f) => { f.main = f.main.replace('manualRefresh(), app.syncStuckCount)', 'manualRefresh())'); }],
   ['Main forgets the stuck count on the unfinished toast (review #186)', (f) => { f.main = f.main.replace('unfinishedMessage(why, app.syncStuckCount)', 'unfinishedMessage(why)'); }],
   ['Main stops listening for the unfinished signal', (f) => { f.main = f.main.replace('function onManualRefreshUnfinished(why)', 'function onSomethingElse(why)'); }],
