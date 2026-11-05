@@ -80,6 +80,9 @@ Item {
             color: root._view.enabled ? Constants.textSecondary : Constants.textMuted
             elide: Text.ElideRight
             Layout.alignment: Qt.AlignVCenter
+            // Without a cap the RowLayout gives the Text its full implicit width, so elide never fires and a long
+            // text at a large system font runs past the row (review of PR #186). Slot, gap and side margins come off.
+            Layout.maximumWidth: Math.max(0, root.width - dp(18) - dp(Constants.space2) - 2 * dp(Constants.space4))
         }
     }
 
