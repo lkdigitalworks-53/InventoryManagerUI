@@ -78,4 +78,14 @@ TestCase {
         compare(spy.count, 0)
         compare(dm._wantTrigger, "")
     }
+
+    // Review of PR #186: an automatic request must not touch a waiting manual wish (the "wait" branch itself needs a
+    // signed-in session, so it runs in Node over the real function bodies; here a dropped request is checked).
+    function test_a_dropped_automatic_request_leaves_a_manual_wish_alone() {
+        AuthService.isOnline = false
+        dm._wantTrigger = "manual"
+        dm._wantSinceMs = Date.now() - 1000
+        compare(dm.requestRefresh("resume"), "drop")
+        compare(dm._wantTrigger, "manual")
+    }
 }

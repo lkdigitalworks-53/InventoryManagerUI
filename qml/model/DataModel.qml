@@ -455,9 +455,13 @@ Item {
             _clearWant()
             _startRefresh(trigger)
         } else if (d.action === "wait") {
-            _wantTrigger = trigger
-            _wantSinceMs = now
-            _wantRearmed = false
+            // A waiting MANUAL wish is only replaced by another manual tap: only a manual wish tells the user how it
+            // ended, and a form closing (_onEditHoldsChanged) makes an automatic request that would swallow it (review #186).
+            if (_wantTrigger !== "manual" || trigger === "manual") {
+                _wantTrigger = trigger
+                _wantSinceMs = now
+                _wantRearmed = false
+            }
             _refreshWaitTimer.restart()
         }
         return d

@@ -36,7 +36,7 @@ App {
     readonly property string refreshState: dataModel.refreshState
     // The row's tap. A run explains itself (the row flips to "Refreshing..."); a wait or a refusal gets one sentence.
     function requestManualRefresh() {
-        var msg = RefreshCaption.requestMessage(dataModel.manualRefresh())
+        var msg = RefreshCaption.requestMessage(dataModel.manualRefresh(), app.syncStuckCount)
         if (msg.length > 0) Toast.show(msg)
     }
 
@@ -256,7 +256,7 @@ App {
     Connections {
         target: dataModel
         function onManualRefreshUnfinished(why) {
-            var msg = RefreshCaption.unfinishedMessage(why)
+            var msg = RefreshCaption.unfinishedMessage(why, app.syncStuckCount)
             if (msg.length > 0) Toast.show(msg)
         }
     }
