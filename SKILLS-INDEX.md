@@ -163,3 +163,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 153: Derive the QML twin of a Node test from the Node file, so the two engines run the same bodies and cannot drift
 - 154: A generated test twin must fail loudly on a case its parser skips, and a monkey test must prove it reached every outcome
 - 155: Use the durable queue as the latch, settle an answer in exactly one place, and run the real function bodies of QML glue in Node
+- 156: Put every decision of a Felgo view into a pure view-model with flat rows, update a list in place, and give a shared component an opt-in that a grep pins as the only user

@@ -20,6 +20,8 @@ const TWINS = [
     { node: "pickerSearch.test.js", qml: "tst_ProductSearch.qml", name: "ProductSearch", helper: "ProductSearch.js", alias: "PS" },
     { node: "pickerPickability.test.js", qml: "tst_ProductPickability.qml", name: "ProductPickability", helper: "ProductPickability.js", alias: "PK" },
     { node: "pickerDraft.test.js", qml: "tst_PickerDraft.qml", name: "PickerDraft", helper: "PickerDraft.js", alias: "PD" },
+    { node: "pickerRowGeometry.test.js", qml: "tst_PickerRowGeometry.qml", name: "PickerRowGeometry", helper: "PickerRowGeometry.js", alias: "PG" },
+    { node: "pickerSheetModel.test.js", qml: "tst_PickerSheetModel.qml", name: "PickerSheetModel", helper: "PickerSheetModel.js", alias: "PM" },
 ];
 
 function slug(title) {
