@@ -51,7 +51,7 @@ L4a NEXT item 3: "L4b: pull-to-refresh on the lists + last updated caption, call
 
 ## NEXT
 1. Read CI on PR #186. The QML twins (`tst_RefreshCaption.qml` 9 functions, `tst_DataModel_refreshRow.qml` 7) and `RefreshRow.qml`'s new `Layout.maximumWidth` have never run.
-2. Taher decides (see PR comment / final chat message): open items D-1 (offline row tappable?), D-2 (does a reset-superseded manual run deserve a toast?), D-3 (author email: PR body and old commits say `dextran52@gmail.com`).
+2. DECIDED by Taher (recommended defaults kept): D-1 offline row stays disabled; D-2 a reset-superseded manual run stays silent (no L4a rule change); D-3 old commits keep `dextran52@gmail.com`, new ones carry `tsadmin@gmail.com`. No code change; revisit D-1 only if the device test shows people tapping the offline row.
 3. Device steps in the test plan, including 19-22.
 4. L4c as listed above.
 
