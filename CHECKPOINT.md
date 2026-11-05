@@ -18,8 +18,9 @@ Design brief section 9, slice S2: `BottomSheet.scrollBody` (+ `guardClose`), `Pi
 - [x] 6. `WIRE-01..16`, dormancy allow-list, two derived QML twins.
 - [x] 7. Hand mutants: 80 listed, first run 18 survivors; 5 test gaps fixed with new cases, redundant guards deleted, 6 stale patterns corrected; final run all present mutants killed.
 - [x] 8. Node: picker files 189/189, functions 1237/1237, scripts 905/905.
-- [ ] 9. Docs (plan, test plan, KNOWN-ISSUES, README, AGENTS, Skill 156, index).
-- [ ] 10. Commit, push, PR, read CI, fix only what CI shows.
+- [x] 9. Docs (plan, test plan, KNOWN-ISSUES, README, AGENTS, Skill 156, index).
+- [x] 10. Pushed `c135dbc`, PR #187 opened (REST API: `gh pr create` needs GraphQL, blocked here). CI first run red on one twin case (`SHEET-26` wrote `draft["__proto__"]`, V4 throws), test-only fix `c12465d`, CI ALL GREEN: QML 2927/2927, Functions, Rules, E2E.
+- [ ] 11. For Taher: veto window on S2-D1..D6, then merge #187; next slice S3 (New Order).
 
 ## State
-QML twins (`tst_PickerRowGeometry`, `tst_PickerSheetModel`), the Felgo layer and `BottomSheet` behaviour are CI-only or device-only and UNSEEN. Open items for S3/S4 are in KNOWN-ISSUES ("Product picker v2: carried requirements"). Next: S3 (New Order wired).
+The two QML twins ran green in CI. The Felgo layer, `BottomSheet` with the new properties and the Back key are device-only and UNSEEN. Open items for S3/S4 are in KNOWN-ISSUES ("Product picker v2: carried requirements"). Next: S3 (New Order wired).
