@@ -276,7 +276,7 @@ test("SHEET-26 seeded monkey, 300 rounds: every row addable or explained, the dr
         const hiddenIds = {};
         for (let i = 0; i < n; ++i) if (rand() < 0.25) hiddenIds["P" + i] = true;
         const draft = {};
-        for (let i = 0; i < 10; ++i) if (rand() < 0.5) draft[pick(["P0", "P1", "P2", "P3", "P9", "__proto__", ""])] = pick([1, 2, 5, 50, 0, -1]);
+        for (let i = 0; i < 10; ++i) if (rand() < 0.5) draft[pick(["P0", "P1", "P2", "P3", "P9", "constructor", ""])] = pick([1, 2, 5, 50, 0, -1]);
         const v = mk(products, {
             draft: draft, query: pick(["", "red", "p1", "zzz", "  ", "r"]), category: pick(["All", "A", "B", "zz"]), inStockOnly: rand() < 0.3,
             orderLines: rand() < 0.1 ? lines(60) : [], hooks: hooks({ hasPendingMint: (id) => !!hiddenIds[id] })
