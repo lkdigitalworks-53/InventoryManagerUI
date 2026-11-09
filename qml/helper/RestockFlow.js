@@ -20,6 +20,32 @@ function costFromText(text) {
     return (isNaN(n) || !isFinite(n)) ? -1 : n
 }
 
+// Review D-C (PR #188 sweep). The Add-quantity field is an editable SpinBox: typed text becomes `value` only on
+// Enter or focus loss, and nothing guarantees the Confirm tap moves focus first. Reading `value` then books the
+// OLD number (type 25, tap Confirm, +10 is booked): wrong stock and a wrong ledger row, with no undo. So the tap
+// reads the typed text itself, with the SpinBox's own parser (`valueFromText`, locale aware), and refuses what
+// the field would have to guess about.
+//   field = the SpinBox: { value, from, to, locale, valueFromText(text, locale), contentItem: { text } }
+//   -> { ok: true, qty }                      a whole number from..to (the committed value when the text cannot be read)
+//   -> { ok: false, message }                 empty, not a number, a fraction, or outside from..to: nothing is sent
+// Never clamps: 100000 typed is not silently booked as 9999.
+function qtyFromField(field) {
+    var lo = (field && typeof field.from === "number") ? field.from : 1
+    var hi = (field && typeof field.to === "number") ? field.to : 9999
+    var bad = { ok: false, message: "Enter a whole quantity from " + lo + " to " + hi }
+    if (!field || typeof field !== "object") return bad
+    var typed = (field.contentItem && typeof field.contentItem.text === "string") ? field.contentItem.text.trim() : null
+    if (typed === null || typeof field.valueFromText !== "function") {
+        // The text cannot be read (a style without a TextInput): the committed value is all there is.
+        var v = field.value
+        return (typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= lo && v <= hi) ? { ok: true, qty: v } : bad
+    }
+    var n
+    try { n = field.valueFromText(typed, field.locale) } catch (e) { return bad }
+    if (typeof n !== "number" || !isFinite(n) || Math.floor(n) !== n || n < lo || n > hi) return bad
+    return { ok: true, qty: n }
+}
+
 // The key made at the tap. "" only if the nonce is not a plain token (cannot happen with restockNonce).
 function newKey(nowMs, random) {
     return Keys.restockKey(Keys.restockNonce(nowMs, random))

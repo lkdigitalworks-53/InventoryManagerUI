@@ -1077,6 +1077,28 @@ TestCase {
         compare(applied[0], "never-awaited")
     }
 
+    // PR #188 sweep. A caller's callback is the caller's code: if it throws, the other callers, the signal and the
+    // drain must still happen. Same cases run in Node in functions/test/gatewayCallbackIsolation.test.js.
+    function test_finishOperation_a_throwing_waiter_does_not_skip_the_next_waiter_or_the_signal() {
+        var second = null
+        var applied = []
+        var onApplied = function(id) { applied.push(id) }
+        Gateway.operationApplied.connect(onApplied)
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { throw new Error("first waiter failed") })
+        Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { second = r })
+        Gateway._finishOperation({ requestId: "k1", opType: "completeOrder" }, { ok: true, results: [] })
+        Gateway.operationApplied.disconnect(onApplied)
+        verify(second !== null, "the waiter after the throwing one was still answered")
+        compare(second.ok, true)
+        compare(applied.length, 1, "and the signal still fired")
+    }
+
+    function test_recordOperation_a_throwing_not_awaiting_callback_still_queues_the_operation() {
+        var key = Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k7", {}, function(r) { throw new Error("toast failed") })
+        compare(key, "k7")
+        compare(OutboxStore.items.length, 1, "queued although the caller's callback threw")
+    }
+
     function test_finishOperation_delivers_to_every_waiter_when_more_than_one_is_registered() {
         var a = null, b = null
         Gateway.recordOperation("completeOrder", _opBody([["inventory", "p1"]]), "k1", { awaitServer: true }, function(r) { a = r })

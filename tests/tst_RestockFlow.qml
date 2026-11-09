@@ -97,6 +97,44 @@ TestCase {
         compare(RF.activityText({ stock: 3 }, "").title, "Restocked: ")
     }
 
+    // -- review D-C (PR #188 sweep): the typed quantity -----------------------
+    // A fake of the editable SpinBox. Qt's default parser throws on text that is not a number.
+    function _spin(text, over) {
+        return Object.assign({
+            value: 10, from: 1, to: 9999, locale: "en_IN", contentItem: { text: text },
+            valueFromText: function(t, loc) {
+                var n = Number(t)
+                if (t !== String(t).trim() || t === "" || isNaN(n)) throw new Error("not a number")
+                return n
+            }
+        }, over || {})
+    }
+    function test_qtyFromField_typed_text_wins_over_the_stale_value() {
+        var r = RF.qtyFromField(_spin("25"))
+        compare(r.ok, true)
+        compare(r.qty, 25)
+        compare(RF.qtyFromField(_spin("  42 ")).qty, 42, "whitespace trimmed")
+        compare(RF.qtyFromField(_spin("1")).qty, 1)
+        compare(RF.qtyFromField(_spin("9999")).qty, 9999)
+    }
+    function test_qtyFromField_refuses_and_never_clamps() {
+        var bad = ["", "   ", "abc", "2.5", "0", "-5", "10000", "100000", "1e999", "NaN"]
+        for (var i = 0; i < bad.length; ++i) {
+            var r = RF.qtyFromField(_spin(bad[i]))
+            compare(r.ok, false, JSON.stringify(bad[i]))
+            compare(r.message, "Enter a whole quantity from 1 to 9999")
+        }
+        compare(RF.qtyFromField(_spin("5", { valueFromText: function() { throw new Error("boom") } })).ok, false)
+    }
+    function test_qtyFromField_without_readable_text_uses_the_checked_committed_value() {
+        compare(RF.qtyFromField(_spin("x", { contentItem: undefined, value: 7 })).qty, 7)
+        compare(RF.qtyFromField(_spin("x", { valueFromText: undefined, value: 7 })).qty, 7)
+        compare(RF.qtyFromField(_spin("x", { contentItem: undefined, value: 0 })).ok, false)
+        compare(RF.qtyFromField(_spin("x", { contentItem: undefined, value: 2.5 })).ok, false)
+        compare(RF.qtyFromField(undefined).ok, false)
+        compare(RF.qtyFromField(null).ok, false)
+    }
+
     // -- review D-2: the cost field's text ----------------------------------
     function test_costFromText() {
         verify(isNaN(RF.costFromText("")))
