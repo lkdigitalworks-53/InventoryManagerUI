@@ -5,6 +5,21 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Three sheets show no full-sheet busy overlay while saving — FOUND 2026-11-09 (Restock overlay report), NOT FIXED
+
+**Where:** `AddProductDialog`, `AddStaffDialog`, `NewOrderDialog` set `busy = true` and never `busyMessage`. `BottomSheet` shows `BusyOverlay` only when `busy` and `busyMessage` are both set, so these show only the small spinner in the primary button. Restock had the same fault and is fixed on branch `fix/2026-11-09-toast-and-busy-above-dialogs`.
+**Why deferred:** Taher reported Restock only; a message per sheet is a wording call each, and the alternative (overlay on every `busy`) changes every sheet and flashes on sub-second saves.
+**Lead:** add a constant `busyMessage: qsTr("...")` at the root of each sheet (as Restock does) and pin it in `restockBusyOverlay.test.js` style; check how long each save can wait before deciding.
+
+---
+
+## Toast pill covers the lower part of a bottom sheet's footer buttons — NOTED 2026-11-09, design call
+
+**Where:** `ToastHost` places the pill 110 dp above the bottom of the window (`tabbarClearance`). Now that toasts are drawn above dialogs, on a bottom sheet the pill lies over the lower part of the Cancel/Confirm buttons for about 5 s. Taps pass through the pill (it has no input handler), so nothing is blocked; it is visual only.
+**Lead:** if it looks wrong on device, anchor the pill near the top while a modal popup is open (`Overlay` knows its popups), or raise it above the sheet footer. Not changed: a position change is a design decision.
+
+---
+
 ## Restock quantity: typed text may not be committed when Confirm is tapped — FOUND 2026-11-09 (Confirm-fix review), FIXED in the #188/#183 review sweep (branch `review/2026-11-09-pr188-pr183-sweep`)
 
 **Where:** `RestockDialog.qtyField` (`QQC.SpinBox`, `editable: true`). A Qt editable SpinBox updates `value` from its text on `editingFinished` (focus loss or Enter), and a `Button` may not take focus on a tap (focus policy depends on the platform and style). If so, typing 25 and tapping Confirm at once would send the previous value (10).

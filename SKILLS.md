@@ -4825,3 +4825,16 @@ Rules:
 6. A mutant that survives means the fake is too forgiving: the first whitespace-trim mutant lived because the fake parser tolerated spaces. Model the real parser's strictness in the fake, then re-kill.
 7. Review a merged PR's neighbours too: the sweep of #183 found its dialog fault only by reading the Gateway path the dialog's callback runs on.
 
+
+## Skill 158: A toast must live in the window Overlay to be seen above a dialog, and a busy overlay needs the message that switches it on
+
+Device test after #188/#189, 2026-11-09: toasts were drawn under every dialog, and Restock showed no busy overlay.
+Rules:
+1. Every `Dialog`, `Popup` and `BottomSheet` is drawn in the window Overlay (`QQC.Overlay.overlay`, z 1000001 in Qt 6.8), above the whole item tree of the window. An ordinary item cannot be put above one with any `z`: `z` only orders siblings. Anything that must be seen over a dialog (a toast, a banner) has to be a child of the Overlay while it shows.
+2. Read the framework source before choosing the layer. `qquickoverlay.cpp` answered the safety questions in minutes: presses no popup claims are ignored, so the Overlay does not block the app; the Overlay is visible whenever it has a child, so keep your item in it only while it is needed, not permanently.
+3. Never leave an item parentless. Reparent with a fallback (`layer ? layer : host`) and read the attached property (`QQC.Overlay.overlay`) on an item that does not move: an item that reparents itself to null loses its window and can never read the Overlay again.
+4. An `anchors.x: parent.x` breaks when the item changes parent. Use an `x` or `y` binding on `parent`.
+5. A reparent exposes any timing race that was harmless before: a new toast arriving while the old one slides away was hidden when the old slide finished. Stop the leaving animation when the next show starts, and test it with a fake animation that can finish late.
+6. `BottomSheet` shows `BusyOverlay` only when `busy` AND `busyMessage` is not empty (the small button spinner is for sub-second saves). A sheet that does a server round trip must declare `busyMessage`. A constant on the dialog is safer than assigning it at the tap: it cannot be left empty by an early return. Pin the gate by evaluating BottomSheet's own `active:` expression in Node, and pin that the overlay is the last child of the content item (declaration order is the stacking order).
+7. A UI-layer file that cannot load under `qmltestrunner` is still testable: run its real function bodies in a `vm` with a fake whose property is a logged setter (every assignment visible), and pin the declarations the functions rely on by reading the file text. Run hand mutants against both (19/19 here); one anchor-in-a-comment false positive showed the shape tests must strip `//` comments before looking for a forbidden token.
+8. Known gap, not fixed here: `AddProductDialog`, `AddStaffDialog` and `NewOrderDialog` are busy without a message (KNOWN-ISSUES).
