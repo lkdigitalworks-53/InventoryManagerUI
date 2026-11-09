@@ -342,7 +342,7 @@ QtObject {
 
         if (callback) {
             if (awaiting) _addOperationWaiter(item.requestId, callback)
-            else callback({ ok: true, queued: true, requestId: item.requestId })
+            else _callSafely(callback, { ok: true, queued: true, requestId: item.requestId }, item.requestId)
         }
         drainNow()
         return item.requestId
@@ -384,7 +384,7 @@ QtObject {
             for (var i = 0; i < waiters.length; ++i) {
                 waiters[i].timer.stop()
                 waiters[i].timer.destroy()
-                waiters[i].fn(result)
+                _callSafely(waiters[i].fn, result, item.requestId)
             }
         }
         if (result.ok) operationApplied(item.requestId, item.opType, result.results || [], result.idempotentReplay === true)
@@ -592,7 +592,16 @@ QtObject {
         var map = Object.assign({}, _deltaCallbacks)
         delete map[requestId]
         _deltaCallbacks = map
-        for (var i = 0; i < callbacks.length; ++i) callbacks[i](result)
+        for (var i = 0; i < callbacks.length; ++i) _callSafely(callbacks[i], result, requestId)
+    }
+
+    // Review (PR #188 sweep). A caller's callback is the caller's code. If it throws (a toast, a dialog, a bug), the
+    // Gateway must still finish its own bookkeeping: the other callers, the operationApplied/Rejected signal that
+    // reconciles a caller who left, the drain after enqueue, the _reschedule after a send. The waiter and delta maps
+    // are cleared BEFORE the loops run, so a throw used to lose every callback after the failing one for good.
+    // Logged, never swallowed silently.
+    function _callSafely(fn, result, requestId) {
+        try { fn(result) } catch (e) { console.warn("[Gateway] a caller's callback threw (ignored, bookkeeping continues):", requestId, e) }
     }
 
     // Forgets anything that has left the outbox, however it left (sent,

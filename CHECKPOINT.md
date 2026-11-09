@@ -1,42 +1,64 @@
-# CHECKPOINT — 2026-11-02 R4 restock wiring (atomic-ops arc) — resume here
+# CHECKPOINT — 2026-11-09 REVIEW SWEEP of PR #188 (Restock Confirm fix) and PR #183 (R4) — resume here
 
-**Branch:** `feat/2026-11-02-r4-restock-wire`, cut from `main` @ `4c88ed9` (PR #181 R3 merged, deployed and device-tested by Taher).
-**Commit identity:** author email `dextran52@gmail.com` and the same address in every commit message (Taher's instruction of 2026-11-02, replaces earlier identities). The PAT comes from the chat prompt only; pass it per command with `git -c http.extraHeader=...`, never in a URL, `.git/config`, the repo, or memory. After a push `grep -c ghp_ .git/config` must print 0.
-**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; short scope per chat turn; honest trade-offs; tests and a test plan for every change; update skills, AGENTS, README as needed; caveman FULL in chat only, documents in normal prose; out-of-scope findings go to the roadmap doc (status doc section 10), not into code.
-**Skills used:** `brainstorming` (design section 2 of the R4 design doc; the architecture was approved with #147, this slice makes the wiring decisions R4-D1..D10, vetoable in the PR), `qt-qml`, `qt-ui-design` (one dialog wording change only), `ponytail`.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-02-r3-merged-prev-CHECKPOINT.md`.
-
-## Scope (from status doc section 8 + 9)
-R4 = `InventoryStore.restock` rewrite onto `RestockPlan` + `Gateway.recordOperation`, durable per-product latch, parked-write refusal kept, picker hide + sale refusal for a queued restock (Q-A2), `DataModel` route for `operationApplied/Rejected` opType `restock` (relaunch case), replay re-read (O3), O1 supplier resolution, O2 `amount || 10` removed, O4 one `Date` for `now`/`date`. NOT in R4: dialog redesign, `activity_log` entity inside the op, `ActivityLog.record` id param, wording for too-large/reserved-text (all R5); deploy is already done (R2).
+**Branch:** `review/2026-11-09-pr188-pr183-sweep`, stacked on `fix/2026-11-09-restock-confirm-noop` (PR #188 head `7005e51`; `main` @ `415b11c`). **Commit identity:** `taher.lkdw@gmail.com` in author and in every commit message. PAT per command only (`git -c http.extraHeader=...`); after a push `grep -c ghp_ .git/config` must print 0. Rules in force: no build/run, no Qt in the sandbox (CI is the QML oracle), branch + push without asking, tests + test plan, honest trade-offs.
+**Skills used:** `requesting-code-review` (reviewer checklist applied by hand: plan alignment, quality, architecture, testing, production readiness), `qt-qml-review` (phase 1 linter not run: needs the skill's python script, QML read by hand; phase 2's six agent missions applied as a reading checklist: bindings, layout, loading, delegates, states, performance), `ponytail-audit` (whole-tree scans for the bug class, lean check).
+**Ask (Taher):** deep full sweep of PR #188, then of PR #183 for further bugs. Chat turn split: A = #188, B = #183/R3/R4, C = fixes + tests, D = docs + push.
 
 ## Steps
-- [x] 1. Read memory, skills, status doc, restock design v2, R3 design, `InventoryStore.restock`, `RestockPlan`, `Gateway.recordOperation`, `DataModel` completion wiring, `OutboxStore`, `RestockDialog`, `NewOrderDialog` picker.
-- [x] 2. Branch, checkpoint archived, this file written.
-- [x] 3. Design doc `specs/2026-11-02-r4-restock-wire-design.md` (decisions R4-D1..D10).
-- [x] 4. Pure `qml/helper/RestockFlow.js` + Node tests (run locally).
-- [x] 5. `OutboxStore.hasQueuedOperationFor`, `InventoryStore.restock` rewrite + settle hooks, `DataModel` route + sale guard, `NewOrderDialog` picker filter, `RestockDialog` wording.
-- [x] 6. QML tests (CI only): rewrite restock tests in `tst_InventoryStore_movementKinds`, `tst_ParkedWriteGuard`; new `tst_InventoryStore_restock`, `tst_DataModel_restockRoute`, `tst_OutboxStore_queuedOperation`, `tst_RestockFlow`.
-- [x] 7. Test plan, Skill 155, SKILLS-INDEX, AGENTS pointer, README row, status doc section 10.
-- [x] 8. Pushed, PR #183 opened, CI read, two test-only fixes (c4575cb, f61396b). CI ALL GREEN on f61396b: 3968/3968.
+- [x] 1. Read memory, three review skills, CHECKPOINT of #188, PR #188 and #183 bodies. Clone, branch off #188 head.
+- [x] 2. (A) #188: diff read; `RestockDialog._confirm`, `BottomSheet` busy rules, `qmlImportScan`, guard + `restockDialogConfirm` tests read; guard proven red when the import is removed; independent scans (helper .js -> .js, QML type per directory, singleton in qmldir): tree clean; CI of #188 read: all 4 jobs green.
+- [x] 3. (B) #183: `InventoryStore.restock/_applyRestock/onRestock*`, `RestockFlow`, `RestockPlan` (R3), `Gateway.recordOperation/_finishOperation/_addOperationWaiter`, `DataModel` route and sale guard, `OutboxStore.hasQueuedOperationFor`, picker filter, import overwrite path, `FailureCause.forRestock`, `SendPolicy`: no data-loss bug; findings F-1, F-2, F-3 and notes O-1..O-3 in the test plan.
+- [x] 4. (C) F-1: `RestockFlow.qtyFromField` + dialog; Node QF-1..15, CF-18..20; 7 mutants killed.
+- [x] 5. (C) F-2: `Gateway._callSafely` at three call sites; Node GI-1..11; 6 mutants killed.
+- [x] 6. (C) F-3: `qmlTreeResolution.guard.test.js` (SC-1..6, TR-0..3); 4 mutants killed. QML twins (5 cases) written, CI only.
+- [x] 7. Node suites: `functions/` 1257/1257, `.github/scripts` 906/906.
+- [x] 8. (D) Docs: test plan `2026-11-09-pr188-pr183-sweep-test-plan.md` (+ README row), Skill 157 + SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES (D-C now fixed).
+- [ ] 9. Commit, push, open stacked PR (base = #188's branch), read CI. See "State" below for the last confirmed step.
+- [ ] 10. Taher: veto D-C2 / D-G, merge this PR into #188's branch, then #188; device test H2 (typed quantity).
 
-## State at push
-Node: functions 1029/1029, scripts 741/741, 23/23 hand mutants killed. QML tests and the emulator e2e case are CI-only and UNSEEN. Open items P1-P6 are in `ATOMIC-OPERATIONS-STATUS.md` section 10.
-**Resume:** read CI for the PR; fix only what CI shows (QML compile errors are the likeliest: the new QML tests were never run). Then Taher's veto window for R4-D1 and R4-D4, then R5.
+## Decisions for Taher
+D-C2 (read the typed quantity at the tap; refuse, do not clamp) and D-G (Gateway swallows and logs caller exceptions): reasons and alternatives in the test plan. Open notes O-1 (dead `restockConfirmed` signal), O-2 (import summary over-counts a product refused by the restock hold): roadmap, no code.
 
-**Final:** PR #183 green. No product code changed after CI turned up red; the fixes were test fixtures (emulator URL, a re-read race in one QML test, the R4-D1 wait in one e2e test). Waiting for Taher's review and vetoes (R4-D1, R4-D2, R4-D4), device test, then R5.
+## Resume
+Everything pushed is on the remote branch; read `git log` and this file. CI is the QML oracle (5 new QML twin cases were never run). The previous checkpoint (PR #188's) follows unchanged below.
 
-## REVIEW SWEEP 2026-11-04 (same PR, no stacked PR) - resume here
-Ask (Taher): deep full-sweep review of PR #183 (requesting-code-review, qt-qml-review, ponytail-audit), fixes in the SAME PR, work split to finish in one chat turn, robustness first. Commit identity `taher.lkdw@gmail.com`, named in every commit message. Baseline: PR was `dirty` against `main` (L4a #182 merged after it was cut).
-- [x] RV-1. Fresh clone into `/home/claude/repo`, PAT only per command (never in `.git/config`). Read memory + the three review skills.
-- [x] RV-2. Merged `origin/main` (17db878) into the branch. Conflicts only in docs: AGENTS.md (kept R4 + R3 + L4a entries), SKILLS-INDEX.md and SKILLS.md (main keeps Skill 151 = L4a; this PR's skill renumbered to **Skill 153**), CHECKPOINT.md (branch version kept). Code files auto-merged. Merge commit `5dd45dc`.
-- [x] RV-3. Read the merged code against L4a: `InventoryStore.restock`, `_applyRestock`, `DataModel` route, `OutboxStore.hasQueuedOperationFor`, `RestockFlow.js`, dialogs.
-- [x] RV-4. Node suites on merged tree: functions 1029/1029, scripts 905/905 (after D-1: functions 1043/1043).
-- [x] RV-5. D-1 fixed: `restockHoldMessage`, `updateRefusal` + `deleteProduct` refuse while a restock is queued. Node `functions/test/restockHold.test.js` (14, 7/7 mutants killed, real-server 409 proof), QML twin `tests/tst_InventoryStore_restockHold.qml` (CI only).
-- [x] RV-5b. D-2 fixed: RestockDialog turned a blank/typo/negative cost into 0 before RestockPlan's bad-cost refusal could run (free batches). New pure `RestockFlow.costFromText` (blank = product cost, number = itself, junk = -1 so the plan refuses). Node D2-1..3 (6/6 mutants killed) + QML twin in tst_RestockFlow.qml. Commit after f1ab2f3.
-- [x] RV-6 (read-based, no Qt toolchain): qml-review checks on changed QML (brace/paren balance, no new bindings/loaders), ponytail-audit: nothing to delete; `supplierFor.newName` has no app caller until R5 (kept, tested). qt-qml-review phase 1 lint on changed lines, ponytail-audit pass.
-- [x] RV-7. Docs: design section 6, test plan, KNOWN-ISSUES, status doc, Skill 155, README, AGENTS.
-- [x] RV-2b. 2026-11-04: `main` moved again (#184, picker v2 docs took Skill 152). Merged it; this PR's skill is now **Skill 153**. Branch CHECKPOINT kept. Pushes while the PR was `dirty` ran NO CI (GitHub does not run pull_request workflows on a conflicting PR), so CI evidence starts after this merge.
-- [x] RV-8. Pushed `45f0143`; PR #183 `mergeable: clean`; CI all green: QML 2761/2761 (incl. the new tst_InventoryStore_restockHold + tst_RestockFlow cases), Functions 1046/1046, Rules 108/108, E2E 111/111 = 4026/4026.
-- [x] RV-2c. 2026-11-04: Taher asked to REBASE the branch onto `main` (#185 picker S1 now at the tip, skills up to 154). Merge commits dropped, history linear, CHECKPOINT.md kept as this branch's version, other docs unioned. This PR's skill is now **Skill 155**. Pushed with --force-with-lease (history rewritten, old tip b54c5b3).
-- [x] RV-2d. Rebased tip `4015b12` pushed; PR #183 `mergeable: clean`; CI green (QML, Functions, Rules, E2E).
-- [ ] RV-9 (open, for Taher): veto window on D-1 (edit/delete held while restock queued) and D-2 (blank cost = recorded cost). Then merge #183; next slice R5.
+---
+
+# CHECKPOINT — 2026-11-09 Restock Confirm button does nothing (PR #183 device test) — resume here
+
+**Branch:** `fix/2026-11-09-restock-confirm-noop`, cut from `main` @ `415b11c` (PR #183 merged, R4 restock).
+**Commit identity:** author email `lkdwtaher@gmail.com`, and the same address in every commit message (Taher's instruction of 2026-11-09, replaces earlier identities). Push per command with `git -c http.extraHeader=...`, never in a URL, `.git/config`, the repo or memory. Taher rotates the PAT after the work; do not spend tokens on it. After a push `grep -c ghp_ .git/config` must print 0.
+**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; short scope per chat turn; honest trade-offs; tests and a test plan for every change; update skills, AGENTS, README as needed; caveman FULL in chat only, documents in normal prose.
+**Skills used:** `systematic-debugging` (the four phases, no fix before root cause), `qt-qml`, `qt-ui-design` (no UI change, wording of one error toast only), `ponytail-audit` (scope: the files this fix touches plus a whole-tree scan for the same bug class).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-09-r4-pr183-merged-prev-CHECKPOINT.md`.
+
+## Report (Taher, device test of PR #183)
+The Restock dialog's **Confirm** button does nothing: no toast, no spinner, no close.
+
+## Root cause (Phase 1, read from code, proven by a failing test before the fix)
+`qml/pages/RestockDialog.qml` called `RestockFlow.costFromText(...)` (added in the #183 review sweep, D-2) but never imported `RestockFlow.js`. `qml/helper/qmldir` lists only three singletons, so `import "../helper"` does NOT expose the helper `.js` files; every other file names each one (`import "../helper/X.js" as X`). The unresolved name throws `ReferenceError` on the first line of the tap that touches it, which is BEFORE `busy = true`: nothing changes on screen and the error only goes to the log. Not caught earlier because the dialog imports the Felgo chain and cannot load under `qmltestrunner`; `InventoryStore` (which has the import) was fully tested and the pure helper has its own tests, so every test passed.
+Phase 2 (pattern): a whole-tree scan (new guard TREE-2) found exactly ONE file with this fault, `RestockDialog.qml`. Nothing else in `qml/`, `tests/`, `test/`.
+
+## Steps
+- [x] 1. Fresh clone `~/work/InventoryManagerUI` (note: `$HOME` is `/root`; the Write tool resolves `/home/claude`, so write to `/root/work/...`), branch, read memory, systematic-debugging, RestockDialog, InventoryStore.restock, RestockFlow, Gateway.recordOperation.
+- [x] 2. Failing guard first: `functions/test/qmlHelperImports.guard.test.js` + `testSupport/qmlImportScan.js` (scanner SCAN-1..12, TREE-0..3, RD-1..3). RED on the old tree (TREE-2, RD-1, RD-3).
+- [x] 3. Fix 1 (root cause): `import "../helper/RestockFlow.js" as RestockFlow` in `RestockDialog.qml`. Guard 19/19.
+- [x] 4. Fix 2 (defence in depth, decision D-A): the tap body moved into `RestockDialog._confirm()` with one try/catch: an exception is logged and shown ("Something went wrong. Check the stock before trying again"), `busy` cleared when it was thrown before the answer; product and quantity captured at the tap (the callback used to re-read `qtyField.value` / `productId` when a slow answer arrived).
+- [x] 5. `functions/test/restockDialogConfirm.test.js`: runs the REAL `_confirm` body in a vm with fake stores. CF-1..17 (18 tests). 14/14 hand mutants killed (`/tmp/mut.py`, list in the test plan).
+- [x] 6. Functions suite full run after both new files: 1218/1218. Script tests (`.github/scripts/__tests__`): 905/905 (after regenerating SKILLS-INDEX with `node .github/scripts/skills-index.js --write`).
+- [x] 7. Docs: test plan `2026-11-09-restock-confirm-noop-test-plan.md` + README index row, Skill 156 + SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES (SpinBox commit, unverified).
+- [x] 8a. Code commit `bd8d9ca`, docs commit `bee28ab` pushed. **PR #188** opened (needed `add_repo` push access for the API call; git push itself worked without).
+- [x] 8b. CI on `bee28ab` ALL GREEN: QML 2882/2882, Functions 1218/1218, Rules 108/108, E2E 111/111 = 4319/4319. No product code changed after CI.
+- [ ] 8c. Taher: device test of PR #188 (test plan on-device section, especially H1, N4, E1, E-SB1), veto window on D-A (the `_confirm()` + try/catch refactor), then merge.
+
+## Next (not started)
+1. If E-SB1 shows +10: fix the SpinBox commit in a separate small PR (lead in `docs/superpowers/KNOWN-ISSUES.md`), check other dialogs with an editable SpinBox.
+2. R5 (restock dialog redesign, wording for too-large/reserved-text) stays as planned in `ATOMIC-OPERATIONS-STATUS.md`.
+
+## Decisions (vetoable in the PR)
+- D-A: refactor the handler into `_confirm()` + try/catch (not only the one-line import). For: the same silent failure class cannot hide again, a stuck-busy sheet is impossible, the real function body is testable in Node. Against: a bigger diff than one line, one more wording the person can see. Alternative rejected: lint guard only (loud in CI, still silent on a phone if a different error is ever thrown).
+- D-B: NO QML twin of the dialog tests (the dialog cannot load under `qmltestrunner`; a stand-in would test the stand-in). Node vm + the import guard + the device checklist cover it.
+- D-C: NOT changed, flagged for the device test (E-SB1 in the test plan): an editable `SpinBox` only commits typed text on focus loss or Enter, so typing 25 and tapping Confirm straight away may still send 10. Unverified (platform and focus policy dependent), so not fixed speculatively (systematic-debugging, no fix without evidence).
+
+## Resume
+If interrupted: the branch on the remote holds everything pushed; read `git log` on it and this file. Remaining work is docs (step 7) and the PR (step 8). CI is the QML oracle; this change has NO QML test of its own (all Node).

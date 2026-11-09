@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import "../components"
 import "../helper"
+import "../helper/RestockFlow.js" as RestockFlow
 import "../model"
 
 // Restock bottom sheet. Public contract preserved: openFor(productId).
@@ -73,7 +74,16 @@ BottomSheet {
         dlg.open()
     }
 
-    onPrimaryClicked: {
+    onPrimaryClicked: dlg._confirm()
+
+    // The Confirm tap. A named function, not an inline handler, so functions/test/restockDialogConfirm.test.js
+    // runs this exact body against fake stores. Three rules, all from the PR #183 device test (a missing import
+    // made this handler throw before anything showed, so Confirm looked dead):
+    //  - everything the tap needs is read once, up front: the answer can arrive later on a slow link,
+    //    when the fields may have changed;
+    //  - an exception is shown to the person and logged, never swallowed;
+    //  - if it was thrown after busy was set and before the answer, busy is cleared so the sheet cannot stick.
+    function _confirm() {
         if (busy) return
         // Defense in depth: the Restock button itself is already hidden
         // from non-owner/admin users (InventoryPage's canManage, bound to
@@ -89,22 +99,40 @@ BottomSheet {
             Toast.show("Only owner/admin can restock products")
             return
         }
-        var supplierId = partyCombo.currentIndex > 0
-                ? dlg._supplierIds[partyCombo.currentIndex]
-                : ""
-        // Blank = the product's recorded cost; a typo or a negative is refused by the plan, not booked as 0 (review D-2).
-        var unitCost = RestockFlow.costFromText(unitCostField.text)
-        busy = true
-        InventoryStore.restock(productId, qtyField.value, supplierId, unitCost, reasonField.text.trim(), function(ok, queued, refusal) {
-            busy = false
-            if (!ok) { Toast.show(refusal || "Could not restock — try again"); return }
-            restockConfirmed(productId, qtyField.value)
-            // Queued = saved, but stock changes only once the server confirms (offline or slow link).
-            Toast.show(queued
-                ? "Restock saved. Stock updates when it syncs"
-                : "Restocked +" + qtyField.value + " units")
-            dlg.close()
-        })
+        var settled = false
+        try {
+            var pid = productId
+            // Review D-C: the typed text, not the last committed value (see RestockFlow.qtyFromField).
+            var typed = RestockFlow.qtyFromField(qtyField)
+            if (!typed.ok) { Toast.show(typed.message); return }
+            var qty = typed.qty
+            if (qtyField.value !== qty) qtyField.value = qty
+            var supplierId = partyCombo.currentIndex > 0
+                    ? dlg._supplierIds[partyCombo.currentIndex]
+                    : ""
+            // Blank = the product's recorded cost; a typo or a negative is refused by the plan, not booked as 0 (review D-2).
+            var unitCost = RestockFlow.costFromText(unitCostField.text)
+            busy = true
+            InventoryStore.restock(pid, qty, supplierId, unitCost, reasonField.text.trim(), function(ok, queued, refusal) {
+                settled = true
+                busy = false
+                if (!ok) { Toast.show(refusal || "Could not restock — try again"); return }
+                restockConfirmed(pid, qty)
+                // Queued = saved, but stock changes only once the server confirms (offline or slow link).
+                Toast.show(queued
+                    ? "Restock saved. Stock updates when it syncs"
+                    : "Restocked +" + qty + " units")
+                dlg.close()
+            })
+        } catch (e) {
+            console.warn("[RestockDialog] confirm failed:", e)
+            // Already answered: the callback has shown its own message, nothing more to say.
+            // Not answered: the restock may or may not have been queued, so do not claim either.
+            if (!settled) {
+                busy = false
+                Toast.show("Something went wrong. Check the stock before trying again")
+            }
+        }
     }
 
     ColumnLayout {
