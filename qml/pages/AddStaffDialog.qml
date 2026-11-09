@@ -16,6 +16,9 @@ BottomSheet {
     primaryAction: "Save"
     secondaryAction: "Cancel"
     primaryPalette: ({ start: Constants.brand2, end: Constants.brand3 })
+    // The full-sheet busy overlay: BottomSheet shows it while busy AND this is non-empty (see RestockDialog).
+    // A constant, not set at the tap, so no early return can leave it stale or empty.
+    busyMessage: qsTr("Adding staff and login — this can take a few seconds")
 
     signal staffCreated(var payload)
 
