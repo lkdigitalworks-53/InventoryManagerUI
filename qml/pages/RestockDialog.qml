@@ -16,6 +16,10 @@ BottomSheet {
     primaryAction: "Confirm"
     secondaryAction: "Cancel"
     primaryPalette: ({ start: Constants.brand4, end: Constants.brand5 })
+    // The full-sheet busy overlay: BottomSheet shows it while busy AND this is non-empty. A restock waits for the
+    // server, so the small spinner on the Confirm button alone is not enough. A constant, not set at the tap, so it
+    // cannot be left stale or empty by a path that returns early.
+    busyMessage: qsTr("Restocking — this can take a few seconds")
 
     property string productId: ""
     property string productName: ""

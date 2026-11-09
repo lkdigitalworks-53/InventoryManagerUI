@@ -165,3 +165,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 155: Use the durable queue as the latch, settle an answer in exactly one place, and run the real function bodies of QML glue in Node
 - 156: A helper `.js` file is not in scope until the file imports it by name, and a handler that cannot be loaded must still be run in Node
 - 157: Read an editable field's text at the tap, never clamp what the person typed, and never let a caller's callback abort the owner's bookkeeping
+- 158: A toast must live in the window Overlay to be seen above a dialog, and a busy overlay needs the message that switches it on

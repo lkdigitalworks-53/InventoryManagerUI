@@ -15,6 +15,9 @@ BottomSheet {
     holdsRefresh: true   // edit form: the background list refresh waits while it is open
     primaryAction: "Place order"
     secondaryAction: "Cancel"
+    // The full-sheet busy overlay: BottomSheet shows it while busy AND this is non-empty (see RestockDialog).
+    // A constant, not set at the tap, so no early return can leave it stale or empty.
+    busyMessage: qsTr("Placing order — this can take a few seconds")
 
     signal orderCreated(var order)
     signal manageChannelsRequested()
