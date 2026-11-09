@@ -4812,3 +4812,16 @@ Rules:
 6. Read inputs once at the tap. A callback that re-reads a field (`qtyField.value`, `productId`) when a slow answer arrives reports what the field holds now, not what was sent.
 7. Prove the guard on the old tree first: with the fix removed the new tests were red (TREE-2, RD-1, RD-3), with it green; then 14 hand mutants of the dialog, 14/14 killed.
 8. Do not fix a plausible second cause without evidence. An editable `SpinBox` commits typed text only on focus loss or Enter, so a typed quantity may not reach `qtyField.value` on Confirm. It depends on the platform focus policy and cannot be checked without a device, so it is a named device-test case (test plan E-SB1), not a speculative change.
+
+## Skill 157: Read an editable field's text at the tap, never clamp what the person typed, and never let a caller's callback abort the owner's bookkeeping
+
+Review sweep of PR #188 (Restock Confirm fix) and PR #183 (R4), 2026-11-09.
+Rules:
+1. An editable `SpinBox` publishes typed text as `value` only on Enter or focus loss, and a `Button` tap does not promise to move focus. Anything that books a quantity must read the text itself, with the field's own `valueFromText(text, locale)` (locale aware), inside one pure helper (`RestockFlow.qtyFromField`) that takes the field object, so a Node test can fake the field.
+2. Refuse, do not clamp: 100000 typed must not be booked as 9999, a fraction must not be rounded, an empty box must not mean "the old value". Return `{ ok, qty | message }`, show the message, send nothing, never set busy. Bring the field's `value` up to date so its dependent labels agree with what was sent.
+3. A fix that is a no-op when the platform already behaves is cheap insurance when the failure is wrong stock with no undo. "No fix without evidence" (Skill 156 rule 8) is for changes that can make things worse; a deterministic read cannot.
+4. A caller's callback is the caller's code. In `Gateway`, run every one through `_callSafely`: a throw otherwise skips the remaining waiters (their map entry was cleared BEFORE the loop), the `operationApplied/Rejected` signal (the only route for a caller who left), `drainNow()` after enqueue and `_reschedule()` after a send. Log it, never swallow silently. In QtTest, assert after the call, not inside the callback (a failing `compare` there is swallowed now).
+5. A name-resolution guard must follow aliases, not file names: helpers import under short aliases (`.import "OperationKeys.js" as Keys`). Check "capitalised namespace used, not declared, not an alias, not a JS global" for helper `.js`; "type or singleton from another directory needs `import "<dir>"`" for QML; "every `pragma Singleton` is in its `qmldir`". Prove each guard fails on a deleted import before trusting it (TR mutants).
+6. A mutant that survives means the fake is too forgiving: the first whitespace-trim mutant lived because the fake parser tolerated spaces. Model the real parser's strictness in the fake, then re-kill.
+7. Review a merged PR's neighbours too: the sweep of #183 found its dialog fault only by reading the Gateway path the dialog's callback runs on.
+
