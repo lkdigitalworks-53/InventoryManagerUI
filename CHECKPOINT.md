@@ -21,8 +21,13 @@ Phase 2 (pattern): a whole-tree scan (new guard TREE-2) found exactly ONE file w
 - [x] 5. `functions/test/restockDialogConfirm.test.js`: runs the REAL `_confirm` body in a vm with fake stores. CF-1..17 (18 tests). 14/14 hand mutants killed (`/tmp/mut.py`, list in the test plan).
 - [x] 6. Functions suite full run after both new files: 1218/1218. Script tests (`.github/scripts/__tests__`): 905/905 (after regenerating SKILLS-INDEX with `node .github/scripts/skills-index.js --write`).
 - [x] 7. Docs: test plan `2026-11-09-restock-confirm-noop-test-plan.md` + README index row, Skill 156 + SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES (SpinBox commit, unverified).
-- [x] 8a. Code commit `bd8d9ca` pushed. Docs commit pushed next, then PR opened.
-- [ ] 8b. Read CI on the PR (QML, Functions, Rules, E2E); fix only what CI shows. Then Taher's device test E-SB1 and veto of D-A.
+- [x] 8a. Code commit `bd8d9ca`, docs commit `bee28ab` pushed. **PR #188** opened (needed `add_repo` push access for the API call; git push itself worked without).
+- [x] 8b. CI on `bee28ab` ALL GREEN: QML 2882/2882, Functions 1218/1218, Rules 108/108, E2E 111/111 = 4319/4319. No product code changed after CI.
+- [ ] 8c. Taher: device test of PR #188 (test plan on-device section, especially H1, N4, E1, E-SB1), veto window on D-A (the `_confirm()` + try/catch refactor), then merge.
+
+## Next (not started)
+1. If E-SB1 shows +10: fix the SpinBox commit in a separate small PR (lead in `docs/superpowers/KNOWN-ISSUES.md`), check other dialogs with an editable SpinBox.
+2. R5 (restock dialog redesign, wording for too-large/reserved-text) stays as planned in `ATOMIC-OPERATIONS-STATUS.md`.
 
 ## Decisions (vetoable in the PR)
 - D-A: refactor the handler into `_confirm()` + try/catch (not only the one-line import). For: the same silent failure class cannot hide again, a stuck-busy sheet is impossible, the real function body is testable in Node. Against: a bigger diff than one line, one more wording the person can see. Alternative rejected: lint guard only (loud in CI, still silent on a phone if a different error is ever thrown).
