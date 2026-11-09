@@ -27,7 +27,7 @@ Read from the Qt 6.8 branch of qtdeclarative; the Qt version Felgo ships was not
 | D-4 | `slideDown.stop()` on each new toast | Without it a toast arriving during the previous one's slide-away was hidden when that slide finished (existing race, made worse by reparenting) | One more line in the function |
 
 ## Findings not fixed (for Taher)
-- `AddProductDialog`, `AddStaffDialog` and `NewOrderDialog` set `busy = true` with no `busyMessage`: same missing overlay as Restock. Listed in `docs/superpowers/KNOWN-ISSUES.md`.
+- (Fixed in session 2, see the addendum at the end.) `AddProductDialog`, `AddStaffDialog` and `NewOrderDialog` set `busy = true` with no `busyMessage`.
 - The toast text is one unwrapped line; the longest toast ("Stock wasn't restored — ...") may overflow the pill. Existing; see device case E2.
 
 ## What was actually executed in the session (honest)
@@ -99,3 +99,89 @@ For 2 minutes: open and close dialogs at random, trigger toasts (bad inputs, Bac
 | `qml/components/ToastHost.qml` | 17 tests, 13 of the 19 mutants | every toast in the app: H1 to H6, N1 to N5, E1, E2, E5 |
 | `qml/pages/RestockDialog.qml` | 6 tests, 3 of the 19 mutants | H1, H2, N5, E3, E4 |
 | `qml/components/BottomSheet.qml` (read only, pinned) | gate and order pinned, 3 of the 19 mutants | busy card on the other sheets: Order detail save, Import: unchanged |
+
+---
+
+# Addendum, session 2 (same PR #190, 2026-11-09): busy card on Add Product, Add Staff, New Order + review sweep
+
+**Covers:** `qml/pages/AddProductDialog.qml`, `qml/pages/AddStaffDialog.qml`, `qml/pages/NewOrderDialog.qml` (one constant `busyMessage` each), `functions/test/sheetBusyOverlay.test.js` (new, 10 tests).
+**No server change, no deploy. The app was not built or run (standing rule); CI is the QML oracle.**
+
+## Decisions (vetoable in the PR)
+| # | Decision | For | Against |
+|---|---|---|---|
+| D-5 | A constant `busyMessage` on each of the three sheets (same as D-2) | Cannot go stale or empty on an early return; same shape as Restock | Wording says "a few seconds": a stalled network can hold longer (KNOWN-ISSUES) |
+| | Rejected: overlay on every `busy` in `BottomSheet` | One central change | Every sheet changes, flash on sub-second saves, would also cover `StuckWritesSheet` |
+| D-6 | `StuckWritesSheet` gets no overlay; `ProfileSettingsDialog` deferred | Stuck-writes `busy` is a modal lock while a confirm is open: an overlay would cover the list; Profile `busy` is `AuthService.busy`, shared with other flows | Profile saves still show only the button spinner |
+| D-7 | One test file for the three sheets plus a repo-wide ratchet | A new sheet cannot forget the message; the ratchet already found two sheets a plain grep missed | Reads source text, so it pins shape, not pixels |
+| D-8 | Wording kept in Restock's style ("... this can take a few seconds") | Consistent | Promises a duration; neutral "please wait" would be more honest offline. Taher to choose |
+
+## 1. Unit tests (`sheetBusyOverlay.test.js`)
+SB-1 each message present at the root, 60 characters or fewer, no braces, all three distinct. SB-2 BottomSheet's own `active:` expression evaluated with each real message, busy x message (4 combinations each). SB-3 ratchet: every root-`BottomSheet` file in `qml/` that turns `busy` on has a message or a reasoned `NO_OVERLAY` entry. SB-3b the `NO_OVERLAY` list is not stale (entry exists, is a root sheet, turns busy on, has no message, reason of 40 characters or more). SB-4 `AddProductDialog.trySubmit`: validation returns before `busy = true`, one `busy = true`, before the store call, and the store callback's first statement is `busy = false`. SB-8 no sheet writes `busyMessage` at runtime, declared once. SB-9 scanner sanity (the six known overlay sheets are found; turn-off lines are not turn-ons; a binding counts).
+
+## 2. Functional (real function bodies in a `vm`)
+SB-5 `AddStaffDialog` `onMemberOperationSucceeded`, `onAuthFailed` (reason and empty reason), `onErrorOccurred` (message and empty): each drops `busy` and `_provisioning` before any text, success closes, failures stay open. SB-6 `NewOrderDialog` `onOrderAdded`, `onOrderCreationFailed` (message and empty): drop `busy`, close or show the error; a stray answer while idle neither closes nor writes text.
+
+## 3. Rules / E2E
+None: view-only change.
+
+## 4. Regression and monkey
+SB-7 seeded monkey, 200 seeds x 40 steps over the NewOrder and AddStaff handlers (tap, tap, success, failure, error in random order, answers while idle): after any answer `busy` is false. Existing suites unchanged and green: functions 1290/1290 (1280 before + 10), `.github/scripts` 905/905, both run in the session.
+
+## 5. Hand mutants (20, all killed)
+No message on each sheet (3); empty message; message too long; duplicate message; product callback writes error text before `busy = false`; staff `onAuthFailed`, `onMemberOperationSucceeded`, `onErrorOccurred` keep busy (3); order `onOrderAdded`, `onOrderCreationFailed` keep busy (2); order handlers lose the idle guard (2); runtime `busyMessage` write; `BottomSheet` gate widened to OR; `StuckWritesSheet` gains a message (stale list); staff `_provisioning` kept on failure; product sets busy before validation; a new sheet with busy and no message. **20/20 killed** (`/tmp/mut.py`, not committed: each mutant is one `old -> new` text swap listed here).
+
+## 6. Counts
+Expected delta from this addendum: functions +10 (total +33 for the PR). QML, Rules, E2E: +0. Recount from the CI comment.
+
+## 7. Review sweep (requesting-code-review, ponytail-audit, qt-qml-review)
+Run inline (no sub-agent tool in this chat). Python linter of `qt-qml-review` on the five touched QML files: only style rules on untouched lines (the repo's own `id: dlg`, `var`, imperative field resets) and nothing on changed lines; not acted on. Findings and what was done are in the PR description and `KNOWN-ISSUES.md`: ratchet gap (fixed), ProfileSettings busy (deferred), no escape from a stalled busy (noted), ToastHost `y` binding (noted, device check D1), wording promise (D-8).
+
+---
+
+## On-device test plan, session 2 additions (Taher, needs a build of this branch)
+**Prerequisites:** owner login; online and airplane-mode phases; one supplier.
+
+### Happy path
+| # | Action | Expected |
+|---|---|---|
+| S2-H1 | Add product with valid data, Save | Solid card over the sheet: spinner, "Adding product — this can take a few seconds", "Don't close the app or press back". Then it fades, toast "Product added" is above the closing sheet, product is in the list |
+| S2-H2 | Add staff (name, role, login password), Save | Card "Adding staff and login — ...". Then toast "Staff added" above the sheet, sheet closes, person in the list and in Team Members |
+| S2-H3 | New order with one product, Place order | Card "Placing order — ...". Then sheet closes, order in the list, stock as expected |
+| S2-H4 | Restock still shows its own card (regression of D-2) | Unchanged |
+
+### Negative
+| # | Action | Expected |
+|---|---|---|
+| S2-N1 | Add product with an empty name, Save | Error text under the form, NO card (refused before busy), button usable |
+| S2-N2 | Add staff with a weak password or an email that exists | Card, then it goes away and the red error text is READABLE (not hidden behind the card); sheet stays open and busy is off |
+| S2-N3 | New order with a quantity above stock | Error text, no card |
+| S2-N4 | Airplane mode, Add product, Save | Card, then the error "Could not add product — try again" readable; sheet usable; note how long the card stayed (D-8, KNOWN-ISSUES) |
+| S2-N5 | Airplane mode, New order, Place order | Same: card, then "Could not create order — try again" readable; note the time |
+
+### Edge cases
+| # | Action | Expected |
+|---|---|---|
+| S2-E1 | While a card is up press Back, tap outside, tap Cancel, tap the X | Nothing closes; the sheet closes only after the answer |
+| S2-E2 | Double-tap Save/Place order fast | One card, one record |
+| S2-E3 | Add product with a photo chosen | Card, product added, photo queues as before |
+| S2-E4 | Slow network (throttled data): Save | Card stays until the answer; note the longest wait seen. If it feels stuck, that is the KNOWN-ISSUES "no escape" entry |
+| S2-E5 | Open Profile settings and save | No card (deferred, KNOWN-ISSUES); button spinner only |
+| S2-E6 | Open the stuck-writes sheet (if any parked write) and tap Discard | Confirm opens, NO busy card over the list |
+
+### Multiple scenarios
+Add three products in a row, then two staff, then two orders: each shows its card once, each closes, no card is left behind on the next open. Fail one (airplane mode) between two successes: the next open starts clean (no card, no error text left).
+
+### Monkey (manual)
+2 minutes: open and close the three sheets at random, tap Save at random moments with valid and invalid data, toggle airplane mode twice, background and foreground the app while a card is up. No crash, no card stuck on a closed or reopened sheet, no unreadable error, no dead area.
+
+### D1 (ToastHost, from the review)
+Add a product with the soft keyboard open (type in the last field, tap Save without closing the keyboard). Watch the "Product added" toast: it must stay visible for its 5 s even though the keyboard closes with the sheet. If the pill vanishes or jumps down, KNOWN-ISSUES "ToastHost pill y" reproduced.
+
+### Affected areas
+| File | Automated coverage | Where to look on device |
+|---|---|---|
+| `qml/pages/AddProductDialog.qml` | SB-1, 2, 4, 8, 9 and 6 mutants | S2-H1, N1, N4, E2, E3 |
+| `qml/pages/AddStaffDialog.qml` | SB-1, 2, 5, 7, 8 and 7 mutants | S2-H2, N2 |
+| `qml/pages/NewOrderDialog.qml` | SB-1, 2, 6, 7, 8 and 6 mutants | S2-H3, N3, N5 |
+| `qml/pages/StuckWritesSheet.qml`, `ProfileSettingsDialog.qml` (read only, in `NO_OVERLAY`) | SB-3, SB-3b | S2-E5, S2-E6 |

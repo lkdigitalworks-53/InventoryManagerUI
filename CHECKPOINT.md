@@ -43,9 +43,9 @@ Everything pushed is on the remote branch; read `git log` and this file. CI is t
 - [x] S2-2. Constant `busyMessage: qsTr(...)` at the root of the three sheets (same style as Restock).
 - [x] S2-3. `functions/test/sheetBusyOverlay.test.js`: 10 cases (SB-1..SB-9 incl. SB-3b), real handler bodies run in a vm, seeded monkey (200 seeds), repo-wide ratchet. 20/20 hand mutants killed (`/tmp/mut.py`, list in the test plan).
 - [x] S2-4. Ratchet found two more sheets that turn `busy` on with no message: `StuckWritesSheet` (busy is a modal lock while a confirm is open: an overlay would be wrong) and `ProfileSettingsDialog` (`busy: AuthService.busy`, shared with other flows). Both listed in `NO_OVERLAY` with a reason; a stale-entry test guards the list.
-- [ ] S2-5. Commit + push this slice (see `git log`).
-- [ ] S2-6. Docs: test plan section, KNOWN-ISSUES (close three-sheets entry, add ProfileSettings), Skill 158 addendum + SKILLS-INDEX, AGENTS, README.
-- [ ] S2-7. Review sweep: (a) requesting-code-review over the whole PR diff, (b) ponytail-audit of the touched areas, (c) qt-qml-review of ToastHost and the four sheets. Findings fixed in this PR, each with a test. Report what is deferred.
+- [x] S2-5. Commit + push the busy-message slice (commit `facb162`).
+- [x] S2-6. Docs: test plan addendum, KNOWN-ISSUES (three-sheets entry closed; ProfileSettings, no-escape, ToastHost `y` binding added), Skill 158 items 8-10, AGENTS, README, plan index. Suites after this: functions 1290/1290, `.github/scripts` 905/905.
+- [~] S2-7. Review sweep (IN PROGRESS: linter run, ToastHost, three sheets and staff/order/product answer paths read; NOT yet read: `toastHostLayer.test.js` and `restockBusyOverlay.test.js` quality, `BottomSheet.qml` itself, `Main.qml` Back/busy handling, other Overlay users). Original scope: (a) requesting-code-review over the whole PR diff, (b) ponytail-audit of the touched areas, (c) qt-qml-review of ToastHost and the four sheets. Findings fixed in this PR, each with a test. Report what is deferred.
 - [ ] S2-8. Read CI (Taher). Device test list is in the test plan (H5/H6 tap-through, new sheet overlay steps).
 
 ### Decisions (vetoable)

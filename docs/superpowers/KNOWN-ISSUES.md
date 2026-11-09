@@ -5,13 +5,34 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
-## Three sheets show no full-sheet busy overlay while saving — FOUND 2026-11-09 (Restock overlay report), NOT FIXED
+## Three sheets show no full-sheet busy overlay while saving — FOUND 2026-11-09 (Restock overlay report), FIXED in PR #190 session 2
 
-**Where:** `AddProductDialog`, `AddStaffDialog`, `NewOrderDialog` set `busy = true` and never `busyMessage`. `BottomSheet` shows `BusyOverlay` only when `busy` and `busyMessage` are both set, so these show only the small spinner in the primary button. Restock had the same fault and is fixed on branch `fix/2026-11-09-toast-and-busy-above-dialogs`.
-**Why deferred:** Taher reported Restock only; a message per sheet is a wording call each, and the alternative (overlay on every `busy`) changes every sheet and flashes on sub-second saves.
-**Lead:** add a constant `busyMessage: qsTr("...")` at the root of each sheet (as Restock does) and pin it in `restockBusyOverlay.test.js` style; check how long each save can wait before deciding.
+**Where:** `AddProductDialog`, `AddStaffDialog`, `NewOrderDialog` set `busy = true` and never `busyMessage`. **Fixed:** each declares a constant `busyMessage` at its root. A ratchet in `functions/test/sheetBusyOverlay.test.js` fails any new root-`BottomSheet` file that turns `busy` on without one.
+**Residual:** the wording says "this can take a few seconds". Order, product and staff saves first mint an id (GET plus commit, up to 8 attempts) and `FirebaseService._request` has no app-level timeout, so on a network that accepts the connection and then stalls the wait is whatever Qt's own transfer timeout is (not checked against the Felgo Qt). While busy the sheet cannot be closed (no cancel, no back, no tap outside). Not changed: a timeout and an escape hatch are a design call, see the next two entries.
 
 ---
+
+## ProfileSettingsDialog shows no busy card while saving — FOUND 2026-11-09 (ratchet in PR #190 session 2), NOT FIXED
+
+**Where:** `ProfileSettingsDialog` binds `busy: AuthService.busy`. `AuthService.busy` is also set by other flows (12 assignments), so a constant message would show on any of them while this sheet is open; a wording and timing call per flow.
+**Lead:** a message that depends on what `AuthService` is doing (a `busyReason` string), or the sheet's own `busy` set at its Save tap. Listed in `NO_OVERLAY` in `sheetBusyOverlay.test.js` with this reason; the test fails when the entry goes stale.
+
+---
+
+## A sheet that is busy has no escape if its answer never comes — NOTED 2026-11-09 (PR #190 session 2 review), design call
+
+**Where:** `BottomSheet.closePolicy` is `NoAutoClose` while `busy`, the close button and Cancel are guarded by `!busy`, and `Main.qml`'s Back honours `busy`. Every path found in `AddProductDialog`, `AddStaffDialog` and `NewOrderDialog` answers (the callback or `orderAdded` / `orderCreationFailed` / `errorOccurred`), so no stuck path was found; a stalled network is the only way to wait long. The new overlay makes the lock obvious ("Don't close the app or press back").
+**Lead:** a per-sheet wait timeout that drops `busy` and shows "Still trying; check the list before retrying" would need care: a late answer after a timeout must not double-create (the order and product paths are idempotent only through their minted id).
+
+---
+
+## ToastHost pill `y` is a binding that an animation does not remove — NOTED 2026-11-09 (PR #190 session 2 review), UNVERIFIED, not fixed
+
+**Where:** `ToastHost.pill` has `y: parent ? parent.height : 600` and is moved by `NumberAnimation` on `y`. Qt animations write with the "keep the binding" flag (from memory of the Qt source, not re-read this session), so if the parent's height changes while a toast shows (soft keyboard hiding on a dialog close, rotation) the binding re-evaluates and the pill jumps to the bottom edge and out of sight for the rest of its 5 s. The binding is older than this PR (the diff does not touch it); the move into the Overlay changes the parent but not the exposure.
+**Lead:** device check D1 in the test plan (toast right as a keyboard closes). If it reproduces: set `y` imperatively in `_showInternal` (start below the layer, animate up) and drop the binding.
+
+---
+
 
 ## Toast pill covers the lower part of a bottom sheet's footer buttons — NOTED 2026-11-09, design call
 
