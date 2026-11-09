@@ -19,6 +19,13 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## MemberManagementDialog redeclares `busy` and is driven from Main.qml — NOTED 2026-11-09 (PR #190 session 2 review), UNVERIFIED, not fixed
+
+**Where:** `qml/pages/MemberManagementDialog.qml` is a root `BottomSheet` and declares its own `property bool busy: false` (line 26) although `BottomSheet` already has `busy`; `Main.qml` sets it with `busy: AuthService.membersBusy`. Two consequences by reading the text: (1) the busy-overlay ratchet in `sheetBusyOverlay.test.js` reads only a sheet's own file, so a `busy` driven from an instance in `Main.qml` is invisible to it; (2) whether `BottomSheet`'s own `closePolicy`, close-button guard and overlay gate (all `root.busy`) see the shadowing property or the base one depends on how Qt resolves a shadowed name (compiled QML may bind to the base type). Not checked in Qt; the sheet shows its own "Loading…" label instead of the card.
+**Lead:** device check: open Member management, tap Refresh, press Back while "Loading…" shows. If the sheet closes, the shadowing bypasses the busy lock. Fix would be to delete the redeclaration and decide on a `busyMessage`.
+
+---
+
 ## A sheet that is busy has no escape if its answer never comes — NOTED 2026-11-09 (PR #190 session 2 review), design call
 
 **Where:** `BottomSheet.closePolicy` is `NoAutoClose` while `busy`, the close button and Cancel are guarded by `!busy`, and `Main.qml`'s Back honours `busy`. Every path found in `AddProductDialog`, `AddStaffDialog` and `NewOrderDialog` answers (the callback or `orderAdded` / `orderCreationFailed` / `errorOccurred`), so no stuck path was found; a stalled network is the only way to wait long. The new overlay makes the lock obvious ("Don't close the app or press back").

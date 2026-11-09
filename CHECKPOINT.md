@@ -45,10 +45,16 @@ Everything pushed is on the remote branch; read `git log` and this file. CI is t
 - [x] S2-4. Ratchet found two more sheets that turn `busy` on with no message: `StuckWritesSheet` (busy is a modal lock while a confirm is open: an overlay would be wrong) and `ProfileSettingsDialog` (`busy: AuthService.busy`, shared with other flows). Both listed in `NO_OVERLAY` with a reason; a stale-entry test guards the list.
 - [x] S2-5. Commit + push the busy-message slice (commit `facb162`).
 - [x] S2-6. Docs: test plan addendum, KNOWN-ISSUES (three-sheets entry closed; ProfileSettings, no-escape, ToastHost `y` binding added), Skill 158 items 8-10, AGENTS, README, plan index. Suites after this: functions 1290/1290, `.github/scripts` 905/905.
-- [~] S2-7. Review sweep (IN PROGRESS: linter run, ToastHost, three sheets and staff/order/product answer paths read; NOT yet read: `toastHostLayer.test.js` and `restockBusyOverlay.test.js` quality, `BottomSheet.qml` itself, `Main.qml` Back/busy handling, other Overlay users). Original scope: (a) requesting-code-review over the whole PR diff, (b) ponytail-audit of the touched areas, (c) qt-qml-review of ToastHost and the four sheets. Findings fixed in this PR, each with a test. Report what is deferred.
+- [x] S2-7. Review sweep DONE for this turn (read: linter on 5 files, ToastHost, BottomSheet busy gate and closePolicy, the three sheets and their answer paths, store mint paths, Main.qml busy bindings). NOT read in depth: `toastHostLayer.test.js` / `restockBusyOverlay.test.js` assertions (19 mutants killed by the first session), `Main.qml` Back handler beyond the busy check, `ImportPreviewDialog` / `OrderDetailDialog` busy flows, the rest of the repo (ponytail-audit was scoped to this PR's areas, not the whole repo). Original scope: Original scope: (a) requesting-code-review over the whole PR diff, (b) ponytail-audit of the touched areas, (c) qt-qml-review of ToastHost and the four sheets. Findings fixed in this PR, each with a test. Report what is deferred.
 - [ ] S2-8. Read CI (Taher). Device test list is in the test plan (H5/H6 tap-through, new sheet overlay steps).
 
 ### Decisions (vetoable)
 - D-5: constant message per sheet (same as D-2). Rejected: overlay on every `busy` (flashes on fast saves, changes every sheet).
 - D-6: `StuckWritesSheet` gets NO overlay by design. `ProfileSettingsDialog` deferred (shared `AuthService.busy`).
 - D-7: one parametrised test file for the three sheets plus a ratchet, not three copies of `restockBusyOverlay.test.js`.
+
+### Next session (pick up here)
+1. Read CI on the PR (QML oracle). Fix any red job first.
+2. Taher: veto or confirm D-1..D-8 (esp. D-8 wording, D-6 ProfileSettings deferral).
+3. Optional follow-ups, each its own small PR (not done, by design): ProfileSettings busy reason; MemberManagementDialog `busy` shadowing check (device first); ToastHost `y` binding (device check D1 first); per-sheet wait timeout and escape hatch (design call).
+4. Review depth not done: whole-repo ponytail-audit, the two Node test files from the first session, OrderDetail/ImportPreview busy flows.
