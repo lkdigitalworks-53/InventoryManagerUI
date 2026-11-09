@@ -331,6 +331,8 @@ replay) is applied once through the `DataModel` route. The restock toast says "R
 the old silent default quantity of 10 is gone. Review sweep (PR #183): while a restock of a product is queued its edit and delete are refused (a stale `before` would get 409 and park), and a blank restock cost now means the product's recorded cost while a mistyped one is refused instead of booked as 0. Design `docs/superpowers/specs/2026-11-02-r4-restock-wire-design.md`, test plan
 `docs/superpowers/test-plans/2026-11-02-r4-restock-wire-test-plan.md`, open items in `docs/superpowers/ATOMIC-OPERATIONS-STATUS.md` section 10. Next: R5.
 
+**Update 2026-11-09 (restock Confirm fix):** the Restock sheet's Confirm button did nothing on the PR #183 device test: the dialog used `RestockFlow` without importing `RestockFlow.js` (the helper directory import does not expose `.js` files), so the tap threw before anything showed. Fixed; the tap now shows any unexpected error instead of failing silently, and a CI guard fails any QML file that uses a helper it did not import. Test plan `docs/superpowers/test-plans/2026-11-09-restock-confirm-noop-test-plan.md`.
+
 **Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
 same transaction as every stock change on `inventory`: explicit `movements` on `recordDelta` (signed quantities must sum to the
 applied delta) or a server-derived default row (`adjustment`; `sale` inside `completeOrder`; `receipt` on create), so product create,

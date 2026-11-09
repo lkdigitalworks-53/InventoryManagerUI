@@ -19,9 +19,10 @@ Phase 2 (pattern): a whole-tree scan (new guard TREE-2) found exactly ONE file w
 - [x] 3. Fix 1 (root cause): `import "../helper/RestockFlow.js" as RestockFlow` in `RestockDialog.qml`. Guard 19/19.
 - [x] 4. Fix 2 (defence in depth, decision D-A): the tap body moved into `RestockDialog._confirm()` with one try/catch: an exception is logged and shown ("Something went wrong. Check the stock before trying again"), `busy` cleared when it was thrown before the answer; product and quantity captured at the tap (the callback used to re-read `qtyField.value` / `productId` when a slow answer arrived).
 - [x] 5. `functions/test/restockDialogConfirm.test.js`: runs the REAL `_confirm` body in a vm with fake stores. CF-1..17 (18 tests). 14/14 hand mutants killed (`/tmp/mut.py`, list in the test plan).
-- [x] 6. Functions suite full run: 1200/1200 before the dialog test; re-run after (see Final).
-- [ ] 7. Docs: test plan, Skill 156 + index, AGENTS, README, KNOWN-ISSUES, test-plans README row. (in progress)
-- [ ] 8. Commit (email in message), push, open PR, read CI, report.
+- [x] 6. Functions suite full run after both new files: 1218/1218. Script tests (`.github/scripts/__tests__`): 905/905 (after regenerating SKILLS-INDEX with `node .github/scripts/skills-index.js --write`).
+- [x] 7. Docs: test plan `2026-11-09-restock-confirm-noop-test-plan.md` + README index row, Skill 156 + SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES (SpinBox commit, unverified).
+- [x] 8a. Code commit `bd8d9ca` pushed. Docs commit pushed next, then PR opened.
+- [ ] 8b. Read CI on the PR (QML, Functions, Rules, E2E); fix only what CI shows. Then Taher's device test E-SB1 and veto of D-A.
 
 ## Decisions (vetoable in the PR)
 - D-A: refactor the handler into `_confirm()` + try/catch (not only the one-line import). For: the same silent failure class cannot hide again, a stuck-busy sheet is impossible, the real function body is testable in Node. Against: a bigger diff than one line, one more wording the person can see. Alternative rejected: lint guard only (loud in CI, still silent on a phone if a different error is ever thrown).

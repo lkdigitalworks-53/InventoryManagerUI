@@ -5,6 +5,14 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
+## Restock quantity: typed text may not be committed when Confirm is tapped — FOUND 2026-11-09 (Confirm-fix review), UNVERIFIED, NOT FIXED
+
+**Where:** `RestockDialog.qtyField` (`QQC.SpinBox`, `editable: true`). A Qt editable SpinBox updates `value` from its text on `editingFinished` (focus loss or Enter), and a `Button` may not take focus on a tap (focus policy depends on the platform and style). If so, typing 25 and tapping Confirm at once would send the previous value (10).
+**Why deferred:** nothing shows it happening; it cannot be checked without a device, and a change made without evidence is a guess (systematic-debugging). It is the device-test case E-SB1 in `docs/superpowers/test-plans/2026-11-09-restock-confirm-noop-test-plan.md`.
+**Lead:** if E-SB1 shows +10, read the text at the tap: `qtyField.valueFromText(qtyField.contentItem.text, qtyField.locale)`, clamp to `from`/`to`, and test it in `restockDialogConfirm.test.js`. The same pattern may exist in other dialogs with an editable SpinBox (`grep -rn "SpinBox" qml/pages`).
+
+---
+
 ## Bulk Approve: a `tryCompleteOrder` that never calls back keeps the banner "running" — FOUND 2026-10-31 (PR #174 sweep), NOT FIXED
 
 **Where:** `OrdersPage._approveAllPending` + `BulkApproveProgress` (the `shortcut: no watchdog` comment). The lock request can no longer hang (D16: 15 s timeout, circuit breaker after 3 no-answers), but the completion step (`DataModel.tryCompleteOrder`, the Gateway write) has no watchdog of its own here: if its callback never fires the state stays "running" and the Approve button stays disabled until the page is rebuilt.

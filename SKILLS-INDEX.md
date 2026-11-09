@@ -163,3 +163,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 153: Derive the QML twin of a Node test from the Node file, so the two engines run the same bodies and cannot drift
 - 154: A generated test twin must fail loudly on a case its parser skips, and a monkey test must prove it reached every outcome
 - 155: Use the durable queue as the latch, settle an answer in exactly one place, and run the real function bodies of QML glue in Node
+- 156: A helper `.js` file is not in scope until the file imports it by name, and a handler that cannot be loaded must still be run in Node
