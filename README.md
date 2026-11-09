@@ -333,6 +333,8 @@ the old silent default quantity of 10 is gone. Review sweep (PR #183): while a r
 
 **Update 2026-11-09 (restock Confirm fix):** the Restock sheet's Confirm button did nothing on the PR #183 device test: the dialog used `RestockFlow` without importing `RestockFlow.js` (the helper directory import does not expose `.js` files), so the tap threw before anything showed. Fixed; the tap now shows any unexpected error instead of failing silently, and a CI guard fails any QML file that uses a helper it did not import. Test plan `docs/superpowers/test-plans/2026-11-09-restock-confirm-noop-test-plan.md`.
 
+**Update 2026-11-09 (review sweep of the restock fix):** a quantity typed in the Restock sheet and confirmed at once is now the quantity booked (before, the last committed number could be sent); an empty, fractional or out-of-range quantity is refused with a message instead of being clamped. A failing toast or dialog can no longer stop the app's background sync bookkeeping, and a second CI guard fails any file that uses a name it did not import. Test plan `docs/superpowers/test-plans/2026-11-09-pr188-pr183-sweep-test-plan.md`.
+
 **Update 2026-09-24 (design only, no code, rev 2):** P1 stock movements (CGST 56(2)) will be written **server-side**, inside the
 same transaction as every stock change on `inventory`: explicit `movements` on `recordDelta` (signed quantities must sum to the
 applied delta) or a server-derived default row (`adjustment`; `sale` inside `completeOrder`; `receipt` on create), so product create,

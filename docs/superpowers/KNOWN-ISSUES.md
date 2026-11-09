@@ -5,10 +5,11 @@ broken, where, why it was deferred, and leads for a future fix.
 
 ---
 
-## Restock quantity: typed text may not be committed when Confirm is tapped — FOUND 2026-11-09 (Confirm-fix review), UNVERIFIED, NOT FIXED
+## Restock quantity: typed text may not be committed when Confirm is tapped — FOUND 2026-11-09 (Confirm-fix review), FIXED in the #188/#183 review sweep (branch `review/2026-11-09-pr188-pr183-sweep`)
 
 **Where:** `RestockDialog.qtyField` (`QQC.SpinBox`, `editable: true`). A Qt editable SpinBox updates `value` from its text on `editingFinished` (focus loss or Enter), and a `Button` may not take focus on a tap (focus policy depends on the platform and style). If so, typing 25 and tapping Confirm at once would send the previous value (10).
-**Why deferred:** nothing shows it happening; it cannot be checked without a device, and a change made without evidence is a guess (systematic-debugging). It is the device-test case E-SB1 in `docs/superpowers/test-plans/2026-11-09-restock-confirm-noop-test-plan.md`.
+**Fix (review sweep):** the tap now reads the typed text with the SpinBox's own parser (`RestockFlow.qtyFromField`), refuses empty/junk/fraction/out-of-range instead of clamping, and brings `qtyField.value` up to date; whether Qt would have committed on its own is still unverified, and no longer matters. Device case H2 in `docs/superpowers/test-plans/2026-11-09-pr188-pr183-sweep-test-plan.md`. This is the only editable SpinBox in the app (`grep -rn SpinBox qml`).
+**Why it was deferred first:** nothing shows it happening; it cannot be checked without a device, and a change made without evidence is a guess (systematic-debugging). It is the device-test case E-SB1 in `docs/superpowers/test-plans/2026-11-09-restock-confirm-noop-test-plan.md`.
 **Lead:** if E-SB1 shows +10, read the text at the tap: `qtyField.valueFromText(qtyField.contentItem.text, qtyField.locale)`, clamp to `from`/`to`, and test it in `restockDialogConfirm.test.js`. The same pattern may exist in other dialogs with an editable SpinBox (`grep -rn "SpinBox" qml/pages`).
 
 ---

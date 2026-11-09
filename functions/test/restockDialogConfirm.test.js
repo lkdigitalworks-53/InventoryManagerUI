@@ -214,6 +214,46 @@ test("CF-15 a late answer after a throw still settles the sheet", () => {
     assert.equal(r.log.closed, 1);
 });
 
+// ------------------------------------------------------------------ review D-C: the typed quantity
+
+// A SpinBox with text typed but not committed (value is still the old 10).
+const typedField = (text, over) => Object.assign({
+    value: 10, from: 1, to: 9999, locale: "en_IN", contentItem: { text },
+    valueFromText(t) { const n = Number(t); if (String(t).trim() === "" || isNaN(n)) throw new Error("nan"); return n; }
+}, over || {});
+
+test("CF-18 typed but not committed: the typed number is sent, the field is brought up to date", () => {
+    const r = rig({ qtyField: typedField("25") });
+    r.tap();
+    assert.equal(r.log.restockCalls.length, 1);
+    assert.equal(r.log.restockCalls[0][1], 25, "25 typed, 25 sent (not the stale 10)");
+    assert.equal(r.ctx.qtyField.value, 25, "the field and its 'stock will be' line follow");
+    r.answer(true, false);
+    assert.deepEqual(r.log.confirmed, [["p1", 25]]);
+    assert.deepEqual(r.log.toasts, ["Restocked +25 units"]);
+});
+
+test("CF-19 unreadable text: nothing is sent, busy is never set, the person is told what to enter", () => {
+    for (const t of ["", "abc", "2.5", "0", "10000"]) {
+        const r = rig({ qtyField: typedField(t) });
+        r.tap();
+        assert.equal(r.log.restockCalls.length, 0, t);
+        assert.equal(r.ctx.busy, false, t);
+        assert.deepEqual(r.log.toasts, ["Enter a whole quantity from 1 to 9999"], t);
+        assert.equal(r.log.closed, 0, t);
+    }
+});
+
+test("CF-20 a refused quantity does not leave the sheet stuck: the next tap with a good number goes through", () => {
+    const f = typedField("abc");
+    const r = rig({ qtyField: f });
+    r.tap();
+    f.contentItem.text = "12";
+    r.tap();
+    assert.equal(r.log.restockCalls.length, 1);
+    assert.equal(r.log.restockCalls[0][1], 12);
+});
+
 // ------------------------------------------------------------------ source shape
 
 const DIALOG = fs.readFileSync(path.join(__dirname, "..", "..", "qml", FILE), "utf8");
@@ -230,7 +270,7 @@ test("CF-17 the sandbox's collaborators are exactly the free names _confirm uses
     const body = SRC.replace(/\/\/[^\n]*/g, "").replace(/"(?:\\.|[^"\\\n])*"/g, '""');
     const used = new Set();
     for (const m of body.matchAll(/(?<![\w.$])([A-Za-z_$][\w$]*)(?=\s*[.(=\s,)\]]|$)/g)) used.add(m[1]);
-    const KEYWORDS = new Set(["function", "if", "return", "var", "try", "catch", "true", "false", "e", "ok", "queued", "refusal", "settled", "pid", "qty", "supplierId", "unitCost"]);
+    const KEYWORDS = new Set(["function", "if", "return", "var", "try", "catch", "true", "false", "e", "ok", "queued", "refusal", "settled", "pid", "qty", "typed", "supplierId", "unitCost"]);
     const free = [...used].filter((n) => !KEYWORDS.has(n)).sort();
     const known = ["AuthStore", "InventoryStore", "RestockFlow", "Toast", "busy", "console", "dlg", "partyCombo", "productId", "qtyField", "reasonField", "restockConfirmed", "unitCostField", "_confirm"].sort();
     assert.deepEqual(free, known);

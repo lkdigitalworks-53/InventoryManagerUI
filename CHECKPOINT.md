@@ -1,3 +1,29 @@
+# CHECKPOINT — 2026-11-09 REVIEW SWEEP of PR #188 (Restock Confirm fix) and PR #183 (R4) — resume here
+
+**Branch:** `review/2026-11-09-pr188-pr183-sweep`, stacked on `fix/2026-11-09-restock-confirm-noop` (PR #188 head `7005e51`; `main` @ `415b11c`). **Commit identity:** `taher.lkdw@gmail.com` in author and in every commit message. PAT per command only (`git -c http.extraHeader=...`); after a push `grep -c ghp_ .git/config` must print 0. Rules in force: no build/run, no Qt in the sandbox (CI is the QML oracle), branch + push without asking, tests + test plan, honest trade-offs.
+**Skills used:** `requesting-code-review` (reviewer checklist applied by hand: plan alignment, quality, architecture, testing, production readiness), `qt-qml-review` (phase 1 linter not run: needs the skill's python script, QML read by hand; phase 2's six agent missions applied as a reading checklist: bindings, layout, loading, delegates, states, performance), `ponytail-audit` (whole-tree scans for the bug class, lean check).
+**Ask (Taher):** deep full sweep of PR #188, then of PR #183 for further bugs. Chat turn split: A = #188, B = #183/R3/R4, C = fixes + tests, D = docs + push.
+
+## Steps
+- [x] 1. Read memory, three review skills, CHECKPOINT of #188, PR #188 and #183 bodies. Clone, branch off #188 head.
+- [x] 2. (A) #188: diff read; `RestockDialog._confirm`, `BottomSheet` busy rules, `qmlImportScan`, guard + `restockDialogConfirm` tests read; guard proven red when the import is removed; independent scans (helper .js -> .js, QML type per directory, singleton in qmldir): tree clean; CI of #188 read: all 4 jobs green.
+- [x] 3. (B) #183: `InventoryStore.restock/_applyRestock/onRestock*`, `RestockFlow`, `RestockPlan` (R3), `Gateway.recordOperation/_finishOperation/_addOperationWaiter`, `DataModel` route and sale guard, `OutboxStore.hasQueuedOperationFor`, picker filter, import overwrite path, `FailureCause.forRestock`, `SendPolicy`: no data-loss bug; findings F-1, F-2, F-3 and notes O-1..O-3 in the test plan.
+- [x] 4. (C) F-1: `RestockFlow.qtyFromField` + dialog; Node QF-1..15, CF-18..20; 7 mutants killed.
+- [x] 5. (C) F-2: `Gateway._callSafely` at three call sites; Node GI-1..11; 6 mutants killed.
+- [x] 6. (C) F-3: `qmlTreeResolution.guard.test.js` (SC-1..6, TR-0..3); 4 mutants killed. QML twins (5 cases) written, CI only.
+- [x] 7. Node suites: `functions/` 1257/1257, `.github/scripts` 906/906.
+- [x] 8. (D) Docs: test plan `2026-11-09-pr188-pr183-sweep-test-plan.md` (+ README row), Skill 157 + SKILLS-INDEX, AGENTS, README, KNOWN-ISSUES (D-C now fixed).
+- [ ] 9. Commit, push, open stacked PR (base = #188's branch), read CI. See "State" below for the last confirmed step.
+- [ ] 10. Taher: veto D-C2 / D-G, merge this PR into #188's branch, then #188; device test H2 (typed quantity).
+
+## Decisions for Taher
+D-C2 (read the typed quantity at the tap; refuse, do not clamp) and D-G (Gateway swallows and logs caller exceptions): reasons and alternatives in the test plan. Open notes O-1 (dead `restockConfirmed` signal), O-2 (import summary over-counts a product refused by the restock hold): roadmap, no code.
+
+## Resume
+Everything pushed is on the remote branch; read `git log` and this file. CI is the QML oracle (5 new QML twin cases were never run). The previous checkpoint (PR #188's) follows unchanged below.
+
+---
+
 # CHECKPOINT — 2026-11-09 Restock Confirm button does nothing (PR #183 device test) — resume here
 
 **Branch:** `fix/2026-11-09-restock-confirm-noop`, cut from `main` @ `415b11c` (PR #183 merged, R4 restock).

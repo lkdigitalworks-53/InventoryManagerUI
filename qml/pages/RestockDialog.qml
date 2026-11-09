@@ -102,7 +102,11 @@ BottomSheet {
         var settled = false
         try {
             var pid = productId
-            var qty = qtyField.value
+            // Review D-C: the typed text, not the last committed value (see RestockFlow.qtyFromField).
+            var typed = RestockFlow.qtyFromField(qtyField)
+            if (!typed.ok) { Toast.show(typed.message); return }
+            var qty = typed.qty
+            if (qtyField.value !== qty) qtyField.value = qty
             var supplierId = partyCombo.currentIndex > 0
                     ? dlg._supplierIds[partyCombo.currentIndex]
                     : ""
