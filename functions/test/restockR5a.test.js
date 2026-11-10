@@ -297,7 +297,7 @@ function confirmRig(over) {
     const ctx = {
         busy: false, productId: "p1",
         dlg: { _supplierIds: ["", "SUP-1", "SUP-2"], _newSupplierName: "", close() {} },
-        qtyField: { value: 10 }, unitCostField: { text: "12.5" }, reasonField: { text: "w" },
+        qtyField: { value: 10 }, unitCostField: { text: "12.5" }, reasonField: { text: "w" }, addPartyField: { text: "" },
         partyCombo: { currentIndex: 0 },
         AuthStore: { canManageInventory: true }, Toast: { show() {} }, RestockFlow: RF,
         InventoryStore: { restock() { calls.push(Array.from(arguments)); } },
@@ -405,4 +405,84 @@ test("M-1 monkey: 600 random dialog states never throw; whatever is built is pla
         } else { assert.ok(known.has(plan.reason), plan.reason); refused++; }
     }
     assert.ok(planned > 50 && refused > 50, planned + "/" + refused);
+});
+
+// ---------------------------------------------------------------------------- PR #191 review sweep
+
+test("C-1 costFromText reads only a plain decimal: hex, binary, octal, exponent and separators are refused, never booked as another price", () => {
+    for (const bad of ["0x10", "0X1F", "0b11", "0o7", "1e3", "1E3", "1e-2", "5e", "1_000", "1,5", "1 5", "+-1", "--1", ".", "+", "-", "1.2.3", "٣", "Infinity", "NaN", "12abc"])
+        assert.equal(RF.costFromText(bad), -1, JSON.stringify(bad));
+    for (const [text, n] of [["0", 0], ["0.0", 0], ["7", 7], [" 7.25 ", 7.25], ["5.", 5], [".5", 0.5], ["+7", 7], ["-3", -3], ["1000000000", 1e9], ["0012", 12]])
+        assert.equal(RF.costFromText(text), n, JSON.stringify(text));
+    assert.equal(RF.costFromText("9".repeat(400)), -1, "a number that overflows the double range is junk, not Infinity");
+    assert.ok(Number.isNaN(RF.costFromText("")) && Number.isNaN(RF.costFromText("   ")), "blank is still 'not given'");
+});
+
+test("C-2 monkey: costFromText never throws; the answer is NaN, -1 or a finite number that the strict pattern accepts", () => {
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const alphabet = "0123456789.+-eExXbo_, \t\n٣Infity";
+    for (let i = 0; i < 2000; i++) {
+        let t = ""; const len = Math.floor(rnd() * 12);
+        for (let k = 0; k < len; k++) t += alphabet[Math.floor(rnd() * alphabet.length)];
+        const r = RF.costFromText(t);
+        if (Number.isNaN(r)) { assert.equal(t.trim(), "", JSON.stringify(t)); continue; }
+        if (r === -1) continue;
+        assert.ok(Number.isFinite(r) && /^[+-]?(\d+\.?\d*|\.\d+)$/.test(t.trim()), JSON.stringify(t));
+    }
+});
+
+test("S-9 a name that IS a known supplier matches it whatever its length (legacy names); the limit guards only NEW names", () => {
+    const long = "L".repeat(150);
+    const list = [{ supplierId: "SUP-9", name: long }];
+    assert.deepEqual(sup(long, list), { ok: true, supplier: { id: "SUP-9" } });
+    assert.deepEqual(sup({ newName: long.toLowerCase() }, list), { ok: true, supplier: { id: "SUP-9" } });
+    assert.deepEqual(sup("M".repeat(150), list), { ok: false, reason: "supplier-too-long" }, "an unknown long name is still refused");
+    assert.deepEqual(plain(RF.newPartyChoice(long, list)), { kind: "existing", id: "SUP-9", name: long });
+});
+
+test("U-1 unusedPartyText: text left in the new-supplier field is reported, blank is not", () => {
+    assert.equal(RF.unusedPartyText(""), "");
+    assert.equal(RF.unusedPartyText("  \t "), "");
+    for (const v of [undefined, null, 5, {}]) assert.equal(RF.unusedPartyText(v), "", String(v));
+    assert.match(RF.unusedPartyText("Newco"), /Tap Use/);
+    assert.match(RF.unusedPartyText(" x "), /clear the field/);
+});
+
+test("U-2 Confirm with a name typed but not 'Use'd: the person is told, nothing is sent, busy is never set", () => {
+    const toasts = [];
+    const r = confirmRig({ addPartyField: { text: "Half Typed" }, Toast: { show(m) { toasts.push(m); } } });
+    r.tap();
+    assert.equal(r.calls.length, 0);
+    assert.equal(r.ctx.busy, false);
+    assert.deepEqual(toasts, [RF.unusedPartyText("Half Typed")]);
+});
+
+test("U-3 Confirm with the new-supplier field empty or blank goes through as before", () => {
+    for (const text of ["", "   "]) {
+        const r = confirmRig({ addPartyField: { text } });
+        r.tap();
+        assert.equal(r.calls.length, 1, JSON.stringify(text));
+    }
+});
+
+test("U-4 after 'Use' the field is cleared, so the Confirm that follows is not refused", () => {
+    const use = useRig({ addPartyField: { text: "Newco" } });
+    use.tap();
+    assert.equal(use.ctx.addPartyField.text, "");
+    const r = confirmRig({ addPartyField: use.ctx.addPartyField, dlg: { _supplierIds: [""], _newSupplierName: use.ctx.dlg._newSupplierName, close() {} } });
+    r.tap();
+    assert.deepEqual(plain(r.calls[0][2]), { newName: "Newco" });
+});
+
+test("G-7 the unused-name check runs before busy is set; the stock label shows the typed quantity; openFor refreshes the SpinBox text", () => {
+    const body = extractFunction(DIALOG_FILE, "_confirm");
+    assert.ok(body.indexOf("unusedPartyText(addPartyField.text)") > 0);
+    assert.ok(body.indexOf("unusedPartyText") < body.indexOf("busy = true"), "must run before busy = true");
+    assert.ok(body.indexOf("unusedPartyText") < body.indexOf("qtyFromField"), "refused before anything is read");
+    const label = DIALOG.slice(DIALOG.indexOf("After this, stock will be") - 300, DIALOG.indexOf("After this, stock will be") + 200);
+    assert.match(label, /RestockFlow\.qtyFromField\(qtyField\)/);
+    assert.equal((DIALOG.match(/currentStock \+ qtyField\.value/g) || []).length, 0, "the label no longer reads the committed value");
+    const open = extractFunction(DIALOG_FILE, "openFor");
+    assert.ok(open.indexOf("qtyField.value = qtyField.from") >= 0 && open.indexOf("qtyField.value = qtyField.from") < open.indexOf("qtyField.value = 10"));
 });

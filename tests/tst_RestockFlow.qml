@@ -221,4 +221,34 @@ TestCase {
         verify(RF.refusalText("reason-too-long").indexOf("500") >= 0)
         verify(RF.refusalText("supplier-too-long").indexOf("100") >= 0)
     }
+
+    // ---- PR #191 review sweep ----
+
+    function test_costFromText_reads_only_a_plain_decimal() {
+        var bad = ["0x10", "0b11", "0o7", "1e3", "1e-2", "5e", "1_000", "1 5", "+-1", ".", "+", "-", "1.2.3"]
+        for (var i = 0; i < bad.length; ++i) compare(RF.costFromText(bad[i]), -1, JSON.stringify(bad[i]))
+        compare(RF.costFromText("5."), 5)
+        compare(RF.costFromText(".5"), 0.5)
+        compare(RF.costFromText("+7"), 7)
+        compare(RF.costFromText("0012"), 12)
+        compare(RF.costFromText("9".repeat(400)), -1)
+        verify(isNaN(RF.costFromText("  ")))
+    }
+
+    function test_known_supplier_matches_whatever_its_length() {
+        var long = "L".repeat(150)
+        var list = [{ supplierId: "SUP-9", name: long }]
+        compare(RF.supplierFor(long, list).supplier.id, "SUP-9")
+        compare(RF.supplierFor({ newName: long.toLowerCase() }, list).supplier.id, "SUP-9")
+        compare(RF.supplierFor("M".repeat(150), list).reason, "supplier-too-long")
+        compare(RF.newPartyChoice(long, list).kind, "existing")
+    }
+
+    function test_unusedPartyText() {
+        compare(RF.unusedPartyText(""), "")
+        compare(RF.unusedPartyText("   "), "")
+        compare(RF.unusedPartyText(undefined), "")
+        compare(RF.unusedPartyText(5), "")
+        verify(RF.unusedPartyText("Newco").indexOf("Tap Use") >= 0)
+    }
 }

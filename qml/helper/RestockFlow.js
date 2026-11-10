@@ -27,11 +27,25 @@ var MAX_UNIT_COST = 1000000000
 //   a number    -> that number, negative included: the plan refuses it as bad-cost
 //   anything else (letters, "1,5", "Infinity") -> -1 : the plan refuses it as bad-cost. Never silently 0.
 // A typed 0 is still 0 (a free sample is a real case).
+// PR #191 sweep: `Number()` also reads "0x10" (16), "0b11" (3), "0o7" (7) and "1e3" (1000), so a mistyped cost was
+// booked as a different price with no refusal (desktop keyboards are not limited by ImhFormattedNumbersOnly). Only a
+// plain decimal is a cost: optional sign, digits, optional fraction ("5." and ".5" are fine).
+var _PLAIN_DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)$/
 function costFromText(text) {
     var t = (typeof text === "string") ? text.trim() : ""
     if (t === "") return NaN
+    if (!_PLAIN_DECIMAL.test(t)) return -1
     var n = Number(t)
-    return (isNaN(n) || !isFinite(n)) ? -1 : n
+    return isFinite(n) ? n : -1
+}
+
+// PR #191 sweep. The "Use" button of the new-supplier row holds the typed name; text still sitting in that field at
+// the Confirm tap was never "Use"d and was silently dropped (the restock booked with no supplier). Confirm refuses
+// instead of guessing: auto-using a half-typed name could create a supplier nobody meant.
+// -> "" (nothing pending) | the message to show
+function unusedPartyText(text) {
+    return (typeof text === "string" && text.trim().length > 0)
+        ? "You typed a new supplier name. Tap Use to add it, or clear the field" : ""
 }
 
 // Review D-C (PR #188 sweep). The Add-quantity field is an editable SpinBox: typed text becomes `value` only on
@@ -94,9 +108,12 @@ function _knownByName(lower, list) {
     return ""
 }
 function _byName(raw, list) {
-    if (raw.length > MAX_SUPPLIER_NAME) return { ok: false, reason: "supplier-too-long" }
+    // PR #191 sweep: a name that IS a known supplier is that supplier whatever its length (legacy or imported names
+    // can exceed the limit, and refusing them would force a duplicate); the limit only guards a NEW name.
     var known = _knownByName(raw.toLowerCase(), list)
-    return known !== "" ? { ok: true, supplier: { id: known } } : { ok: true, supplier: { newName: raw } }
+    if (known !== "") return { ok: true, supplier: { id: known } }
+    if (raw.length > MAX_SUPPLIER_NAME) return { ok: false, reason: "supplier-too-long" }
+    return { ok: true, supplier: { newName: raw } }
 }
 function supplierFor(party, suppliers) {
     if (party === undefined || party === null || party === "") return { ok: true, supplier: null }

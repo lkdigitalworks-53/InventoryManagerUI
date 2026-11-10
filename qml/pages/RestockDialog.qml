@@ -68,6 +68,10 @@ BottomSheet {
         productName = p.name
         currentStock = p.stock
         minStock = p.minStock
+        // PR #191 sweep: the SpinBox shows typed text until Enter or focus loss; assigning the SAME value (10) does not
+        // refresh it, so text typed and abandoned last time stayed in the field and Confirm (which reads the text)
+        // booked it. Moving the value first forces the text to be rewritten.
+        qtyField.value = qtyField.from
         qtyField.value = 10
         // Default the cost field to the product's recorded cost — the user
         // can override per-batch (price renegotiated, FX shift, etc.).
@@ -111,6 +115,9 @@ BottomSheet {
         var settled = false
         try {
             var pid = productId
+            // PR #191 sweep: a name typed in the new-supplier row but never sent with "Use" is refused, not dropped.
+            var unused = RestockFlow.unusedPartyText(addPartyField.text)
+            if (unused !== "") { Toast.show(unused); return }
             // Review D-C: the typed text, not the last committed value (see RestockFlow.qtyFromField).
             var typed = RestockFlow.qtyFromField(qtyField)
             if (!typed.ok) { Toast.show(typed.message); return }
@@ -223,8 +230,11 @@ BottomSheet {
             }
         }
 
+        // PR #191 sweep: shows what Confirm will book (the typed text), not the last committed `value`, and says so when
+        // the text cannot be booked.
         Text {
-            text: "After this, stock will be " + (dlg.currentStock + qtyField.value) + " units."
+            readonly property var _typed: RestockFlow.qtyFromField(qtyField)
+            text: _typed.ok ? "After this, stock will be " + (dlg.currentStock + _typed.qty) + " units." : _typed.message
             color: Constants.textSecondary
             font.pixelSize: sp(Constants.fsSmall)
         }

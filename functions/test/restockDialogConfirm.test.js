@@ -35,6 +35,7 @@ function rig(over) {
         qtyField: { value: 10 },
         unitCostField: { text: "12.5" },
         reasonField: { text: "  weekly  " },
+        addPartyField: { text: "" },
         partyCombo: { currentIndex: 0 },
         AuthStore: { canManageInventory: true },
         Toast: { show(m) { log.toasts.push(m); } },
@@ -270,8 +271,8 @@ test("CF-17 the sandbox's collaborators are exactly the free names _confirm uses
     const body = SRC.replace(/\/\/[^\n]*/g, "").replace(/"(?:\\.|[^"\\\n])*"/g, '""');
     const used = new Set();
     for (const m of body.matchAll(/(?<![\w.$])([A-Za-z_$][\w$]*)(?=\s*[.(=\s,)\]]|$)/g)) used.add(m[1]);
-    const KEYWORDS = new Set(["function", "if", "return", "var", "try", "catch", "true", "false", "e", "ok", "queued", "refusal", "settled", "pid", "qty", "typed", "party", "unitCost"]);
+    const KEYWORDS = new Set(["function", "if", "return", "var", "try", "catch", "true", "false", "e", "ok", "queued", "refusal", "settled", "pid", "qty", "typed", "party", "unitCost", "unused"]);
     const free = [...used].filter((n) => !KEYWORDS.has(n)).sort();
-    const known = ["AuthStore", "InventoryStore", "RestockFlow", "Toast", "busy", "console", "dlg", "partyCombo", "productId", "qtyField", "reasonField", "restockConfirmed", "unitCostField", "_confirm"].sort();
+    const known = ["AuthStore", "InventoryStore", "RestockFlow", "Toast", "addPartyField", "busy", "console", "dlg", "partyCombo", "productId", "qtyField", "reasonField", "restockConfirmed", "unitCostField", "_confirm"].sort();
     assert.deepEqual(free, known);
 });

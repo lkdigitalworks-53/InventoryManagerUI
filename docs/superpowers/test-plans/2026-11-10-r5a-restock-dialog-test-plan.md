@@ -37,7 +37,19 @@ M-1: 600 seeded random dialog states (typed names incl. blank, `SUP-`, `{{sup}}`
 M1 object party ignored; M2 blank `newName` accepted; M3 name limit off by one; M4 case-sensitive match; M5 string `SUP-` no longer an id; M6 typed name ignored; M7 index 0 read as a row; M8 index without a string behind it; M9 empty text not "none"; M10 existing treated as new; M11 reason measured untrimmed; M12 reason off by one; M13 cost ceiling off by one; M14 `Infinity` becomes "too large"; M15 reason limit drifts from the server; M16 reason text missing; M17 cost text duplicates another; M18 "Use" button dead; M19 a pick does not clear the name; M20 `openFor` keeps the old name; M21 reason field unlimited; M22 name field unlimited; M23 Confirm sends no party; M24 combo not reset on a new name; M25 an existing match keeps a stale pending name; M26 `AuthTextField` drops `maxLength`. First run: 3 survived (M7 and M8 were an equivalent guard, which was removed as redundant code; M17 needed a wording assertion); all killed after that.
 
 ## 7. Counts
-Functions 1290 -> 1327 (+37). Scripts 905 (unchanged). QML: `tst_RestockFlow` 14 -> 19 test functions (CI to confirm the total). Coverage statement: the changed pure helper (`RestockFlow.js` new code: `supplierFor`, `partyFor`, `newPartyChoice`, `makeInput` limits, `refusalText`) is covered line and branch by the cases above (each new branch has a case and a killing mutant). The dialog QML (`_useTypedParty`, `_confirm`, bindings) is covered by its real function bodies in Node plus the on-device list below; the bindings (`displayText`, `visible`, `maxLength`) are pinned by source guards only.
+Functions 1290 -> 1327 (+37), 1335 after the PR #191 sweep (+8). Scripts 905 (unchanged). QML: `tst_RestockFlow` 14 -> 19 test functions in the first commit, 22 after the PR #191 sweep (CI to confirm the total). Coverage statement: the changed pure helper (`RestockFlow.js` new code: `supplierFor`, `partyFor`, `newPartyChoice`, `makeInput` limits, `refusalText`) is covered line and branch by the cases above (each new branch has a case and a killing mutant). The dialog QML (`_useTypedParty`, `_confirm`, bindings) is covered by its real function bodies in Node plus the on-device list below; the bindings (`displayText`, `visible`, `maxLength`) are pinned by source guards only.
+
+## 8. PR #191 review sweep (added on the same branch)
+Findings fixed here, each with its tests (Node RUN: functions 1327 -> 1335, +8 in `restockR5a.test.js`; QML twin `tst_RestockFlow` 19 -> 22 test functions, CI only):
+| ID | Finding (concrete case) | Fix | Tests |
+|---|---|---|---|
+| F-A | `costFromText` used `Number()`: "0x10" booked 16, "0b11" 3, "0o7" 7, "1e3" 1000, with no refusal | only a plain decimal is a cost; the rest is -1 (refused as bad-cost) | C-1, C-2 (2000-string monkey), D2-1 adjusted ("1e2" moved to the junk list), QML twin |
+| F-B | A known supplier whose name is over 100 characters (legacy or imported) was refused "supplier-too-long" by the string path, forcing a duplicate | match a known name first, enforce the limit only on a NEW name | S-9, QML twin |
+| F-C | A name typed in the new-supplier row but never sent with "Use" was silently dropped at Confirm (restock booked with no supplier) | Confirm refuses with a message, before busy and before anything is read | U-1..U-4, G-7, CF-17 and the two Confirm rigs adjusted |
+| F-D | The "After this, stock will be" line read the committed `value` while Confirm books the typed text (type 25, no Enter: line says +10, Confirm books +25) | the line reads `RestockFlow.qtyFromField(qtyField)`, and shows the refusal text when the text cannot be booked | G-7 (source guard); binding itself on device (step 22) |
+| F-E | Reopening the sheet after typing a quantity and cancelling left the typed text in the SpinBox (assigning the same `value` 10 does not rewrite it), and Confirm booked it | `openFor` moves the value to `from` first, then to 10 | G-7; on device (step 23) |
+Hand mutants for the sweep code: 6 of 6 killed (regex loosened, length check before the known match, unused text never reported, Confirm without the check, label reading `value`, no value cycle).
+Not fixed, on purpose: the "{{sup}}" refusal text says "the text" without naming the field (practically unreachable, design T7); a pasted text longer than a `maxLength` is cut silently by Qt; two offline devices typing one new name (O1). The QML linter's repo-wide findings (`var`, `id: dlg`, attribute order) are the codebase convention and unchanged.
 
 # On-device test plan (Taher, needs a build of this branch)
 
@@ -65,6 +77,13 @@ Prerequisites. P1: signed in as owner or admin of a clean test workspace. P2: at
 15. Type a new name, **Use**, then pick "Bolt & Co" in the combo. EXPECT: "New:" label and hint disappear; Confirm books Bolt & Co and creates no supplier.
 16. **Use** "Newco2", close the sheet with Cancel, open Restock again. EXPECT: the combo is back to the placeholder, no hint.
 17. Open Restock, tap "+", type text, tap the "x" (close row) without **Use**. EXPECT: the typed text is discarded and no supplier is chosen.
+
+### PR #191 sweep steps
+22. Open Restock on A. Type 25 in Add quantity, do NOT press Enter, look at the line under it, then tap Confirm. EXPECT: the line reads "After this, stock will be <stock + 25> units", and Confirm books +25 (the same number).
+23. Type 25 in Add quantity (no Enter), Cancel, open Restock again on the same product. EXPECT: the field shows 10 again.
+24. Type "abc" in Add quantity. EXPECT: the line under it reads "Enter a whole quantity from 1 to 9999"; Confirm shows the same text and sends nothing.
+25. Tap "+", type "Half Typed" in the new-supplier row and tap Confirm WITHOUT "Use". EXPECT: toast "You typed a new supplier name. Tap Use to add it, or clear the field"; nothing is sent; the sheet stays open and usable. Tap Use, then Confirm: books as in step 2.
+26. Unit cost "0x10" or "1e3", Confirm. EXPECT: "Unit cost is not a valid amount" and nothing sent. "12.5", "5." and ".5" are accepted.
 
 ### Multiple scenarios
 18. Airplane mode. Restock A with **Use** "Offline Co". Confirm. EXPECT: "Restock saved. Stock updates when it syncs", A hidden from the New Order picker. Turn the network on. EXPECT: after sync "Offline Co" exists once, A's stock is up, A selectable again.

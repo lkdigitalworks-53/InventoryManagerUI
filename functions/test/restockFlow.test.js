@@ -259,9 +259,8 @@ test("D2-1 costFromText: blank / not-a-string = NaN (not given); a number is its
     assert.equal(RF.costFromText("0"), 0, "a typed zero is a free sample and stays 0");
     assert.equal(RF.costFromText("0.0"), 0);
     assert.equal(RF.costFromText(" 7.25 "), 7.25);
-    assert.equal(RF.costFromText("1e2"), 100);
     assert.equal(RF.costFromText("-3"), -3, "a negative is passed on so the plan can refuse it");
-    for (const junk of ["abc", "12abc", "1,5", "Infinity", "-Infinity", "1e999", "NaN", "--1", "1.2.3"]) assert.equal(RF.costFromText(junk), -1, junk);
+    for (const junk of ["abc", "12abc", "1,5", "Infinity", "-Infinity", "1e999", "NaN", "--1", "1.2.3", "1e2", "0x10", "0b11", "0o7", "1_0", "+-1", "5e", "."]) assert.equal(RF.costFromText(junk), -1, junk);
 });
 
 test("D2-2 end to end: what costFromText yields is booked, defaulted or refused by the REAL plan", () => {
