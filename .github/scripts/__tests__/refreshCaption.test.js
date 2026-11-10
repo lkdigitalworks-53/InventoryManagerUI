@@ -85,13 +85,13 @@ function battery(m) {
   for (const j of [null, undefined, 5, 'x', {}, { action: 'zzz' }, { action: 5 }]) eq('junk decision', m.requestMessage(j), '');
 
   // unfinishedMessage
-  eq('gave up', m.unfinishedMessage('gave-up'), "Couldn't refresh. Tap the refresh row to try again.");
-  eq('partial', m.unfinishedMessage('partial'), 'Some lists could not be updated. Tap the refresh row to try again.');
+  eq('gave up', m.unfinishedMessage('gave-up'), "Couldn't refresh. Tap the refresh button to try again.");
+  eq('partial', m.unfinishedMessage('partial'), 'Some lists could not be updated. Tap the refresh button to try again.');
   for (const j of [...JUNK, 'zzz', 'committed']) eq('unfinished junk', m.unfinishedMessage(j), '');
 
   // review of PR #186: stuck writes (second argument) change what a wait on the outbox, and a gave-up wish, say
   const STUCK_WAIT = 'Some changes are not syncing, so the refresh waits. Open the sync message at the top to fix or discard them.';
-  const STUCK_GAVE_UP = "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh row.";
+  const STUCK_GAVE_UP = "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh button.";
   eq('stuck + outbox wait', m.requestMessage({ action: 'wait', reason: 'outbox' }, 1), STUCK_WAIT);
   eq('stuck many + outbox wait', m.requestMessage({ action: 'wait', reason: 'outbox' }, 12), STUCK_WAIT);
   for (const z of [0, -1, undefined, null, NaN, Infinity, '2', true, {}])
@@ -102,8 +102,8 @@ function battery(m) {
   eq('stuck does not change a drop', m.requestMessage({ action: 'drop', reason: 'too-soon' }, 3), 'Just refreshed. Try again in a few seconds.');
   eq('stuck does not make a run talk', m.requestMessage({ action: 'run', reason: '' }, 3), '');
   eq('stuck + gave-up', m.unfinishedMessage('gave-up', 2), STUCK_GAVE_UP);
-  for (const z of [0, -1, undefined, null, NaN, '2']) eq('no usable stuck count keeps gave-up ' + String(z), m.unfinishedMessage('gave-up', z), "Couldn't refresh. Tap the refresh row to try again.");
-  eq('stuck does not change partial', m.unfinishedMessage('partial', 5), 'Some lists could not be updated. Tap the refresh row to try again.');
+  for (const z of [0, -1, undefined, null, NaN, '2']) eq('no usable stuck count keeps gave-up ' + String(z), m.unfinishedMessage('gave-up', z), "Couldn't refresh. Tap the refresh button to try again.");
+  eq('stuck does not change partial', m.unfinishedMessage('partial', 5), 'Some lists could not be updated. Tap the refresh button to try again.');
   eq('stuck + junk why stays silent', m.unfinishedMessage('zzz', 5), '');
 
   // Contract with RefreshPolicy: every answer the real policy can give a manual refresh has the right message kind.

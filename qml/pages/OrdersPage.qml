@@ -62,6 +62,12 @@ Item {
         subtitle: "Manage and track customer orders"
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 variant: "glass"
                 iconName: "import"
@@ -94,19 +100,11 @@ Item {
             width: root.width
             spacing: dp(Constants.space3)
 
-            RefreshRow {
-                Layout.fillWidth: true
-                Layout.topMargin: dp(Constants.space2)
-                lastSyncMs: app.refreshLastSyncMs
-                refreshState: app.refreshState
-                online: app.isOnline
-                onRefreshRequested: app.requestManualRefresh()
-            }
-
             SearchField {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
+                Layout.topMargin: dp(Constants.space3)
                 placeholder: "Search orders, customers…"
                 onTextChanged: root._searchText = text
             }

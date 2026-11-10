@@ -56,3 +56,12 @@ A pull gesture can be added later on top of the same `DataModel.manualRefresh()`
 - The row says "Updated" for the sign-in sync start even if that sync failed (L4a limit).
 - English-only strings in the helper, like `FailureCause.js`; the row's static labels are not wrapped in `qsTr` either (house helpers do the same).
 - Nothing built or run on a device; what the row looks like and how it feels on a phone is device-only.
+
+## Addendum 2026-11-10 (PR #186 device test): the row became a header button
+Taher: the always-visible "Updated N minutes ago" row is too loud and costs a row of space. He first suggested pull-to-refresh, then judged it too much effort and asked for a refresh button "in some subtle place" whose text shows for a while and disappears.
+- A-D1. `RefreshRow` is removed. `qml/components/RefreshAction.qml` is a 38 dp ghost `IconActionButton` (opacity 0.7), the FIRST entry of each of the five pages' `GlassHeader.actions` (Inventory, Orders, Staff, Dashboard, Sales). No row in the content column: the page layout is back to what it was before L4b.
+- A-D2. The caption ("Refreshing…", then "Updated just now"; "Offline · Updated 5 min ago" offline; "Waiting to refresh…" while it waits) is a non-modal `Popup` anchored under the button. It exists only after a tap on THIS button (`_armed`); an automatic refresh (resume, reconnect) never shows it. It stays while a refresh is busy and hides 3.5 s after it settles. No timer ticks while nothing is shown.
+- A-D3. The button is tappable unless busy, so an offline or too-soon tap still gets its toast from `app.requestManualRefresh()`. (The old row was disabled offline and said nothing.)
+- A-D4. Wording in `RefreshCaption.js` says "refresh button" instead of "refresh row".
+- Rejected: pull-to-refresh (needs overscroll on a ScrollView pinned to `StopAtBounds`, Sales has a swipe handler, cannot be tested without a device); a toast for the caption (far from the button, and it queues); a 30 s ticking timer (the caption lives for seconds).
+- Header crowding: Orders now has four icons. If a narrow phone elides the subtitle too much, the button can move into a menu (device check).

@@ -58,7 +58,8 @@ function check(f) {
     if (!/_finishRefresh\("failed"\)/.test(page) || !/_finishRefresh\("discarded"\)/.test(page) || !/_finishRefresh\("committed"\)/.test(page)) v.push(k + ': missing outcome');
     if (page.indexOf('_commitRefresh(') < page.indexOf('allowed')) v.push(k + ': commits before the guard');
     // the live list is assigned only in commit
-    if (!new RegExp('(^|\\s)' + list + ' = ').test(commit)) v.push(k + ': commit does not assign the list');
+    // OrdersStore writes `orders` only through _setOrders (the CAS-base guard, PR #186 order fix): same assignment.
+    if (!new RegExp('(^|\\s)' + list + ' = ').test(commit) && !(list === 'orders' && /\b_setOrders\(all\)/.test(commit))) v.push(k + ': commit does not assign the list');
     if (!/hasMore = false/.test(commit)) v.push(k + ': commit leaves hasMore');
     // start: refuses while busy; bumps seq; stores done
     if (!/refreshing \|\| loadingMore \|\| _resetPending\) return false/.test(start)) v.push(k + ': start does not refuse while busy');

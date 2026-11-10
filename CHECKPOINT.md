@@ -1,88 +1,39 @@
-# CHECKPOINT — 2026-11-04 L4b refresh row ("last updated" + tap to refresh) — resume here
+# CHECKPOINT — 2026-11-10 PR #186 device-test fixes — resume here
 
-**Branch:** `feat/2026-11-04-l4b-refresh-row`, cut from `main` @ `17db878` (PR #182 L4a merged and device tested).
-**Commit identity:** every commit message names `dextran52@gmail.com` (Taher's standing rule); git author set to the same.
-**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle); always a branch; push without asking; one focused slice per chat turn; honest trade-offs; tests and a test plan for every change; caveman-full replies.
-**Skills used:** `brainstorming` (decisions B-D1..B-D9, defaults built, all vetoable in the PR), `qt-qml`, `qt-ui-design` (+ ux pass), `ponytail` (smallest design that is robust).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-04-l4a-merged-prev-CHECKPOINT.md` (L4a + review sweep + edit-form hold; its NEXT item 3 is this slice).
+**Branch:** `fix/2026-11-10-pr186-order-cas-base`, cut from PR #186's head (`feat/2026-11-04-l4b-refresh-row` @ `ac1473e`). Not stacked on `main`: #186 is not merged.
+**Commit identity:** `taher.lkdw@gmail.com` in every commit message (Taher's instruction for this session). PAT via a GIT_ASKPASS script outside the repo, never in `.git/config`; Taher rotates it.
+**Rules in force:** no build/run, no Qt in the sandbox (CI is the QML oracle), branch + push without asking, tests + test plan, honest trade-offs, caveman-full in chat only, short scope per turn.
+**Skills used:** `systematic-debugging`, `qt-qml`, `qt-ui-design`, `ponytail`.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-10-pr186-sweeps-prev-CHECKPOINT.md`.
 
-## Why this slice
-L4a NEXT item 3: "L4b: pull-to-refresh on the lists + last updated caption, calls `DataModel.requestRefresh("manual")`. Needs a qt-ui-design pass first."
+## Reports (Taher, device test of PR #186)
+1. The "Updated N minutes ago" row is too prominent and takes space.
+2. Order edited in the Firestore console, app refreshed, then every edit / complete / delete is refused ("updated elsewhere — your change didn't save"); a refused delete still wrote an "Order deleted" Activity entry. Products do not show it.
+   Reproduction (Taher): changed `quantity` of a line inside `products` in the console, refreshed, set status completed, saved: rejected, all later edits rejected too.
 
-## Steps
-- [x] 1. Read memory, cloned fresh, read L4a design, coordinator, pages, GlassHeader, Toast, Icon, AppScrollView.
-- [x] 2. Branch created, previous checkpoint archived.
-- [x] 3. Design `specs/2026-11-04-l4b-refresh-row-design.md` (facts F1-F9, decisions B-D1..B-D10). B-D1 departs from the plan: a tap row, not a pull gesture (StopAtBounds, untestable gesture, Sales swipe handler).
-- [x] 4. `qml/helper/RefreshCaption.js` (pure) + `refreshCaption.test.js` (35 tests, 33 mutants killed).
-- [x] 5. `DataModel`: `lastSyncMs`, `refreshState`, `_request`/`manualRefresh()`, `_abandonWant`, signal `manualRefreshUnfinished`, hung-read watchdog (poll timer on while a run is out), `_lostCancelled`.
-- [x] 6. `qml/components/RefreshRow.qml`; first child on Inventory, Orders, Staff, Dashboard, Sales (not Activity); `Main.qml` props, `requestManualRefresh()`, toasts.
-- [x] 7. Tests: coordinator scenarios + 17 mutants in `refreshBehavior.test.js`, `refreshRowWiring.test.js` (28), one L4a rule repointed (`_request`), one L4a assertion changed on purpose (timer stays on while running), QML twins `tst_RefreshCaption.qml` (8) and `tst_DataModel_refreshRow.qml` (6), CI only.
-- [x] 8. Test plan, README, AGENTS, KNOWN-ISSUES (new entry + L4a hung-read entry updated), Skill 159 + index (renumbered 152 -> 156 -> 159 on rebases).
-- [x] 9. Sandbox: script suite 994/994, `functions` untouched.
-- [x] 10. Pushed, PR #186 opened.
+## Root cause (matches the reproduction)
+The server deep-compares `before` with the stored doc (`applyMutation`, `recordOperation`). The app sent a `before` REBUILT from the local copy by `_normalizeOrder`, which recomputes items/subtotal/discount/tax/total from the lines. A hand-changed quantity (totals untouched) makes the stored doc differ from its own rebuild, so every write 409s for ever. Delete logged its Activity entry at tap time, before the ack.
 
-## NEXT
-1. Read CI on the PR head (QML twins and the `DataModel`/page edits compile only in CI). Fix anything it shows.
-2. Taher: veto or accept B-D1..B-D10 (first: tap row instead of pull gesture; Dashboard included although its activity feed is not refreshed). Device steps in the test plan.
-3. L4c: add `ActivityLog`, categories, channels to the refresh; incremental refresh; sign-in sync on the shadow fetch; consider the one-helper refactor of the six store copies.
-4. Atomic-ops arc: R4 (`InventoryStore.restock` rewrite) is still next there.
+## Taher's reproduction (confirms the root cause)
+Console: changed `quantity` inside `products`. App: refreshed, opened the order, set status completed, saved -> rejected "updated elsewhere"; all later edits rejected. Matches F2/F3 of `specs/2026-11-10-order-cas-base-design.md`: the rebuilt `before` recomputes totals from the lines, the stored totals were untouched.
 
-## Not done / honest gaps
-- Nothing built or run on a device; the row's look, spacing and feel are device-only.
-- QML tests and the page edits ran in CI only (not yet read).
-- Pull gesture not built (B-D1).
+## Slice 1 (order fix) — DONE, pushed (commit `71f2a6a`)
+- [x] `OrdersStore`: `_serverBase`, `_beforeFor`, `_setOrders` + `onOrdersChanged`, ack-gated delete Activity (see design D-1..D-4).
+- [x] `orderCasBase.test.js` (25), `tst_ActivityLog_deleteEntries.qml` updated, old refresh tests adapted.
 
----
-
-# Review session of PR #186 (tsadmin@gmail.com) - resume here
-
-**Rules in force (this account):** clone fresh every session; always a branch; push without asking; no build or run until told; no Qt in the sandbox (CI is the QML oracle); `tsadmin@gmail.com` in every commit message; tests + test plan for every change; update skills/agents/readme as needed; short scope per chat turn; caveman-full replies; honest trade-offs.
-**Skills used:** `requesting-code-review` (no subagent tool here: reviewed inline), `qt-qml-review` (lint run, filtered to added lines; the six agent missions done inline), `ponytail-audit` (scoped to the PR and what it touches, not the whole repo).
-
-## Steps
-- [x] R1. Cloned, fetched the PR branch, rebased onto `main` @ `415b11c`. Conflicts: CHECKPOINT (kept the branch version) and four docs (AGENTS, SKILLS, SKILLS-INDEX, KNOWN-ISSUES: both sides kept). **L4b skill renumbered 152 -> 156** (main took 152-155; later 159). Force-pushed with lease (`0f4d123`).
-- [x] R2. Lint: 960 hits on the 10 QML files, 17 on added lines; 16 are repo convention (`var`, attribute order, test ids) and 1 is a false positive (`!==`). qmllint not available.
-- [x] R3. Finding 1 fixed: a waiting manual wish was replaced by any automatic wait (`_onEditHoldsChanged` makes a resume request when a form closes), so its toast was lost. `DataModel._request` keeps it. 5 scenarios + 4 mutants (red first, then green).
-- [x] R4. Finding 2 fixed: with a stuck write the gate waits forever and the toast said "Sending your changes first". `RefreshCaption.requestMessage/unfinishedMessage` take an optional `stuckCount`; `Main.qml` passes `app.syncStuckCount`. +17 checks, +6 mutants, 2 wiring mutants, QML twin +1.
-- [x] R5. Finding 3 fixed: `RefreshRow` text had `elide` but no `Layout.maximumWidth`, so it never elided. Cap added, wiring rule + mutant.
-- [x] R6. Docs: test plan (new steps 19-22), KNOWN-ISSUES (3 entries), Skill 159 rules 8-12, AGENTS line.
-- [x] R7. Sandbox: script suite 1012/1012. `functions` not run this session (untouched by the PR; main added `restockWire` tests there).
-- [ ] R8. Read CI on the PR head (the QML twins and page edits compile only in CI). Fix anything it shows.
+## Slice 2 (subtle refresh button) — DONE in code (Taher: pull-to-refresh is too much effort; a subtle button whose text shows for a while, then disappears)
+- [x] `RefreshRow.qml` -> `RefreshAction.qml` (ghost 38 dp icon, first header action on the five pages, caption Popup armed by its own tap, hides 3.5 s after the refresh settles). Pages restored from `main` then one block inserted each.
+- [x] `refreshRowWiring.test.js` replaced by `refreshActionWiring.test.js` (41 incl. 38 hand mutants). Helper wording "refresh button".
+- [x] Docs: design `specs/2026-11-10-order-cas-base-design.md`, addendum in the L4b design, test plan + index row, KNOWN-ISSUES (two entries), README, AGENTS, Skill 160 + `SKILLS-INDEX.md`.
+- Suites run here: scripts 1049/1049, functions 1290/1290. QML not run (CI).
 
 ## NEXT
-1. Read CI on PR #186. The QML twins (`tst_RefreshCaption.qml` 9 functions, `tst_DataModel_refreshRow.qml` 7) and `RefreshRow.qml`'s new `Layout.maximumWidth` have never run.
-2. DECIDED by Taher (recommended defaults kept): D-1 offline row stays disabled; D-2 a reset-superseded manual run stays silent (no L4a rule change); D-3 old commits keep `dextran52@gmail.com`, new ones carry `tsadmin@gmail.com`. No code change; revisit D-1 only if the device test shows people tapping the offline row.
-3. Device steps in the test plan, including 19-22.
-4. L4c as listed above.
+1. Read CI on the branch head (QML twins, `OrdersStore` edits, `RefreshAction` compile only in CI). Fix any red job first.
+2. Taher: device steps in the test plan (H1 is his exact reproduction; H5/N4/N5/N6/E4 for the button). Veto or accept D-1..D-4 and A-D1..A-D4.
+3. Open PR (base = PR #186's branch `feat/2026-11-04-l4b-refresh-row`, stacked) and merge into #186 once CI is green and he has tested.
+4. Follow-ups, own PRs: check every other store's stored shape against its rebuild (`before` is rebuilt in inventory, suppliers, staff, batches); header crowding on Orders (four icons) if a narrow phone elides the title.
 
 ## Not done / honest gaps
-- Nothing built or run on a device. Layout cap, spacing and feel are device-only.
-- Whole-repo `ponytail-audit` not run (scoped to this PR). `qmllint` and the real six-agent fan-out were not available.
-- `functions` suite not run; no QML test run.
-
----
-
-# Review session 2 of PR #186 (taher.lkdw@gmail.com) - resume here
-
-**Rules in force:** clone fresh; fixes go in the SAME PR branch (`feat/2026-11-04-l4b-refresh-row`), no stacked PR; push without asking; no build or run; no Qt in the sandbox (CI is the QML oracle); `taher.lkdw@gmail.com` in every commit message; tests + test plan for every change; caveman-full replies; honest trade-offs.
-**Skills used:** `requesting-code-review` (inline, no subagent tool), `qt-qml-review` (lint run, filtered to added lines: 19 hits, all repo convention), `ponytail-audit` (scoped to the PR and what it touches).
-
-## Steps
-- [x] S1. Cloned, branch was already on `main` @ `515ab19`: rebase was a no-op, nothing to push. CI on head `0208a6b` read: 4416/4416 green (QML 2907, Functions 1290, Rules 108, E2E 111). R8 of the earlier session is closed.
-- [x] S2. Read the skills, `RefreshCaption.js`, `RefreshRow.qml`, the whole `DataModel` refresh engine, `RefreshPolicy.js`, `Main.qml` diff, the five page edits, both QML twins and the coordinator tests.
-- [x] S3. Finding 1 fixed: `_wantRearmed` (one retry per discarded refresh) was cleared only in the wait branch of `_request`, so a request that ran at once never got its retry after any earlier retry cycle; a manual tap then ended in the "could not be updated" toast. One line in `DataModel._request`. Red first (2 failing), then green. +1 scenario, +1 mutant (`refreshBehavior.test.js`).
-- [x] S4. Vacuous test fixed: the L4a assertion "a new trigger starts fresh" was `equal(flag, false || flag)` (cannot fail). Now `equal(flag, false)`. Grepped all `refresh*.test.js` for the same shape: none left.
-- [x] S5. Docs: test plan step 23, KNOWN-ISSUES entry, Skill 159 rule 13 and its stale renumbering note, stale `156` in this file fixed to `159`.
-- [x] S6. Sandbox: script suite 1014/1014. `functions` suite shows 9 file-level failures that are identical on a clean tree (sandbox has no handler harness deps); untouched by this PR, CI is the oracle.
-- [x] S7. CI on `fd28cb6`: QML, Functions, Rules, E2E all green; PR `mergeable_state` clean.
-
-## NEXT
-1. Read CI on PR #186 (S7).
-2. Taher: veto/accept B-D1..B-D10 and D-1..D-3 as before; run device steps 1-23 in the test plan (new: 23).
-3. L4c (ActivityLog, categories, channels in the refresh; incremental refresh; one-helper refactor of the six store copies).
-
-## Not done / honest gaps
-- Nothing built or run on a device. Row look, spacing (adds ~56 dp on five pages) and feel are device-only.
-- `qmllint` and a real six-agent fan-out not available; whole-repo `ponytail-audit` not run (scoped to this PR).
-- Style: `RefreshRow.qml:31` declares a property after a signal (lint ORD-1); left, repo convention.
-
+- Nothing built or run on a device. The popup's look, position and fade are device-only.
+- QML test files and the page/component edits were never loaded by Qt here.
+- The root cause is confirmed by Taher's reproduction and by code reading, not by a server log.

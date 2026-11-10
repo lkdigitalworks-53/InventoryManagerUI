@@ -49,6 +49,12 @@ Item {
         subtitle: "Track and manage products"
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 variant: "glass"
                 iconName: "import"
@@ -73,15 +79,6 @@ Item {
             width: root.width
             spacing: dp(Constants.space3)
 
-            RefreshRow {
-                Layout.fillWidth: true
-                Layout.topMargin: dp(Constants.space2)
-                lastSyncMs: app.refreshLastSyncMs
-                refreshState: app.refreshState
-                online: app.isOnline
-                onRefreshRequested: app.requestManualRefresh()
-            }
-
             // Top KPI grid — 2×2 to match the prototype phone layout. Three
             // wide cards on a phone row are too cramped for the value to read
             // at a glance.
@@ -89,6 +86,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
+                Layout.topMargin: dp(Constants.space3)
                 columns: 2
                 columnSpacing: dp(Constants.space2 + 2)
                 rowSpacing: dp(Constants.space2 + 2)

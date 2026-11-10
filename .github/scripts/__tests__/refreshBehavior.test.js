@@ -43,6 +43,8 @@ function makeStore(name, opts = {}) {
     _overlayUnsynced(a) { calls.overlay++; return a.map(x => Object.assign({ overlaid: true }, x)); },
   };
   if (c.norm) ctx[c.norm] = (a) => a.map(x => Object.assign({ norm: true }, x));
+  // OrdersStore writes its list only through _setOrders (the CAS-base guard); in this sandbox it is a plain write.
+  ctx._setOrders = (a) => { ctx[c.list] = a; };
   vm.createContext(ctx);
   for (const fn of FNS) vm.runInContext(extractFunction(c.file, fn).replace(/^function /, 'this.' + fn + ' = function '), ctx);
   // _resetAndFetch / clear call _cancelRefresh first (wiring test pins that); here we model the resets directly.

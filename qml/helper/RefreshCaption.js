@@ -15,7 +15,7 @@ var OFFLINE_TOAST = "You are offline. Connect to the internet and try again"   /
 // Review of PR #186: a queued write that keeps failing (Gateway.stuckCount > 0) holds every refresh until the user
 // fixes or discards it (the gate counts parked writes), so "Sending your changes first" would be a promise nobody keeps.
 var STUCK_WAIT = "Some changes are not syncing, so the refresh waits. Open the sync message at the top to fix or discard them."
-var STUCK_GAVE_UP = "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh row."
+var STUCK_GAVE_UP = "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh button."
 
 function isNum(n) { return typeof n === "number" && isFinite(n) }
 function hasStuck(n) { return isNum(n) && n > 0 }
@@ -78,7 +78,7 @@ function requestMessage(d, stuckCount) {
 // stuckCount (optional): when > 0 the likely reason a wait ran out is the stuck writes, so say that instead.
 function unfinishedMessage(why, stuckCount) {
     if (why === "gave-up" && hasStuck(stuckCount)) return STUCK_GAVE_UP
-    if (why === "gave-up") return "Couldn't refresh. Tap the refresh row to try again."
-    if (why === "partial") return "Some lists could not be updated. Tap the refresh row to try again."
+    if (why === "gave-up") return "Couldn't refresh. Tap the refresh button to try again."
+    if (why === "partial") return "Some lists could not be updated. Tap the refresh button to try again."
     return ""
 }
