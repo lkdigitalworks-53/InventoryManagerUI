@@ -107,3 +107,9 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
   - P9 FIXED in the review sweep (design section 6, D-2): the restock dialog booked a blank or mistyped cost as 0; now blank = recorded cost, junk = refused.
   - P6 `_restockSettled` keeps a few bytes for a key whose signal never comes (sign-out mid-flight).
 - Next: R5 (dialog wording and `maxLength`, the typed name passed into the operation (P1), `activity_log` entity inside the operation with an id parameter on `ActivityLog.record`, P2), then R6 (docs and device test of the whole arc). Taher's veto window for R4-D1 (one open restock per product) and R4-D4 (hidden from sales while queued) is the PR.
+
+## 11. Update 2026-11-11 (P1 compliance: S4a register read model)
+- Not an atomic-operations change; recorded here because this file is the P1 anchor too (sections 6 and 7). P1 standing: S1a, S1b, S2a-c, S2d-1, S2f-1..7 merged; S2d-2, S2e, S3 open; S4 split into S4a (built now: `computeStockRegister`, server, read-only), S4b (client page), S4c (CA column layout).
+- Nothing in the app reads the ledger yet. `stock_movements` read is still `isMember` in the rules (KNOWN-ISSUES, P1 S4a item 1): restrict it before S2e writes real `valueAtCost`.
+- Design `specs/2026-11-11-p1-s4a-stock-register-design.md`; the R5a PR (#191) and R5b are independent of it.
+

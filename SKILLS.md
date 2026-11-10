@@ -4919,3 +4919,21 @@ Rules:
 11. Count only positive quantities when computing what is left, as `CompletionPlan` does (NOP-25); a stray negative line must not free stock, and a bump must never turn a bad quantity into NaN.
 
 **The check:** for the dialog, list every place it changes the order and name the pure function that owns the quantity, the price and the stock formula; for every hook it hands a sheet, name the store call and the counter that makes the sheet re-read; for every early-stop check, say what it does when it throws.
+
+## Skill 162: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
+
+**Built in P1 S4a, 2026-11-11 (`functions/lib/stockRegisterMath.js`, `computeStockRegister`).** The stock register (CGST 56(2)) is a read model over `stock_movements`. The traps were all about what the number is derived from, not about arithmetic.
+
+Rules:
+1. Derive every balance from the ledger rows. `opening` is the sum of rows before the period, never "current stock minus the rows since": that is cheaper, but the first stock change without a row makes the register silently wrong, and a report that trusts the mutable document is not an audit trail. Use the document only as a cross-check (`reconciles`) and show the disagreement instead of hiding it.
+2. Periods are half-open `[from, to)`. An inclusive `to` counts one instant in two adjacent periods; test the boundary row on both sides and test that two adjacent periods chain (closing of one = opening of the next).
+3. Time bounds cross the network with an explicit offset (or epoch ms). A date-only or offset-less string is refused (`invalid-window`): the server would read it as UTC and move every boundary by 5.5 hours for an Indian phone.
+4. Fold the ledger as a stream: a pure accumulator with `add(row)` and `finish(refs)` keeps memory at O(products) while the handler pages the collection, and the same object serves the batch tests. A ledger only grows, so `readAllPaged` (everything in memory, fine for `computeAnalysis`) is the wrong shape here. Put a row cap on the stream and answer 413, not a timeout.
+5. Count what you skip. Rows that cannot be classified (no product, unknown kind, bad quantity, a quantity against its kind's direction, no time) are left out of every balance and reported by reason in `counts.skipped`; the cross-check then exposes the gap. Never fail the whole report on one bad row and never fold one in silently.
+6. Float noise needs a rounding step that also normalises `-0` (`Math.round(-1e-12 * 1e9) / 1e9` is `-0`, and `assert.equal(-0, 0)` passes while `Object.is` does not). The first mutant run left this one alive until a test used `Object.is`.
+7. Adding a read endpoint is a rules review too. The role gate on the endpoint (staff refused) does not protect data the rules let every member read directly (`stock_movements` read is `isMember`). Write that gap into KNOWN-ISSUES the moment you find it.
+8. Reads are billed per document. State the cost of a full scan in the design, make the client fetch on demand only, and name the way out (a running balance written in the same transaction) before volume forces it.
+9. Every new endpoint goes into the `HANDLERS` list of `index.handlers.membershipAuthority.test.js`; the identity matrix then runs against it for free. The handler harness cannot test an OPTIONS preflight (the mock never ends the response), so do not write that case.
+
+**The check:** for a report over a ledger, name the source of each figure (rows only?), the period rule at both ends, the memory shape (stream or load), what happens to a row it cannot read, the cost per request, and who can read the raw rows without the endpoint.
+

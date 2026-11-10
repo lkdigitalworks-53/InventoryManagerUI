@@ -1000,3 +1000,17 @@ After a hand edit in the Firestore console (a changed `quantity`, an extra field
 - **Other stores still rebuild `before`** (inventory, suppliers, staff, batches). Not reported; each store's stored shape against its rebuild needs its own check.
 - **A Timestamp typed by hand in the console** decodes to null on the client, so that doc still cannot match. Not covered.
 - **Each order is held twice in memory** (the list and its base).
+
+## P1 S4a stock register (2026-11-11): findings and limits, open unless marked
+
+1. **Every member can read the raw ledger, cost values included.** `firestore.rules` has `stock_movements: allow read: if isMember(tenantId)`. `computeStockRegister` refuses staff (403 `role-not-allowed`), but a staff member's token can still read the rows straight from Firestore REST. Today `valueAtCost` is 0 on every row (derived rows carry 0; S2e pickers will write real values), so nothing sensitive is exposed yet. Fix before S2e ships: restrict the rule to owner/admin/manager (rules test + `firebase deploy --only firestore:rules`); the client has no ledger reader, so nothing breaks.
+2. **The register reads the whole ledger on every request and Firestore bills each row.** About one read per row; capped at 250 000 rows (413 `ledger-too-large` past it, for every period). Fine for dev and a few opens a month; S4b must fetch on demand only. Fix when volume arrives: a running per-product balance written in the same transaction as the rows (design section 5). Not started; needs its own design because it touches every write path.
+3. **`reconciles` is advisory, not transactional.** The ledger and the inventory are read separately; a write landing between them can flag one product for one answer. The register's balances never use the inventory doc, so they are not affected.
+4. **Period boundaries are the client's job.** The endpoint wants offset-aware instants and treats `to` as exclusive. S4b must send local midnights with the phone's offset (and the end of a month as the first instant of the next one), not `23:59:59`.
+5. **Column layout of the printed register is undecided** (which kinds count as receipts, supplies, returns; P1 design section 8). The endpoint returns IN and OUT per kind and the layout is a presentation choice, to confirm with the CA before S4c.
+6. **`valueAtCost` is not in the register** until S2e writes real values (SR-D11).
+7. **Imported-order completion still counts as `adjustment`** (S2d-2 open), so the register's `sale` OUT understates supplies for imported orders until S2d-2 lands. Visible as `adjustment.out`.
+8. **P1 design table said S4 depends on S3.** It does not for the register; S3 (`batchRef`) is only needed for per-batch traceability. Corrected in the S4a design, SR-D13.
+9. **No emulator e2e for the endpoint.** The handler is proven against the in-memory double. The first real call is the on-device `curl` step 1 of the test plan; S4b adds a QML-to-endpoint case.
+10. **The harness cannot test an OPTIONS preflight** (the mock response never ends it), so the 204 path of `computeStockRegister` is untested, like every other handler (see `index.handlers.test.js`). The line is the same one-liner all handlers share.
+11. **Commit identity.** The 2026-11-04 checkpoint says Taher moved commits to `allibaas52@gmail.com` on 2026-11-09; this session's prompt says `dextran52@gmail.com`. This PR uses the prompt's address (the latest explicit instruction in the session). Confirm which one is current.

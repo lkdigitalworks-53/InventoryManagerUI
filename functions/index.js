@@ -23,6 +23,7 @@ const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const RealisedMath = require("./lib/realisedMath");
 const BreakdownMath = require("./lib/breakdownMath");
+const StockRegisterMath = require("./lib/stockRegisterMath");
 const GatewayLogic = require("./lib/gatewayLogic");
 const BatchMutationLogic = require("./lib/batchMutationLogic");
 const OperationLogic = require("./lib/operationLogic");
@@ -915,6 +916,30 @@ async function readAllPaged(db, collectionPath, pageSize) {
     return out;
 }
 
+// Same paging as readAllPaged but hands each doc to `onDoc` and keeps none of them, so memory
+// stays flat however long the collection is (the stock ledger only ever grows). Stops with a
+// tagged error once `maxDocs` docs were read, so a runaway ledger answers 413 instead of
+// running into the function timeout.
+async function streamAllPaged(db, collectionPath, onDoc, maxDocs, pageSize) {
+    pageSize = pageSize || ANALYSIS_PAGE_SIZE;
+    const base = db.collection(collectionPath).orderBy("__name__").limit(pageSize);
+    let lastDoc = null;
+    let seen = 0;
+    for (;;) {
+        const q = lastDoc ? base.startAfter(lastDoc) : base;
+        const snap = await q.get();
+        if (snap.empty) break;
+        for (const doc of snap.docs) {
+            seen += 1;
+            if (seen > maxDocs) throw Object.assign(new Error("too-many-docs"), { code: "too-many-docs" });
+            onDoc(doc.data());
+        }
+        if (snap.docs.length < pageSize) break;
+        lastDoc = snap.docs[snap.docs.length - 1];
+    }
+    return seen;
+}
+
 function buildProductCategoryMap(products) {
     const map = {};
     for (const p of products) if (p && p.productId) map[p.productId] = p.category || "";
@@ -1036,6 +1061,75 @@ exports.computeAnalysis = functions.onRequest(
             send(res, 200, { ok: true, totals: totals, byDimension: byDimension, bucketWalk: bucketWalk });
         } catch (e) {
             console.error("computeAnalysis failed", e);
+            send(res, 500, { ok: false, error: "compute-failed" });
+        }
+    });
+
+// P1 S4a: the CGST Rule 56(2) stock register. Read-only. Streams the whole stock_movements
+// ledger once (opening balances need every row before the period) and folds it into one row per
+// product with StockRegisterMath; nothing is written. Roles owner/admin/manager only: the ledger
+// carries cost values. Design: docs/superpowers/specs/2026-11-11-p1-s4a-stock-register-design.md
+const REGISTER_MAX_LEDGER_ROWS = 250000;
+
+exports.computeStockRegister = functions.onRequest(
+    { region: "asia-south1", cors: true, timeoutSeconds: 120 },
+    async (req, res) => {
+        if (req.method === "OPTIONS") { send(res, 204, {}); return; }
+        if (req.method !== "POST") {
+            send(res, 405, { ok: false, error: "method-not-allowed" });
+            return;
+        }
+
+        const authHeader = req.get("Authorization") || "";
+        const match = authHeader.match(/^Bearer\s+(.+)$/i);
+        if (!match) { send(res, 401, { ok: false, error: "missing-token" }); return; }
+
+        let decoded;
+        try {
+            decoded = await admin.auth().verifyIdToken(match[1]);
+        } catch (e) {
+            send(res, 401, { ok: false, error: "invalid-token" });
+            return;
+        }
+
+        const body = req.body || {};
+        const db = scopedDb(body.env);
+        const ctx = await deriveContext(db, decoded.uid);
+        if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
+        if (!StockRegisterMath.canViewRegister(ctx.role)) {
+            send(res, 403, { ok: false, error: "role-not-allowed" });
+            return;
+        }
+
+        const win = StockRegisterMath.parseWindow(body.from, body.to);
+        if (!win.ok) { send(res, 400, { ok: false, error: win.error }); return; }
+
+        const tenantRoot = "tenants/" + ctx.tenantId;
+        try {
+            const acc = StockRegisterMath.createAccumulator(win);
+            const readAt = Date.now();
+            // Ledger first, inventory second, both outside one transaction: a sale landing between
+            // the two reads can show one product as not reconciling for this answer only
+            // (`reconciles` is a cross-check, never an input to a balance). Run it again.
+            const [, products] = await Promise.all([
+                streamAllPaged(db, tenantRoot + "/stock_movements", acc.add, REGISTER_MAX_LEDGER_ROWS),
+                readAllPaged(db, tenantRoot + "/inventory")
+            ]);
+            const register = acc.finish(products);
+            send(res, 200, {
+                ok: true,
+                window: { fromMs: win.fromMs, toMs: win.toMs },
+                readAt: readAt,
+                kinds: register.kinds,
+                products: register.products,
+                counts: register.counts
+            });
+        } catch (e) {
+            if (e && e.code === "too-many-docs") {
+                send(res, 413, { ok: false, error: "ledger-too-large" });
+                return;
+            }
+            console.error("computeStockRegister failed", e);
             send(res, 500, { ok: false, error: "compute-failed" });
         }
     });
