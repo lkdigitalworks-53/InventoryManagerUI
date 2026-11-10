@@ -1,7 +1,7 @@
 "use strict";
-// Product picker v2, slice S1: the three helpers are dormant (nothing calls them yet), have the shape
+// Product picker v2, slices S1 and S2: the three helpers are dormant (nothing calls them yet), have the shape
 // a `.pragma library` file needs (Skill 83), and the QML twins are exactly what the Node tests derive.
-// DORM-01..03 and PAIR-01..02. S3 changes DORM-01 on purpose, in the same PR that wires a dialog.
+// DORM-01..03 and PAIR-01..03. S3 changes DORM-01 on purpose, in the same PR that wires a dialog.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -28,6 +28,10 @@ const ALLOWED = new Set([
     "tests/tst_ProductSearch.qml", "tests/tst_ProductPickability.qml", "tests/tst_PickerDraft.qml",
     "functions/test/pickerSearch.test.js", "functions/test/pickerPickability.test.js", "functions/test/pickerDraft.test.js",
     "tests/pickerFixtures.js", "functions/test/pickerFlow.test.js", "functions/test/pickerDormancy.test.js", "functions/test/testSupport/pickerTwin.js",
+    // Slice S2 (still dormant: pickerSheetWiring.test.js WIRE-15 pins that nothing else mentions these).
+    "qml/helper/PickerSheetModel.js", "qml/components/ProductPickerSheet.qml", "qml/components/ProductPickerRow.qml", "qml/helper/PickerRowGeometry.js",
+    "functions/test/pickerRowGeometry.test.js", "tests/tst_PickerRowGeometry.qml",
+    "functions/test/pickerSheetModel.test.js", "functions/test/pickerSheetWiring.test.js", "tests/tst_PickerSheetModel.qml",
 ]);
 
 test("DORM-01 nothing outside the helpers and their tests mentions them", () => {

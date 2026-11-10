@@ -35,6 +35,23 @@ QQC.Dialog {
     property var primaryPalette: Constants.gradHero
     default property alias body: bodyHolder.data
 
+    // Opt-in (picker v2, D5). true (default): the body scrolls inside this sheet's own ScrollView, exactly as before, so
+    // the other sheets are untouched. false: the body gets exactly the height between title and footer, nothing here
+    // scrolls, and the body's own ListView owns the scrolling (a ListView inside a ScrollView fights it), so the footer
+    // stays pinned. Implemented with two Bindings that are active only while this is false.
+    property bool scrollBody: true
+
+    // Opt-in (picker v2, D1). true: the X, Cancel and a tap outside ask the owner through closeRequested() instead of
+    // closing, so it can say "Discard N items?" first; the system Back key is routed by the owner (Keys handler on its
+    // body) and, if that does not fire on a device, does nothing rather than lose data. false (default): unchanged.
+    property bool guardClose: false
+    signal closeRequested()
+    function requestClose() {
+        if (busy) return
+        if (guardClose) closeRequested()
+        else close()
+    }
+
     // Width the primary button keeps so its label is never ellipsized ("Stay signed in" showed as
     // "S..."). PrimaryButton reports no label width of its own, so without this floor a long
     // secondary label took the room first. Math in SheetFooter.js (tested headlessly).
@@ -68,7 +85,7 @@ QQC.Dialog {
     // CloseOnPressOutside) for the non-busy case, so this is a no-op when
     // not busy — only blocks tap-outside/escape while an operation is
     // actually in flight.
-    closePolicy: busy ? QQC.Popup.NoAutoClose
+    closePolicy: (busy || guardClose) ? QQC.Popup.NoAutoClose
                        : (QQC.Popup.CloseOnEscape | QQC.Popup.CloseOnPressOutside)
 
     width: parent ? parent.width : dp(540)
@@ -104,7 +121,11 @@ QQC.Dialog {
         NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: Constants.durMed }
     }
 
-    QQC.Overlay.modal: Rectangle { color: Constants.overlay }
+    QQC.Overlay.modal: Rectangle {
+        color: Constants.overlay
+        // guardClose turns off the automatic tap-outside close, so route the tap to the owner. Disabled otherwise.
+        MouseArea { anchors.fill: parent; enabled: root.guardClose; onClicked: root.requestClose() }
+    }
 
     background: Rectangle {
         radius: dp(Constants.radiusXl)
@@ -125,6 +146,11 @@ QQC.Dialog {
         // not just the ColumnLayout on its own.
         transform: Translate { y: root._slideOffset }
 
+        // guardClose: Escape and the Android Back key ask the owner instead of closing. Not accepted (so the Popup's own
+        // closePolicy handling runs, exactly as before) when guardClose is false.
+        Keys.onEscapePressed: function(event) { event.accepted = root.guardClose; if (root.guardClose) root.requestClose() }
+        Keys.onBackPressed: function(event) { event.accepted = root.guardClose; if (root.guardClose) root.requestClose() }
+
         // Must match PrimaryButton's label font (bold, fsBodyLg): same text, same width.
         TextMetrics {
             id: primaryMetrics
@@ -132,6 +158,11 @@ QQC.Dialog {
             font.bold: true
             text: root.primaryAction
         }
+
+        // scrollBody false: the body is exactly as tall as the scroller's viewport, so the Flickable has nothing to scroll.
+        // Binding restores the default sizing when `when` is false, so with the default scrollBody (true) these never act.
+        Binding { target: scroller; property: "contentHeight"; value: scroller.availableHeight; when: !root.scrollBody }
+        Binding { target: bodyHolder; property: "height"; value: scroller.availableHeight; when: !root.scrollBody }
 
         ColumnLayout {
             id: contentLayout
@@ -179,7 +210,7 @@ QQC.Dialog {
                     // four separate dismissal paths (back button,
                     // tap-outside, this X, and Cancel below) that all
                     // needed the same guard, not just the obvious ones.
-                    onClicked: { if (!root.busy) root.close() }
+                    onClicked: root.requestClose()   // busy-guarded inside; closes unless guardClose asks the owner
                 }
             }
 
@@ -227,7 +258,7 @@ QQC.Dialog {
                     visible: root.secondaryAction.length > 0
                     text: root.secondaryAction
                     textColor: root.secondaryColor
-                    onClicked: { if (!root.busy) { root.secondaryClicked(); root.close() } }
+                    onClicked: { if (!root.busy) { root.secondaryClicked(); root.requestClose() } }
                 }
 
                 PrimaryButton {

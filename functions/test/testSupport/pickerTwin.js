@@ -20,6 +20,8 @@ const TWINS = [
     { node: "pickerSearch.test.js", qml: "tst_ProductSearch.qml", name: "ProductSearch", helper: "ProductSearch.js", alias: "PS" },
     { node: "pickerPickability.test.js", qml: "tst_ProductPickability.qml", name: "ProductPickability", helper: "ProductPickability.js", alias: "PK" },
     { node: "pickerDraft.test.js", qml: "tst_PickerDraft.qml", name: "PickerDraft", helper: "PickerDraft.js", alias: "PD" },
+    { node: "pickerRowGeometry.test.js", qml: "tst_PickerRowGeometry.qml", name: "PickerRowGeometry", helper: "PickerRowGeometry.js", alias: "PG" },
+    { node: "pickerSheetModel.test.js", qml: "tst_PickerSheetModel.qml", name: "PickerSheetModel", helper: "PickerSheetModel.js", alias: "PM" },
 ];
 
 function slug(title) {
@@ -62,8 +64,17 @@ function derive(spec) {
         if (NODE_ONLY.test(pre[1])) throw new Error(spec.node + ": QML-PRELUDE uses a Node-only name");
         out.push(""); out.push(indent(pre[1].replace(/\n+$/, ""), 4));
     }
+    // A helper defined at the top of the Node file but outside the prelude does not exist in the QML twin: the twin
+    // would load and then fail with a ReferenceError in CI only (it did, in the #187 review sweep). Refuse it here.
+    const outside = src.replace(/\/\/ QML-PRELUDE-BEGIN\n[\s\S]*?\/\/ QML-PRELUDE-END/, "");
+    const hidden = [];
+    for (const m of outside.matchAll(/^(?:function (\w+)\(|const (\w+) =)/gm)) hidden.push(m[1] || m[2]);
+    const known = new Set([spec.alias, "FX", "test"]);
     for (const c of parseCases(src)) {
         if (/\(Node only\)$/.test(c.title)) continue;
+        for (const name of hidden)
+            if (!known.has(name) && new RegExp("\\b" + name + "\\b").test(c.body))
+                throw new Error(spec.node + " " + c.id + ": uses " + name + ", defined outside the QML-PRELUDE, so the QML twin cannot see it");
         if (NODE_ONLY.test(c.body)) throw new Error(spec.node + " " + c.id + ": body uses a Node-only name; end the title with (Node only) or rewrite it");
         out.push("");
         out.push("    function test_" + c.id.replace("-", "_") + "_" + slug(c.title) + "() {");

@@ -168,3 +168,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 158: A toast must live in the window Overlay to be seen above a dialog, and a busy overlay needs the message that switches it on
 - 159: Show the state of a background job where the user looks, give every tap an answer, and make sure no state can stick
 - 160: A compare-and-swap `before` must be the exact image the server holds, never a rebuild of the local copy; log a delete only when the server acked it; keep a transient status out of the layout
+- 161: Put every decision of a Felgo view into a pure view-model with flat rows, update a list in place, and give a shared component an opt-in that a grep pins as the only user
