@@ -17,5 +17,10 @@ R5 as written has four parts. Split decided this session (vetoable, see design D
 - [x] 3. Code: `RestockFlow` (supplierFor structured, partyFor, newPartyChoice, limits, texts), `AuthTextField.maxLength`, `RestockDialog` ("Use", pending name, hint, limits).
 - [x] 4. Tests: `restockR5a.test.js` (37), adjusted CF-17, RD-2, F-9, E-3; QML twin 5 functions; 26/26 mutants killed (`/tmp/mut.py`, list in the test plan).
 - [x] 5. Docs: test plan + index row, status doc section 11, KNOWN-ISSUES, Skill 159 + SKILLS-INDEX regenerated, AGENTS, README.
-- [ ] 6. Full suites, commit, push, open PR.
-- [ ] 7. Read CI (next session / Taher).
+- [x] 6. Full suites (functions 1327/1327, scripts 905/905), commit `a047d07`, pushed, PR #191 opened.
+- [ ] 7. Read CI on PR #191 (QML oracle: `tst_RestockFlow` 19 functions; fix red first). Taher: veto D-R5-1..7, device steps 1-21.
+
+## Next session (pick up here)
+1. Read CI of PR #191; fix only what CI shows.
+2. Then R5b on a NEW branch off `main` after #191 merges: `activity_log` inside the operation (operation-only entity map in `operationLogic.js`, NOT `ENTITY_COLLECTIONS`; server stamps `actorUid` + timestamp; rules check; `ActivityLog.record(id)` parameter; planner op + `reflect` + `_applyRestock` writes the row from results; budget formula +1 write/+1 audit), then P2 (`TransactionStore.recordPurchase` removal, doc-shape guard moved). Server deploy BEFORE client. Design notes: `specs/2026-11-10-r5a-restock-dialog-design.md` section 5.
+3. Then R6 (docs + device test of the whole arc). Add-product slice also fixes `AddProductDialog`'s inline add-supplier row.
