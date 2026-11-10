@@ -1,10 +1,24 @@
 .pragma library
 .import "OperationKeys.js" as Keys
+.import "StockMovements.js" as SM
 
 // Pure decisions around the restock wiring (atomic-ops R4). Design:
 // docs/superpowers/specs/2026-11-02-r4-restock-wire-design.md. InventoryStore.restock stays thin and
 // asks this file; every branch here runs in Node (functions/test/restockFlow.test.js) and in
 // tests/tst_RestockFlow.qml. Nothing here reads a store, a clock or a random source.
+
+// Review R5a (design 2026-11-10-r5a-restock-dialog-design.md, D-R5-4/5/6). Field limits the dialog enforces while typing
+// (maxLength) and this file enforces again at the tap (a pasted value can exceed maxLength on some platforms, a caller
+// other than the dialog may not enforce it at all).
+//   MAX_REASON         = the server's movement-reason limit (SM.MAX_REASON, pinned equal by a test). The reason is
+//                        written to the ledger row, the batch note and the purchase row; StockMovements.make cuts the
+//                        ledger copy at this length, so a longer text used to be whole in two docs and cut in the third.
+//   MAX_SUPPLIER_NAME  = a name that fits a list row and a report column; no server rule exists, this is the app's own.
+//   MAX_UNIT_COST      = a FINITE per-unit cost above this is a typo, not a price (1e9 rupees). Keeps qty * cost (qty <= 9999)
+//                        far below the double range, so the plan's overflow refusal stays a backstop.
+var MAX_REASON = SM.MAX_REASON
+var MAX_SUPPLIER_NAME = 100
+var MAX_UNIT_COST = 1000000000
 
 // Review D-2 (PR #183 sweep). The cost field's text -> the `unitCost` to hand to makeInput. The dialog used to
 // turn a blank, a typo or a negative into 0 before the plan could see it, so the plan's bad-cost refusal never
@@ -58,26 +72,78 @@ function localDate(d) {
     return d.getFullYear() + "-" + _pad(d.getMonth() + 1) + "-" + _pad(d.getDate())
 }
 
-// Same rules as InventoryStore._resolveSupplierId (design R4-D5, review observation O1):
-// empty -> no supplier; a "SUP-" prefix is an id (kept as typed, known or not: the server's batch and
-// purchase only store it); otherwise a name that
-// matches a known supplier case-insensitively is that supplier; anything else is a NEW supplier.
-// `suppliers` = [{ supplierId, name }]. Names are trimmed first, so " Acme" matches "Acme" (the old
-// path compared untrimmed text and would have made a duplicate). Whitespace-only text is refused.
-// -> { ok: true, supplier: null | { id } | { newName } } | { ok: false, reason: "bad-supplier" }
-function supplierFor(party, suppliers) {
-    if (party === undefined || party === null || party === "") return { ok: true, supplier: null }
-    var raw = String(party).trim()
-    if (raw.length === 0) return { ok: false, reason: "bad-supplier" }
-    var list = Array.isArray(suppliers) ? suppliers : []
-    if (raw.indexOf("SUP-") === 0) return { ok: true, supplier: { id: raw } }
-    var lower = raw.toLowerCase()
+// Same rules as InventoryStore._resolveSupplierId (design R4-D5, review observation O1), now also for a
+// STRUCTURED party (R5a, D-R5-2):
+//   party = "" / null / undefined      no supplier
+//   party = "SUP-..."  (string)        an id, kept as typed (known or not: the batch and the purchase only store it)
+//   party = "Acme"     (string)        a name: a known supplier case-insensitively, otherwise a NEW supplier
+//   party = { id }                     an id, always (never reinterpreted)
+//   party = { newName }                a NAME, always: a known supplier case-insensitively (so a second device or a
+//                                      retyped name does not make a duplicate), otherwise a NEW supplier. A name that
+//                                      happens to start with "SUP-" is still a name here; the plain string form would
+//                                      have read it as an id and stored a supplier id that exists nowhere.
+// Names are trimmed first, so " Acme" matches "Acme". Whitespace-only is refused, and so is a name longer than
+// MAX_SUPPLIER_NAME (reason "supplier-too-long"). `suppliers` = [{ supplierId, name }].
+// -> { ok: true, supplier: null | { id } | { newName } } | { ok: false, reason: "bad-supplier" | "supplier-too-long" }
+function _knownByName(lower, list) {
     for (var j = 0; j < list.length; ++j) {
         var s = list[j]
         if (s && typeof s.name === "string" && s.name.trim().toLowerCase() === lower && typeof s.supplierId === "string" && s.supplierId.length > 0)
-            return { ok: true, supplier: { id: s.supplierId } }
+            return s.supplierId
     }
-    return { ok: true, supplier: { newName: raw } }
+    return ""
+}
+function _byName(raw, list) {
+    if (raw.length > MAX_SUPPLIER_NAME) return { ok: false, reason: "supplier-too-long" }
+    var known = _knownByName(raw.toLowerCase(), list)
+    return known !== "" ? { ok: true, supplier: { id: known } } : { ok: true, supplier: { newName: raw } }
+}
+function supplierFor(party, suppliers) {
+    if (party === undefined || party === null || party === "") return { ok: true, supplier: null }
+    var list = Array.isArray(suppliers) ? suppliers : []
+    if (typeof party === "object") {
+        if (typeof party.newName === "string") {
+            var nn = party.newName.trim()
+            return nn.length === 0 ? { ok: false, reason: "bad-supplier" } : _byName(nn, list)
+        }
+        if (typeof party.id === "string" && party.id.trim().length > 0) return { ok: true, supplier: { id: party.id.trim() } }
+        return { ok: false, reason: "bad-supplier" }
+    }
+    var raw = String(party).trim()
+    if (raw.length === 0) return { ok: false, reason: "bad-supplier" }
+    if (raw.indexOf("SUP-") === 0) return { ok: true, supplier: { id: raw } }
+    return _byName(raw, list)
+}
+
+// What the restock dialog hands to InventoryStore.restock as `party` (R5a, D-R5-2). A typed NEW supplier name wins over
+// the picker (the dialog clears it when the person picks a row, so both are never set at once); otherwise the picked
+// id, or "" for the placeholder row. `ids` = the picker's id list (index 0 is ""). A bad or out-of-range index is "no supplier"
+// (an index with no string behind it, such as 99, -1, 1.5 or NaN, falls through the typeof check).
+function partyFor(newName, index, ids) {
+    var typed = (typeof newName === "string") ? newName.trim() : ""
+    if (typed.length > 0) return { newName: typed }
+    var list = Array.isArray(ids) ? ids : []
+    return (typeof index === "number" && index > 0 && typeof list[index] === "string") ? list[index] : ""
+}
+
+// The dialog's "Use" button for the typed new-supplier name (R5a, D-R5-1). Nothing is created here: the supplier is
+// created INSIDE the restock operation, so a restock that fails leaves no orphan supplier and burns no number.
+//   -> { kind: "none" }                          empty text: nothing to do
+//   -> { kind: "invalid", message }              over-long text
+//   -> { kind: "existing", id, name }            matches a known supplier (case-insensitive): pick that row, make nothing
+//   -> { kind: "new", name }                     a new supplier, created with the restock
+function newPartyChoice(text, suppliers) {
+    var raw = (typeof text === "string") ? text.trim() : ""
+    if (raw.length === 0) return { kind: "none" }
+    var r = supplierFor({ newName: raw }, suppliers)
+    if (!r.ok) return { kind: "invalid", message: refusalText(r.reason) }
+    if (r.supplier.id !== undefined) {
+        var list = Array.isArray(suppliers) ? suppliers : []
+        var name = raw
+        for (var i = 0; i < list.length; ++i) if (list[i] && list[i].supplierId === r.supplier.id) name = String(list[i].name)
+        return { kind: "existing", id: r.supplier.id, name: name }
+    }
+    return { kind: "new", name: r.supplier.newName }
 }
 
 // Builds RestockPlan.build's input from what the tap knows. `now` is ONE Date: the ISO timestamp and
@@ -91,6 +157,9 @@ function makeInput(a) {
     if (Object.prototype.toString.call(a.now) !== "[object Date]" || isNaN(a.now.getTime())) return { ok: false, reason: "bad-time" }
     var sup = supplierFor(a.party, a.suppliers)
     if (!sup.ok) return sup
+    // R5a: limits. The text is measured trimmed (the planner trims it too); a non-string reason is the planner's to ignore.
+    if (typeof a.reason === "string" && a.reason.trim().length > MAX_REASON) return { ok: false, reason: "reason-too-long" }
+    if (typeof a.unitCost === "number" && isFinite(a.unitCost) && a.unitCost > MAX_UNIT_COST) return { ok: false, reason: "cost-too-large" }
     var cost = (typeof a.unitCost === "number" && !isNaN(a.unitCost)) ? a.unitCost : (typeof p.price === "number" ? p.price : 0)
     return { ok: true, input: {
         key: a.key, productId: p.productId, productName: p.name, category: p.category,
@@ -111,12 +180,15 @@ function classify(res) {
 
 // Person-facing text for a refusal made BEFORE anything is queued (RestockPlan.build's reasons).
 // bad-quantity is the one text the dialogs already showed; InventoryStore.restockQtyRefusal reads it
-// from here so the two cannot drift. The rest are app-side problems or free-text limits (R5 may refine).
+// from here so the two cannot drift. The rest are app-side problems or field limits (R5a added the three limit texts).
 function refusalText(reason) {
     switch (reason) {
     case "bad-quantity": return "Quantity must be greater than zero"
     case "bad-cost": return "Unit cost is not a valid amount"
+    case "cost-too-large": return "Unit cost is too large. Enter the price of ONE unit, up to " + MAX_UNIT_COST
     case "bad-supplier": return "Supplier name is not valid"
+    case "supplier-too-long": return "Supplier name is too long. Use at most " + MAX_SUPPLIER_NAME + " characters"
+    case "reason-too-long": return "The reason is too long. Use at most " + MAX_REASON + " characters"
     case "too-large": return "The note is too long to save. Shorten it and try again"
     case "reserved-text": return "Remove any {{ or }} from the text and try again"
     }

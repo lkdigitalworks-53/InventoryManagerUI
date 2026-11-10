@@ -12,6 +12,8 @@ ColumnLayout {
     property alias echoMode: input.echoMode
     property alias inputMethodHints: input.inputMethodHints
     property alias readOnly: input.readOnly
+    // Typing limit (QQC.TextField's own default, 32767, until a caller sets it). Added for the restock dialog's fields (R5a).
+    property alias maxLength: input.maxLength
     property alias acceptableInput: input.acceptableInput
     property alias inputItem: input
 

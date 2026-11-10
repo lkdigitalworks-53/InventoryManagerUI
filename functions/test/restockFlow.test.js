@@ -221,7 +221,9 @@ test("E-2 the same key sent twice is a replay: stock moves once, the answer carr
 test("E-3 refusals made before anything is queued: every planner refusal reaches a person-facing text", () => {
     const cases = [[{ qty: 0 }, "bad-quantity"], [{ qty: -1 }, "bad-quantity"], [{ unitCost: -1 }, "bad-cost"],
         [{ unitCost: Infinity }, "bad-cost"], [{ qty: 1e308, unitCost: 5 }, "bad-cost"], [{ reason: "{{batch}}" }, "reserved-text"],
-        [{ reason: "x".repeat(1100000) }, "too-large"]];
+        // R5a: the tap's own limit (500 characters) now stops a long reason first; the planner's size check stays as the
+        // backstop, so it is reached here with a product name that is huge (existing data, not typed in the dialog).
+        [{ product: Object.assign({}, PRODUCT, { name: "x".repeat(1100000) }) }, "too-large"]];
     for (const [over, reason] of cases) {
         const made = RF.makeInput(args(over));
         assert.equal(made.ok, true);

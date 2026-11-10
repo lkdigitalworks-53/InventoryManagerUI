@@ -30,6 +30,10 @@ BottomSheet {
     // briefly declared on the inner ColumnLayout, which silently broke the
     // dialog by making `dlg._addPartyOpen` undefined and throwing in bindings.
     property bool _addPartyOpen: false
+    // A typed NEW supplier name (R5a). Nothing is created when the person taps "Use": the name travels inside the
+    // restock operation and the server creates the supplier in the same transaction as the batch, so a restock that
+    // fails leaves no orphan supplier and burns no number. "" = none. Picking a row in the combo clears it.
+    property string _newSupplierName: ""
 
     signal restockConfirmed(string productId, int amount)
 
@@ -74,6 +78,7 @@ BottomSheet {
 
         addPartyField.text = ""
         dlg._addPartyOpen = false
+        dlg._newSupplierName = ""
         reasonField.text = ""
         dlg.open()
     }
@@ -111,13 +116,12 @@ BottomSheet {
             if (!typed.ok) { Toast.show(typed.message); return }
             var qty = typed.qty
             if (qtyField.value !== qty) qtyField.value = qty
-            var supplierId = partyCombo.currentIndex > 0
-                    ? dlg._supplierIds[partyCombo.currentIndex]
-                    : ""
+            // A typed new supplier name (created inside the operation) or the picked id, decided in the helper.
+            var party = RestockFlow.partyFor(dlg._newSupplierName, partyCombo.currentIndex, dlg._supplierIds)
             // Blank = the product's recorded cost; a typo or a negative is refused by the plan, not booked as 0 (review D-2).
             var unitCost = RestockFlow.costFromText(unitCostField.text)
             busy = true
-            InventoryStore.restock(pid, qty, supplierId, unitCost, reasonField.text.trim(), function(ok, queued, refusal) {
+            InventoryStore.restock(pid, qty, party, unitCost, reasonField.text.trim(), function(ok, queued, refusal) {
                 settled = true
                 busy = false
                 if (!ok) { Toast.show(refusal || "Could not restock — try again"); return }
@@ -137,6 +141,23 @@ BottomSheet {
                 Toast.show("Something went wrong. Check the stock before trying again")
             }
         }
+    }
+
+    // The "Use" button of the inline new-supplier row. Creates NOTHING (see _newSupplierName). A name that matches a
+    // known supplier (case-insensitive) selects that row instead, so retyping "acme" never makes a second supplier.
+    function _useTypedParty() {
+        var c = RestockFlow.newPartyChoice(addPartyField.text, SupplierStore.suppliers)
+        if (c.kind === "none") return
+        if (c.kind === "invalid") { Toast.show(c.message); return }
+        if (c.kind === "existing") {
+            dlg._newSupplierName = ""
+            dlg._refreshSuppliers(c.id)
+        } else {
+            dlg._newSupplierName = c.name
+            partyCombo.currentIndex = 0
+        }
+        addPartyField.text = ""
+        dlg._addPartyOpen = false
     }
 
     ColumnLayout {
@@ -244,9 +265,12 @@ BottomSheet {
                 // back to a supplierId via `_supplierIds[currentIndex]`.
                 model: dlg._supplierLabels
                 font.pixelSize: sp(Constants.fsBody)
-                displayText: currentIndex > 0
-                        ? currentText
-                        : qsTr("Select or add a supplier")
+                displayText: dlg._newSupplierName.length > 0
+                        ? qsTr("New: ") + dlg._newSupplierName
+                        : (currentIndex > 0 ? currentText : qsTr("Select or add a supplier"))
+                // A user pick replaces a typed new name (one supplier per restock). Programmatic currentIndex
+                // changes do not emit `activated`, so _useTypedParty / _refreshSuppliers never clear it by accident.
+                onActivated: dlg._newSupplierName = ""
             }
             QQC.AbstractButton {
                 id: addPartyToggle
@@ -286,27 +310,25 @@ BottomSheet {
                 id: addPartyField
                 Layout.fillWidth: true
                 placeholderText: qsTr("New supplier name")
+                maxLength: RestockFlow.MAX_SUPPLIER_NAME
                 onAccepted: addPartyBtn.clicked()
             }
             PrimaryButton {
                 id: addPartyBtn
-                text: qsTr("Save")
+                text: qsTr("Use")
                 implicitHeight: dp(44)
                 implicitWidth: dp(80)
-                onClicked: {
-                    var n = (addPartyField.text || "").trim()
-                    if (n.length === 0) return
-                    // SupplierStore.addSupplier calls back with the existing
-                    // record when the name already exists, so we always get an id.
-                    addPartyBtn.enabled = false
-                    SupplierStore.addSupplier({ name: n }, function(s) {
-                        addPartyBtn.enabled = true
-                        dlg._refreshSuppliers(s ? s.supplierId : "")
-                        addPartyField.text = ""
-                        dlg._addPartyOpen = false
-                    })
-                }
+                onClicked: dlg._useTypedParty()
             }
+        }
+        // Says what "Use" did: the supplier does not exist yet, it is created with the restock.
+        Text {
+            Layout.fillWidth: true
+            visible: dlg._newSupplierName.length > 0
+            text: qsTr("“%1” will be added as a new supplier when you confirm this restock.").arg(dlg._newSupplierName)
+            wrapMode: Text.WordWrap
+            color: Constants.textSecondary
+            font.pixelSize: sp(Constants.fsSmall)
         }
 
         Text {
@@ -320,6 +342,7 @@ BottomSheet {
             id: reasonField
             Layout.fillWidth: true
             placeholderText: qsTr("e.g. delayed shipment, emergency restock")
+            maxLength: RestockFlow.MAX_REASON
         }
     }
 }

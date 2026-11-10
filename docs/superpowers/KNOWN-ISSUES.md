@@ -187,6 +187,8 @@ The `tenants/{t}` update rule now requires `request.resource.data.ownerId == res
 
 ## Restock is two independent writes: a 4xx drops the stock delta but keeps the batch — DECIDED 2026-09-30, NOT BUILT
 
+**Status 2026-11-10:** R3, R4 and R5a are built (R4: restock is one operation; R5a: the sheet's new supplier is created inside it, field limits). The original bug below is closed for restock. Still open: the `activity_log` entry inside the operation (R5b), and `AddProductDialog`'s inline "add new party" row, which still creates the supplier by the separate mint before the product is saved (an orphan supplier if the product is then cancelled or refused; fix belongs to the add-product slice).
+
 **Status 2026-10-28:** server half built (R2: `mint` op, `restock` opType, PR on `feat/2026-10-28-r2-mint-engine`). The client rewrite (R3 `RestockPlan`, R4 `InventoryStore.restock`, R5 dialog and `activity_log`) is still NOT BUILT, so this bug is still live in the app.
 
 **Found on-device (Taher, PR #97 test).** Member `status` set to suspended, then restock a product: toast "Could not

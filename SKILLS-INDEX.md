@@ -171,3 +171,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 161: Put every decision of a Felgo view into a pure view-model with flat rows, update a list in place, and give a shared component an opt-in that a grep pins as the only user
 - 162: Wire a dialog to a tested sheet through one pure apply-and-check helper, re-read at the commit, and run the glue's real text in a sandbox
 - 163: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
+- 164: A step that creates something must not run before the confirm that needs it; take a structured value, not an overloaded string, and let a limit have exactly one source of truth

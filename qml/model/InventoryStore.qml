@@ -1315,8 +1315,9 @@ QtObject {
     property var _restockNames: ({})
 
     // One tap = one atomic operation (supplier + batch + stock + purchase in ONE server transaction, the
-    // server mints the ids). `party` may be "", a supplierId, an existing supplier name or a brand-new name
-    // (RestockFlow.supplierFor decides). `unitCost` that is not a number defaults to the product's cost.
+    // server mints the ids). `party` may be "", a supplierId, an existing supplier name or a brand-new name, or
+    // the structured { id } / { newName } the restock dialog sends (RestockFlow.supplierFor decides; a new
+    // supplier is created INSIDE the operation, never before it). `unitCost` that is not a number defaults to the product's cost.
     // callback(ok, queued, refusal), exactly once:
     //   (true,  false)           the server applied it; stock, batch, purchase and Activity are updated
     //   (true,  true)            saved but not answered yet (offline or slow); nothing changes locally until

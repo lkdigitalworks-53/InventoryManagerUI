@@ -1,0 +1,78 @@
+# Test plan — Atomic ops R5a: restock dialog (typed supplier joins the operation, field limits, wording)
+
+Branch `feat/2026-11-10-r5a-restock-dialog-supplier-in-op`. Design: `docs/superpowers/specs/2026-11-10-r5a-restock-dialog-design.md`. Format: Skill 49.
+
+## What was actually executed in the session (honest)
+- RUN (Node, this sandbox): `functions/` suite 1327/1327 (was 1290, +37 new in `restockR5a.test.js`), `.github/scripts` suite 905/905. 26 of 26 hand mutants killed (below).
+- NOT RUN here (no Qt in the sandbox, standing rule): `tests/tst_RestockFlow.qml` (5 new test functions, 14 to 19), the whole dialog on a screen. CI is the QML oracle; Taher runs the on-device list.
+- Rules and e2e: none. No rules, no server code and no collection changed. The server accepts the new request shape since R2 (proved here against the real `operationLogic`, E-1 to E-4).
+
+## 1. Unit (Node, `functions/test/restockR5a.test.js`, and the QML twin)
+| IDs | What |
+|---|---|
+| S-1..S-8 | `supplierFor` with `{ newName }`, `{ id }`, mixed, malformed, bad supplier lists; the string forms unchanged; name limit 100 (exactly 100 passes, 101 refused, measured trimmed); `SUP-Foo` as a name vs as an id |
+| P-1..P-3 | `partyFor` (typed name wins; index 0, negative, fractional, NaN, past the end, non-string entries are "no supplier"); `newPartyChoice` (none, invalid, existing with canonical name, new) |
+| L-1..L-7 | reason 500/501 and trimmed; cost exactly 1e9, 1e9+1, 1e300, NaN fallback, Infinity left to the planner; every refusal reason has its own text and the texts differ; limit texts name the limit; reason limit equals the server's `MAX_REASON` and `StockMovements.MAX_REASON`; a 500-character reason is whole in the ledger row, the batch note and the purchase row; qty 9999 times the cost ceiling stays finite |
+
+## 2. Functional (Node, real function bodies and the real server code)
+| IDs | What |
+|---|---|
+| E-1 | typed new supplier -> `partyFor` -> `makeInput` -> `RestockPlan.build` -> real `applyOperation`: minted `SUP-` id, supplier doc named as typed, batch and purchase carry it, stock 10 -> 15 |
+| E-2 | a new name starting with `SUP-` becomes a real supplier (not a dangling id) |
+| E-3 | THE defect, closed: the product vanished, the operation is refused (404), the store is byte-identical afterwards: no supplier, counter untouched, no marker |
+| E-4 | same key twice: one supplier, same ids in the replayed answer |
+| D-1..D-4 | the real `_useTypedParty` body in a `vm`: new name held and nothing created; known name picks that row; empty text does nothing; over-long name toasts and changes nothing |
+| D-5..D-8 | the real `_confirm` body: a pending name is sent as `{ newName }`, otherwise the picked id or ""; the whole tap through plan and real server ends as a supplier named as typed; a supplier that arrived meanwhile is matched, not duplicated |
+
+## 3. Rules / E2E
+None (see above). The existing emulator case for restock (R4) exercises the same operation shape and is unchanged.
+
+## 4. Regression (automated)
+G-1..G-6 read the dialog and `AuthTextField` text: no `SupplierStore.addSupplier*` and no `Gateway.` call left in the dialog; the "Save" label that saved a supplier is gone; "Use" runs `_useTypedParty` and no second inline copy exists; the combo clears the pending name on a user pick and shows it otherwise; `openFor` resets it; both fields take `maxLength` from the helper's constants and `AuthTextField` forwards it; the hint text exists. Adjusted existing guards: CF-17 (free names of `_confirm`), RD-2 (the dialog may now read `RestockFlow.MAX_*`, so the guard accepts `var` exports; a missing constant would silently be `undefined`), F-9 and E-3 of `restockFlow.test.js` (new limits; the planner's `too-large` is still reached, now through a huge product name).
+
+## 5. Monkey and multi-scenario
+M-1: 600 seeded random dialog states (typed names incl. blank, `SUP-`, `{{sup}}`, 101 characters, non-strings; random picker index incl. out of range; costs incl. NaN, 1e9, 1e308, Infinity; reasons incl. 501 characters and `{{batch}}`; quantities incl. 0). Never throws; every refusal has a known reason and a text; every plan the app builds is ACCEPTED by the real server validator; the run must reach both outcomes (planned > 50 and refused > 50).
+
+## 6. Hand mutants (26, all killed; script kept in the session, list here)
+M1 object party ignored; M2 blank `newName` accepted; M3 name limit off by one; M4 case-sensitive match; M5 string `SUP-` no longer an id; M6 typed name ignored; M7 index 0 read as a row; M8 index without a string behind it; M9 empty text not "none"; M10 existing treated as new; M11 reason measured untrimmed; M12 reason off by one; M13 cost ceiling off by one; M14 `Infinity` becomes "too large"; M15 reason limit drifts from the server; M16 reason text missing; M17 cost text duplicates another; M18 "Use" button dead; M19 a pick does not clear the name; M20 `openFor` keeps the old name; M21 reason field unlimited; M22 name field unlimited; M23 Confirm sends no party; M24 combo not reset on a new name; M25 an existing match keeps a stale pending name; M26 `AuthTextField` drops `maxLength`. First run: 3 survived (M7 and M8 were an equivalent guard, which was removed as redundant code; M17 needed a wording assertion); all killed after that.
+
+## 7. Counts
+Functions 1290 -> 1327 (+37). Scripts 905 (unchanged). QML: `tst_RestockFlow` 14 -> 19 test functions (CI to confirm the total). Coverage statement: the changed pure helper (`RestockFlow.js` new code: `supplierFor`, `partyFor`, `newPartyChoice`, `makeInput` limits, `refusalText`) is covered line and branch by the cases above (each new branch has a case and a killing mutant). The dialog QML (`_useTypedParty`, `_confirm`, bindings) is covered by its real function bodies in Node plus the on-device list below; the bindings (`displayText`, `visible`, `maxLength`) are pinned by source guards only.
+
+# On-device test plan (Taher, needs a build of this branch)
+
+Prerequisites. P1: signed in as owner or admin of a clean test workspace. P2: at least two products (A with stock 10, B with stock 4) and two suppliers ("Acme Farms", "Bolt & Co"). P3: a second device or a Firestore console for the checks marked (console). P4: airplane mode available.
+
+### Happy path
+1. Open Restock on A. Tap the "+" next to Supplier. Type "Newco" in the new row, tap **Use**. EXPECT: the row closes; the combo reads "New: Newco"; the hint says "Newco will be added as a new supplier when you confirm this restock"; the Suppliers screen (open it from another tab only after step 3) does NOT list Newco yet.
+2. Quantity 5, cost left as shown, reason "test". Tap **Confirm**. EXPECT: busy card, then "Restocked +5 units", sheet closes.
+3. Open Suppliers. EXPECT: "Newco" is there exactly once. Open A's batches: one new batch whose supplier is Newco. A's stock is 15. (console) the `suppliers` doc has the minted id and the batch/purchase docs carry it.
+4. Restock B choosing "Acme Farms" in the picker. EXPECT: unchanged behaviour: stock +N, batch supplier Acme Farms, no new supplier.
+5. Restock A again, type "newco" (lower case) and **Use**. EXPECT: the combo picks the existing "Newco" row (no "New:" label, no hint). Confirm. EXPECT: still ONE Newco in Suppliers.
+
+### Negative
+6. THE bug (P1): Restock A, **Use** with "Ghost Ltd", then **Cancel** the sheet. EXPECT: no "Ghost Ltd" in Suppliers (before this change it was there).
+7. Restock A, **Use** "Ghost Two", then in the console delete product A, tap Confirm. EXPECT: a refusal text that says the product is gone and nothing was added; no "Ghost Two" in Suppliers; (console) `counters/suppliers` value unchanged.
+8. In the new-supplier row paste 150 characters. EXPECT: it stops at 100.
+9. In Reason paste 600 characters. EXPECT: it stops at 500.
+10. Unit cost "99999999999" (11 digits), Confirm. EXPECT: "Unit cost is too large. Enter the price of ONE unit, up to 1000000000", nothing sent, sheet still open and usable.
+11. Unit cost "abc", Confirm. EXPECT: "Unit cost is not a valid amount" (unchanged).
+
+### Edge cases
+12. **Use** "SUP-Foo" (a name that looks like an id), Confirm. EXPECT: a new supplier named "SUP-Foo" with a normal minted id; the batch shows supplier "SUP-Foo", not a blank.
+13. **Use** "  Acme   " (padding, and only part of "Acme Farms"), Confirm. EXPECT: a NEW supplier "Acme" (only the whole name matches, ignoring case and padding; there is no fuzzy match). Check you are happy with that.
+14. **Use** with the field empty. EXPECT: nothing happens, row stays open.
+15. Type a new name, **Use**, then pick "Bolt & Co" in the combo. EXPECT: "New:" label and hint disappear; Confirm books Bolt & Co and creates no supplier.
+16. **Use** "Newco2", close the sheet with Cancel, open Restock again. EXPECT: the combo is back to the placeholder, no hint.
+17. Open Restock, tap "+", type text, tap the "x" (close row) without **Use**. EXPECT: the typed text is discarded and no supplier is chosen.
+
+### Multiple scenarios
+18. Airplane mode. Restock A with **Use** "Offline Co". Confirm. EXPECT: "Restock saved. Stock updates when it syncs", A hidden from the New Order picker. Turn the network on. EXPECT: after sync "Offline Co" exists once, A's stock is up, A selectable again.
+19. Two devices: device 1 types new "Dual Co" and Confirms while offline; device 2 creates "Dual Co" through the Suppliers screen; device 1 goes online. EXPECT: two suppliers named "Dual Co" (known limit O1, the server does not dedupe by name). Record, do not fail the slice.
+20. Kill the app after an offline Confirm with a new supplier, relaunch, go online. EXPECT: applied exactly once, one supplier.
+
+### Monkey (manual, 2 minutes)
+21. Hammer **Use** with random text (emoji, "{{sup}}", "{{batch}}", spaces, 99/100/101 characters), flip the picker, tap "+" and "x", Confirm and Cancel at random. EXPECT: no crash, no stuck busy card, no unexpected supplier in Suppliers (only ones whose restock was confirmed). "{{sup}}" as the NAME: EXPECT the refusal "Remove any {{ or }} from the text and try again".
+
+### Affected areas (spot check, 1 minute each)
+Add Product dialog (its own inline "add new party" is unchanged and still creates the supplier immediately: known, separate slice); Supplier list; other screens using `AuthTextField` (login, profile, add staff): typing unchanged, no new length cap; Notifications/Activity entry for a restock still appears (still written by the client, R5b moves it).

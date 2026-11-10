@@ -13,9 +13,9 @@ R5 as written has four parts. Split decided this session (vetoable, see design D
 
 ## Steps
 - [x] 1. Read memory, status doc, designs R1-R4, `operationLogic.js`, `RestockPlan/Flow/FailureCause`, `RestockDialog`, `ActivityLog`, `SupplierStore.addSupplier`. Clone, branch, archive checkpoint.
-- [ ] 2. Design doc `specs/2026-11-10-r5a-restock-dialog-design.md`.
-- [ ] 3. Code: `RestockFlow` (partyFor, newPartyChoice, limits, refusal texts), `AuthTextField.maxLength`, `RestockDialog`.
-- [ ] 4. Tests (Node real-body + QML twin), mutants.
-- [ ] 5. Docs: test plan, status doc section 11, KNOWN-ISSUES, Skill, SKILLS-INDEX, AGENTS, README.
+- [x] 2. Design doc `specs/2026-11-10-r5a-restock-dialog-design.md`.
+- [x] 3. Code: `RestockFlow` (supplierFor structured, partyFor, newPartyChoice, limits, texts), `AuthTextField.maxLength`, `RestockDialog` ("Use", pending name, hint, limits).
+- [x] 4. Tests: `restockR5a.test.js` (37), adjusted CF-17, RD-2, F-9, E-3; QML twin 5 functions; 26/26 mutants killed (`/tmp/mut.py`, list in the test plan).
+- [x] 5. Docs: test plan + index row, status doc section 11, KNOWN-ISSUES, Skill 159 + SKILLS-INDEX regenerated, AGENTS, README.
 - [ ] 6. Full suites, commit, push, open PR.
 - [ ] 7. Read CI (next session / Taher).
