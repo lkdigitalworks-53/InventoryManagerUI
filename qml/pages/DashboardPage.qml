@@ -269,6 +269,12 @@ Item {
         title: root._firstName()
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 variant: "glass"
                 iconName: "bell"

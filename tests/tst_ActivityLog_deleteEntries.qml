@@ -51,12 +51,30 @@ TestCase {
                                  total: 250, products: [] }]
 
         OrdersStore.deleteOrder("ORD-1")
+        // PR #186 device test: the entry is written when the server acks the delete, not at click time
+        // (a refused delete used to leave "Order deleted" in the log for an order that was still there).
+        compare(ActivityLog.entries.length, 0, "nothing logged before the ack")
+        Gateway.mutationApplied("order", "ORD-1", "delete")
 
         compare(ActivityLog.entries.length, 1)
         compare(ActivityLog.entries[0].kind, "order_deleted")
         verify(ActivityLog.entries[0].title.indexOf("Jane Doe") >= 0,
                "title must name the customer")
         compare(ActivityLog.entries[0].entityId, "ORD-1")
+    }
+
+    function test_deleteOrder_refused_by_the_server_logs_nothing() {
+        OrdersStore.orders = [{ orderId: "ORD-1", customer: "Jane Doe", status: "pending",
+                                 total: 250, products: [] }]
+
+        OrdersStore.deleteOrder("ORD-1")
+        Gateway.mutationConflicted("order", "ORD-1", { orderId: "ORD-1", customer: "Jane Doe", status: "pending",
+                                                        total: 250, products: [] }, "delete")
+        // A late ack for the same id (a duplicate signal) must not resurrect the entry either.
+        Gateway.mutationApplied("order", "ORD-1", "delete")
+
+        compare(ActivityLog.entries.length, 0)
+        compare(OrdersStore.orders.length, 1, "the refused delete restored the order")
     }
 
     function test_deleteStaff_logs_a_staff_deleted_entry() {

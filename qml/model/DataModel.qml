@@ -412,6 +412,14 @@ Item {
     property int lastRefreshAction: 0     // bumped when a refresh run ends (tests and later UI read it)
     property string lastRefreshOutcome: "" // "committed" | "partial" | ""
 
+    // L4b refresh row (docs/superpowers/specs/2026-11-04-l4b-refresh-row-design.md). Read-only views of the engine's state
+    // so a page can say how old the lists are and whether a refresh is on its way, plus the one thing it may ask for.
+    readonly property real lastSyncMs: _lastSyncMs
+    readonly property string refreshState: _refreshRunning ? "running" : (_wantTrigger !== "" ? "waiting" : "idle")
+    // A manual refresh ended without the lists being updated: why = "gave-up" | "partial". Main.qml shows a toast.
+    signal manualRefreshUnfinished(string why)
+    property bool _lostCancelled: false   // the current run was cancelled as lost (a hung read), not by a reset
+
     function _refreshStoreList() {
         return [OrdersStore, InventoryStore, StockBatchStore, SupplierStore, StaffStore, TransactionStore]
     }
@@ -438,33 +446,53 @@ Item {
         }
     }
 
-    // trigger: "resume" | "reconnect" | "manual". Returns "run" | "wait" | "drop" (a later UI reads the answer).
-    function requestRefresh(trigger) {
+    // trigger: "resume" | "reconnect" | "manual". Returns { action: "run" | "wait" | "drop", reason }.
+    function _request(trigger) {
         var now = Date.now()
         _cancelLostRun(now)
         var d = RefreshPolicy.decide(trigger, _refreshSnapshot(), now, _lastSyncMs, _lastRefreshStartMs)
         if (d.action === "run") {
             _clearWant()
+            _wantRearmed = false   // a fresh request earns its own single retry; only the retry run itself (via _pollWant) keeps the flag (review 2 of #186)
             _startRefresh(trigger)
         } else if (d.action === "wait") {
-            _wantTrigger = trigger
-            _wantSinceMs = now
-            _wantRearmed = false
+            // A waiting MANUAL wish is only replaced by another manual tap: only a manual wish tells the user how it
+            // ended, and a form closing (_onEditHoldsChanged) makes an automatic request that would swallow it (review #186).
+            if (_wantTrigger !== "manual" || trigger === "manual") {
+                _wantTrigger = trigger
+                _wantSinceMs = now
+                _wantRearmed = false
+            }
             _refreshWaitTimer.restart()
         }
-        return d.action
+        return d
     }
+
+    // Returns "run" | "wait" | "drop" (the automatic triggers and the L4a tests read only this).
+    function requestRefresh(trigger) { return _request(trigger).action }
+
+    // The refresh row's tap (L4b): ignores the 5 minute staleness rule, keeps the spacing and the whole gate.
+    // Returns { action, reason } so the caller can say why a refresh is waiting or was refused.
+    function manualRefresh() { return _request("manual") }
 
     function _clearWant() {
         _wantTrigger = ""
         _wantSinceMs = 0
-        _refreshWaitTimer.stop()
+        if (!_refreshRunning) _refreshWaitTimer.stop()   // while a run is out the timer also watches for a hung read
+    }
+
+    // A wish that ends without a run. Only a MANUAL one tells the user (resume and reconnect stay silent).
+    function _abandonWant() {
+        var manual = _wantTrigger === "manual"
+        _clearWant()
+        if (manual) manualRefreshUnfinished("gave-up")
     }
 
     // FirebaseService has no request timeout, so a hung read would leave "refreshing" up for good. A run older than
     // RUN_TTL_MS is cancelled: each store answers "superseded" and the run ends without marking the lists current.
     function _cancelLostRun(now) {
         if (!_refreshRunning || !RefreshPolicy.runLost(_lastRefreshStartMs, now)) return
+        _lostCancelled = true
         var stores = _refreshStoreList()
         for (var i = 0; i < stores.length; ++i) stores[i]._cancelRefresh()
     }
@@ -472,14 +500,15 @@ Item {
     function _pollWant() {
         var now = Date.now()
         _cancelLostRun(now)
-        if (_wantTrigger === "" || RefreshPolicy.wantExpired(_wantSinceMs, now)) { _clearWant(); return }
+        if (_wantTrigger === "") { _clearWant(); return }   // nothing waiting; the timer only stays while a run is out
+        if (RefreshPolicy.wantExpired(_wantSinceMs, now)) { _abandonWant(); return }
         var d = RefreshPolicy.decide(_wantTrigger, _refreshSnapshot(), now, _lastSyncMs, _lastRefreshStartMs)
         if (d.action === "run") {
             var t = _wantTrigger
             _clearWant()
             _startRefresh(t)
         } else if (d.action === "drop" && d.reason !== "too-soon") {
-            _clearWant()   // blocked, offline, or the lists became fresh another way: nothing left to wait for
+            _abandonWant()   // blocked, offline, or the lists became fresh another way: nothing left to wait for
         }
     }
 
@@ -487,7 +516,9 @@ Item {
         _lastRefreshStartMs = Date.now()
         _refreshTrigger = trigger
         _refreshRunning = true
+        _lostCancelled = false
         _refreshResults = []
+        _refreshWaitTimer.restart()   // polls for a hung read (runLost) while the run is out
         var rev = OutboxStore.revision
         var guard = function() { return RefreshPolicy.swapOk(rev, _refreshSnapshot()) }
         var stores = _refreshStoreList()
@@ -508,12 +539,20 @@ Item {
         lastRefreshOutcome = all ? "committed" : "partial"
         lastRefreshAction++
         // A copy dropped because writes happened meanwhile is worth one more try once things are quiet.
+        var rearm = false
         if (!all && _refreshResults.indexOf("discarded") !== -1 && !_wantRearmed && _refreshTrigger !== "") {
             _wantTrigger = _refreshTrigger
             _wantSinceMs = Date.now()
             _wantRearmed = true
+            rearm = true
             _refreshWaitTimer.restart()
         }
+        if (_wantTrigger === "") _refreshWaitTimer.stop()   // run over, nothing waiting: the watchdog is not needed
+        // A manual refresh that ended without the lists updated tells the user, unless a retry is coming or a reset /
+        // sign-out cancelled it (those load everything themselves; a hung read cancelled as lost is a real failure).
+        var cancelledByReset = _refreshResults.indexOf("superseded") !== -1 && !_lostCancelled
+        if (!all && !rearm && _refreshTrigger === "manual" && !cancelledByReset && AuthService.isSessionOpen())
+            manualRefreshUnfinished("partial")
     }
 
     // The last edit form closed: the refresh that was held off (or forgotten after WANT_TTL_MS) gets one chance now.

@@ -201,6 +201,12 @@ Item {
         subtitle: qsTr("Revenue, stock & transactions")
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 variant: "glass"
                 iconName: "settings"

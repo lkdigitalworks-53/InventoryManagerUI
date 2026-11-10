@@ -58,6 +58,12 @@ Item {
         }
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 visible: root.canInviteMembers
                 variant: "glass"

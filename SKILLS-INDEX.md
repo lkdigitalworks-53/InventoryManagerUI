@@ -166,3 +166,5 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 156: A helper `.js` file is not in scope until the file imports it by name, and a handler that cannot be loaded must still be run in Node
 - 157: Read an editable field's text at the tap, never clamp what the person typed, and never let a caller's callback abort the owner's bookkeeping
 - 158: A toast must live in the window Overlay to be seen above a dialog, and a busy overlay needs the message that switches it on
+- 159: Show the state of a background job where the user looks, give every tap an answer, and make sure no state can stick
+- 160: A compare-and-swap `before` must be the exact image the server holds, never a rebuild of the local copy; log a delete only when the server acked it; keep a transient status out of the layout

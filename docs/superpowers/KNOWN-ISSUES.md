@@ -934,7 +934,7 @@ Two gaps were found by the first live deploys (actAs on the App Engine default S
 
 ## A read with no answer can hold a refresh for up to 3 minutes — FOUND 2026-11-02 (L4a, read from code), MITIGATED
 
-`FirebaseService` sets no request timeout. A hung refresh read keeps `refreshing` up; the next trigger after 3 minutes cancels it (`RefreshPolicy.runLost`). The older sign-in sync has no such watchdog (existing issue, unchanged).
+`FirebaseService` sets no request timeout. A hung refresh read keeps `refreshing` up; since L4b the 5 s poll timer also runs while a run is out, so the run is cancelled by its own watchdog about 3 minutes after it started (`RefreshPolicy.runLost`), and a manual one tells the user (before L4b only the next trigger cancelled it). The older sign-in sync has no such watchdog (existing issue, unchanged).
 
 ## L4a review: three unconfirmed risks, left on purpose — FOUND 2026-11-03 (review sweep of PR #182), NOT FIXED
 
@@ -956,3 +956,26 @@ Nine forms hold the refresh (Add/Edit product, New order, Order detail, Restock,
 5. **Ids:** draft and plan ids are strings; an order line may hold a numeric id. Match plan entries to lines with `String(line.productId) === entry.productId`.
 6. **Pre-existing, not S1:** `NewOrderDialog` skips the stock check at submit when the product is gone (`inv` null), so it fails open there.
 7. **Unverified:** whether `StockBatchStore._pendingMints` and `InventoryStore.syncStates` publish a revision signal a live-refreshing sheet can bind to (check first in the S2 plan).
+
+---
+
+## L4b refresh button (was a row until 2026-11-10): BUILT 2026-11-04, reshaped 2026-11-10 (CI unverified, device steps pending); four known limits
+**2026-11-10:** the always-visible row was too loud, so it is now `RefreshAction`, a ghost icon, first entry of each page's header actions; its caption shows only after a tap and fades 3.5 s after the refresh settles (design addendum A-D1..A-D4). Orders' header now has four icons: check a narrow phone. The text below describes the original row; "row" = the button, "pull gesture" was still not built (too much effort, Taher).
+`RefreshRow` (first child of the content column on Inventory, Orders, Staff, Dashboard, Sales) shows "Updated N min ago" and a tap starts a manual refresh (`DataModel.manualRefresh()`). Design `specs/2026-11-04-l4b-refresh-row-design.md`, test plan `test-plans/2026-11-04-l4b-refresh-row-test-plan.md`.
+- **A tap, not a pull gesture (B-D1).** Pages scroll in `AppScrollView`, pinned to `StopAtBounds` on purpose (Android free-drag bug), so an overscroll pull has nothing to read; a custom gesture cannot be verified in the sandbox or in CI and competes with `SalesPage`'s swipe handler. The row sits where a pull indicator would. A pull gesture can be added later on `manualRefresh()` if the device test says the row is not enough.
+- **Dashboard's recent-activity feed is not refreshed (B-D2).** Its KPIs and orders are; the `ActivityLog` rows catch up at the next sign-in sync until L4c adds `ActivityLog` to the refresh. The row says "Updated" for the whole page.
+- **"Updated" can be the sign-in sync start even if that sync failed (B-D3, L4a limit).** A manual tap fixes it.
+- **Strings are English literals** in `RefreshCaption.js` and `RefreshAction.qml`, like `FailureCause.js`; not in `qsTr`.
+- **The row is not unit-testable in CI** (needs Felgo `dp`, `sp`, `Icon`); it is pinned by `refreshActionWiring.test.js` and checked on a device.
+- **A stuck or parked write blocks a manual refresh until the user fixes it (found in the PR #186 review).** The gate counts every outbox item, parked ones included (L4a, by design), so a tap waits and gives up after 2 minutes however often it is repeated. Before the review the toast said "Sending your changes first", which is not true for a stuck write; with `Gateway.stuckCount > 0` it now says the changes are not syncing and to fix or discard them. Not changed: the gate itself (a refresh swapping lists under an unsent write is what L4a prevents).
+- **A tap that is ended by a reset (not by a failure) is silent (PR #186 review, confidence 65; DECIDED: leave as is).** If a discard-resync or another reset supersedes one store while a manual run is out, the run ends partial without a toast and `lastSyncMs` stays old (the other stores did commit). The row shows the old age after a tap with no explanation. Not fixed: rare, and changing `allCommitted` to count a reset store as current needs an L4a decision. Verify on a device by discarding a parked write while a manual refresh runs.
+- **Disabled rows give no answer to a tap (PR #186 review; DECIDED: keep disabled).** Offline, "Waiting" and "Refreshing" make the row non-tappable (neutral text), so the offline toast, "Already refreshing." and the other `requestMessage` branches are only reachable by a race (a state flipping between render and tap) and by tests. Kept: a muted row that does nothing is the usual disabled look and the spinner is its own answer. If the device test shows people tapping the offline row, make offline tappable (a `tappable` field in `view`, the toast already exists).
+- **FIXED in review 2 of PR #186: the discard retry (`_wantRearmed`) was never re-armed after its first use.** It was cleared only when a request had to wait, so after one retry cycle a request that ran at once got no retry if its copy was dropped (a manual tap then ended in the "could not be updated" toast). `_request` now clears it on a direct run; the retry run itself keeps it, so a stream of writes still cannot loop the refresh.
+
+## Order CAS base: FIXED 2026-11-10 (CI unverified, device steps pending); five known limits
+After a hand edit in the Firestore console (a changed `quantity`, an extra field), every edit, completion and delete of that order answered 409 for ever, and a refused delete still wrote an "Order deleted" Activity entry. Cause: `before` was rebuilt from the local copy while the server deep-compares it with the stored doc. Fix: `OrdersStore._serverBase` keeps the exact server image per order and `before` is a copy of it. Design `specs/2026-11-10-order-cas-base-design.md`, test plan `test-plans/2026-11-10-order-cas-base-and-refresh-button-test-plan.md`, Skill 160.
+- **The first app save of a hand-edited order recomputes its totals** from the lines (D-2); a hand-edited total or an unknown field does not survive it.
+- **An offline delete shows no Activity entry until the server confirms** (D-4, same as products).
+- **Other stores still rebuild `before`** (inventory, suppliers, staff, batches). Not reported; each store's stored shape against its rebuild needs its own check.
+- **A Timestamp typed by hand in the console** decodes to null on the client, so that doc still cannot match. Not covered.
+- **Each order is held twice in memory** (the list and its base).

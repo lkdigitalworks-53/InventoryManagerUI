@@ -62,6 +62,12 @@ Item {
         subtitle: "Manage and track customer orders"
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 variant: "glass"
                 iconName: "import"

@@ -58,7 +58,8 @@ function check(f) {
     if (!/_finishRefresh\("failed"\)/.test(page) || !/_finishRefresh\("discarded"\)/.test(page) || !/_finishRefresh\("committed"\)/.test(page)) v.push(k + ': missing outcome');
     if (page.indexOf('_commitRefresh(') < page.indexOf('allowed')) v.push(k + ': commits before the guard');
     // the live list is assigned only in commit
-    if (!new RegExp('(^|\\s)' + list + ' = ').test(commit)) v.push(k + ': commit does not assign the list');
+    // OrdersStore writes `orders` only through _setOrders (the CAS-base guard, PR #186 order fix): same assignment.
+    if (!new RegExp('(^|\\s)' + list + ' = ').test(commit) && !(list === 'orders' && /\b_setOrders\(all\)/.test(commit))) v.push(k + ': commit does not assign the list');
     if (!/hasMore = false/.test(commit)) v.push(k + ': commit leaves hasMore');
     // start: refuses while busy; bumps seq; stores done
     if (!/refreshing \|\| loadingMore \|\| _resetPending\) return false/.test(start)) v.push(k + ': start does not refuse while busy');
@@ -84,7 +85,7 @@ function check(f) {
     ['lockHeld', 'LockManager.anyHeld'], ['editOpen', 'LockManager.anyEditing'], ['photoPending', 'PhotoQueue.pendingCount'], ['sessionOpen', 'AuthService.isSessionOpen()'], ['accessBlock', 'AuthService.accessBlock']])
     if (!new RegExp(key + ':\\s*' + src.replace(/[().]/g, '\\$&')).test(snapBody)) v.push('snapshot ' + key + ' not read from ' + src);
   if (!/checking: AuthService\.checking === true \|\| AuthService\.tokenNeedsRefresh\(\)/.test(snapBody)) v.push('snapshot: token expiry not part of checking');
-  if (!/_cancelLostRun\(now\)/.test(body(dm, 'requestRefresh') || '') || !/_cancelLostRun\(now\)/.test(body(dm, '_pollWant') || '')) v.push('watchdog not run by both entry points');
+  if (!/_cancelLostRun\(now\)/.test(body(dm, '_request') || '') || !/_cancelLostRun\(now\)/.test(body(dm, '_pollWant') || '')) v.push('watchdog not run by both entry points');
   if (!/RefreshPolicy\.runLost\(_lastRefreshStartMs, now\)\) return/.test(body(dm, '_cancelLostRun') || '') || !/_cancelRefresh\(\)/.test(body(dm, '_cancelLostRun') || '')) v.push('watchdog body');
   const list = body(dm, '_refreshStoreList') || '';
   for (const k of Object.keys(STORE_FILES)) if (!list.includes(k)) v.push('coordinator list lacks ' + k);
