@@ -291,7 +291,7 @@ test('coordinator: partial results never mark the lists current; failure is not 
   k.stores.forEach((s, i) => s.done(i === 1 ? 'discarded' : 'committed'));
   assert.equal(k.ctx._wantTrigger, '', 'only one retry per trigger'); 
   k.ctx._wantRearmed = true; k.tick(20000);
-  assert.equal(k.ctx.requestRefresh('resume'), 'run'); assert.equal(k.ctx._wantRearmed, false || k.ctx._wantRearmed, 'a new trigger starts fresh');
+  assert.equal(k.ctx.requestRefresh('resume'), 'run'); assert.equal(k.ctx._wantRearmed, false, 'a new trigger starts fresh');
 });
 
 test('coordinator: a store that refuses to start -> skipped, run still finishes, lists not marked current', () => {
@@ -672,6 +672,17 @@ const REVIEW = [
     k = stale(mk()); k.ctx.requestRefresh('resume'); k.tick(10000); k.ctx.requestRefresh('reconnect');
     assert.equal(k.ctx._wantTrigger, 'reconnect'); assert.equal(k.ctx._wantSinceMs, k.ctx.__now);
   }],
+  ['a run that starts at once clears the retry flag, so it gets its own single retry (review 2 of #186)', (mk) => {
+    const k = mk(); k.ctx._wantRearmed = true;   // left over from an earlier trigger that already used its retry
+    assert.equal(k.ctx.manualRefresh().action, 'run'); assert.equal(k.ctx._wantRearmed, false);
+    k.stores.forEach((st, i) => st.done(i === 1 ? 'discarded' : 'committed'));
+    assert.equal(k.ctx._wantTrigger, 'manual', 'one retry is waiting'); assert.equal(k.ctx._wantRearmed, true);
+    assert.deepEqual(k.log.unfinished, [], 'a retry is coming: no toast yet');
+    k.tick(20000); k.ctx._pollWant();   // the retry run itself keeps the flag: it must not loop
+    assert.equal(k.ctx._wantRearmed, true, 'the retry run does not clear the flag');
+    k.stores.forEach((st, i) => st.done(i === 1 ? 'discarded' : 'committed'));
+    assert.equal(k.ctx._wantTrigger, '', 'only one retry'); assert.deepEqual(k.log.unfinished, ['partial'], 'the second discard tells the user');
+  }],
   ['an automatic request that is dropped or runs never touches a waiting manual wish', (mk) => {
     let k = stale(mk()); k.ctx.manualRefresh(); k.ctx._lastSyncMs = k.ctx.__now - 1000;   // lists look fresh
     assert.equal(k.ctx.requestRefresh('resume'), 'drop'); assert.equal(k.ctx._wantTrigger, 'manual');
@@ -685,6 +696,7 @@ const REVIEW_MUTANTS = [
   ['the guard is removed: any wait replaces the wish', 'if (_wantTrigger !== "manual" || trigger === "manual") {', 'if (true) {'],
   ['the guard is inverted', '_wantTrigger !== "manual" || trigger === "manual"', '_wantTrigger === "manual" || trigger !== "manual"'],
   ['a manual tap can no longer replace a manual wish', '_wantTrigger !== "manual" || trigger === "manual"', '_wantTrigger !== "manual"'],
+  ['a run that starts at once keeps the old retry flag', '_wantRearmed = false   // a fresh request earns', '// a fresh request earns'],
   // Equivalent, not listed: restarting the poll timer when the wish is NOT replaced (the timer is already running; restart only re-phases the 5 s poll).
   ['the guard also blocks an automatic wish from replacing an automatic one', '_wantTrigger !== "manual" || trigger === "manual"', '_wantTrigger === ""'],
 ];

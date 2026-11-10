@@ -71,3 +71,10 @@ Extra on-device steps (phone A):
 20. Manual wish survives a form (negative, edge). Create an order offline, network on, tap the row at once (toast "Sending your changes first..."), then open Edit product and close it without saving. Expect: the row still says "Waiting to refresh..."; when the order is acknowledged the refresh runs. Repeat with the order kept unsent for 2 minutes: the "Couldn't refresh..." toast still appears (before the review fix it stayed silent).
 21. Large text (edge, monkey on settings). Set the system font to its largest size, go offline with an old "Updated" time (for example 59 min ago) on a narrow phone. Expect: the row text stays inside the screen and ends with an ellipsis if it does not fit, the icon slot stays visible.
 22. Stuck writes + no stuck: with nothing stuck, step 8 still shows "Sending your changes first. The refresh follows." (the old wording is unchanged when the stuck count is 0).
+
+## Review 2 of PR #186 (taher.lkdw@gmail.com) - added cases
+
+Unit (Node, RUN): `refreshBehavior.test.js` review scenario "a run that starts at once clears the retry flag, so it gets its own single retry" (flag cleared on a direct run; one retry waits with no toast; the retry run keeps the flag so it cannot loop; the second discard toasts) + 1 mutant. The L4a assertion "a new trigger starts fresh" compared the flag with itself and could never fail; it now asserts `false`. QML: none added (the engine edit is one assignment, run in Node over the real function body).
+
+Extra on-device step (phone A, two phones help):
+23. Retry after a retry (edge, multiple scenarios). Tap the row, and while it says "Refreshing..." add an order so the fetched copy is dropped. Expect: the row says "Waiting to refresh...", then refreshes once the order is acknowledged, row "Updated just now", no toast. Wait 20 s and repeat the same thing a second time in the same app session. Expect the SAME behaviour (before the fix the second time ended with the toast "Some lists could not be updated..." and no retry).

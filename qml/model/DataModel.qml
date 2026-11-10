@@ -453,6 +453,7 @@ Item {
         var d = RefreshPolicy.decide(trigger, _refreshSnapshot(), now, _lastSyncMs, _lastRefreshStartMs)
         if (d.action === "run") {
             _clearWant()
+            _wantRearmed = false   // a fresh request earns its own single retry; only the retry run itself (via _pollWant) keeps the flag (review 2 of #186)
             _startRefresh(trigger)
         } else if (d.action === "wait") {
             // A waiting MANUAL wish is only replaced by another manual tap: only a manual wish tells the user how it
