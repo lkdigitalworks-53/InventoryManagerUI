@@ -58,6 +58,12 @@ Item {
         }
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 visible: root.canInviteMembers
                 variant: "glass"
@@ -83,20 +89,12 @@ Item {
             width: root.width
             spacing: dp(Constants.space3)
 
-            RefreshRow {
-                Layout.fillWidth: true
-                Layout.topMargin: dp(Constants.space2)
-                lastSyncMs: app.refreshLastSyncMs
-                refreshState: app.refreshState
-                online: app.isOnline
-                onRefreshRequested: app.requestManualRefresh()
-            }
-
             // Quick KPI strip
             RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
+                Layout.topMargin: dp(Constants.space3)
                 spacing: dp(Constants.space2)
 
                 GradientKpiCard {

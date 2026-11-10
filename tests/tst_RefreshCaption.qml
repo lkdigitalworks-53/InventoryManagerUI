@@ -77,8 +77,8 @@ TestCase {
     }
 
     function test_unfinished_messages() {
-        compare(RC.unfinishedMessage("gave-up"), "Couldn't refresh. Tap the refresh row to try again.")
-        compare(RC.unfinishedMessage("partial"), "Some lists could not be updated. Tap the refresh row to try again.")
+        compare(RC.unfinishedMessage("gave-up"), "Couldn't refresh. Tap the refresh button to try again.")
+        compare(RC.unfinishedMessage("partial"), "Some lists could not be updated. Tap the refresh button to try again.")
         compare(RC.unfinishedMessage("zzz"), "")
     }
 
@@ -90,8 +90,8 @@ TestCase {
         compare(RC.requestMessage({ action: "wait", reason: "outbox" }, undefined), "Sending your changes first. The refresh follows.")
         compare(RC.requestMessage({ action: "wait", reason: "in-flight" }, 2), "Sending your changes first. The refresh follows.")
         compare(RC.requestMessage({ action: "run", reason: "" }, 2), "")
-        compare(RC.unfinishedMessage("gave-up", 1), "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh row.")
-        compare(RC.unfinishedMessage("gave-up", 0), "Couldn't refresh. Tap the refresh row to try again.")
-        compare(RC.unfinishedMessage("partial", 3), "Some lists could not be updated. Tap the refresh row to try again.")
+        compare(RC.unfinishedMessage("gave-up", 1), "Couldn't refresh: some changes are not syncing. Fix or discard them, then tap the refresh button.")
+        compare(RC.unfinishedMessage("gave-up", 0), "Couldn't refresh. Tap the refresh button to try again.")
+        compare(RC.unfinishedMessage("partial", 3), "Some lists could not be updated. Tap the refresh button to try again.")
     }
 }

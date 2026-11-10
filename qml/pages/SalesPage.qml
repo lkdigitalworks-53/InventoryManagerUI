@@ -201,6 +201,12 @@ Item {
         subtitle: qsTr("Revenue, stock & transactions")
 
         actions: [
+            RefreshAction {
+                lastSyncMs: app.refreshLastSyncMs
+                refreshState: app.refreshState
+                online: app.isOnline
+                onRefreshRequested: app.requestManualRefresh()
+            },
             IconActionButton {
                 variant: "glass"
                 iconName: "settings"
@@ -333,19 +339,11 @@ Item {
             width: root.width
             spacing: dp(Constants.space4)
 
-            RefreshRow {
-                Layout.fillWidth: true
-                Layout.topMargin: dp(Constants.space2)
-                lastSyncMs: app.refreshLastSyncMs
-                refreshState: app.refreshState
-                online: app.isOnline
-                onRefreshRequested: app.requestManualRefresh()
-            }
-
             SegmentedPill {
                 Layout.fillWidth: true
                 Layout.leftMargin: dp(Constants.space4)
                 Layout.rightMargin: dp(Constants.space4)
+                Layout.topMargin: dp(Constants.space3)
                 // Staff see only Current + Sold; everyone else sees all six.
                 model: root.canViewFinancials
                        ? [qsTr("Value"), qsTr("Purchased"), qsTr("Current"),

@@ -14,12 +14,26 @@
 ## Root cause (matches the reproduction)
 The server deep-compares `before` with the stored doc (`applyMutation`, `recordOperation`). The app sent a `before` REBUILT from the local copy by `_normalizeOrder`, which recomputes items/subtotal/discount/tax/total from the lines. A hand-changed quantity (totals untouched) makes the stored doc differ from its own rebuild, so every write 409s for ever. Delete logged its Activity entry at tap time, before the ack.
 
-## Slice 1 (order fix) — DONE in code
-- [x] `OrdersStore`: `_serverBase` (exact decoded server image per order; fed by load, refresh, conflict, remote result; set to `after` on every local write), `_beforeFor`, used by `buildOrderUpdate` (edit + completion), `applyAdjustment`, `deleteOrder`.
-- [x] Delete logs Activity only on `Gateway.mutationApplied`; refused / discarded deletes log nothing.
-- [x] All internal writes of `orders` go through `_setOrders`; an outside write drops every base (falls back to the rebuilt copy).
-- [x] Tests: `.github/scripts/__tests__/orderCasBase.test.js` (CB-1..CB-24, incl. 300-seed monkey, real server `_deepEqual`); `tst_ActivityLog_deleteEntries.qml` updated; two old refresh test files adapted to `_setOrders`.
-- [x] Local suites: scripts 1039/1039, functions 1290/1290. QML not run (CI).
-- [ ] QML twin tests, test plan, README/AGENTS/SKILLS entries, KNOWN-ISSUES.
+## Taher's reproduction (confirms the root cause)
+Console: changed `quantity` inside `products`. App: refreshed, opened the order, set status completed, saved -> rejected "updated elsewhere"; all later edits rejected. Matches F2/F3 of `specs/2026-11-10-order-cas-base-design.md`: the rebuilt `before` recomputes totals from the lines, the stored totals were untouched.
 
-## Slice 2 (subtle refresh) — see below, updated as it is built
+## Slice 1 (order fix) — DONE, pushed (commit `71f2a6a`)
+- [x] `OrdersStore`: `_serverBase`, `_beforeFor`, `_setOrders` + `onOrdersChanged`, ack-gated delete Activity (see design D-1..D-4).
+- [x] `orderCasBase.test.js` (25), `tst_ActivityLog_deleteEntries.qml` updated, old refresh tests adapted.
+
+## Slice 2 (subtle refresh button) — DONE in code (Taher: pull-to-refresh is too much effort; a subtle button whose text shows for a while, then disappears)
+- [x] `RefreshRow.qml` -> `RefreshAction.qml` (ghost 38 dp icon, first header action on the five pages, caption Popup armed by its own tap, hides 3.5 s after the refresh settles). Pages restored from `main` then one block inserted each.
+- [x] `refreshRowWiring.test.js` replaced by `refreshActionWiring.test.js` (41 incl. 38 hand mutants). Helper wording "refresh button".
+- [x] Docs: design `specs/2026-11-10-order-cas-base-design.md`, addendum in the L4b design, test plan + index row, KNOWN-ISSUES (two entries), README, AGENTS, Skill 160 + `SKILLS-INDEX.md`.
+- Suites run here: scripts 1049/1049, functions 1290/1290. QML not run (CI).
+
+## NEXT
+1. Read CI on the branch head (QML twins, `OrdersStore` edits, `RefreshAction` compile only in CI). Fix any red job first.
+2. Taher: device steps in the test plan (H1 is his exact reproduction; H5/N4/N5/N6/E4 for the button). Veto or accept D-1..D-4 and A-D1..A-D4.
+3. Open PR (base = PR #186's branch `feat/2026-11-04-l4b-refresh-row`, stacked) and merge into #186 once CI is green and he has tested.
+4. Follow-ups, own PRs: check every other store's stored shape against its rebuild (`before` is rebuilt in inventory, suppliers, staff, batches); header crowding on Orders (four icons) if a narrow phone elides the title.
+
+## Not done / honest gaps
+- Nothing built or run on a device. The popup's look, position and fade are device-only.
+- QML test files and the page/component edits were never loaded by Qt here.
+- The root cause is confirmed by Taher's reproduction and by code reading, not by a server log.
