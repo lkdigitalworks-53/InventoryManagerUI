@@ -34,6 +34,33 @@ QtObject {
     property bool _resetPending: false
     property var _cursor: null
 
+    // The exact image of each order's document as the server holds it (decoded, never normalised) -- the
+    // compare-and-swap base. applyMutation and recordOperation deep-compare `before` with the stored doc, so a
+    // `before` REBUILT from the local copy (_normalizeOrder recomputes totals from the lines, drops unknown keys,
+    // fills defaults) disagrees with any stored doc that is not already in that exact shape (edited by hand in
+    // the console, written by an older build) and every edit and delete of that order then answers 409 forever
+    // (PR #186 device test, 2026-11-10). Filled from every read of the server (load, refresh, conflict, remote
+    // result) and set to the sent `after` on every local write; a missing entry falls back to the rebuilt copy.
+    property var _serverBase: ({})
+    property var _refreshBases: ({})    // private buffer of a refresh run; becomes _serverBase on commit
+    // Deletes waiting for the server's ack: the Activity entry is written only then (same as products).
+    property var _pendingDeletes: ({})
+
+    // Every write of `orders` inside this file goes through _setOrders. A write from anywhere else (a test that
+    // seeds the list, a future code path) is one this store cannot vouch for, so it drops every CAS base and
+    // pending delete: the next `before` is then the rebuilt copy, exactly as it was before _serverBase existed.
+    property bool _internalOrdersWrite: false
+    function _setOrders(arr) {
+        _internalOrdersWrite = true
+        orders = arr
+        _internalOrdersWrite = false
+    }
+    onOrdersChanged: {
+        if (_internalOrdersWrite) return
+        _serverBase = ({})
+        _pendingDeletes = ({})
+    }
+
     property Settings _settings: Settings {
         category: "OrdersStore"
         // See qml/helper/SettingsPath.js (SKILLS Skill 41) -- untouched
@@ -61,7 +88,49 @@ QtObject {
         if (AuthStore.tenantId.length > 0)
             _load()
         Gateway.mutationConflicted.connect(_onMutationConflicted)
+        Gateway.mutationApplied.connect(_onMutationApplied)
+        Gateway.parkedWriteDiscarded.connect(_onParkedWriteDiscarded)
         Gateway.batchMutationFailedPermanently.connect(_onBatchMutationFailedPermanently)
+    }
+
+    function _snap(doc) { return JSON.parse(JSON.stringify(doc)) }
+
+    // `doc` null forgets the entry (the order is gone on the server).
+    function _rememberBase(orderId, doc) {
+        if (!orderId) return
+        if (doc) _serverBase[orderId] = _snap(doc)
+        else delete _serverBase[orderId]
+    }
+
+    // The `before` of a write: the server image when known, else the rebuilt copy `order` (a _clone() entry).
+    // Always a fresh copy, so nothing a caller edits afterwards can reach the stored base.
+    function _beforeFor(order) {
+        var b = _serverBase[order.orderId]
+        return b ? _snap(b) : Object.assign({}, order)
+    }
+
+    function _dropPendingDelete(orderId) {
+        if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, orderId)) return
+        delete _pendingDeletes[orderId]
+    }
+
+    // The delete reached the server: only now does the Activity entry exist. A delete that merged into a
+    // still-queued create never reaches the server, so nothing fires and nothing is logged (the order never
+    // existed there).
+    function _onMutationApplied(entity, entityId, action) {
+        if (entity !== "order" || action !== "delete") return
+        if (!Object.prototype.hasOwnProperty.call(_pendingDeletes, entityId)) return
+        var info = _pendingDeletes[entityId]
+        _dropPendingDelete(entityId)
+        ActivityLog.record("order_deleted",
+                           "Order deleted: " + (info.customer || entityId),
+                           formatCurrency(info.total || 0) + (info.status ? " · " + info.status : ""),
+                           entityId)
+    }
+
+    // A parked delete the person discarded never applied: no entry.
+    function _onParkedWriteDiscarded(requestId, entities) {
+        _pendingDeletes = ({})
     }
 
     // Bulk-import chunking fix: every item Gateway.recordMutations("order", ...)
@@ -74,7 +143,8 @@ QtObject {
         var failedIds = {}
         for (var i = 0; i < items.length; ++i) failedIds[items[i].entityId] = true
         var arr = orders.filter(function(o) { return !failedIds[o.orderId] })
-        orders = arr
+        for (var fid in failedIds) _rememberBase(fid, null)
+        _setOrders(arr)
         revision++
         _refreshCounts()
         Toast.show(qsTr("%1 imported order(s) couldn't be saved and were removed. Please re-check and re-import them.").arg(items.length))
@@ -98,6 +168,9 @@ QtObject {
         for (var i = 0; i < arr.length; ++i) {
             if (arr[i].orderId === entityId) { idx = i; break }
         }
+        // The server's own answer is the next `before`, untouched (null = gone: forget it).
+        _rememberBase(entityId, current)
+        if (action === "delete") _dropPendingDelete(entityId)  // never applied: no Activity entry
         if (current) {
             var normalized = _normalizeOrder(current)
             if (idx >= 0) arr[idx] = normalized
@@ -105,7 +178,7 @@ QtObject {
         } else if (idx >= 0) {
             arr.splice(idx, 1) // deleted elsewhere
         }
-        orders = arr
+        _setOrders(arr)
         revision++
         _refreshCounts()
         // A rejected delete-conflict means the order still legitimately
@@ -130,17 +203,23 @@ QtObject {
     function _resetAndFetch() {
         _cancelRefresh()
         if (loadingMore) { _resetPending = true; return }
-        orders = [];
+        _setOrders([]);
+        _serverBase = ({});
         hasMore = true;
         _cursor = null;
         _refreshCounts();
         _fetchFromFirebase();
     }
 
-    function _normalizeOrders(arr) {
+    function _normalizeOrders(arr, baseSink) {
         // Normalize backend field names to local schema
         for (var i = 0; i < arr.length; ++i) {
             var o = arr[i];
+            // The server image, taken BEFORE the defaults below touch the object (see _serverBase).
+            if (baseSink) {
+                var rawId = o.orderId || o.order_id
+                if (rawId) baseSink[rawId] = _snap(o)
+            }
             if (o.order_id && !o.orderId) o.orderId = o.order_id;
             if (!o.customer) o.customer = "";
             if (o.items === undefined) o.items = 0;
@@ -180,7 +259,7 @@ QtObject {
                 console.warn("[OrdersStore] Firestore sync failed", FirebaseService.lastStatusCode, FirebaseService.lastError)
                 return;
             }
-            orders = orders.concat(_normalizeOrders(result.items));
+            _setOrders(orders.concat(_normalizeOrders(result.items, _serverBase)));
             revision++;
             _refreshCounts();
             hasMore = result.hasMore;
@@ -209,6 +288,7 @@ QtObject {
         if (refreshing || loadingMore || _resetPending) return false
         refreshing = true
         _refreshDone = done
+        _refreshBases = ({})
         _refreshPage(++_refreshSeq, [], null, guard)
         return true
     }
@@ -234,7 +314,7 @@ QtObject {
                 _finishRefresh("failed")
                 return
             }
-            var next = acc.concat(_normalizeOrders(result.items))
+            var next = acc.concat(_normalizeOrders(result.items, _refreshBases))
             if (result.hasMore) { _refreshPage(seq, next, result.nextCursor, guard); return }
             // A load that started while this copy was being read (a Transaction retry, a reset that raced the cancel)
             // is appending pages to the live list. Swapping now and letting its next page land on top would
@@ -249,7 +329,9 @@ QtObject {
     }
 
     function _commitRefresh(all, nextCursor) {
-        orders = all
+        _setOrders(all)
+        _serverBase = _refreshBases
+        _refreshBases = ({})
         hasMore = false
         _cursor = nextCursor
         revision++
@@ -260,7 +342,9 @@ QtObject {
 
     function clear() {
         _cancelRefresh()
-        orders = []
+        _setOrders([])
+        _serverBase = ({})
+        _pendingDeletes = ({})
         revision++
         _refreshCounts()
     }
@@ -396,7 +480,8 @@ QtObject {
                 }
             }
 
-            orders = arr;
+            _setOrders(arr);
+            for (var bi = 0; bi < mutationItems.length; ++bi) _rememberBase(mutationItems[bi].entityId, mutationItems[bi].after);
             revision++;
             _refreshCounts();
             // See InventoryStore.upsertMany's identical comment: >maxBatchSize
@@ -617,11 +702,13 @@ QtObject {
     }
 
     function _commit(arr, changedOrder, action, before) {
-        orders = arr;
+        _setOrders(arr);
         revision++;
         _refreshCounts();
-        if (changedOrder)
+        if (changedOrder) {
+            _rememberBase(changedOrder.orderId, action === "delete" ? null : changedOrder)
             Gateway.recordMutation("order", changedOrder.orderId, action || "update", before || null, changedOrder);
+        }
     }
 
     function _clone() {
@@ -705,7 +792,7 @@ QtObject {
         if (idx < 0) return null;
         var arr = _clone();
         var o = arr[idx];
-        var before = Object.assign({}, o);
+        var before = _beforeFor(o);
         if (fields.status          !== undefined) o.status          = fields.status;
         if (fields.customer        !== undefined) o.customer        = fields.customer;
         if (fields.email           !== undefined) o.email           = fields.email;
@@ -748,8 +835,9 @@ QtObject {
         if (idx < 0) return null;
         var arr = _clone();
         var previous = arr[idx];
+        _rememberBase(doc.orderId, doc)
         arr[idx] = _normalizeOrder(Object.assign({}, doc));
-        orders = arr;
+        _setOrders(arr);
         revision++;
         _refreshCounts();
         return previous;
@@ -766,7 +854,7 @@ QtObject {
         if (idx < 0) return;
         var arr = _clone();
         var o = arr[idx];
-        var before = Object.assign({}, o);
+        var before = _beforeFor(o);
         o.products = newLines || [];
         var t = computeOrderTotals(o.products);
         o.subtotal = t.subtotal;
@@ -889,20 +977,20 @@ QtObject {
         var found = false
         var before = null
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].orderId === orderId) { before = Object.assign({}, arr[i]); arr.splice(i, 1); found = true; break; }
+            if (arr[i].orderId === orderId) { before = _beforeFor(arr[i]); arr.splice(i, 1); found = true; break; }
         }
         // Update local state without re-uploading the whole collection
         // (bulk PUT cannot delete documents — it only upserts).
-        orders = arr
+        _setOrders(arr)
         revision++
         _refreshCounts()
         if (!found) return
 
+        _rememberBase(orderId, null)
+        // Activity is written when the server acks the delete (_onMutationApplied), never before: a refused
+        // delete used to leave an "Order deleted" entry for an order that was still there (PR #186 device test).
+        _pendingDeletes[orderId] = { customer: before.customer, total: before.total, status: before.status }
         Gateway.recordMutation("order", orderId, "delete", before, null)
-        ActivityLog.record("order_deleted",
-                           "Order deleted: " + (before.customer || orderId),
-                           formatCurrency(before.total || 0) + (before.status ? " · " + before.status : ""),
-                           orderId)
     }
 
     function totalRevenue() {
