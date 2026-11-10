@@ -74,7 +74,7 @@ L4a NEXT item 3: "L4b: pull-to-refresh on the lists + last updated caption, call
 - [x] S4. Vacuous test fixed: the L4a assertion "a new trigger starts fresh" was `equal(flag, false || flag)` (cannot fail). Now `equal(flag, false)`. Grepped all `refresh*.test.js` for the same shape: none left.
 - [x] S5. Docs: test plan step 23, KNOWN-ISSUES entry, Skill 159 rule 13 and its stale renumbering note, stale `156` in this file fixed to `159`.
 - [x] S6. Sandbox: script suite 1014/1014. `functions` suite shows 9 file-level failures that are identical on a clean tree (sandbox has no handler harness deps); untouched by this PR, CI is the oracle.
-- [ ] S7. Read CI on the new head. The `DataModel.qml` edit is one assignment; QML tests have not run on it.
+- [x] S7. CI on `fd28cb6`: QML, Functions, Rules, E2E all green; PR `mergeable_state` clean.
 
 ## NEXT
 1. Read CI on PR #186 (S7).
