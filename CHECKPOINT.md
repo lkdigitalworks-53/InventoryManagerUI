@@ -41,7 +41,7 @@ Server only. Nothing in the app calls the endpoint. QML untouched, rules untouch
 - [x] R1. Findings confirmed with a concrete case (see list below).
 - [x] R2. Chunk 1 code fixes + tests, pushed `19247fd`: F1, F2, F3, F4 fixed; SR-29..32, SRH-18..22 new; 5/5 fix-mutants killed; functions 1433/1433.
 - [x] R3. Chunk 2 docs + guard: SRG-09 (budget < timeout, mutant killed), design section 7 (SR-D14..17), KNOWN-ISSUES 11 closed + 12..18 added, test plan counts + steps 7/8/10b/10c/20 (8 and 20 BLOCKED: no staff login exists), Skill 162 rules 10..14, README sentence. Functions 1434/1434, `.github/scripts` 1049/1049.
-- [ ] R4. Chunk 3 push, read CI, update this file.
+- [x] R4. Pushed `5a82b44`; CI on it: Functions, QML, Rules, E2E all success, PR Test Summary Comment success, Deploy Check skipped (runs on merge). Sweep summary posted as a PR comment.
 **Findings (concrete cases)**
 - F1: `from:"2026-02-30T00:00:00Z"` parses to 2 Mar (V8 rolls over). Register for a wrong period, no error.
 - F2: cap 250 000 rows at 500 rows/page = 500 sequential reads; ~100-250 ms each = 50-125 s vs 120 s function timeout. Timeout kill sends no CORS headers: client sees a no-answer, not a code.
