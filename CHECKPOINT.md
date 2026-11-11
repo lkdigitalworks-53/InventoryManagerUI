@@ -31,6 +31,15 @@ Review PR #191 in full, fix what CI shows and what the review finds, in the same
 Two phones offline adding the same new supplier (O1) still create two; needs a server rule. A parked restock keeps holding its new supplier name until retried or discarded (accepted cost of option A).
 Everything in the previous checkpoint's list still stands (`{{sup}}` text does not name the field; Qt cuts a long paste silently; O1 two offline devices; `AddProductDialog` inline add-supplier row). A cost typed with non-ASCII digits (Devanagari numerals) is refused as not a valid amount, never booked wrong.
 
+## Device crash on launch (reported 2026-11-12, Android, Felgo Cloud Build, latest commit `93cc9aa`, clean install) - OPEN, no root cause yet
+Taher has the crash log and will share it; do NOT change code before the first error line is known (systematic-debugging, Phase 1).
+Static evidence gathered (nothing run, no Qt in the sandbox):
+- Ruled out: every `import "..."` path and `.import` in qml/ resolves; every `pragma Singleton` file is in its `qmldir` and every registered singleton exists; every type name used resolves to a local type or a Qt/Felgo type; no JS newer than ES2017 in qml/; RestockDialog has no duplicate ids/properties/functions, braces balance; qml linter finds no crash-class issue (only old LDR-3/DEL-1/style).
+- Not covered by CI: no test loads `Main.qml` or `RestockDialog.qml` as a component, and no job starts the real app, so a root-load failure would show only on a device. `Main.qml:1142` instantiates `RestockDialog` at startup. A root load failure makes a Qt app exit at once on Android, which looks like a crash.
+- Open hypotheses, ranked by what a log would show: (1) a QML load error in a startup-instantiated file (log line `qt.qml` / `QQmlApplicationEngine failed to load`); (2) a native module missing from the Felgo Cloud APK: `Qt5Compat.GraphicalEffects` (`LoginPage.qml`, the first screen on a clean install) or `QtQuick.Effects` (`RoundedThumb.qml`), both older than this PR; (3) Felgo/Firebase init (`android/google-services.json` is committed and unchanged since October); (4) CI uses Qt 6.8, the Felgo Cloud SDK may use another Qt.
+- First discriminating question: does the previous Felgo Cloud build (older commit or `main`) open? If yes, bisect the commits between; if no, it is environment (2)-(4), not PR #191.
+Log commands for Taher: `adb logcat -c`, open the app, `adb logcat -d | grep -E "qt|Qt|QML|FATAL|AndroidRuntime|firebase|felgo|SIGSEGV"`, or `adb logcat -b crash -d`.
+
 ## Next session (pick up here)
 1. Read CI of the PR head after the option A push; fix anything the QML twins show (they have never run).
 2. Taher: device steps 1 to 35 of the test plan.
