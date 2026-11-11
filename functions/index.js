@@ -1157,6 +1157,22 @@ exports.computeStockRegister = functions.onRequest(
             const acc = StockRegisterMath.createAccumulator(win);
             const readAt = Date.now();
             const deadlineMs = readAt + REGISTER_SCAN_BUDGET_MS;
+            // D-R3: ask Firestore for the row COUNT first (an aggregation: about one read per 1000 index
+            // entries). A ledger over the cap answers 413 before a single row is read, so every retry
+            // stays cheap. A count that fails is NOT a failed request: log it and fall through to the
+            // stream, whose own cap below stays the backstop (rows can arrive between the two).
+            // shortcut: no timeout around count(), add one only if it is ever seen to hang.
+            let ledgerCount = null;
+            try {
+                const agg = await db.collection(tenantRoot + "/stock_movements").count().get();
+                ledgerCount = agg.data().count;
+            } catch (countErr) {
+                console.warn("computeStockRegister count failed, scanning instead", countErr);
+            }
+            if (typeof ledgerCount === "number" && ledgerCount > REGISTER_MAX_LEDGER_ROWS) {
+                send(res, 413, { ok: false, error: "ledger-too-large" });
+                return;
+            }
             // Ledger first, inventory second, both outside one transaction: a sale landing between
             // the two reads can show one product as not reconciling for this answer only
             // (`reconciles` is a cross-check, never an input to a balance). Run it again.

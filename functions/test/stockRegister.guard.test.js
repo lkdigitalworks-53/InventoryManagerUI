@@ -137,3 +137,15 @@ test("SRG-09 the scan budget always ends well before the function timeout, and t
     assert.ok(/streamAllPaged\([^)]*REGISTER_PAGE_SIZE,\s*deadlineMs\)/s.test(block), "stream must get page size and deadline");
     assert.ok(/deadlineMs !== undefined && Date\.now\(\) > deadlineMs/.test(indexSrc), "stream must check the deadline per page");
 });
+
+test("SRG-11 the count pre-check sits before the stream, uses the SAME cap constant with a strict >, and a failed count falls through", () => {
+    const block = handlerBlock();
+    const c = block.indexOf(".count().get()");
+    const st = block.indexOf("streamAllPaged(");
+    assert.ok(c > 0 && st > c, "count() must run before the stream");
+    assert.ok(/ledgerCount > REGISTER_MAX_LEDGER_ROWS/.test(block), "pre-check must use the shared cap with a strict >");
+    assert.ok(/typeof ledgerCount === "number"/.test(block), "a junk count must be ignored");
+    const catchAt = block.indexOf("catch (countErr)");
+    assert.ok(catchAt > c && catchAt < st, "count() failure must be caught locally and fall through");
+    assert.ok(/streamAllPaged\(db, tenantRoot \+ "\/stock_movements", acc\.add, REGISTER_MAX_LEDGER_ROWS/.test(block), "the in-stream cap (backstop) is still the same constant");
+});

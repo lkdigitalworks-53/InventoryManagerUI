@@ -69,6 +69,9 @@ function installMocks() {
         docs: {}, // path -> plain data object (undefined/missing = "does not exist")
         collections: {}, // path -> [{ id, data }] ordered array, for readAllPaged (computeAnalysis)
         setCalls: [], // { path, data, opts } for every doc.set()/txn.set(), any collection -- assertion aid
+        countCalls: [], // collPath for every collection(...).count().get() (D-R3)
+        countError: null, // when set, count().get() throws this
+        countValue: null, // when a number, count().get() answers it instead of the seeded length
         collectionGetCalls: [], // collPath for every collection(...).get() actually executed
         firestoreDbIds: [], // databaseId passed to every getFirestore(app, databaseId) call (scopedDb env resolution)
         collectionGetError: null, // when set, every collection(...).get() throws this (computeAnalysis 500 path)
@@ -193,6 +196,17 @@ function installMocks() {
                 return collectionQuery(collPath, Object.assign({}, state, { where: (state.where || []).concat([[field, value]]) }));
             },
             limit: (n) => collectionQuery(collPath, Object.assign({}, state, { limit: n })),
+            // Aggregation: collection().count().get() -> snap.data().count. Reads NO documents, so it is
+            // recorded in countCalls, never in collectionGetCalls. mockState.countValue overrides the
+            // answer (a ledger too long to seed); countError makes it throw.
+            count: () => ({
+                get: async () => {
+                    mockState.countCalls.push(collPath);
+                    if (mockState.countError) throw mockState.countError;
+                    const n = mockState.countValue !== null ? mockState.countValue : (mockState.collections[collPath] || []).length;
+                    return { data: () => ({ count: n }) };
+                }
+            }),
             startAfter: (afterDoc) => collectionQuery(collPath, Object.assign({}, state, { afterId: afterDoc.id })),
             get: async () => {
                 mockState.collectionGetCalls.push(collPath);

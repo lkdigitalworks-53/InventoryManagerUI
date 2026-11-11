@@ -29,6 +29,9 @@ function reset() {
     mockState.collections[INV] = [];
     mockState.collectionGetCalls.length = 0;
     mockState.collectionGetError = null;
+    mockState.countCalls.length = 0;
+    mockState.countError = null;
+    mockState.countValue = null;
     mockState.verifyIdToken = async () => ({ uid: "test-uid" });
 }
 
@@ -338,4 +341,111 @@ test("SRH-22 env names that exist only on Object.prototype never pick a database
     mockState.firestoreDbIds.length = 0;
     await call({ env: "test" });
     assert.ok(mockState.firestoreDbIds.every((id) => id === "test"));
+});
+
+// ── D-R3 (2026-11-11): count() pre-check ────────────────────────────────────
+function bigLedger(n) {
+    const rows = [];
+    for (let i = 0; i < n; i++) rows.push({ id: "m" + i, data: { productId: "p1", kind: "receipt", qty: 1, serverTimestamp: ts(IN_WINDOW) } });
+    return rows;
+}
+
+test("SRH-23 a count over the cap -> 413 with ZERO ledger pages and ZERO inventory reads (the cheap refusal)", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countValue = 250001;
+    const res = await call();
+    assert.equal(res.statusCode, 413);
+    assert.deepEqual(jsonBody(res), { ok: false, error: "ledger-too-large" });
+    assert.deepEqual(mockState.countCalls, [LEDGER]);
+    assert.equal(mockState.collectionGetCalls.length, 0, "a refused request must read no document");
+    assert.equal(mockState.setCalls.length, 0);
+});
+
+test("SRH-24 a count of exactly the cap passes the pre-check and is served (the boundary matches the stream's)", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countValue = 250000;
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 4, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 4)];
+    const res = await call();
+    assert.equal(res.statusCode, 200);
+    assert.equal(jsonBody(res).products[0].closing, 4);
+    assert.ok(mockState.collectionGetCalls.length > 0);
+});
+
+test("SRH-25 count() throws -> the request is still served by the stream (a failed count is not a failed request)", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countError = Object.assign(new Error("14 UNAVAILABLE"), { code: 14 });
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 2, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 2)];
+    const res = await call();
+    assert.equal(res.statusCode, 200);
+    assert.equal(jsonBody(res).products[0].closing, 2);
+});
+
+test("SRH-26 count says small but the stream finds more than the cap -> still 413 (the backstop stays)", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countValue = 10;
+    mockState.collections[LEDGER] = bigLedger(250001);
+    const res = await call();
+    assert.equal(res.statusCode, 413);
+    assert.deepEqual(jsonBody(res), { ok: false, error: "ledger-too-large" });
+    assert.ok(mockState.collectionGetCalls.length > 0, "the stream ran");
+});
+
+test("SRH-27 a junk count answer (not a number) is ignored: the stream decides", async () => {
+    for (const junk of ["huge", NaN, undefined, {}, [], true]) {
+        reset();
+        seedHappyPathAuth(mockState);
+        mockState.countValue = junk === undefined ? null : junk;
+        mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 1, IN_WINDOW)];
+        mockState.collections[INV] = [product("p1", "W", 1)];
+        const res = await call();
+        assert.equal(res.statusCode, 200, String(junk));
+    }
+});
+
+test("SRH-28 the count runs only for an allowed caller with a valid window, never before the gates", async () => {
+    reset();
+    seedHappyPathAuth(mockState, { role: "staff" });
+    assert.equal((await call()).statusCode, 403);
+    assert.equal(mockState.countCalls.length, 0, "staff");
+    reset();
+    seedHappyPathAuth(mockState);
+    assert.equal((await call({ from: "garbage" })).statusCode, 400);
+    assert.equal(mockState.countCalls.length, 0, "bad window");
+    reset();
+    mockState.verifyIdToken = async () => { throw new Error("bad"); };
+    assert.equal((await call()).statusCode, 401);
+    assert.equal(mockState.countCalls.length, 0, "bad token");
+});
+
+test("SRH-29 a count of 0 serves an empty register; the count never touches another tenant's ledger", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.collections["tenants/other/stock_movements"] = bigLedger(3);
+    const res = await call();
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res).products, []);
+    assert.deepEqual(mockState.countCalls, [LEDGER]);
+});
+
+test("SRH-30 monkey: random counts and ledger sizes never produce a 500, and 413 happens iff the count or the ledger is over the cap", async () => {
+    let seed = 99;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let i = 0; i < 60; i++) {
+        reset();
+        seedHappyPathAuth(mockState);
+        const rows = Math.floor(rnd() * 5);
+        const counts = [null, 0, 3, 250000, 250001, 9999999, "x", NaN];
+        const count = counts[Math.floor(rnd() * counts.length)];
+        if (rnd() < 0.2) mockState.countError = new Error("boom"); else mockState.countValue = count;
+        mockState.collections[LEDGER] = bigLedger(rows);
+        const res = await call();
+        const over = !mockState.countError && typeof count === "number" && count > 250000;
+        assert.equal(res.statusCode, over ? 413 : 200, "count=" + String(count) + " err=" + Boolean(mockState.countError));
+    }
 });
