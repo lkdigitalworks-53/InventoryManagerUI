@@ -19,7 +19,7 @@ Review PR #191 in full, fix what CI shows and what the review finds, in the same
 - [x] 7. Read by hand and found sound: `onActivated` exists (`AppComboBox` is a `QQC.ComboBox`), `applyRestockResults` adds the new supplier locally so the Activity text can name it, the plan trims the reason (so the 500 check is consistent), the typed-quantity label re-evaluates on text, the "+" toggle clears the field so a hidden field never blocks Confirm, other `restock` caller (`DataModel`) passes no party. Linter on the changed QML: no category that main does not already have.
 - [x] 8. Docs: KNOWN-ISSUES (open decision), design D-R5-13, test plan (F-J..F-L, steps 29 to 31, counts), status doc section 11, AGENTS, README, Skill 162 rules 15 to 18.
 - [x] 9. Suites here: functions 1421/1421 (1413 after the rebase, +8).
-- [ ] 10. Push, then read CI of the new head. `tst_RestockFlow` compiles for the first time, so its 27 functions run for the first time in CI: if one fails it is a QtTest or engine difference, fix only what CI shows.
+- [x] 10. Pushed `4925f0f..46630b9` to the PR branch. CI of `46630b9`: QML Tests 2975 passed, 0 failed (was 2942 passed, 2 failed; `tst_RestockFlow` compiled and ran for the first time, engine has `String.normalize`), Functions, Rules and E2E green, deploy jobs skipped (not a merge).
 
 ## Open decision for Taher (not built on purpose)
 Two queued restocks on ONE device with the same NEW supplier name create two suppliers (the second tap cannot see the first's supplier until the server answers; the server does not dedupe by name). Options and recommendation (A: refuse the second while the first is queued) are in `docs/superpowers/KNOWN-ISSUES.md`. It blocks a real offline workflow, so it is Taher's call.
@@ -28,6 +28,6 @@ Two queued restocks on ONE device with the same NEW supplier name create two sup
 Everything in the previous checkpoint's list still stands (`{{sup}}` text does not name the field; Qt cuts a long paste silently; O1 two offline devices; `AddProductDialog` inline add-supplier row). A cost typed with non-ASCII digits (Devanagari numerals) is refused as not a valid amount, never booked wrong.
 
 ## Next session (pick up here)
-1. Read CI of PR #191 and fix only what it shows.
+1. PR #191 CI is green on `46630b9`; nothing to fix unless a later push changes that.
 2. Taher: answer the open decision above (A, B or C), then device steps 1 to 31 of the test plan.
 3. Then R5b on a NEW branch off `main` after #191 merges (design section 5), then R6.
