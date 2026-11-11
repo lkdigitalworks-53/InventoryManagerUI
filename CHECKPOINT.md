@@ -18,7 +18,7 @@ Wire `NewOrderDialog` to `ProductPickerSheet`; delete `productNames`, `_pickerPr
 - [x] 6. `StockBatchStore.mintRevision`, `NewOrderDialog` wired, `NOW-01..16` (16/16), dormancy allow-lists and `W-20` updated on purpose.
 - [x] 7. Node: functions 1409/1409, `.github/scripts` 1049/1049. 43 hand mutants: 1 real survivor (shortfall hid oversize), test added, all killed.
 - [x] 8. Docs: plan, test plan (rows, checks 54 to 66, verification row), KNOWN-ISSUES 22 to 25, README, AGENTS, Skill 162, SKILLS-INDEX regenerated.
-- [ ] 9. Push (done once docs are in), read CI, open PR (REST API: `gh pr create` needs GraphQL, blocked here).
+- [x] 9. Pushed `705349e`, PR #194 opened (REST API). CI ALL GREEN on `705349e`: QML Tests (twins included), Functions, Rules, E2E; PR Test Summary Comment also green.
 - [ ] 10. For Taher: veto window on S3-D1..D8, device checks 54 to 66, merge; next S4 (Edit Order).
 
 ## Findings so far (read from code)
@@ -27,4 +27,4 @@ Wire `NewOrderDialog` to `ProductPickerSheet`; delete `productNames`, `_pickerPr
 - Dry run is feasible: `CompletionPlan.build` is pure; the sale docs are one per line with a quantity; so a stub `saleDocs` gives the same operation count as the real one.
 
 ## State
-Not built, not run on a device. The QML twins (`tst_NewOrderPicker`, regenerated `tst_PickerSheetModel`) and the Felgo layer are UNSEEN until CI. Open items: KNOWN-ISSUES 22 to 25 (no-price row reason, cart stepper 28 dp, error label may be off screen, dry-run cost unmeasured). If the session ends here: read CI on the branch head, fix, open the PR, then ask Taher the questions listed in the PR body.
+Not built, not run on a device. The QML twins (`tst_NewOrderPicker`, regenerated `tst_PickerSheetModel`) ran GREEN in CI on `705349e`. The Felgo layer (`NewOrderDialog` wiring, the sheet over the order sheet, the button) is device-only and UNSEEN. Open items: KNOWN-ISSUES 22 to 25 (no-price row reason, cart stepper 28 dp, error label may be off screen, dry-run cost unmeasured). Next: Taher answers the four questions in PR #194, runs device checks 54 to 66, merges; then S4 (Edit Order).
