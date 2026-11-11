@@ -486,3 +486,76 @@ test("G-7 the unused-name check runs before busy is set; the stock label shows t
     const open = extractFunction(DIALOG_FILE, "openFor");
     assert.ok(open.indexOf("qtyField.value = qtyField.from") >= 0 && open.indexOf("qtyField.value = qtyField.from") < open.indexOf("qtyField.value = 10"));
 });
+
+// ---------------------------------------------------------------------------- PR #191 sweep, second batch
+
+test("N-1 supplier names have ONE spelling: NFC, zero-width removed, whitespace runs folded, trimmed", () => {
+    assert.deepEqual(sup({ newName: "Café" }, []), { ok: true, supplier: { newName: "Café" } }, "decomposed accent becomes the composed letter");
+    assert.deepEqual(sup({ newName: "A\tB\n C" }, []), { ok: true, supplier: { newName: "A B C" } });
+    assert.deepEqual(sup("Ac​me  Farms", []), { ok: true, supplier: { newName: "Acme Farms" } });
+    assert.deepEqual(sup({ newName: " Bolt & Co " }, []), { ok: true, supplier: { newName: "Bolt & Co" } }, "no-break spaces fold too");
+});
+
+test("N-2 a name made only of invisible characters is blank, not a supplier you cannot see", () => {
+    for (const bad of ["​", "​‌‍", "﻿", "⁠ ​"]) {
+        assert.deepEqual(sup({ newName: bad }, []), { ok: false, reason: "bad-supplier" }, JSON.stringify(bad));
+        assert.deepEqual(sup(bad, []), { ok: false, reason: "bad-supplier" }, JSON.stringify(bad));
+    }
+});
+
+test("N-3 matching a known supplier uses the same spelling on both sides (decomposed typing, double spaces, invisible characters)", () => {
+    const list = [{ supplierId: "SUP-1", name: "Café  Noir" }, { supplierId: "SUP-2", name: "Acme Farms" }];
+    assert.deepEqual(sup({ newName: "café noir" }, list), { ok: true, supplier: { id: "SUP-1" } });
+    assert.deepEqual(sup("ACME​   farms", list), { ok: true, supplier: { id: "SUP-2" } });
+    assert.deepEqual(plain(RF.newPartyChoice("Café Noir", list)), { kind: "existing", id: "SUP-1", name: "Café  Noir" });
+    assert.deepEqual(plain(RF.newPartyChoice("​", list)), { kind: "invalid", message: RF.refusalText("bad-supplier") });
+});
+
+test("N-4 the length limit counts the CLEANED name (folded spaces and invisible characters do not count)", () => {
+    assert.equal(sup({ newName: "x".repeat(100) + "​​" }, []).ok, true);
+    assert.equal(sup({ newName: "a" + " ".repeat(50) + "b" }, []).ok, true);
+    assert.equal(sup({ newName: "x".repeat(101) }, []).reason, "supplier-too-long");
+});
+
+test("N-5 costFromText: a typed negative zero is a plain zero", () => {
+    for (const t of ["-0", "-0.0", "+0", "0"]) assert.ok(Object.is(RF.costFromText(t), 0), t);
+});
+
+test("N-6 the purchase total is money rounded to 2 places; the unit cost keeps what was typed", async () => {
+    for (const [qty, cost, total] of [[3, 0.1, 0.3], [3, 0.123456789, 0.37], [7, 19.99, 139.93], [9999, 1e9, 9999e9], [1, 0.005, 0.01], [10, 12.5, 125]]) {
+        const plan = plain(RP.build(RF.makeInput(args({ qty, unitCost: cost })).input));
+        assert.equal(plan.ok, true, JSON.stringify([qty, cost]));
+        const purchase = plan.ops.find((o) => o.entity === "transaction").after;
+        assert.equal(purchase.total, total, JSON.stringify([qty, cost]));
+        assert.equal(purchase.unitCost, cost, "unit cost is not rounded");
+        assert.ok(Number.isFinite(purchase.total));
+    }
+    const plan = plain(RP.build(RF.makeInput(args({ qty: 3, unitCost: 0.1 })).input));
+    const db = baseDb();
+    const { result } = await send(db, plan);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(plain(RP.reflect(result.results)).purchase.total, 0.3, "the real server stores the rounded total");
+});
+
+test("N-7 monkey: whatever name text the tap meets, the result is a refusal or a name that is its own fixed point", () => {
+    let seed = 5;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const alphabet = ["a", "B", " ", "\t", "\n", "​", " ", "é", "é", "SUP-", "{{", "x", "﻿", "😀"];
+    for (let i = 0; i < 1500; i++) {
+        let t = ""; const len = Math.floor(rnd() * 14);
+        for (let k = 0; k < len; k++) t += alphabet[Math.floor(rnd() * alphabet.length)];
+        const r = sup({ newName: t }, []);
+        if (!r.ok) { assert.ok(r.reason === "bad-supplier" || r.reason === "supplier-too-long", r.reason); continue; }
+        const nm = r.supplier.newName;
+        assert.ok(nm.length > 0 && nm === nm.trim() && !/\s\s/.test(nm) && !/[​-‍⁠﻿\t\n]/.test(nm), JSON.stringify(t));
+        assert.deepEqual(sup({ newName: nm }, []), r, "cleaning twice changes nothing");
+    }
+});
+
+test("N-8 the 2-place rounding never turns a finite total into Infinity (planner-level callers have no cost ceiling)", () => {
+    const plan = plain(RP.build(Object.assign(RF.makeInput(args({ qty: 1, unitCost: 1 })).input, { unitCost: 1.5e307 })));
+    assert.equal(plan.ok, true);
+    assert.equal(plan.ops.find((o) => o.entity === "transaction").after.total, 1.5e307);
+    const big = plain(RP.build(Object.assign(RF.makeInput(args({ qty: 1, unitCost: 1 })).input, { qty: 1e6, unitCost: 1e9 })));
+    assert.equal(big.ops.find((o) => o.entity === "transaction").after.total, 1e15, "the existing R-4 case is unchanged");
+});

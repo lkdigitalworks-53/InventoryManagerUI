@@ -26,6 +26,9 @@ var _DATE = /^\d{4}-\d{2}-\d{2}$/
 function _refuse(reason) { return { ok: false, reason: reason } }
 function _isNum(n) { return typeof n === "number" && isFinite(n) }
 function _text(v) { return typeof v === "string" ? v : "" }
+// Money to 2 places, like the order totals (3 x 0.1 was stored as 0.30000000000000004). A huge value is kept as it is:
+// x * 100 can overflow to Infinity, which JSON turns into null, while a finite total was always accepted here.
+function _money(x) { var r = Math.round(x * 100) / 100; return isFinite(r) ? r : x }
 function _hasToken(s) { return typeof s === "string" && (s.indexOf(TOK_SUP) >= 0 || s.indexOf(TOK_BAT) >= 0) }
 
 function _create(entity, entityId, after) {
@@ -118,7 +121,7 @@ function build(input) {
     ops.push(_create("transaction", Keys.purchaseTxId(TOK_BAT), {
         txId: Keys.purchaseTxId(TOK_BAT), kind: "purchase", timestamp: inp.now, date: inp.date,
         productId: inp.productId, productName: productName, category: category, party: supplierId,
-        quantity: inp.qty, unitCost: inp.unitCost, unitPrice: 0, total: inp.qty * inp.unitCost,
+        quantity: inp.qty, unitCost: inp.unitCost, unitPrice: 0, total: _money(inp.qty * inp.unitCost),
         orderId: "", reason: reason
     }))
 

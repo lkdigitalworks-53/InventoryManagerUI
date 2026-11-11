@@ -251,4 +251,22 @@ TestCase {
         compare(RF.unusedPartyText(5), "")
         verify(RF.unusedPartyText("Newco").indexOf("Tap Use") >= 0)
     }
+
+    // ---- PR #191 review sweep, second batch ----
+
+    function test_supplier_names_have_one_spelling() {
+        compare(RF.supplierFor({ newName: "Cafe\u0301" }, []).supplier.newName, "Caf\u00e9")
+        compare(RF.supplierFor({ newName: "A\tB\n C" }, []).supplier.newName, "A B C")
+        compare(RF.supplierFor("Ac\u200bme  Farms", []).supplier.newName, "Acme Farms")
+        compare(RF.supplierFor({ newName: "\u200b\u200c" }, []).reason, "bad-supplier")
+        compare(RF.supplierFor("\ufeff", []).reason, "bad-supplier")
+        compare(RF.supplierFor({ newName: "x".repeat(100) + "\u200b" }, []).ok, true)
+        compare(RF.supplierFor("ACME\u200b   farms", suppliers).supplier.id, "SUP-001")
+        compare(RF.newPartyChoice("\u200b", suppliers).kind, "invalid")
+    }
+
+    function test_costFromText_negative_zero_is_zero() {
+        compare(1 / RF.costFromText("-0"), Infinity, "+0, not -0")
+        compare(1 / RF.costFromText("-0.0"), Infinity)
+    }
 }

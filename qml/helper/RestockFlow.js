@@ -36,7 +36,8 @@ function costFromText(text) {
     if (t === "") return NaN
     if (!_PLAIN_DECIMAL.test(t)) return -1
     var n = Number(t)
-    return isFinite(n) ? n : -1
+    if (!isFinite(n)) return -1
+    return n === 0 ? 0 : n          // "-0" is a zero, not a negative zero that a store could keep as "-0"
 }
 
 // PR #191 sweep. The "Use" button of the new-supplier row holds the typed name; text still sitting in that field at
@@ -99,10 +100,20 @@ function localDate(d) {
 // Names are trimmed first, so " Acme" matches "Acme". Whitespace-only is refused, and so is a name longer than
 // MAX_SUPPLIER_NAME (reason "supplier-too-long"). `suppliers` = [{ supplierId, name }].
 // -> { ok: true, supplier: null | { id } | { newName } } | { ok: false, reason: "bad-supplier" | "supplier-too-long" }
+// PR #191 sweep: ONE spelling of a supplier name, used to store it and to compare it. Unicode NFC (a decomposed "e" +
+// accent from another keyboard or a paste matched nothing and made a second "Café"), zero-width characters removed (a
+// name of only those looked empty and was accepted), every run of whitespace incl. tab and newline folded to one
+// space (a pasted line break stored in a list row), then trimmed. `normalize` is guarded: an engine without it
+// simply skips NFC.
+function _cleanName(v) {
+    var t = String(v)
+    if (typeof t.normalize === "function") t = t.normalize("NFC")
+    return t.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim()
+}
 function _knownByName(lower, list) {
     for (var j = 0; j < list.length; ++j) {
         var s = list[j]
-        if (s && typeof s.name === "string" && s.name.trim().toLowerCase() === lower && typeof s.supplierId === "string" && s.supplierId.length > 0)
+        if (s && typeof s.name === "string" && _cleanName(s.name).toLowerCase() === lower && typeof s.supplierId === "string" && s.supplierId.length > 0)
             return s.supplierId
     }
     return ""
@@ -120,7 +131,7 @@ function supplierFor(party, suppliers) {
     var list = Array.isArray(suppliers) ? suppliers : []
     if (typeof party === "object") {
         if (typeof party.newName === "string") {
-            var nn = party.newName.trim()
+            var nn = _cleanName(party.newName)
             return nn.length === 0 ? { ok: false, reason: "bad-supplier" } : _byName(nn, list)
         }
         if (typeof party.id === "string" && party.id.trim().length > 0) return { ok: true, supplier: { id: party.id.trim() } }
@@ -129,7 +140,8 @@ function supplierFor(party, suppliers) {
     var raw = String(party).trim()
     if (raw.length === 0) return { ok: false, reason: "bad-supplier" }
     if (raw.indexOf("SUP-") === 0) return { ok: true, supplier: { id: raw } }
-    return _byName(raw, list)
+    var nm = _cleanName(raw)
+    return nm.length === 0 ? { ok: false, reason: "bad-supplier" } : _byName(nm, list)
 }
 
 // What the restock dialog hands to InventoryStore.restock as `party` (R5a, D-R5-2). A typed NEW supplier name wins over
