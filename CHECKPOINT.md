@@ -29,3 +29,21 @@ Server only. Nothing in the app calls the endpoint. QML untouched, rules untouch
 3. **S2d-2** server kind hint for the clamped imported-order deduction (then client passes `sale`).
 4. Restrict `stock_movements` read to owner/admin/manager in the rules BEFORE S2e (KNOWN-ISSUES, P1 S4a item 1).
 5. S2e after the CA; S3 only if per-batch traceability is asked for. R5b (atomic ops) is independent: see PR #191 and `areas` notes.
+
+
+---
+# REVIEW SWEEP of PR #193 (2026-11-11, same branch, no stacked PR) - resume here
+**Asked:** deep full sweep with `requesting-code-review`, `qt-qml-review` (N/A: PR has zero QML files), `ponytail-audit`; fixes in the SAME PR; no parallel agents; split into chunks; robustness first; show done/next at the end.
+**Commit identity (RESOLVED):** `taher.lkdw@gmail.com`, as git user AND last line of every commit message (Taher, this session). Supersedes `dextran52@` / `allibaas52@` above; KNOWN-ISSUES P1 S4a item 11 is closed by this.
+**PAT:** from chat prompt only; clone URL reset, pushes use `-c http.extraHeader`. Not in repo/memory.
+**Sweep steps**
+- [x] R0. Read skills, memory, PR body, math module, handler, harness, tests (54/54 pass locally on Node 22).
+- [x] R1. Findings confirmed with a concrete case (see list below).
+- [ ] R2. Chunk 1 code fixes + tests: F1 calendar-impossible dates roll over; F2 500-row pages + no deadline vs 120 s timeout; F3 `scopedDb`/`deriveContext` outside the `try`; F4 `scopedDb` accepts `constructor`/`toString` as env (all handlers).
+- [ ] R3. Chunk 2 docs: KNOWN-ISSUES, test plan, design deltas, Skill 162, README/AGENTS only if needed, full test run.
+- [ ] R4. Chunk 3 push, read CI, update this file.
+**Findings (concrete cases)**
+- F1: `from:"2026-02-30T00:00:00Z"` parses to 2 Mar (V8 rolls over). Register for a wrong period, no error.
+- F2: cap 250 000 rows at 500 rows/page = 500 sequential reads; ~100-250 ms each = 50-125 s vs 120 s function timeout. Timeout kill sends no CORS headers: client sees a no-answer, not a code.
+- F3: `scopedDb` + `deriveContext` run before the `try`: a transient Firestore error there is an unhandled rejection (no JSON answer).
+- F4: `DATABASE_ID_FOR_ENV["constructor"]` is truthy -> not the safe `prd` fallback. Pre-existing, every handler.
