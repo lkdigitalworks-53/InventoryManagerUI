@@ -90,8 +90,39 @@ test("SRG-08 no client-writable path: the ledger collection is still write-denie
     const rules = fs.readFileSync(path.join(root, "..", "firestore.rules"), "utf8");
     const m = rules.match(/match \/stock_movements\/\{docId\} \{([^}]*)\}/);
     assert.ok(m, "stock_movements rule not found");
-    assert.ok(/allow read: if isMember\(tenantId\)/.test(m[1]));
     assert.ok(/allow write: if false/.test(m[1]));
+});
+
+test("SRG-08b D-R1: stock_movements read uses isLedgerReader, whose role list equals REGISTER_ROLES, and only it uses it", () => {
+    const rules = fs.readFileSync(path.join(root, "..", "firestore.rules"), "utf8");
+    const m = rules.match(/match \/stock_movements\/\{docId\} \{([^}]*)\}/);
+    assert.ok(/allow read: if isLedgerReader\(tenantId\);/.test(m[1]), "stock_movements read must be isLedgerReader");
+    assert.equal((rules.match(/isLedgerReader\(tenantId\)/g) || []).length, 2, "defined once, used once");
+    const fn = rules.match(/function isLedgerReader\(tenantId\) \{([^}]*)\}/);
+    assert.ok(fn, "isLedgerReader not found");
+    assert.ok(/isMember\(tenantId\)\s*&&/.test(fn[1]), "an active member with a valid role first");
+    const list = fn[1].match(/myRole\(tenantId\) in \[([^\]]*)\]/);
+    assert.ok(list, "role list not found");
+    const roles = list[1].split(",").map((r) => r.trim().replace(/'/g, ""));
+    assert.deepEqual(roles, Reg.REGISTER_ROLES, "firestore.rules and REGISTER_ROLES must not drift");
+});
+
+test("SRG-08c D-R1: audit_log, transactions and stock_batches were NOT narrowed (stock_batches is KNOWN-ISSUES item 19)", () => {
+    const rules = fs.readFileSync(path.join(root, "..", "firestore.rules"), "utf8");
+    for (const c of ["audit_log", "transactions", "stock_batches"]) {
+        const m = rules.match(new RegExp("match \\/" + c + "\\/\\{docId\\} \\{([^}]*)\\}"));
+        assert.ok(m, c);
+        assert.ok(/allow read: if isMember\(tenantId\);/.test(m[1]), c + " read changed");
+        assert.ok(/allow write: if false/.test(m[1]), c);
+    }
+});
+
+test("SRG-08d D-R1: the app never reads stock_movements directly (a client read would break for staff)", () => {
+    const { execSync } = require("node:child_process");
+    const repo = path.join(root, "..");
+    let out = "";
+    try { out = execSync("grep -rln stock_movements qml src main.cpp", { cwd: repo, encoding: "utf8" }); } catch (e) { out = ""; }
+    assert.equal(out.trim(), "", "a client read of stock_movements needs a role-aware UI: " + out);
 });
 
 test("SRG-09 the scan budget always ends well before the function timeout, and the stream gets page size + deadline", () => {

@@ -47,6 +47,15 @@ service cloud.firestore {
         && roleIsValid(myRole(tenantId));
     }
 
+    // The roles that may read the raw stock_movements ledger (P1 S4a follow-up D-R1). It will carry cost
+    // values (S2e), and computeStockRegister already refuses staff: the direct read must not be wider than
+    // the endpoint. Mirrors REGISTER_ROLES in functions/lib/stockRegisterMath.js: keep the two lists equal
+    // (a guard test parses both, Skill 128 rule 10). Only stock_movements uses it: audit_log, transactions
+    // and stock_batches stay isMember (stock_batches holds cost prices: KNOWN-ISSUES, P1 S4a item 19).
+    function isLedgerReader(tenantId) {
+      return isMember(tenantId) && myRole(tenantId) in ['owner', 'admin', 'manager'];
+    }
+
     // Which roles an actor may hand out. Mirrors canAssignRole in functions/index.js and
     // AuthService._canAssignRole: an owner assigns admin/manager/staff, an admin assigns
     // manager/staff, nobody assigns owner (the only owner is the one the tenant bootstrap creates).
@@ -192,7 +201,7 @@ service cloud.firestore {
         allow write: if false;
       }
       match /stock_movements/{docId} {
-        allow read: if isMember(tenantId);
+        allow read: if isLedgerReader(tenantId);
         allow write: if false;
       }
 

@@ -32,7 +32,8 @@ member is refused everywhere except reading their own member doc (so the app can
 |---|---|---|
 | `tenants/{tenantId}` (the doc) | active member | create: signed-in user who is the `ownerId`; update: owner (`ownerId` is immutable); delete: owner |
 | `members/{uid}` | own doc always; roster for active members | create: `canAssignRole` (owner assigns admin/manager/staff, admin assigns manager/staff, nobody assigns owner) or the one-time owner bootstrap; update: `canAssignRole` for the new role AND `canManageTarget` for the target's current role (an admin cannot touch a peer admin or the owner; member `uid` immutable); delete: `canManageTarget` (not self) or voluntary leave (non-owner) |
-| `audit_log`, `transactions`, `stock_batches`, `stock_movements` (ledger) | active member | nobody (gateway Cloud Functions only, Admin SDK) |
+| `audit_log`, `transactions`, `stock_batches` (ledger) | active member | nobody (gateway Cloud Functions only, Admin SDK) |
+| `stock_movements` (ledger) | active **owner, admin or manager** (`isLedgerReader`; staff cannot read it, since P1 S4a follow-up D-R1) | nobody (gateway Cloud Functions only, Admin SDK) |
 | `locks`, `pending_cleanup` (server-only) | nobody | nobody |
 | `activity_log`, `config`, `counters`, `_migrations` (client-writable allow-list) | active member | active member |
 | everything else, e.g. `inventory`, `orders`, `staff`, `removed_staff`, `suppliers`, and any name not yet invented | active member (except the server-only names) | **nobody**: default deny, gateway Cloud Functions only |

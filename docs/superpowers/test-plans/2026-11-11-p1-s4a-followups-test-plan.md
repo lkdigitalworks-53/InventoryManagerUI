@@ -33,3 +33,19 @@ Whole functions suite 1552/1552 (was 1525). Every older writer / register test p
 None (no client, no rules change in this slice). The row gains one string field; `firestore.rules` denies every client write to `stock_movements`, so no rule sees it.
 ### On-device (curl, same prerequisites P1..P5 as the S4a plan; after the functions deploy)
 Happy: S4a step 4, deleted product C now answers `name` = C's name. Edge: rename product A in the app, make one more stock change, call the register: A shows the NEW name. Negative: a product created and deleted before this deploy has only old rows, so `name:null` is still correct for it. Affected: restock, order complete, return, product edit, product delete, bulk import all still write their rows (the register totals do not change).
+
+## Slice 3 - D-R1: `stock_movements` read restricted to owner / admin / manager
+### 1. Rules tests (`test/firestore.rules.test.js`, emulator: CI ONLY, not run in the sandbox: the emulator jar cannot download here)
+WRITTEN, NOT RUN locally. 22 new cases plus the shared ledger loop (owner): owner, admin, manager read OK and cannot create / update / delete (data untouched); staff cannot read, write or delete; suspended owner / admin / manager / staff cannot read or write; member docs with role viewer, empty, `Owner`, numeric, missing, missing status, unknown status cannot read; outsider and anonymous cannot get or list; manager can list, staff cannot; a manager of ANOTHER tenant cannot read; regression: `audit_log`, `transactions`, `stock_batches` stay readable by all four roles.
+### 2. Unit / guard (`functions/test/stockRegister.guard.test.js`, RUN 12/12)
+SRG-08 write-denied; SRG-08b `isLedgerReader` is the read rule, defined once and used once, starts with `isMember`, and its role list EQUALS `REGISTER_ROLES` (parsed from both files); SRG-08c the three sibling collections still `isMember` read / `false` write; SRG-08d no `stock_movements` in `qml/`, `src/`, `main.cpp`.
+### 3. Mutation (hand, 5/5 killed by the guards)
+staff added to the list; read back to `isMember`; `isMember` dropped from the helper; `stock_batches` narrowed; admin removed. The emulator cases cover the same behaviour but only CI can run them.
+### 4. Regression
+Functions suite and scripts suite unchanged and green (see CHECKPOINT for the final counts). No handler code changed in this slice.
+### 5. E2E
+None: the app has no ledger read. State it in the PR.
+### Deploy
+`checks.yml` deploys `functions,firestore:rules,firestore:indexes` on merge (behind the Deploy Check gate), so ONE approval ships all four slices. The plan's "rules need a separate deploy" was stale. If the rules deploy fails, revert this commit only.
+### On-device (curl / console, after the deploy)
+Happy: signed in as the owner, open the Firebase console Firestore data for `stock_movements`: unaffected (console bypasses rules). The S4a register `curl` steps still work (Admin SDK). Negative: BLOCKED until a staff login exists (KNOWN-ISSUES 12); the emulator cases are the proof until then. Affected: every normal app flow (restock, order, return, lock, photos, analysis): none reads the ledger, so nothing should change. Regression: S4a steps 1-5.
