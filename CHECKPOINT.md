@@ -26,5 +26,10 @@ Wire `NewOrderDialog` to `ProductPickerSheet`; delete `productNames`, `_pickerPr
 - `StockBatchStore._pendingMints` has no revision (confirmed). `OutboxStore.revision` ticks on every item change, so a queued restock or edit ticks it. `InventoryStore.revision` ticks on `products`.
 - Dry run is feasible: `CompletionPlan.build` is pure; the sale docs are one per line with a quantity; so a stub `saleDocs` gives the same operation count as the real one.
 
+## Taher's answers on PR #194 (2026-11-11) - resume here
+- [x] A1. No selling price refused, 0 allowed: already the behaviour, plan and KNOWN-ISSUES 23 note it. A2. Dry run per rebuild kept (device check 64 measures). A4. Size-only check confirmed.
+- [x] A3. Toast instead of the red label: `_applyPicked` clears the label and calls `Toast.show(note)`; NOW-06 and NOW-15 updated (fake `Toast` in the sandbox); docs updated.
+- [ ] A5. Push, read CI on the new head, tell Taher. Then he runs device checks 54 to 66 and merges #194; next S4 (Edit Order).
+
 ## State
 Not built, not run on a device. The QML twins (`tst_NewOrderPicker`, regenerated `tst_PickerSheetModel`) ran GREEN in CI on `705349e`. The Felgo layer (`NewOrderDialog` wiring, the sheet over the order sheet, the button) is device-only and UNSEEN. Open items: KNOWN-ISSUES 22 to 25 (no-price row reason, cart stepper 28 dp, error label may be off screen, dry-run cost unmeasured). Next: Taher answers the four questions in PR #194, runs device checks 54 to 66, merges; then S4 (Edit Order).

@@ -15,9 +15,12 @@
 | S3-D5 | A NEW line needs a selling price that is a finite number >= 0 (0 stays allowed). Anything else is refused and reported ("has no selling price"). | Before, a product with no price became a line with an undefined price and a NaN total. The cost: such a product cannot be sold from New Order until its price is fixed, and the sheet row does not say why (the dialog reports after Add): KNOWN-ISSUES item 23. |
 | S3-D6 | `StockBatchStore.mintRevision`, ticked by `on_PendingMintsChanged` (carried item 7). | The alternative, a `Connections` in the dialog on the store's private `_pendingMints`, reaches into a private property. A public counter is one line and matches `revision` on the other stores. |
 | S3-D7 | `revision` handed to the sheet is `InventoryStore.revision + StockBatchStore.revision + StockBatchStore.mintRevision + OutboxStore.revision`. | Every term only grows, so the sum changes exactly when one term does. `InventoryStore.syncStates` is refreshed synchronously from the outbox items, before the sheet's deferred rebuild, so `OutboxStore.revision` covers it. NOW-04 pins the four terms. |
-| S3-D8 | The trigger is one full-width `GhostButton` (48 dp, "Add products" or "Add more products", off while `busy`). The sheet lives inside the dialog and is closed by the dialog's `onClosed`. What was not added goes to the dialog's existing red error label. | Simplest thing that works. The label sits at the bottom of the scrolling body and may be off screen after a long order (device check 65); a toast is the alternative. |
+| S3-D8 | The trigger is one full-width `GhostButton` (48 dp, "Add products" or "Add more products", off while `busy`). The sheet lives inside the dialog and is closed by the dialog's `onClosed`. What was not added is a toast (`Toast.show`, Taher 2026-11-11); the red label is cleared on every pick. | The label sat at the bottom of the scrolling body and could be off screen. A toast draws above dialogs (#190) and lasts about 5 s: a long message can be missed, so the first three names are shown, with a count (device check 65). |
 
 Not changed on purpose: no `isDeleting` hook (a deleted product leaves the catalog at once, see the `ProductPickability.js` header); the parity gap of carried item 3 needs no code (a held row is never sent, so it can never be parked; the two outbox queries can differ only for a damaged saved row, and then completion refuses with a message).
+
+## Taher's answers (2026-11-11, PR #194)
+1. S3-D5 confirmed: a product with no selling price is not allowed on an order, a selling price of 0 is allowed (no change). 2. S3-D2 as recommended: dry run on every rebuild, measured by device check 64. 3. S3-D8 changed: a toast, not the red label (done). 4. S3-D3 confirmed: size only.
 
 ## Files
 

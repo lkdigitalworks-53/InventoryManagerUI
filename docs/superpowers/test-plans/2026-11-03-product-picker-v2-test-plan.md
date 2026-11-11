@@ -150,13 +150,13 @@ Covered in Node (no device): SHEET-27 `sameList`, SHEET-28 `changedRows` (happy,
 56. Open the sheet again and pick a product already on the order. Expect its quantity to go UP by the amount picked (not replaced) and its edited price and discount to stay. The row says "In this order: N".
 57. A product with a mint outstanding, a queued restock, or an unsynced or parked edit must not be listed; the footer says how many are hidden. While the sheet is open, let the mint or restock land (go online): expect the product to appear without reopening the sheet.
 58. A product with stock 0 is shown disabled with "Out of stock"; "In stock only" removes it.
-59. Drift: with the sheet open and a quantity set, reduce that product's stock another way (a sale on a second device). Tap Add. Expect no more than is left on the order and a red line "Not added as picked. ..." on the order sheet.
+59. Drift: with the sheet open and a quantity set, reduce that product's stock another way (a sale on a second device). Tap Add. Expect no more than is left on the order and a toast "Not added as picked. ..." above the order sheet.
 60. A product with no selling price (edit one in the data if needed): expect it to be refused after Add with "has no selling price" and no line (KNOWN-ISSUES 23).
 61. Close the sheet with a draft (X, Cancel, outside, Back): the discard question; "Keep picking" keeps it; Discard closes and the order is unchanged.
 62. Open the sheet, then force the order sheet to close (sign out, session lock). Expect the picker to close with it and nothing to be left open.
 63. Place an order after picking: unchanged flow (busy overlay, double tap guard, success closes). While placing, "Add products" is disabled.
 64. Size check, needs seed data: a shop where products span two batches each. Pick 50 such lines (49 fit, 50 do not). Expect the footer to say the order has too many items (with counts) and Add to be off; remove lines and it comes back. On a big batch ledger, tap steppers quickly and note any lag (KNOWN-ISSUES 25).
-65. After a long order, is the red "Not added" line visible without scrolling? If not, say so (KNOWN-ISSUES 24b).
+65. The "Not added as picked" toast draws above the order sheet, is readable in about 5 s, and a following clean pick shows none. Say if it is missed or covers something.
 66. Regression: Edit Order still has its combo and behaves exactly as before (S4 changes it).
 
 ### Affected areas

@@ -82,7 +82,10 @@ test("NOW-06 _applyPicked applies the plan with applyPlan, replaces the cart and
     const fn = noComments(extractFunction("pages/NewOrderDialog.qml", "_applyPicked"));
     assert.ok(fn.includes("Picker.applyPlan(selectedProducts, plan, _pickerLookup)"));
     assert.ok(fn.includes("selectedProducts = res.lines"));
-    assert.ok(fn.includes("errorLabel.text = Picker.skippedNote(res.skipped)"));
+    assert.ok(fn.includes('errorLabel.text = ""'), "a stale error must be cleared");
+    assert.ok(fn.includes("var note = Picker.skippedNote(res.skipped)"));
+    assert.ok(/if \(note\.length > 0\) Toast\.show\(note\)/.test(fn), "what was skipped must be a toast");
+    assert.ok(!/errorLabel\.text = [^"]/.test(fn), "the skipped note must not go to the red label");
 });
 
 test("NOW-07 the trigger is a 48 dp ghost button that opens the sheet, is off while an order is being placed, and says what it does", () => {
@@ -173,12 +176,13 @@ function dialogGlue(world, cart) {
         { InventoryStore: world.InventoryStore, StockBatchStore: world.StockBatchStore });
     dlg._pickerHooks = vm.runInNewContext("(" + literal(CODE, "readonly property var _pickerHooks", "{", "}") + ")",
         { InventoryStore: world.InventoryStore, StockBatchStore: world.StockBatchStore, Picker: NP, dlg: dlg });
-    const errorLabel = { text: "" };
+    const errorLabel = { text: "stale" };
+    const toasts = [];
     const fnSrc = extractFunction("pages/NewOrderDialog.qml", "_applyPicked");
     const apply = vm.runInNewContext("(" + fnSrc.replace(/^function _applyPicked/, "function") + ")",
-        { Picker: NP, errorLabel: errorLabel, get selectedProducts() { return dlg.selectedProducts; }, set selectedProducts(v) { dlg.selectedProducts = v; },
+        { Picker: NP, errorLabel: errorLabel, Toast: { show: (m) => toasts.push(m) }, get selectedProducts() { return dlg.selectedProducts; }, set selectedProducts(v) { dlg.selectedProducts = v; },
           _pickerLookup: dlg._pickerLookup });
-    return { dlg, errorLabel, apply };
+    return { dlg, errorLabel, toasts, apply };
 }
 
 function viewOf(g, world, draft, extra) {
@@ -209,7 +213,8 @@ test("NOW-15 the real _applyPicked: a plan from the real sheet model becomes car
     assert.deepEqual(plain(v.canCommit), { ok: true, reason: "" });
     g.apply(PD.commitPlan(v.draft, g.dlg.selectedProducts));
     assert.deepEqual(plain(g.dlg.selectedProducts.map((l) => [l.productId, l.qty, l.price, l.name])), [["A", 3, 10, "Alpha"], ["C", 2, 5, "Gamma"]]);
-    assert.equal(g.errorLabel.text, "");
+    assert.equal(g.errorLabel.text, "", "the stale error is cleared");
+    assert.deepEqual(g.toasts, []);
     // second pick: A x2 more (bump), D x1 (add); the sheet's maxQty for A is now 2
     v = viewOf(g, world, PD.step(PD.step({}, "A", 2, 2), "D", 1, 9));
     assert.equal(v.rows.filter((r) => r.productId === "A")[0].maxQty, 2);
@@ -220,10 +225,11 @@ test("NOW-15 the real _applyPicked: a plan from the real sheet model becomes car
     world.w.products = world.w.products.filter((p) => p.productId !== "E");
     g.apply({ adds: [{ productId: "E", qty: 1 }], bumps: [{ productId: "A", qty: 1 }] });
     assert.deepEqual(plain(g.dlg.selectedProducts.map((l) => [l.productId, l.qty])), [["A", 5], ["C", 2], ["D", 1]]);
-    assert.equal(g.errorLabel.text, "Not added as picked. Alpha: out of stock now; E: no longer in the catalog");
-    // the next clean pick clears the message
-    g.apply({ adds: [], bumps: [{ productId: "C", qty: 1 }] });
+    assert.deepEqual(g.toasts, ["Not added as picked. Alpha: out of stock now; E: no longer in the catalog"]);
     assert.equal(g.errorLabel.text, "");
+    // the next clean pick shows no toast
+    g.apply({ adds: [], bumps: [{ productId: "C", qty: 1 }] });
+    assert.equal(g.toasts.length, 1);
     assert.equal(g.dlg.selectedProducts.filter((l) => l.productId === "C")[0].qty, 3);
 });
 

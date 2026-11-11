@@ -85,11 +85,15 @@ BottomSheet {
                                            + StockBatchStore.mintRevision + OutboxStore.revision
 
     // The plan from the sheet: add N more, never remove (design D4). applyPlan re-reads each product at this moment and
-    // clamps or refuses, so the order never holds more than the stock, and says what it did not add.
+    // clamps or refuses, so the order never holds more than the stock. What it did not add is a toast (Taher, 2026-11-11):
+    // the red label sits at the bottom of the scrolling body and may be off screen. The label is cleared, since the
+    // person has just added products and an older "Add at least one product" no longer applies.
     function _applyPicked(plan) {
         var res = Picker.applyPlan(selectedProducts, plan, _pickerLookup)
         selectedProducts = res.lines
-        errorLabel.text = Picker.skippedNote(res.skipped)
+        errorLabel.text = ""
+        var note = Picker.skippedNote(res.skipped)
+        if (note.length > 0) Toast.show(note)
     }
 
     onOpened: {
