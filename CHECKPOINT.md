@@ -54,4 +54,5 @@ Server only. Nothing in the app calls the endpoint. QML untouched, rules untouch
 - D-R3 `count()` pre-check so an over-cap request is cheap (item 14) [skip, revisit with the running balance].
 - D-R4 fix the unwrapped `deriveContext` in the other handlers (item 16) [own PR].
 - Dependabot: 1 critical + 10 high open on the default branch (item 18) [look before the next deploy].
-**Next (in order):** read CI on the sweep head; Taher vetoes/merges; approve functions deploy; S4b design pass (client page); S2d-2.
+**DECIDED (Taher, 2026-11-11):** D-R1..D-R4 are ONE follow-up PR taken right after #193 merges. Plan: `docs/superpowers/plans/2026-11-11-p1-s4a-followups-one-pr-plan.md` (four commits: older-handler context try, ledger productName, ledger read rule, droppable count() pre-check). A new session starts there: read the plan, ask Taher the 3 grill questions at its top, branch from `main`.
+**Next (in order):** read CI on the sweep head; Taher vetoes/merges; approve functions deploy; THE FOLLOW-UP PR ABOVE; S4b design pass (client page); S2d-2.

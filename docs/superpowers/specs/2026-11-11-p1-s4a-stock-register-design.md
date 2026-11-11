@@ -83,3 +83,5 @@ Four defects found and fixed here, each with a test that fails when the fix is r
 | SR-D17 | `env` lookup in `scopedDb` (shared by EVERY handler) | own keys only: `constructor`, `toString`, `__proto__` fall back to the default database like any unknown env | leave it: `DATABASE_ID_FOR_ENV["constructor"]` is truthy, so the fail-safe fallback was skipped and a function object was passed as database id |
 
 Open for Taher, not decided here (details in KNOWN-ISSUES): restrict the `stock_movements` read rule now or before S2e (item 1), write a product-name snapshot into ledger rows so deleted products stay readable (item 13), a `count()` pre-check so an over-cap request is cheap (item 14).
+
+Taher chose to take all four as ONE PR right after this one: plan `plans/2026-11-11-p1-s4a-followups-one-pr-plan.md`.

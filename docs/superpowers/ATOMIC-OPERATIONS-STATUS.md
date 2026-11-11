@@ -111,5 +111,6 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
 ## 11. Update 2026-11-11 (P1 compliance: S4a register read model)
 - Not an atomic-operations change; recorded here because this file is the P1 anchor too (sections 6 and 7). P1 standing: S1a, S1b, S2a-c, S2d-1, S2f-1..7 merged; S2d-2, S2e, S3 open; S4 split into S4a (built now: `computeStockRegister`, server, read-only), S4b (client page), S4c (CA column layout).
 - Nothing in the app reads the ledger yet. `stock_movements` read is still `isMember` in the rules (KNOWN-ISSUES, P1 S4a item 1): restrict it before S2e writes real `valueAtCost`.
+- NEXT TASK after #193 merges: the S4a follow-ups in one PR, `plans/2026-11-11-p1-s4a-followups-one-pr-plan.md` (older-handler context `try`, ledger `productName`, ledger read rule, `count()` pre-check).
 - Design `specs/2026-11-11-p1-s4a-stock-register-design.md`; the R5a PR (#191) and R5b are independent of it.
 
