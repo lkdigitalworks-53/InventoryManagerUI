@@ -16,7 +16,7 @@ R5 as written has four parts. Split decided this session (vetoable, see design D
 - [x] 2. Design doc `specs/2026-11-10-r5a-restock-dialog-design.md`.
 - [x] 3. Code: `RestockFlow` (supplierFor structured, partyFor, newPartyChoice, limits, texts), `AuthTextField.maxLength`, `RestockDialog` ("Use", pending name, hint, limits).
 - [x] 4. Tests: `restockR5a.test.js` (37), adjusted CF-17, RD-2, F-9, E-3; QML twin 5 functions; 26/26 mutants killed (`/tmp/mut.py`, list in the test plan).
-- [x] 5. Docs: test plan + index row, status doc section 11, KNOWN-ISSUES, Skill 159 + SKILLS-INDEX regenerated, AGENTS, README.
+- [x] 5. Docs: test plan + index row, status doc section 11, KNOWN-ISSUES, Skill 162 + SKILLS-INDEX regenerated, AGENTS, README.
 - [x] 6. Full suites (functions 1327/1327, scripts 905/905), commit `a047d07`, pushed, PR #191 opened.
 - [ ] 7. Read CI on PR #191 (QML oracle: `tst_RestockFlow` 19 functions; fix red first). Taher: veto D-R5-1..7, device steps 1-21.
 
