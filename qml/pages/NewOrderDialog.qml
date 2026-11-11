@@ -89,10 +89,10 @@ BottomSheet {
     // the red label sits at the bottom of the scrolling body and may be off screen. The label is cleared, since the
     // person has just added products and an older "Add at least one product" no longer applies.
     function _applyPicked(plan) {
-        var res = Picker.applyPlan(selectedProducts, plan, _pickerLookup)
+        const res = Picker.applyPlan(selectedProducts, plan, _pickerLookup)
         selectedProducts = res.lines
         errorLabel.text = ""
-        var note = Picker.skippedNote(res.skipped)
+        const note = Picker.skippedNote(res.skipped)
         if (note.length > 0) Toast.show(note)
     }
 

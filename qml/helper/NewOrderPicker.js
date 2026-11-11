@@ -19,13 +19,15 @@
 // every comparison is String(line.productId) === id.
 
 var CANNOT_CHECK_TEXT = "Could not check the size of this order. Try again"
+// The skipped note is a TOAST and the toast pill is one line that does not wrap (ToastHost, KNOWN-ISSUES 26), about 40
+// characters on a phone. So the reasons are short and the note names one product.
 var REASON_TEXT = {
-    "invalid": "invalid request",
-    "gone": "no longer in the catalog",
-    "out-of-stock": "out of stock now",
-    "no-price": "has no selling price"
+    "invalid": "not added",
+    "gone": "no longer listed",
+    "out-of-stock": "out of stock",
+    "no-price": "no price"
 }
-var NOTE_NAMES = 3
+var NOTE_NAME_MAX = 12
 
 function _has(o, k) { return !!o && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k) }
 function _str(s) { return (typeof s === "string") ? s : ((s === undefined || s === null) ? "" : String(s)) }
@@ -50,7 +52,8 @@ function cartQty(lines, productId) {
     for (var i = 0; i < lines.length; ++i) {
         var l = lines[i]
         if (!l || typeof l !== "object" || _blankId(l.productId) || String(l.productId) !== id) continue
-        if (typeof l.qty === "number" && isFinite(l.qty)) used += l.qty
+        // Only positive quantities count, as in CompletionPlan: a stray negative line must not free stock for another.
+        if (typeof l.qty === "number" && isFinite(l.qty) && l.qty > 0) used += l.qty
     }
     return used
 }
@@ -115,29 +118,38 @@ function applyPlan(lines, plan, lookup) {
         if (at < 0 && price === null) { skipped.push(_skip(id, name, "no-price")); continue }
         var take = Math.min(e.qty, cap)
         if (take < e.qty) skipped.push({ productId: id, name: name, reason: "reduced", added: take, asked: e.qty })
-        if (at >= 0) out[at].qty += take
+        if (at >= 0) out[at].qty = _whole(out[at].qty) + take    // a line with no usable quantity counts as 0, never NaN
         else out.push({ name: name, qty: take, price: price, productId: id, discountType: "flat", discountValue: 0 })
     }
     return { lines: out, skipped: skipped }
 }
 
-// One line for the dialog's error label, "" when nothing was skipped. At most NOTE_NAMES products are named.
+// The product name as the toast shows it: at most NOTE_NAME_MAX characters, never cutting an emoji in half.
+function _shortName(name) {
+    if (name.length <= NOTE_NAME_MAX) return name
+    var end = NOTE_NAME_MAX - 1
+    var c = name.charCodeAt(end - 1)
+    if (c >= 0xD800 && c <= 0xDBFF) end--
+    return name.slice(0, end).replace(/\s+$/, "") + "\u2026"
+}
+
+// The toast text, "" when nothing was skipped: the first skipped product and why, then "(+N more)". Short on purpose,
+// see REASON_TEXT. Nothing is lost: the order sheet shows what was added.
 function skippedNote(skipped) {
     if (!Array.isArray(skipped)) return ""
-    var parts = []
+    var first = ""
+    var count = 0
     for (var i = 0; i < skipped.length; ++i) {
         var s = skipped[i]
         if (!s || typeof s !== "object") continue
+        if (++count > 1) continue
         var why = "not added"
-        if (s.reason === "reduced") why = "only " + _whole(s.added) + " of " + _whole(s.asked) + " added, stock changed"
+        if (s.reason === "reduced") why = "only " + _whole(s.added) + " of " + _whole(s.asked) + " added"
         else if (_has(REASON_TEXT, s.reason)) why = REASON_TEXT[s.reason]
         var who = _str(s.name).length > 0 ? _str(s.name) : (_str(s.productId).length > 0 ? _str(s.productId) : "A product")
-        parts.push(who + ": " + why)
+        first = _shortName(who) + ": " + why
     }
-    if (parts.length === 0) return ""
-    var shown = parts.slice(0, NOTE_NAMES).join("; ")
-    var more = parts.length - NOTE_NAMES
-    return "Not added as picked. " + shown + (more > 0 ? "; and " + more + " more" : "")
+    return count === 0 ? "" : first + (count > 1 ? " (+" + (count - 1) + " more)" : "")
 }
 
 // The CompletionPlan hooks of a dry run: same number of changes as the real ones (the order itself, and one sale

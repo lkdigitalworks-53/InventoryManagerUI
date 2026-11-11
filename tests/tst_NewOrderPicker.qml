@@ -59,7 +59,8 @@ TestCase {
     }
 
     function test_NOP_01_cartqty_all_lines_of_the_product_string_id_matches_a_numeric() {
-        const lines = [line("A", 2), line("B", 5), line("A", 3), line(7, 4), null, 5, "x", { productId: "A" }, { productId: "A", qty: NaN }, { productId: "", qty: 9 }];
+        const lines = [line("A", 2), line("B", 5), line("A", 3), line(7, 4), null, 5, "x", { productId: "A" }, { productId: "A", qty: NaN }, { productId: "", qty: 9 },
+                       { productId: "A", qty: -4 }, { productId: "A", qty: 0 }];
         eq(NP.cartQty(lines, "A"), 5);
         eq(NP.cartQty(lines, "B"), 5);
         eq(NP.cartQty(lines, "7"), 4);
@@ -77,6 +78,7 @@ TestCase {
         eq(NP.availableFor(prod("A", 10), [line("A", 2), line("A", 3)]), 5);
         eq(NP.availableFor(prod("A", 10), [line("B", 4)]), 10);
         eq(NP.availableFor(prod("A", 10), undefined), 10);
+        eq(NP.availableFor(prod("A", 5), [line("A", -3)]), 5);
         for (const s of [0, -3, NaN, Infinity, "5", undefined, null, {}]) eq(NP.availableFor(prod("A", s), []), 0);
         for (const p of [undefined, null, 5, "x", {}, [], { productId: "", stock: 5 }, { stock: 5 }]) eq(NP.availableFor(p, []), 0);
     }
@@ -221,20 +223,20 @@ TestCase {
         eq(NP.applyPlan([line("A", 1), null, 3], plan(), lk([])).lines, [line("A", 1)]);
     }
 
-    function test_NOP_17_skippednote_one_line_at_most_three_products_named_the_reason() {
+    function test_NOP_17_skippednote_toast_sized_the_first_product_and_why_n_more_for() {
         eq(NP.skippedNote([]), "");
         eq(NP.skippedNote(undefined), "");
         eq(NP.skippedNote("x"), "");
         eq(NP.skippedNote([null, 5, "x"]), "");
-        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "out-of-stock" }]), "Not added as picked. Pen: out of stock now");
-        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "reduced", added: 3, asked: 5 }]), "Not added as picked. Pen: only 3 of 5 added, stock changed");
-        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "no-price" }, { productId: "B", name: "Cup", reason: "gone" }, { productId: "C", name: "", reason: "invalid" }]),
-           "Not added as picked. Pen: has no selling price; Cup: no longer in the catalog; C: invalid request");
-        eq(NP.skippedNote([{ productId: "A", name: "A", reason: "gone" }, { productId: "B", name: "B", reason: "gone" }, { productId: "C", name: "C", reason: "gone" },
-                           { productId: "D", name: "D", reason: "gone" }, { productId: "E", name: "E", reason: "gone" }]),
-           "Not added as picked. A: no longer in the catalog; B: no longer in the catalog; C: no longer in the catalog; and 2 more");
-        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "mystery" }]), "Not added as picked. Pen: not added");
-        eq(NP.skippedNote([{}]), "Not added as picked. A product: not added");
+        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "out-of-stock" }]), "Pen: out of stock");
+        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "reduced", added: 3, asked: 5 }]), "Pen: only 3 of 5 added");
+        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "no-price" }]), "Pen: no price");
+        eq(NP.skippedNote([{ productId: "A", name: "Cup", reason: "gone" }]), "Cup: no longer listed");
+        eq(NP.skippedNote([{ productId: "C", name: "", reason: "invalid" }]), "C: not added");
+        eq(NP.skippedNote([null, { productId: "A", name: "Pen", reason: "no-price" }, 5, { productId: "B", name: "Cup", reason: "gone" }, { productId: "C", name: "", reason: "invalid" }]),
+           "Pen: no price (+2 more)");
+        eq(NP.skippedNote([{ productId: "A", name: "Pen", reason: "mystery" }]), "Pen: not added");
+        eq(NP.skippedNote([{}]), "A product: not added");
     }
 
     function test_NOP_18_opscheck_an_ordinary_order_fits() {
@@ -361,5 +363,54 @@ TestCase {
         ok(seen.added > 30 && seen.bumped > 5 && seen.reduced > 5 && seen.gone > 5 && seen.oos > 20 && seen.noprice > 5 && seen.invalid > 20
            && seen.big > 10 && seen.refusedSize > 3 && seen.nearLimit > 0,
            "the monkey never reached every outcome: " + FX.canon(seen));
+    }
+
+    function test_NOP_25_a_cart_line_with_a_negative_or_missing_quantity_frees_no_sto() {
+        eq(NP.cartQty([line("A", -4), line("A", 2)], "A"), 2);
+        const w = lk([prod("A", 5)]);
+        // stock 5 and a stray -3 line: asking for 9 gives 5 (reduced), not 8
+        const r = NP.applyPlan([line("A", -3)], plan([e("A", 9)]), w);
+        eq(r.lines.length, 1);
+        eq(r.lines[0].qty, 5);
+        eq(r.skipped.length, 1);
+        eq(r.skipped[0].reason, "reduced");
+        // a line with no quantity counts as 0, so a bump of 2 gives 2
+        const r2 = NP.applyPlan([line("A", undefined)], plan([], [e("A", 2)]), w);
+        eq(r2.lines[0].qty, 2);
+        eq(r2.skipped.length, 0);
+        // a quantity that is a string counts as 0 as well
+        const r3 = NP.applyPlan([line("A", "3")], plan([], [e("A", 2)]), w);
+        eq(r3.lines[0].qty, 2);
+    }
+
+    function test_NOP_26_skippednote_cuts_a_long_name_to_12_characters_with_an_ellips() {
+        const one = (name) => NP.skippedNote([{ productId: "A", name: name, reason: "gone" }]);
+        eq(one("Twelve chars"), "Twelve chars: no longer listed");
+        eq(one("Twelve chars!"), "Twelve char\u2026: no longer listed");
+        eq(one("Extra Virgin Cold Pressed Olive Oil"), "Extra Virgi\u2026: no longer listed");
+        eq(one("Pen         x"), "Pen\u2026: no longer listed");
+        const apples = "\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E";
+        eq(one(apples), "\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\u2026: no longer listed");
+        eq(NP.skippedNote([{ productId: "prod-long-id-0001", name: "", reason: "gone" }]), "prod-long-i\u2026: no longer listed");
+    }
+
+    function test_NOP_27_monkey_any_mix_of_up_to_40_skipped_products_gives_a_note_of_() {
+        const rand = FX.rng(91);
+        const pick = (list) => list[Math.floor(rand() * list.length)];
+        const names = ["", "Pen", "Extra Virgin Cold Pressed Olive Oil", "Basmati Rice 5kg family pack", "\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E\uD83C\uDF4E",
+                       "Thirteen char", "Pen         x"];
+        const reasons = ["invalid", "gone", "out-of-stock", "no-price", "reduced", "mystery"];
+        for (let round = 0; round < 300; ++round) {
+            const list = [];
+            const n = 1 + Math.floor(rand() * 40);
+            for (let i = 0; i < n; ++i)
+                list.push({ productId: pick(["A", "B", "", "prod-long-id-0001"]), name: pick(names), reason: pick(reasons),
+                            added: Math.floor(rand() * 1000), asked: Math.floor(rand() * 1000) });
+            const note = NP.skippedNote(list);
+            ok(note.length > 0 && note.length <= 48, "not toast-sized: " + note.length + " " + note);
+            ok(!/[\uD800-\uDBFF]\u2026/.test(note), "an emoji was cut in half: " + note);
+            eq(/ \(\+\d+ more\)$/.test(note), n > 1);
+            if (n > 1) ok(note.indexOf("(+" + (n - 1) + " more)") > 0, "wrong count: " + note);
+        }
     }
 }

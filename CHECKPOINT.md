@@ -33,3 +33,19 @@ Wire `NewOrderDialog` to `ProductPickerSheet`; delete `productNames`, `_pickerPr
 
 ## State
 Not built, not run on a device. The QML twins (`tst_NewOrderPicker`, regenerated `tst_PickerSheetModel`) ran GREEN in CI on `705349e`. The Felgo layer (`NewOrderDialog` wiring, the sheet over the order sheet, the button) is device-only and UNSEEN. Open items: KNOWN-ISSUES 22 to 25 (no-price row reason, cart stepper 28 dp, error label may be off screen, dry-run cost unmeasured). Next: Taher answers the four questions in PR #194, runs device checks 54 to 66, merges; then S4 (Edit Order).
+
+## REVIEW SWEEP R1 of PR #194 (2026-11-11, new session, other account) - resume here
+**Rules this session:** commit message text contains `allibaas52@gmail.com` (Taher's current instruction; earlier commits on this branch carry `tsadmin@gmail.com`). Skills run inline, no sub-agents: `requesting-code-review`, `qt-qml-review` (lint script run on PR-added lines; qmllint not available, Qt not installed on purpose), `ponytail-audit` (scoped to the picker v2 surface plus this PR; whole-repo audit is NOT done). PAT is passed per command, never written to a file.
+**Steps**
+- [x] R1-1. Read skills, memory, cloned, branch checked out, PR read (23 files, +1667/-162, CI green on 9bd72d0).
+- [x] R1-2. Read `NewOrderPicker.js`, `PickerSheetModel.js` diff, `StockBatchStore.mintRevision`, `NewOrderDialog.qml` diff, sheet contract, `CompletionPlan`, `ToastHost`; lint on added lines; Node probes of edge cases; baseline Node tests 133/133.
+- [ ] R1-3. Fix F1 (toast note too long for the single-line pill), F2 (negative cart qty frees stock), F3 (bump of a line with a bad qty gives NaN), F4 (stale comments), F5 (`var` in new function).
+- [ ] R1-4. Tests: NOP-17 rewritten, NOP-25..28 added, NOW-06/15 updated, twin regenerated (`node functions/test/testSupport/pickerTwin.js --write`), full Node suites run.
+- [ ] R1-5. Docs: plan S3-D8, KNOWN-ISSUES 26 (ToastHost cannot wrap) and 27, test plan rows + device checks, Skill 162, AGENTS, README as needed.
+- [ ] R1-6. Commit (message has allibaas52@gmail.com), push, wait for CI, comment on PR with the report.
+**Findings so far**
+- F1 IMPORTANT: `ToastHost` pill is one line, 40 dp, no wrap or elide, at most about 44 characters on a 360 dp phone. The skipped note ("Not added as picked. A: ...; B: ...") is up to about 190 characters, so on a phone it is clipped on both sides and unreadable. Fix here: a short note (one name, "(+N more)"). Root cause (ToastHost cannot wrap, every long toast in the app has it) is logged, not changed: shared component, layout cannot be seen without a build.
+- F2 IMPORTANT: `cartQty` adds negative quantities, so a stray negative cart line frees stock for another (CompletionPlan itself counts only positive quantities).
+- F3 MINOR: `applyPlan` bump on a line whose qty is not a number gives NaN.
+- F4 MINOR: `NewOrderPicker.js` header and `skippedNote` comment still say "error label".
+- F5 MINOR: `var` in the new `_applyPicked` (lint JS-1). Other lint hits on added lines: `errorLabel.text =` BND-2 is a false positive (label is driven imperatively everywhere), ORD-1 on the GhostButton is the repo-wide Layout-first order.

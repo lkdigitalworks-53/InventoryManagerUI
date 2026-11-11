@@ -83,7 +83,7 @@ test("NOW-06 _applyPicked applies the plan with applyPlan, replaces the cart and
     assert.ok(fn.includes("Picker.applyPlan(selectedProducts, plan, _pickerLookup)"));
     assert.ok(fn.includes("selectedProducts = res.lines"));
     assert.ok(fn.includes('errorLabel.text = ""'), "a stale error must be cleared");
-    assert.ok(fn.includes("var note = Picker.skippedNote(res.skipped)"));
+    assert.ok(fn.includes("const note = Picker.skippedNote(res.skipped)"));
     assert.ok(/if \(note\.length > 0\) Toast\.show\(note\)/.test(fn), "what was skipped must be a toast");
     assert.ok(!/errorLabel\.text = [^"]/.test(fn), "the skipped note must not go to the red label");
 });
@@ -225,7 +225,7 @@ test("NOW-15 the real _applyPicked: a plan from the real sheet model becomes car
     world.w.products = world.w.products.filter((p) => p.productId !== "E");
     g.apply({ adds: [{ productId: "E", qty: 1 }], bumps: [{ productId: "A", qty: 1 }] });
     assert.deepEqual(plain(g.dlg.selectedProducts.map((l) => [l.productId, l.qty])), [["A", 5], ["C", 2], ["D", 1]]);
-    assert.deepEqual(g.toasts, ["Not added as picked. Alpha: out of stock now; E: no longer in the catalog"]);
+    assert.deepEqual(g.toasts, ["Alpha: out of stock (+1 more)"]);
     assert.equal(g.errorLabel.text, "");
     // the next clean pick shows no toast
     g.apply({ adds: [], bumps: [{ productId: "C", qty: 1 }] });
