@@ -1,7 +1,7 @@
 "use strict";
 // Product picker v2, slices S1 and S2: the three helpers are dormant (nothing calls them yet), have the shape
 // a `.pragma library` file needs (Skill 83), and the QML twins are exactly what the Node tests derive.
-// DORM-01..03 and PAIR-01..03. S3 changes DORM-01 on purpose, in the same PR that wires a dialog.
+// DORM-01..03 and PAIR-01..03. S3 changed DORM-01 on purpose (New Order is wired; its allow-list entries are marked).
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -32,6 +32,9 @@ const ALLOWED = new Set([
     "qml/helper/PickerSheetModel.js", "qml/components/ProductPickerSheet.qml", "qml/components/ProductPickerRow.qml", "qml/helper/PickerRowGeometry.js",
     "functions/test/pickerRowGeometry.test.js", "tests/tst_PickerRowGeometry.qml",
     "functions/test/pickerSheetModel.test.js", "functions/test/pickerSheetWiring.test.js", "tests/tst_PickerSheetModel.qml",
+    // Slice S3 (New Order wired, on purpose): the dialog, its helper and their tests. OrderDetailDialog stays out until S4.
+    "qml/pages/NewOrderDialog.qml", "qml/helper/NewOrderPicker.js", "functions/test/newOrderPicker.test.js",
+    "functions/test/newOrderPickerWiring.test.js", "tests/tst_NewOrderPicker.qml",
 ]);
 
 test("DORM-01 nothing outside the helpers and their tests mentions them", () => {

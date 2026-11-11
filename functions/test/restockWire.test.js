@@ -312,7 +312,8 @@ test("W-20 DataModel routes both Gateway signals for opType restock, announces a
     assert.match(dm, /InventoryStore\.onRestockRejected\(requestId, rejection\)[\s\S]{0,200}dispatcher\.errorOccurred\("inventory", failure\)/);
     assert.match(dm, /InventoryStore\.hasQueuedRestock\(parkedInv\.productId\)/);
     assert.match(dm, /InventoryStore\.restockPendingSaleMessage/);
-    assert.match(rd("pages/NewOrderDialog.qml"), /if \(InventoryStore\.hasQueuedRestock\(p\.productId\)\) continue/);
+    // S3: the New Order picker hides it through the sheet's hook (the old combo loop is gone)
+    assert.match(rd("pages/NewOrderDialog.qml"), /hasQueuedRestock: function\(id\) \{ return InventoryStore\.hasQueuedRestock\(id\) \}/);
     assert.match(rd("pages/RestockDialog.qml"), /function\(ok, queued, refusal\)/);
     assert.doesNotMatch(rd("pages/RestockDialog.qml"), /supplierFailed/);
     assert.doesNotMatch(dm, /supplierFailed/);

@@ -17,6 +17,10 @@
 //   hasPendingMint(id), hasQueuedRestock(id) [optional], unsyncedState(id), isDeleting(id) [optional],
 //   inOrderQty(id) [optional], availableFor(product).
 // A missing required hook makes every row disabled "unavailable" (fail closed), never addable.
+// Optional hook (slice S3): commitCheck(plan) -> { ok, text }, the dialog's dry run of the order's completion (does
+// the order still fit in one atomic operation?). Absent: no check. Present but throwing, not a function, or not saying
+// ok: the draft cannot be committed (fail closed), with the hook's text when it gave one. It runs only when the cheap
+// gate (PickerDraft.canCommit) already passed, so an empty or over-full draft costs nothing.
 
 var REASON_TEXT = {
     "out-of-stock": "Out of stock",
@@ -24,6 +28,7 @@ var REASON_TEXT = {
     "unavailable": "Not available right now"
 }
 var MAX_QUERY_SHOWN = 40
+var CHECK_FAILED_TEXT = "Could not check this order. Try again"
 
 function _isProduct(p) { return !!p && typeof p === "object" && typeof p.productId === "string" && p.productId.length > 0 }
 function _num(n) { return (typeof n === "number" && isFinite(n)) ? n : 0 }
@@ -181,9 +186,22 @@ function _emptyState(products, matched, rows, hiddenCount, query, inStockOnly) {
     return { kind: "no-match", text: q.length > 0 ? "No products match \"" + q + "\"." : "No products in this category." }
 }
 
+// -> { ok, text }. See the commitCheck hook above.
+function _check(hooks, draft, orderLines) {
+    var h = (hooks && typeof hooks === "object") ? hooks : {}
+    if (h.commitCheck === undefined || h.commitCheck === null) return { ok: true, text: "" }
+    try {
+        var r = h.commitCheck(Draft.commitPlan(draft, orderLines))
+        if (r && r.ok === true) return { ok: true, text: "" }
+        return { ok: false, text: (r && typeof r.text === "string" && r.text.length > 0) ? r.text : CHECK_FAILED_TEXT }
+    } catch (e) {
+        return { ok: false, text: CHECK_FAILED_TEXT }
+    }
+}
+
 // input: { products, hooks, orderLines, draft, query, category, inStockOnly }
 // -> { draft, draftChanged, rows, hiddenCount, hiddenNote, empty: {kind, text}, totals: {items, lines, amount},
-//      canCommit: {ok, reason}, commitNote }
+//      canCommit: {ok, reason}, commitNote }   reason: "" | "empty" | "too-many-lines" | "check-failed"
 // `draft` is the draft AFTER reconcile: a quantity above what the product can give now is clamped, one whose product
 // became unavailable or left the catalog is dropped. The sheet writes it back when draftChanged. Never throws on junk.
 function build(input) {
@@ -210,6 +228,11 @@ function build(input) {
     for (var r = 0; r < sum.rows.length; ++r) rows.push(_viewRow(sum.rows[r]))
 
     var gate = Draft.canCommit(orderLines, draft)
+    var note = gate.reason === "too-many-lines" ? "An order holds at most " + Draft.MAX_LINES + " lines." : ""
+    if (gate.ok) {
+        var chk = _check(inp.hooks, draft, orderLines)
+        if (!chk.ok) { gate = { ok: false, reason: "check-failed" }; note = chk.text }
+    }
     return {
         draft: draft,
         draftChanged: !_sameFlat(draft, draft0),
@@ -219,6 +242,6 @@ function build(input) {
         empty: _emptyState(products, matched.length, rows, sum.hiddenCount, inp.query, !!inp.inStockOnly),
         totals: Draft.totals(draft, function(id) { return _has(byId, "k:" + id) ? priceOf(byId["k:" + id]) : 0 }),
         canCommit: gate,
-        commitNote: gate.reason === "too-many-lines" ? "An order holds at most " + Draft.MAX_LINES + " lines." : ""
+        commitNote: note
     }
 }

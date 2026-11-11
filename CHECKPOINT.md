@@ -12,16 +12,19 @@ Wire `NewOrderDialog` to `ProductPickerSheet`; delete `productNames`, `_pickerPr
 ## Steps
 - [x] 1. Clone, skills read, branch cut, old checkpoint archived, this file.
 - [x] 2. Read design, audit, S2 plan, KNOWN-ISSUES carried list, sheet, helpers, stores, `NewOrderDialog`.
-- [ ] 3. Plan doc `plans/2026-11-11-product-picker-v2-s3-new-order.md` with S3-D1..D8.
-- [ ] 4. `NewOrderPicker.js` (pure) + Node tests + QML twin.
-- [ ] 5. `PickerSheetModel.build`: optional `commitCheck` hook + tests.
-- [ ] 6. `StockBatchStore.mintRevision`, `NewOrderDialog` wiring, wiring tests, dormancy tests updated on purpose.
-- [ ] 7. Run Node suites, hand mutants.
-- [ ] 8. Docs: test plan, KNOWN-ISSUES, README, AGENTS, Skill 162, SKILLS-INDEX.
-- [ ] 9. Commit, push, read CI, open PR (REST API).
-- [ ] 10. For Taher: veto window on S3-D1..D8, device checks, merge; next S4 (Edit Order).
+- [x] 3. Plan doc `plans/2026-11-11-product-picker-v2-s3-new-order.md` with S3-D1..D8 (trade-offs inside).
+- [x] 4. `NewOrderPicker.js` + `NOP-01..24` (24/24), QML twin derived.
+- [x] 5. `PickerSheetModel.build` optional `commitCheck` + `SHEET-32..40` (42/42).
+- [x] 6. `StockBatchStore.mintRevision`, `NewOrderDialog` wired, `NOW-01..16` (16/16), dormancy allow-lists and `W-20` updated on purpose.
+- [x] 7. Node: functions 1409/1409, `.github/scripts` 1049/1049. 43 hand mutants: 1 real survivor (shortfall hid oversize), test added, all killed.
+- [x] 8. Docs: plan, test plan (rows, checks 54 to 66, verification row), KNOWN-ISSUES 22 to 25, README, AGENTS, Skill 162, SKILLS-INDEX regenerated.
+- [ ] 9. Push (done once docs are in), read CI, open PR (REST API: `gh pr create` needs GraphQL, blocked here).
+- [ ] 10. For Taher: veto window on S3-D1..D8, device checks 54 to 66, merge; next S4 (Edit Order).
 
 ## Findings so far (read from code)
 - Parity gap (carried item 3): a HELD row (`dependsOn`) is never sent, so it never fails, so `StuckWrites.isParkedItem` (needs `terminal` + `stuck` or failures) cannot become true for it. `hasParkedForEntity` and `unsyncedByEntity` therefore only differ for a damaged saved row; the failure direction is safe (completion refuses with a message). No code change.
 - `StockBatchStore._pendingMints` has no revision (confirmed). `OutboxStore.revision` ticks on every item change, so a queued restock or edit ticks it. `InventoryStore.revision` ticks on `products`.
 - Dry run is feasible: `CompletionPlan.build` is pure; the sale docs are one per line with a quantity; so a stub `saleDocs` gives the same operation count as the real one.
+
+## State
+Not built, not run on a device. The QML twins (`tst_NewOrderPicker`, regenerated `tst_PickerSheetModel`) and the Felgo layer are UNSEEN until CI. Open items: KNOWN-ISSUES 22 to 25 (no-price row reason, cart stepper 28 dp, error label may be off screen, dry-run cost unmeasured). If the session ends here: read CI on the branch head, fix, open the PR, then ask Taher the questions listed in the PR body.
