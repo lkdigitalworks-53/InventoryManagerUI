@@ -4,7 +4,7 @@ Status: PLAN ONLY, nothing below is built. Written 2026-11-11 at the end of the 
 Source of every item: `docs/superpowers/KNOWN-ISSUES.md` section "P1 S4a stock register" and design section 7 of
 `specs/2026-11-11-p1-s4a-stock-register-design.md`. Taher asked for all four open decisions as ONE PR.
 
-**Branch:** `feat/<date>-p1-s4a-followups` cut from `main` AFTER #193 is merged. **Commit identity:** `taher.lkdw@gmail.com` (git user and last line of the message). Standing rules: `AGENTS.md` "Session & Sandbox Conventions" (no build/run, no Qt in sandbox, push without asking, CI is the QML/rules oracle, no production caveats). Read `SKILLS-INDEX.md` then Skills 162, 127, 128, 135 (and `grep -i ledger\|rules\|handler SKILLS-INDEX.md`).
+**Branch:** `feat/<date>-p1-s4a-followups` cut from `main` AFTER #193 is merged. **Commit identity:** `taher.lkdw@gmail.com` (git user and last line of the message). Standing rules: `AGENTS.md` "Session & Sandbox Conventions" (no build/run, no Qt in sandbox, push without asking, CI is the QML/rules oracle, no production caveats). Read `SKILLS-INDEX.md` then Skills 163, 127, 128, 135 (and `grep -i ledger\|rules\|handler SKILLS-INDEX.md`).
 
 ## Honest advice before starting (grill Taher on these first, 3 questions max)
 - One PR is fine, but it touches three deploy surfaces at once (functions, rules, client-visible API field). **Build it as four commits, one per slice, each independently revertable, in the order below.** If CI goes red on one slice, revert that commit only.
@@ -26,7 +26,7 @@ Source of every item: `docs/superpowers/KNOWN-ISSUES.md` section "P1 S4a stock r
 **Register:** `stockRegisterMath` remembers, per product, the name of the LATEST row (by time) that carries one; `finish` uses `doc.name`, else that ledger name, else `null`. `deleted` stays `!doc`. Response shape unchanged (still `name`), so no client change. Old rows without the field are fine (dev only, no backfill, AGENTS rule 4).
 **Tests:** `movementLogic` unit (name present, absent, blank, 300 chars, non-string, delete uses before); each of the four writers produces rows with the name (existing writer suites, one assertion each); register: deleted product gets its last ledger name, rename keeps latest, mixed old/new rows, all rows nameless gives `null`; SRG-06 field list gains `productName`; extend SR-27 (real `buildRows` into the register) so a created/renamed/deleted product keeps its name; monkey SR-28 oracle gains the name rule. Mutants: field not written in one writer, wrong row picked (first instead of latest), blank accepted.
 **Test plan edit:** step 4 of the S4a plan (`name:null` for deleted product C) becomes "name is C's name".
-**Docs:** design SR-D9 limit sentence removed, KNOWN-ISSUES 13 closed, Skill 162 one rule.
+**Docs:** design SR-D9 limit sentence removed, KNOWN-ISSUES 13 closed, Skill 163 one rule.
 
 ## Slice 3: D-R1, restrict the `stock_movements` read rule (KNOWN-ISSUES 1)
 **Why:** the endpoint refuses staff but any member can read the raw ledger over Firestore REST. Safe today (every `valueAtCost` is 0); not safe once S2e writes real values.
@@ -34,7 +34,7 @@ Source of every item: `docs/superpowers/KNOWN-ISSUES.md` section "P1 S4a stock r
 **Client:** `grep -rn stock_movements qml/` must still be empty (it was at #193). If it is not, stop.
 **Tests (CI is the only oracle: the emulator jar cannot download in the sandbox):** `test/firestore.rules.test.js`: the shared `LEDGER_COLLECTIONS` loop currently asserts "a member can read" with `memberDb()` (the owner), so it stays true for owner; take `stock_movements` out of the member-read assertion of the loop or keep the owner case and ADD per-role cases using `dbAs(uid, role)`: owner/admin/manager read OK; staff read FAILS; suspended manager FAILS; missing/invalid role FAILS; outsider FAILS; anonymous FAILS; write FAILS for all five roles. Update `SRG-08` in `stockRegister.guard.test.js` (it pins `allow read: if isMember(tenantId)`): pin the new function instead and that `REGISTER_ROLES` equals the rule's role list (parse both).
 **Deploy (not a code step, tell Taher):** rules do not ride the functions deploy gate. After merge: `firebase deploy --only firestore:rules` (check `deploy-check.sh` / `deployWorkflowWiring.test.js` for how rules are handled before claiming anything). Functions deploy is also needed for slices 1, 2 and 4. Order: functions first, then rules; nothing in the app reads the ledger so either order is safe.
-**Docs:** KNOWN-ISSUES 1 closed, design SR-D7 note updated, Skill 162 rule 7 reworded, `FIRESTORE_RULES.md` ledger row, AGENTS rules mention if a table lists read access.
+**Docs:** KNOWN-ISSUES 1 closed, design SR-D7 note updated, Skill 163 rule 7 reworded, `FIRESTORE_RULES.md` ledger row, AGENTS rules mention if a table lists read access.
 
 ## Slice 4 (droppable): D-R3, `count()` pre-check (KNOWN-ISSUES 14)
 **Why:** a ledger over 250 000 rows answers 413 only after reading 250 000 docs, and every retry repeats it.

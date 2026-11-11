@@ -170,4 +170,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 160: A compare-and-swap `before` must be the exact image the server holds, never a rebuild of the local copy; log a delete only when the server acked it; keep a transient status out of the layout
 - 161: Put every decision of a Felgo view into a pure view-model with flat rows, update a list in place, and give a shared component an opt-in that a grep pins as the only user
 - 162: Wire a dialog to a tested sheet through one pure apply-and-check helper, re-read at the commit, and run the glue's real text in a sandbox
-- 162: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
+- 163: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only

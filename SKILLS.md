@@ -4920,7 +4920,7 @@ Rules:
 
 **The check:** for the dialog, list every place it changes the order and name the pure function that owns the quantity, the price and the stock formula; for every hook it hands a sheet, name the store call and the counter that makes the sheet re-read; for every early-stop check, say what it does when it throws.
 
-## Skill 162: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
+## Skill 163: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
 
 **Built in P1 S4a, 2026-11-11 (`functions/lib/stockRegisterMath.js`, `computeStockRegister`).** The stock register (CGST 56(2)) is a read model over `stock_movements`. The traps were all about what the number is derived from, not about arithmetic.
 
