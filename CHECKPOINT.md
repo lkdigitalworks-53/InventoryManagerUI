@@ -39,11 +39,19 @@ Server only. Nothing in the app calls the endpoint. QML untouched, rules untouch
 **Sweep steps**
 - [x] R0. Read skills, memory, PR body, math module, handler, harness, tests (54/54 pass locally on Node 22).
 - [x] R1. Findings confirmed with a concrete case (see list below).
-- [ ] R2. Chunk 1 code fixes + tests: F1 calendar-impossible dates roll over; F2 500-row pages + no deadline vs 120 s timeout; F3 `scopedDb`/`deriveContext` outside the `try`; F4 `scopedDb` accepts `constructor`/`toString` as env (all handlers).
-- [ ] R3. Chunk 2 docs: KNOWN-ISSUES, test plan, design deltas, Skill 162, README/AGENTS only if needed, full test run.
+- [x] R2. Chunk 1 code fixes + tests, pushed `19247fd`: F1, F2, F3, F4 fixed; SR-29..32, SRH-18..22 new; 5/5 fix-mutants killed; functions 1433/1433.
+- [x] R3. Chunk 2 docs + guard: SRG-09 (budget < timeout, mutant killed), design section 7 (SR-D14..17), KNOWN-ISSUES 11 closed + 12..18 added, test plan counts + steps 7/8/10b/10c/20 (8 and 20 BLOCKED: no staff login exists), Skill 162 rules 10..14, README sentence. Functions 1434/1434, `.github/scripts` 1049/1049.
 - [ ] R4. Chunk 3 push, read CI, update this file.
 **Findings (concrete cases)**
 - F1: `from:"2026-02-30T00:00:00Z"` parses to 2 Mar (V8 rolls over). Register for a wrong period, no error.
 - F2: cap 250 000 rows at 500 rows/page = 500 sequential reads; ~100-250 ms each = 50-125 s vs 120 s function timeout. Timeout kill sends no CORS headers: client sees a no-answer, not a code.
 - F3: `scopedDb` + `deriveContext` run before the `try`: a transient Firestore error there is an unhandled rejection (no JSON answer).
 - F4: `DATABASE_ID_FOR_ENV["constructor"]` is truthy -> not the safe `prd` fallback. Pre-existing, every handler.
+
+**Open decisions for Taher (defaults in brackets, nothing blocks the merge)**
+- D-R1 restrict `stock_movements` read to owner/admin/manager: now in this PR, or its own small PR before S2e [own PR, needs a rules deploy + emulator rules test that only CI can run].
+- D-R2 `productName` snapshot in ledger rows so deleted products stay readable (KNOWN-ISSUES 13) [before S4b].
+- D-R3 `count()` pre-check so an over-cap request is cheap (item 14) [skip, revisit with the running balance].
+- D-R4 fix the unwrapped `deriveContext` in the other handlers (item 16) [own PR].
+- Dependabot: 1 critical + 10 high open on the default branch (item 18) [look before the next deploy].
+**Next (in order):** read CI on the sweep head; Taher vetoes/merges; approve functions deploy; S4b design pass (client page); S2d-2.

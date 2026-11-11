@@ -6,18 +6,21 @@ Server only: no QML, no rules change, no UI. CI observed: see CHECKPOINT (read a
 ## 1. Unit tests
 | File | Cases | Run? | Covers |
 |---|---|---|---|
-| `functions/test/stockRegisterMath.test.js` | 29 | RUN 29/29 | `toMillis` (Date, Timestamp-like, `{seconds}`, `{_seconds}`, ms, ISO with offset; 20 junk values all NaN), `parseWindow` (ms, ISO offset, 19 refused shapes), `canViewRegister`, opening / IN / OUT per kind / closing, every kind present, adjustment both directions, `[from,to)` boundaries, adjacent periods chain, fractional quantities, `-0` normalised, ledger-only (deleted) product, stock with no rows, ledger vs inventory disagreement, rows only after the period, ordering, junk inventory docs, non-numeric stock, 18 unclassifiable rows by reason, prototype-like ids, empty input, streaming equals batch and inputs not mutated, Timestamp shapes |
-| `functions/test/index.handlers.stockRegister.test.js` | 17 | RUN 17/17 | 405 on four methods, 401 x2, 403 no context, 403 staff (zero reads), 200 for owner/admin/manager, 12 bad windows, happy path JSON shape, read-only (no writes, only the two collections), 1203 rows over 3 pages, exactly one full page, empty ledger, 250 001 rows = 413, 250 000 rows served, Firestore failure = 500, junk rows reported, other tenant never read, unknown env, no body |
-| `functions/test/stockRegister.guard.test.js` | 8 | RUN 8/8 | module pure (one require), handler has no write call, ledger streamed not materialised and capped, order context -> role -> window -> read, kinds not copied, role list vs `VALID_ROLES`, row fields the register reads are the ones the server writes, handler codes present, `stock_movements` still write-denied in the rules |
+| `functions/test/stockRegisterMath.test.js` | 33 | RUN 33/33 | `toMillis` (Date, Timestamp-like, `{seconds}`, `{_seconds}`, ms, ISO with offset; 20 junk values all NaN), `parseWindow` (ms, ISO offset, 19 refused shapes), `canViewRegister`, opening / IN / OUT per kind / closing, every kind present, adjustment both directions, `[from,to)` boundaries, adjacent periods chain, fractional quantities, `-0` normalised, ledger-only (deleted) product, stock with no rows, ledger vs inventory disagreement, rows only after the period, ordering, junk inventory docs, non-numeric stock, 18 unclassifiable rows by reason, prototype-like ids, empty input, streaming equals batch and inputs not mutated, Timestamp shapes; review sweep: SR-29 impossible calendar dates refused (12 shapes, both bounds), SR-30 leap days (2024, 2000, year 0 yes; 1900, 2100, 2026 no; every month end), SR-31 hour 24 / minute 60 / second 60 / zone range, SR-32 monkey 3000 random dates against a Date round-trip oracle |
+| `functions/test/index.handlers.stockRegister.test.js` | 22 | RUN 22/22 | 405 on four methods, 401 x2, 403 no context, 403 staff (zero reads), 200 for owner/admin/manager, 12 bad windows, happy path JSON shape, read-only (no writes, only the two collections), 2503 rows over 3 pages of 1000, exactly one full page (1000), empty ledger, 250 001 rows = 413, 250 000 rows served, Firestore failure = 500, junk rows reported, other tenant never read, unknown env, no body; review sweep: SRH-18 impossible date = 400 with zero reads, SRH-19 scan over its 100 s budget = 504 `ledger-scan-timeout` and no page after the budget, SRH-20 a fast multi-page scan is served, SRH-21 Firestore error while resolving the membership = JSON 500, SRH-22 `constructor` / `toString` / `__proto__` / `hasOwnProperty` / `valueOf` fall back to the default database while `dev` and `test` still map |
+| `functions/test/stockRegister.guard.test.js` | 9 | RUN 9/9 | module pure (one require), handler has no write call, ledger streamed not materialised and capped, order context -> role -> window -> read, kinds not copied, role list vs `VALID_ROLES`, row fields the register reads are the ones the server writes, handler codes present, `stock_movements` still write-denied in the rules; SRG-09 the scan budget stays at least 10 s under the function timeout and the stream gets page size + deadline |
 
 ## 2. Regression tests
 - `index.handlers.membershipAuthority.test.js` now includes `computeStockRegister`: the whole F2/F3/S2f-1 matrix (removed, suspended, unsafe tenant id, 11 bad roles, valid roles pass the identity step) runs against the new endpoint (+10 cases).
 - SR-27 feeds rows built by the REAL `movementLogic` (derive for create / sale / increase-as-sale / edit / delete, explicit return and loss) into the register: the register can read everything the server writes, and a product created, sold, edited and deleted ends at 0 and reconciles.
-- Existing suites untouched: functions 1424/1424 (1360 before: 29 + 17 + 8 + 10 new), `.github/scripts` 1049/1049.
+- Existing suites untouched: functions 1433/1433 after the review sweep (1424 before it, 1360 before the PR: 29 + 17 + 8 + 10 new, then +9 in the sweep), `.github/scripts` see CHECKPOINT. The harness gained one recording field (`firestoreDbIds`); every older handler test still passes.
+- `scopedDb` (shared by every handler) changed in the sweep: SRH-22 covers the new behaviour through this endpoint; all other handler suites run the old and new code paths identically for `dev`, `test`, `prd` and unknown env.
 
 ## 3. Mutation and monkey
 - SR-28: 300 seeded random ledgers x random windows against a brute-force oracle (opening, IN, OUT, closing, ledger total, count, identity `closing = opening + IN - OUT`); shuffling the rows changes nothing.
 - 25 hand mutants on the new code (boundary `<` to `<=` both sides, sign of OUT, ledger total dropped, opening sign, closing without opening, stock-without-rows removed, direction check removed, `reconciles` forced true, `deleted` forced false, name order flipped, `from >= to` loosened, staff added to roles, offset-less ISO accepted, kind and time checks removed, cap off by one, role gate removed, window check removed, 413 removed, paging loop broken, cap changed, `acc.add` unplugged, products blanked, `-0` kept): the first run left one survivor (`-0` normalisation), killed by the new case SR-11b; final run 25/25 killed.
+
+- Review-sweep mutants (5, each reverts one fix): calendar check off (5 tests fail), deadline never checked (SRH-19), context outside the try (SRH-21), plain-object env lookup (SRH-22), page size back to 500 (SRH-09), budget raised to 115 s (SRG-09). All killed.
 
 ## 4. E2E (emulator)
 Not written. `test/e2e` drives the QML app and `recordOperation` against the emulator; the register has no client yet, and the handler is proven against the in-memory Firestore double that every other handler test uses. S4b adds the first QML-to-endpoint case.
@@ -44,10 +47,12 @@ Prerequisites
 
 ### Negative
 6. Same call with no `Authorization` header: 401 `missing-token`. With `Bearer garbage`: 401 `invalid-token`.
-7. `from` after `to`; `from` equal to `to`; `"from":"2026-04-01"` (date only); `"from":"2026-04-01T00:00:00"` (no offset); a missing `to`. Each: 400 `invalid-window`.
-8. Sign in as a STAFF member of the same tenant (create one in the Staff page), repeat step 1 with that token: 403 `role-not-allowed`. As a manager and an admin: 200.
+7. `from` after `to`; `from` equal to `to`; `"from":"2026-04-01"` (date only); `"from":"2026-04-01T00:00:00"` (no offset); a missing `to`; `"from":"2026-02-30T00:00:00Z"` and `"to":"2026-04-31T00:00:00+05:30"` (days that do not exist); `"from":"2026-04-01T24:00:00Z"`. Each: 400 `invalid-window` (never a register for some other month).
+8. **BLOCKED (no second login can be created yet: `Gateway.provisioningAvailable` is `false`, KNOWN-ISSUES item 12).** Intended check: a STAFF token of the same tenant gets 403 `role-not-allowed`; manager and admin get 200. Until then the gate is proven by SRH-05 and the membership matrix. Do NOT try to create a staff login for this.
 9. Use the owner token of ANOTHER tenant: the answer lists only that tenant's products (never A, B, C).
 10. A GET request: 405.
+10b. `"env":"constructor"` (and `"toString"`) with the owner's dev token: 403 `no-tenant-context`, exactly like `"env":"nonsense"`: the default database holds no such user. Never a 500 or a hang.
+10c. The 504 `ledger-scan-timeout` and 413 `ledger-too-large` answers need a huge ledger and cannot be reproduced on a dev tenant: they are proven by SRH-19 and SRH-11 only.
 
 ### Edge cases
 11. Period that starts after everything: `from` = tomorrow. Expect every product `opening` = its stock, all IN/OUT 0, `closing` = opening.
@@ -66,4 +71,4 @@ Cloud Functions deploy (new export), `firestore.rules` untouched, Analysis (`com
 ### Regression (on the phone)
 18. Restock, complete an order, return one item: all still work and stock moves once.
 19. Sales Analysis still opens and totals as before.
-20. Sign in as staff: nothing new is visible anywhere (no register page yet).
+20. **BLOCKED with step 8** (no staff login yet). Intended: signed in as staff, nothing new is visible anywhere (no register page yet).
