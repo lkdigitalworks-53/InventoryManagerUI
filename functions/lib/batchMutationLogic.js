@@ -158,6 +158,7 @@ async function applyMutationsBatch(db, params) {
                     MovementLogic.deriveForMutation(r.item.action, r.item.before, r.item.after), {
                         baseId: params.requestId + ":" + r.item.entityId,
                         productId: r.item.entityId,
+                        productName: MovementLogic.nameFor(r.item.before, r.item.action === "delete" ? null : r.item.after),
                         actorUid: params.actorUid,
                         actorRole: params.actorRole,
                         serverTimestamp: params.serverTimestamp,

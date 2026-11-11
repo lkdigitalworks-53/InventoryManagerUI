@@ -66,6 +66,11 @@ test("SRG-05 the register's kinds are the server's kinds (no copy to drift) and 
 test("SRG-06 every ledger row field the register reads is a field the server writes", () => {
     const ctx = { baseId: "b", productId: "p", actorUid: "u", actorRole: "owner", serverTimestamp: 1, clientTimestamp: 1, requestId: "r" };
     const built = Movement.buildRows(Movement.deriveMovement(-1, "sale"), ctx)[0].data;
+    // D-R2: productName is read through cleanProductName, so the register and the writer clean it alike.
+    const named = Movement.buildRows(Movement.deriveMovement(-1, "sale"), Object.assign({ productName: "Rice" }, ctx))[0].data;
+    assert.equal(named.productName, "Rice");
+    assert.ok(mathSrc.indexOf("row.productName") >= 0, "register no longer reads productName");
+    assert.ok(mathSrc.indexOf("cleanProductName") >= 0, "register must clean the ledger name like the writer");
     for (const field of ["productId", "kind", "qty", "serverTimestamp"]) {
         assert.ok(Object.prototype.hasOwnProperty.call(built, field), "server rows no longer carry " + field);
         assert.ok(mathSrc.indexOf("row." + field) >= 0, "register no longer reads " + field);

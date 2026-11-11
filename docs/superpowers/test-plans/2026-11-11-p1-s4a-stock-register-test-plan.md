@@ -42,7 +42,7 @@ Prerequisites
 1. `curl -s -X POST "$URL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY"`. Expect HTTP 200, `ok:true`, `kinds` with 10 names, `counts.skipped` all 0.
 2. In the answer find product A. Expect `opening 0`, `kinds.receipt.in` 14 (10 opening stock + 4 restock), `kinds.sale.out` 2, `kinds.sales_return.in` 1, `closing` 13, `currentStock` 13, `reconciles:true`.
 3. Product B: expect `receipt.in` 5, `adjustment.out` 2, `closing` 3, `reconciles:true`.
-4. Product C (deleted): expect `deleted:true`, `name:null`, `closing 0`, `adjustment.out` 2, `reconciles:true`.
+4. Product C (deleted): expect `deleted:true`, `name` = C's name (follow-up slice 2; `null` only for a product whose rows were all written before the `productName` field existed), `closing 0`, `adjustment.out` 2, `reconciles:true`.
 5. Compare `counts.rowsSeen` with the number of documents in `stock_movements` in the console. Expect equal.
 
 ### Negative

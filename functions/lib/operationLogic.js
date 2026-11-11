@@ -398,7 +398,8 @@ async function applyOperation(db, params) {
                 }
                 entry.data = Object.assign({}, entry.data, after);
                 entry.dirty = true;
-                audits.push({ i: i, op: op, action: "delta", before: before, after: after, movements: movements });
+                audits.push({ i: i, op: op, action: "delta", before: before, after: after, movements: movements,
+                              productName: MovementLogic.nameFor(null, entry.data) });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "delta", after: after });
             } else {
                 if (!_deepEqual(entry.data, op.before)) {
@@ -417,7 +418,8 @@ async function applyOperation(db, params) {
                 // equal to the running state by the check above.
                 const movements = op.entity === "inventory"
                     ? MovementLogic.deriveForMutation(op.action, op.before, op.action === "delete" ? null : (op.after || {})) : [];
-                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: movements });
+                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: movements,
+                              productName: MovementLogic.nameFor(op.before, op.action === "delete" ? null : op.after) });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "mutation",
                                after: op.action === "delete" ? null : (op.after || {}) });
             }
@@ -451,6 +453,7 @@ async function applyOperation(db, params) {
             const rows = MovementLogic.buildRows(a.movements, {
                 baseId: opAuditId(params.requestId, a.i),
                 productId: a.op.entityId,
+                productName: a.productName,
                 actorUid: params.actorUid,
                 actorRole: params.actorRole,
                 serverTimestamp: params.serverTimestamp,
