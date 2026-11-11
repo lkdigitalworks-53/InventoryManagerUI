@@ -39,6 +39,7 @@ const HANDLERS = [
     { name: "releaseLock", body: { env: "test", entity: "order", entityId: "ORD-1" } },
     { name: "provisionMember", body: { env: "test", email: "newhire@example.com", displayName: "New Hire", password: "s3cret!", role: "staff" } },
     { name: "computeAnalysis", body: { env: "test", viewMode: "revenue" } },
+    { name: "computeStockRegister", body: { env: "test", from: "2026-04-01T00:00:00Z", to: "2026-05-01T00:00:00Z" } },
     { name: "uploadProductPhoto", body: { env: "test", productId: "PRD-1", photoId: "photo-1", requestId: "photo-1", imageBase64: "AAAA", thumbBase64: "AAAA" } },
     { name: "deleteProductPhoto", body: { env: "test", productId: "PRD-1", photoId: "photo-1", requestId: "del-1" } }
 ];
