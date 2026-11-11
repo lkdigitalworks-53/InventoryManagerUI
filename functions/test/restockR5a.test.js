@@ -606,3 +606,76 @@ test("J-5 end to end through the planner and the REAL server code: the name with
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(plain(RP.reflect(result.results)).supplier.name, CONJUNCT, "the real server stores the joiner");
 });
+
+// ---------------------------------------------------------------------------- Review pass 3, option A (queued new supplier)
+
+const STORE_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "qml", "model", "InventoryStore.qml"), "utf8");
+// A queued restock exactly as Gateway.recordOperation stores it: the REAL planner's ops under opType "restock".
+const queuedRestock = (party, over) => Object.assign({ opType: "restock", requestId: "r-1", ops: plain(RP.build(RF.makeInput(args({ party })).input)).ops }, over || {});
+
+test("K-1 a queued restock that creates a supplier blocks the same name, however it is spelled", () => {
+    const items = [queuedRestock({ newName: "Acme" })];
+    for (const same of ["Acme", "acme", "  ACME  ", "Ac" + ZWNJ + "me", "A" + ZWSP + "cme"])
+        assert.equal(RF.queuedNewSupplierClash(same, items), true, JSON.stringify(same));
+    for (const other of ["Acme 2", "Bolt", "Acm"]) assert.equal(RF.queuedNewSupplierClash(other, items), false, other);
+});
+
+test("K-2 only a restock that CREATES a supplier counts: a known supplier, no supplier, another opType, a malformed item", () => {
+    const items = [queuedRestock({ id: "SUP-001" }), queuedRestock(""), queuedRestock({ newName: "Acme" }, { opType: "order" }),
+        null, undefined, 7, "x", {}, { opType: "restock" }, { opType: "restock", ops: "no" }, { opType: "restock", ops: [null, 3, {}, { kind: "mutation", entity: "supplier", action: "create" }] },
+        { opType: "restock", ops: [{ kind: "mutation", entity: "supplier", action: "update", after: { name: "Acme" } }, { kind: "mutation", entity: "product", action: "create", after: { name: "Acme" } }] }];
+    assert.equal(RF.queuedNewSupplierClash("Acme", items), false);
+    assert.equal(RF.queuedNewSupplierClash("Acme", items.concat([queuedRestock({ newName: "Acme" })])), true, "found behind the noise");
+});
+
+test("K-3 a blank name, no list, or a list that is not an array never clashes", () => {
+    const items = [queuedRestock({ newName: "Acme" })];
+    for (const blank of ["", "   ", ZWNJ + ZWJ, ZWSP, undefined, null, 5, {}]) assert.equal(RF.queuedNewSupplierClash(blank, items), false, String(blank));
+    for (const bad of [undefined, null, {}, "Acme", 3]) assert.equal(RF.queuedNewSupplierClash("Acme", bad), false, String(bad));
+    assert.equal(RF.queuedNewSupplierClash("Acme", []), false);
+    // A stored item whose supplier name is itself blank (malformed or from an older build) must not make every blank name clash.
+    const blankItem = { opType: "restock", ops: [{ kind: "mutation", entity: "supplier", action: "create", after: { name: ZWNJ } }, { kind: "mutation", entity: "supplier", action: "create", after: { name: "" } }] };
+    for (const blank of ["", ZWNJ, ZWJ + ZWSP]) assert.equal(RF.queuedNewSupplierClash(blank, [blankItem]), false, JSON.stringify(blank));
+});
+
+test("K-4 the queue is persisted as JSON: the clash is still found after a relaunch, and after the queued restock is gone it is not", () => {
+    const items = JSON.parse(JSON.stringify([queuedRestock({ newName: CONJUNCT })]));
+    assert.equal(RF.queuedNewSupplierClash(CONJUNCT, items), true);
+    assert.equal(RF.queuedNewSupplierClash(CONJUNCT.replace(ZWJ, ""), items), true, "typed without the joiner");
+    assert.equal(RF.queuedNewSupplierClash(CONJUNCT, []), false, "synced: the queue no longer holds it");
+});
+
+test("K-5 the refusal text names the supplier and both ways out", () => {
+    const t = RF.supplierPendingText("Acme Farms");
+    assert.ok(t.indexOf("\"Acme Farms\"") >= 0 && t.indexOf("syncs") >= 0 && t.indexOf("leave the supplier out") >= 0, t);
+});
+
+test("K-6 differential monkey (1500 pairs): the clash agrees with the known-supplier lookup, which is what the second tap would otherwise have used", () => {
+    let seed = 23;
+    const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const parts = ["a", "A", "b", " ", "  ", "\t", ZWSP, ZWNJ, ZWJ, WJ, BOM, "e" + String.fromCharCode(0x301), String.fromCharCode(0xe9), "Acme", "Farms", "x"];
+    const make = () => { let t = ""; for (let n = rnd(5); n > 0; --n) t += parts[rnd(parts.length)]; return t; };
+    let hits = 0;
+    for (let i = 0; i < 1500; ++i) {
+        const a = make(), b = make();
+        const planned = plain(RP.build(RF.makeInput(args({ party: { newName: b } })).input));
+        if (!planned.ok) continue;                                   // b is not a plannable supplier name: nothing is ever queued
+        const item = { opType: "restock", ops: planned.ops };
+        const viaLookup = sup({ newName: a }, [{ supplierId: "SUP-9", name: b }]);
+        const expected = viaLookup.ok && viaLookup.supplier.id === "SUP-9";
+        assert.equal(RF.queuedNewSupplierClash(a, [item]), expected, JSON.stringify([a, b]));
+        if (expected) ++hits;
+    }
+    assert.ok(hits > 20, "the monkey must reach the matching case: " + hits);
+});
+
+test("K-7 InventoryStore.restock asks AFTER the same-product holds and BEFORE anything is queued, only for a NEW supplier, from the stored queue", () => {
+    const hold = STORE_SRC.indexOf("if (hasQueuedRestock(productId)) { finish(false, false, restockPendingMessage); return }");
+    const ask = STORE_SRC.indexOf("RestockFlow.queuedNewSupplierClash(newSupplier.newName, OutboxStore.items)");
+    const queue = STORE_SRC.indexOf("Gateway.recordOperation(\"restock\"");
+    const names = STORE_SRC.indexOf("_restockNames[plan.key] = current.name");
+    assert.ok(hold > 0 && ask > hold && names > ask && queue > names, [hold, ask, names, queue].join(" "));
+    assert.ok(STORE_SRC.indexOf("var newSupplier = made.input.supplier") > hold, "reads the planned supplier, so the string and object party forms are both covered");
+    assert.ok(STORE_SRC.indexOf("typeof newSupplier.newName === \"string\"") > 0, "a known supplier or no supplier is never asked");
+    assert.ok(STORE_SRC.indexOf("RestockFlow.supplierPendingText(newSupplier.newName)") > ask);
+});

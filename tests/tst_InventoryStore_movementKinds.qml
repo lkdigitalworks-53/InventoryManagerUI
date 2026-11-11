@@ -25,7 +25,7 @@ TestCase {
         StockBatchStore._pendingMints = []
         AuthStore.role = "owner"
     }
-    function cleanup() { OutboxStore.clear(); StockBatchStore._pendingMints = [] }
+    function cleanup() { OutboxStore.clear(); StockBatchStore._pendingMints = []; SupplierStore.suppliers = [] }
 
     function _product(id) {
         return { productId: id, name: "Widget " + id, category: "Widgets", sku: "", unit: "pc",
@@ -327,5 +327,72 @@ TestCase {
         compare(out.ok, false)
         compare(out.refusal, InventoryStore.restockQtyRefusal)
         compare(OutboxStore.pendingCount, 0)
+    }
+
+    // ── review pass 3, option A (Taher, 2026-11-11): a new supplier lives only inside its queued restock ──
+    // SupplierStore learns it when the server answers and the server does not dedupe by name, so the same new name on a
+    // second restock, tapped while the first is still queued, would create a second supplier. It is refused instead.
+    function _restockWith(productId, party) {
+        var out = { calls: 0, ok: null, queued: null, refusal: null }
+        InventoryStore.restock(productId, 3, party, 10, "", function(ok, queued, refusal) {
+            out.calls++; out.ok = ok; out.queued = queued; out.refusal = refusal })
+        return out
+    }
+    function _moreProducts() {
+        InventoryStore.products = InventoryStore.products.concat([_product("SKU-3"), _product("SKU-4")])
+    }
+
+    function test_a_second_restock_with_the_same_new_supplier_is_held_while_the_first_is_queued() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        compare(_restockItems().length, 1, "the first restock is queued")
+        var namesBefore = Object.keys(InventoryStore._restockNames).length     // a singleton: earlier tests leave entries
+        var second = _restockWith("SKU-2", { newName: "  acme " })
+        compare(second.calls, 1, "the callback answers exactly once")
+        compare(second.ok, false)
+        compare(second.queued, false)
+        verify(second.refusal.indexOf("still waiting to sync") >= 0 && second.refusal.indexOf("leave the supplier out") >= 0, second.refusal)
+        compare(_restockItems().length, 1, "nothing was queued for the second product")
+        compare(_restockDelta("SKU-2"), null)
+        compare(Object.keys(InventoryStore._restockNames).length, namesBefore, "the refused tap left no trace")
+    }
+    function test_the_plain_string_form_of_the_same_name_is_held_too() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        var second = _restockWith("SKU-2", "ACME")
+        compare(second.ok, false)
+        verify(second.refusal.indexOf("still waiting to sync") >= 0, second.refusal)
+        compare(_restockItems().length, 1)
+    }
+    function test_a_different_new_name_a_known_supplier_and_no_supplier_are_not_held() {
+        _moreProducts()
+        SupplierStore.suppliers = [{ supplierId: "SUP-009", name: "Bolt & Co" }]
+        var results = [_restockWith("SKU-1", { newName: "Acme" }), _restockWith("SKU-2", { newName: "Acme Two" }),
+                       _restockWith("SKU-3", { id: "SUP-009" }), _restockWith("SKU-4", "")]
+        for (var i = 0; i < results.length; ++i) verify(!results[i].refusal, "tap " + (i + 1) + " was not refused: " + results[i].refusal)
+        compare(_restockItems().length, 4, "another new name, a known supplier and no supplier are all queued")
+    }
+    function test_a_name_that_is_a_known_supplier_is_not_held_even_if_a_queued_restock_made_the_same_name() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        SupplierStore.suppliers = [{ supplierId: "SUP-010", name: "Acme" }]    // the server answered for another device meanwhile
+        var second = _restockWith("SKU-2", { newName: "Acme" })
+        verify(!second.refusal, "it resolves to the known supplier, so it creates nothing and is not held: " + second.refusal)
+        compare(_restockItems().length, 2)
+    }
+    function test_the_hold_ends_when_the_first_restock_has_left_the_queue() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        compare(_restockWith("SKU-2", { newName: "Acme" }).ok, false)
+        OutboxStore.clear()
+        verify(!_restockWith("SKU-2", { newName: "Acme" }).refusal, "nothing queued creates it any more")
+        compare(_restockItems().length, 1)
+    }
+    function test_the_same_product_keeps_its_own_message() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        var again = _restockWith("SKU-1", { newName: "Acme" })
+        compare(again.ok, false)
+        compare(again.refusal, InventoryStore.restockPendingMessage)
     }
 }

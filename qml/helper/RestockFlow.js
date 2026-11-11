@@ -235,6 +235,30 @@ function refusalText(reason) {
     return "Could not restock (" + String(reason) + "). Please report this"
 }
 
+// Review pass 3, option A (Taher, 2026-11-11). A supplier a restock creates exists only INSIDE its queued operation: the
+// local supplier list learns it when the server answers, and the server does not dedupe by name. So a second restock
+// with the same new name, tapped meanwhile, would create a second supplier. True when a still-queued (or parked)
+// restock in `items` (OutboxStore.items) creates a supplier whose name matches `newName` (the same match key the
+// known-supplier lookup uses). Reads only what is stored, so it holds after a relaunch too. Anything unreadable is false.
+function queuedNewSupplierClash(newName, items) {
+    var key = _matchKey(newName)
+    if (key.length === 0 || !Array.isArray(items)) return false
+    for (var i = 0; i < items.length; ++i) {
+        var it = items[i]
+        if (!it || it.opType !== "restock" || !Array.isArray(it.ops)) continue
+        for (var j = 0; j < it.ops.length; ++j) {
+            var o = it.ops[j]
+            if (o && o.kind === "mutation" && o.entity === "supplier" && o.action === "create"
+                    && o.after && typeof o.after.name === "string" && _matchKey(o.after.name) === key)
+                return true
+        }
+    }
+    return false
+}
+function supplierPendingText(newName) {
+    return "A restock that adds the supplier \"" + String(newName) + "\" is still waiting to sync. Restock this product after it syncs, or leave the supplier out"
+}
+
 // The Activity entry of a settled restock, from RestockPlan.reflect's outcome alone (the plan is gone
 // after a relaunch). Same wording the old restock wrote. `supplierName` may be "".
 // -> { title, subtitle }

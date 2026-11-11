@@ -1341,6 +1341,15 @@ QtObject {
         // sent. R4-D1: nor can a second restock start while one is still queued or in flight.
         if (hasParkedWrite(productId)) { finish(false, false, parkedWriteMessage); return }
         if (hasQueuedRestock(productId)) { finish(false, false, restockPendingMessage); return }
+        // Review pass 3, option A: a new supplier is created inside a queued restock and unknown to SupplierStore until
+        // the server answers, so the same new name on a second restock would make a second supplier. Refused; known
+        // suppliers and "no supplier" are not affected.
+        var newSupplier = made.input.supplier
+        if (newSupplier && typeof newSupplier.newName === "string"
+                && RestockFlow.queuedNewSupplierClash(newSupplier.newName, OutboxStore.items)) {
+            finish(false, false, RestockFlow.supplierPendingText(newSupplier.newName))
+            return
+        }
 
         _restockNames[plan.key] = current.name
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false

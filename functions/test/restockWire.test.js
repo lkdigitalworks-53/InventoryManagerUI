@@ -34,6 +34,7 @@ function sandbox(opts) {
         parkedWriteMessage: "PARKED", restockPendingMessage: "PENDING", restockDiscardedMessage: "DISCARDED",
         _restockSettled: {}, _restockNames: {},
         AuthService: { isOnline: o.online },
+        OutboxStore: { items: [] },       // option A reads the stored queue; the fake Gateway feeds it like enqueueOperation does
         SupplierStore: { suppliers: o.suppliers, nameOf: (id) => (o.suppliers.find((s) => s.supplierId === id) || {}).name || "",
             addLocalSupplier: (d) => { log.supplier.push(d.supplierId); o.suppliers.push(d); }, syncFromFirebase: () => log.resync.push("supplier") },
         StockBatchStore: { addLocalBatch: (d) => log.batch.push(d.batchId), syncFromFirebase: () => log.resync.push("batch") },
@@ -44,6 +45,7 @@ function sandbox(opts) {
         Gateway: { recordOperation: (opType, ops, key, options, cb) => {
             log.gateway.push({ opType, ops: plain(ops), key, options: plain(options), cb });
             state.queued = true;      // enqueueOperation is synchronous: the outbox item exists on return
+            ctx.OutboxStore.items.push({ opType, requestId: key, ops: plain(ops) });
             return key;
         } },
     };
@@ -65,6 +67,7 @@ async function serve(call, db) {
 
 // What the Gateway does at a terminal outcome: waiters first, then the signal.
 function finish(h, call, res, awaited) {
+    h.ctx.OutboxStore.items = h.ctx.OutboxStore.items.filter((i) => i.requestId !== call.key);   // a terminal outcome removes the item first
     if (awaited) call.cb(res);
     if (res.ok) h.ctx.onRestockApplied(call.key, res.results, res.idempotentReplay === true);
     else return h.ctx.onRestockRejected(call.key, res);
@@ -341,4 +344,77 @@ test("M-1 monkey: 400 random taps and outcomes in random order never throw and n
         assert.deepEqual(plain(h.ctx._restockSettled), {}, "no flag left behind");
         assert.deepEqual(plain(h.ctx._restockNames), {}, "no name left behind");
     }
+});
+
+// ---------------------------------------------------------------------------- review pass 3, option A (queued new supplier)
+
+const FOUR = [1, 2, 3, 4].map((n) => ({ productId: "p" + n, name: "Item " + n, category: "Veg", price: 12.5, stock: 10 }));
+// hasQueuedRestock as the real OutboxStore.hasQueuedOperationFor derives it: from the stored queue, per product.
+function perProductHold(h) {
+    h.ctx.hasQueuedRestock = (id) => h.ctx.OutboxStore.items.some((i) => i.opType === "restock" && i.ops.some((o) => o.entity === "inventory" && o.entityId === id));
+}
+function optionA(opts) { const h = sandbox(Object.assign({ online: false, products: FOUR, suppliers: [{ supplierId: "SUP-009", name: "Bolt & Co" }] }, opts || {})); perProductHold(h); return h; }
+
+test("W-15 a second restock with the same NEW supplier is refused while the first is queued: nothing sent, nothing remembered, one answer", () => {
+    const h = optionA();
+    const first = tap(h, { id: "p1", party: { newName: "Acme" } });
+    assert.equal(h.taps(), 1);
+    const namesBefore = Object.keys(plain(h.ctx._restockNames)).length;
+    const second = tap(h, { id: "p2", party: { newName: "  acme " } });
+    assert.equal(h.taps(), 1, "the Gateway was not called for the second tap");
+    assert.deepEqual(second.calls, [{ ok: false, queued: false, refusal: RF.supplierPendingText("acme") }]);
+    assert.equal(Object.keys(plain(h.ctx._restockNames)).length, namesBefore, "the refused tap left no trace");
+    assert.equal(h.ctx.OutboxStore.items.length, 1);
+    assert.deepEqual(first.calls, [], "the first is still waiting for its answer");
+});
+
+test("W-16 the plain string form of the same name is held too", () => {
+    const h = optionA();
+    tap(h, { id: "p1", party: "Acme" });
+    const second = tap(h, { id: "p2", party: "ACME" });
+    assert.equal(h.taps(), 1);
+    assert.equal(second.calls[0].ok, false);
+    assert.equal(second.calls[0].refusal, RF.supplierPendingText("ACME"));
+});
+
+test("W-17 a different new name, a known supplier and no supplier are not held", () => {
+    const h = optionA();
+    tap(h, { id: "p1", party: { newName: "Acme" } });
+    const b = tap(h, { id: "p2", party: { newName: "Acme Two" } });
+    const c = tap(h, { id: "p3", party: { id: "SUP-009" } });
+    const d = tap(h, { id: "p4", party: "" });
+    assert.equal(h.taps(), 4);
+    for (const t of [b, c, d]) assert.deepEqual(t.calls, [], "queued, not refused");
+});
+
+test("W-18 the same product keeps its own message (the product hold is checked first)", () => {
+    const h = optionA();
+    tap(h, { id: "p1", party: { newName: "Acme" } });
+    const again = tap(h, { id: "p1", party: { newName: "Acme" } });
+    assert.deepEqual(again.calls, [{ ok: false, queued: false, refusal: "PENDING" }]);
+    assert.equal(h.taps(), 1);
+});
+
+test("W-19 end to end with the REAL server: after the first restock syncs, the same name is the known supplier and creates nothing", async () => {
+    const h = optionA({ online: true });
+    const first = tap(h, { id: "p1", party: { newName: "Acme" } });
+    assert.equal(tap(h, { id: "p2", party: { newName: "Acme" } }).calls[0].ok, false, "held while the first is queued");
+    const { answer } = await serve(first.call);
+    finish(h, first.call, answer, true);
+    assert.deepEqual(h.log.supplier, ["SUP-001"], "the first created the supplier and the local list has it now");
+    const second = tap(h, { id: "p2", party: { newName: "Acme" } });
+    assert.deepEqual(second.calls, [], "not held any more");
+    assert.equal(h.taps(), 2);
+    assert.deepEqual(second.call.ops.filter((o) => o.entity === "supplier"), [], "it resolved to SUP-001: no second supplier is created");
+    assert.equal(plain(second.call.ops).some((o) => o.after && o.after.supplierId === "SUP-001"), true, "the batch points at the supplier the first one made");
+});
+
+test("W-20 a first restock that is discarded frees the name", () => {
+    const h = optionA({ online: true });
+    const first = tap(h, { id: "p1", party: { newName: "Acme" } });
+    assert.equal(tap(h, { id: "p2", party: { newName: "Acme" } }).calls[0].ok, false);
+    finish(h, first.call, { ok: false, discarded: true }, true);
+    const second = tap(h, { id: "p2", party: { newName: "Acme" } });
+    assert.deepEqual(second.calls, [], "queued, not refused");
+    assert.equal(h.taps(), 2);
 });

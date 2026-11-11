@@ -1,4 +1,4 @@
-# CHECKPOINT — 2026-11-11 PR #191 review pass 3 (QML CI red) — resume here
+# CHECKPOINT — 2026-11-11 PR #191 review pass 3 (QML CI red) + option A — resume here
 
 **Branch:** work branch `fix/2026-11-11-pr191-review-sweep-3`, pushed to the PR's own branch `feat/2026-11-10-r5a-restock-dialog-supplier-in-op` (PR #191, base `main` @ `977cde0`), so the fixes are in the PR. Reviewed head before this pass: `4925f0f`.
 **Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>` (the Project rule). Earlier passes used other addresses; this account uses this one. Push goes through the session's attached repo access (`add_repo` with push), no token in any command, nothing written to `.git/config`.
@@ -20,14 +20,15 @@ Review PR #191 in full, fix what CI shows and what the review finds, in the same
 - [x] 8. Docs: KNOWN-ISSUES (open decision), design D-R5-13, test plan (F-J..F-L, steps 29 to 31, counts), status doc section 11, AGENTS, README, Skill 162 rules 15 to 18.
 - [x] 9. Suites here: functions 1421/1421 (1413 after the rebase, +8).
 - [x] 10. Pushed `4925f0f..46630b9` to the PR branch. CI of `46630b9`: QML Tests 2975 passed, 0 failed (was 2942 passed, 2 failed; `tst_RestockFlow` compiled and ran for the first time, engine has `String.normalize`), Functions, Rules and E2E green, deploy jobs skipped (not a merge).
+- [x] 11. Taher answered the open decision: option A. Built: `RestockFlow.queuedNewSupplierClash(newName, items)` + `supplierPendingText`, called in `InventoryStore.restock` after the same-product hold (reads `OutboxStore.items`). Tests: `restockR5a.test.js` K-1..K-7 (7 of 7 hand mutants killed), `restockWire.test.js` rig got an `OutboxStore` fed by the fake Gateway (it broke W-1, W-4, W-14, M-1 first) + W-15..W-20, QML twins (6 functions, CI only). Docs: KNOWN-ISSUES, D-R5-14, test plan F-M and steps 32 to 35, status doc, AGENTS, README, Skill 162 rule 19. Suites here: functions 1434/1434, scripts 1049/1049.
+- [ ] 12. Push and read CI of the new head (QML twins run only in CI).
 
-## Open decision for Taher (not built on purpose)
-Two queued restocks on ONE device with the same NEW supplier name create two suppliers (the second tap cannot see the first's supplier until the server answers; the server does not dedupe by name). Options and recommendation (A: refuse the second while the first is queued) are in `docs/superpowers/KNOWN-ISSUES.md`. It blocks a real offline workflow, so it is Taher's call.
 
 ## Not fixed on purpose
+Two phones offline adding the same new supplier (O1) still create two; needs a server rule. A parked restock keeps holding its new supplier name until retried or discarded (accepted cost of option A).
 Everything in the previous checkpoint's list still stands (`{{sup}}` text does not name the field; Qt cuts a long paste silently; O1 two offline devices; `AddProductDialog` inline add-supplier row). A cost typed with non-ASCII digits (Devanagari numerals) is refused as not a valid amount, never booked wrong.
 
 ## Next session (pick up here)
-1. PR #191 CI is green on `46630b9`; nothing to fix unless a later push changes that.
-2. Taher: answer the open decision above (A, B or C), then device steps 1 to 31 of the test plan.
+1. Read CI of the PR head after the option A push; fix anything the QML twins show (they have never run).
+2. Taher: device steps 1 to 35 of the test plan.
 3. Then R5b on a NEW branch off `main` after #191 merges (design section 5), then R6.
