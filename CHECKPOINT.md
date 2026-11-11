@@ -17,7 +17,7 @@ Asked: next tasks of the compliance P1 roadmap, design and implement in one turn
 - [x] 5. Tests: `stockRegisterMath.test.js` 29, `index.handlers.stockRegister.test.js` 17, `stockRegister.guard.test.js` 8, membership matrix +10. Functions 1424/1424, `.github/scripts` 1049/1049.
 - [x] 6. 25 hand mutants: 24 killed first run, the `-0` survivor killed by SR-11b, final 25/25.
 - [x] 7. Docs: design, test plan (+ index row), KNOWN-ISSUES (11 items), README, AGENTS, Skill 162 (+ `SKILLS-INDEX.md` regenerated), `ATOMIC-OPERATIONS-STATUS` section 11.
-- [ ] 8. Push, open PR (REST API, `gh pr create` needs GraphQL), read CI.
+- [x] 8. Pushed `9134471`, PR #193 opened (REST API, `gh pr create` needs GraphQL). CI on that head: Functions, QML, Rules, E2E all success; PR Test Summary Comment success; Deploy Check skipped (runs on merge).
 - [ ] 9. For Taher: veto window on SR-D1..D13; merge; approve the functions deploy; device steps in the test plan are `curl` checks (no UI yet).
 
 ## State
