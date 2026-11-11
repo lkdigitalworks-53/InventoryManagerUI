@@ -32,7 +32,7 @@ const MemberProvisionLogic = require("./lib/memberProvisionLogic");
 const PhotoValidation = require("./lib/photoValidation");
 const PhotoCleanup = require("./lib/photoCleanup");
 const { send } = require("./lib/httpResponse");
-const { classifyWriteError } = require("./lib/writeError");
+const { classifyWriteError, UNAVAILABLE } = require("./lib/writeError");
 
 admin.initializeApp();
 
@@ -169,6 +169,21 @@ async function deriveContext(db, uid) {
     return { tenantId: tenantId, role: member.role, actorName: actorName };
 }
 
+// The caller's context, or null (refused), or CONTEXT_FAILED when the membership read itself threw
+// (a transient Firestore error). An async handler that throws before its own try is an unhandled
+// rejection: no JSON body and no CORS headers, so the client cannot tell why. Each handler maps
+// CONTEXT_FAILED to ITS OWN 500 code. Never map it to a terminal code (write-rejected parks a write
+// for good): the failure says nothing about the request, so the client must retry.
+const CONTEXT_FAILED = Object.freeze({ failed: true });
+async function deriveContextSafe(db, uid) {
+    try {
+        return await deriveContext(db, uid);
+    } catch (e) {
+        logger.error("deriveContext failed", { uid: uid, message: e && e.message, code: e && e.code });
+        return CONTEXT_FAILED;
+    }
+}
+
 exports.recordMutation = functions.onRequest(
     { region: "asia-south1", cors: true },
     async (req, res) => {
@@ -207,7 +222,8 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -362,7 +378,8 @@ exports.recordDelta = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -439,7 +456,8 @@ exports.recordOperation = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -520,7 +538,8 @@ exports.acquireLock = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "lock-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -585,7 +604,8 @@ exports.releaseLock = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "release-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -644,7 +664,8 @@ exports.recordMutationsBatch = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -750,7 +771,8 @@ exports.provisionMember = functions.onRequest(
 
         const body = req.body || {};
         const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
+        const ctx = await deriveContextSafe(db, decoded.uid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "auth-failed" }); return; }
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
         if (ctx.role !== "owner" && ctx.role !== "admin") {
             send(res, 403, { ok: false, error: "not-authorized" });
@@ -993,7 +1015,8 @@ exports.computeAnalysis = functions.onRequest(
 
         const body = req.body || {};
         const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
+        const ctx = await deriveContextSafe(db, decoded.uid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "compute-failed" }); return; }
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
 
         const viewMode = String(body.viewMode || "");
@@ -1212,7 +1235,8 @@ exports.uploadProductPhoto = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "write-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -1367,7 +1391,8 @@ exports.deleteProductPhoto = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "write-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;

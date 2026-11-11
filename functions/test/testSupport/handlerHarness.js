@@ -135,10 +135,15 @@ function installMocks() {
         // S2f-1 (2026-10-25): deriveContext logs one structured warning per refusal. The stub below
         // captures them here ([{msg, ...fields}]) so tests can assert the reason and the CI log stays
         // quiet. Tests that care clear it themselves (mockState.logWarnings.length = 0).
-        logWarnings: []
+        logWarnings: [],
+        // Slice 1 follow-up: deriveContextSafe logs one logger.error when the membership read throws.
+        logErrors: []
     };
     require(resolveFromFunctionsRoot("firebase-functions/logger")).warn = (msg, data) => {
         mockState.logWarnings.push(Object.assign({ msg: msg }, data));
+    };
+    require(resolveFromFunctionsRoot("firebase-functions/logger")).error = (msg, data) => {
+        mockState.logErrors.push(Object.assign({ msg: msg }, data));
     };
 
     function _writeDoc(docPath, data, opts) {
