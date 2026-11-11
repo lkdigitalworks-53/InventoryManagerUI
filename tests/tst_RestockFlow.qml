@@ -236,12 +236,14 @@ TestCase {
     }
 
     function test_known_supplier_matches_whatever_its_length() {
-        var long = "L".repeat(150)
-        var list = [{ supplierId: "SUP-9", name: long }]
-        compare(RF.supplierFor(long, list).supplier.id, "SUP-9")
-        compare(RF.supplierFor({ newName: long.toLowerCase() }, list).supplier.id, "SUP-9")
+        // Not `long`: it is a reserved word in QML's JavaScript, and the whole file failed to compile (PR #191 CI).
+        // functions/test/qmlReservedWords.guard.test.js now fails fast on that.
+        var longName = "L".repeat(150)
+        var list = [{ supplierId: "SUP-9", name: longName }]
+        compare(RF.supplierFor(longName, list).supplier.id, "SUP-9")
+        compare(RF.supplierFor({ newName: longName.toLowerCase() }, list).supplier.id, "SUP-9")
         compare(RF.supplierFor("M".repeat(150), list).reason, "supplier-too-long")
-        compare(RF.newPartyChoice(long, list).kind, "existing")
+        compare(RF.newPartyChoice(longName, list).kind, "existing")
     }
 
     function test_unusedPartyText() {
@@ -255,7 +257,9 @@ TestCase {
     // ---- PR #191 review sweep, second batch ----
 
     function test_supplier_names_have_one_spelling() {
-        compare(RF.supplierFor({ newName: "Cafe\u0301" }, []).supplier.newName, "Caf\u00e9")
+        // The NFC step is skipped when the engine has no String.normalize; test_engine_has_string_normalize says so on its own.
+        if (typeof "".normalize === "function")
+            compare(RF.supplierFor({ newName: "Cafe\u0301" }, []).supplier.newName, "Caf\u00e9")
         compare(RF.supplierFor({ newName: "A\tB\n C" }, []).supplier.newName, "A B C")
         compare(RF.supplierFor("Ac\u200bme  Farms", []).supplier.newName, "Acme Farms")
         compare(RF.supplierFor({ newName: "\u200b\u200c" }, []).reason, "bad-supplier")
@@ -266,7 +270,34 @@ TestCase {
     }
 
     function test_costFromText_negative_zero_is_zero() {
-        compare(1 / RF.costFromText("-0"), Infinity, "+0, not -0")
-        compare(1 / RF.costFromText("-0.0"), Infinity)
+        // verify, not compare: QtTest's compare is fuzzy for numbers and its handling of Infinity is not worth relying on.
+        verify(1 / RF.costFromText("-0") === Infinity, "+0, not -0")
+        verify(1 / RF.costFromText("-0.0") === Infinity, "+0, not -0 (with a fraction)")
+    }
+
+    // ---- PR #191 review pass 3 ----
+
+    // The NFC step is skipped when the engine has no String.normalize; this says so on its own instead of hiding it.
+    function test_engine_has_string_normalize() {
+        verify(typeof "".normalize === "function", "this QML engine has no String.normalize: supplier names are not NFC-folded")
+    }
+
+    // ZWNJ (U+200C) and ZWJ (U+200D) are part of how Hindi, Malayalam and Persian names are spelled and drawn: they stay in a
+    // stored name. They never decide a match, and a name made only of them is blank.
+    function test_joiners_stay_in_a_stored_name_but_never_decide_a_match() {
+        var conjunct = "क्‍ष"
+        compare(RF.supplierFor({ newName: conjunct }, []).supplier.newName, conjunct, "a Devanagari conjunct keeps its joiner")
+        compare(RF.supplierFor({ newName: "Ac‌me" }, []).supplier.newName, "Ac‌me")
+        compare(RF.supplierFor({ newName: "acme" }, [{ supplierId: "SUP-5", name: "Ac‌me" }]).supplier.id, "SUP-5")
+        compare(RF.supplierFor({ newName: "Ac‍me" }, [{ supplierId: "SUP-6", name: "ACME" }]).supplier.id, "SUP-6")
+        compare(RF.supplierFor({ newName: "‌‍" }, []).reason, "bad-supplier")
+        compare(RF.supplierFor({ newName: "​‌‍" }, []).reason, "bad-supplier")
+        compare(RF.newPartyChoice("‍", suppliers).kind, "invalid")
+    }
+
+    function test_unusedPartyText_ignores_a_field_that_holds_only_invisible_characters() {
+        compare(RF.unusedPartyText("​"), "")
+        compare(RF.unusedPartyText("‌‍ ﻿"), "")
+        verify(RF.unusedPartyText("​A").indexOf("Tap Use") >= 0)
     }
 }

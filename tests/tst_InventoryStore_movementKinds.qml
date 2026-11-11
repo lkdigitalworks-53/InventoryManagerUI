@@ -71,9 +71,36 @@ TestCase {
         InventoryStore.restock("SKU-1", 2.5, "", 10, "", function() {})
         compare(_restockDelta("SKU-1").movements[0].qty, 2.5)
     }
-    function test_restock_with_a_very_long_reason_still_queues_a_valid_row() {
-        InventoryStore.restock("SKU-1", 3, "", 10, new Array(901).join("x"), function() {})
-        compare(_restockDelta("SKU-1").movements[0].reason.length, 500, "the ledger row is cut, the batch note is not")
+    // R5a (D-R5-4): the reason limit (500 = the server's MAX_REASON) stops the tap with its own text. It used to cut the ledger
+    // copy and keep the batch note and the purchase row whole: one restock, three different reasons. PR #191 CI went red here
+    // because this test still expected the old cut; the three tests below pin the new rule at, over and around the limit.
+    function test_restock_with_a_very_long_reason_is_refused_before_anything_is_queued() {
+        var out = { calls: 0, ok: null, queued: null, refusal: null }
+        InventoryStore.restock("SKU-1", 3, "", 10, new Array(901).join("x"), function(ok, queued, refusal) {
+            out.calls++; out.ok = ok; out.queued = queued; out.refusal = refusal })
+        compare(out.calls, 1, "the callback answers exactly once")
+        compare(out.ok, false)
+        compare(out.queued, false)
+        verify(out.refusal.indexOf("500") >= 0, "the text names the limit: " + out.refusal)
+        compare(_restockItems().length, 0, "nothing queued")
+        compare(OutboxStore.pendingCount, 0)
+        compare(StockBatchStore._pendingMints.length, 0, "no batch mint was started")
+    }
+    function test_restock_with_a_reason_of_exactly_500_characters_is_queued_whole() {
+        InventoryStore.restock("SKU-1", 3, "", 10, new Array(501).join("x"), function() {})
+        compare(_restockItems().length, 1)
+        compare(_restockDelta("SKU-1").movements[0].reason.length, 500)
+    }
+    function test_restock_reason_is_measured_after_trimming() {
+        InventoryStore.restock("SKU-1", 3, "", 10, "  " + new Array(501).join("x") + "  ", function() {})
+        compare(_restockItems().length, 1, "500 characters plus padding is still 500")
+        compare(_restockDelta("SKU-1").movements[0].reason.length, 500)
+    }
+    function test_restock_with_a_reason_of_501_characters_is_refused() {
+        var out = { ok: null }
+        InventoryStore.restock("SKU-1", 3, "", 10, new Array(502).join("x"), function(ok) { out.ok = ok })
+        compare(out.ok, false)
+        compare(_restockItems().length, 0)
     }
     function test_a_second_restock_of_the_same_product_is_refused_while_the_first_is_queued() {
         // R4-D1: the queued operation is the latch (this also covers a double tap in one tick).

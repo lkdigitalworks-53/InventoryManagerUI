@@ -489,6 +489,13 @@ test("G-7 the unused-name check runs before busy is set; the stock label shows t
 
 // ---------------------------------------------------------------------------- PR #191 sweep, second batch
 
+// Built from char codes so no invisible character sits in this file's source where a reviewer cannot see it.
+const ZWSP = String.fromCharCode(0x200b), ZWNJ = String.fromCharCode(0x200c), ZWJ = String.fromCharCode(0x200d);
+const WJ = String.fromCharCode(0x2060), BOM = String.fromCharCode(0xfeff);
+const CONJUNCT = String.fromCharCode(0x0915, 0x094d, 0x200d, 0x0937);      // Devanagari ka + virama + ZWJ + ssa
+const STRIPPED = new RegExp("[" + ZWSP + WJ + BOM + "\\t\\n]");            // never kept in a stored name
+const JOINERS = new RegExp("[" + ZWNJ + ZWJ + "]", "g");                   // kept in a stored name, never decide a match
+
 test("N-1 supplier names have ONE spelling: NFC, zero-width removed, whitespace runs folded, trimmed", () => {
     assert.deepEqual(sup({ newName: "Café" }, []), { ok: true, supplier: { newName: "Café" } }, "decomposed accent becomes the composed letter");
     assert.deepEqual(sup({ newName: "A\tB\n C" }, []), { ok: true, supplier: { newName: "A B C" } });
@@ -540,14 +547,15 @@ test("N-6 the purchase total is money rounded to 2 places; the unit cost keeps w
 test("N-7 monkey: whatever name text the tap meets, the result is a refusal or a name that is its own fixed point", () => {
     let seed = 5;
     const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-    const alphabet = ["a", "B", " ", "\t", "\n", "​", " ", "é", "é", "SUP-", "{{", "x", "﻿", "😀"];
+    const alphabet = ["a", "B", " ", "\t", "\n", ZWSP, String.fromCharCode(0xa0), "e" + String.fromCharCode(0x301), String.fromCharCode(0xe9), "SUP-", "{{", "x", BOM, WJ, ZWNJ, ZWJ, "😀"];
     for (let i = 0; i < 1500; i++) {
         let t = ""; const len = Math.floor(rnd() * 14);
         for (let k = 0; k < len; k++) t += alphabet[Math.floor(rnd() * alphabet.length)];
         const r = sup({ newName: t }, []);
         if (!r.ok) { assert.ok(r.reason === "bad-supplier" || r.reason === "supplier-too-long", r.reason); continue; }
         const nm = r.supplier.newName;
-        assert.ok(nm.length > 0 && nm === nm.trim() && !/\s\s/.test(nm) && !/[​-‍⁠﻿\t\n]/.test(nm), JSON.stringify(t));
+        assert.ok(nm.length > 0 && nm === nm.trim() && !/\s\s/.test(nm) && !STRIPPED.test(nm), JSON.stringify(t));
+        assert.ok(nm.replace(JOINERS, "").length > 0, "a name of only joiners must be refused: " + JSON.stringify(t));
         assert.deepEqual(sup({ newName: nm }, []), r, "cleaning twice changes nothing");
     }
 });
@@ -558,4 +566,43 @@ test("N-8 the 2-place rounding never turns a finite total into Infinity (planner
     assert.equal(plan.ops.find((o) => o.entity === "transaction").after.total, 1.5e307);
     const big = plain(RP.build(Object.assign(RF.makeInput(args({ qty: 1, unitCost: 1 })).input, { qty: 1e6, unitCost: 1e9 })));
     assert.equal(big.ops.find((o) => o.entity === "transaction").after.total, 1e15, "the existing R-4 case is unchanged");
+});
+
+// ---------------------------------------------------------------------------- PR #191 review pass 3 (joiners)
+
+test("J-1 ZWNJ and ZWJ stay in a stored supplier name (Indic and Persian scripts need them); the useless invisibles do not", () => {
+    assert.deepEqual(sup({ newName: CONJUNCT }, []), { ok: true, supplier: { newName: CONJUNCT } });
+    assert.deepEqual(sup({ newName: "Ac" + ZWNJ + "me" }, []), { ok: true, supplier: { newName: "Ac" + ZWNJ + "me" } });
+    assert.deepEqual(sup({ newName: "Ac" + ZWSP + WJ + BOM + "me" }, []), { ok: true, supplier: { newName: "Acme" } });
+    assert.deepEqual(sup(CONJUNCT, []), { ok: true, supplier: { newName: CONJUNCT } }, "the plain string form too");
+});
+
+test("J-2 joiners never decide a match: either side may carry them, in any case", () => {
+    const list = [{ supplierId: "SUP-5", name: "Ac" + ZWNJ + "me" }, { supplierId: "SUP-6", name: "BOLT" }, { supplierId: "SUP-7", name: CONJUNCT }];
+    assert.deepEqual(sup({ newName: "acme" }, list), { ok: true, supplier: { id: "SUP-5" } });
+    assert.deepEqual(sup({ newName: "Bo" + ZWJ + "lt" }, list), { ok: true, supplier: { id: "SUP-6" } });
+    assert.deepEqual(sup({ newName: CONJUNCT.replace(ZWJ, "") }, list), { ok: true, supplier: { id: "SUP-7" } }, "typed without the joiner still finds it");
+    assert.deepEqual(plain(RF.newPartyChoice("ACME", list)), { kind: "existing", id: "SUP-5", name: "Ac" + ZWNJ + "me" });
+});
+
+test("J-3 a name made only of joiners (with or without other invisible characters) is blank, never a supplier nobody can see", () => {
+    for (const bad of [ZWNJ, ZWJ, ZWNJ + ZWJ, ZWSP + ZWNJ + ZWJ, " " + ZWNJ + " ", BOM + ZWJ]) {
+        assert.deepEqual(sup({ newName: bad }, []), { ok: false, reason: "bad-supplier" }, JSON.stringify(bad));
+        assert.deepEqual(sup(bad, []), { ok: false, reason: "bad-supplier" }, JSON.stringify(bad));
+        assert.equal(plain(RF.newPartyChoice(bad, SUPPLIERS)).kind, "invalid", JSON.stringify(bad));
+    }
+});
+
+test("J-4 unusedPartyText: a field holding only invisible characters is not text left behind (the person cannot see it to clear it)", () => {
+    for (const t of [ZWSP, ZWNJ + ZWJ, " " + BOM + " ", WJ]) assert.equal(RF.unusedPartyText(t), "", JSON.stringify(t));
+    for (const t of ["A", ZWSP + "A", CONJUNCT]) assert.ok(RF.unusedPartyText(t).indexOf("Tap Use") >= 0, JSON.stringify(t));
+});
+
+test("J-5 end to end through the planner and the REAL server code: the name with its joiner is stored whole, once", async () => {
+    const plan = plain(RP.build(RF.makeInput(args({ party: { newName: CONJUNCT } })).input));
+    assert.equal(plan.ok, true, JSON.stringify(plan));
+    const db = baseDb();
+    const { result } = await send(db, plan);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(plain(RP.reflect(result.results)).supplier.name, CONJUNCT, "the real server stores the joiner");
 });

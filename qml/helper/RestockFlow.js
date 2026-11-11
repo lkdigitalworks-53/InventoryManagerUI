@@ -45,7 +45,9 @@ function costFromText(text) {
 // instead of guessing: auto-using a half-typed name could create a supplier nobody meant.
 // -> "" (nothing pending) | the message to show
 function unusedPartyText(text) {
-    return (typeof text === "string" && text.trim().length > 0)
+    // Review pass 3: "nothing visible" decides, so a field holding only invisible characters (which the person cannot
+    // see to clear) does not block Confirm with a message about a name they never typed.
+    return (typeof text === "string" && _matchKey(text).length > 0)
         ? "You typed a new supplier name. Tap Use to add it, or clear the field" : ""
 }
 
@@ -101,27 +103,36 @@ function localDate(d) {
 // MAX_SUPPLIER_NAME (reason "supplier-too-long"). `suppliers` = [{ supplierId, name }].
 // -> { ok: true, supplier: null | { id } | { newName } } | { ok: false, reason: "bad-supplier" | "supplier-too-long" }
 // PR #191 sweep: ONE spelling of a supplier name, used to store it and to compare it. Unicode NFC (a decomposed "e" +
-// accent from another keyboard or a paste matched nothing and made a second "Café"), zero-width characters removed (a
-// name of only those looked empty and was accepted), every run of whitespace incl. tab and newline folded to one
-// space (a pasted line break stored in a list row), then trimmed. `normalize` is guarded: an engine without it
-// simply skips NFC.
+// accent from another keyboard or a paste matched nothing and made a second "Cafe"), the invisible characters that
+// mean nothing in a name removed (zero-width space U+200B, word joiner U+2060, BOM U+FEFF), every run of whitespace
+// incl. tab and newline folded to one space (a pasted line break stored in a list row), then trimmed. `normalize` is
+// guarded: an engine without it simply skips NFC.
+// Review pass 3: the zero-width NON-joiner (U+200C) and JOINER (U+200D) STAY in the stored name. Hindi, Malayalam,
+// Persian and other scripts need them to be spelled and drawn correctly (a conjunct loses its shape without the
+// joiner), and this app's suppliers are typed in those scripts. They are only left out of the MATCH key (_matchKey), so
+// "Ac\u200Cme" and "Acme" are still one supplier and a name made only of joiners is still blank. The characters are
+// written as escapes on purpose: a literal invisible character in a regex cannot be seen in a review.
 function _cleanName(v) {
     var t = String(v)
     if (typeof t.normalize === "function") t = t.normalize("NFC")
-    return t.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim()
+    return t.replace(/[\u200B\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim()
 }
-function _knownByName(lower, list) {
+// What two names are compared by: the cleaned name without the joiners, lower case. "" = nothing a person can see.
+function _matchKey(v) { return _cleanName(v).replace(/[\u200C\u200D]/g, "").toLowerCase() }
+function _knownByName(key, list) {
     for (var j = 0; j < list.length; ++j) {
         var s = list[j]
-        if (s && typeof s.name === "string" && _cleanName(s.name).toLowerCase() === lower && typeof s.supplierId === "string" && s.supplierId.length > 0)
+        if (s && typeof s.name === "string" && _matchKey(s.name) === key && typeof s.supplierId === "string" && s.supplierId.length > 0)
             return s.supplierId
     }
     return ""
 }
 function _byName(raw, list) {
+    var key = _matchKey(raw)
+    if (key.length === 0) return { ok: false, reason: "bad-supplier" }       // only joiners: nothing a person can see
     // PR #191 sweep: a name that IS a known supplier is that supplier whatever its length (legacy or imported names
     // can exceed the limit, and refusing them would force a duplicate); the limit only guards a NEW name.
-    var known = _knownByName(raw.toLowerCase(), list)
+    var known = _knownByName(key, list)
     if (known !== "") return { ok: true, supplier: { id: known } }
     if (raw.length > MAX_SUPPLIER_NAME) return { ok: false, reason: "supplier-too-long" }
     return { ok: true, supplier: { newName: raw } }
