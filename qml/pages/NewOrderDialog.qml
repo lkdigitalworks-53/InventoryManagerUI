@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../components"
 import "../helper"
 import "../model"
+import "../helper/NewOrderPicker.js" as Picker
 
 // Mobile-first New Order sheet — bottom sheet with customer fields and a
 // product picker. Public contract preserved: signal `orderCreated(order)`.
@@ -34,14 +35,6 @@ BottomSheet {
     // a duplicate order — same category the doc calls out.
 
     property var selectedProducts: []
-    property var productNames: []
-    // Parallel to productNames, same filtering, same order -- productCombo's
-    // currentIndex indexes into THIS, not InventoryStore.products directly,
-    // since a product with a pending batch mint (StockBatchStore.
-    // hasPendingMint) is skipped from both arrays together. Without this
-    // indirection, filtering productNames alone would misalign every index
-    // after the first skipped product.
-    property var _pickerProducts: []
 
     // Mirror of StaffStore filtered to active members. Index 0 is the
     // empty "(no staff)" row so the user can leave it unattributed.
@@ -68,54 +61,39 @@ BottomSheet {
     // Cached totals — recomputes only when inputs change, not on every binding read.
     readonly property var _totalsCache: _totals(selectedProducts)
 
-    // Units of a product already in the cart — so the picker can show what's
-    // ACTUALLY still available (stock − in-cart), and refresh as qty changes.
-    function _inCartQty(productId) {
-        var used = 0
-        if (!productId) return used
-        for (var i = 0; i < selectedProducts.length; ++i) {
-            var sp = selectedProducts[i]
-            if (sp.productId === productId) used += (sp.qty || 0)
-        }
-        return used
-    }
+    // ---- Product picker (picker v2, slice S3) ----
+    // The sheet knows no store: everything it reads comes in through these three. What may be added, how much and at
+    // what price is decided in NewOrderPicker.js and the sheet's helpers (tested, Skill 83); this file only wires them.
+    // The stores own the guards that HIDE a product (design D2): a batch-id mint outstanding, a restock queued, a queued
+    // or parked edit. No isDeleting hook: a deleted product leaves the catalog at once (ProductPickability.js header).
+    readonly property var _pickerLookup: ({
+        productOf: function(id) { return InventoryStore.getById(id) },
+        batchesOf: function(id) { return StockBatchStore.forProduct(id) }
+    })
+    readonly property var _pickerHooks: ({
+        hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
+        hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
+        unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
+        inOrderQty: function(id) { return Picker.cartQty(dlg.selectedProducts, id) },
+        availableFor: function(p) { return Picker.availableFor(p, dlg.selectedProducts) },
+        commitCheck: function(plan) { return Picker.opsCheck(dlg.selectedProducts, plan, dlg._pickerLookup) }
+    })
+    // Every counter the hooks read. Each only grows, so the sum changes whenever any of them does and the open sheet
+    // re-reads (Skill 78): stock and catalog, batches, pending mints (own counter, S3) and the outbox (queued restock,
+    // queued or parked edit).
+    readonly property int _pickerRevision: InventoryStore.revision + StockBatchStore.revision
+                                           + StockBatchStore.mintRevision + OutboxStore.revision
 
-    // Available for a NEW order = on-hand stock minus what's already in this
-    // cart (units aren't deducted until the order completes). Mirrors
-    // OrderDetailDialog._availableStock for the pending case.
-    function _availableStock(p) {
-        return Math.max(0, (p.stock || 0) - _inCartQty(p.productId))
-    }
-
-    // (Re)build the picker labels with a live "avail N" that reflects the cart.
-    // Called on open AND after every qty change / add — without this the count
-    // was built once and stayed static (unlike the edit-order dialog).
-    // Skips any product with a batch-id mint still pending (StockBatchStore.
-    // hasPendingMint) -- its stock number may already be up but the FIFO
-    // ledger backing it isn't yet, and selling against it here is exactly
-    // the drift topUpOldest's Adjustment-batch fix (2026-09-14) exists to
-    // paper over safely, not something to invite deliberately when it's this
-    // easy to just wait for the retry.
-    function _rebuildPickerNames() {
-        var names = []
-        var pickable = []
-        for (var i = 0; i < InventoryStore.products.length; ++i) {
-            var p = InventoryStore.products[i]
-            if (StockBatchStore.hasPendingMint(p.productId)) continue
-            // R4 (Q-A2): a queued restock has no local batch yet; sell it once the restock has synced.
-            if (InventoryStore.hasQueuedRestock(p.productId)) continue
-
-            var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
-            var productId = p.productId ? "[" + p.productId + "] " : ""
-            names.push(productId + p.name + " — " + InventoryStore.formatCurrency(sp)
-                       + " · " + _availableStock(p) + " left")
-            pickable.push(p)
-        }
-        var savedIdx = (typeof productCombo !== "undefined") ? productCombo.currentIndex : 0
-        productNames = names
-        _pickerProducts = pickable
-        if (typeof productCombo !== "undefined")
-            productCombo.currentIndex = Math.max(0, Math.min(savedIdx, names.length - 1))
+    // The plan from the sheet: add N more, never remove (design D4). applyPlan re-reads each product at this moment and
+    // clamps or refuses, so the order never holds more than the stock. What it did not add is a toast (Taher, 2026-11-11):
+    // the red label sits at the bottom of the scrolling body and may be off screen. The label is cleared, since the
+    // person has just added products and an older "Add at least one product" no longer applies.
+    function _applyPicked(plan) {
+        const res = Picker.applyPlan(selectedProducts, plan, _pickerLookup)
+        selectedProducts = res.lines
+        errorLabel.text = ""
+        const note = Picker.skippedNote(res.skipped)
+        if (note.length > 0) Toast.show(note)
     }
 
     onOpened: {
@@ -124,8 +102,6 @@ BottomSheet {
         // happened (or didn't finish happening) the last time this sheet
         // was used.
         busy = false
-        _rebuildPickerNames()
-        productCombo.currentIndex = 0
         customerField.text = ""
         emailField.text = ""
         phoneField.text = ""
@@ -159,12 +135,11 @@ BottomSheet {
     }
 
     onClosed: {
+        picker.close()   // never leave the picker open over a closed order sheet
         selectedProducts = []
         customerField.text = ""
         emailField.text = ""
         phoneField.text = ""
-        productCombo.currentIndex = 0
-        _rebuildPickerNames()
     }
 
     onPrimaryClicked: trySubmit()
@@ -258,22 +233,11 @@ BottomSheet {
             Layout.topMargin: dp(Constants.space2)
         }
 
-        RowLayout {
+        GhostButton {
             Layout.fillWidth: true
-            spacing: dp(Constants.space2)
-
-            AppComboBox {
-                id: productCombo
-                Layout.fillWidth: true
-                model: dlg.productNames
-                font.pixelSize: sp(Constants.fsBody)
-            }
-
-            IconActionButton {
-                variant: "default"
-                iconName: "add"
-                onClicked: dlg.addSelectedProduct()
-            }
+            text: dlg.selectedProducts.length > 0 ? qsTr("Add more products") : qsTr("Add products")
+            enabled: !dlg.busy
+            onClicked: picker.open()
         }
 
         ColumnLayout {
@@ -571,34 +535,6 @@ BottomSheet {
             }
         }
         selectedProducts = arr
-        _rebuildPickerNames()   // refresh "avail N" to reflect the new cart qty
-    }
-
-    function addSelectedProduct() {
-        var idx = productCombo.currentIndex
-        if (idx < 0 || idx >= _pickerProducts.length) return
-        var p = _pickerProducts[idx]
-        if (p.stock <= 0) return
-        var arr = []
-        for (var i = 0; i < selectedProducts.length; ++i)
-            arr.push({ name: selectedProducts[i].name, qty: selectedProducts[i].qty,
-                       price: selectedProducts[i].price, productId: selectedProducts[i].productId,
-                       discountType: selectedProducts[i].discountType || "flat",
-                       discountValue: selectedProducts[i].discountValue || 0 })
-        for (var j = 0; j < arr.length; ++j) {
-            if (arr[j].productId === p.productId) {
-                if (arr[j].qty >= p.stock) return
-                arr[j].qty++
-                selectedProducts = arr
-                _rebuildPickerNames()
-                return
-            }
-        }
-        var sp = p.sellingPrice !== undefined ? p.sellingPrice : p.price
-        arr.push({ name: p.name, qty: 1, price: sp, productId: p.productId,
-                   discountType: "flat", discountValue: 0 })
-        selectedProducts = arr
-        _rebuildPickerNames()
     }
 
     function trySubmit() {
@@ -660,6 +596,16 @@ BottomSheet {
         // logic.orderAdded (success) or logic.orderCreationFailed (failure)
         // signal, via the Connections block below. See ASYNC-REENTRANCY-BUGS.md
         // C-2 and SKILLS Skill 65.
+    }
+
+    // Searchable product sheet with a quantity stepper per row (picker v2). Declared here, opened by "Add products".
+    ProductPickerSheet {
+        id: picker
+        products: InventoryStore.products
+        hooks: dlg._pickerHooks
+        orderLines: dlg.selectedProducts
+        revision: dlg._pickerRevision
+        onCommitted: function(plan) { dlg._applyPicked(plan) }
     }
 
     // Waits for the real result of the addOrder round trip fired above,

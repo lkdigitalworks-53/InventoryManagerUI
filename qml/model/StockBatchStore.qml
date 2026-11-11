@@ -498,6 +498,10 @@ QtObject {
     // place is strictly better than relying on that safety net.
     property var _pendingMints: []
     property var _pendingMintsInFlight: ({})
+    // Ticks on every change of the list above. hasPendingMint() reads a plain property, so a reader that must RE-READ
+    // when a mint lands (the order picker sheet, picker v2 S3) has nothing else to watch: it adds this to its revision.
+    property int mintRevision: 0
+    on_PendingMintsChanged: mintRevision++
 
     property Settings _pendingMintSettings: Settings {
         category: "StockBatchStorePendingMints"

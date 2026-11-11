@@ -476,4 +476,124 @@ TestCase {
         eq(mk([p]).rows[0].unit, "kg");
         eq(p.unit, " kg ");
     }
+
+    function test_SHEET_32_without_a_commitcheck_hook_nothing_changes_the_gate_and_the_() {
+        const v = mk([prod("A", 5)], { draft: { A: 2 } });
+        eq(v.canCommit, { ok: true, reason: "" });
+        eq(v.commitNote, "");
+        for (const none of [undefined, null]) eq(mk([prod("A", 5)], { draft: { A: 2 }, hooks: hooks({ commitCheck: none }) }).canCommit, { ok: true, reason: "" });
+    }
+
+    function test_SHEET_33_an_accepting_commitcheck_leaves_the_gate_open_and_is_asked_o() {
+        const asked = [];
+        const v = mk([prod("A", 5), prod("B", 5), prod("C", 5)], {
+            draft: { C: 1, A: 2 }, orderLines: [{ productId: "C", qty: 1 }],
+            hooks: hooks({ commitCheck: (plan) => { asked.push(plan); return { ok: true, text: "" }; } })
+        });
+        eq(v.canCommit, { ok: true, reason: "" });
+        eq(v.commitNote, "");
+        eq(asked, [{ adds: [{ productId: "A", qty: 2 }], bumps: [{ productId: "C", qty: 1 }] }]);
+    }
+
+    function test_SHEET_34_a_refusing_commitcheck_closes_the_gate_with_the_hook_s_words() {
+        const refuse = hooks({ commitCheck: () => ({ ok: false, text: "Too big to complete" }) });
+        const plain = mk([prod("A", 5), prod("B", 5)], { draft: { A: 2 } });
+        const v = mk([prod("A", 5), prod("B", 5)], { draft: { A: 2 }, hooks: refuse });
+        eq(v.canCommit, { ok: false, reason: "check-failed" });
+        eq(v.commitNote, "Too big to complete");
+        eq(v.rows, plain.rows);
+        eq(v.draft, plain.draft);
+        eq(v.totals, plain.totals);
+        eq(v.draftChanged, false);
+    }
+
+    function test_SHEET_35_a_commitcheck_that_does_not_clearly_say_ok_refuses_with_the_() {
+        const generic = "Could not check this order. Try again";
+        const results = [undefined, null, 5, "ok", true, {}, { ok: "yes" }, { ok: 1 }, { ok: false }, { ok: false, text: "" }, { ok: false, text: 7 }];
+        for (const r of results) {
+            const v = mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => r }) });
+            eq(v.canCommit, { ok: false, reason: "check-failed" });
+            eq(v.commitNote, generic);
+        }
+        eq(mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => ({ ok: false, text: "x" }) }) }).commitNote, "x");
+        // words without a clear ok still refuse, and the words are shown
+        const wordsOnly = mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => ({ text: "fine" }) }) });
+        eq(wordsOnly.canCommit, { ok: false, reason: "check-failed" });
+        eq(wordsOnly.commitNote, "fine");
+        eq(mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => ({ ok: true, text: "ignored" }) }) }).commitNote, "");
+    }
+
+    function test_SHEET_36_a_commitcheck_that_throws_or_is_not_a_function_refuses_fail_() {
+        const generic = "Could not check this order. Try again";
+        for (const h of [() => { throw new Error("boom"); }, () => { throw "text"; }, "yes", 5, {}, []]) {
+            let v;
+            noThrow(() => { v = mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: h }) }); });
+            eq(v.canCommit, { ok: false, reason: "check-failed" });
+            eq(v.commitNote, generic);
+            eq(v.rows.length, 1);
+        }
+    }
+
+    function test_SHEET_37_commitcheck_runs_only_after_the_cheap_gate_passed_not_for_an() {
+        let calls = 0;
+        const counting = hooks({ commitCheck: () => { calls++; return { ok: true, text: "" }; } });
+        eq(mk([prod("A", 5)], { hooks: counting }).canCommit, { ok: false, reason: "empty" });
+        eq(mk([prod("A", 5)], { draft: { A: 0 }, hooks: counting }).canCommit, { ok: false, reason: "empty" });
+        eq(calls, 0);
+        const full = mk([prod("A", 5)], { draft: { A: 1 }, orderLines: lines(60), hooks: counting });
+        eq(full.canCommit, { ok: false, reason: "too-many-lines" });
+        eq(full.commitNote, "An order holds at most 60 lines.");
+        eq(calls, 0);
+        eq(mk([prod("A", 5)], { draft: { A: 1 }, hooks: counting }).canCommit.ok, true);
+        eq(calls, 1);
+    }
+
+    function test_SHEET_38_the_hook_sees_the_draft_after_the_reconcile_a_quantity_above() {
+        let seen = null;
+        const spy = hooks({ commitCheck: (plan) => { seen = plan; return { ok: true, text: "" }; } });
+        const v = mk([prod("A", 3)], { draft: { A: 9, GONE: 4 }, hooks: spy });
+        eq(v.draft, { A: 3 });
+        eq(seen, { adds: [{ productId: "A", qty: 3 }], bumps: [] });
+        // everything dropped: the gate is "empty" and the hook is not asked
+        seen = null;
+        eq(mk([prod("A", 0)], { draft: { A: 2 }, hooks: spy }).canCommit, { ok: false, reason: "empty" });
+        eq(seen, null);
+    }
+
+    function test_SHEET_39_a_refusing_commitcheck_does_not_hide_the_quiet_footer_lines_() {
+        const refuse = hooks({ commitCheck: () => ({ ok: false, text: "Too big" }), hasPendingMint: (id) => id === "H" });
+        const v = mk([prod("A", 5), prod("H", 5)], { draft: { A: 1 }, hooks: refuse });
+        eq(v.hiddenNote, "1 product hidden while it syncs");
+        eq(v.commitNote, "Too big");
+        const none = mk([], { draft: {}, hooks: refuse });
+        eq(none.empty.kind, "no-products");
+        eq(none.canCommit, { ok: false, reason: "empty" });
+    }
+
+    function test_SHEET_40_seeded_monkey_300_rounds_the_gate_is_open_exactly_when_the_d() {
+        const rand = FX.rng(53);
+        const pick = (list) => list[Math.floor(rand() * list.length)];
+        const seen = { open: 0, refused: 0, empty: 0, full: 0, asked: 0 };
+        for (let round = 0; round < 300; ++round) {
+            const products = [];
+            for (let i = 0; i < 5; ++i) products.push(prod("P" + i, pick([0, 2, 6, 40])));
+            const draft = {};
+            for (let i = 0; i < 5; ++i) if (rand() < 0.5) draft["P" + i] = pick([1, 2, 9, 99]);
+            const verdict = pick([{ ok: true, text: "" }, { ok: false, text: "No" }, undefined, null, "x", { ok: "yes" }, "THROW"]);
+            let asked = 0;
+            const hook = (plan) => { asked++; if (verdict === "THROW") throw new Error("x"); return verdict; };
+            const orderLines = rand() < 0.15 ? lines(60) : [];
+            const v = mk(products, { draft: draft, orderLines: orderLines, hooks: hooks({ commitCheck: rand() < 0.1 ? undefined : hook }) });
+            let items = 0;
+            for (const k in v.draft) items += v.draft[k];
+            const cheapOk = items > 0 && orderLines.length === 0;
+            if (v.canCommit.ok) { ok(cheapOk, "open gate on a draft that is not worth committing"); seen.open++; }
+            if (v.canCommit.reason === "check-failed") { ok(cheapOk && asked > 0, "check-failed without a cheap pass or a call"); ok(v.commitNote.length > 0, "a refusal without words"); seen.refused++; }
+            if (v.canCommit.reason === "empty") seen.empty++;
+            if (v.canCommit.reason === "too-many-lines") { eq(asked, 0); seen.full++; }
+            if (asked > 0) seen.asked++;
+            ok(asked <= 1, "the hook was asked more than once in one build");
+        }
+        ok(seen.open > 20 && seen.refused > 20 && seen.empty > 5 && seen.full > 5 && seen.asked > 50, "the monkey never reached every outcome: " + FX.canon(seen));
+    }
 }

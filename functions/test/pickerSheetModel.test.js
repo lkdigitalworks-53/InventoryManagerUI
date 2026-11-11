@@ -1,5 +1,5 @@
 "use strict";
-// PickerSheetModel (qml/helper/PickerSheetModel.js). Cases SHEET-01..31, plan:
+// PickerSheetModel (qml/helper/PickerSheetModel.js). Cases SHEET-01..40, plan:
 // docs/superpowers/plans/2026-11-04-product-picker-v2-s2-sheet-component.md. The QML twin
 // tests/tst_PickerSheetModel.qml is derived from these bodies (PAIR-01 in pickerDormancy.test.js).
 const test = require("node:test");
@@ -439,4 +439,124 @@ test("SHEET-31 every row names its unit: the product's, trimmed, or pcs when it 
     const p = FX.freeze(prod("A", 5, { unit: " kg " }));
     eq(mk([p]).rows[0].unit, "kg");
     eq(p.unit, " kg ");
+});
+
+test("SHEET-32 without a commitCheck hook nothing changes: the gate and the note are the S2 ones", () => {
+    const v = mk([prod("A", 5)], { draft: { A: 2 } });
+    eq(v.canCommit, { ok: true, reason: "" });
+    eq(v.commitNote, "");
+    for (const none of [undefined, null]) eq(mk([prod("A", 5)], { draft: { A: 2 }, hooks: hooks({ commitCheck: none }) }).canCommit, { ok: true, reason: "" });
+});
+
+test("SHEET-33 an accepting commitCheck leaves the gate open and is asked once, with the plan the commit would hand over", () => {
+    const asked = [];
+    const v = mk([prod("A", 5), prod("B", 5), prod("C", 5)], {
+        draft: { C: 1, A: 2 }, orderLines: [{ productId: "C", qty: 1 }],
+        hooks: hooks({ commitCheck: (plan) => { asked.push(plan); return { ok: true, text: "" }; } })
+    });
+    eq(v.canCommit, { ok: true, reason: "" });
+    eq(v.commitNote, "");
+    eq(asked, [{ adds: [{ productId: "A", qty: 2 }], bumps: [{ productId: "C", qty: 1 }] }]);
+});
+
+test("SHEET-34 a refusing commitCheck closes the gate with the hook's words; rows, draft and totals are untouched", () => {
+    const refuse = hooks({ commitCheck: () => ({ ok: false, text: "Too big to complete" }) });
+    const plain = mk([prod("A", 5), prod("B", 5)], { draft: { A: 2 } });
+    const v = mk([prod("A", 5), prod("B", 5)], { draft: { A: 2 }, hooks: refuse });
+    eq(v.canCommit, { ok: false, reason: "check-failed" });
+    eq(v.commitNote, "Too big to complete");
+    eq(v.rows, plain.rows);
+    eq(v.draft, plain.draft);
+    eq(v.totals, plain.totals);
+    eq(v.draftChanged, false);
+});
+
+test("SHEET-35 a commitCheck that does not clearly say ok refuses, with the generic words when it gave none", () => {
+    const generic = "Could not check this order. Try again";
+    const results = [undefined, null, 5, "ok", true, {}, { ok: "yes" }, { ok: 1 }, { ok: false }, { ok: false, text: "" }, { ok: false, text: 7 }];
+    for (const r of results) {
+        const v = mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => r }) });
+        eq(v.canCommit, { ok: false, reason: "check-failed" });
+        eq(v.commitNote, generic);
+    }
+    eq(mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => ({ ok: false, text: "x" }) }) }).commitNote, "x");
+    // words without a clear ok still refuse, and the words are shown
+    const wordsOnly = mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => ({ text: "fine" }) }) });
+    eq(wordsOnly.canCommit, { ok: false, reason: "check-failed" });
+    eq(wordsOnly.commitNote, "fine");
+    eq(mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: () => ({ ok: true, text: "ignored" }) }) }).commitNote, "");
+});
+
+test("SHEET-36 a commitCheck that throws, or is not a function, refuses (fail closed) and never throws out of build", () => {
+    const generic = "Could not check this order. Try again";
+    for (const h of [() => { throw new Error("boom"); }, () => { throw "text"; }, "yes", 5, {}, []]) {
+        let v;
+        noThrow(() => { v = mk([prod("A", 5)], { draft: { A: 1 }, hooks: hooks({ commitCheck: h }) }); });
+        eq(v.canCommit, { ok: false, reason: "check-failed" });
+        eq(v.commitNote, generic);
+        eq(v.rows.length, 1);
+    }
+});
+
+test("SHEET-37 commitCheck runs only after the cheap gate passed: not for an empty draft, not for a full order", () => {
+    let calls = 0;
+    const counting = hooks({ commitCheck: () => { calls++; return { ok: true, text: "" }; } });
+    eq(mk([prod("A", 5)], { hooks: counting }).canCommit, { ok: false, reason: "empty" });
+    eq(mk([prod("A", 5)], { draft: { A: 0 }, hooks: counting }).canCommit, { ok: false, reason: "empty" });
+    eq(calls, 0);
+    const full = mk([prod("A", 5)], { draft: { A: 1 }, orderLines: lines(60), hooks: counting });
+    eq(full.canCommit, { ok: false, reason: "too-many-lines" });
+    eq(full.commitNote, "An order holds at most 60 lines.");
+    eq(calls, 0);
+    eq(mk([prod("A", 5)], { draft: { A: 1 }, hooks: counting }).canCommit.ok, true);
+    eq(calls, 1);
+});
+
+test("SHEET-38 the hook sees the draft AFTER the reconcile: a quantity above the stock of this moment arrives clamped, a vanished product not at all", () => {
+    let seen = null;
+    const spy = hooks({ commitCheck: (plan) => { seen = plan; return { ok: true, text: "" }; } });
+    const v = mk([prod("A", 3)], { draft: { A: 9, GONE: 4 }, hooks: spy });
+    eq(v.draft, { A: 3 });
+    eq(seen, { adds: [{ productId: "A", qty: 3 }], bumps: [] });
+    // everything dropped: the gate is "empty" and the hook is not asked
+    seen = null;
+    eq(mk([prod("A", 0)], { draft: { A: 2 }, hooks: spy }).canCommit, { ok: false, reason: "empty" });
+    eq(seen, null);
+});
+
+test("SHEET-39 a refusing commitCheck does not hide the quiet footer lines or the empty state", () => {
+    const refuse = hooks({ commitCheck: () => ({ ok: false, text: "Too big" }), hasPendingMint: (id) => id === "H" });
+    const v = mk([prod("A", 5), prod("H", 5)], { draft: { A: 1 }, hooks: refuse });
+    eq(v.hiddenNote, "1 product hidden while it syncs");
+    eq(v.commitNote, "Too big");
+    const none = mk([], { draft: {}, hooks: refuse });
+    eq(none.empty.kind, "no-products");
+    eq(none.canCommit, { ok: false, reason: "empty" });
+});
+
+test("SHEET-40 seeded monkey, 300 rounds: the gate is open exactly when the draft is worth something, the cheap gate passes and the hook says ok", () => {
+    const rand = FX.rng(53);
+    const pick = (list) => list[Math.floor(rand() * list.length)];
+    const seen = { open: 0, refused: 0, empty: 0, full: 0, asked: 0 };
+    for (let round = 0; round < 300; ++round) {
+        const products = [];
+        for (let i = 0; i < 5; ++i) products.push(prod("P" + i, pick([0, 2, 6, 40])));
+        const draft = {};
+        for (let i = 0; i < 5; ++i) if (rand() < 0.5) draft["P" + i] = pick([1, 2, 9, 99]);
+        const verdict = pick([{ ok: true, text: "" }, { ok: false, text: "No" }, undefined, null, "x", { ok: "yes" }, "THROW"]);
+        let asked = 0;
+        const hook = (plan) => { asked++; if (verdict === "THROW") throw new Error("x"); return verdict; };
+        const orderLines = rand() < 0.15 ? lines(60) : [];
+        const v = mk(products, { draft: draft, orderLines: orderLines, hooks: hooks({ commitCheck: rand() < 0.1 ? undefined : hook }) });
+        let items = 0;
+        for (const k in v.draft) items += v.draft[k];
+        const cheapOk = items > 0 && orderLines.length === 0;
+        if (v.canCommit.ok) { ok(cheapOk, "open gate on a draft that is not worth committing"); seen.open++; }
+        if (v.canCommit.reason === "check-failed") { ok(cheapOk && asked > 0, "check-failed without a cheap pass or a call"); ok(v.commitNote.length > 0, "a refusal without words"); seen.refused++; }
+        if (v.canCommit.reason === "empty") seen.empty++;
+        if (v.canCommit.reason === "too-many-lines") { eq(asked, 0); seen.full++; }
+        if (asked > 0) seen.asked++;
+        ok(asked <= 1, "the hook was asked more than once in one build");
+    }
+    ok(seen.open > 20 && seen.refused > 20 && seen.empty > 5 && seen.full > 5 && seen.asked > 50, "the monkey never reached every outcome: " + FX.canon(seen));
 });
