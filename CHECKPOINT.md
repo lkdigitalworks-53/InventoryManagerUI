@@ -39,10 +39,10 @@ Not built, not run on a device. The QML twins (`tst_NewOrderPicker`, regenerated
 **Steps**
 - [x] R1-1. Read skills, memory, cloned, branch checked out, PR read (23 files, +1667/-162, CI green on 9bd72d0).
 - [x] R1-2. Read `NewOrderPicker.js`, `PickerSheetModel.js` diff, `StockBatchStore.mintRevision`, `NewOrderDialog.qml` diff, sheet contract, `CompletionPlan`, `ToastHost`; lint on added lines; Node probes of edge cases; baseline Node tests 133/133.
-- [ ] R1-3. Fix F1 (toast note too long for the single-line pill), F2 (negative cart qty frees stock), F3 (bump of a line with a bad qty gives NaN), F4 (stale comments), F5 (`var` in new function).
-- [ ] R1-4. Tests: NOP-17 rewritten, NOP-25..28 added, NOW-06/15 updated, twin regenerated (`node functions/test/testSupport/pickerTwin.js --write`), full Node suites run.
-- [ ] R1-5. Docs: plan S3-D8, KNOWN-ISSUES 26 (ToastHost cannot wrap) and 27, test plan rows + device checks, Skill 162, AGENTS, README as needed.
-- [ ] R1-6. Commit (message has allibaas52@gmail.com), push, wait for CI, comment on PR with the report.
+- [x] R1-3. (pushed bf520d4) Fix F1 (toast note too long for the single-line pill), F2 (negative cart qty frees stock), F3 (bump of a line with a bad qty gives NaN), F4 (stale comments), F5 (`var` in new function).
+- [x] R1-4. (pushed bf520d4; functions 1412/1412, scripts 1050/1050) Tests: NOP-17 rewritten, NOP-25..28 added, NOW-06/15 updated, twin regenerated (`node functions/test/testSupport/pickerTwin.js --write`), full Node suites run.
+- [x] R1-5. (second commit) Docs: plan S3-D8, KNOWN-ISSUES 26 (ToastHost cannot wrap) and 27, test plan rows + device checks, Skill 162, AGENTS, README as needed.
+- [ ] R1-6. Code pushed `bf520d4`, docs commit next. Then: wait for CI (QML twins regenerated, CI only), comment on PR #194 with the report. Open: ToastHost wrap (KNOWN-ISSUES 26), ponytail list (27), whole-repo audit, qmllint (CI only).
 **Findings so far**
 - F1 IMPORTANT: `ToastHost` pill is one line, 40 dp, no wrap or elide, at most about 44 characters on a 360 dp phone. The skipped note ("Not added as picked. A: ...; B: ...") is up to about 190 characters, so on a phone it is clipped on both sides and unreadable. Fix here: a short note (one name, "(+N more)"). Root cause (ToastHost cannot wrap, every long toast in the app has it) is logged, not changed: shared component, layout cannot be seen without a build.
 - F2 IMPORTANT: `cartQty` adds negative quantities, so a stray negative cart line frees stock for another (CompletionPlan itself counts only positive quantities).

@@ -4915,5 +4915,7 @@ Rules:
 7. Deleting code can break a pin that read it. `W-20` in `restockWire.test.js` matched the deleted combo loop; only the whole `functions` suite showed it, not the picker files. Run everything before pushing.
 8. Close what you open. A modal opened from a sheet is closed by that sheet's `onClosed`, so a forced close (sign-out, lock) never leaves it over nothing.
 9. A new allow-listed use is changed on purpose, in the same PR: the dormancy tests (DORM-01, WIRE-15) named the files allowed to mention the sheet; S3 adds the dialog and its helper there, and NOW-09 pins that Edit Order still does not use it.
+10. Shape a message for the surface that shows it. A toast pill is one line of about 40 characters and does not wrap: read the host component before choosing a toast, keep the text to one name and a count, and pin its length with a monkey (NOP-27). Node proves the words, not that they fit.
+11. Count only positive quantities when computing what is left, as `CompletionPlan` does (NOP-25); a stray negative line must not free stock, and a bump must never turn a bad quantity into NaN.
 
 **The check:** for the dialog, list every place it changes the order and name the pure function that owns the quantity, the price and the stock formula; for every hook it hands a sheet, name the store call and the counter that makes the sheet re-read; for every early-stop check, say what it does when it throws.
