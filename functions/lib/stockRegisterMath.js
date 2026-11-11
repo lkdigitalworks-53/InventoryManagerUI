@@ -31,9 +31,35 @@ const REGISTER_ROLES = ["owner", "admin", "manager"];
 // ("2026-04-01T00:00:00+05:30" or "...Z"). An offset-less string is refused on purpose: the
 // server would read it as UTC while the phone meant its own local midnight, silently moving
 // every boundary by hours.
-const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
+// Groups: 1 year, 2 month, 3 day, 4 hour, 5 minute, 6 second (optional), 7 zone, 8-9 zone hh:mm.
+const ISO_WITH_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(Z|[+-](\d{2}):(\d{2}))$/;
 // ECMAScript Date range.
 const MAX_MS = 8.64e15;
+
+// Last day of a 1-based month. setUTCFullYear (not Date.UTC) so years 0-99 are not mapped to 19xx.
+function daysInMonth(year, month) {
+    const d = new Date(0);
+    d.setUTCFullYear(year, month, 0);
+    return d.getUTCDate();
+}
+
+// The shape check above is not enough: Date.parse silently ROLLS an impossible calendar date
+// over ("2026-02-30" -> 2 March, "2026-04-31" -> 1 May) and accepts "T24:00:00" as the next
+// midnight. For a statutory register a silently moved period boundary is a wrong answer with
+// no error, so every field is range-checked and an impossible instant is refused.
+function isValidIsoInstant(s) {
+    const m = ISO_WITH_OFFSET.exec(s);
+    if (!m) return false;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const second = m[6] === undefined ? 0 : Number(m[6]);
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > daysInMonth(year, month)) return false;
+    if (Number(m[4]) > 23 || Number(m[5]) > 59 || second > 59) return false;
+    if (m[8] !== undefined && (Number(m[8]) > 23 || Number(m[9]) > 59)) return false;
+    return true;
+}
 
 function canViewRegister(role) {
     return REGISTER_ROLES.indexOf(role) >= 0;
@@ -50,7 +76,7 @@ function round9(x) {
 function toMillis(ts) {
     if (ts === null || ts === undefined) return NaN;
     if (typeof ts === "number") return isFinite(ts) ? ts : NaN;
-    if (typeof ts === "string") return ISO_WITH_OFFSET.test(ts) ? Date.parse(ts) : NaN;
+    if (typeof ts === "string") return isValidIsoInstant(ts) ? Date.parse(ts) : NaN;
     if (ts instanceof Date) return ts.getTime();
     if (typeof ts !== "object") return NaN;
     if (typeof ts.toMillis === "function") {

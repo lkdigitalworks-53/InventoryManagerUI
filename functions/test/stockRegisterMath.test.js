@@ -380,3 +380,58 @@ test("SR-28 monkey: 300 random ledgers x random windows agree with a brute-force
         assert.deepEqual(Reg.buildRegister(shuffled, [], win), reg);
     }
 });
+
+// ── review sweep of PR #193: calendar-impossible instants ────────────────────
+
+test("SR-29 an impossible calendar date is refused, never rolled over to the next month (2026-02-30 is not 2 March)", () => {
+    const impossible = [
+        "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", "2026-04-31T00:00:00+05:30", "2026-06-31T00:00:00Z",
+        "2026-09-31T00:00:00Z", "2026-11-31T00:00:00Z", "2026-01-32T00:00:00Z", "2026-00-10T00:00:00Z",
+        "2026-13-01T00:00:00Z", "2026-04-00T00:00:00Z", "1900-02-29T00:00:00Z", "2100-02-29T00:00:00Z"
+    ];
+    for (const s of impossible) {
+        assert.ok(Number.isNaN(Reg.toMillis(s)), "toMillis must refuse " + s);
+        assert.equal(Reg.parseWindow(s, "2027-01-01T00:00:00Z").ok, false, "from " + s);
+        assert.equal(Reg.parseWindow("2020-01-01T00:00:00Z", s).ok, false, "to " + s);
+    }
+});
+
+test("SR-30 leap days are accepted exactly in leap years (2024, 2000, year 0), refused in 1900, 2100, 2026", () => {
+    assert.equal(Reg.toMillis("2024-02-29T00:00:00Z"), Date.UTC(2024, 1, 29));
+    assert.equal(Reg.toMillis("2000-02-29T00:00:00Z"), Date.UTC(2000, 1, 29));
+    assert.ok(Number.isFinite(Reg.toMillis("0000-02-29T00:00:00Z")), "year 0 is a leap year");
+    for (const y of ["1900", "2100", "2026", "2025"]) assert.ok(Number.isNaN(Reg.toMillis(y + "-02-29T00:00:00Z")), y);
+    for (const [m, last] of [["01", 31], ["03", 31], ["04", 30], ["06", 30], ["09", 30], ["11", 30], ["12", 31]]) {
+        assert.ok(Number.isFinite(Reg.toMillis("2026-" + m + "-" + last + "T00:00:00Z")), m + "-" + last);
+        assert.ok(Number.isNaN(Reg.toMillis("2026-" + m + "-" + (last + 1) + "T00:00:00Z")), m + "-" + (last + 1));
+    }
+});
+
+test("SR-31 clock and zone fields are range checked: hour 24 (next midnight), minute/second 60, zone hour 24, zone minute 60", () => {
+    for (const s of ["2026-04-01T24:00:00Z", "2026-04-01T24:00Z", "2026-04-01T23:60:00Z", "2026-04-01T23:59:60Z",
+        "2026-04-01T00:00:00+24:00", "2026-04-01T00:00:00+05:60", "2026-04-01T00:00:00-99:99"]) {
+        assert.ok(Number.isNaN(Reg.toMillis(s)), s);
+    }
+    assert.equal(Reg.toMillis("2026-04-30T23:59:59.999999999Z"), Date.UTC(2026, 3, 30, 23, 59, 59, 999));
+    assert.equal(Reg.toMillis("2026-04-01T00:00+05:30"), Date.UTC(2026, 2, 31, 18, 30));
+    assert.equal(Reg.toMillis("2026-12-31T23:59:59-23:59"), Date.UTC(2027, 0, 1, 23, 58, 59));
+});
+
+test("SR-32 monkey: 3000 random Y-M-D strings are accepted exactly when the calendar date exists (oracle: Date round trip)", () => {
+    let seed = 20261111;
+    function rnd(n) { seed = (seed * 1664525 + 1013904223) >>> 0; return seed % n; }
+    let accepted = 0;
+    let refused = 0;
+    for (let i = 0; i < 3000; i++) {
+        const y = 1900 + rnd(250);
+        const m = 1 + rnd(14); // 13 and 14 are impossible months
+        const d = rnd(34);     // 0 and 32..33 are impossible days
+        const str = String(y).padStart(4, "0") + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0") + "T00:00:00Z";
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        const exists = m >= 1 && m <= 12 && d >= 1 && dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+        const got = Reg.toMillis(str);
+        if (exists) { assert.equal(got, Date.UTC(y, m - 1, d), str); accepted++; }
+        else { assert.ok(Number.isNaN(got), "must refuse " + str); refused++; }
+    }
+    assert.ok(accepted > 1000 && refused > 200, "the run exercised both sides: " + accepted + "/" + refused);
+});

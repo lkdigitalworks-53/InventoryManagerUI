@@ -52,7 +52,10 @@ admin.initializeApp();
 const DATABASE_ID_FOR_ENV = { dev: "dev1", test: "test", prd: "(default)" };
 
 function scopedDb(env) {
-    const databaseId = DATABASE_ID_FOR_ENV[env] || DATABASE_ID_FOR_ENV.prd;
+    // Own keys only: a plain-object lookup also answers "constructor", "toString", "__proto__",
+    // which are truthy and would skip the fail-safe "prd" fallback below.
+    const databaseId = Object.prototype.hasOwnProperty.call(DATABASE_ID_FOR_ENV, env)
+        ? DATABASE_ID_FOR_ENV[env] : DATABASE_ID_FOR_ENV.prd;
     return getFirestore(admin.app(), databaseId);
 }
 
@@ -920,12 +923,19 @@ async function readAllPaged(db, collectionPath, pageSize) {
 // stays flat however long the collection is (the stock ledger only ever grows). Stops with a
 // tagged error once `maxDocs` docs were read, so a runaway ledger answers 413 instead of
 // running into the function timeout.
-async function streamAllPaged(db, collectionPath, onDoc, maxDocs, pageSize) {
+//
+// `deadlineMs` (epoch ms, optional): checked before every page. Once passed, the scan stops with a
+// tagged "scan-timeout" error. Without it a long ledger runs into the platform timeout, which kills
+// the request with no JSON body and no CORS headers, so the app sees "no answer" instead of a code.
+async function streamAllPaged(db, collectionPath, onDoc, maxDocs, pageSize, deadlineMs) {
     pageSize = pageSize || ANALYSIS_PAGE_SIZE;
     const base = db.collection(collectionPath).orderBy("__name__").limit(pageSize);
     let lastDoc = null;
     let seen = 0;
     for (;;) {
+        if (deadlineMs !== undefined && Date.now() > deadlineMs) {
+            throw Object.assign(new Error("scan-timeout"), { code: "scan-timeout" });
+        }
         const q = lastDoc ? base.startAfter(lastDoc) : base;
         const snap = await q.get();
         if (snap.empty) break;
@@ -1070,6 +1080,11 @@ exports.computeAnalysis = functions.onRequest(
 // product with StockRegisterMath; nothing is written. Roles owner/admin/manager only: the ledger
 // carries cost values. Design: docs/superpowers/specs/2026-11-11-p1-s4a-stock-register-design.md
 const REGISTER_MAX_LEDGER_ROWS = 250000;
+// 1000 rows per page (computeAnalysis uses 500): the cap above is then 250 sequential reads, not 500.
+const REGISTER_PAGE_SIZE = 1000;
+// The function timeout is 120 s. The scan stops starting new pages after this budget so the answer
+// is a clean 504 `ledger-scan-timeout` with CORS headers, with 20 s left to send it.
+const REGISTER_SCAN_BUDGET_MS = 100000;
 
 exports.computeStockRegister = functions.onRequest(
     { region: "asia-south1", cors: true, timeoutSeconds: 120 },
@@ -1093,8 +1108,18 @@ exports.computeStockRegister = functions.onRequest(
         }
 
         const body = req.body || {};
-        const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
+        // Inside a try: a transient Firestore error while resolving the membership must answer
+        // 500 with CORS headers, not escape as an unhandled rejection (no JSON, no code).
+        let db;
+        let ctx;
+        try {
+            db = scopedDb(body.env);
+            ctx = await deriveContext(db, decoded.uid);
+        } catch (e) {
+            console.error("computeStockRegister context failed", e);
+            send(res, 500, { ok: false, error: "compute-failed" });
+            return;
+        }
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
         if (!StockRegisterMath.canViewRegister(ctx.role)) {
             send(res, 403, { ok: false, error: "role-not-allowed" });
@@ -1108,11 +1133,13 @@ exports.computeStockRegister = functions.onRequest(
         try {
             const acc = StockRegisterMath.createAccumulator(win);
             const readAt = Date.now();
+            const deadlineMs = readAt + REGISTER_SCAN_BUDGET_MS;
             // Ledger first, inventory second, both outside one transaction: a sale landing between
             // the two reads can show one product as not reconciling for this answer only
             // (`reconciles` is a cross-check, never an input to a balance). Run it again.
             const [, products] = await Promise.all([
-                streamAllPaged(db, tenantRoot + "/stock_movements", acc.add, REGISTER_MAX_LEDGER_ROWS),
+                streamAllPaged(db, tenantRoot + "/stock_movements", acc.add, REGISTER_MAX_LEDGER_ROWS,
+                    REGISTER_PAGE_SIZE, deadlineMs),
                 readAllPaged(db, tenantRoot + "/inventory")
             ]);
             const register = acc.finish(products);
@@ -1127,6 +1154,10 @@ exports.computeStockRegister = functions.onRequest(
         } catch (e) {
             if (e && e.code === "too-many-docs") {
                 send(res, 413, { ok: false, error: "ledger-too-large" });
+                return;
+            }
+            if (e && e.code === "scan-timeout") {
+                send(res, 504, { ok: false, error: "ledger-scan-timeout" });
                 return;
             }
             console.error("computeStockRegister failed", e);

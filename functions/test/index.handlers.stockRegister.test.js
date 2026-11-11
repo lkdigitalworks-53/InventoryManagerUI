@@ -163,30 +163,30 @@ test("SRH-08 the handler only reads: no doc write, no set call, only the two col
     assert.deepEqual(Array.from(new Set(mockState.collectionGetCalls)).sort(), [INV, LEDGER].sort());
 });
 
-test("SRH-09 a ledger longer than one page (500) is read to the end: 1203 rows across 3 pages all count", async () => {
+test("SRH-09 a ledger longer than one page (1000) is read to the end: 2503 rows across 3 pages all count", async () => {
     reset();
     seedHappyPathAuth(mockState);
     const rows = [];
-    for (let i = 0; i < 1203; i++) rows.push(mv("m" + String(i).padStart(5, "0"), "p1", "receipt", 1, IN_WINDOW + i));
+    for (let i = 0; i < 2503; i++) rows.push(mv("m" + String(i).padStart(5, "0"), "p1", "receipt", 1, IN_WINDOW + i));
     mockState.collections[LEDGER] = rows;
-    mockState.collections[INV] = [product("p1", "W", 1203)];
+    mockState.collections[INV] = [product("p1", "W", 2503)];
     const res = await call();
     const p = jsonBody(res).products[0];
-    assert.equal(p.closing, 1203);
-    assert.equal(p.movementCount, 1203);
+    assert.equal(p.closing, 2503);
+    assert.equal(p.movementCount, 2503);
     assert.equal(p.reconciles, true);
     assert.equal(mockState.collectionGetCalls.filter((c) => c === LEDGER).length, 3);
 });
 
-test("SRH-10 exactly one full page (500 rows) ends cleanly; an empty ledger gives an empty register", async () => {
+test("SRH-10 exactly one full page (1000 rows) ends cleanly; an empty ledger gives an empty register", async () => {
     reset();
     seedHappyPathAuth(mockState);
     const rows = [];
-    for (let i = 0; i < 500; i++) rows.push(mv("m" + String(i).padStart(4, "0"), "p1", "receipt", 1, IN_WINDOW));
+    for (let i = 0; i < 1000; i++) rows.push(mv("m" + String(i).padStart(4, "0"), "p1", "receipt", 1, IN_WINDOW));
     mockState.collections[LEDGER] = rows;
-    mockState.collections[INV] = [product("p1", "W", 500)];
+    mockState.collections[INV] = [product("p1", "W", 1000)];
     let res = await call();
-    assert.equal(jsonBody(res).products[0].movementCount, 500);
+    assert.equal(jsonBody(res).products[0].movementCount, 1000);
     reset();
     seedHappyPathAuth(mockState);
     res = await call();
@@ -262,4 +262,80 @@ test("SRH-17 a request with no body at all is a 400 invalid-window, not a crash"
     const res = mockRes();
     await handlers.computeStockRegister(mockReq({ body: undefined }), res);
     assert.ok(res.statusCode === 400 || res.statusCode === 403, "got " + res.statusCode);
+});
+
+// ── review sweep of PR #193 ──────────────────────────────────────────────────
+
+test("SRH-18 a calendar-impossible bound is a 400 invalid-window, nothing read (2026-02-30 must not become 2 March)", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    for (const bad of [{ from: "2026-02-30T00:00:00Z" }, { to: "2026-04-31T00:00:00+05:30" }, { from: "2026-04-01T24:00:00Z" }]) {
+        const res = await call(bad);
+        assert.equal(res.statusCode, 400, JSON.stringify(bad));
+        assert.equal(jsonBody(res).error, "invalid-window");
+    }
+    assert.equal(mockState.collectionGetCalls.length, 0);
+});
+
+test("SRH-19 a scan that outlives its time budget -> 504 ledger-scan-timeout as JSON (not a platform kill), no partial answer", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    const rows = [];
+    for (let i = 0; i < 2500; i++) rows.push(mv("m" + String(i).padStart(5, "0"), "p1", "receipt", 1, IN_WINDOW));
+    mockState.collections[LEDGER] = rows;
+    const base = Date.now();
+    const realNow = Date.now;
+    // Every executed collection read costs 60 s of fake time: page 1 starts inside the 100 s budget,
+    // page 2 starts after two reads (ledger page + inventory page) = 120 s, which is over it.
+    Date.now = () => base + 60000 * mockState.collectionGetCalls.length;
+    let res;
+    try { res = await call(); } finally { Date.now = realNow; }
+    assert.equal(res.statusCode, 504);
+    assert.deepEqual(jsonBody(res), { ok: false, error: "ledger-scan-timeout" });
+    assert.equal(mockState.collectionGetCalls.filter((c) => c === LEDGER).length, 1, "no page is started after the budget");
+});
+
+test("SRH-20 a fast scan under the budget is served; the budget is only checked between pages", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    const rows = [];
+    for (let i = 0; i < 2500; i++) rows.push(mv("m" + String(i).padStart(5, "0"), "p1", "receipt", 1, IN_WINDOW));
+    mockState.collections[LEDGER] = rows;
+    const base = Date.now();
+    const realNow = Date.now;
+    Date.now = () => base + 10000 * mockState.collectionGetCalls.length; // 4 reads = 40 s
+    let res;
+    try { res = await call(); } finally { Date.now = realNow; }
+    assert.equal(res.statusCode, 200);
+    assert.equal(jsonBody(res).counts.rowsSeen, 2500);
+});
+
+test("SRH-21 a Firestore error while resolving the membership -> 500 compute-failed as JSON, not an unhandled rejection", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.docs = new Proxy({}, { get() { throw new Error("14 UNAVAILABLE"); } });
+    const res = await call();
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(jsonBody(res), { ok: false, error: "compute-failed" });
+    assert.equal(mockState.collectionGetCalls.length, 0);
+});
+
+test("SRH-22 env names that exist only on Object.prototype never pick a database: they fall back to the default one", async () => {
+    for (const env of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+        reset();
+        seedHappyPathAuth(mockState);
+        mockState.firestoreDbIds.length = 0;
+        const res = await call({ env: env });
+        assert.equal(res.statusCode, 200, env);
+        assert.ok(mockState.firestoreDbIds.length > 0);
+        assert.ok(mockState.firestoreDbIds.every((id) => id === "(default)"), env + " -> " + JSON.stringify(mockState.firestoreDbIds));
+    }
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.firestoreDbIds.length = 0;
+    await call({ env: "dev" });
+    assert.ok(mockState.firestoreDbIds.every((id) => id === "dev1"), "a real env still maps: dev -> dev1");
+    mockState.firestoreDbIds.length = 0;
+    await call({ env: "test" });
+    assert.ok(mockState.firestoreDbIds.every((id) => id === "test"));
 });

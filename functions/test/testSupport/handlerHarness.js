@@ -70,6 +70,7 @@ function installMocks() {
         collections: {}, // path -> [{ id, data }] ordered array, for readAllPaged (computeAnalysis)
         setCalls: [], // { path, data, opts } for every doc.set()/txn.set(), any collection -- assertion aid
         collectionGetCalls: [], // collPath for every collection(...).get() actually executed
+        firestoreDbIds: [], // databaseId passed to every getFirestore(app, databaseId) call (scopedDb env resolution)
         collectionGetError: null, // when set, every collection(...).get() throws this (computeAnalysis 500 path)
         applyMutationResult: null,
         applyDeltaResult: null,
@@ -289,7 +290,7 @@ function installMocks() {
     require.cache[firestorePath] = {
         id: firestorePath, filename: firestorePath, loaded: true,
         exports: {
-            getFirestore: (app, databaseId) => ({
+            getFirestore: (app, databaseId) => (mockState.firestoreDbIds.push(databaseId), {
                 doc: docRef,
                 collection: (collPath) => collectionQuery(collPath, {}),
                 collectionGroup: (groupId) => collectionGroupQuery(databaseId || "(default)", groupId, {}),
