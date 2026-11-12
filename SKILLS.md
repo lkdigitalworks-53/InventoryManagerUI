@@ -4971,7 +4971,7 @@ Rules:
 20. Review pass 4 (Android launch crash): a QML property name must be one Qt really has, and it is checked against the Qt docs, not remembered from another toolkit. `maxLength` is QLineEdit; a `QQC.TextField` has `maximumLength`. An alias to a missing property is a COMPILE error: the file fails, every file that uses it fails, and when that chain reaches `Main.qml` the app exits at launch. CI cannot load Felgo components, so no QML test sees it and a test that pins the wrong name makes it worse. Guard: `functions/test/qmlAliasTargets.guard.test.js` (every `property alias x: id.prop` must be a (type, property) pair listed in `ALIAS_OK`, no `maxLength` anywhere, every import path has exact letter case because Android is case-sensitive). When something crashes at launch with no log yet, read the files on the startup path for NAMES (aliases, assigned properties, handler names), not only for imports: imports were already clean.
 
 
-## Skill 164: Close a class of bug with one helper, give it a table-driven test over every handler, and pick each handler's failure code by what the CLIENT does with it
+## Skill 165: Close a class of bug with one helper, give it a table-driven test over every handler, and pick each handler's failure code by what the CLIENT does with it
 
 **Built in the P1 S4a follow-ups PR, 2026-11-11 (`deriveContextSafe`, `functions/index.js`).** Ten HTTP handlers resolved the caller before their own `try`; a transient Firestore error there was an unhandled rejection (no JSON, no CORS headers). The fix is small. The traps were in choosing the answer and in proving it covers every handler, including the next one.
 
