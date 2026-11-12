@@ -14,7 +14,7 @@
 - [x] 3. CLIENT (planner, adopt, hooks, QML twins, e2e x2): `RestockPlan` activity op + `reflect`, `ActivityLog.adopt`, `InventoryStore` hooks (+ legacy fallback), QML twins.
 - [x] 4. P2: `TransactionStore.recordPurchase` removed, D-1 drift guard moved to a pinned key list.
 - [x] 5. Docs (test plan, README, SKILLS 166 + index, AGENTS, STATUS 13, KNOWN-ISSUES 24-28): test plan, README, SKILLS, AGENTS, ATOMIC-OPERATIONS-STATUS section 13, KNOWN-ISSUES.
-- [ ] 6. Push, read CI, report done / pending / next.
+- [x] 6. Pushed. PR #197. CI on `bde06ca`: QML red (4 test-side cases, stale op counts + one tie), fixed in `e4c490c`; CI on `e4c490c`: Functions, QML, E2E, Rules all green (read 2026-11-13 via API). Deploy Check runs on merge.
 
 ## NEXT (if this session stops)
 Continue at the first unchecked step. Deploy order when merged: functions first, then the client build.
