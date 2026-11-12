@@ -224,8 +224,8 @@ function validateOperationRequest(body) {
              clientTimestamp: (body && body.clientTimestamp) || null };
 }
 
-// Shape rules for the one activity row an operation may create (R5b D-R5b-2/5/6). `earlier` = the ops already
-// accepted. The client sends seven keys and nothing else: who and when are stamped by applyOperation.
+// Shape rules for the one activity row an operation may create (R5b D-R5b-2/5/6; one row, product and title: PR #197
+// review F1-F3). `earlier` = the ops already accepted. The client sends seven keys and nothing else: who and when are stamped by applyOperation.
 function checkActivityOp(v, index, earlier) {
     const bad = (error) => ({ ok: false, status: 400, error: error, opIndex: index });
     const a = v.after;
@@ -238,9 +238,17 @@ function checkActivityOp(v, index, earlier) {
     if (typeof a.subtitle !== "string" || a.subtitle.length > MAX_ACTIVITY_SUBTITLE) return bad("invalid-activity");
     if (typeof a.entityId !== "string" || a.entityId.length === 0 || a.entityId.length > MAX_ID_LENGTH) return bad("invalid-activity");
     if (a.read !== false || a.dismissed !== false) return bad("invalid-activity");
-    if (a.subtitle.indexOf(STOCK_TOKEN) >= 0
-        && !earlier.some((o) => o.kind === "delta" && o.entity === "inventory" && o.entityId === a.entityId && has(o.deltas, "stock")))
-        return bad("activity-stock-missing");
+    // PR #197 review F1: ONE feed row per operation (D-R5b-5; reflect() reads 0 or 1). Without this an operation could
+    // carry 190 rows under literal ids, each one a client-chosen write the shared budget happily counts.
+    if (earlier.some((o) => o.entity === "activity")) return bad("invalid-activity");
+    // F3: the token is filled in the subtitle only. In the title it would be stored as the literal text.
+    if (a.title.indexOf(STOCK_TOKEN) >= 0) return bad("invalid-activity");
+    // F2: the row names a product THIS operation changed (an earlier inventory delta for it), token or not. A row about
+    // another product would put "Restocked: B" in the feed for a restock of A.
+    const hasToken = a.subtitle.indexOf(STOCK_TOKEN) >= 0;
+    const named = earlier.filter((o) => o.kind === "delta" && o.entity === "inventory" && o.entityId === a.entityId);
+    if (named.length === 0) return bad(hasToken ? "activity-stock-missing" : "invalid-activity");
+    if (hasToken && !named.some((o) => has(o.deltas, "stock"))) return bad("activity-stock-missing");
     return null;
 }
 

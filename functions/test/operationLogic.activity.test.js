@@ -128,9 +128,10 @@ test("A-7 the stock token needs an EARLIER delta op with a stock field for the s
     const noStock = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { qty: 1 }, floors: {}, clamps: {} };
     assert.equal(invalid(body([m, batch, noStock, tx, a])).error, "activity-stock-missing", "no stock field");
     assert.equal(invalid(body([m, batch, tx, a])).error, "activity-stock-missing", "no delta at all");
-    // without the token no delta is needed
+    // PR #197 review F2: without the token a delta is still needed, but its stock field is not (see A-12)
     const plain = activityOp({ subtitle: "plain text" });
-    assert.equal(OL.validateOperationRequest(body([m, batch, tx, plain])).ok, true);
+    assert.equal(invalid(body([m, batch, tx, plain])).error, "invalid-activity", "no delta, no token");
+    assert.equal(OL.validateOperationRequest(body([m, batch, noStock, tx, plain])).ok, true, "a delta without stock is enough when no token is used");
 });
 
 test("A-8 the id placeholder rules: an unbound or undeclared name is refused, with or without a mint op", () => {
@@ -168,6 +169,53 @@ test("A-9 monkey: 400 random single-field corruptions never throw and never let 
         assert.equal(a.id, v.ops[4].entityId);
     }
     assert.ok(accepted > 0 && accepted < 400, "the monkey reaches both outcomes: " + accepted);
+});
+
+test("A-10 (PR #197 review F1) ONE feed row per operation: a second activity op is refused, wherever it sits and whatever its id", () => {
+    const [m, batch, d, tx, a] = restockOps();
+    const second = (id) => create("activity", id, activityDoc({ id, subtitle: "plain" }));
+    for (const [label, ops] of [["right after", [m, batch, d, tx, a, second("act-extra")]],
+                                ["same id twice", [m, batch, d, tx, a, activityOp()]],
+                                ["literal first, template second", [m, batch, d, tx, second("act-lit"), a]],
+                                ["many", [m, batch, d, tx, a, second("act-s1"), second("act-s2"), second("act-s3")]]]) {
+        const r = invalid(body(ops));
+        assert.equal(r.error, "invalid-activity", label);
+        assert.ok(r.opIndex >= 4 && r.opIndex <= 5, label + " opIndex " + r.opIndex);
+    }
+    // the refusal names the SECOND row, not the first
+    assert.equal(invalid(body([m, batch, d, tx, a, second("act-extra")])).opIndex, 5);
+    // exactly one still passes, with or without the token
+    assert.equal(OL.validateOperationRequest(body([m, batch, d, tx, second("act-only")])).ok, true);
+});
+
+test("A-11 (PR #197 review F3) the stock token belongs in the subtitle only: in the title it is refused, not stored raw", () => {
+    for (const title of [TOKEN, "Restocked: " + TOKEN, TOKEN + TOKEN])
+        assert.equal(invalid(body(restockOps({ activity: activityOp({ title }) }))).error, "invalid-activity", title);
+    // text that merely looks like it is fine: braces without the dollar, a dollar without braces
+    assert.equal(OL.validateOperationRequest(body(restockOps({ activity: activityOp({ title: "Restocked: {{stock}} $stock {$stock}" }) }))).ok, true);
+});
+
+test("A-12 (PR #197 review F2) the row names a product THIS operation changed, token or not", () => {
+    const [m, batch, d, tx] = restockOps();
+    const other = (over) => activityOp(Object.assign({ entityId: "p2", subtitle: "plain" }, over || {}));
+    assert.equal(invalid(body([m, batch, d, tx, other()])).error, "invalid-activity", "delta is for p1, row says p2");
+    assert.equal(invalid(body([m, batch, d, tx, other({ subtitle: "now " + TOKEN })])).error, "activity-stock-missing", "token keeps its own code");
+    assert.equal(OL.validateOperationRequest(body([m, batch, d, delta("p2", 1), tx, other()])).ok, true, "a delta for p2 earlier makes p2 right");
+    // the row is checked against EARLIER ops only
+    assert.equal(invalid(body([m, batch, tx, other(), delta("p2", 1)])).error, "invalid-activity", "delta for p2 comes after the row");
+    // a mutation on the same id is not a delta
+    const asMutation = create("inventory", "p2", { productId: "p2" });
+    assert.equal(invalid(body([m, batch, d, asMutation, tx, other()])).error, "invalid-activity", "an inventory mutation is not a stock delta");
+    // the row of a REAL restock (planner shape) is untouched by the rule
+    assert.equal(OL.validateOperationRequest(body(restockOps())).ok, true);
+});
+
+test("A-13 (PR #197 review) none of F1-F3 reaches an operation without an activity op, or applyOperation on its own", async () => {
+    const db = baseDb();
+    assert.equal((await run(db, body(restockOps({ activity: null })))).ok, true);
+    // an operation that carries two delta ops for one product and ONE row is fine (the last delta fills the token, B-4)
+    const [m, batch, d, tx, a] = restockOps();
+    assert.equal(OL.validateOperationRequest(body([m, batch, d, delta("p1", 2), tx, a])).ok, true);
 });
 
 // ------------------------------------------------------------------ apply

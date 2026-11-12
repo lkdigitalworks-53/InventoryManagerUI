@@ -828,3 +828,34 @@ test("R5b: a client that sends its own actorUid or timestamp in the feed row is 
         await restoreCounter(before);
     }
 });
+
+test("R5b review F1-F3: two feed rows, a row about another product and the stock token in the title are each refused (400 invalid-activity), nothing written", async () => {
+    const before = await counterSnapshot();
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const row = (id, over) => ({ kind: "mutation", entity: "activity", entityId: id, action: "create", before: null,
+            after: Object.assign({ id: id, kind: "product_restocked", title: "Restocked: Mint E2E", subtitle: "plain",
+                                   entityId: "opE2E-pm", read: false, dismissed: false }, over || {}) });
+        const cases = [
+            ["two", [row("act-{{b}}"), row("act-e2e-second")], 5],
+            ["other product", [row("act-{{b}}", { entityId: "opE2E-other" })], 4],
+            ["token in the title", [row("act-{{b}}", { title: "{{$stock}}" })], 4]
+        ];
+        let n = 0;
+        for (const [label, extra, index] of cases) {
+            const body = restockOp("restock:opE2E-f" + (++n), 3);
+            for (const op of extra) body.ops.push(op);
+            const r = await post(body);
+            trackResult(r);
+            assert.equal(r.status, 400, label + " " + JSON.stringify(r.body));
+            assert.equal(r.body.error, "invalid-activity", label);
+            assert.equal(r.body.opIndex, index, label);
+            assert.equal((await read("inventory/opE2E-pm")).stock, 10, label + ": stock unchanged");
+            assert.equal(await read("audit_log/restock:opE2E-f" + n), null, label + ": no marker");
+            assert.equal(await read("activity_log/act-e2e-second"), null, label + ": no stray row");
+        }
+        assert.deepEqual(await counterSnapshot(), before, "no number burned");
+    } finally {
+        await restoreCounter(before);
+    }
+});
