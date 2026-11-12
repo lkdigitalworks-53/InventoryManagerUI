@@ -19,7 +19,7 @@ Wire `OrderDetailDialog` to `ProductPickerSheet`; delete the combo and its helpe
 - [x] 7. S3 pins changed on purpose: `NOW-09`, `WIRE-15`, `W-20`, `DORM-01` allow-list.
 - [x] 8. Node: functions 1616/1616 (after merging main @ `4c0f360`), `.github/scripts` 1049/1049, picker files 299/299. 27 hand mutants: 3 survivors on the first run (2 real gaps fixed with tests, 1 equivalent), final run all killed except the equivalent one.
 - [x] 9. Docs: plan, test plan (rows, device checks 67 to 91, verification row), KNOWN-ISSUES 28 to 35, README, AGENTS, Skill 165, `SKILLS-INDEX.md` regenerated.
-- [x] 10. Committed `b7b3824`, pushed, PR #196 opened (REST). It was `dirty` against main @ `4c0f360` (#191 restock R5a): merged main into the branch (CHECKPOINT = branch, my skill renumbered 164 -> 165, index regenerated), suites re-run green. Next: read CI.
+- [x] 10. Committed `b7b3824`, pushed, PR #196 opened (REST). It was `dirty` against main @ `4c0f360` (#191 restock R5a): merged main into the branch (CHECKPOINT = branch, my skill renumbered 164 -> 165, index regenerated), suites re-run green. CI on `c4e612a` all green: QML 3049, Functions 1616, Rules 108, E2E 111 (4884/4884), PR mergeable clean.
 - [ ] 11. For Taher: veto window on S4-D1..D8, answer the questions below, device checks 67 to 91, merge.
 
 ## Findings (read from code, not changed unless listed in the plan)
@@ -27,10 +27,10 @@ Wire `OrderDetailDialog` to `ProductPickerSheet`; delete the combo and its helpe
 - Completed-order edit has no operation cap (KNOWN-ISSUES 29), orders with no lines are seeded from the first two products of the shop (30), the lock does not gate adding (31).
 
 ## State
-Not built, not run on a device. The QML twin `tst_EditOrderPicker` (25 cases) and the regenerated `tst_NewOrderPicker` have NOT run (no Qt here): CI is their oracle. The Felgo layer (the button, the sheet over the order sheet, `_applyPicked` on a real `ListModel`) is device-only and UNSEEN.
+Not built, not run on a device. The QML twin `tst_EditOrderPicker` (25 cases) and the regenerated `tst_NewOrderPicker` ran in CI (green); they could not run here (no Qt). The Felgo layer (the button, the sheet over the order sheet, `_applyPicked` on a real `ListModel`) is device-only and UNSEEN.
 
 ## NEXT (in this order, my recommendation)
-1. Read CI on this PR; fix whatever is red.
+1. (done) CI green on `c4e612a`.
 2. Taher: veto/answer, device checks 67 to 91, merge.
 3. The P1 S4a follow-up PR (`plans/2026-11-11-p1-s4a-followups-one-pr-plan.md`: `productName` in ledger rows, ledger read rule, droppable `count()`, wrap `deriveContext`), decided on 2026-11-11 to be taken right after #193.
 4. Picker S5: the emulator E2E (KNOWN-ISSUES 34), accessibility, themes, font scale, big-catalog performance, the full device pass, the 28 dp cart steppers (28a, 24a), the "no price" row reason (23).
