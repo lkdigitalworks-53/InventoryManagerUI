@@ -18,3 +18,22 @@
 
 ## NEXT (if this session stops)
 Continue at the first unchecked step. Deploy order when merged: functions first, then the client build.
+
+---
+
+# REVIEW SWEEP 1 of PR #197 (2026-11-13, one chat turn, NO parallel agents) - resume here
+
+**Who/how:** session prompt of 2026-11-13. Commit identity `tsadmin@gmail.com` as git user AND last line of every commit message (newer prompt wins over `lkdwtaher@`; the three R5b commits above keep the old one, history NOT rewritten). Fixes go ON the PR head branch `feat/2026-11-12-r5b-activity-log-in-op` (the PR IS that branch; a second branch would be a second PR). PAT only per command via `git -c http.extraHeader`, remote URL clean.
+**Skills used:** `requesting-code-review` (inline: the user forbids parallel agents), `qt-qml-review` (Phase 1 python lint run on the changed QML, filtered to changed lines; Phase 2 done inline, six domains, on `adopt` + two small edits; qmllint not available, no Qt in the sandbox), `ponytail-audit` (finding format).
+**Rules in force:** no build or run of the app; CI is the oracle for QML and rules; Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`, baseline 1711/1711 on head `cd08418`).
+
+## Steps
+- [x] R0. Clone, checkout PR head, read CHECKPOINT, design D-R5b-1..8, full prod diff (server, planner, ActivityLog, InventoryStore, TransactionStore), all new tests, docs diff; baseline 1711/1711 locally.
+- [x] R1. Probed the server with a script (real `validateOperationRequest` + `applyOperation` on the strict fake DB). Confirmed: F1 four activity rows accepted in ONE operation (design says one); F2 a row naming product p2 accepted while the delta is on p1; F3 `{{$stock}}` in the TITLE stored raw. Lint (qt-qml-review Phase 1) on changed lines: 24 hits, 0 real (22 `var` = repo convention 1452 vs 5, 1 JS-2 and 1 ORD-1 false positives).
+- [ ] R2. SERVER FIX F1+F2+F3 in `checkActivityOp` + tests (A-7 last line flips on purpose, A-10, A-11) + hand mutants. Commit 1.
+- [ ] R3. TEST HYGIENE: duplicate label `W-20` in `restockWire.test.js` (new cases renamed W-23..W-25), `B-2` vacuous `||`. Commit 2.
+- [ ] R4. DOCS: stale `recordPurchase` mentions (MigrationService comment, SKILLS rule text), test plan section, Skill 166 rules 10-11, README, AGENTS, KNOWN-ISSUES 29+, this file. Commit 3.
+- [ ] R5. Push, read CI on the new head, report done / next.
+
+## NEXT (if this session stops)
+Continue at the first unchecked R-step. Each commit is independent and revertable. Never force-push this branch.
