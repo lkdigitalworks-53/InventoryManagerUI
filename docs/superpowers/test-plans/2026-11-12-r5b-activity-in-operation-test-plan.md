@@ -31,9 +31,9 @@ Branch `feat/2026-11-12-r5b-activity-log-in-op`. Design: `docs/superpowers/specs
 ## 2. Functional (Node, real function bodies + real server code)
 | IDs | What |
 |---|---|
-| W-20 | answer with the server's row: adopted once, NO client-written row, the same answer again adds nothing |
-| W-21 | legacy answer (queued by the previous build): the old client row is written once |
-| W-22 | damaged feed row: nothing applied, nothing recorded, everything re-read |
+| W-23 | answer with the server's row: adopted once, NO client-written row, the same answer again adds nothing |
+| W-24 | legacy answer (queued by the previous build): the old client row is written once |
+| W-25 | damaged feed row: nothing applied, nothing recorded, everything re-read |
 | P-3 | source pins: the tap writes no row; `applyRestockResults` adopts; the legacy `record` exists only behind `!out.activity` |
 | H-3/H-4 | `applyRestockResults` order now supplier, batch, purchase, feed row, stock; replay keeps stock alone |
 
@@ -57,7 +57,7 @@ opType restriction dropped; exact-keys dropped; `read`/`dismissed` check dropped
 3. **New supplier typed in the dialog.** Subtitle says `from <typed name>`; the supplier exists once.
 4. **Offline restock.** Airplane mode, restock, observe "saved, syncing" and NO row yet; go online. Expected: one row appears after the answer, with the time of the SYNC (design D-R5b-2: server clock). The purchase row keeps the tap time.
 5. **Kill the app between the answer and the feed.** Restock online, force-close at once. Expected: reopen shows the row (the old client PUT could lose it).
-6. **Replay.** Not reproducible by hand; covered by B-6 and W-20.
+6. **Replay.** Not reproducible by hand; covered by B-6 and W-23.
 7. **Long text.** Product name of 300 characters and a 500-character reason: the restock succeeds, the feed title is cut, nothing is refused.
 8. **Old build in the queue.** Skip unless an offline restock queued by the previous APK exists; then update, go online: ONE row (the legacy path), no duplicate.
 9. **Bell.** Another account restocks: your bell badge counts it; your own restock does not (actor stamped by the server).

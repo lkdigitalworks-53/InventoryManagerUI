@@ -237,7 +237,10 @@ test("B-1 the activity doc is stored with server-stamped actorUid and timestamp,
 test("B-2 the server's clock and caller win: a client cannot choose who or when (it cannot even send them)", async () => {
     const db = baseDb();
     await run(db, body(restockOps()), { actorUid: "u-real", now: new Date("2031-01-02T03:04:05Z") });
-    const doc = db.store[T + "activity_log/act-BAT-2031-001"] || db.store[T + "activity_log/act-BAT-2026-001"];
+    // exactly one feed row, and the id carries the year of the injected clock (the counter year)
+    const keys = Object.keys(db.store).filter((k) => k.indexOf("/activity_log/") > 0);
+    assert.deepEqual(keys, [T + "activity_log/act-BAT-2031-001"]);
+    const doc = db.store[keys[0]];
     assert.equal(doc.actorUid, "u-real");
     assert.equal(doc.timestamp, "2031-01-02T03:04:05.000Z");
 });

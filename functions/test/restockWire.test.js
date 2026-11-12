@@ -423,7 +423,7 @@ test("W-20 a first restock that is discarded frees the name", () => {
 
 // ------------------------------------------------------------------ R5b: the feed row comes from the server
 
-test("W-20 R5b: the answer carries the server's feed row; it is adopted once and no client-written row is made", async () => {
+test("W-23 R5b: the answer carries the server's feed row; it is adopted once and no client-written row is made", async () => {
     const h = sandbox();
     const t = tap(h, { party: "Newco" });
     const { answer } = await serve(t.call);
@@ -437,7 +437,7 @@ test("W-20 R5b: the answer carries the server's feed row; it is adopted once and
     assert.equal(h.log.legacy.length, 0);
 });
 
-test("W-21 R5b legacy: an answer to a restock queued by the previous build (no feed row) writes the old client row, once", async () => {
+test("W-24 R5b legacy: an answer to a restock queued by the previous build (no feed row) writes the old client row, once", async () => {
     const h = sandbox();
     const t = tap(h, { party: "Newco" });
     const { answer } = await serve(t.call);
@@ -448,7 +448,7 @@ test("W-21 R5b legacy: an answer to a restock queued by the previous build (no f
     assert.deepEqual(plain(h.log.activity[0]), { kind: "product_restocked", title: "Restocked: Tomato", sub: "+5 · now 15 in stock · from Newco · weekly", id: "p1" });
 });
 
-test("W-22 R5b: an answer that cannot be read as one restock (damaged feed row) applies nothing, writes no row, and re-reads", async () => {
+test("W-25 R5b: an answer that cannot be read as one restock (damaged feed row) applies nothing, writes no row, and re-reads", async () => {
     const h = sandbox();
     const t = tap(h, { party: "" });
     const { answer } = await serve(t.call);
