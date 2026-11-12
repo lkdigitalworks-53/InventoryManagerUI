@@ -8,7 +8,7 @@
 // tests/tst_RestockFlow.qml. Nothing here reads a store, a clock or a random source.
 
 // Review R5a (design 2026-11-10-r5a-restock-dialog-design.md, D-R5-4/5/6). Field limits the dialog enforces while typing
-// (maxLength) and this file enforces again at the tap (a pasted value can exceed maxLength on some platforms, a caller
+// (maximumLength) and this file enforces again at the tap (a pasted value can exceed maximumLength on some platforms, a caller
 // other than the dialog may not enforce it at all).
 //   MAX_REASON         = the server's movement-reason limit (SM.MAX_REASON, pinned equal by a test). The reason is
 //                        written to the ledger row, the batch note and the purchase row; StockMovements.make cuts the

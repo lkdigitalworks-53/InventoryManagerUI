@@ -1,46 +1,38 @@
-# CHECKPOINT — 2026-11-11 PR #191 review pass 3 (QML CI red) + option A — resume here
+# CHECKPOINT — 2026-11-12 PR #191 review pass 4 (Android launch crash) — resume here
 
-**Branch:** work branch `fix/2026-11-11-pr191-review-sweep-3`, pushed to the PR's own branch `feat/2026-11-10-r5a-restock-dialog-supplier-in-op` (PR #191, base `main` @ `977cde0`), so the fixes are in the PR. Reviewed head before this pass: `4925f0f`.
-**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>` (the Project rule). Earlier passes used other addresses; this account uses this one. Push goes through the session's attached repo access (`add_repo` with push), no token in any command, nothing written to `.git/config`.
+**Branch:** work branch `fix/2026-11-12-pr191-review-sweep-4`, pushed to the PR's own branch `feat/2026-11-10-r5a-restock-dialog-supplier-in-op` (PR #191), so the fix is in the PR. Base of this pass: `afa2808`.
+**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`. Push: the PAT goes in the push URL only, nothing written to `.git/config`.
 **Rules in force:** no build or run, no Qt in the sandbox (CI is the QML oracle), push to the PR branch without asking, tests and test plan for every change, honest trade-offs, no parallel agents in this chat, caveman FULL in chat only (documents in normal prose), short scope per turn.
-**Skills used:** `superpowers:requesting-code-review`, `qt-development-skills:qt-qml-review` (linter run, deep passes by hand), `ponytail:ponytail-audit` (lens only).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-11-pr191-sweep2-prev-CHECKPOINT.md`.
+**Skills used:** `superpowers:requesting-code-review`, `qt-development-skills:qt-qml-review` (linter run, deep passes by hand, no agents), `ponytail:ponytail-audit` (lens only).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-12-pr191-pass3-prev-CHECKPOINT.md` (it holds the pass 3 steps and the "Device crash on launch" section this pass worked from).
 
 ## Task
-Review PR #191 in full, fix what CI shows and what the review finds, in the same PR.
+Taher: the Felgo Cloud build of this branch crashes at launch on Android after a clean install. Review PR #191 in full, check QML errors and missing imports that can crash, fix in the same PR. Logcat to follow.
 
 ## Steps
-- [x] 1. Clone (depth 1) and fetch the PR branch; REST only (GraphQL is blocked in these sessions).
-- [x] 2. CI of head `4925f0f`: Functions, Firestore + Storage Rules and E2E green; QML Tests red with `Totals: 2942 passed, 2 failed`.
-- [x] 3. Root causes, both in tests. (a) `tests/tst_RestockFlow.qml:239` declared `var long`: `long` is reserved in QML's JavaScript, the whole file failed to compile (`Expected token identifier`), so none of its tests ran. (b) `tests/tst_InventoryStore_movementKinds.qml` `test_restock_with_a_very_long_reason_still_queues_a_valid_row` still expected a 900-character reason to be cut to 500 and queued; since R5a `restock` refuses it (`reason-too-long`), so `_restockDelta` was null.
-- [x] 4. Fixes: `var long` renamed; the stale test replaced by four (refused over 500 with nothing queued and no mint, exactly 500 whole, 500 plus padding, 501 refused); `-0` assertions use `verify` instead of QtTest's fuzzy `compare` on Infinity; the `String.normalize` dependent assertion is guarded and has its own availability test.
-- [x] 5. Regression guard: `functions/test/qmlReservedWords.guard.test.js` (Q-1..Q-3) reads every QML and helper file. Proven first on the broken tree: it failed on exactly that line and nowhere else.
-- [x] 6. Review findings. F-J (fixed, D-R5-13): `_cleanName` stripped U+200C and U+200D, which Hindi, Malayalam and Persian names need; now only U+200B, U+2060, U+FEFF are stripped, joiners are left out of the match key only (`_matchKey`), and `unusedPartyText` uses the same key. The invisible characters in the regex were literals; now escapes. Tests J-1..J-5 and N-7 updated; QML twin +3 functions. 4 of 4 hand mutants killed.
-- [x] 7. Read by hand and found sound: `onActivated` exists (`AppComboBox` is a `QQC.ComboBox`), `applyRestockResults` adds the new supplier locally so the Activity text can name it, the plan trims the reason (so the 500 check is consistent), the typed-quantity label re-evaluates on text, the "+" toggle clears the field so a hidden field never blocks Confirm, other `restock` caller (`DataModel`) passes no party. Linter on the changed QML: no category that main does not already have.
-- [x] 8. Docs: KNOWN-ISSUES (open decision), design D-R5-13, test plan (F-J..F-L, steps 29 to 31, counts), status doc section 11, AGENTS, README, Skill 164 rules 15 to 18.
-- [x] 9. Suites here: functions 1421/1421 (1413 after the rebase, +8).
-- [x] 10. Pushed `4925f0f..46630b9` to the PR branch. CI of `46630b9`: QML Tests 2975 passed, 0 failed (was 2942 passed, 2 failed; `tst_RestockFlow` compiled and ran for the first time, engine has `String.normalize`), Functions, Rules and E2E green, deploy jobs skipped (not a merge).
-- [x] 11. Taher answered the open decision: option A. Built: `RestockFlow.queuedNewSupplierClash(newName, items)` + `supplierPendingText`, called in `InventoryStore.restock` after the same-product hold (reads `OutboxStore.items`). Tests: `restockR5a.test.js` K-1..K-7 (7 of 7 hand mutants killed), `restockWire.test.js` rig got an `OutboxStore` fed by the fake Gateway (it broke W-1, W-4, W-14, M-1 first) + W-15..W-20, QML twins (6 functions, CI only). Docs: KNOWN-ISSUES, D-R5-14, test plan F-M and steps 32 to 35, status doc, AGENTS, README, Skill 164 rule 19. Suites here: functions 1434/1434, scripts 1049/1049.
-- [x] 12. Pushed `8fd0bd6`; no CI started because PR #191 became `dirty` (main moved: #193, #194). Merged `origin/main` into the branch (docs conflicts only; main took Skill 162 and 163 so the restock skill is now Skill 164, status doc section 12 is main's). Suites after the merge: functions 1560/1560, scripts 1049/1049.
-- [x] 13. Merge pushed as `34d86da`, CI green (QML, Functions, Rules, E2E), PR `clean`.
-- [x] 14. At Taher's request the branch was REBASED onto `origin/main` (3c03306) instead of carrying the merge commit, and force-pushed with lease; conflicts were docs only (CHECKPOINT.md kept mine, the rest taken from the already-resolved merge tree, so the final tree equals `34d86da` apart from this note). Old head for reference: `34d86da`.
-- [ ] 15. Read CI of the rebased head.
+- [x] 1. Cloned, fetched PR #191 head (`afa2808`), made the work branch.
+- [x] 2. Re-checked what pass 3 had ruled out, by script, not by memory: 235 `import "..."` paths resolve with EXACT letter case; no JS `.import` cycle; no `.pragma library` file importing a non-library file; no JS API newer than the engine (`normalize`, `Intl` guarded); all types, singletons and `BottomSheet` properties used by `RestockDialog.qml` exist.
+- [x] 3. New angle: names that must exist in Qt, not only in the repo. Listed every `property alias` (24). **23 are real Qt properties. One is not: `AuthTextField.qml:16  property alias maxLength: input.maxLength`.** `input` is a `QQC.TextField`; QML has `maximumLength`, not `maxLength` (that is QLineEdit). An alias to a missing property is a compile error: `AuthTextField.qml` fails, so does `LoginPage.qml` (uses it) and `Main.qml` (instantiates `LoginPage` at the root). Qt exits at once = "crash at launch". Added by this PR (R5a). Nothing in CI could see it: Felgo components cannot be loaded by `qmltestrunner`, and `restockR5a.test.js` G-5 pinned the wrong name.
+- [x] 4. Also scanned every instantiation of a local component for properties it does not declare: 33 hits, all real `QQC.ComboBox` properties (`model`, `currentIndex`, `displayText`). Nothing else.
+- [x] 5. Fix: alias renamed `maximumLength: input.maximumLength`; two users in `RestockDialog.qml` renamed; comment in `RestockFlow.js`; test G-5 pinned to the real name and to the absence of `maxLength`.
+- [x] 6. Guard: `functions/test/qmlAliasTargets.guard.test.js` (11 tests: AS-1..AS-6 scanner, AL-0..AL-3 tree, IM-1 exact-case imports). Proven: with the QML fix stashed AL-1, AL-2, AL-3 and G-5 fail (4); with the fix 11 of 11 pass.
+- [x] 7. Suites run here: `node --test test/*.test.js` in `functions/` = 1182 tests, 1173 pass, 9 files fail on `Cannot find module 'node-mocks-http'` (not installed in this sandbox, same on the clean tree; CI has it). Brace balance of the three touched files checked.
+- [x] 8. Docs: test plan section 9 + device steps 36 and 37, design and status doc wording, AGENTS (pass 4 entry), SKILLS Skill 164 rule 20.
+- [ ] 9. Commit, push to the PR branch (this step is the one being done when this file is read: check `git log` and the PR for the pass 4 commit).
+- [ ] 10. CI of the new head: QML Tests, Functions, Rules, E2E.
+- [ ] 11. Taher: new Felgo Cloud build, step 36 of the test plan FIRST (clean install opens to Login). If it still exits, send the logcat: the first `qt.qml` / `FATAL` / `AndroidRuntime` line decides.
 
+## Honest status of the fix
+High confidence, not proof. A static read found a definite compile error on the startup path, introduced by this PR. It is the strongest candidate for the exit at launch, but no log has been seen. If the build still exits, the cause is elsewhere.
 
-## Not fixed on purpose
-Two phones offline adding the same new supplier (O1) still create two; needs a server rule. A parked restock keeps holding its new supplier name until retried or discarded (accepted cost of option A).
-Everything in the previous checkpoint's list still stands (`{{sup}}` text does not name the field; Qt cuts a long paste silently; O1 two offline devices; `AddProductDialog` inline add-supplier row). A cost typed with non-ASCII digits (Devanagari numerals) is refused as not a valid amount, never booked wrong.
-
-## Device crash on launch (reported 2026-11-12, Android, Felgo Cloud Build, latest commit `93cc9aa`, clean install) - OPEN, no root cause yet
-Taher has the crash log and will share it; do NOT change code before the first error line is known (systematic-debugging, Phase 1).
-Static evidence gathered (nothing run, no Qt in the sandbox):
-- Ruled out: every `import "..."` path and `.import` in qml/ resolves; every `pragma Singleton` file is in its `qmldir` and every registered singleton exists; every type name used resolves to a local type or a Qt/Felgo type; no JS newer than ES2017 in qml/; RestockDialog has no duplicate ids/properties/functions, braces balance; qml linter finds no crash-class issue (only old LDR-3/DEL-1/style).
-- Not covered by CI: no test loads `Main.qml` or `RestockDialog.qml` as a component, and no job starts the real app, so a root-load failure would show only on a device. `Main.qml:1142` instantiates `RestockDialog` at startup. A root load failure makes a Qt app exit at once on Android, which looks like a crash.
-- Open hypotheses, ranked by what a log would show: (1) a QML load error in a startup-instantiated file (log line `qt.qml` / `QQmlApplicationEngine failed to load`); (2) a native module missing from the Felgo Cloud APK: `Qt5Compat.GraphicalEffects` (`LoginPage.qml`, the first screen on a clean install) or `QtQuick.Effects` (`RoundedThumb.qml`), both older than this PR; (3) Felgo/Firebase init (`android/google-services.json` is committed and unchanged since October); (4) CI uses Qt 6.8, the Felgo Cloud SDK may use another Qt.
-- First discriminating question: does the previous Felgo Cloud build (older commit or `main`) open? If yes, bisect the commits between; if no, it is environment (2)-(4), not PR #191.
-Log commands for Taher: `adb logcat -c`, open the app, `adb logcat -d | grep -E "qt|Qt|QML|FATAL|AndroidRuntime|firebase|felgo|SIGSEGV"`, or `adb logcat -b crash -d`.
+## Not checked, still open (in order of how much they matter)
+1. `qml/components/ProductPickerSheet.qml` and `ProductPickerRow.qml`: first loaded by a device through PR #194 (the picker was dormant before). Read by hand this pass for names (properties, signals, `Constants.*`, `SearchField`, `ChipScroller`, `ConfirmDialog.ask`): all exist. Not provable without a load. Test plan step 37.
+2. No test loads any Felgo component. A real load needs Felgo in CI; the guards only read text.
+3. Environment suspects from pass 3 (still unconfirmed): `Qt5Compat.GraphicalEffects` (LoginPage) and `QtQuick.Effects` (RoundedThumb) packaged by Felgo Cloud; Qt version of the Felgo SDK vs CI Qt 6.8; Firebase init.
+4. `NewOrderDialog.qml` changes of #194 (152 lines) and `RefreshAction.qml` (#186) were not read line by line this pass.
+Everything in the pass 3 "Not fixed on purpose" list still stands (O1 two offline devices, parked restock keeps holding its new supplier name, `{{sup}}` text does not name the field, Qt cuts a long paste silently, Devanagari numerals refused).
 
 ## Next session (pick up here)
-1. Read CI of the PR head after the option A push; fix anything the QML twins show (they have never run).
-2. Taher: device steps 1 to 35 of the test plan.
+1. Read CI of the PR head after the pass 4 push.
+2. Taher's build and logcat decide what is next (step 11 above).
 3. Then R5b on a NEW branch off `main` after #191 merges (design section 5), then R6.

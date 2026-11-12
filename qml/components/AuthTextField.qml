@@ -13,7 +13,9 @@ ColumnLayout {
     property alias inputMethodHints: input.inputMethodHints
     property alias readOnly: input.readOnly
     // Typing limit (QQC.TextField's own default, 32767, until a caller sets it). Added for the restock dialog's fields (R5a).
-    property alias maxLength: input.maxLength
+    // Qt's name is `maximumLength`. `maxLength` is a QLineEdit (Widgets) name that QML does not have: an alias to it is a
+    // compile error that fails this file and every page that uses it (LoginPage), so the app exits at launch.
+    property alias maximumLength: input.maximumLength
     property alias acceptableInput: input.acceptableInput
     property alias inputItem: input
 

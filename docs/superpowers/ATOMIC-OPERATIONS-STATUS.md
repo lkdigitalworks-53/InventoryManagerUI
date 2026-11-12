@@ -90,7 +90,7 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
   - O2 `amount || 10`: the old `restock` turned amount 0 into 10; the planner refuses 0. R4 decides.
   - O3 a replayed answer carries the batch and supplier as of the first application; R4 re-reads the product and must not trust a replayed `qtyRemaining` for FIFO figures until the next sync.
   - O4 `now` and `date` are format-checked only; R4's caller test pins that both come from one `new Date()`.
-- **Observations for R5 (wording and field limits):** person-facing texts for `too-large`, `reserved-text` and an overflowing `bad-cost`; a `maxLength` on the restock reason field on top of the planner guard; the cost field accepts `1e308` through `parseFloat`.
+- **Observations for R5 (wording and field limits):** person-facing texts for `too-large`, `reserved-text` and an overflowing `bad-cost`; a `maximumLength` on the restock reason field on top of the planner guard; the cost field accepts `1e308` through `parseFloat`.
 
 ## 10. Update 2026-11-02 (R4 built: restock is one operation)
 - Merged since section 9: #181 (R3 planner), deployed and device-tested by Taher.
@@ -106,7 +106,7 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
   - P8 FIXED in the review sweep (design section 6, D-1): an edit or delete of a product with a queued restock was sent with a stale `before` and got 409. Now refused while the restock is queued.
   - P9 FIXED in the review sweep (design section 6, D-2): the restock dialog booked a blank or mistyped cost as 0; now blank = recorded cost, junk = refused.
   - P6 `_restockSettled` keeps a few bytes for a key whose signal never comes (sign-out mid-flight).
-- Next: R5 (dialog wording and `maxLength`, the typed name passed into the operation (P1), `activity_log` entity inside the operation with an id parameter on `ActivityLog.record`, P2), then R6 (docs and device test of the whole arc). Taher's veto window for R4-D1 (one open restock per product) and R4-D4 (hidden from sales while queued) is the PR.
+- Next: R5 (dialog wording and `maximumLength`, the typed name passed into the operation (P1), `activity_log` entity inside the operation with an id parameter on `ActivityLog.record`, P2), then R6 (docs and device test of the whole arc). Taher's veto window for R4-D1 (one open restock per product) and R4-D4 (hidden from sales while queued) is the PR.
 
 ## 11. Update 2026-11-10 (R5a built: the dialog's new supplier joins the operation)
 - Merged since section 10: #183 (R4) with its review sweeps, #188, #190 (toasts above dialogs, busy overlays).

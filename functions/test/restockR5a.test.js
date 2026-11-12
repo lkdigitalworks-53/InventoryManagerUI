@@ -370,10 +370,15 @@ test("G-4 openFor clears a typed name left from the last time the sheet was open
     assert.match(body, /_newSupplierName\s*=\s*""/);
 });
 
-test("G-5 both free-text fields are length-limited from the helper's constants; AuthTextField forwards maxLength", () => {
-    assert.match(DIALOG, /id: addPartyField[\s\S]{0,300}maxLength:\s*RestockFlow\.MAX_SUPPLIER_NAME/);
-    assert.match(DIALOG, /id: reasonField[\s\S]{0,300}maxLength:\s*RestockFlow\.MAX_REASON/);
-    assert.match(FIELD, /property alias maxLength:\s*input\.maxLength/);
+// Review pass 4 (Android launch crash): this test used to pin `maxLength` / `input.maxLength`. QQC.TextField has no
+// `maxLength` (that is QLineEdit); its property is `maximumLength`. The alias failed AuthTextField.qml at load, and with it
+// LoginPage and Main.qml, so the app exited at launch on a device. Pinned now to Qt's real name; the tree-wide guard is
+// functions/test/qmlAliasTargets.guard.test.js.
+test("G-5 both free-text fields are length-limited from the helper's constants; AuthTextField forwards Qt's own name maximumLength", () => {
+    assert.match(DIALOG, /id: addPartyField[\s\S]{0,300}maximumLength:\s*RestockFlow\.MAX_SUPPLIER_NAME/);
+    assert.match(DIALOG, /id: reasonField[\s\S]{0,300}maximumLength:\s*RestockFlow\.MAX_REASON/);
+    assert.match(FIELD, /property alias maximumLength:\s*input\.maximumLength/);
+    assert.doesNotMatch(FIELD + DIALOG, /\bmaxLength\s*:|alias maxLength|input\.maxLength/);
 });
 
 test("G-6 the hint under the row says the supplier is created with the restock (it is not created yet)", () => {

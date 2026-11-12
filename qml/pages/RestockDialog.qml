@@ -320,7 +320,7 @@ BottomSheet {
                 id: addPartyField
                 Layout.fillWidth: true
                 placeholderText: qsTr("New supplier name")
-                maxLength: RestockFlow.MAX_SUPPLIER_NAME
+                maximumLength: RestockFlow.MAX_SUPPLIER_NAME
                 onAccepted: addPartyBtn.clicked()
             }
             PrimaryButton {
@@ -352,7 +352,7 @@ BottomSheet {
             id: reasonField
             Layout.fillWidth: true
             placeholderText: qsTr("e.g. delayed shipment, emergency restock")
-            maxLength: RestockFlow.MAX_REASON
+            maximumLength: RestockFlow.MAX_REASON
         }
     }
 }
