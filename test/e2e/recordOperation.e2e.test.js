@@ -525,6 +525,7 @@ async function restoreCounter(before) {
     for (const n of mintedNow.splice(0)) {
         await db.doc(T + "stock_batches/" + idFor(n)).delete();
         await db.doc(T + "transactions/tx-p-" + idFor(n)).delete();
+        await db.doc(T + "activity_log/act-" + idFor(n)).delete();      // R5b: the feed row of a restock with an activity op
     }
     if (before === null) await db.doc(T + BATCH_COUNTER).delete();
     else await db.doc(T + BATCH_COUNTER).set(before);
@@ -773,3 +774,57 @@ test("mint: a bind named after an Object.prototype member and never used is a cl
         }
     });
 }
+
+test("R5b: a restock with an activity op stores the feed row with the SERVER's actor and time, the stock filled in; a replay adds no second row", async () => {
+    const before = await counterSnapshot();
+    const v0 = before ? before.value : 0;
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const body = restockOp("restock:opE2E-a1", 3);
+        body.ops.push({ kind: "mutation", entity: "activity", entityId: "act-{{b}}", action: "create", before: null,
+            after: { id: "act-{{b}}", kind: "product_restocked", title: "Restocked: Mint E2E", subtitle: "+3 \u00b7 now {{$stock}} in stock",
+                     entityId: "opE2E-pm", read: false, dismissed: false } });
+        const t0 = Date.now();
+        const r = await post(body);
+        trackResult(r);
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        const id = "act-" + idFor(v0 + 1);
+        const doc = await read("activity_log/" + id);
+        assert.equal(doc.id, id);
+        assert.equal(doc.subtitle, "+3 \u00b7 now 13 in stock");
+        assert.equal(typeof doc.actorUid, "string");
+        assert.ok(doc.actorUid.length > 0);
+        assert.equal(typeof doc.timestamp, "string", "an ISO string, so the feed's orderBy(timestamp) never mixes types");
+        assert.ok(Date.parse(doc.timestamp) >= t0 - 5000 && Date.parse(doc.timestamp) <= Date.now() + 5000);
+        assert.deepEqual(r.body.results[r.body.results.length - 1].after, doc);
+        assert.equal((await read("audit_log/restock:opE2E-a1~4")).entity, "activity");
+
+        const again = await post(body);
+        assert.equal(again.status, 200);
+        assert.equal(again.body.idempotentReplay, true);
+        assert.deepEqual(await read("activity_log/" + id), doc, "the replay left the first row untouched");
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("R5b: a client that sends its own actorUid or timestamp in the feed row is refused (400 invalid-activity), nothing written", async () => {
+    const before = await counterSnapshot();
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const body = restockOp("restock:opE2E-a2", 3);
+        body.ops.push({ kind: "mutation", entity: "activity", entityId: "act-{{b}}", action: "create", before: null,
+            after: { id: "act-{{b}}", kind: "product_restocked", title: "t", subtitle: "s", entityId: "opE2E-pm", read: false, dismissed: false,
+                     actorUid: "someone-else", timestamp: "1999-01-01T00:00:00.000Z" } });
+        const r = await post(body);
+        trackResult(r);
+        assert.equal(r.status, 400);
+        assert.equal(r.body.error, "invalid-activity");
+        assert.equal(r.body.opIndex, 4);
+        assert.equal((await read("inventory/opE2E-pm")).stock, 10);
+        assert.equal(await read("audit_log/restock:opE2E-a2"), null);
+        assert.deepEqual(await counterSnapshot(), before);
+    } finally {
+        await restoreCounter(before);
+    }
+});

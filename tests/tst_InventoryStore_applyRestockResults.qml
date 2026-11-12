@@ -110,4 +110,33 @@ TestCase {
         verify(InventoryStore.applyRestockResults(_good()).ok)
         compare(StockBatchStore.batches.length, 1, "the ledger docs are still filled")
     }
+
+    // ── R5b: the feed row the server wrote is adopted, once ────────────────────
+
+    function _goodWithRow() {
+        return _good().concat([{ kind: "mutation", entity: "activity", entityId: "act-BAT-2026-001", action: "create",
+            after: { id: "act-BAT-2026-001", kind: "product_restocked", title: "Restocked: Tomato", subtitle: "+5 \u00b7 now 15 in stock",
+                     entityId: "p1", read: false, dismissed: false, actorUid: "u", timestamp: "2026-06-15T12:00:00.000Z" } }])
+    }
+
+    function test_the_servers_feed_row_is_adopted_and_a_replay_adds_nothing() {
+        verify(InventoryStore.applyRestockResults(_goodWithRow()).ok)
+        compare(ActivityLog.entries.length, 1)
+        compare(ActivityLog.entries[0].id, "act-BAT-2026-001")
+        verify(InventoryStore.applyRestockResults(_goodWithRow(), { replay: true }).ok)
+        compare(ActivityLog.entries.length, 1)
+    }
+
+    function test_a_legacy_answer_has_no_feed_row_and_applyRestockResults_adds_none() {
+        verify(InventoryStore.applyRestockResults(_good()).ok)
+        compare(ActivityLog.entries.length, 0)
+    }
+
+    function test_a_damaged_feed_row_applies_nothing() {
+        var bad = _goodWithRow()
+        bad[bad.length - 1].after.entityId = "p2"
+        compare(InventoryStore.applyRestockResults(bad).ok, false)
+        compare(ActivityLog.entries.length, 0)
+        compare(StockBatchStore.batches.length, 0)
+    }
 }

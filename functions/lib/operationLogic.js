@@ -40,6 +40,21 @@ const MAX_OPS = 200;
 // `receipt` movement explicitly, otherwise the server derives `adjustment`.
 const OP_TYPES = ["completeOrder", "restock"];
 
+// R5b (design 2026-11-12-r5b-activity-in-operation-design.md): the feed row of a restock is written INSIDE the
+// operation. The entity is named here and NOT in gatewayLogic's ENTITY_COLLECTIONS: lockLogic, batchMutationLogic
+// and every single-record endpoint read that map, so listing it there would open the feed to all of them
+// (pinned by a guard test). Create-only, opType-restricted, one fixed shape; the server stamps who and when.
+const OPERATION_ONLY_ENTITIES = {
+    activity: { collection: "activity_log", opTypes: ["restock"] }
+};
+const ACTIVITY_KINDS = ["product_restocked"];
+const ACTIVITY_KEYS = ["id", "kind", "title", "subtitle", "entityId", "read", "dismissed"];
+const MAX_ACTIVITY_TITLE = 200;
+const MAX_ACTIVITY_SUBTITLE = 1000;
+// Replaced in the subtitle by the stock the SAME operation's delta op left on the same product. `$` is not a
+// legal mint bind-name character, so this token can never be a minted id.
+const STOCK_TOKEN = "{{$stock}}";
+
 // `mint` op (design 2026-10-28-r2-mint-engine-design.md): the server hands out counter ids INSIDE the
 // operation transaction, so a rejected operation burns no number. Later ops name the id as {{bind}}.
 const MAX_MINT_OPS = 5;
@@ -155,8 +170,14 @@ function validateOperationRequest(body) {
             continue;
         }
         const perOp = Object.assign({}, raw, { requestId: opAuditId(requestId, i) });
+        const only = has(OPERATION_ONLY_ENTITIES, String(raw.entity)) ? OPERATION_ONLY_ENTITIES[String(raw.entity)] : null;
         let v;
-        if (raw.kind === "delta") v = validateDeltaRequest(perOp);
+        if (only) {
+            // Mutation (create) only, and only in the operation types that carry it: anything else is "no such entity".
+            if (raw.kind !== "mutation" || only.opTypes.indexOf(opType) < 0)
+                return { ok: false, status: 400, error: "unsupported-entity", opIndex: i };
+            v = validateMutationRequest(perOp, { [String(raw.entity)]: only.collection });
+        } else if (raw.kind === "delta") v = validateDeltaRequest(perOp);
         else if (raw.kind === "mutation") v = validateMutationRequest(perOp);
         else return { ok: false, status: 400, error: "unsupported-kind", opIndex: i };
         if (!v.ok) return Object.assign({}, v, { opIndex: i });
@@ -168,9 +189,14 @@ function validateOperationRequest(body) {
         if (raw.kind === "mutation" && isCascadeEntityDelete(v.entity, v.action)) {
             return { ok: false, status: 400, error: "cascade-delete-not-allowed", opIndex: i };
         }
+        if (only) {
+            const badActivity = checkActivityOp(v, i, ops);
+            if (badActivity) return badActivity;
+        }
         // Placeholders exist only in an operation that has a mint op; without one nothing below runs,
-        // so completeOrder-style operations are checked and applied exactly as before.
-        if (mintCount > 0) {
+        // so completeOrder-style operations are checked and applied exactly as before. An activity op always
+        // runs the check: its id is `act-{{batch}}`, and braces left in a stored doc id are never legal.
+        if (mintCount > 0 || only) {
             const bad = checkPlaceholders(raw.kind, v, i, { at: declaredAt, entity: declaredEntity, used: used });
             if (bad) return bad;
         }
@@ -196,6 +222,42 @@ function validateOperationRequest(body) {
 
     return { ok: true, requestId: requestId, opType: opType, ops: ops,
              clientTimestamp: (body && body.clientTimestamp) || null };
+}
+
+// Shape rules for the one activity row an operation may create (R5b D-R5b-2/5/6). `earlier` = the ops already
+// accepted. The client sends seven keys and nothing else: who and when are stamped by applyOperation.
+function checkActivityOp(v, index, earlier) {
+    const bad = (error) => ({ ok: false, status: 400, error: error, opIndex: index });
+    const a = v.after;
+    if (v.action !== "create" || v.before !== null) return bad("invalid-activity");
+    if (!a || Object.prototype.toString.call(a) !== "[object Object]") return bad("invalid-activity");
+    if (Object.keys(a).length !== ACTIVITY_KEYS.length || !ACTIVITY_KEYS.every((k) => has(a, k))) return bad("invalid-activity");
+    if (v.entityId.indexOf("act-") !== 0 || a.id !== v.entityId) return bad("invalid-activity");
+    if (ACTIVITY_KINDS.indexOf(a.kind) < 0) return bad("invalid-activity");
+    if (typeof a.title !== "string" || a.title.length === 0 || a.title.length > MAX_ACTIVITY_TITLE) return bad("invalid-activity");
+    if (typeof a.subtitle !== "string" || a.subtitle.length > MAX_ACTIVITY_SUBTITLE) return bad("invalid-activity");
+    if (typeof a.entityId !== "string" || a.entityId.length === 0 || a.entityId.length > MAX_ID_LENGTH) return bad("invalid-activity");
+    if (a.read !== false || a.dismissed !== false) return bad("invalid-activity");
+    if (a.subtitle.indexOf(STOCK_TOKEN) >= 0
+        && !earlier.some((o) => o.kind === "delta" && o.entity === "inventory" && o.entityId === a.entityId && has(o.deltas, "stock")))
+        return bad("activity-stock-missing");
+    return null;
+}
+
+// The activity doc as it is stored and answered: `{{$stock}}` filled from this operation's own delta result for
+// the same product, and the caller's uid and the server clock stamped on. The time is an ISO string, the format
+// ActivityLog.record always used, so the feed's orderBy("timestamp") never mixes value types.
+function stampActivity(after, params, results) {
+    let subtitle = after.subtitle;
+    if (subtitle.indexOf(STOCK_TOKEN) >= 0) {
+        let stock;
+        for (const r of results)
+            if (r && r.kind === "delta" && r.entity === "inventory" && r.entityId === after.entityId && r.after && has(r.after, "stock")) stock = r.after.stock;
+        if (stock === undefined) return { error: "activity-stock-missing" };
+        subtitle = subtitle.split(STOCK_TOKEN).join(String(stock));
+    }
+    return { doc: Object.assign({}, after, { subtitle: subtitle, actorUid: params.actorUid,
+                                             timestamp: new Date(params.now || Date.now()).toISOString() }) };
 }
 
 // Placeholder rules for one non-mint op of an operation that has mint ops (M6). Returns an error
@@ -406,22 +468,30 @@ async function applyOperation(db, params) {
                     return { ok: false, status: 409, error: "conflict", conflict: true,
                              opIndex: i, current: entry.data };
                 }
+                // The doc as stored. Only an activity row differs from what the client sent (server stamps).
+                let afterDoc = op.after;
+                if (op.entity === "activity") {
+                    if (op.action !== "create") return { ok: false, status: 400, error: "invalid-activity", opIndex: i };
+                    const stamped = stampActivity(op.after, params, results);
+                    if (stamped.error) return { ok: false, status: 400, error: stamped.error, opIndex: i };
+                    afterDoc = stamped.doc;
+                }
                 if (op.action === "delete") {
                     entry.exists = false;
                     entry.data = null;
                 } else {
                     entry.exists = true;
-                    entry.data = op.after || {};
+                    entry.data = afterDoc || {};
                 }
                 entry.dirty = true;
                 // Inventory stock changes leave a server-derived ledger row (P1 D11); `before` is proven
                 // equal to the running state by the check above.
                 const movements = op.entity === "inventory"
-                    ? MovementLogic.deriveForMutation(op.action, op.before, op.action === "delete" ? null : (op.after || {})) : [];
-                audits.push({ i: i, op: op, action: op.action, before: op.before, after: op.after, movements: movements,
-                              productName: MovementLogic.nameFor(op.before, op.action === "delete" ? null : op.after) });
+                    ? MovementLogic.deriveForMutation(op.action, op.before, op.action === "delete" ? null : (afterDoc || {})) : [];
+                audits.push({ i: i, op: op, action: op.action, before: op.before, after: afterDoc, movements: movements,
+                              productName: MovementLogic.nameFor(op.before, op.action === "delete" ? null : afterDoc) });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "mutation",
-                               after: op.action === "delete" ? null : (op.after || {}) });
+                               after: op.action === "delete" ? null : (afterDoc || {}) });
             }
         }
 
@@ -486,4 +556,5 @@ async function applyOperation(db, params) {
     });
 }
 
-module.exports = { MAX_OPS, MAX_MINT_SKIPS, OP_TYPES, validateOperationRequest, applyOperation, opAuditId };
+module.exports = { MAX_OPS, MAX_MINT_SKIPS, OP_TYPES, OPERATION_ONLY_ENTITIES, STOCK_TOKEN,
+                   validateOperationRequest, applyOperation, opAuditId };

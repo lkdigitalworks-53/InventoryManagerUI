@@ -83,13 +83,13 @@ TestCase {
 
     // ── build: shape ──────────────────────────────────────────────────────
 
-    function test_B1_new_supplier_six_ops_mints_first() {
+    function test_B1_new_supplier_seven_ops_mints_first() {
         var p = RP.build(_input())
         verify(p.ok)
         compare(p.key, key)
         compare(p.opType, "restock")
-        compare(JSON.stringify(p.at), JSON.stringify({ supplierMint: 0, batchMint: 1, supplierCreate: 2, batchCreate: 3, delta: 4, purchase: 5 }))
-        compare(_kinds(p.ops).join(","), "mint,mint,mutation,mutation,delta,mutation")
+        compare(JSON.stringify(p.at), JSON.stringify({ supplierMint: 0, batchMint: 1, supplierCreate: 2, batchCreate: 3, delta: 4, purchase: 5, activity: 6 }))
+        compare(_kinds(p.ops).join(","), "mint,mint,mutation,mutation,delta,mutation,mutation")
         compare(p.ops[0].counter, "supplier"); compare(p.ops[0].bind, "sup")
         compare(p.ops[1].counter, "stock_batch"); compare(p.ops[1].bind, "batch")
         compare(p.ops[2].entityId, "{{sup}}"); compare(p.ops[2].after.name, "Acme Farms")
@@ -100,17 +100,20 @@ TestCase {
         compare(p.ops[4].movements[0].qty, 5)
         compare(p.ops[4].movements[0].reason, "weekly")
         compare(p.ops[5].entityId, "tx-p-{{batch}}"); compare(p.ops[5].after.party, "{{sup}}")
-        var creates = [2, 3, 5]
+        compare(p.ops[6].entity, "activity"); compare(p.ops[6].entityId, "act-{{batch}}")
+        compare(p.ops[6].after.title, "Restocked: Tomato")
+        compare(p.ops[6].after.subtitle, "+5 \u00b7 now {{$stock}} in stock \u00b7 from Acme Farms \u00b7 weekly")
+        var creates = [2, 3, 5, 6]
         for (var i = 0; i < creates.length; ++i) {
             compare(p.ops[creates[i]].action, "create")
             verify(p.ops[creates[i]].before === null)
         }
     }
 
-    function test_B2_known_supplier_four_ops() {
+    function test_B2_known_supplier_five_ops() {
         var p = RP.build(_input({ supplier: { id: "SUP-009" } }))
-        compare(_kinds(p.ops).join(","), "mint,mutation,delta,mutation")
-        compare(JSON.stringify(p.at), JSON.stringify({ supplierMint: -1, batchMint: 0, supplierCreate: -1, batchCreate: 1, delta: 2, purchase: 3 }))
+        compare(_kinds(p.ops).join(","), "mint,mutation,delta,mutation,mutation")
+        compare(JSON.stringify(p.at), JSON.stringify({ supplierMint: -1, batchMint: 0, supplierCreate: -1, batchCreate: 1, delta: 2, purchase: 3, activity: 4 }))
         compare(p.ops[1].after.supplierId, "SUP-009")
         compare(p.ops[3].after.party, "SUP-009")
     }
@@ -120,7 +123,7 @@ TestCase {
         for (var i = 0; i < list.length; ++i) {
             var p = RP.build(_input({ supplier: list[i] }))
             verify(p.ok)
-            compare(p.ops.length, 4)
+            compare(p.ops.length, 5)
             compare(p.ops[1].after.supplierId, "")
             compare(p.ops[3].after.party, "")
         }
@@ -391,5 +394,43 @@ TestCase {
         }
         verify(applied > 100, "coverage floor: built " + applied)
         verify(refused > 15, "coverage floor: refused " + refused)
+    }
+
+    // ── R5b: the feed row inside the operation (Node twin: functions/test/restockPlan.test.js AC-1..AC-5) ──
+
+    function test_AC1_activity_text_is_cut_not_refused() {
+        var big = RP.build(_input({ productName: new Array(5001).join("N"), supplier: { id: "SUP-1" }, supplierName: new Array(5001).join("S") }))
+        verify(big.ok)
+        var a = big.ops[big.at.activity].after
+        compare(a.title.length, 11 + 150)
+        verify(a.subtitle.length <= 1000)
+        var emoji = RP.build(_input({ productName: new Array(150).join("a") + "\uD83D\uDE00 tail" })).ops[6].after.title
+        compare(emoji, "Restocked: " + new Array(150).join("a"))
+    }
+
+    function test_AC2_the_stock_token_is_reserved_text_everywhere() {
+        var overs = [{ productName: "a {{$stock}}" }, { category: "{{$stock}}" }, { reason: "{{$stock}}" },
+                     { supplier: { newName: "{{$stock}}" } }, { supplier: { id: "SUP-1" }, supplierName: "x{{$stock}}" }]
+        for (var i = 0; i < overs.length; ++i) {
+            var p = RP.build(_input(overs[i]))
+            compare(p.ok, false)
+            compare(p.reason, "reserved-text")
+        }
+        verify(RP.build(_input({ reason: "{{$other}} {{stock}} $stock" })).ok)
+    }
+
+    function test_AC3_reflect_reads_the_feed_row_and_accepts_a_legacy_answer_without_one() {
+        var withRow = _good().concat([{ kind: "mutation", entity: "activity", entityId: "act-BAT-2026-001", action: "create",
+            after: { id: "act-BAT-2026-001", kind: "product_restocked", title: "t", subtitle: "s", entityId: "p1",
+                     read: false, dismissed: false, actorUid: "u", timestamp: iso } }])
+        var out = RP.reflect(withRow)
+        verify(out.ok, JSON.stringify(out))
+        compare(out.activity.id, "act-BAT-2026-001")
+        verify(RP.reflect(_good()).activity === null)
+        var bad = JSON.parse(JSON.stringify(withRow))
+        bad[bad.length - 1].after.id = "act-other"
+        compare(RP.reflect(bad).ok, false)
+        compare(RP.reflect(bad).detail, "activity-doc")
+        compare(RP.reflect(withRow.concat([withRow[withRow.length - 1]])).detail, "shape")
     }
 }

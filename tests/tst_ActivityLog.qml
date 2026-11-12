@@ -124,4 +124,58 @@ TestCase {
         compare(ActivityLog.unreadCount, 0)
         compare(ActivityLog.notifications.length, 1, "read entries still show in the sheet")
     }
+
+    // ── adopt: a row the SERVER wrote (atomic-ops R5b) ─────────────────────────
+    // Node twin: functions/test/activityLogAdopt.test.js (the real function body).
+
+    function _row(id, sec) {
+        return { id: id, kind: "product_restocked", title: "t", subtitle: "s", entityId: "p1",
+                 timestamp: "2026-06-15T12:00:" + (sec < 10 ? "0" : "") + sec + ".000Z",
+                 read: false, dismissed: false, actorUid: me }
+    }
+
+    function _ids() {
+        var out = []
+        for (var i = 0; i < ActivityLog.entries.length; ++i) out.push(ActivityLog.entries[i].id)
+        return out.join(",")
+    }
+
+    function test_adopt_places_a_row_by_timestamp_newest_first() {
+        verify(ActivityLog.adopt(_row("a3", 30)))
+        verify(ActivityLog.adopt(_row("a1", 10)))
+        verify(ActivityLog.adopt(_row("a2", 20)))
+        compare(_ids(), "a3,a2,a1")
+    }
+
+    function test_adopt_ignores_an_id_already_held() {
+        verify(ActivityLog.adopt(_row("a1", 10)))
+        var rev = ActivityLog.revision
+        compare(ActivityLog.adopt(_row("a1", 50)), false)
+        compare(ActivityLog.entries.length, 1)
+        compare(ActivityLog.revision, rev, "no change, no revision bump")
+    }
+
+    function test_adopt_refuses_what_is_not_a_feed_row() {
+        var bad = [null, undefined, 5, "x", {}, { id: "", timestamp: "t" }, { id: "a" }, { id: "a", timestamp: 5 }]
+        for (var i = 0; i < bad.length; ++i) compare(ActivityLog.adopt(bad[i]), false)
+        compare(ActivityLog.entries.length, 0)
+    }
+
+    function test_adopt_keeps_at_most_50_and_skips_a_row_older_than_all_of_them() {
+        var arr = []
+        for (var i = 0; i < 50; ++i) arr.push(_row("e" + i, 59 - i))
+        ActivityLog.entries = arr
+        compare(ActivityLog.adopt(_row("old", 1)), false)
+        compare(ActivityLog.entries.length, 50)
+        verify(ActivityLog.adopt(_row("newest", 59)))
+        compare(ActivityLog.entries.length, 50)
+        compare(ActivityLog.entries[0].id, "newest")
+    }
+
+    function test_an_adopted_own_row_shows_in_history_but_not_in_the_bell() {
+        verify(ActivityLog.adopt(_row("mine", 10)))
+        compare(ActivityLog.entries.length, 1)
+        compare(ActivityLog.notifications.length, 0)
+        compare(ActivityLog.unreadCount, 0)
+    }
 }

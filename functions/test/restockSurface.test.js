@@ -137,6 +137,7 @@ function inventorySandbox() {
         SupplierStore: { addLocalSupplier: (d) => calls.push(["supplier", d.supplierId]) },
         StockBatchStore: { addLocalBatch: (d) => calls.push(["batch", d.batchId]) },
         TransactionStore: { addLocalEntries: (docs) => calls.push(["tx", docs.map((x) => x.txId)]) },
+        ActivityLog: { adopt: (d) => calls.push(["activity", d.id]) },
         applyRemoteStock: (id, stock) => calls.push(["stock", id, stock]),
     };
     vm.runInNewContext(extractFunction("model/InventoryStore.qml", "applyRestockResults"), ctx);
@@ -153,20 +154,20 @@ async function serverResults(over) {
     return plain(r.results);
 }
 
-test("H-3 applyRestockResults: a live answer fills the supplier, batch, purchase and stock, in that order", async () => {
+test("H-3 applyRestockResults: a live answer fills the supplier, batch, purchase, feed row and stock, in that order", async () => {
     const { ctx, calls } = inventorySandbox();
     const out = ctx.applyRestockResults(await serverResults());
     assert.equal(out.ok, true);
-    assert.deepEqual(plain(calls), [["supplier", "SUP-001"], ["batch", "BAT-2026-001"], ["tx", ["tx-p-BAT-2026-001"]], ["stock", "p1", 13]]);
+    assert.deepEqual(plain(calls), [["supplier", "SUP-001"], ["batch", "BAT-2026-001"], ["tx", ["tx-p-BAT-2026-001"]], ["activity", "act-BAT-2026-001"], ["stock", "p1", 13]]);
 });
 
 test("H-4 applyRestockResults: a known supplier adds no supplier; a replay leaves the stock alone but still fills the gaps", async () => {
     let h = inventorySandbox();
     h.ctx.applyRestockResults(await serverResults({ supplier: { id: "SUP-009" } }));
-    assert.deepEqual(plain(h.calls).map((c) => c[0]), ["batch", "tx", "stock"]);
+    assert.deepEqual(plain(h.calls).map((c) => c[0]), ["batch", "tx", "activity", "stock"]);
     h = inventorySandbox();
     h.ctx.applyRestockResults(await serverResults(), { replay: true });
-    assert.deepEqual(plain(h.calls).map((c) => c[0]), ["supplier", "batch", "tx"]);
+    assert.deepEqual(plain(h.calls).map((c) => c[0]), ["supplier", "batch", "tx", "activity"]);
     h = inventorySandbox();
     h.ctx.applyRestockResults(await serverResults(), { replay: false });
     assert.equal(plain(h.calls).filter((c) => c[0] === "stock").length, 1);
@@ -213,4 +214,12 @@ test("P-2 RestockPlan and OperationKeys stay QML pragma-library files (no QML/si
         assert.match(src, /^\.pragma library\s*$/m, f);
         assert.deepEqual((src.match(/^\.import .*$/gm) || []).filter((l) => !/"[A-Za-z]+\.js" as \w+$/.test(l)), [], f);
     }
+});
+
+test("P-3 R5b wiring: the feed row of a restock is adopted from the server's answer; the client-written row exists only as the legacy fallback", () => {
+    assert.doesNotMatch(extractFunction("model/InventoryStore.qml", "restock"), /ActivityLog\./, "the tap writes no feed row");
+    assert.match(extractFunction("model/InventoryStore.qml", "applyRestockResults"), /if \(out\.activity\) ActivityLog\.adopt\(out\.activity\)/);
+    const apply = extractFunction("model/InventoryStore.qml", "_applyRestock");
+    assert.match(apply, /if \(out\.ok && !out\.activity\) \{[\s\S]*ActivityLog\.record\("product_restocked"/);
+    assert.equal((apply.match(/ActivityLog\.record\(/g) || []).length, 1);
 });
