@@ -69,4 +69,25 @@ opType restriction dropped; exact-keys dropped; `read`/`dismissed` check dropped
 First CI read on `bde06ca`: Functions green; QML RED, 4 of the QML cases: `tst_InventoryStore_restock` (2) and `tst_RestockPlan` M1 still expected the old 4/6 op counts, and `tst_ActivityLog` 50-cap case used an equal timestamp (equal goes AFTER the held row). Test-side only, product code was right; fixed in the next commit. Learning: Skill 166 rule 9.
 
 ## 9. Counts
-Functions 1711/1711, scripts 1049/1049, QML twins and e2e in CI.
+Functions 1715/1715 after review sweep 1 (section 10; 1711 before), scripts 1049/1049, QML twins and e2e in CI.
+
+## 10. PR #197 review sweep 1 (2026-11-13): three server gaps, found by probe, fixed
+**How found.** A script sent hostile bodies to the REAL `validateOperationRequest` + `applyOperation` (strict fake DB). Before the fix: an operation with FOUR feed rows was accepted (the design says one); a row naming product p2 was accepted while the only delta was on p1; `{{$stock}}` in the TITLE was stored as the literal text. After: all three are `400 invalid-activity` at the offending op.
+
+**Executed (Node, this sandbox, counts taken from `node --test | grep "^# "`):** `functions/` **1715/1715** (+4: A-10..A-13), `.github/scripts` **1049/1049**. 9 of 9 real hand mutants killed (one-row rule dropped / never matching; title rule dropped / `> 0`; product rule dropped / any product / mutation counted as delta / token code lost; stock-field check dropped). A tenth mutant (`earlier.concat([])`) is EQUIVALENT code, not a test gap. **NOT run here:** the emulator case below (CI only).
+
+| IDs | What | Kind |
+|---|---|---|
+| A-7 (last line) | without the token a delta for the product is still needed; a delta WITHOUT a `stock` field is enough then. FLIPPED ON PURPOSE (it asserted "no delta needed") | negative + edge |
+| A-10 | one feed row per operation: right after, same id twice, literal id first and template second, four rows; the refusal names the SECOND row; one row still passes | negative + multi-scenario |
+| A-11 | `{{$stock}}` in the title (alone, inside text, doubled) refused; look-alikes (`{{stock}}`, `$stock`, `{$stock}`) accepted | negative + edge |
+| A-12 | the row's product: other product (`invalid-activity`), token keeps `activity-stock-missing`, an earlier delta for it makes it right, a later delta does not, an inventory MUTATION is not a delta, the planner's real shape untouched | negative + edge + happy |
+| A-13 | no activity op, or two deltas and one row: unchanged behaviour | regression |
+| A-9 (unchanged) | 400 random single-field corruptions still reach both outcomes and every accepted doc passes the oracle | monkey |
+| e2e `R5b review F1-F3` | emulator: two rows (opIndex 5), other product (4), token in title (4): each 400, stock unchanged, no marker, no stray row, counter untouched | e2e (CI) |
+
+**Regression:** every earlier test passes unedited except A-7's last assertion. `AC-5` (2000 random typed inputs, every plan the planner builds passes the server validator) is the proof that the tighter rules still accept everything the client sends.
+
+**Test hygiene in the same sweep (no production change):** the three new `restockWire` cases were labelled W-20/21/22 and collided with an existing W-20; now W-23..W-25 (rows in section 2 updated). `B-2` asserted `a || b` between two possible ids; now one exact key.
+
+**On device (Taher), one extra step.** 13. **All three supplier shapes still write the row.** Restock once with no supplier, once with a known supplier, once with a new typed supplier. Expected each time: ONE row at the top of the feed, `now N in stock` filled in. This is the only way the stricter server rules could hurt a real user, so it is the only device step this sweep adds. The refused shapes cannot be produced from the app (the planner never builds them), so they have no device step.

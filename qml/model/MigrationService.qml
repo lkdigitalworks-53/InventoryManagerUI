@@ -4,8 +4,8 @@ import QtQuick
 // FIFO backfill is intentionally a no-op now. The earlier implementation
 // promoted every PartyStore name into a Supplier and synthesised batches
 // from `purchase`/`created` transactions — but PartyStore is QSettings-
-// backed (not tenant-scoped), and the new write paths (`recordCreated` /
-// `recordPurchase`) already create batches. Running on a fresh account
+// backed (not tenant-scoped), and the new write paths (`recordCreated`; a restock is
+// one server operation) already create batches. Running on a fresh account
 // therefore (a) leaked the previous account's supplier names into the new
 // tenant and (b) duplicated every newly-created batch.
 //
