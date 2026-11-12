@@ -14,6 +14,7 @@
 // `lookup` is supplied by the dialog so this file reads no store:
 //   productOf(id)  -> the catalog product or null            (InventoryStore.getById)
 //   batchesOf(id)  -> its FIFO batches, oldest first          (StockBatchStore.forProduct); used by opsCheck only
+//   availableOf(id, product, lines) -> optional; units still addable (default: stock minus the cart). Edit Order only.
 //
 // Ids: plan ids are strings, a cart line may hold a numeric id (KNOWN-ISSUES, picker carried requirement 5), so
 // every comparison is String(line.productId) === id.
@@ -91,6 +92,22 @@ function _indexOf(lines, id) {
     return -1
 }
 
+// How many units NEW quantity may still use for this product. The default is the New Order formula. Edit Order
+// (picker slice S4) passes lookup.availableOf(id, product, linesBuiltSoFar) because a completed order's units are
+// already out of stock; the hook is optional, so New Order is unchanged. A throwing or non-number hook gives 0:
+// fail closed, the product is refused.
+function _capOf(lookup, id, p, out) {
+    if (lookup && typeof lookup.availableOf === "function") {
+        try {
+            var n = lookup.availableOf(id, p, out)
+            return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0
+        } catch (e) {
+            return 0
+        }
+    }
+    return availableFor({ productId: id, stock: p.stock }, out)
+}
+
 function _skip(id, name, reason) { return { productId: id, name: name, reason: reason } }
 
 // -> { lines, skipped }. `lines` is a NEW array of NEW objects (the input is never changed); `skipped` lists what was
@@ -111,7 +128,7 @@ function applyPlan(lines, plan, lookup) {
         var p = _productOf(lookup, id)
         if (!p) { skipped.push(_skip(id, id, "gone")); continue }
         var name = _str(p.name).length > 0 ? _str(p.name) : id
-        var cap = availableFor({ productId: id, stock: p.stock }, out)
+        var cap = _capOf(lookup, id, p, out)
         if (cap <= 0) { skipped.push(_skip(id, name, "out-of-stock")); continue }
         var at = _indexOf(out, id)
         var price = priceOf(p)

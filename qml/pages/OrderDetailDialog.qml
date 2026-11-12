@@ -8,6 +8,7 @@ import "../helper/OrderMath.js" as OrderMath
 import "../helper/FailureCause.js" as FailureCause
 import "../helper/OrderAdjust.js" as OrderAdjust
 import "../helper/StaffPicker.js" as StaffPicker
+import "../helper/EditOrderPicker.js" as Edit
 import "../model"
 
 // Order detail / edit — bottom sheet. Live product table with qty editing,
@@ -55,8 +56,8 @@ BottomSheet {
     // releases when IT closes. Reset immediately after being read.
     property bool _lockHandoffPending: false
 
+    // The catalog as of openFor(): used only to seed a legacy order that has no line items (see openFor).
     property var catalog: []
-    property var catalogNames: []
 
     ListModel { id: products }
 
@@ -165,53 +166,67 @@ BottomSheet {
             _taxBreakdown = vintageTax > 0 ? [{ rate: dominantRate, amount: vintageTax }] : []
             _total = Math.round((t.subtotal - t.discount + vintageTax) * 100) / 100
         }
-        var savedIdx = productCombo.currentIndex
-        _rebuildCatalog()
-        productCombo.currentIndex = savedIdx
+        // The sheet re-reads when this changes (picker v2, S4). The hooks themselves read the live rows (_pickerLinesNow).
+        _pickerLines = Edit.linesOf(lineArr)
     }
 
-    // Skips any product with a batch-id mint still pending (StockBatchStore.
-    // hasPendingMint) -- same reasoning as NewOrderDialog._rebuildPickerNames.
-    // Only affects adding a NEW line via this picker; an existing line
-    // already on the order (added before the mint failure) is untouched --
-    // it's edited via its own row, not this combo.
+    // The catalog for seeding a legacy order that has no line items (openFor). Skips any product with a batch-id mint
+    // still pending (StockBatchStore.hasPendingMint). The product picker (ProductPickerSheet, below) does not use this.
     function _rebuildCatalog() {
         var cat = []
-        var names = []
         for (var i = 0; i < InventoryStore.products.length; ++i) {
             var p = InventoryStore.products[i]
             if (StockBatchStore.hasPendingMint(p.productId)) continue
-            var avail = _availableStock(p.productId)
             var sellPrice = p.sellingPrice !== undefined ? p.sellingPrice : p.price
             cat.push({ name: p.name, price: sellPrice, productId: p.productId,
                          taxable: !!p.taxable, taxPercent: p.taxPercent || 0 })
-            var productId = p.productId ? "[" + p.productId + "] " : ""
-            names.push(productId + p.name + " — " + InventoryStore.formatCurrency(sellPrice) + " · avail " + avail)
         }
         catalog = cat
-        catalogNames = names
     }
 
-    function _availableStock(productId) {
-        var inv = InventoryStore.getById(productId)
-        if (!inv) return 0
-        // Current qty for this product in the edit form.
-        var used = 0
-        for (var i = 0; i < products.count; ++i)
-            if (products.get(i).productId === productId)
-                used = products.get(i).quantity
-        if (_orderStatus === "completed") {
-            // Completed orders already deducted their ORIGINAL units from
-            // inv.stock at completion. Available = on-hand + units freed by
-            // reducing below the original qty (and − units pulled by adding
-            // above it). So reducing a line raises the count, adding lowers it,
-            // and at the unchanged baseline available == true on-hand.
-            var orig = _findOriginalLine(productId)
-            var origQty = orig ? (orig.quantity || 0) : 0
-            return Math.max(0, inv.stock + (origQty - used))
-        }
-        // Pending/processing: units not deducted yet — subtract the cart qty.
-        return Math.max(0, inv.stock - used)
+    // ---- Product picker (picker v2, slice S4) ----
+    // The sheet knows no store: everything it reads comes in through these. What may be added, how much, with which tax
+    // and whether a pending order is still small enough to complete is decided in EditOrderPicker.js, NewOrderPicker.js
+    // and the sheet's helpers (tested, Skill 83); this file only wires them. The guards that HIDE a product are the same
+    // as in New Order (design D2): a batch-id mint outstanding, a restock queued, a queued or parked edit. No isDeleting
+    // hook: a deleted product leaves the catalog at once (ProductPickability.js header).
+    // _pickerLines is the notifier for the sheet's `orderLines` binding; every decision reads the rows themselves
+    // (_pickerLinesNow), so a stale copy can never decide anything.
+    property var _pickerLines: []
+    function _pickerLinesNow() { return Edit.linesOf(_lineItemArray()) }
+    // The order's SAVED status and its lines at completion: the stock formula and the booked-tax rule need both.
+    function _pickerCtx() { return { status: dlg._orderStatus, original: dlg._originalLines } }
+    readonly property var _pickerLookup: ({
+        productOf: function(id) { return InventoryStore.getById(id) },
+        batchesOf: function(id) { return StockBatchStore.forProduct(id) }
+    })
+    readonly property var _pickerHooks: ({
+        hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
+        hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
+        unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
+        inOrderQty: function(id) { return Edit.cartQty(dlg._pickerLinesNow(), id) },
+        availableFor: function(p) { return Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx()) },
+        commitCheck: function(plan) { return Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup) }
+    })
+    // Every counter the hooks read; each only grows, so the sum changes whenever one does and the open sheet re-reads
+    // (Skill 78). Same four as New Order (NOW-04).
+    readonly property int _pickerRevision: InventoryStore.revision + StockBatchStore.revision
+                                           + StockBatchStore.mintRevision + OutboxStore.revision
+
+    // The plan from the sheet: add N more, never remove (design D4). applyPlan re-reads each product at this moment and
+    // clamps or refuses, so the order never holds more than the stock allows. Existing rows get a new quantity only;
+    // new rows get the booked or the current tax (EditOrderPicker.seedOf). What was not added is a toast (same as New
+    // Order), and a stale stock message from an earlier Save is cleared.
+    function _applyPicked(plan) {
+        const res = Edit.applyPlan(_pickerLinesNow(), plan, _pickerCtx(), _pickerLookup)
+        for (let i = 0; i < res.sets.length; ++i)
+            products.setProperty(res.sets[i].index, "quantity", res.sets[i].quantity)
+        for (let j = 0; j < res.appends.length; ++j)
+            products.append(res.appends[j])
+        recomputeSubtotal()
+        stockErrorLabel.text = ""
+        const note = Edit.skippedNote(res.skipped)
+        if (note.length > 0) Toast.show(note)
     }
 
     function openFor(id) {
@@ -229,11 +244,8 @@ BottomSheet {
             if (allOrders[i].orderId === id) { o = allOrders[i]; break }
         if (!o) return
 
-        // Seed status + the original-lines snapshot BEFORE any catalog build,
-        // because _availableStock (used by _rebuildCatalog) reads BOTH
-        // _orderStatus and _originalLines. Doing the first _rebuildCatalog
-        // before these were set meant it ran against the PREVIOUS order's
-        // leftover state — so opening order B showed order A's available count.
+        // Seed status + the original-lines snapshot first: the picker's stock formula and booked-tax rule
+        // (_pickerCtx) read BOTH, and the legacy-order seeding below reads the catalog built right after them.
         _orderStatus = String(o.status || "")
         _originalLines = (o.products || []).map(function(lp) {
             return { productId: lp.productId || "", name: lp.name, price: lp.price,
@@ -307,7 +319,6 @@ BottomSheet {
             }
         }
         recomputeSubtotal()
-        productCombo.currentIndex = 0
         stockErrorLabel.text = ""
 
         // Acquire in the background — the dialog opens and shows the order
@@ -331,6 +342,7 @@ BottomSheet {
     // notably the available-stock count, which derives from products +
     // _originalLines + _orderStatus.
     onClosed: {
+        picker.close()   // a picker still fading out must not outlive the order it was reading
         if (_lockHandoffPending) {
             _lockHandoffPending = false // ConfirmReturnSheet now owns this lock
         } else {
@@ -529,6 +541,16 @@ BottomSheet {
         // not here, synchronously, before the real write has even started.
     }
 
+    // Searchable product sheet with a quantity stepper per row (picker v2). Declared here, opened by "Add products".
+    ProductPickerSheet {
+        id: picker
+        products: InventoryStore.products
+        hooks: dlg._pickerHooks
+        orderLines: dlg._pickerLines
+        revision: dlg._pickerRevision
+        onCommitted: function(plan) { dlg._applyPicked(plan) }
+    }
+
     // Scoped to _pendingSaveOrderId so this only reacts to the save THIS
     // dialog instance just issued — logic is a shared dispatcher and both
     // signals fire for order updates from anywhere in the app (bulk
@@ -657,54 +679,12 @@ BottomSheet {
             Layout.topMargin: dp(Constants.space2)
         }
 
-        // Picker
-        RowLayout {
+        // Product picker: opens the searchable sheet (picker v2). Off while a save is in flight.
+        GhostButton {
             Layout.fillWidth: true
-            spacing: dp(Constants.space2)
-
-            AppComboBox {
-                id: productCombo
-                Layout.fillWidth: true
-                model: dlg.catalogNames
-                font.pixelSize: sp(Constants.fsBody)
-            }
-            IconActionButton {
-                variant: "default"
-                iconName: "add"
-                onClicked: {
-                    var idx = productCombo.currentIndex
-                    if (idx < 0 || idx >= dlg.catalog.length) return
-                    var p = dlg.catalog[idx]
-                    var avail = dlg._availableStock(p.productId)
-                    if (avail <= 0) return
-                    // Match the existing cart row by productId, not name — two
-                    // distinct products can legitimately share a display name,
-                    // and matching by name here would silently bump the WRONG
-                    // product's quantity (and its price/tax) instead of adding
-                    // this one as its own line.
-                    for (var i = 0; i < products.count; ++i) {
-                        if (products.get(i).productId === p.productId) {
-                            products.setProperty(i, "quantity", products.get(i).quantity + 1)
-                            dlg.recomputeSubtotal()
-                            return
-                        }
-                    }
-                    // On a COMPLETED order, a product that was on the order at
-                    // completion is re-added at its BOOKED tax (time-of-supply),
-                    // NOT the product's current rate — re-taxing already-supplied
-                    // units would diverge from the immutable sale ledger and
-                    // overstate the total. Genuinely new products (no booked line)
-                    // and pending orders use the current catalog rate.
-                    var booked = dlg._orderStatus === "completed"
-                            ? dlg._findOriginalLine(p.productId) : null
-                    var addTaxable = booked ? !!booked.taxable : !!p.taxable
-                    var addTaxPercent = booked ? (booked.taxPercent || 0) : (p.taxPercent || 0)
-                    products.append({ productId: p.productId, name: p.name, price: p.price, quantity: 1,
-                                        discountType: "flat", discountValue: 0,
-                                        taxable: addTaxable, taxPercent: addTaxPercent })
-                    dlg.recomputeSubtotal()
-                }
-            }
+            text: products.count > 0 ? qsTr("Add more products") : qsTr("Add products")
+            enabled: !dlg.busy
+            onClicked: picker.open()
         }
 
         // Line items as cards (Repeater, not ListView, to avoid nested-scroll

@@ -103,7 +103,7 @@ test("NOW-08 closing the order sheet closes the picker; opening it leaves the pi
     assert.ok(!/picker/.test(opened));
 });
 
-test("NOW-09 only New Order uses the sheet: Edit Order keeps its combo until S4", () => {
+test("NOW-09 New Order and Edit Order are the only users of the sheet (Edit Order was wired in S4; its own pins are EOW-01..16)", () => {
     const offenders = [];
     const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
@@ -111,9 +111,8 @@ test("NOW-09 only New Order uses the sheet: Edit Order keeps its combo until S4"
         else if (/\.qml$/.test(e.name) && /ProductPickerSheet\s*\{/.test(fs.readFileSync(full, "utf8"))) offenders.push(path.relative(ROOT, full).split(path.sep).join("/"));
     } };
     walk(path.join(ROOT, "qml"));
-    assert.deepEqual(offenders.filter((f) => f !== "qml/components/ProductPickerSheet.qml"), ["qml/pages/NewOrderDialog.qml"].filter((f) => offenders.includes(f)));
-    assert.deepEqual(offenders, ["qml/pages/NewOrderDialog.qml"]);
-    assert.ok(read("qml/pages/OrderDetailDialog.qml").includes("productCombo"));
+    assert.deepEqual(offenders.sort(), ["qml/pages/NewOrderDialog.qml", "qml/pages/OrderDetailDialog.qml"]);
+    assert.ok(!read("qml/pages/OrderDetailDialog.qml").includes("productCombo"));
 });
 
 test("NOW-10 the submit check stays the final guard: busy first, then name, at least one line, and stock per line", () => {

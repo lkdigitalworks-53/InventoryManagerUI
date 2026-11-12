@@ -1,5 +1,5 @@
 "use strict";
-// NewOrderPicker (qml/helper/NewOrderPicker.js). Cases NOP-01..24, plan:
+// NewOrderPicker (qml/helper/NewOrderPicker.js). Cases NOP-01..27 and NOP-28..30, plan:
 // docs/superpowers/plans/2026-11-11-product-picker-v2-s3-new-order.md. The QML twin tests/tst_NewOrderPicker.qml is
 // derived from these bodies (PAIR-01 in pickerDormancy.test.js). The carried requirements this closes (dry run,
 // valid price, id matching) are in docs/superpowers/KNOWN-ISSUES.md, "Product picker v2: carried requirements".
@@ -406,5 +406,43 @@ test("NOP-27 monkey: any mix of up to 40 skipped products gives a note of at mos
         ok(!/[\uD800-\uDBFF]\u2026/.test(note), "an emoji was cut in half: " + note);
         eq(/ \(\+\d+ more\)$/.test(note), n > 1);
         if (n > 1) ok(note.indexOf("(+" + (n - 1) + " more)") > 0, "wrong count: " + note);
+    }
+});
+
+test("NOP-28 applyPlan uses lookup.availableOf when the dialog supplies it (Edit Order), with the product and the lines built so far", () => {
+    const l = lk([prod("A", 2)]);
+    const seen = [];
+    l.availableOf = function(id, p, out) { seen.push([id, p.stock, out.length]); return 7; };
+    const r = NP.applyPlan([line("A", 1)], plan([], [e("A", 9), e("A", 9)]), l);
+    // stock is only 2, the hook says 7: the first entry takes 7, the second sees the same answer from the hook again
+    eq(r.lines[0].qty, 1 + 7 + 7);
+    eq(seen, [["A", 2, 1], ["A", 2, 1]]);
+});
+
+test("NOP-29 a hook answer that is not a number above 0 refuses the product as out of stock, a fraction is floored, a throw never adds anything", () => {
+    for (const bad of [0, -3, NaN, Infinity, "5", undefined, null, {}]) {
+        const l = lk([prod("A", 9)]);
+        l.availableOf = function() { return bad; };
+        const r = NP.applyPlan([], plan([e("A", 1)]), l);
+        eq(r.lines, []);
+        eq(r.skipped.map(function(s) { return s.reason; }), ["out-of-stock"]);
+    }
+    const f = lk([prod("A", 9)]);
+    f.availableOf = function() { return 2.9; };
+    eq(NP.applyPlan([], plan([e("A", 5)]), f).lines[0].qty, 2);
+    const t = lk([prod("A", 9)]);
+    t.availableOf = function() { throw new Error("x"); };
+    const r2 = NP.applyPlan([], plan([e("A", 1)]), t);
+    eq(r2.lines, []);
+    eq(r2.skipped.map(function(s) { return s.reason; }), ["out-of-stock"]);
+});
+
+test("NOP-30 without the hook nothing changes: a hook that is not a function is ignored and the stock minus the cart decides", () => {
+    for (const notFn of [undefined, null, 5, "x", {}]) {
+        const l = lk([prod("A", 4)]);
+        l.availableOf = notFn;
+        const r = NP.applyPlan([line("A", 3)], plan([], [e("A", 9)]), l);
+        eq(r.lines[0].qty, 4);
+        eq(r.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 1, asked: 9 }]);
     }
 });
