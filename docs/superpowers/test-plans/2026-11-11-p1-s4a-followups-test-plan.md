@@ -49,3 +49,19 @@ None: the app has no ledger read. State it in the PR.
 `checks.yml` deploys `functions,firestore:rules,firestore:indexes` on merge (behind the Deploy Check gate), so ONE approval ships all four slices. The plan's "rules need a separate deploy" was stale. If the rules deploy fails, revert this commit only.
 ### On-device (curl / console, after the deploy)
 Happy: signed in as the owner, open the Firebase console Firestore data for `stock_movements`: unaffected (console bypasses rules). The S4a register `curl` steps still work (Admin SDK). Negative: BLOCKED until a staff login exists (KNOWN-ISSUES 12); the emulator cases are the proof until then. Affected: every normal app flow (restock, order, return, lock, photos, analysis): none reads the ledger, so nothing should change. Regression: S4a steps 1-5.
+
+## Slice 4 - D-R3: `count()` pre-check in `computeStockRegister`
+### 1. Unit / functional (real handler, in-memory double with a new `count()` aggregation)
+| File | Cases | Run? | Covers |
+|---|---|---|---|
+| `functions/test/index.handlers.stockRegister.test.js` | +8 (SRH-23..30) | RUN | over cap: 413 with ZERO document reads; exactly the cap is served (strict `>`, same constant as the stream); `count()` throws: still served; count says small but the stream finds more than the cap: 413 from the backstop; six junk count answers ignored; the count never runs for staff, a bad window or a bad token; count 0 and another tenant's ledger untouched; 60-case monkey (413 iff count or ledger over the cap, never 500). |
+| `functions/test/stockRegister.guard.test.js` | +1 (SRG-11) | RUN | count before the stream, shared cap with strict `>`, junk count ignored, local catch, in-stream cap still the same constant. |
+Harness: `handlerHarness.js` gained `count().get()` (`countCalls`, `countError`, `countValue`); a count reads no document, so it is NOT in `collectionGetCalls`.
+### 2. Regression
+Functions 1564/1564 on this branch (1552 after slices 2 and 3, plus 12 here), scripts 1049/1049. Every older register test passes unchanged (the double answers the seeded length when `countValue` is unset).
+### 3. Mutation (hand, 6/6 killed)
+Pre-check removed; `>` to `>=`; a count failure fails the request; in-stream cap removed (backstop); junk count not ignored; wrong collection counted.
+### 4. E2E / rules
+None. The real `count()` call has never run against Firestore: the first real call is the on-device `curl` below (admin SDK `^12.6` supports it).
+### On-device (curl, after the deploy)
+Happy: S4a step 1 still answers 200. Negative: an over-cap ledger (250 001 rows) cannot be built on a phone, do NOT seed it; the 413 path is proven by the double only. Look in the function logs after the first call: there must be NO `count failed, scanning instead` warning. If there is one, `count()` is failing on real Firestore and the request silently falls back to the full scan (still correct, but the saving is gone): report it.
