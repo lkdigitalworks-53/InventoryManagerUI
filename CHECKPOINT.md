@@ -17,9 +17,9 @@ Wire `OrderDetailDialog` to `ProductPickerSheet`; delete the combo and its helpe
 - [x] 5. `qml/helper/EditOrderPicker.js` + `EOP-01..26`, QML twin derived and registered (`pickerTwin.js`).
 - [x] 6. `OrderDetailDialog.qml` wired; `EOW-01..16` (runs the dialog's real functions against a fake `ListModel`).
 - [x] 7. S3 pins changed on purpose: `NOW-09`, `WIRE-15`, `W-20`, `DORM-01` allow-list.
-- [x] 8. Node: functions 1531/1531, `.github/scripts` 1049/1049, picker files 299/299. 27 hand mutants: 3 survivors on the first run (2 real gaps fixed with tests, 1 equivalent), final run all killed except the equivalent one.
-- [x] 9. Docs: plan, test plan (rows, device checks 67 to 91, verification row), KNOWN-ISSUES 28 to 35, README, AGENTS, Skill 164, `SKILLS-INDEX.md` regenerated.
-- [ ] 10. Commit, push, open the PR (REST API, `gh pr create` needs GraphQL), read CI, fix what is red.
+- [x] 8. Node: functions 1616/1616 (after merging main @ `4c0f360`), `.github/scripts` 1049/1049, picker files 299/299. 27 hand mutants: 3 survivors on the first run (2 real gaps fixed with tests, 1 equivalent), final run all killed except the equivalent one.
+- [x] 9. Docs: plan, test plan (rows, device checks 67 to 91, verification row), KNOWN-ISSUES 28 to 35, README, AGENTS, Skill 165, `SKILLS-INDEX.md` regenerated.
+- [x] 10. Committed `b7b3824`, pushed, PR #196 opened (REST). It was `dirty` against main @ `4c0f360` (#191 restock R5a): merged main into the branch (CHECKPOINT = branch, my skill renumbered 164 -> 165, index regenerated), suites re-run green. Next: read CI.
 - [ ] 11. For Taher: veto window on S4-D1..D8, answer the questions below, device checks 67 to 91, merge.
 
 ## Findings (read from code, not changed unless listed in the plan)
