@@ -1315,8 +1315,9 @@ QtObject {
     property var _restockNames: ({})
 
     // One tap = one atomic operation (supplier + batch + stock + purchase in ONE server transaction, the
-    // server mints the ids). `party` may be "", a supplierId, an existing supplier name or a brand-new name
-    // (RestockFlow.supplierFor decides). `unitCost` that is not a number defaults to the product's cost.
+    // server mints the ids). `party` may be "", a supplierId, an existing supplier name or a brand-new name, or
+    // the structured { id } / { newName } the restock dialog sends (RestockFlow.supplierFor decides; a new
+    // supplier is created INSIDE the operation, never before it). `unitCost` that is not a number defaults to the product's cost.
     // callback(ok, queued, refusal), exactly once:
     //   (true,  false)           the server applied it; stock, batch, purchase and Activity are updated
     //   (true,  true)            saved but not answered yet (offline or slow); nothing changes locally until
@@ -1340,6 +1341,15 @@ QtObject {
         // sent. R4-D1: nor can a second restock start while one is still queued or in flight.
         if (hasParkedWrite(productId)) { finish(false, false, parkedWriteMessage); return }
         if (hasQueuedRestock(productId)) { finish(false, false, restockPendingMessage); return }
+        // Review pass 3, option A: a new supplier is created inside a queued restock and unknown to SupplierStore until
+        // the server answers, so the same new name on a second restock would make a second supplier. Refused; known
+        // suppliers and "no supplier" are not affected.
+        var newSupplier = made.input.supplier
+        if (newSupplier && typeof newSupplier.newName === "string"
+                && RestockFlow.queuedNewSupplierClash(newSupplier.newName, OutboxStore.items)) {
+            finish(false, false, RestockFlow.supplierPendingText(newSupplier.newName))
+            return
+        }
 
         _restockNames[plan.key] = current.name
         var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false

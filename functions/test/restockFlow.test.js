@@ -221,7 +221,9 @@ test("E-2 the same key sent twice is a replay: stock moves once, the answer carr
 test("E-3 refusals made before anything is queued: every planner refusal reaches a person-facing text", () => {
     const cases = [[{ qty: 0 }, "bad-quantity"], [{ qty: -1 }, "bad-quantity"], [{ unitCost: -1 }, "bad-cost"],
         [{ unitCost: Infinity }, "bad-cost"], [{ qty: 1e308, unitCost: 5 }, "bad-cost"], [{ reason: "{{batch}}" }, "reserved-text"],
-        [{ reason: "x".repeat(1100000) }, "too-large"]];
+        // R5a: the tap's own limit (500 characters) now stops a long reason first; the planner's size check stays as the
+        // backstop, so it is reached here with a product name that is huge (existing data, not typed in the dialog).
+        [{ product: Object.assign({}, PRODUCT, { name: "x".repeat(1100000) }) }, "too-large"]];
     for (const [over, reason] of cases) {
         const made = RF.makeInput(args(over));
         assert.equal(made.ok, true);
@@ -257,9 +259,8 @@ test("D2-1 costFromText: blank / not-a-string = NaN (not given); a number is its
     assert.equal(RF.costFromText("0"), 0, "a typed zero is a free sample and stays 0");
     assert.equal(RF.costFromText("0.0"), 0);
     assert.equal(RF.costFromText(" 7.25 "), 7.25);
-    assert.equal(RF.costFromText("1e2"), 100);
     assert.equal(RF.costFromText("-3"), -3, "a negative is passed on so the plan can refuse it");
-    for (const junk of ["abc", "12abc", "1,5", "Infinity", "-Infinity", "1e999", "NaN", "--1", "1.2.3"]) assert.equal(RF.costFromText(junk), -1, junk);
+    for (const junk of ["abc", "12abc", "1,5", "Infinity", "-Infinity", "1e999", "NaN", "--1", "1.2.3", "1e2", "0x10", "0b11", "0o7", "1_0", "+-1", "5e", "."]) assert.equal(RF.costFromText(junk), -1, junk);
 });
 
 test("D2-2 end to end: what costFromText yields is booked, defaulted or refused by the REAL plan", () => {

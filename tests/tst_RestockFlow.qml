@@ -158,4 +158,146 @@ TestCase {
         compare(RF.makeInput(_args({ unitCost: RF.costFromText("9.5") })).input.unitCost, 9.5)
         compare(RF.makeInput(_args({ unitCost: RF.costFromText("abc") })).input.unitCost, -1, "makeInput passes it on; the plan refuses it")
     }
+
+    // ---- R5a (design 2026-11-10-r5a-restock-dialog-design.md): typed new supplier joins the operation, limits ----
+
+    function test_supplierFor_structured_party() {
+        compare(RF.supplierFor({ newName: "  Newco " }, suppliers).supplier.newName, "Newco")
+        compare(RF.supplierFor({ newName: "acme farms" }, suppliers).supplier.id, "SUP-001")
+        compare(RF.supplierFor({ newName: "SUP-Foo" }, suppliers).supplier.newName, "SUP-Foo", "a name, not an id")
+        compare(RF.supplierFor("SUP-Foo", suppliers).supplier.id, "SUP-Foo", "the plain string form is unchanged")
+        compare(RF.supplierFor({ newName: " " }, suppliers).reason, "bad-supplier")
+        compare(RF.supplierFor({ id: " SUP-9 " }, suppliers).supplier.id, "SUP-9")
+        compare(RF.supplierFor({ id: "" }, suppliers).reason, "bad-supplier")
+        compare(RF.supplierFor({}, suppliers).reason, "bad-supplier")
+        compare(RF.supplierFor({ newName: "x".repeat(100) }, suppliers).ok, true)
+        compare(RF.supplierFor({ newName: "x".repeat(101) }, suppliers).reason, "supplier-too-long")
+        compare(RF.supplierFor("y".repeat(101), suppliers).reason, "supplier-too-long")
+    }
+
+    function test_partyFor() {
+        compare(RF.partyFor("  Newco ", 2, ["", "SUP-1", "SUP-2"]).newName, "Newco")
+        compare(RF.partyFor("", 2, ["", "SUP-1", "SUP-2"]), "SUP-2")
+        compare(RF.partyFor("   ", 1, ["", "SUP-1"]), "SUP-1")
+        compare(RF.partyFor("", 0, ["X", "SUP-1"]), "")
+        compare(RF.partyFor("", 99, ["", "SUP-1"]), "")
+        compare(RF.partyFor("", -1, ["", "SUP-1"]), "")
+        compare(RF.partyFor("", NaN, ["", "SUP-1"]), "")
+        compare(RF.partyFor("", 1, undefined), "")
+        compare(RF.partyFor("", 1, ["", 7]), "")
+    }
+
+    function test_newPartyChoice() {
+        compare(RF.newPartyChoice("  ", suppliers).kind, "none")
+        compare(RF.newPartyChoice("x".repeat(101), suppliers).kind, "invalid")
+        compare(RF.newPartyChoice("x".repeat(101), suppliers).message, RF.refusalText("supplier-too-long"))
+        var ex = RF.newPartyChoice(" ACME farms ", suppliers)
+        compare(ex.kind, "existing"); compare(ex.id, "SUP-001"); compare(ex.name, "Acme Farms")
+        var nw = RF.newPartyChoice(" Newco ", suppliers)
+        compare(nw.kind, "new"); compare(nw.name, "Newco")
+        compare(RF.newPartyChoice("SUP-Foo", []).kind, "new")
+    }
+
+    function test_limits() {
+        compare(RF.MAX_REASON, 500); compare(RF.MAX_SUPPLIER_NAME, 100); compare(RF.MAX_UNIT_COST, 1000000000)
+        compare(RF.makeInput(_args({ reason: "r".repeat(500) })).ok, true)
+        compare(RF.makeInput(_args({ reason: "r".repeat(501) })).reason, "reason-too-long")
+        compare(RF.makeInput(_args({ reason: "  " + "r".repeat(500) + "  " })).ok, true)
+        compare(RF.makeInput(_args({ unitCost: 1e9 })).ok, true)
+        compare(RF.makeInput(_args({ unitCost: 1e9 + 1 })).reason, "cost-too-large")
+        compare(RF.makeInput(_args({ unitCost: Infinity })).ok, true, "left for the plan, which refuses it as bad-cost")
+        compare(RF.makeInput(_args({ unitCost: NaN })).input.unitCost, 12.5)
+    }
+
+    function test_refusalText_new_reasons_are_distinct() {
+        var reasons = ["bad-quantity", "bad-cost", "cost-too-large", "bad-supplier", "supplier-too-long", "reason-too-long", "too-large", "reserved-text"]
+        var seen = {}
+        for (var i = 0; i < reasons.length; ++i) {
+            var t = RF.refusalText(reasons[i])
+            verify(t.length > 0)
+            verify(!seen[t], "duplicate text for " + reasons[i])
+            seen[t] = true
+        }
+        verify(RF.refusalText("reason-too-long").indexOf("500") >= 0)
+        verify(RF.refusalText("supplier-too-long").indexOf("100") >= 0)
+    }
+
+    // ---- PR #191 review sweep ----
+
+    function test_costFromText_reads_only_a_plain_decimal() {
+        var bad = ["0x10", "0b11", "0o7", "1e3", "1e-2", "5e", "1_000", "1 5", "+-1", ".", "+", "-", "1.2.3"]
+        for (var i = 0; i < bad.length; ++i) compare(RF.costFromText(bad[i]), -1, JSON.stringify(bad[i]))
+        compare(RF.costFromText("5."), 5)
+        compare(RF.costFromText(".5"), 0.5)
+        compare(RF.costFromText("+7"), 7)
+        compare(RF.costFromText("0012"), 12)
+        compare(RF.costFromText("9".repeat(400)), -1)
+        verify(isNaN(RF.costFromText("  ")))
+    }
+
+    function test_known_supplier_matches_whatever_its_length() {
+        // Not `long`: it is a reserved word in QML's JavaScript, and the whole file failed to compile (PR #191 CI).
+        // functions/test/qmlReservedWords.guard.test.js now fails fast on that.
+        var longName = "L".repeat(150)
+        var list = [{ supplierId: "SUP-9", name: longName }]
+        compare(RF.supplierFor(longName, list).supplier.id, "SUP-9")
+        compare(RF.supplierFor({ newName: longName.toLowerCase() }, list).supplier.id, "SUP-9")
+        compare(RF.supplierFor("M".repeat(150), list).reason, "supplier-too-long")
+        compare(RF.newPartyChoice(longName, list).kind, "existing")
+    }
+
+    function test_unusedPartyText() {
+        compare(RF.unusedPartyText(""), "")
+        compare(RF.unusedPartyText("   "), "")
+        compare(RF.unusedPartyText(undefined), "")
+        compare(RF.unusedPartyText(5), "")
+        verify(RF.unusedPartyText("Newco").indexOf("Tap Use") >= 0)
+    }
+
+    // ---- PR #191 review sweep, second batch ----
+
+    function test_supplier_names_have_one_spelling() {
+        // The NFC step is skipped when the engine has no String.normalize; test_engine_has_string_normalize says so on its own.
+        if (typeof "".normalize === "function")
+            compare(RF.supplierFor({ newName: "Cafe\u0301" }, []).supplier.newName, "Caf\u00e9")
+        compare(RF.supplierFor({ newName: "A\tB\n C" }, []).supplier.newName, "A B C")
+        compare(RF.supplierFor("Ac\u200bme  Farms", []).supplier.newName, "Acme Farms")
+        compare(RF.supplierFor({ newName: "\u200b\u200c" }, []).reason, "bad-supplier")
+        compare(RF.supplierFor("\ufeff", []).reason, "bad-supplier")
+        compare(RF.supplierFor({ newName: "x".repeat(100) + "\u200b" }, []).ok, true)
+        compare(RF.supplierFor("ACME\u200b   farms", suppliers).supplier.id, "SUP-001")
+        compare(RF.newPartyChoice("\u200b", suppliers).kind, "invalid")
+    }
+
+    function test_costFromText_negative_zero_is_zero() {
+        // verify, not compare: QtTest's compare is fuzzy for numbers and its handling of Infinity is not worth relying on.
+        verify(1 / RF.costFromText("-0") === Infinity, "+0, not -0")
+        verify(1 / RF.costFromText("-0.0") === Infinity, "+0, not -0 (with a fraction)")
+    }
+
+    // ---- PR #191 review pass 3 ----
+
+    // The NFC step is skipped when the engine has no String.normalize; this says so on its own instead of hiding it.
+    function test_engine_has_string_normalize() {
+        verify(typeof "".normalize === "function", "this QML engine has no String.normalize: supplier names are not NFC-folded")
+    }
+
+    // ZWNJ (U+200C) and ZWJ (U+200D) are part of how Hindi, Malayalam and Persian names are spelled and drawn: they stay in a
+    // stored name. They never decide a match, and a name made only of them is blank.
+    function test_joiners_stay_in_a_stored_name_but_never_decide_a_match() {
+        var conjunct = "क्‍ष"
+        compare(RF.supplierFor({ newName: conjunct }, []).supplier.newName, conjunct, "a Devanagari conjunct keeps its joiner")
+        compare(RF.supplierFor({ newName: "Ac‌me" }, []).supplier.newName, "Ac‌me")
+        compare(RF.supplierFor({ newName: "acme" }, [{ supplierId: "SUP-5", name: "Ac‌me" }]).supplier.id, "SUP-5")
+        compare(RF.supplierFor({ newName: "Ac‍me" }, [{ supplierId: "SUP-6", name: "ACME" }]).supplier.id, "SUP-6")
+        compare(RF.supplierFor({ newName: "‌‍" }, []).reason, "bad-supplier")
+        compare(RF.supplierFor({ newName: "​‌‍" }, []).reason, "bad-supplier")
+        compare(RF.newPartyChoice("‍", suppliers).kind, "invalid")
+    }
+
+    function test_unusedPartyText_ignores_a_field_that_holds_only_invisible_characters() {
+        compare(RF.unusedPartyText("​"), "")
+        compare(RF.unusedPartyText("‌‍ ﻿"), "")
+        verify(RF.unusedPartyText("​A").indexOf("Tap Use") >= 0)
+    }
 }

@@ -238,6 +238,15 @@ TestCase {
         compare(RP.build(_input({ unitCost: 0.1 + 0.2 })).ok, true)
     }
 
+    // PR #191 sweep: the total is money to 2 places; a huge one is kept whole (x * 100 would overflow to Infinity).
+    function test_total_is_rounded_to_two_places_and_huge_totals_stay_finite() {
+        compare(RP.build(_input({ qty: 3, unitCost: 0.1 })).ops.filter(function(o) { return o.entity === "transaction" })[0].after.total, 0.3)
+        compare(RP.build(_input({ qty: 7, unitCost: 19.99 })).ops.filter(function(o) { return o.entity === "transaction" })[0].after.total, 139.93)
+        var big = RP.build(_input({ qty: 1, unitCost: 1.5e307 }))
+        verify(big.ok)
+        compare(big.ops.filter(function(o) { return o.entity === "transaction" })[0].after.total, 1.5e307)
+    }
+
     // PR #181 sweep F2 (design T11): a doc over the Firestore size limit is refused before it is queued.
     function test_R5_oversize_text_is_refused_in_every_typed_field() {
         var big = "x".repeat(1100000)

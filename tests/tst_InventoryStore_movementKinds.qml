@@ -25,7 +25,7 @@ TestCase {
         StockBatchStore._pendingMints = []
         AuthStore.role = "owner"
     }
-    function cleanup() { OutboxStore.clear(); StockBatchStore._pendingMints = [] }
+    function cleanup() { OutboxStore.clear(); StockBatchStore._pendingMints = []; SupplierStore.suppliers = [] }
 
     function _product(id) {
         return { productId: id, name: "Widget " + id, category: "Widgets", sku: "", unit: "pc",
@@ -71,9 +71,36 @@ TestCase {
         InventoryStore.restock("SKU-1", 2.5, "", 10, "", function() {})
         compare(_restockDelta("SKU-1").movements[0].qty, 2.5)
     }
-    function test_restock_with_a_very_long_reason_still_queues_a_valid_row() {
-        InventoryStore.restock("SKU-1", 3, "", 10, new Array(901).join("x"), function() {})
-        compare(_restockDelta("SKU-1").movements[0].reason.length, 500, "the ledger row is cut, the batch note is not")
+    // R5a (D-R5-4): the reason limit (500 = the server's MAX_REASON) stops the tap with its own text. It used to cut the ledger
+    // copy and keep the batch note and the purchase row whole: one restock, three different reasons. PR #191 CI went red here
+    // because this test still expected the old cut; the three tests below pin the new rule at, over and around the limit.
+    function test_restock_with_a_very_long_reason_is_refused_before_anything_is_queued() {
+        var out = { calls: 0, ok: null, queued: null, refusal: null }
+        InventoryStore.restock("SKU-1", 3, "", 10, new Array(901).join("x"), function(ok, queued, refusal) {
+            out.calls++; out.ok = ok; out.queued = queued; out.refusal = refusal })
+        compare(out.calls, 1, "the callback answers exactly once")
+        compare(out.ok, false)
+        compare(out.queued, false)
+        verify(out.refusal.indexOf("500") >= 0, "the text names the limit: " + out.refusal)
+        compare(_restockItems().length, 0, "nothing queued")
+        compare(OutboxStore.pendingCount, 0)
+        compare(StockBatchStore._pendingMints.length, 0, "no batch mint was started")
+    }
+    function test_restock_with_a_reason_of_exactly_500_characters_is_queued_whole() {
+        InventoryStore.restock("SKU-1", 3, "", 10, new Array(501).join("x"), function() {})
+        compare(_restockItems().length, 1)
+        compare(_restockDelta("SKU-1").movements[0].reason.length, 500)
+    }
+    function test_restock_reason_is_measured_after_trimming() {
+        InventoryStore.restock("SKU-1", 3, "", 10, "  " + new Array(501).join("x") + "  ", function() {})
+        compare(_restockItems().length, 1, "500 characters plus padding is still 500")
+        compare(_restockDelta("SKU-1").movements[0].reason.length, 500)
+    }
+    function test_restock_with_a_reason_of_501_characters_is_refused() {
+        var out = { ok: null }
+        InventoryStore.restock("SKU-1", 3, "", 10, new Array(502).join("x"), function(ok) { out.ok = ok })
+        compare(out.ok, false)
+        compare(_restockItems().length, 0)
     }
     function test_a_second_restock_of_the_same_product_is_refused_while_the_first_is_queued() {
         // R4-D1: the queued operation is the latch (this also covers a double tap in one tick).
@@ -300,5 +327,72 @@ TestCase {
         compare(out.ok, false)
         compare(out.refusal, InventoryStore.restockQtyRefusal)
         compare(OutboxStore.pendingCount, 0)
+    }
+
+    // ── review pass 3, option A (Taher, 2026-11-11): a new supplier lives only inside its queued restock ──
+    // SupplierStore learns it when the server answers and the server does not dedupe by name, so the same new name on a
+    // second restock, tapped while the first is still queued, would create a second supplier. It is refused instead.
+    function _restockWith(productId, party) {
+        var out = { calls: 0, ok: null, queued: null, refusal: null }
+        InventoryStore.restock(productId, 3, party, 10, "", function(ok, queued, refusal) {
+            out.calls++; out.ok = ok; out.queued = queued; out.refusal = refusal })
+        return out
+    }
+    function _moreProducts() {
+        InventoryStore.products = InventoryStore.products.concat([_product("SKU-3"), _product("SKU-4")])
+    }
+
+    function test_a_second_restock_with_the_same_new_supplier_is_held_while_the_first_is_queued() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        compare(_restockItems().length, 1, "the first restock is queued")
+        var namesBefore = Object.keys(InventoryStore._restockNames).length     // a singleton: earlier tests leave entries
+        var second = _restockWith("SKU-2", { newName: "  acme " })
+        compare(second.calls, 1, "the callback answers exactly once")
+        compare(second.ok, false)
+        compare(second.queued, false)
+        verify(second.refusal.indexOf("still waiting to sync") >= 0 && second.refusal.indexOf("leave the supplier out") >= 0, second.refusal)
+        compare(_restockItems().length, 1, "nothing was queued for the second product")
+        compare(_restockDelta("SKU-2"), null)
+        compare(Object.keys(InventoryStore._restockNames).length, namesBefore, "the refused tap left no trace")
+    }
+    function test_the_plain_string_form_of_the_same_name_is_held_too() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        var second = _restockWith("SKU-2", "ACME")
+        compare(second.ok, false)
+        verify(second.refusal.indexOf("still waiting to sync") >= 0, second.refusal)
+        compare(_restockItems().length, 1)
+    }
+    function test_a_different_new_name_a_known_supplier_and_no_supplier_are_not_held() {
+        _moreProducts()
+        SupplierStore.suppliers = [{ supplierId: "SUP-009", name: "Bolt & Co" }]
+        var results = [_restockWith("SKU-1", { newName: "Acme" }), _restockWith("SKU-2", { newName: "Acme Two" }),
+                       _restockWith("SKU-3", { id: "SUP-009" }), _restockWith("SKU-4", "")]
+        for (var i = 0; i < results.length; ++i) verify(!results[i].refusal, "tap " + (i + 1) + " was not refused: " + results[i].refusal)
+        compare(_restockItems().length, 4, "another new name, a known supplier and no supplier are all queued")
+    }
+    function test_a_name_that_is_a_known_supplier_is_not_held_even_if_a_queued_restock_made_the_same_name() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        SupplierStore.suppliers = [{ supplierId: "SUP-010", name: "Acme" }]    // the server answered for another device meanwhile
+        var second = _restockWith("SKU-2", { newName: "Acme" })
+        verify(!second.refusal, "it resolves to the known supplier, so it creates nothing and is not held: " + second.refusal)
+        compare(_restockItems().length, 2)
+    }
+    function test_the_hold_ends_when_the_first_restock_has_left_the_queue() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        compare(_restockWith("SKU-2", { newName: "Acme" }).ok, false)
+        OutboxStore.clear()
+        verify(!_restockWith("SKU-2", { newName: "Acme" }).refusal, "nothing queued creates it any more")
+        compare(_restockItems().length, 1)
+    }
+    function test_the_same_product_keeps_its_own_message() {
+        SupplierStore.suppliers = []
+        _restockWith("SKU-1", { newName: "Acme" })
+        var again = _restockWith("SKU-1", { newName: "Acme" })
+        compare(again.ok, false)
+        compare(again.refusal, InventoryStore.restockPendingMessage)
     }
 }

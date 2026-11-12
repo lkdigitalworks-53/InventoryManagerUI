@@ -155,12 +155,12 @@ test("RD-1 RestockDialog imports RestockFlow.js under the name it uses", () => {
     assert.ok(jsImports(DIALOG).some((i) => i.alias === "RestockFlow" && i.path === "../helper/RestockFlow.js"));
 });
 
-test("RD-2 RestockDialog uses RestockFlow only for functions RestockFlow.js defines", () => {
+test("RD-2 RestockDialog uses RestockFlow only for functions and vars RestockFlow.js defines", () => {
     const code = stripNonCode(DIALOG);
     const used = [...code.matchAll(/(?<![\w.])RestockFlow\.([A-Za-z_$]\w*)/g)].map((m) => m[1]);
     assert.ok(used.length > 0, "dialog no longer uses RestockFlow: update this guard");
     const defined = new Set([...fs.readFileSync(path.join(ROOT, "qml", "helper", "RestockFlow.js"), "utf8")
-        .matchAll(/^function ([A-Za-z_$]\w*)\(/gm)].map((m) => m[1]));
+        .matchAll(/^(?:function|var) ([A-Za-z_$]\w*)\b/gm)].map((m) => m[1]));   // R5a: the dialog also reads RestockFlow.MAX_* limits
     for (const fn of used) assert.ok(defined.has(fn), "RestockFlow." + fn + " is not defined in RestockFlow.js");
 });
 

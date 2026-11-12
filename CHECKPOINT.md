@@ -1,63 +1,38 @@
-# CHECKPOINT: 2026-11-11 P1 S4a stock register read model (server) - resume here
+# CHECKPOINT — 2026-11-12 PR #191 review pass 4 (Android launch crash) — resume here
 
-**Branch:** `feat/2026-11-11-p1-s4a-stock-register-server`, cut from `main` @ `977cde0` (#187 picker S2 and #186 L4b merged); **rebased 2026-11-11 onto `main` @ `9e96f84` (#194 picker S3 merged)**, old head `c7c67de`.
-**Commit identity:** every commit message ends with `dextran52@gmail.com` (this session's prompt). The previous checkpoint says Taher moved to `allibaas52@gmail.com` on 2026-11-09: CONFIRM which is current (KNOWN-ISSUES, P1 S4a item 11). The PAT comes from the chat prompt only, passed per command with `git -c http.extraHeader=...`, never in a URL, `.git/config`, the repo or memory.
-**Rules in force:** no build or run until Taher says so; no Qt in the sandbox (CI is the QML oracle; this slice has no QML); always a branch; push without asking; short scope per chat turn; honest trade-offs; tests and a test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`.
-**Skills used:** `brainstorming` (design with defaulted decisions SR-D1..D13), `qt-qml` and `qt-ui-design` (consulted, no UI in this slice), `ponytail` (smallest change: one pure module, one handler, no index, no schema change).
-**Previous checkpoints archived:** `docs/superpowers/specs/2026-11-11-picker-s2-merged-prev-CHECKPOINT.md` (picker S2, #187 merged) and `docs/superpowers/specs/2026-11-11-picker-s3-merged-prev-CHECKPOINT.md` (picker S3, #194 merged; main's checkpoint at the rebase).
+**Branch:** work branch `fix/2026-11-12-pr191-review-sweep-4`, pushed to the PR's own branch `feat/2026-11-10-r5a-restock-dialog-supplier-in-op` (PR #191), so the fix is in the PR. Base of this pass: `afa2808`.
+**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>`. Push: the PAT goes in the push URL only, nothing written to `.git/config`.
+**Rules in force:** no build or run, no Qt in the sandbox (CI is the QML oracle), push to the PR branch without asking, tests and test plan for every change, honest trade-offs, no parallel agents in this chat, caveman FULL in chat only (documents in normal prose), short scope per turn.
+**Skills used:** `superpowers:requesting-code-review`, `qt-development-skills:qt-qml-review` (linter run, deep passes by hand, no agents), `ponytail:ponytail-audit` (lens only).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-12-pr191-pass3-prev-CHECKPOINT.md` (it holds the pass 3 steps and the "Device crash on launch" section this pass worked from).
 
-## Why this slice
-Asked: next tasks of the compliance P1 roadmap, design and implement in one turn. Read of `main`: S1a/S1b/S2a-c/S2d-1/S2f merged; owner-demotion = S2f-7 (already merged); open: S2d-2, S2e (CA), S3, S4. NOTHING reads `stock_movements`, so P1 is invisible. Chose S4a (server register read model): sandbox-testable end to end, no dependency on S3 (the design's "S4 depends on S3" is wrong for the register, SR-D13).
+## Task
+Taher: the Felgo Cloud build of this branch crashes at launch on Android after a clean install. Review PR #191 in full, check QML errors and missing imports that can crash, fix in the same PR. Logcat to follow.
 
 ## Steps
-- [x] 1. Read memory, `ATOMIC-OPERATIONS-STATUS`, P1 design, S2 design, S2d design, KNOWN-ISSUES, `movementLogic`, `computeAnalysis`, harness.
-- [x] 2. Branch, previous checkpoint archived.
-- [x] 3. `functions/lib/stockRegisterMath.js` (pure accumulator, `parseWindow`, `toMillis`, `canViewRegister`).
-- [x] 4. `computeStockRegister` in `functions/index.js` + `streamAllPaged` (stream, cap 250 000, 413).
-- [x] 5. Tests: `stockRegisterMath.test.js` 29, `index.handlers.stockRegister.test.js` 17, `stockRegister.guard.test.js` 8, membership matrix +10. Functions 1424/1424, `.github/scripts` 1049/1049.
-- [x] 6. 25 hand mutants: 24 killed first run, the `-0` survivor killed by SR-11b, final 25/25.
-- [x] 7. Docs: design, test plan (+ index row), KNOWN-ISSUES (11 items), README, AGENTS, Skill 163 (+ `SKILLS-INDEX.md` regenerated), `ATOMIC-OPERATIONS-STATUS` section 11.
-- [x] 8. Pushed `9134471`, PR #193 opened (REST API, `gh pr create` needs GraphQL). CI on that head: Functions, QML, Rules, E2E all success; PR Test Summary Comment success; Deploy Check skipped (runs on merge).
-- [ ] 9. For Taher: veto window on SR-D1..D13; merge; approve the functions deploy; device steps in the test plan are `curl` checks (no UI yet).
+- [x] 1. Cloned, fetched PR #191 head (`afa2808`), made the work branch.
+- [x] 2. Re-checked what pass 3 had ruled out, by script, not by memory: 235 `import "..."` paths resolve with EXACT letter case; no JS `.import` cycle; no `.pragma library` file importing a non-library file; no JS API newer than the engine (`normalize`, `Intl` guarded); all types, singletons and `BottomSheet` properties used by `RestockDialog.qml` exist.
+- [x] 3. New angle: names that must exist in Qt, not only in the repo. Listed every `property alias` (24). **23 are real Qt properties. One is not: `AuthTextField.qml:16  property alias maxLength: input.maxLength`.** `input` is a `QQC.TextField`; QML has `maximumLength`, not `maxLength` (that is QLineEdit). An alias to a missing property is a compile error: `AuthTextField.qml` fails, so does `LoginPage.qml` (uses it) and `Main.qml` (instantiates `LoginPage` at the root). Qt exits at once = "crash at launch". Added by this PR (R5a). Nothing in CI could see it: Felgo components cannot be loaded by `qmltestrunner`, and `restockR5a.test.js` G-5 pinned the wrong name.
+- [x] 4. Also scanned every instantiation of a local component for properties it does not declare: 33 hits, all real `QQC.ComboBox` properties (`model`, `currentIndex`, `displayText`). Nothing else.
+- [x] 5. Fix: alias renamed `maximumLength: input.maximumLength`; two users in `RestockDialog.qml` renamed; comment in `RestockFlow.js`; test G-5 pinned to the real name and to the absence of `maxLength`.
+- [x] 6. Guard: `functions/test/qmlAliasTargets.guard.test.js` (11 tests: AS-1..AS-6 scanner, AL-0..AL-3 tree, IM-1 exact-case imports). Proven: with the QML fix stashed AL-1, AL-2, AL-3 and G-5 fail (4); with the fix 11 of 11 pass.
+- [x] 7. Suites run here: `node --test test/*.test.js` in `functions/` = 1182 tests, 1173 pass, 9 files fail on `Cannot find module 'node-mocks-http'` (not installed in this sandbox, same on the clean tree; CI has it). Brace balance of the three touched files checked.
+- [x] 8. Docs: test plan section 9 + device steps 36 and 37, design and status doc wording, AGENTS (pass 4 entry), SKILLS Skill 164 rule 20.
+- [x] 9. Committed `9e550b1` and pushed to the PR branch (`afa2808..9e550b1`) and to the work branch. The sandbox git proxy first refused (repo not in the session's set); `add_repo` with push access fixed it, no token was used or written to `.git/config`.
+- [ ] 10. CI of the new head: QML Tests, Functions, Rules, E2E.
+- [ ] 11. Taher: new Felgo Cloud build, step 36 of the test plan FIRST (clean install opens to Login). If it still exits, send the logcat: the first `qt.qml` / `FATAL` / `AndroidRuntime` line decides.
 
-## State
-Server only. Nothing in the app calls the endpoint. QML untouched, rules untouched.
+## Honest status of the fix
+High confidence, not proof. A static read found a definite compile error on the startup path, introduced by this PR. It is the strongest candidate for the exit at launch, but no log has been seen. If the build still exits, the cause is elsewhere.
 
-## NEXT (in this order, my recommendation)
-1. Read CI on this PR. Fix whatever is red.
-2. **S4b** client: `StockRegisterService.qml` (POST with local-midnight offset ISO, on demand only) + Stock Register page (period picker, per-product rows, mismatch banner, skipped-rows note), role-gated owner/admin/manager. Needs a design pass first (UI).
-3. **S2d-2** server kind hint for the clamped imported-order deduction (then client passes `sale`).
-4. Restrict `stock_movements` read to owner/admin/manager in the rules BEFORE S2e (KNOWN-ISSUES, P1 S4a item 1).
-5. S2e after the CA; S3 only if per-batch traceability is asked for. R5b (atomic ops) is independent: see PR #191 and `areas` notes.
+## Not checked, still open (in order of how much they matter)
+1. `qml/components/ProductPickerSheet.qml` and `ProductPickerRow.qml`: first loaded by a device through PR #194 (the picker was dormant before). Read by hand this pass for names (properties, signals, `Constants.*`, `SearchField`, `ChipScroller`, `ConfirmDialog.ask`): all exist. Not provable without a load. Test plan step 37.
+2. No test loads any Felgo component. A real load needs Felgo in CI; the guards only read text.
+3. Environment suspects from pass 3 (still unconfirmed): `Qt5Compat.GraphicalEffects` (LoginPage) and `QtQuick.Effects` (RoundedThumb) packaged by Felgo Cloud; Qt version of the Felgo SDK vs CI Qt 6.8; Firebase init.
+4. `NewOrderDialog.qml` changes of #194 (152 lines) and `RefreshAction.qml` (#186) were not read line by line this pass.
+Everything in the pass 3 "Not fixed on purpose" list still stands (O1 two offline devices, parked restock keeps holding its new supplier name, `{{sup}}` text does not name the field, Qt cuts a long paste silently, Devanagari numerals refused).
 
-
----
-# REVIEW SWEEP of PR #193 (2026-11-11, same branch, no stacked PR) - resume here
-**Asked:** deep full sweep with `requesting-code-review`, `qt-qml-review` (N/A: PR has zero QML files), `ponytail-audit`; fixes in the SAME PR; no parallel agents; split into chunks; robustness first; show done/next at the end.
-**Commit identity (RESOLVED):** `taher.lkdw@gmail.com`, as git user AND last line of every commit message (Taher, this session). Supersedes `dextran52@` / `allibaas52@` above; KNOWN-ISSUES P1 S4a item 11 is closed by this.
-**PAT:** from chat prompt only; clone URL reset, pushes use `-c http.extraHeader`. Not in repo/memory.
-**Sweep steps**
-- [x] R0. Read skills, memory, PR body, math module, handler, harness, tests (54/54 pass locally on Node 22).
-- [x] R1. Findings confirmed with a concrete case (see list below).
-- [x] R2. Chunk 1 code fixes + tests, pushed `19247fd`: F1, F2, F3, F4 fixed; SR-29..32, SRH-18..22 new; 5/5 fix-mutants killed; functions 1433/1433.
-- [x] R3. Chunk 2 docs + guard: SRG-09 (budget < timeout, mutant killed), design section 7 (SR-D14..17), KNOWN-ISSUES 11 closed + 12..18 added, test plan counts + steps 7/8/10b/10c/20 (8 and 20 BLOCKED: no staff login exists), Skill 163 rules 10..14, README sentence. Functions 1434/1434, `.github/scripts` 1049/1049.
-- [x] R4. Pushed `5a82b44`; CI on it: Functions, QML, Rules, E2E all success, PR Test Summary Comment success, Deploy Check skipped (runs on merge). Sweep summary posted as a PR comment.
-**Findings (concrete cases)**
-- F1: `from:"2026-02-30T00:00:00Z"` parses to 2 Mar (V8 rolls over). Register for a wrong period, no error.
-- F2: cap 250 000 rows at 500 rows/page = 500 sequential reads; ~100-250 ms each = 50-125 s vs 120 s function timeout. Timeout kill sends no CORS headers: client sees a no-answer, not a code.
-- F3: `scopedDb` + `deriveContext` run before the `try`: a transient Firestore error there is an unhandled rejection (no JSON answer).
-- F4: `DATABASE_ID_FOR_ENV["constructor"]` is truthy -> not the safe `prd` fallback. Pre-existing, every handler.
-
-**Open decisions for Taher (defaults in brackets, nothing blocks the merge)**
-- D-R1 restrict `stock_movements` read to owner/admin/manager: now in this PR, or its own small PR before S2e [own PR, needs a rules deploy + emulator rules test that only CI can run].
-- D-R2 `productName` snapshot in ledger rows so deleted products stay readable (KNOWN-ISSUES 13) [before S4b].
-- D-R3 `count()` pre-check so an over-cap request is cheap (item 14) [skip, revisit with the running balance].
-- D-R4 fix the unwrapped `deriveContext` in the other handlers (item 16) [own PR].
-- Dependabot: 1 critical + 10 high open on the default branch (item 18) [look before the next deploy].
-**DECIDED (Taher, 2026-11-11):** D-R1..D-R4 are ONE follow-up PR taken right after #193 merges. Plan: `docs/superpowers/plans/2026-11-11-p1-s4a-followups-one-pr-plan.md` (four commits: older-handler context try, ledger productName, ledger read rule, droppable count() pre-check). A new session starts there: read the plan, ask Taher the 3 grill questions at its top, branch from `main`.
-**Next (in order):** read CI on the sweep head; Taher vetoes/merges; approve functions deploy; THE FOLLOW-UP PR ABOVE; S4b design pass (client page); S2d-2.
-
-## Rebase onto main (2026-11-11, after #194)
-- [x] Rebased all 7 commits onto `origin/main` @ `9e96f84`. Conflicts only in docs: `CHECKPOINT.md` (kept ours, main's archived as the picker-s3 file above), `README.md` (both updates kept, S3 paragraph first), `SKILLS.md` and `SKILLS-INDEX.md` (both kept).
-- [x] Skill number collision: main's S3 took Skill 162, so our register skill is now **Skill 163** (SKILLS.md, SKILLS-INDEX.md, AGENTS.md, README.md, follow-up plan, this file). No code touched; the functions suite was not re-run in the sandbox (no code changed in the rebase, CI is the oracle).
-- [ ] Read CI on the rebased head; then the NEXT list above is unchanged.
+## Next session (pick up here)
+1. Read CI of the PR head after the pass 4 push.
+2. Taher's build and logcat decide what is next (step 11 above).
+3. Then R5b on a NEW branch off `main` after #191 merges (design section 5), then R6.
