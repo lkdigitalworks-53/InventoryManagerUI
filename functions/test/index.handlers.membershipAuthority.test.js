@@ -352,8 +352,141 @@ test("S2f-1 provisionMember stamps the tenant name from the tenant doc, never fr
     }
 });
 
+// Slice 1 of the S4a follow-ups (D-R4): a membership read that THROWS (transient Firestore error)
+// must answer a JSON 500 with the handler's OWN code, never escape as an unhandled rejection (no body,
+// no CORS headers). Never a terminal code: write-rejected parks a write for good on the client.
+const CONTEXT_FAILED_CODE = {
+    recordMutation: "write-unavailable",
+    recordDelta: "write-unavailable",
+    recordMutationsBatch: "write-unavailable",
+    recordOperation: "write-unavailable",
+    acquireLock: "lock-failed",
+    releaseLock: "release-failed",
+    provisionMember: "auth-failed",
+    computeAnalysis: "compute-failed",
+    computeStockRegister: "compute-failed",
+    uploadProductPhoto: "write-failed",
+    deleteProductPhoto: "write-failed"
+};
+
+// reset() above does not clear the harness's call logs; they would carry earlier tests' calls into the
+// "nothing was done" assertions.
+function clearCallLogs() {
+    for (const k of ["setCalls", "applyMutationCalls", "acquireLockCalls", "releaseLockCalls", "storageSaveCalls",
+        "storageDeleteCalls", "docDeleteCalls", "collectionGetCalls"]) mockState[k].length = 0;
+}
+
+function assertNothingDone(h) {
+    assert.equal(mockState.setCalls.length, 0, h.name + " wrote a doc");
+    assert.equal(mockState.applyMutationCalls.length, 0, h.name + " applied a mutation");
+    assert.equal(mockState.acquireLockCalls.length, 0, h.name + " took a lock");
+    assert.equal(mockState.releaseLockCalls.length, 0, h.name + " released a lock");
+    assert.equal(mockState.storageSaveCalls.length, 0, h.name + " saved a file");
+    assert.equal(mockState.storageDeleteCalls.length, 0, h.name + " deleted a file");
+    assert.equal(mockState.docDeleteCalls.length, 0, h.name + " deleted a doc");
+    assert.equal(mockState.collectionGetCalls.length, 0, h.name + " scanned a collection");
+}
+
+const FAILING_READS = [
+    { label: "the users doc read throws", fails: (key) => key.startsWith("users/") },
+    { label: "the member doc read throws", fails: (key) => key.indexOf("/members/") >= 0 },
+    { label: "every read throws", fails: () => true }
+];
+
+for (const h of HANDLERS) {
+    for (const f of FAILING_READS) {
+        test("D-R4 " + h.name + ": " + f.label + " -> JSON 500 " + CONTEXT_FAILED_CODE[h.name] + ", nothing done, one logged error", async () => {
+            reset();
+            clearCallLogs();
+            seedHappyPathAuth(mockState, { uid: UID, tenantId: HOME, role: "owner" });
+            const docs = mockState.docs;
+            mockState.docs = new Proxy(docs, {
+                get(target, key) {
+                    if (typeof key === "string" && f.fails(key)) throw Object.assign(new Error("14 UNAVAILABLE"), { code: 14 });
+                    return target[key];
+                }
+            });
+            mockState.logErrors.length = 0;
+            const res = await call(h);
+            assert.equal(res.statusCode, 500, h.name + " " + JSON.stringify(jsonBody(res)));
+            assert.deepEqual(jsonBody(res), { ok: false, error: CONTEXT_FAILED_CODE[h.name] });
+            assert.notEqual(jsonBody(res).error, "write-rejected", "a context failure must never be terminal");
+            assert.notEqual(jsonBody(res).error, "no-tenant-context", "a failed read is not a refusal");
+            assertNothingDone(h);
+            // computeStockRegister keeps its own inline try and logs with console.error (SR-D16): not captured here.
+            if (h.name !== "computeStockRegister") {
+                const logged = mockState.logErrors.filter((e) => e.msg === "deriveContext failed");
+                assert.equal(logged.length, 1, h.name + " must log the failure once");
+                assert.equal(logged[0].uid, UID);
+            }
+        });
+    }
+}
+
+test("D-R4 a non-Error throw (string, undefined) is still a JSON 500, never an unhandled rejection", async () => {
+    for (const thrown of ["boom", undefined, null, 42, { code: 14 }]) {
+        for (const h of HANDLERS) {
+            reset();
+            seedHappyPathAuth(mockState, { uid: UID, tenantId: HOME, role: "owner" });
+            mockState.docs = new Proxy(mockState.docs, { get(target, key) { if (typeof key === "string" && key.startsWith("users/")) throw thrown; return target[key]; } });
+            const res = await call(h);
+            assert.equal(res.statusCode, 500, h.name + " thrown " + String(thrown));
+            assert.equal(jsonBody(res).error, CONTEXT_FAILED_CODE[h.name]);
+        }
+    }
+});
+
+test("D-R4 the answer carries the CORS headers a platform 500 lacks (the response goes through send())", async () => {
+    reset();
+    seedHappyPathAuth(mockState, { uid: UID, tenantId: HOME, role: "owner" });
+    mockState.docs = new Proxy(mockState.docs, { get() { throw new Error("14 UNAVAILABLE"); } });
+    const res = await call(LOCK);
+    assert.equal(res.statusCode, 500);
+    assert.equal(typeof jsonBody(res), "object");
+});
+
+test("D-R4 a refusal (403 no-tenant-context) is untouched: a refused member is NOT reported as a failed read", async () => {
+    for (const h of HANDLERS) {
+        reset();
+        seedUserDoc(VICTIM, "owner");
+        const res = await call(h);
+        assert.equal(res.statusCode, 403, h.name);
+        assert.equal(jsonBody(res).error, "no-tenant-context");
+    }
+});
+
+test("D-R4 monkey: a random read fails at a random step, 200 runs: always a JSON body, never a throw out of the handler", async () => {
+    let seed = 20261111;
+    const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    for (let i = 0; i < 200; i++) {
+        const h = HANDLERS[Math.floor(rnd() * HANDLERS.length)];
+        const f = FAILING_READS[Math.floor(rnd() * FAILING_READS.length)];
+        reset();
+        seedHappyPathAuth(mockState, { uid: UID, tenantId: HOME, role: "owner" });
+        mockState.docs = new Proxy(mockState.docs, { get(target, key) { if (typeof key === "string" && f.fails(key)) throw new Error("14 UNAVAILABLE"); return target[key]; } });
+        const res = await call(h); // an unhandled rejection would reject this await
+        assert.equal(res.statusCode, 500, h.name + " run " + i);
+        assert.equal(jsonBody(res).error, CONTEXT_FAILED_CODE[h.name]);
+    }
+});
+
+test("guard: every handler has a context-failure code in this file (add new handlers to CONTEXT_FAILED_CODE)", () => {
+    assert.deepEqual(Object.keys(CONTEXT_FAILED_CODE).sort(), HANDLERS.map((h) => h.name).sort());
+});
+
 test("guard: every deriveContext call site in index.js belongs to a handler in HANDLERS (add new handlers here)", () => {
     const src = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
-    const sites = (src.match(/await deriveContext\(/g) || []).length;
-    assert.equal(sites, HANDLERS.length, "index.js has " + sites + " deriveContext call sites, this file covers " + HANDLERS.length);
+    // D-R4: ten handlers go through deriveContextSafe; computeStockRegister keeps its own inline try (it
+    // also wraps scopedDb, SR-D16); the one other raw call is inside deriveContextSafe itself.
+    const safe = (src.match(/await deriveContextSafe\(/g) || []).length;
+    const raw = (src.match(/await deriveContext\(/g) || []).length;
+    assert.equal(raw, 2, "raw deriveContext calls: the helper and computeStockRegister only, found " + raw);
+    assert.equal(safe + 1, HANDLERS.length, "index.js has " + safe + " deriveContextSafe sites + computeStockRegister, this file covers " + HANDLERS.length);
+});
+
+test("guard: no handler answers a context failure with a terminal code (write-rejected parks a write for good)", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+    const lines = src.split("\n").filter((l) => l.indexOf("CONTEXT_FAILED)") >= 0 && l.indexOf("deriveContextSafe") < 0);
+    assert.equal(lines.length, HANDLERS.length - 1);
+    for (const l of lines) assert.equal(/REJECTED|write-rejected/.test(l), false, l);
 });

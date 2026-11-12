@@ -237,6 +237,7 @@ async function applyMutation(db, params) {
         const rows = MovementLogic.buildRows(movements, {
             baseId: params.requestId,
             productId: params.entityId,
+            productName: MovementLogic.nameFor(current, params.action === "delete" ? null : params.after),
             actorUid: params.actorUid,
             actorRole: params.actorRole,
             serverTimestamp: params.serverTimestamp,
@@ -309,6 +310,8 @@ async function applyDelta(db, params) {
         const rows = MovementLogic.buildRows(movements, {
             baseId: params.requestId,
             productId: params.entityId,
+            // The delta touches stock fields only, so the name is the stored doc's (unchanged by it).
+            productName: MovementLogic.nameFor(null, current),
             actorUid: params.actorUid,
             actorRole: params.actorRole,
             serverTimestamp: params.serverTimestamp,

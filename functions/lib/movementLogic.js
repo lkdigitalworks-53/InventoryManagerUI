@@ -102,8 +102,33 @@ function deriveForMutation(action, before, after) {
     return deriveMovement(delta, action === "create" ? "receipt" : "adjustment");
 }
 
+// The product name a ledger row carries, so a deleted product stays readable in the stock register
+// (the inventory doc is gone, the row is not). Only a non-empty string survives: trimmed and capped at
+// MAX_PRODUCT_NAME. Anything else is `undefined`, and buildRows then omits the field (Firestore rejects
+// an `undefined` value, and a blank name would hide a real one that came earlier).
+const MAX_PRODUCT_NAME = 200;
+function cleanProductName(v) {
+    if (typeof v !== "string") return undefined;
+    const t = v.trim();
+    if (t === "") return undefined;
+    let cut = t.slice(0, MAX_PRODUCT_NAME);
+    // A cap that lands between the two halves of a surrogate pair (an emoji) would leave a lone half,
+    // which the wire turns into U+FFFD. Drop the orphan half instead (PR #195 review).
+    const last = cut.charCodeAt(cut.length - 1);
+    if (cut.length < t.length && last >= 0xD800 && last <= 0xDBFF) cut = cut.slice(0, -1);
+    return cut.trim();
+}
+
+// ONE place that picks the name for a write: the document AFTER the change, else the one before it
+// (a delete has no after). Either may be null or lack a name.
+function nameFor(before, after) {
+    const fromAfter = after && typeof after === "object" ? cleanProductName(after.name) : undefined;
+    if (fromAfter !== undefined) return fromAfter;
+    return before && typeof before === "object" ? cleanProductName(before.name) : undefined;
+}
+
 // One { id, data } per movement. ctx: { baseId, productId, actorUid, actorRole,
-// serverTimestamp, clientTimestamp, requestId, operationId?, opType?, opIndex? }.
+// serverTimestamp, clientTimestamp, requestId, productName?, operationId?, opType?, opIndex? }.
 // `baseId` is the audit_log id of the write that carries the movements, so a
 // retried request (which replays from that audit entry) never writes a row twice.
 function buildRows(movements, ctx) {
@@ -123,6 +148,8 @@ function buildRows(movements, ctx) {
             clientTimestamp: ctx.clientTimestamp,
             requestId: ctx.requestId
         };
+        const productName = cleanProductName(ctx.productName);
+        if (productName !== undefined) data.productName = productName;
         if (ctx.operationId !== undefined) {
             data.operationId = ctx.operationId;
             data.opType = ctx.opType;
@@ -133,6 +160,6 @@ function buildRows(movements, ctx) {
 }
 
 module.exports = {
-    KIND_DIRECTION, MOVEMENT_KINDS, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES,
-    validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
+    KIND_DIRECTION, MOVEMENT_KINDS, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
+    cleanProductName, nameFor, validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
 };

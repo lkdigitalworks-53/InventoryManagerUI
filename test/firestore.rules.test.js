@@ -112,7 +112,7 @@ async function dbAs(uid, role) {
 const LEDGER_COLLECTIONS = ["audit_log", "transactions", "stock_batches", "stock_movements"];
 
 for (const collection of LEDGER_COLLECTIONS) {
-    test(`ledger/${collection}: a member can read but never write it`, async () => {
+    test(`ledger/${collection}: a member (the seeded owner) can read but never write it`, async () => {
         await seedAsAdmin(`tenants/${TENANT}/${collection}`, "doc1", { seed: true });
 
         await assertSucceeds(getDoc(doc(memberDb(), `tenants/${TENANT}/${collection}/doc1`)));
@@ -130,6 +130,89 @@ for (const collection of LEDGER_COLLECTIONS) {
 
     test(`ledger/${collection}: an unauthenticated request cannot write it`, async () => {
         await assertFails(setDoc(doc(anonDb(), `tenants/${TENANT}/${collection}/doc1`), { x: 1 }));
+    });
+}
+
+// ── stock_movements read is narrower than the other ledger collections (P1 S4a follow-up D-R1) ───
+// owner / admin / manager read it (mirrors REGISTER_ROLES); staff, a suspended manager, a bad or missing
+// role, an outsider and an anonymous caller do not. Nobody writes it. The other three ledger
+// collections stay readable by every active member, pinned below so a copy-paste cannot narrow them.
+
+const LEDGER_PATH = `tenants/${TENANT}/stock_movements/doc1`;
+
+for (const role of ["owner", "admin", "manager"]) {
+    test(`D-R1 stock_movements: an active ${role} can read it and still cannot write, update or delete it`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+        const db = await dbAs(`ledger-${role}`, role);
+        await assertSucceeds(getDoc(doc(db, LEDGER_PATH)));
+        await assertFails(setDoc(doc(db, LEDGER_PATH), { tampered: true }));
+        await assertFails(setDoc(doc(db, `tenants/${TENANT}/stock_movements/doc2`), { n: 1 }));
+        await assertFails(updateDoc(doc(db, LEDGER_PATH), { seed: false }));
+        await assertFails(deleteDoc(doc(db, LEDGER_PATH)));
+        assert.deepEqual(await readAsAdmin(LEDGER_PATH), { seed: true });
+    });
+}
+
+test("D-R1 stock_movements: staff cannot read it, cannot write it, and the data is untouched", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+    const db = await dbAs("ledger-staff", "staff");
+    await assertFails(getDoc(doc(db, LEDGER_PATH)));
+    await assertFails(setDoc(doc(db, LEDGER_PATH), { tampered: true }));
+    await assertFails(deleteDoc(doc(db, LEDGER_PATH)));
+    assert.deepEqual(await readAsAdmin(LEDGER_PATH), { seed: true });
+});
+
+for (const role of ["owner", "admin", "manager", "staff"]) {
+    test(`D-R1 stock_movements: a SUSPENDED ${role} can neither read nor write it`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+        const db = await dbWith(`ledger-susp-${role}`, role, "suspended");
+        await assertFails(getDoc(doc(db, LEDGER_PATH)));
+        await assertFails(setDoc(doc(db, LEDGER_PATH), { tampered: true }));
+    });
+}
+
+for (const [label, data] of [
+    ["viewer role", { role: "viewer", status: "active" }],
+    ["empty role", { role: "", status: "active" }],
+    ["wrong-case Owner", { role: "Owner", status: "active" }],
+    ["numeric role", { role: 7, status: "active" }],
+    ["missing role", { status: "active" }],
+    ["missing status", { role: "owner" }],
+    ["unknown status", { role: "owner", status: "banned" }],
+]) {
+    test(`D-R1 stock_movements: a member doc with ${label} cannot read it`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+        const db = await dbWithDoc(`ledger-bad-${label.replace(/\s+/g, "-")}`, data);
+        await assertFails(getDoc(doc(db, LEDGER_PATH)));
+    });
+}
+
+test("D-R1 stock_movements: an outsider and an anonymous caller can neither read it nor list it", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+    for (const db of [outsiderDb(), anonDb()]) {
+        await assertFails(getDoc(doc(db, LEDGER_PATH)));
+        await assertFails(getDocs(collection(db, `tenants/${TENANT}/stock_movements`)));
+    }
+});
+
+test("D-R1 stock_movements: a manager can list the collection, a staff member cannot", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+    await assertSucceeds(getDocs(collection(await dbAs("list-manager", "manager"), `tenants/${TENANT}/stock_movements`)));
+    await assertFails(getDocs(collection(await dbAs("list-staff", "staff"), `tenants/${TENANT}/stock_movements`)));
+});
+
+test("D-R1 stock_movements: a manager of ANOTHER tenant cannot read this tenant's ledger", async () => {
+    await seedAsAdmin(`tenants/${TENANT}/stock_movements`, "doc1", { seed: true });
+    await seedAsAdmin("tenants/other-tenant/members", "other-mgr", { uid: "other-mgr", role: "manager", status: "active" });
+    await assertFails(getDoc(doc(testEnv.authenticatedContext("other-mgr").firestore(), LEDGER_PATH)));
+});
+
+for (const collectionName of ["audit_log", "transactions", "stock_batches"]) {
+    test(`D-R1 regression ${collectionName}: every active role can still read it (only stock_movements narrowed)`, async () => {
+        await seedAsAdmin(`tenants/${TENANT}/${collectionName}`, "doc1", { seed: true });
+        for (const role of ["owner", "admin", "manager", "staff"]) {
+            await assertSucceeds(getDoc(doc(await dbAs(`reg-${collectionName}-${role}`, role), `tenants/${TENANT}/${collectionName}/doc1`)));
+        }
     });
 }
 

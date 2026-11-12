@@ -122,7 +122,9 @@ function emptyKinds() {
 }
 
 function emptyProduct() {
-    return { opening: 0, windowNet: 0, ledger: 0, count: 0, kinds: emptyKinds() };
+    // nameAt/name: the name on the LATEST row (by time) that carries one; equal times keep the greater name
+    // so the answer never depends on the order the ledger pages arrive in.
+    return { opening: 0, windowNet: 0, ledger: 0, count: 0, kinds: emptyKinds(), nameAt: -Infinity, name: null };
 }
 
 // win: { fromMs, toMs } from parseWindow. Feed every ledger row to add(); call finish() once
@@ -154,6 +156,11 @@ function createAccumulator(win) {
         if (!acc) { acc = emptyProduct(); perProduct[row.productId] = acc; }
         acc.ledger += qty;
         acc.count += 1;
+        const rowName = Movement.cleanProductName(row.productName);
+        if (rowName !== undefined && (t > acc.nameAt || (t === acc.nameAt && rowName > acc.name))) {
+            acc.nameAt = t;
+            acc.name = rowName;
+        }
         if (t < win.fromMs) {
             acc.opening += qty;
         } else if (t < win.toMs) {
@@ -199,7 +206,7 @@ function createAccumulator(win) {
             }
             rows.push({
                 productId: id,
-                name: (doc && typeof doc.name === "string") ? doc.name : null,
+                name: (doc && typeof doc.name === "string") ? doc.name : acc.name,
                 deleted: !doc,
                 opening: round9(acc.opening),
                 kinds: kinds,

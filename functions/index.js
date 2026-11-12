@@ -32,7 +32,7 @@ const MemberProvisionLogic = require("./lib/memberProvisionLogic");
 const PhotoValidation = require("./lib/photoValidation");
 const PhotoCleanup = require("./lib/photoCleanup");
 const { send } = require("./lib/httpResponse");
-const { classifyWriteError } = require("./lib/writeError");
+const { classifyWriteError, UNAVAILABLE } = require("./lib/writeError");
 
 admin.initializeApp();
 
@@ -169,6 +169,21 @@ async function deriveContext(db, uid) {
     return { tenantId: tenantId, role: member.role, actorName: actorName };
 }
 
+// The caller's context, or null (refused), or CONTEXT_FAILED when the membership read itself threw
+// (a transient Firestore error). An async handler that throws before its own try is an unhandled
+// rejection: no JSON body and no CORS headers, so the client cannot tell why. Each handler maps
+// CONTEXT_FAILED to ITS OWN 500 code. Never map it to a terminal code (write-rejected parks a write
+// for good): the failure says nothing about the request, so the client must retry.
+const CONTEXT_FAILED = Object.freeze({ failed: true });
+async function deriveContextSafe(db, uid) {
+    try {
+        return await deriveContext(db, uid);
+    } catch (e) {
+        logger.error("deriveContext failed", { uid: uid, message: e && e.message, code: e && e.code });
+        return CONTEXT_FAILED;
+    }
+}
+
 exports.recordMutation = functions.onRequest(
     { region: "asia-south1", cors: true },
     async (req, res) => {
@@ -207,7 +222,8 @@ exports.recordMutation = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -362,7 +378,8 @@ exports.recordDelta = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -439,7 +456,8 @@ exports.recordOperation = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -520,7 +538,8 @@ exports.acquireLock = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "lock-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -585,7 +604,8 @@ exports.releaseLock = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "release-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -644,7 +664,8 @@ exports.recordMutationsBatch = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -750,7 +771,8 @@ exports.provisionMember = functions.onRequest(
 
         const body = req.body || {};
         const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
+        const ctx = await deriveContextSafe(db, decoded.uid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "auth-failed" }); return; }
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
         if (ctx.role !== "owner" && ctx.role !== "admin") {
             send(res, 403, { ok: false, error: "not-authorized" });
@@ -993,7 +1015,8 @@ exports.computeAnalysis = functions.onRequest(
 
         const body = req.body || {};
         const db = scopedDb(body.env);
-        const ctx = await deriveContext(db, decoded.uid);
+        const ctx = await deriveContextSafe(db, decoded.uid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "compute-failed" }); return; }
         if (!ctx) { send(res, 403, { ok: false, error: "no-tenant-context" }); return; }
 
         const viewMode = String(body.viewMode || "");
@@ -1085,6 +1108,21 @@ const REGISTER_PAGE_SIZE = 1000;
 // The function timeout is 120 s. The scan stops starting new pages after this budget so the answer
 // is a clean 504 `ledger-scan-timeout` with CORS headers, with 20 s left to send it.
 const REGISTER_SCAN_BUDGET_MS = 100000;
+// count() is only a cheap pre-check, so it never gets to eat the scan budget: after this long it is treated
+// like a failed count (logged, the stream runs and its own cap stays the backstop). Without it a hung
+// count() would run into the 120 s function timeout and the client would get a platform 504 with no JSON
+// body and no CORS headers (PR #195 review).
+const REGISTER_COUNT_TIMEOUT_MS = 15000;
+
+// Rejects with { code } if `promise` has not settled after `ms`. The timer is always cleared, and the
+// losing promise stays handled by Promise.race, so a late rejection is never unhandled.
+function withTimeout(promise, ms, code) {
+    let timer;
+    const limit = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(code), { code: code })), ms);
+    });
+    return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 
 exports.computeStockRegister = functions.onRequest(
     { region: "asia-south1", cors: true, timeoutSeconds: 120 },
@@ -1134,6 +1172,24 @@ exports.computeStockRegister = functions.onRequest(
             const acc = StockRegisterMath.createAccumulator(win);
             const readAt = Date.now();
             const deadlineMs = readAt + REGISTER_SCAN_BUDGET_MS;
+            // D-R3: ask Firestore for the row COUNT first (an aggregation: about one read per 1000 index
+            // entries). A ledger over the cap answers 413 before a single row is read, so every retry
+            // stays cheap. A count that fails is NOT a failed request: log it and fall through to the
+            // stream, whose own cap below stays the backstop (rows can arrive between the two).
+            // The count is capped at REGISTER_COUNT_TIMEOUT_MS: a hung count must not eat the scan budget.
+            let ledgerCount = null;
+            try {
+                const agg = await withTimeout(db.collection(tenantRoot + "/stock_movements").count().get(),
+                    REGISTER_COUNT_TIMEOUT_MS, "count-timeout");
+                ledgerCount = agg.data().count;
+            } catch (countErr) {
+                logger.warn("computeStockRegister count failed, scanning instead",
+                    { message: countErr && countErr.message, code: countErr && countErr.code });
+            }
+            if (typeof ledgerCount === "number" && ledgerCount > REGISTER_MAX_LEDGER_ROWS) {
+                send(res, 413, { ok: false, error: "ledger-too-large" });
+                return;
+            }
             // Ledger first, inventory second, both outside one transaction: a sale landing between
             // the two reads can show one product as not reconciling for this answer only
             // (`reconciles` is a cross-check, never an input to a balance). Run it again.
@@ -1212,7 +1268,8 @@ exports.uploadProductPhoto = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "write-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
@@ -1243,21 +1300,36 @@ exports.uploadProductPhoto = functions.onRequest(
 
         // Idempotency check up front, before touching Storage at all -- a retried call with the
         // same requestId must not re-upload.
-        const existingAudit = await auditRef.get();
-        if (existingAudit.exists) {
-            const productSnap = await productRef.get();
-            const photoIds = productSnap.exists ? (productSnap.data().photoIds || []) : [];
-            send(res, 200, { ok: true, already: true, photoId: photoId, photoIds: photoIds });
-            return;
-        }
-
+        //
         // F3 (PH3, design Q1): read the product BEFORE any Storage write, so a missing product (404)
         // or a full gallery (409) never leaves orphan objects. The transaction below stays the final
         // authority; the tiny race between this read and the Storage write is accepted (documented
         // in the design: a product deleted in that window can leave one orphan pair).
-        const preflightSnap = await productRef.get();
-        const preflight = PhotoCleanup.evaluateUploadPreflight(
-            preflightSnap.exists ? (preflightSnap.data() || {}) : null, photoId, MAX_PHOTOS_PER_PRODUCT);
+        //
+        // Both reads sit inside ONE try (PR #195 review): a transient Firestore error here used to escape
+        // as an unhandled rejection (no JSON body, no CORS headers), the very failure D-R4 closes for the
+        // context read. Nothing is written yet, so the client may retry: write-failed, never a terminal code.
+        let replayPhotoIds = null;
+        let preflight = null;
+        try {
+            const existingAudit = await auditRef.get();
+            if (existingAudit.exists) {
+                const productSnap = await productRef.get();
+                replayPhotoIds = productSnap.exists ? (productSnap.data().photoIds || []) : [];
+            } else {
+                const preflightSnap = await productRef.get();
+                preflight = PhotoCleanup.evaluateUploadPreflight(
+                    preflightSnap.exists ? (preflightSnap.data() || {}) : null, photoId, MAX_PHOTOS_PER_PRODUCT);
+            }
+        } catch (e) {
+            console.error("uploadProductPhoto preflight read failed", e);
+            send(res, 500, { ok: false, error: "write-failed" });
+            return;
+        }
+        if (replayPhotoIds !== null) {
+            send(res, 200, { ok: true, already: true, photoId: photoId, photoIds: replayPhotoIds });
+            return;
+        }
         if (!preflight.ok) {
             send(res, preflight.status, { ok: false, error: preflight.error });
             return;
@@ -1367,7 +1439,8 @@ exports.deleteProductPhoto = functions.onRequest(
             return;
         }
 
-        const ctx = await deriveContext(db, actorUid);
+        const ctx = await deriveContextSafe(db, actorUid);
+        if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: "write-failed" }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
