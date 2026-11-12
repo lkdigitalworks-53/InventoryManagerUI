@@ -216,7 +216,10 @@ service cloud.firestore {
       // Generic fallback. READ: any active member, except the server-only names. WRITE: only the
       // allow-list above (default deny). See isClientWritableCollection.
       match /{collection}/{docId} {
-        allow read: if isMember(tenantId) && !isServerOnlyCollection(collection);
+        // stock_movements is carved out like the server-only names: its own block above narrows the read
+        // to isLedgerReader, and Firestore grants a request if ANY matching rule allows it, so this
+        // wildcard would otherwise hand the ledger to every member again (CI caught it, PR #195).
+        allow read: if isMember(tenantId) && !isServerOnlyCollection(collection) && collection != 'stock_movements';
         allow create, update, delete: if isMember(tenantId)
                                       && isClientWritableCollection(collection);
       }

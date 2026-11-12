@@ -107,6 +107,18 @@ test("SRG-08b D-R1: stock_movements read uses isLedgerReader, whose role list eq
     assert.deepEqual(roles, Reg.REGISTER_ROLES, "firestore.rules and REGISTER_ROLES must not drift");
 });
 
+test("SRG-08e D-R1: the generic fallback's READ carves stock_movements out (Firestore ORs every matching rule: without it every member reads the ledger)", () => {
+    const rules = fs.readFileSync(path.join(root, "..", "firestore.rules"), "utf8");
+    const m = rules.match(/match \/\{collection\}\/\{docId\} \{([\s\S]*?)\n      \}/);
+    assert.ok(m, "generic fallback block not found");
+    const read = m[1].match(/allow read: if ([^;]*);/);
+    assert.ok(read, "fallback read rule not found");
+    assert.ok(/collection != 'stock_movements'/.test(read[1]), "the fallback read must exclude stock_movements");
+    assert.ok(/!isServerOnlyCollection\(collection\)/.test(read[1]), "the server-only carve-out must stay");
+    // Any OTHER match block that would also catch stock_movements for reads must not exist.
+    assert.equal((rules.match(/match \/stock_movements\//g) || []).length, 1, "exactly one stock_movements block");
+});
+
 test("SRG-08c D-R1: audit_log, transactions and stock_batches were NOT narrowed (stock_batches is KNOWN-ISSUES item 19)", () => {
     const rules = fs.readFileSync(path.join(root, "..", "firestore.rules"), "utf8");
     for (const c of ["audit_log", "transactions", "stock_batches"]) {

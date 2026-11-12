@@ -39,7 +39,9 @@ Happy: S4a step 4, deleted product C now answers `name` = C's name. Edge: rename
 WRITTEN, NOT RUN locally. 22 new cases plus the shared ledger loop (owner): owner, admin, manager read OK and cannot create / update / delete (data untouched); staff cannot read, write or delete; suspended owner / admin / manager / staff cannot read or write; member docs with role viewer, empty, `Owner`, numeric, missing, missing status, unknown status cannot read; outsider and anonymous cannot get or list; manager can list, staff cannot; a manager of ANOTHER tenant cannot read; regression: `audit_log`, `transactions`, `stock_batches` stay readable by all four roles.
 ### 2. Unit / guard (`functions/test/stockRegister.guard.test.js`, RUN 12/12)
 SRG-08 write-denied; SRG-08b `isLedgerReader` is the read rule, defined once and used once, starts with `isMember`, and its role list EQUALS `REGISTER_ROLES` (parsed from both files); SRG-08c the three sibling collections still `isMember` read / `false` write; SRG-08d no `stock_movements` in `qml/`, `src/`, `main.cpp`.
-### 3. Mutation (hand, 5/5 killed by the guards)
+### 1b. CI found a hole the guards missed (2026-11-12, fixed in the same PR)
+The emulator job failed 2 of 129 cases on the first head: staff COULD still read `stock_movements`, because the generic fallback `match /{collection}/{docId}` allowed every member to read it and Firestore ORs matching rules. Fix: `collection != 'stock_movements'` in the fallback read; new guard SRG-08e reads the fallback block and pins the carve-out (mutant removing it: killed). The emulator cases are the proof; read the Rules job on the fixing head.
+### 3. Mutation (hand, 5/5 killed by the guards, plus 1/1 for the carve-out)
 staff added to the list; read back to `isMember`; `isMember` dropped from the helper; `stock_batches` narrowed; admin removed. The emulator cases cover the same behaviour but only CI can run them.
 ### 4. Regression
 Functions suite and scripts suite unchanged and green (see CHECKPOINT for the final counts). No handler code changed in this slice.
