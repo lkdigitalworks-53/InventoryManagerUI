@@ -18,7 +18,7 @@ Taher: the Felgo Cloud build of this branch crashes at launch on Android after a
 - [x] 6. Guard: `functions/test/qmlAliasTargets.guard.test.js` (11 tests: AS-1..AS-6 scanner, AL-0..AL-3 tree, IM-1 exact-case imports). Proven: with the QML fix stashed AL-1, AL-2, AL-3 and G-5 fail (4); with the fix 11 of 11 pass.
 - [x] 7. Suites run here: `node --test test/*.test.js` in `functions/` = 1182 tests, 1173 pass, 9 files fail on `Cannot find module 'node-mocks-http'` (not installed in this sandbox, same on the clean tree; CI has it). Brace balance of the three touched files checked.
 - [x] 8. Docs: test plan section 9 + device steps 36 and 37, design and status doc wording, AGENTS (pass 4 entry), SKILLS Skill 164 rule 20.
-- [ ] 9. Commit, push to the PR branch (this step is the one being done when this file is read: check `git log` and the PR for the pass 4 commit).
+- [x] 9. Committed `9e550b1` and pushed to the PR branch (`afa2808..9e550b1`) and to the work branch. The sandbox git proxy first refused (repo not in the session's set); `add_repo` with push access fixed it, no token was used or written to `.git/config`.
 - [ ] 10. CI of the new head: QML Tests, Functions, Rules, E2E.
 - [ ] 11. Taher: new Felgo Cloud build, step 36 of the test plan FIRST (clean install opens to Login). If it still exits, send the logcat: the first `qt.qml` / `FATAL` / `AndroidRuntime` line decides.
 
