@@ -65,5 +65,8 @@ opType restriction dropped; exact-keys dropped; `read`/`dismissed` check dropped
 11. **Negative.** Restock for a product deleted on another device: refused, no feed row.
 12. **Purchase ledger.** Analysis > Purchased still shows the restock (the removed `recordPurchase` was not on that path since R4).
 
-## 8. Counts
+## 8. CI correction round (honest)
+First CI read on `bde06ca`: Functions green; QML RED, 4 of the QML cases: `tst_InventoryStore_restock` (2) and `tst_RestockPlan` M1 still expected the old 4/6 op counts, and `tst_ActivityLog` 50-cap case used an equal timestamp (equal goes AFTER the held row). Test-side only, product code was right; fixed in the next commit. Learning: Skill 166 rule 9.
+
+## 9. Counts
 Functions 1711/1711, scripts 1049/1049, QML twins and e2e in CI.

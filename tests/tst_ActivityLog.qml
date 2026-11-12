@@ -167,7 +167,9 @@ TestCase {
         ActivityLog.entries = arr
         compare(ActivityLog.adopt(_row("old", 1)), false)
         compare(ActivityLog.entries.length, 50)
-        verify(ActivityLog.adopt(_row("newest", 59)))
+        var newest = _row("newest", 59)
+        newest.timestamp = "2026-06-15T13:00:00.000Z"   // strictly newer than e0 (an equal time goes AFTER the row held)
+        verify(ActivityLog.adopt(newest))
         compare(ActivityLog.entries.length, 50)
         compare(ActivityLog.entries[0].id, "newest")
     }

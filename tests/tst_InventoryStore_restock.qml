@@ -100,13 +100,13 @@ TestCase {
         _tap({ party: "Newco" })
         var it = _items()[0]
         verify(it.requestId.indexOf("restock:") === 0)
-        compare(it.ops.map(function(o) { return o.kind }).join(","), "mint,mint,mutation,mutation,delta,mutation")
+        compare(it.ops.map(function(o) { return o.kind }).join(","), "mint,mint,mutation,mutation,delta,mutation,mutation")
     }
     function test_a_known_supplier_name_resolves_to_its_id_and_adds_no_supplier() {
         AuthService.isOnline = false
         _tap({ party: "acme farms" })
         var ops = _items()[0].ops
-        compare(ops.length, 4)
+        compare(ops.length, 5)
         compare(ops[1].after.supplierId, "SUP-009")
     }
     function test_a_second_restock_of_the_product_is_refused_until_the_first_leaves_the_outbox() {

@@ -385,7 +385,7 @@ TestCase {
             var p = RP.build(inp)
             if (p.ok) {
                 applied++
-                verify(p.ops.length === 4 || p.ops.length === 6)
+                verify(p.ops.length === 5 || p.ops.length === 7)
                 verify(p.ops[p.at.delta].movements.length === 1)
             } else {
                 refused++

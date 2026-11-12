@@ -5001,5 +5001,6 @@ Rules:
 6. When an answer can come from an older client's queue, keep a clearly marked legacy fallback for ONE release (`shortcut:` comment, KNOWN-ISSUES entry), written so the new path and the old path can never both fire (`!out.activity`).
 7. Deploy order is part of the design: a new client against an old server is a terminal 400. Say "functions first" in the PR, the test plan and AGENTS.
 8. Run the hand mutants on the stamping and the shape rules, and read the survivors: one survivor is one missing test.
+9. (CI, 2026-11-12) Adding an op to a plan changes every test that counts ops, and the QML twins are invisible to the Node run: CI showed 4 red QML cases (`tst_InventoryStore_restock` x2 and `tst_RestockPlan` monkey still expected 4 or 6 ops; `tst_ActivityLog` assumed a newer row at an EQUAL timestamp goes first, it goes after). Before pushing, `grep -rn "ops.length\|mint,mint" tests test/e2e` for the plan you changed, not only the Node tests, and give a test row a strictly different timestamp when order matters.
 
 **The check:** for a derived row, answer (a) what happens if the app dies right after the answer, (b) what a replay writes, (c) who decides actor and time, (d) which other endpoint can now reach the collection.
