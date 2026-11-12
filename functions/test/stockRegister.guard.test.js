@@ -130,11 +130,21 @@ test("SRG-08c D-R1: audit_log, transactions and stock_batches were NOT narrowed 
 });
 
 test("SRG-08d D-R1: the app never reads stock_movements directly (a client read would break for staff)", () => {
-    const { execSync } = require("node:child_process");
+    // A plain fs walk, not a shell grep: a missing folder or a missing grep must FAIL here, never pass vacuously.
     const repo = path.join(root, "..");
-    let out = "";
-    try { out = execSync("grep -rln stock_movements qml src main.cpp", { cwd: repo, encoding: "utf8" }); } catch (e) { out = ""; }
-    assert.equal(out.trim(), "", "a client read of stock_movements needs a role-aware UI: " + out);
+    const hits = [];
+    const walk = (p) => {
+        if (fs.statSync(p).isDirectory()) {
+            for (const name of fs.readdirSync(p)) walk(path.join(p, name));
+        } else if (fs.readFileSync(p, "utf8").indexOf("stock_movements") >= 0) {
+            hits.push(path.relative(repo, p));
+        }
+    };
+    for (const target of ["qml", "src", "main.cpp"]) {
+        assert.ok(fs.existsSync(path.join(repo, target)), target + " not found: the guard would pass without looking");
+        walk(path.join(repo, target));
+    }
+    assert.deepEqual(hits, [], "a client read of stock_movements needs a role-aware UI");
 });
 
 test("SRG-09 the scan budget always ends well before the function timeout, and the stream gets page size + deadline", () => {
@@ -160,4 +170,14 @@ test("SRG-11 the count pre-check sits before the stream, uses the SAME cap const
     const catchAt = block.indexOf("catch (countErr)");
     assert.ok(catchAt > c && catchAt < st, "count() failure must be caught locally and fall through");
     assert.ok(/streamAllPaged\(db, tenantRoot \+ "\/stock_movements", acc\.add, REGISTER_MAX_LEDGER_ROWS/.test(block), "the in-stream cap (backstop) is still the same constant");
+});
+
+test("SRG-12 the count timeout is a constant well under the scan budget, wraps count().get(), and is cleared in a finally", () => {
+    const t = indexSrc.match(/const REGISTER_COUNT_TIMEOUT_MS = (\d+);/);
+    const b = indexSrc.match(/const REGISTER_SCAN_BUDGET_MS = (\d+);/);
+    assert.ok(t && b, "constants not found");
+    assert.ok(Number(t[1]) >= 5000, "a count may take a few seconds on a big ledger");
+    assert.ok(Number(t[1]) * 4 <= Number(b[1]), "the count must leave most of the scan budget to the stream");
+    assert.ok(/withTimeout\(db\.collection\(tenantRoot \+ "\/stock_movements"\)\.count\(\)\.get\(\),\s*REGISTER_COUNT_TIMEOUT_MS/.test(handlerBlock()), "count().get() must go through withTimeout");
+    assert.ok(/\.finally\(\(\) => clearTimeout\(timer\)\)/.test(indexSrc), "the timer must always be cleared");
 });

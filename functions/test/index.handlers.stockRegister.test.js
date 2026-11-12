@@ -32,6 +32,7 @@ function reset() {
     mockState.countCalls.length = 0;
     mockState.countError = null;
     mockState.countValue = null;
+    mockState.countHang = false;
     mockState.verifyIdToken = async () => ({ uid: "test-uid" });
 }
 
@@ -448,4 +449,114 @@ test("SRH-30 monkey: random counts and ledger sizes never produce a 500, and 413
         const over = !mockState.countError && typeof count === "number" && count > 250000;
         assert.equal(res.statusCode, over ? 413 : 200, "count=" + String(count) + " err=" + Boolean(mockState.countError));
     }
+});
+
+// ── PR #195 review: a failed count() is logged as ONE structured warning, not a raw console dump ─────
+test("SRH-31 count() throws -> exactly one structured logger.warn (message + code), still served by the stream", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.logWarnings.length = 0;
+    mockState.countError = Object.assign(new Error("14 UNAVAILABLE: try again"), { code: 14 });
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 2, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 2)];
+    const res = await call();
+    assert.equal(res.statusCode, 200);
+    const warned = mockState.logWarnings.filter((w) => w.msg.indexOf("count failed, scanning instead") >= 0);
+    assert.equal(warned.length, 1);
+    assert.equal(warned[0].code, 14);
+    assert.equal(warned[0].message, "14 UNAVAILABLE: try again");
+    assert.equal(Object.prototype.hasOwnProperty.call(warned[0], "stack"), false, "no stack or raw error object in the log entry");
+});
+
+test("SRH-32 count() throws a non-Error (string, object without a message): logged without throwing, request still served", async () => {
+    for (const thrown of ["boom", { code: 4 }, 7]) {
+        reset();
+        seedHappyPathAuth(mockState);
+        mockState.logWarnings.length = 0;
+        mockState.countError = thrown;
+        mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 1, IN_WINDOW)];
+        mockState.collections[INV] = [product("p1", "W", 1)];
+        const res = await call();
+        assert.equal(res.statusCode, 200, String(thrown));
+        assert.equal(mockState.logWarnings.filter((w) => w.msg.indexOf("count failed") >= 0).length, 1, String(thrown));
+    }
+});
+
+test("SRH-33 a count that SUCCEEDS logs no warning (the warning means the pre-check was skipped)", async () => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.logWarnings.length = 0;
+    mockState.countValue = 3;
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 1, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 1)];
+    assert.equal((await call()).statusCode, 200);
+    assert.equal(mockState.logWarnings.filter((w) => w.msg.indexOf("count failed") >= 0).length, 0);
+});
+
+// ── PR #195 review: a hung count() is cut off, then the stream serves the request ────────────────────
+async function callWithHungCount(t, advanceMs) {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const pending = call();
+    // Let the handler run (microtasks only) until it is waiting on count(); setImmediate is not mocked.
+    for (let i = 0; i < 200 && mockState.countCalls.length === 0; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(mockState.countCalls.length, 1, "the handler reached count()");
+    t.mock.timers.tick(advanceMs);
+    return pending;
+}
+
+test("SRH-34 count() never settles: after 15 s it is abandoned, one warning is logged and the stream serves the request", { timeout: 10000 }, async (t) => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.logWarnings.length = 0;
+    mockState.countHang = true;
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 5, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 5)];
+    const res = await callWithHungCount(t, 15000);
+    assert.equal(res.statusCode, 200);
+    assert.equal(jsonBody(res).products[0].closing, 5);
+    const warned = mockState.logWarnings.filter((w) => w.msg.indexOf("count failed, scanning instead") >= 0);
+    assert.equal(warned.length, 1);
+    assert.equal(warned[0].code, "count-timeout");
+});
+
+test("SRH-35 count() still pending 1 ms before the limit: the handler keeps waiting (no early give-up)", { timeout: 10000 }, async (t) => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countHang = true;
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 1, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 1)];
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let settled = false;
+    const pending = call().then((r) => { settled = true; return r; });
+    for (let i = 0; i < 200 && mockState.countCalls.length === 0; i++) await new Promise((r) => setImmediate(r));
+    t.mock.timers.tick(14999);
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(settled, false, "still waiting at 14999 ms");
+    t.mock.timers.tick(1);
+    const res = await pending;
+    assert.equal(res.statusCode, 200);
+});
+
+test("SRH-36 a hung count() on a ledger OVER the cap still ends 413 (the stream backstop, not a hang)", { timeout: 10000 }, async (t) => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countHang = true;
+    mockState.collections[LEDGER] = bigLedger(250001);
+    const res = await callWithHungCount(t, 15000);
+    assert.equal(res.statusCode, 413);
+    assert.deepEqual(jsonBody(res), { ok: false, error: "ledger-too-large" });
+});
+
+test("SRH-37 a count that answers in time clears its timer (no timer left behind to fire later)", async (t) => {
+    reset();
+    seedHappyPathAuth(mockState);
+    mockState.countValue = 2;
+    mockState.collections[LEDGER] = [mv("m1", "p1", "receipt", 1, IN_WINDOW)];
+    mockState.collections[INV] = [product("p1", "W", 1)];
+    mockState.logWarnings.length = 0;
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const res = await call();
+    assert.equal(res.statusCode, 200);
+    t.mock.timers.tick(60000);
+    assert.equal(mockState.logWarnings.filter((w) => w.msg.indexOf("count failed") >= 0).length, 0);
 });

@@ -72,6 +72,7 @@ function installMocks() {
         countCalls: [], // collPath for every collection(...).count().get() (D-R3)
         countError: null, // when set, count().get() throws this
         countValue: null, // when a number, count().get() answers it instead of the seeded length
+        countHang: false, // when true, count().get() never settles (a hung aggregation)
         collectionGetCalls: [], // collPath for every collection(...).get() actually executed
         firestoreDbIds: [], // databaseId passed to every getFirestore(app, databaseId) call (scopedDb env resolution)
         collectionGetError: null, // when set, every collection(...).get() throws this (computeAnalysis 500 path)
@@ -202,6 +203,7 @@ function installMocks() {
             count: () => ({
                 get: async () => {
                     mockState.countCalls.push(collPath);
+                    if (mockState.countHang) return new Promise(() => {});
                     if (mockState.countError) throw mockState.countError;
                     const n = mockState.countValue !== null ? mockState.countValue : (mockState.collections[collPath] || []).length;
                     return { data: () => ({ count: n }) };

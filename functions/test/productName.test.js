@@ -320,3 +320,65 @@ test("PN-27 monkey: 300 random ledgers: the name is the latest valid ledger name
         assert.deepEqual(Reg.buildRegister(rows.slice().sort(() => rnd() - 0.5), docs, WIN), reg);
     }
 });
+
+// ── PR #195 review: the cap never cuts an emoji in half ─────────────────────────────────────────────
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+test("PN-28 cleanProductName: a cap that lands inside a surrogate pair drops the orphan half (no U+FFFD on the wire)", () => {
+    const grin = "\u{1F600}"; // 2 UTF-16 units
+    const cut = M.cleanProductName("x".repeat(199) + grin);
+    assert.equal(cut, "x".repeat(199));
+    assert.equal(LONE_SURROGATE.test(cut), false);
+    const cutMore = M.cleanProductName("x".repeat(199) + grin + "tail");
+    assert.equal(cutMore, "x".repeat(199));
+});
+
+test("PN-29 cleanProductName: an emoji that ENDS exactly at the cap is kept whole; names under the cap are untouched", () => {
+    const grin = "\u{1F600}";
+    const exact = "x".repeat(198) + grin; // 200 units
+    assert.equal(M.cleanProductName(exact), exact);
+    assert.equal(M.cleanProductName(exact).length, 200);
+    assert.equal(M.cleanProductName("x" + grin), "x" + grin);
+    assert.equal(M.cleanProductName(grin.repeat(100)), grin.repeat(100));
+    assert.equal(M.cleanProductName(grin.repeat(150)), grin.repeat(100), "an even cap lands between pairs: nothing to drop");
+    assert.equal(M.cleanProductName(grin.repeat(150)).length, 200);
+});
+
+test("PN-30 cleanProductName: emoji at the cap with a space just before it still ends trimmed", () => {
+    const grin = "\u{1F600}";
+    assert.equal(M.cleanProductName("x".repeat(198) + " " + grin), "x".repeat(198));
+});
+
+test("PN-31 cleanProductName: an input that is ALREADY a lone surrogate is not made worse or thrown on", () => {
+    assert.equal(M.cleanProductName("ab\uD83D"), "ab\uD83D");
+    assert.equal(M.cleanProductName("\uDE00"), "\uDE00");
+    assert.doesNotThrow(() => M.cleanProductName("x".repeat(199) + "\uD83D"));
+    assert.equal(M.cleanProductName("x".repeat(199) + "\uD83D" + "y").length, 199);
+});
+
+test("PN-32 monkey: 400 random mixed BMP/emoji names: length <= 200, no lone half made, a prefix of the trimmed input, idempotent", () => {
+    let seed = 195;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const alphabet = ["a", "b", " ", "\u00e9", "\u0928", "\u{1F600}", "\u{1F4E6}", "\u{1F1EE}\u{1F1F3}"];
+    for (let i = 0; i < 400; i++) {
+        let s = "";
+        const n = Math.floor(rnd() * 260);
+        for (let k = 0; k < n; k++) s += alphabet[Math.floor(rnd() * alphabet.length)];
+        const out = M.cleanProductName(s);
+        if (out === undefined) { assert.equal(s.trim(), "", "only a blank input has no name"); continue; }
+        assert.ok(out.length <= 200, "run " + i);
+        assert.equal(LONE_SURROGATE.test(out), false, "run " + i);
+        assert.ok(s.trim().startsWith(out), "run " + i + ": the result is a prefix of the trimmed input");
+        assert.equal(out, out.trim(), "run " + i);
+        assert.equal(M.cleanProductName(out), out, "run " + i + ": idempotent");
+    }
+});
+
+test("PN-33 the register and the writer clean an emoji-capped name alike (one function, so they cannot drift)", () => {
+    const grin = "\u{1F600}";
+    const long = "x".repeat(199) + grin;
+    const rows = M.buildRows(M.deriveMovement(-1, "sale"), { baseId: "b", productId: "p", productName: long, actorUid: "u", actorRole: "owner",
+        serverTimestamp: 1, clientTimestamp: 1, requestId: "r" });
+    assert.equal(rows[0].data.productName, "x".repeat(199));
+});

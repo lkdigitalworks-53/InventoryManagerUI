@@ -500,3 +500,125 @@ test("RES-P1 uploadProductPhoto / deleteProductPhoto: a requestId in the reserve
     assert.equal(mockState.storageSaveCalls.length, 0);
     assert.equal(mockState.storageDeleteCalls.length, 0);
 });
+
+// ── PR #195 review: the uploadProductPhoto reads BEFORE Storage are inside a try ─────────────────────
+// A transient Firestore error on the idempotency read, the replay's product read or the preflight read
+// used to escape as an unhandled rejection (no JSON, no CORS). Now: JSON 500 write-failed (retryable,
+// never a terminal code), and nothing was written, saved or deleted.
+
+const AUDIT_KEY = "tenants/" + TENANT + "/audit_log/photo-1";
+const PRODUCT_KEY = "tenants/" + TENANT + "/inventory/" + PRODUCT;
+
+function failReadsOf(substring, thrown) {
+    mockState.docs = new Proxy(mockState.docs, {
+        get(target, key) {
+            if (typeof key === "string" && key.indexOf(substring) >= 0) {
+                throw thrown === undefined ? Object.assign(new Error("14 UNAVAILABLE"), { code: 14 }) : thrown;
+            }
+            return target[key];
+        }
+    });
+}
+
+function assertUploadRefusedCleanly(res, label) {
+    assert.equal(res.statusCode, 500, label);
+    assert.deepEqual(jsonBody(res), { ok: false, error: "write-failed" }, label);
+    assert.notEqual(jsonBody(res).error, "write-rejected", label + ": a read failure is never terminal");
+    assert.equal(mockState.storageSaveCalls.length, 0, label + ": no Storage write");
+    assert.equal(mockState.setCalls.length, 0, label + ": no Firestore write");
+}
+
+test("RD-U1 upload: the idempotency (audit) read throws -> JSON 500 write-failed, no Storage save, no write", async () => {
+    resetState();
+    mockState.setCalls = [];
+    failReadsOf("/audit_log/");
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assertUploadRefusedCleanly(res, "audit read");
+});
+
+test("RD-U2 upload: the preflight product read throws -> JSON 500 write-failed, no Storage save, no write", async () => {
+    resetState();
+    mockState.setCalls = [];
+    failReadsOf("/inventory/");
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assertUploadRefusedCleanly(res, "preflight read");
+});
+
+test("RD-U3 upload replay: the audit entry exists but the product read throws -> JSON 500 write-failed (not a half answer)", async () => {
+    resetState();
+    mockState.docs[AUDIT_KEY] = { entryId: "photo-1" };
+    mockState.setCalls = [];
+    failReadsOf("/inventory/");
+    const res = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+    assertUploadRefusedCleanly(res, "replay product read");
+});
+
+test("RD-U4 upload: non-Error throws (string, undefined, null, number, bare object) are still a JSON 500, never a rejection", async () => {
+    for (const thrown of ["boom", null, 42, { code: 14 }]) {
+        for (const where of ["/audit_log/", "/inventory/"]) {
+            resetState();
+            mockState.setCalls = [];
+            failReadsOf(where, thrown);
+            const res = mockRes();
+            await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res);
+            assertUploadRefusedCleanly(res, where + " thrown " + String(thrown));
+        }
+    }
+});
+
+test("RD-U5 upload: after a failed read the SAME request succeeds once the read recovers (the failure parked nothing)", async () => {
+    resetState();
+    mockState.setCalls = [];
+    failReadsOf("/inventory/");
+    const first = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), first);
+    assert.equal(first.statusCode, 500);
+    resetState();
+    mockState.docs[AUDIT_KEY] = undefined; // no audit entry was ever written by the failed attempt
+    const second = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), second);
+    assert.equal(second.statusCode, 200);
+    assert.deepEqual(jsonBody(second).photoIds, ["photo-1"]);
+    assert.equal(mockState.storageSaveCalls.length, 2);
+});
+
+test("RD-U6 upload: the happy, replay, 404 and 409 answers are unchanged by the new try (regression)", async () => {
+    resetState();
+    const ok = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), ok);
+    assert.equal(ok.statusCode, 200);
+    assert.equal(jsonBody(ok).already, false);
+    const replay = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), replay);
+    assert.equal(replay.statusCode, 200);
+    assert.equal(jsonBody(replay).already, true);
+    resetState({ product: null });
+    const missing = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), missing);
+    assert.equal(missing.statusCode, 404);
+    resetState({ product: { photoIds: Array.from({ length: 10 }, (_, i) => "p" + i) } });
+    const full = mockRes();
+    await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), full);
+    assert.equal(full.statusCode, 409);
+});
+
+test("RD-U7 monkey: 120 runs, a random read fails at a random step: always a JSON body, never a throw out of the handler", async () => {
+    let seed = 195;
+    const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    for (let i = 0; i < 120; i++) {
+        const replay = rnd() < 0.4;
+        resetState();
+        mockState.setCalls = [];
+        if (replay) mockState.docs[AUDIT_KEY] = { entryId: "photo-1" };
+        failReadsOf(rnd() < 0.5 ? "/audit_log/" : "/inventory/");
+        const res = mockRes();
+        await handlers.uploadProductPhoto(mockReq({ body: uploadBody() }), res); // a rejection would fail here
+        // audit failing always fails; product failing fails in both the replay and the preflight path.
+        assert.equal(res.statusCode, 500, "run " + i);
+        assert.equal(jsonBody(res).error, "write-failed", "run " + i);
+        assert.equal(mockState.storageSaveCalls.length, 0, "run " + i);
+    }
+});

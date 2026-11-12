@@ -110,7 +110,13 @@ const MAX_PRODUCT_NAME = 200;
 function cleanProductName(v) {
     if (typeof v !== "string") return undefined;
     const t = v.trim();
-    return t === "" ? undefined : t.slice(0, MAX_PRODUCT_NAME).trim();
+    if (t === "") return undefined;
+    let cut = t.slice(0, MAX_PRODUCT_NAME);
+    // A cap that lands between the two halves of a surrogate pair (an emoji) would leave a lone half,
+    // which the wire turns into U+FFFD. Drop the orphan half instead (PR #195 review).
+    const last = cut.charCodeAt(cut.length - 1);
+    if (cut.length < t.length && last >= 0xD800 && last <= 0xDBFF) cut = cut.slice(0, -1);
+    return cut.trim();
 }
 
 // ONE place that picks the name for a write: the document AFTER the change, else the one before it

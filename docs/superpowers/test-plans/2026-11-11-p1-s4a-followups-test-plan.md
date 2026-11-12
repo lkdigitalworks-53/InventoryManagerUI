@@ -67,3 +67,22 @@ Pre-check removed; `>` to `>=`; a count failure fails the request; in-stream cap
 None. The real `count()` call has never run against Firestore: the first real call is the on-device `curl` below (admin SDK `^12.6` supports it).
 ### On-device (curl, after the deploy)
 Happy: S4a step 1 still answers 200. Negative: an over-cap ledger (250 001 rows) cannot be built on a phone, do NOT seed it; the 413 path is proven by the double only. Look in the function logs after the first call: there must be NO `count failed, scanning instead` warning. If there is one, `count()` is failing on real Firestore and the request silently falls back to the full scan (still correct, but the saving is gone): report it.
+
+## Review sweep 1 - PR #195 (2026-11-12): fixes added to the same PR
+Findings fixed: (F1) `uploadProductPhoto` read Firestore three times before its Storage write with no `try` (unhandled rejection on a transient error); (F2) a hung `count()` had no timeout; (F3) the count failure was logged with a raw `console.warn(error)`; (F4) the 200-character name cap could split an emoji; (F5) guard SRG-08d shelled out to `grep` and passed vacuously when it failed.
+### 1. Unit / functional (RUN)
+| File | Cases | Covers |
+|---|---|---|
+| `functions/test/index.handlers.photos.test.js` | +7 (RD-U1..U7) | audit read throws, preflight read throws, replay product read throws: JSON 500 `write-failed`, never `write-rejected`, zero Storage saves, zero writes. Non-Error throws (string, null, 42, object) at both reads. Same request succeeds after the read recovers. Happy, replay, 404, 409 unchanged. Monkey: 120 seeded runs, a random read fails at a random step. |
+| `functions/test/productName.test.js` | +6 (PN-28..33) | cap inside a surrogate pair drops the orphan half; an emoji ending exactly at the cap is kept; a space before the emoji still ends trimmed; input that is already a lone surrogate is not made worse; monkey 400 random mixed BMP / emoji names (length, no lone half, prefix, trimmed, idempotent); writer and register clean alike. |
+| `functions/test/index.handlers.stockRegister.test.js` | +7 (SRH-31..37) | count failure logs exactly one structured warning (message, code, no stack); non-Error throws; a successful count logs nothing; hung count abandoned at 15 s then served by the stream (one warning, code `count-timeout`); still waiting at 14 999 ms; hung count on an over-cap ledger still ends 413; a count that answers clears its timer. Fake timers, per-test `timeout`. |
+| `functions/test/stockRegister.guard.test.js` | +1, 1 rewritten | SRG-12 (timeout constant under a quarter of the scan budget, wraps `count().get()`, cleared in a `finally`); SRG-08d is now an fs walk that fails when a folder is missing. Harness gains `countHang`. |
+### 2. Regression
+Whole functions suite 1586/1586 (was 1564). Rules, QML and E2E: nothing touched in this sweep.
+### 3. Mutation (hand, all killed)
+Original `index.js` against RD-U (5 fail); original `cleanProductName` against PN (5 fail); `console.warn` back (2 fail); a `qml` file that names `stock_movements` (SRG-08d fails); `withTimeout` removed (SRH-34..37 and SRG-12 fail, none hangs).
+### 4. E2E / rules
+None: no client change, no rules change in this sweep.
+### On-device (curl, after the functions deploy)
+Happy: upload a photo from the app, it still works. Negative: cannot be provoked on a phone; covered by the double. Edge: a product named with an emoji at character 200 (paste a long name) saves and shows in the register without a replacement character. Watch the logs for `count failed, scanning instead` with code `count-timeout` after the first register calls.
+
