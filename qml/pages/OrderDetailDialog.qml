@@ -118,15 +118,11 @@ BottomSheet {
     // productId. Used by the completed-order stock guard to know how many
     // units a line already held before this edit. productId-only: names can
     // duplicate across distinct products, so a name-based fallback here would
-    // risk matching the wrong line's booked quantity/tax.
-    function _findOriginalLine(productId) {
-        var src = _originalLines || []
-        if (!productId) return null
-        for (var i = 0; i < src.length; ++i) {
-            if (src[i].productId === productId) return src[i]
-        }
-        return null
-    }
+    // risk matching the wrong line's booked quantity/tax. Ids match as STRINGS,
+    // the same way the product picker matches them (EditOrderPicker.originalOf):
+    // an order line may hold a numeric id, and two matchers that disagree would
+    // book a re-added line at the booked tax but forecast and guard it as new.
+    function _findOriginalLine(productId) { return Edit.originalOf(_originalLines, productId) }
 
     function recomputeSubtotal() {
         var lineArr = _lineItemArray()
@@ -351,6 +347,7 @@ BottomSheet {
         _lockState = "pending"
         _lockHolder = null
         products.clear()
+        _pickerLines = []   // the sheet's notifier must not keep the closed order's rows
         _originalLines = []
         _orderStatus = ""
         stockErrorLabel.text = ""

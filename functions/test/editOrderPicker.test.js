@@ -362,3 +362,86 @@ test("EOP-26 parity with New Order: a pending order with no tax gets the same qu
         eq(viaEdit, b.lines.map(function(l) { return { productId: l.productId, qty: l.qty }; }));
     }
 });
+
+test("EOP-27 originalOf: ids match as strings in both directions, the first match wins, blank ids and junk entries never match, not a list is null", () => {
+    const list = [null, 5, orig("", 9, true, 5), orig(7, 2, true, 18), orig("A", 3, false, 0), orig("A", 8, true, 5)];
+    eq(EP.originalOf(list, "7").quantity, 2);    // numeric id on the order, string id asked
+    eq(EP.originalOf(list, 7).quantity, 2);
+    eq(EP.originalOf([orig("7", 4, false, 0)], 7).quantity, 4);    // string id on the order, numeric id asked
+    eq(EP.originalOf(list, "A").quantity, 3);    // first match
+    for (const blank of ["", undefined, null, "Z"]) eq(EP.originalOf(list, blank), null);
+    for (const bad of [undefined, null, 5, "x", {}]) eq(EP.originalOf(bad, "A"), null);
+    // the helper's own readers use it: a numeric id on the order is booked tax and units for a string id
+    const c = ctx("completed", [orig(7, 2, true, 18)]);
+    eq(EP.seedOf(prod("7", 5, { taxable: false, taxPercent: 0 }), c), { taxable: true, taxPercent: 18 });
+    eq(EP.availableFor(prod("7", 1), [], c), 3);
+});
+
+test("EOP-28 applyPlan: a bump keeps a fractional quantity the line already holds, a line with no usable quantity counts as 0, the limit still holds", () => {
+    const lookup = lk([prod("A", 10)]);
+    for (const status of ["pending", "completed"]) {
+        const c = ctx(status, status === "completed" ? [orig("A", 2.5, false, 0)] : []);
+        const r = EP.applyPlan([line("A", 2.5)], plan([], [e("A", 1)]), c, lookup);
+        eq(r.sets, [{ index: 0, productId: "A", quantity: 3.5 }]);
+        eq(r.skipped, []);
+    }
+    for (const bad of [0, -3, NaN, undefined, "2"]) {
+        const r = EP.applyPlan([line("A", bad)], plan([], [e("A", 2)]), ctx("pending"), lookup);
+        eq(r.sets, [{ index: 0, productId: "A", quantity: 2 }]);
+    }
+    const r2 = EP.applyPlan([line("A", 2.5)], plan([], [e("A", 5)]), ctx("pending"), lk([prod("A", 5)]));
+    eq(r2.sets, [{ index: 0, productId: "A", quantity: 4.5 }]);
+    eq(r2.skipped.map(function(s) { return s.reason; }), ["reduced"]);
+});
+
+test("EOP-29 applyPlan: a junk row inside the lines keeps its index and never makes it throw, and a new product is still appended after it", () => {
+    const lines = [null, line("A", 1), 7, "x", line("B", 2)];
+    let r = null;
+    noThrow(() => { r = EP.applyPlan(lines, plan([e("C", 1)], [e("B", 1), e("A", 2)]), ctx("pending"), lk([prod("A", 9), prod("B", 9)])); });
+    eq(r.sets, [{ index: 1, productId: "A", quantity: 3 }, { index: 4, productId: "B", quantity: 3 }]);
+    eq(r.appends.length, 0);
+    eq(r.skipped.map(function(s) { return s.reason; }), ["gone"]);
+    const r2 = EP.applyPlan(lines, plan([e("N", 2)], []), ctx("pending"), lk([prod("A", 9), prod("B", 9), prod("N", 9)]));
+    eq(r2.sets, []);
+    eq(r2.appends.map(function(a) { return [a.productId, a.quantity]; }), [["N", 2]]);
+    eq(lines.length, 5);
+    eq(lines[0], null);
+});
+
+test("EOP-30 monkey, seeded, fractional quantities and junk rows: a set only adds and points at its own row, a product never ends above its whole-unit limit, in both statuses", () => {
+    for (let seed = 1; seed <= 150; ++seed) {
+        const rand = rng(seed + 1000);
+        const n = 1 + Math.floor(rand() * 5);
+        const products = [];
+        for (let i = 0; i < n; ++i) products.push(prod("P" + i, Math.floor(rand() * 9)));
+        const completed = rand() < 0.5;
+        const original = [];
+        const lines = [];
+        for (let i = 0; i < n; ++i) {
+            if (rand() < 0.3) lines.push(rand() < 0.5 ? null : 7);
+            if (rand() < 0.7) {
+                const q = 0.5 * (1 + Math.floor(rand() * 8));
+                lines.push(line("P" + i, q));
+                if (completed && rand() < 0.7) original.push(orig("P" + i, q, false, 0));
+            }
+        }
+        const adds = [], bumps = [];
+        for (let k = 0; k < Math.floor(rand() * 6); ++k) (rand() < 0.5 ? adds : bumps).push(e("P" + Math.floor(rand() * (n + 1)), 1 + Math.floor(rand() * 4)));
+        const r = EP.applyPlan(lines, plan(adds, bumps), ctx(completed ? "completed" : "pending", original), lk(products));
+        const next = lines.map(function(l) { return (l && typeof l === "object") ? { productId: l.productId, qty: l.qty } : null; });
+        for (const s of r.sets) {
+            ok(s.index >= 0 && s.index < next.length && next[s.index] !== null && next[s.index].productId === s.productId, "a set points at its own row, seed " + seed);
+            ok(s.quantity > next[s.index].qty, "a set only adds, seed " + seed);
+            next[s.index].qty = s.quantity;
+        }
+        for (const a of r.appends) next.push({ productId: a.productId, qty: a.quantity });
+        for (const p of products) {
+            let held = 0, after = 0;
+            for (let i = 0; i < lines.length; ++i) if (lines[i] && lines[i].productId === p.productId && lines[i].qty > 0) held += lines[i].qty;
+            for (const l of next) if (l && l.productId === p.productId && l.qty > 0) after += l.qty;
+            const o = completed ? original.filter(function(x) { return x.productId === p.productId; })[0] : null;
+            const limit = Math.max(held, p.stock + (o ? Math.floor(o.quantity) : 0));
+            ok(after <= limit, "limit of " + p.productId + ", seed " + seed + ": " + after + " > " + limit);
+        }
+    }
+});

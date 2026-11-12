@@ -17,10 +17,11 @@
 // in the same order (linesOf). `ctx` is { status, original }: the order's SAVED status and its original lines
 // ({ productId, quantity, taxable, taxPercent }, the dialog's _originalLines). `lookup` is { productOf(id), batchesOf(id) }.
 
-function _has(o, k) { return !!o && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k) }
 function _whole(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0 }
 function _blankId(id) { return id === undefined || id === null || id === "" }
 function _completed(ctx) { return !!ctx && ctx.status === "completed" }
+// The picker line of a row that is not an object: it keeps the index of its row and holds nothing.
+function _blankLine() { return { productId: "", name: "", qty: 0, price: 0, discountType: "flat", discountValue: 0 } }
 
 // One picker line per row, same order, quantity renamed to qty. A row that is not an object becomes a blank line, so
 // the index of every line stays the index of its row.
@@ -29,23 +30,26 @@ function linesOf(rows) {
     if (!Array.isArray(rows)) return out
     for (var i = 0; i < rows.length; ++i) {
         var r = rows[i]
-        if (!r || typeof r !== "object") { out.push({ productId: "", name: "", qty: 0, price: 0, discountType: "flat", discountValue: 0 }); continue }
+        if (!r || typeof r !== "object") { out.push(_blankLine()); continue }
         out.push({ productId: r.productId, name: r.name, qty: r.quantity, price: r.price,
                    discountType: r.discountType === "percent" ? "percent" : "flat", discountValue: r.discountValue || 0 })
     }
     return out
 }
 
-// The line this product had when the order was completed (first match by String id), or null.
-function _originalOf(ctx, productId) {
-    if (_blankId(productId) || !ctx || !Array.isArray(ctx.original)) return null
+// The line this product had when the order was completed (first match by String id), or null. `original` is the dialog's
+// _originalLines. The dialog's _findOriginalLine is this function, so the stock guard, the tax forecast, the + stepper and
+// the picker all match ids the same way (an order line may hold a numeric id, KNOWN-ISSUES, picker carried requirement 5).
+function originalOf(original, productId) {
+    if (_blankId(productId) || !Array.isArray(original)) return null
     var id = String(productId)
-    for (var i = 0; i < ctx.original.length; ++i) {
-        var l = ctx.original[i]
+    for (var i = 0; i < original.length; ++i) {
+        var l = original[i]
         if (l && typeof l === "object" && !_blankId(l.productId) && String(l.productId) === id) return l
     }
     return null
 }
+function _originalOf(ctx, productId) { return originalOf(ctx && ctx.original, productId) }
 
 // Units of a product the order holds now (all its lines).
 function cartQty(lines, productId) { return NP.cartQty(lines, productId) }
@@ -99,7 +103,8 @@ function _full(lookup, ctx) {
 // The dialog applies sets with setProperty and appends with append, then recomputes ONCE. Nothing is ever removed, and no
 // existing row's price, discount or tax is touched.
 function applyPlan(lines, plan, ctx, lookup) {
-    var before = Array.isArray(lines) ? lines : []
+    var before = []    // a copy in which a junk row is a blank line, so row index and line index stay the same thing
+    if (Array.isArray(lines)) for (var k = 0; k < lines.length; ++k) before.push((lines[k] && typeof lines[k] === "object") ? lines[k] : _blankLine())
     var res = NP.applyPlan(before, plan, _full(lookup, ctx))
     var sets = []
     var appends = []

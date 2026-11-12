@@ -34,6 +34,8 @@ function _has(o, k) { return !!o && typeof o === "object" && Object.prototype.ha
 function _str(s) { return (typeof s === "string") ? s : ((s === undefined || s === null) ? "" : String(s)) }
 function _whole(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0 }
 function _isQty(q) { return typeof q === "number" && isFinite(q) && q > 0 && Math.floor(q) === q }
+// What a line holds now: a positive finite quantity as it is (an order line of 2.5 stays 2.5), anything else 0.
+function _held(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? n : 0 }
 function _blankId(id) { return id === undefined || id === null || id === "" }
 
 function _productOf(lookup, id) {
@@ -105,7 +107,8 @@ function _capOf(lookup, id, p, out) {
             return 0
         }
     }
-    return availableFor({ productId: id, stock: p.stock }, out)
+    var left = availableFor({ productId: id, stock: p.stock }, out)    // a fractional line in the cart leaves a fraction: whole units only
+    return left > 0 ? Math.floor(left) : 0
 }
 
 function _skip(id, name, reason) { return { productId: id, name: name, reason: reason } }
@@ -135,7 +138,7 @@ function applyPlan(lines, plan, lookup) {
         if (at < 0 && price === null) { skipped.push(_skip(id, name, "no-price")); continue }
         var take = Math.min(e.qty, cap)
         if (take < e.qty) skipped.push({ productId: id, name: name, reason: "reduced", added: take, asked: e.qty })
-        if (at >= 0) out[at].qty = _whole(out[at].qty) + take    // a line with no usable quantity counts as 0, never NaN
+        if (at >= 0) out[at].qty = _held(out[at].qty) + take    // a line with no usable quantity counts as 0, never NaN; a fraction is kept
         else out.push({ name: name, qty: take, price: price, productId: id, discountType: "flat", discountValue: 0 })
     }
     return { lines: out, skipped: skipped }

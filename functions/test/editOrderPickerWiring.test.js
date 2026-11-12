@@ -265,3 +265,26 @@ test("EOW-16 a row removed from the model is seen at once: the hooks and _applyP
     g.apply({ adds: [{ productId: "A", qty: 1 }], bumps: [] });
     assert.deepEqual(plain(g.model.rows.map((r) => [r.productId, r.quantity])), [["C", 1], ["A", 1]]);
 });
+
+test("EOW-17 PR #196 sweep: _findOriginalLine is EditOrderPicker.originalOf, so the stock guard, the tax forecast, the + stepper and the picker match ids the same way; run for real with a numeric id", () => {
+    const body = fn("_findOriginalLine");
+    assert.ok(/^function _findOriginalLine\(productId\)\s*\{\s*return Edit\.originalOf\(_originalLines, productId\)\s*\}$/.test(body.trim()), body);
+    assert.ok(!/\.productId\s*===\s*productId/.test(CODE), "no second id matcher is left in the dialog");
+    const original = [{ productId: 7, name: "Seven", quantity: 2, taxable: true, taxPercent: 18 }, { productId: "A", quantity: 3, taxable: false, taxPercent: 0 }];
+    const run = (id, orig) => vm.runInNewContext(body + "; _findOriginalLine(id)", { Edit: EP, _originalLines: orig, id });
+    assert.equal(run("7", original).quantity, 2);
+    assert.equal(run(7, original).quantity, 2);
+    assert.equal(run("A", original).quantity, 3);
+    for (const blank of ["", undefined, null, "Z"]) assert.equal(run(blank, original), null);
+    assert.equal(run("7", []), null);
+    assert.equal(run("7", undefined), null);
+    // the three readers in the dialog all go through it
+    assert.equal((CODE.match(/_findOriginalLine\(/g) || []).length, 4, "the definition and the three readers");
+});
+
+test("EOW-18 PR #196 sweep: closing the dialog also empties the sheet's notifier, after the picker is closed and before the order's state is cleared", () => {
+    const closed = literal(CODE, "onClosed:", "{", "}");
+    const at = (s) => closed.indexOf(s);
+    assert.ok(at("picker.close()") >= 0 && at("_pickerLines = []") > at("picker.close()"), "_pickerLines is emptied after picker.close()");
+    assert.ok(at("_pickerLines = []") > at("products.clear()") && at("_pickerLines = []") < at("_originalLines = []"));
+});

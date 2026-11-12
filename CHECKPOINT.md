@@ -1,3 +1,21 @@
+# CHECKPOINT: PR #196 sweep (2026-11-12, resume here)
+
+Branch `feat/2026-11-12-picker-s4-edit-order` (the PR's own branch, fixes pushed to it). Commit email used: dextran52@gmail.com (the earlier session below used taher.lkdw@gmail.com; Taher's 2026-11-12 instruction wins).
+
+## Done
+- Full sweep: whole files read (OrderDetailDialog.qml, EditOrderPicker.js, NewOrderPicker.js, half of ProductPickerSheet.qml); Phase 1 lint (21 hits on changed lines, all style or false positives); adversarial probes.
+- Fixed: id matcher drift (`originalOf`), fractional bump flooring (`_held`), fractional default cap (`_capOf`), junk row in `lines` (`_blankLine`), `_pickerLines` cleared on close, dead `_has` deleted.
+- Tests: NOP-31, EOP-27..30, EOW-17, EOW-18; QML twins regenerated with `node functions/test/testSupport/pickerTwin.js --write`.
+- Docs: KNOWN-ISSUES 36 (fixed) and 37 (open), SKILLS 165 rules 12-14, AGENTS note, README note, test plan checks 92-96 + verification row.
+
+## Next
+- Wait for CI on the sweep commit (QML twins never run locally; no Qt in sandbox). If a twin fails, read results.xml, fix the Node test body, regenerate.
+- Taher decides KNOWN-ISSUES 37(a): make `_save()` and the cart-row `+` stepper use `Edit.availableFor`.
+- Not reviewed: second half of ProductPickerSheet.qml, test bodies line by line.
+
+---
+# Earlier session (PR #196 author), kept below
+
 # CHECKPOINT: 2026-11-12 picker v2 slice S4 (Edit Order wired) - resume here
 
 **Branch:** `feat/2026-11-12-picker-s4-edit-order`, cut from `main` @ `3c03306` (PR #194 picker S3 and PR #193 P1 S4a merged).

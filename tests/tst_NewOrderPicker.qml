@@ -451,4 +451,18 @@ TestCase {
             eq(r.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 1, asked: 9 }]);
         }
     }
+
+    function test_NOP_31_a_bump_keeps_a_fractional_quantity_the_line_already_holds_a_() {
+        const r = NP.applyPlan([line("A", 2.5)], plan([], [e("A", 1)]), lk([prod("A", 10)]));
+        eq(r.lines[0].qty, 3.5);
+        eq(r.skipped, []);
+        for (const bad of [0, -3, NaN, undefined, "2", Infinity]) {
+            const r2 = NP.applyPlan([line("A", bad)], plan([], [e("A", 2)]), lk([prod("A", 10)]));
+            eq(r2.lines[0].qty, 2);
+        }
+        // stock 5, the line holds 2.5: 2 whole units are left, so a bump of 5 adds 2 and says so
+        const r3 = NP.applyPlan([line("A", 2.5)], plan([], [e("A", 5)]), lk([prod("A", 5)]));
+        eq(r3.lines[0].qty, 4.5);
+        eq(r3.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 2, asked: 5 }]);
+    }
 }
