@@ -4987,3 +4987,19 @@ Rules:
 9. (PR #195 review) Test a timeout with `t.mock.timers.enable({ apis: ["setTimeout"] })`, never a real wait, and give the test its own `{ timeout }`: if the code under test loses its timeout the test must FAIL, not hang the job (SRH-34..37 under a mutant fail in seconds). Let the handler reach the hung call with `setImmediate` (not mocked) before `tick`, and tick 1 ms short of the limit to prove it does not give up early.
 
 **The check:** for any "resolve the caller" step, name what the client does with each possible answer (refused, failed, terminal, retry) and which of them each handler can now return when the lookup itself throws. For any rules read change, list every `match` that can cover the path and say which ones you carved out.
+
+## Skill 166: Put a derived feed row inside the transaction that causes it, stamp who and when on the server, and open an entity to ONE operation type instead of to every endpoint
+
+**Why:** the feed row of a restock was a client PUT after the answer: lost if the app died in between, written twice by a replay, and its actor and time were whatever the phone said (a wrong clock pins a row on top of the feed for ever).
+
+**Rules:**
+1. A row that exists because an operation happened belongs INSIDE that operation's transaction. Then "applied" implies "feed row exists", a replay returns the same stored row, and a rejection leaves no trace.
+2. Give the new entity its OWN map (`OPERATION_ONLY_ENTITIES`), restricted by operation type and by action. Never add it to the shared `ENTITY_COLLECTIONS`: five other endpoints read that map, and one line there silently opens the collection to all of them. Pin it with a guard that every other validator answers `unsupported-entity`, and that only one file names the collection.
+3. The client sends the SHAPE, the server owns the FACTS: refuse any extra key (do not ignore it), then stamp the caller and the server clock. Test the stamping on `applyOperation` alone too, with a doc that skipped validation (B-11): a mutant that let the doc's own `actorUid` win survived the validator tests until that case existed.
+4. A value only the transaction knows (the stock after this delta) is a named token the server fills (`{{$stock}}`), with a character no bind name can contain, a validation that an earlier op provides it, and the same token reserved in the planner so typed text can never equal it.
+5. Cosmetic text is CUT by the planner (never split a surrogate pair), never refused: a valid restock must not fail for a long product name. The server still enforces the cap.
+6. When an answer can come from an older client's queue, keep a clearly marked legacy fallback for ONE release (`shortcut:` comment, KNOWN-ISSUES entry), written so the new path and the old path can never both fire (`!out.activity`).
+7. Deploy order is part of the design: a new client against an old server is a terminal 400. Say "functions first" in the PR, the test plan and AGENTS.
+8. Run the hand mutants on the stamping and the shape rules, and read the survivors: one survivor is one missing test.
+
+**The check:** for a derived row, answer (a) what happens if the app dies right after the answer, (b) what a replay writes, (c) who decides actor and time, (d) which other endpoint can now reach the collection.

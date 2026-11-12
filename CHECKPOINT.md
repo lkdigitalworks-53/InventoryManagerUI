@@ -9,11 +9,11 @@
 
 ## Steps
 - [x] 0. Read memory, ATOMIC-OPERATIONS-STATUS, R5a design notes, operationLogic, ActivityLog, RestockPlan, InventoryStore restock; branch cut; baseline restock tests 88/88.
-- [ ] 1. Design doc + this checkpoint committed.
-- [ ] 2. SERVER: `activity` operation-only entity in `operationLogic.js` (validate, stamp, `{{$stock}}`), tests, FailureCause codes.
-- [ ] 3. CLIENT: `RestockPlan` activity op + `reflect`, `ActivityLog.adopt`, `InventoryStore` hooks (+ legacy fallback), QML twins.
-- [ ] 4. P2: `TransactionStore.recordPurchase` removed, D-1 drift guard moved to a pinned key list.
-- [ ] 5. Docs: test plan, README, SKILLS, AGENTS, ATOMIC-OPERATIONS-STATUS section 13, KNOWN-ISSUES.
+- [x] 1. Design doc + this checkpoint written.
+- [x] 2. SERVER (23 tests, 16/16 mutants): `activity` operation-only entity in `operationLogic.js` (validate, stamp, `{{$stock}}`), tests, FailureCause codes.
+- [x] 3. CLIENT (planner, adopt, hooks, QML twins, e2e x2): `RestockPlan` activity op + `reflect`, `ActivityLog.adopt`, `InventoryStore` hooks (+ legacy fallback), QML twins.
+- [x] 4. P2: `TransactionStore.recordPurchase` removed, D-1 drift guard moved to a pinned key list.
+- [x] 5. Docs (test plan, README, SKILLS 166 + index, AGENTS, STATUS 13, KNOWN-ISSUES 24-28): test plan, README, SKILLS, AGENTS, ATOMIC-OPERATIONS-STATUS section 13, KNOWN-ISSUES.
 - [ ] 6. Push, read CI, report done / pending / next.
 
 ## NEXT (if this session stops)
