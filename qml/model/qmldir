@@ -20,3 +20,4 @@ singleton Gateway 1.0 Gateway.qml
 singleton LockManager 1.0 LockManager.qml
 singleton AnalysisService 1.0 AnalysisService.qml
 singleton GoogleAuthService 1.0 GoogleAuthService.qml
+singleton StockRegisterService 1.0 StockRegisterService.qml
