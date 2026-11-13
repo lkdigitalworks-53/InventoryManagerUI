@@ -41,7 +41,6 @@ QtObject {
         if (!lastBody || !lastWindow) return null
         if (StockRegisterModel.windowKey(win) !== StockRegisterModel.windowKey(lastWindow)) return null
         if (lastTenantId !== AuthStore.tenantId || lastRole !== AuthStore.role) return null
-        if (!StockRegisterModel.canView(AuthStore.role)) return null
         return { body: lastBody, window: lastWindow }
     }
 
@@ -96,7 +95,7 @@ QtObject {
         if (typeof AuthService !== "undefined" && AuthService)
             AuthService.ensureFreshToken()
 
-        var gen = ++_generation
+        var gen = _generation   // only cancel() bumps it: a request that was cancelled never matches again
         var tenantAtSend = AuthStore.tenantId
         var roleAtSend = AuthStore.role
         var xhr = new XMLHttpRequest()
@@ -139,9 +138,10 @@ QtObject {
             }
             var c = StockRegisterModel.classify(status, body)
             console.warn("[StockRegisterService] failed", status, c.kind)
-            // A 401 means the token expired: refresh so the person's next tap works (silent: no error dialog).
+            // A 401 usually means the token expired: ask the one silent door (sessionRecheckWiring pins that no
+            // other file calls refreshIdToken(true)) so the person's next tap works. No retry here: single flight.
             if (c.kind === "auth" && typeof AuthService !== "undefined" && AuthService)
-                AuthService.refreshIdToken(true)
+                AuthService.ensureFreshToken()
             _answer(callback, { ok: false, kind: c.kind, message: c.message, retryable: c.retryable })
         }
 
