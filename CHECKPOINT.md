@@ -1,3 +1,24 @@
+# CHECKPOINT: PR #196 second sweep (2026-11-13, resume here)
+
+Same branch `feat/2026-11-12-picker-s4-edit-order` (fixes pushed to the PR). Commit email: dextran52@gmail.com. Skills used: `requesting-code-review` (done inline, no subagent, as asked), `qt-qml-review` (Phase 1 lint run; Phase 2 done by hand, no parallel agents), `ponytail-audit`, `caveman`.
+
+## Done
+- [x] Main unchanged (@ `66d3f8d`), PR mergeable clean, CI green on `aa09f9c` (5017/5017) before this sweep.
+- [x] Read whole: `EditOrderPicker.js`, `NewOrderPicker.js`, `ProductPickerSheet.qml` (all 316 lines, the half left open on 2026-11-12), `ProductPickerRow.qml`, `_save`, `openFor`, the stepper, both wiring tests. `BottomSheet` hold/close semantics checked (refresh hold is a counter, picker does not hold, `close()` skips the guard).
+- [x] Phase 1 lint on 3 QML files: style only (`var`, ordering, `property var`), nothing new on changed lines.
+- [x] 34 hand mutants on both helpers: all killed. Seeded fuzz of `applyPlan` (40,000 orders, 5 invariants): one defect.
+- [x] Fixed: NaN-quantity row made a spurious `set` (EOP-31); two pass-through wrappers deleted, dialog imports `NP` (EOW-03/05 repinned, EOP-24 deleted); header comment `// function openFor(id)` hid `openFor` from `extractFunction` (KNOWN-ISSUES 33 had the wrong cause), tests use the real body; EOW-19 added.
+- [x] Docs: KNOWN-ISSUES 33 fixed, 37b fixed, 38 and 39 added; Skill 167 rule 9 corrected, 15 and 16 added; AGENTS, README, test plan rows and verification block, plan counts, E2E roadmap sentence.
+- [x] Node: functions 1724/1724, scripts 1049/1049. QML twin regenerated (never run here: no Qt).
+
+## Next
+- CI on the sweep commit; if a twin fails read results.xml, fix the Node body, regenerate with `node functions/test/testSupport/pickerTwin.js --write`.
+- Taher: decide KNOWN-ISSUES 39a (shared stock formula for stepper and `_save()`, recommended with S5), run device checks 67 to 96, merge.
+- After merge: P1 S4a follow-ups are already in (#195); next is picker S5 or P1 S4b.
+
+---
+# Earlier sweep (2026-11-12), kept below
+
 # CHECKPOINT: PR #196 sweep (2026-11-12, resume here)
 
 Branch `feat/2026-11-12-picker-s4-edit-order` (the PR's own branch, fixes pushed to it). Commit email used: dextran52@gmail.com (the earlier session below used taher.lkdw@gmail.com; Taher's 2026-11-12 instruction wins).
@@ -36,7 +57,7 @@ Wire `OrderDetailDialog` to `ProductPickerSheet`; delete the combo and its helpe
 - [x] 6. `OrderDetailDialog.qml` wired; `EOW-01..16` (runs the dialog's real functions against a fake `ListModel`).
 - [x] 7. S3 pins changed on purpose: `NOW-09`, `WIRE-15`, `W-20`, `DORM-01` allow-list.
 - [x] 8. Node: functions 1616/1616 (after merging main @ `4c0f360`), `.github/scripts` 1049/1049, picker files 299/299. 27 hand mutants: 3 survivors on the first run (2 real gaps fixed with tests, 1 equivalent), final run all killed except the equivalent one.
-- [x] 9. Docs: plan, test plan (rows, device checks 67 to 91, verification row), KNOWN-ISSUES 28 to 35, README, AGENTS, Skill 165, `SKILLS-INDEX.md` regenerated.
+- [x] 9. Docs: plan, test plan (rows, device checks 67 to 91, verification row), KNOWN-ISSUES 28 to 35, README, AGENTS, Skill 167, `SKILLS-INDEX.md` regenerated.
 - [x] 10. Committed `b7b3824`, pushed, PR #196 opened (REST). It was `dirty` against main @ `4c0f360` (#191 restock R5a): merged main into the branch (CHECKPOINT = branch, my skill renumbered 164 -> 165, index regenerated), suites re-run green. CI on `c4e612a` all green: QML 3049, Functions 1616, Rules 108, E2E 111 (4884/4884), PR mergeable clean.
 - [ ] 11. For Taher: veto window on S4-D1..D8, answer the questions below, device checks 67 to 91, merge.
 

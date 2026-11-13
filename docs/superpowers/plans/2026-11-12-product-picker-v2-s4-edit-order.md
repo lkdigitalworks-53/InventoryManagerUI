@@ -32,8 +32,8 @@
 | `qml/helper/EditOrderPicker.js` (create) | The rules above. `.pragma library`, imports `NewOrderPicker.js`. |
 | `qml/helper/NewOrderPicker.js` (modify) | `_capOf` and the optional `availableOf` hook in `applyPlan`; `opsCheck` inherits it through `applyPlan`. |
 | `qml/pages/OrderDetailDialog.qml` (modify) | Combo, add button, `catalogNames`, `_availableStock`, the per-recompute catalog rebuild deleted; `_pickerLines`, `_pickerLinesNow`, `_pickerCtx`, `_pickerLookup`, `_pickerHooks`, `_pickerRevision`, `_applyPicked`, the button and the sheet added; `onClosed` closes the picker first. |
-| `functions/test/editOrderPicker.test.js` (create) | `EOP-01..26`; QML twin `tests/tst_EditOrderPicker.qml` derived (25 cases, EOP-26 is Node only). |
-| `functions/test/editOrderPickerWiring.test.js` (create) | `EOW-01..16`: source pins, and the dialog's real functions and literals run against a fake `ListModel`. |
+| `functions/test/editOrderPicker.test.js` (create) | `EOP-01..31` (EOP-24 deleted in the second sweep); QML twin `tests/tst_EditOrderPicker.qml` derived (29 cases, EOP-26 is Node only). |
+| `functions/test/editOrderPickerWiring.test.js` (create) | `EOW-01..19`: source pins, and the dialog's real functions and literals run against a fake `ListModel`. |
 | `functions/test/newOrderPicker.test.js` (modify) | `NOP-28..30` for the hook; twin regenerated. |
 | `functions/test/newOrderPickerWiring.test.js` (NOW-09), `pickerSheetWiring.test.js` (WIRE-15), `restockWire.test.js` (W-20), `pickerDormancy.test.js`, `testSupport/pickerTwin.js` (modify) | Allow-lists and pins changed on purpose (Edit Order is wired now); the new twin registered. |
 

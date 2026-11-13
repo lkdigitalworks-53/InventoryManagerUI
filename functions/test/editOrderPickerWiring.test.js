@@ -1,5 +1,5 @@
 "use strict";
-// Picker v2, slice S4: the Edit Order dialog is wired to the picker sheet. EOW-01..16. Plan:
+// Picker v2, slice S4: the Edit Order dialog is wired to the picker sheet. EOW-01..19. Plan:
 // docs/superpowers/plans/2026-11-12-product-picker-v2-s4-edit-order.md. Like newOrderPickerWiring.test.js these read the
 // QML text (qmltestrunner cannot load Felgo), so they pin WIRING, not painting; EOW-12..14 also RUN the dialog's real
 // hook literal, its real row snapshot and its real _applyPicked body in a sandbox against the real helpers and a fake
@@ -15,6 +15,7 @@ const ROOT = path.join(__dirname, "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 const DLG = read("qml/pages/OrderDetailDialog.qml");
 const EP = load("EditOrderPicker.js");
+const NPH = load("NewOrderPicker.js");
 const PM = load("PickerSheetModel.js");
 const PD = load("PickerDraft.js");
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -30,8 +31,7 @@ function literal(src, head, open, close) {
     return src.substring(start, i + 1);
 }
 const fn = (name) => noComments(extractFunction("pages/OrderDetailDialog.qml", name));
-// openFor holds an unbalanced brace inside a comment, so extractFunction cannot bound it: take the text up to the next member.
-const OPEN_FOR = CODE.slice(CODE.indexOf("function openFor("), CODE.indexOf("onClosed:"));
+const OPEN_FOR = fn("openFor");
 
 test("EOW-01 the combo, its names array, its stock helper and the old add button are gone; the catalog stays for legacy-order seeding only", () => {
     for (const name of ["productCombo", "catalogNames", "_availableStock", "IconActionButton"])
@@ -59,7 +59,7 @@ test("EOW-03 the hooks are the six the helpers expect, each wired to the store o
         hasPendingMint: "StockBatchStore.hasPendingMint(id)",
         hasQueuedRestock: "InventoryStore.hasQueuedRestock(id)",
         unsyncedState: "InventoryStore.syncStateOf(id)",
-        inOrderQty: "Edit.cartQty(dlg._pickerLinesNow(), id)",
+        inOrderQty: "NP.cartQty(dlg._pickerLinesNow(), id)",
         availableFor: "Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx())",
         commitCheck: "Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup)"
     };
@@ -89,7 +89,7 @@ test("EOW-05 _applyPicked reads the live rows, applies sets and appends to the m
     assert.equal((f.match(/recomputeSubtotal\(\)/g) || []).length, 1, "one recompute, after both loops");
     assert.ok(f.indexOf("recomputeSubtotal()") > f.indexOf("products.append"));
     assert.ok(f.includes('stockErrorLabel.text = ""'));
-    assert.ok(f.includes("const note = Edit.skippedNote(res.skipped)"));
+    assert.ok(f.includes("const note = NP.skippedNote(res.skipped)"));
     assert.ok(/if \(note\.length > 0\) Toast\.show\(note\)/.test(f));
     assert.ok(!/products\.remove|products\.clear/.test(f), "the picker never removes a row");
     assert.ok(!/setProperty\([^)]*"(price|discountType|discountValue|taxable|taxPercent)"/.test(f), "the picker never touches an existing row's price, discount or tax");
@@ -189,7 +189,7 @@ function dialogGlue(world, rows, status, original) {
     const recomputes = [];
     const label = { text: "stale" };
     const dlg = { _orderStatus: status, _originalLines: original || [] };
-    const sandbox = { products: model, Edit: EP, dlg, Toast: { show: (m) => toasts.push(m) }, stockErrorLabel: label,
+    const sandbox = { products: model, Edit: EP, NP: NPH, dlg, Toast: { show: (m) => toasts.push(m) }, stockErrorLabel: label,
                       recomputeSubtotal: () => recomputes.push(model.rows.length),
                       InventoryStore: world.InventoryStore, StockBatchStore: world.StockBatchStore };
     const script = ["_lineItemArray", "_pickerLinesNow", "_pickerCtx", "_applyPicked"].map((n) => extractFunction("pages/OrderDetailDialog.qml", n)).join("\n")
@@ -287,4 +287,17 @@ test("EOW-18 PR #196 sweep: closing the dialog also empties the sheet's notifier
     const at = (s) => closed.indexOf(s);
     assert.ok(at("picker.close()") >= 0 && at("_pickerLines = []") > at("picker.close()"), "_pickerLines is emptied after picker.close()");
     assert.ok(at("_pickerLines = []") > at("products.clear()") && at("_pickerLines = []") < at("_originalLines = []"));
+});
+
+test("EOW-19 PR #196 second sweep: the dialog imports both helpers once each, EditOrderPicker no longer wraps cartQty or skippedNote, the header comment no longer hides openFor from extractFunction, and a row with a NaN quantity is left alone by the real _applyPicked", () => {
+    assert.equal((CODE.match(/import "\.\.\/helper\/EditOrderPicker\.js" as Edit/g) || []).length, 1);
+    assert.equal((CODE.match(/import "\.\.\/helper\/NewOrderPicker\.js" as NP/g) || []).length, 1);
+    assert.ok(!/\bEdit\.(cartQty|skippedNote)\b/.test(CODE), "the dialog calls NewOrderPicker for those two, directly");
+    assert.deepEqual(Object.keys(EP).filter((k) => /^(cartQty|skippedNote)$/.test(k)), [], "EditOrderPicker.js is not a facade for NewOrderPicker.js");
+    const whole = extractFunction("pages/OrderDetailDialog.qml", "openFor");
+    assert.ok(whole.length > 500 && whole.length < 9000 && /_originalLines = \(o\.products/.test(whole) && !/function recomputeSubtotal/.test(whole), "extractFunction bounds the real openFor");
+    const world = fakeWorld();
+    const g = dialogGlue(world, [row("A", NaN), row("C", 1)], "pending");
+    g.apply({ adds: [], bumps: [{ productId: "C", qty: 1 }] });
+    assert.deepEqual(plain(g.model.rows.map((r) => [r.productId, Number.isNaN(r.quantity) ? "NaN" : r.quantity])), [["A", "NaN"], ["C", 2]]);
 });

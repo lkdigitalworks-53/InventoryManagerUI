@@ -9,12 +9,13 @@ import "../helper/FailureCause.js" as FailureCause
 import "../helper/OrderAdjust.js" as OrderAdjust
 import "../helper/StaffPicker.js" as StaffPicker
 import "../helper/EditOrderPicker.js" as Edit
+import "../helper/NewOrderPicker.js" as NP
 import "../model"
 
 // Order detail / edit — bottom sheet. Live product table with qty editing,
 // totals (subtotal / GST 18% / total), product picker. Public contract:
 // signal orderUpdated(orderId)
-// function openFor(id)
+// openFor(id)
 // property string orderId, int orderIndex
 BottomSheet {
     id: dlg
@@ -200,7 +201,7 @@ BottomSheet {
         hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
         hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
         unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
-        inOrderQty: function(id) { return Edit.cartQty(dlg._pickerLinesNow(), id) },
+        inOrderQty: function(id) { return NP.cartQty(dlg._pickerLinesNow(), id) },
         availableFor: function(p) { return Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx()) },
         commitCheck: function(plan) { return Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup) }
     })
@@ -221,7 +222,7 @@ BottomSheet {
             products.append(res.appends[j])
         recomputeSubtotal()
         stockErrorLabel.text = ""
-        const note = Edit.skippedNote(res.skipped)
+        const note = NP.skippedNote(res.skipped)
         if (note.length > 0) Toast.show(note)
     }
 

@@ -51,9 +51,6 @@ function originalOf(original, productId) {
 }
 function _originalOf(ctx, productId) { return originalOf(ctx && ctx.original, productId) }
 
-// Units of a product the order holds now (all its lines).
-function cartQty(lines, productId) { return NP.cartQty(lines, productId) }
-
 // Units NEW quantity may still use. Pending or processing: on-hand minus what the order holds (same as New Order).
 // Completed: its units are already out of stock, so on-hand plus the units the order held at completion minus what it
 // holds now (a removed line frees its units for a re-add, a bigger line uses them). Whole units, never negative. Any
@@ -112,7 +109,8 @@ function applyPlan(lines, plan, ctx, lookup) {
     for (var i = 0; i < res.lines.length; ++i) {
         var l = res.lines[i]
         if (i < before.length) {
-            if (l.qty !== before[i].qty) sets.push({ index: i, productId: l.productId, quantity: l.qty })
+            // `> 0` also keeps a row whose quantity is NaN out of `sets`: NaN !== NaN would make an untouched row look changed.
+            if (l.qty > 0 && l.qty !== before[i].qty) sets.push({ index: i, productId: l.productId, quantity: l.qty })
             continue
         }
         var p = _productOf(lookup, String(l.productId))
@@ -130,5 +128,3 @@ function commitCheck(lines, plan, ctx, lookup) {
     if (_completed(ctx)) return { ok: true, text: "" }
     return NP.opsCheck(Array.isArray(lines) ? lines : [], plan, _full(lookup, ctx))
 }
-
-function skippedNote(skipped) { return NP.skippedNote(skipped) }

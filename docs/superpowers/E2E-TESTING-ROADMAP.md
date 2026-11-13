@@ -236,8 +236,7 @@ closed, not just mergeable.
   startup, in case the app was relaunched while already online with leftovers) via
   `retryPendingMints()`/`_retryOnePendingMint()`, deduped against concurrent/overlapping retries via
   an in-flight set (same pattern `OutboxStore._inFlightKeys` already established). `hasPendingMint
-  (productId)` lets a caller check whether a product has one outstanding; wired into both
-  `NewOrderDialog._rebuildPickerNames()` and `OrderDetailDialog._rebuildCatalog()` to skip such
+  (productId)` lets a caller check whether a product has one outstanding; wired into both order dialogs (since picker v2, S3 and S4, as the sheet's `hasPendingMint` hook; `OrderDetailDialog._rebuildCatalog()` now only seeds a legacy order) to skip such
   products from the "add a line" picker entirely (existing lines already on an order are untouched —
   only new selection is blocked). `NewOrderDialog` needed a small structural fix alongside this: its
   picker resolved selection via a raw `InventoryStore.products[idx]` index with no filtering layer

@@ -302,13 +302,6 @@ TestCase {
         eq(EP.commitCheck([], plan(addRange(0, 60, 2)), { status: "weird" }, world(60).lookup).ok, false);
     }
 
-    function test_EOP_24_skippednote_is_neworderpicker_s_note_unchanged() {
-        const sk = [{ productId: "A", name: "Alpha", reason: "out-of-stock" }, { productId: "B", name: "Beta", reason: "gone" }];
-        eq(EP.skippedNote(sk), "Alpha: out of stock (+1 more)");
-        eq(EP.skippedNote([]), "");
-        eq(EP.skippedNote(undefined), "");
-    }
-
     function test_EOP_25_monkey_seeded_over_random_orders_and_plans_no_product_ever_e() {
         for (let seed = 1; seed <= 150; ++seed) {
             const rand = rng(seed);
@@ -426,5 +419,20 @@ TestCase {
                 ok(after <= limit, "limit of " + p.productId + ", seed " + seed + ": " + after + " > " + limit);
             }
         }
+    }
+
+    function test_EOP_31_applyplan_a_row_whose_quantity_is_nan_or_not_a_number_is_nev() {
+        const lines = [line("A", NaN), line("B", 2), line("C", undefined), line("D", "2"), line("E", -1), line("F", Infinity)];
+        const prods = [prod("A", 9), prod("B", 9), prod("C", 9), prod("D", 9), prod("E", 9), prod("F", 9)];
+        const before = JSON.stringify(lines);
+        const r = EP.applyPlan(lines, plan([], [e("B", 1)]), ctx("pending"), lk(prods));
+        eq(r.sets, [{ index: 1, productId: "B", quantity: 3 }]);
+        eq(r.appends.length, 0);
+        eq(JSON.stringify(lines), before);
+        // a bump ON the NaN row counts the row as holding 0: it gets a real, finite quantity
+        const r2 = EP.applyPlan(lines, plan([], [e("A", 2)]), ctx("pending"), lk(prods));
+        eq(r2.sets, [{ index: 0, productId: "A", quantity: 2 }]);
+        // an untouched plan changes nothing at all, however bad the rows are
+        eq(EP.applyPlan(lines, plan([], []), ctx("completed", [orig("A", 1, false, 0)]), lk(prods)).sets, []);
     }
 }

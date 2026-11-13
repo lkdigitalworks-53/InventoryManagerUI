@@ -1,5 +1,5 @@
 "use strict";
-// EditOrderPicker (qml/helper/EditOrderPicker.js). Cases EOP-01..26, plan:
+// EditOrderPicker (qml/helper/EditOrderPicker.js). Cases EOP-01..31 (EOP-24 went with the pass-through wrapper it tested, PR #196 second sweep), plan:
 // docs/superpowers/plans/2026-11-12-product-picker-v2-s4-edit-order.md. The QML twin tests/tst_EditOrderPicker.qml is
 // derived from these bodies (PAIR-01 in pickerDormancy.test.js); a title ending "(Node only)" is left out of the twin.
 // What this proves: the three things Edit Order does differently from New Order (status-aware stock, booked tax on a
@@ -299,13 +299,6 @@ test("EOP-23 commitCheck fails closed for a pending order when it cannot read th
     eq(EP.commitCheck([], plan(addRange(0, 60, 2)), { status: "weird" }, world(60).lookup).ok, false);
 });
 
-test("EOP-24 skippedNote is NewOrderPicker's note, unchanged", () => {
-    const sk = [{ productId: "A", name: "Alpha", reason: "out-of-stock" }, { productId: "B", name: "Beta", reason: "gone" }];
-    eq(EP.skippedNote(sk), "Alpha: out of stock (+1 more)");
-    eq(EP.skippedNote([]), "");
-    eq(EP.skippedNote(undefined), "");
-});
-
 test("EOP-25 monkey, seeded: over random orders and plans no product ever ends above its limit, no line is removed or duplicated, no price or tax of an existing row is touched, in both statuses", () => {
     for (let seed = 1; seed <= 150; ++seed) {
         const rand = rng(seed);
@@ -444,4 +437,19 @@ test("EOP-30 monkey, seeded, fractional quantities and junk rows: a set only add
             ok(after <= limit, "limit of " + p.productId + ", seed " + seed + ": " + after + " > " + limit);
         }
     }
+});
+
+test("EOP-31 applyPlan: a row whose quantity is NaN or not a number is never in sets (NaN !== NaN made it look changed), the touched rows still are, nothing is written into it", () => {
+    const lines = [line("A", NaN), line("B", 2), line("C", undefined), line("D", "2"), line("E", -1), line("F", Infinity)];
+    const prods = [prod("A", 9), prod("B", 9), prod("C", 9), prod("D", 9), prod("E", 9), prod("F", 9)];
+    const before = JSON.stringify(lines);
+    const r = EP.applyPlan(lines, plan([], [e("B", 1)]), ctx("pending"), lk(prods));
+    eq(r.sets, [{ index: 1, productId: "B", quantity: 3 }]);
+    eq(r.appends.length, 0);
+    eq(JSON.stringify(lines), before);
+    // a bump ON the NaN row counts the row as holding 0: it gets a real, finite quantity
+    const r2 = EP.applyPlan(lines, plan([], [e("A", 2)]), ctx("pending"), lk(prods));
+    eq(r2.sets, [{ index: 0, productId: "A", quantity: 2 }]);
+    // an untouched plan changes nothing at all, however bad the rows are
+    eq(EP.applyPlan(lines, plan([], []), ctx("completed", [orig("A", 1, false, 0)]), lk(prods)).sets, []);
 });
