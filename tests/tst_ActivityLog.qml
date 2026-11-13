@@ -155,6 +155,14 @@ TestCase {
         compare(ActivityLog.revision, rev, "no change, no revision bump")
     }
 
+    // PR #197 sweep 2: the held id sits BELOW where the new copy would go; it must still be found.
+    function test_adopt_finds_a_held_id_below_the_insertion_point() {
+        verify(ActivityLog.adopt(_row("a3", 30)))
+        verify(ActivityLog.adopt(_row("a1", 10)))
+        compare(ActivityLog.adopt(_row("a1", 50)), false)
+        compare(_ids(), "a3,a1")
+    }
+
     function test_adopt_refuses_what_is_not_a_feed_row() {
         var bad = [null, undefined, 5, "x", {}, { id: "", timestamp: "t" }, { id: "a" }, { id: "a", timestamp: 5 }]
         for (var i = 0; i < bad.length; ++i) compare(ActivityLog.adopt(bad[i]), false)

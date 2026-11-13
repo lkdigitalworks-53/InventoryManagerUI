@@ -69,7 +69,7 @@ opType restriction dropped; exact-keys dropped; `read`/`dismissed` check dropped
 First CI read on `bde06ca`: Functions green; QML RED, 4 of the QML cases: `tst_InventoryStore_restock` (2) and `tst_RestockPlan` M1 still expected the old 4/6 op counts, and `tst_ActivityLog` 50-cap case used an equal timestamp (equal goes AFTER the held row). Test-side only, product code was right; fixed in the next commit. Learning: Skill 166 rule 9.
 
 ## 9. Counts
-Functions 1715/1715 after review sweep 1 (section 10; 1711 before), scripts 1049/1049, QML twins and e2e in CI.
+Functions 1720/1720 after review sweep 2 (section 11; 1715 after sweep 1, 1711 before), scripts 1049/1049, QML twins and e2e in CI.
 
 ## 10. PR #197 review sweep 1 (2026-11-13): three server gaps, found by probe, fixed
 **How found.** A script sent hostile bodies to the REAL `validateOperationRequest` + `applyOperation` (strict fake DB). Before the fix: an operation with FOUR feed rows was accepted (the design says one); a row naming product p2 was accepted while the only delta was on p1; `{{$stock}}` in the TITLE was stored as the literal text. After: all three are `400 invalid-activity` at the offending op.
@@ -91,3 +91,18 @@ Functions 1715/1715 after review sweep 1 (section 10; 1711 before), scripts 1049
 **Test hygiene in the same sweep (no production change):** the three new `restockWire` cases were labelled W-20/21/22 and collided with an existing W-20; now W-23..W-25 (rows in section 2 updated). `B-2` asserted `a || b` between two possible ids; now one exact key.
 
 **On device (Taher), one extra step.** 13. **All three supplier shapes still write the row.** Restock once with no supplier, once with a known supplier, once with a new typed supplier. Expected each time: ONE row at the top of the feed, `now N in stock` filled in. This is the only way the stricter server rules could hurt a real user, so it is the only device step this sweep adds. The refused shapes cannot be produced from the app (the planner never builds them), so they have no device step.
+
+## 11. PR #197 review sweep 2 (2026-11-13): the caps held on the template, not on the stored text. Fixed
+**How found.** A probe script (real `validateOperationRequest` + `applyOperation`, strict fake DB) stored a 1600-char subtitle: `checkActivityOp` proves the 1000-char cap on the TEMPLATE, then `applyOperation` fills `{{$stock}}` (10 chars) with the real stock (16 digits) and the mint phase replaces `{{batch}}` in title and subtitle with a longer id. A hostile client could store text over the cap (a restock from the app never does: the planner clips to about 650). Also: `stampActivity` threw a TypeError inside the transaction on a doc with no title or subtitle (only reachable by calling `applyOperation` without validation).
+**Fix.** `stampActivity` refuses (`invalid-activity`, 400, nothing written) a doc that is not a doc with string title and subtitle, and re-proves both caps on the STORED text.
+
+| IDs | What | Kind |
+|---|---|---|
+| B-12 | 100 tokens (1000-char template) x a 16-digit stock: refused, no write; the same template with a 2-digit stock: accepted, stored 200 chars | negative + edge |
+| B-13 | boundary: stored exactly 1000 chars kept, 1001 refused (stock of 10 and 11 digits) | edge |
+| B-14 | 22 x `{{batch}}` (198-char template) in the title: the minted ids push it over 200: refused; one `{{batch}}`: accepted and longer than its braces | negative + edge |
+| B-15 | `applyOperation` alone with `after` null, `{}`, number title, null subtitle, undefined title: `invalid-activity`, never a throw | negative (robustness) |
+| AD-8 / `tst_ActivityLog.test_adopt_finds_a_held_id_below_the_insertion_point` | a newer copy of a row held further down the list is ignored (the duplicate scan does not stop at the insertion point) | edge (Node + QML twin) |
+
+**Hand mutant.** The two new guards in `stampActivity` removed: B-12, B-13, B-14, B-15 fail (4 of 4); restored: 31/31 in the file.
+**Not covered, on purpose.** No new emulator case: the new refusal is in the same code path the existing `R5b review F1-F3` case drives. The activity id is still not pinned (KNOWN-ISSUES 30, decision recorded). **On device:** nothing new; the app never sends a template that expands past the caps.

@@ -34,7 +34,21 @@ Continue at the first unchecked step. Deploy order when merged: functions first,
 - [x] R3. TEST HYGIENE (tests and test plan only, zero prod change): the three new `restockWire` cases were labelled W-20/21/22 and collided with the existing W-20 (two already shared it, a third made it three); renamed W-23..W-25 and the test plan rows; `B-2` had `a || b` between two possible ids, now ONE exact key list (proves the id carries the injected clock's year). 57/57 in the two files. The older W-20 pair (lines 312 and 414) is NOT touched (KNOWN-ISSUES). Commit 2 = this one.
 - [x] R4. DOCS (commit 3 = this one): stale `recordPurchase` mentions fixed (MigrationService comment, SKILLS.md two places); test plan section 10 + counts; Skill 166 rules 10-12; README and AGENTS sentences; KNOWN-ISSUES 29-32 (W-20 pair, id not pinned = decision, adopt vs stale fetch = unverified, lint noted). Left as history on purpose: `ATOMIC-OPERATIONS-STATUS.md` section 10 P2 line and the old plans/specs (they describe their own date).
 - [x] R5. Pushed after every commit. CI on head `2874f1d` (read 2026-11-13 via API): Functions 1715/1715, QML 3026/3026, Rules 129/129, E2E 114/114 (113 + the new F1-F3 emulator case), 4984 of 4984. Sweep 1 of PR #197 is DONE.
-- [ ] R6 (NEXT SESSION, optional, only if Taher asks for sweep 2): decide KNOWN-ISSUES 30 (pin the activity id?) and 31 (adopt vs stale fetch: needs a device timing test); the three R5b-original commits keep `lkdwtaher@` (history not rewritten). Deploy order when merged: functions FIRST, then the client build.
+- [x] R6 Done in sweep 2 below: KNOWN-ISSUES 30 stays a recorded decision (id not pinned), 31 analysed by reading the code (real, not new in R5b, fix proposed as a separate PR). The three R5b-original commits keep `lkdwtaher@` (history not rewritten). Deploy order when merged: functions FIRST, then the client build.
+
+# REVIEW SWEEP 2 of PR #197 (2026-11-13, one chat turn, NO parallel agents) - resume here
+
+**Who/how:** session prompt of 2026-11-13 07:48 IST (superpowers requesting-code-review, qt-qml-review, ponytail-audit, caveman full). Commit identity `lkdwtaher@gmail.com` as git user AND last line of every commit message (this prompt names it; sweep 1 used another address and stays as it is). Fixes go ON the PR head branch. PAT only per command via `git -c http.extraHeader`, remote URL clean. No build, no Qt.
+**Rules in force:** same as sweep 1. Node tests run here (`cd functions && npm ci && node --test`; scripts: `node --test .github/scripts/__tests__/*.test.js`).
+
+## Steps
+- [x] T0. Clone, checkout PR head `1bad9ee`, memory read, baseline functions 1715/1715.
+- [x] T1. Read whole server diff, applyOperation, runMints, checkPlaceholders, recordOperation handler (no role gate there = known decision, KNOWN-ISSUES ~399), firestore rules (activity_log client-writable), full client diff (RestockPlan, ActivityLog.adopt, InventoryStore hooks, RestockFlow), legacy activityText parity, new QML tests.
+- [x] T2. PROBE (`scratchpad/probe2.js`): FOUND subtitle stored at 1600 chars from a 1000-char template (token x 100 x 16-digit stock); minted ids can also push the title over 200. Literal id `act-squat` accepted (KNOWN-ISSUES 30, decision stays). Max-float stock refused by the existing movement check.
+- [x] T3. FIX `stampActivity` (`functions/lib/operationLogic.js`): refuse a non-doc / non-string title or subtitle (was a TypeError inside the transaction), re-prove both caps on the stored text. Tests B-12..B-15, 4/4 killed with the fix reverted. Adopt twin AD-8 + `tst_ActivityLog` case (a held id below the insertion point).
+- [x] T4. DOCS: test plan section 11 + counts, KNOWN-ISSUES 31 (confidence 85, not new in R5b, fix proposed), Skill 166 rule 13, this checkpoint.
+- [x] T5. Counts: functions 1720/1720 (+5), scripts 1049/1049. QML twin and CI: read after push.
+- [ ] T6 (NEXT SESSION): read CI on the sweep 2 head; separate small PR for KNOWN-ISSUES 31 (merge by id in `ActivityLog._fetchFromFirebase`) if Taher wants it; R6 device test of the whole restock arc (test plan section 7 + step 13).
 
 ## NEXT (if this session stops)
 Continue at the first unchecked R-step. Each commit is independent and revertable. Never force-push this branch.

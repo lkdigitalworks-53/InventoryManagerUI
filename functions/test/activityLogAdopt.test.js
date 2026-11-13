@@ -76,3 +76,11 @@ test("AD-7 a list that is not set yet (undefined) behaves like an empty one", ()
     assert.equal(ctx.adopt(row("a1", ts(1))), true);
     assert.deepEqual(ids(ctx), ["a1"]);
 });
+
+test("AD-8 (PR #197 sweep 2) a held id BELOW the insertion point is still found: a newer copy of a held row is ignored, not added twice", () => {
+    const ctx = sandbox([row("a3", ts(30)), row("a1", ts(10))]);
+    assert.equal(ctx.adopt(row("a1", ts(50))), false);      // would sort first (50 > 30), but a1 is held further down
+    assert.deepEqual(ids(ctx), ["a3", "a1"]);
+    assert.equal(ctx.revision, 0);
+    assert.equal(ctx.pruned, 0);
+});

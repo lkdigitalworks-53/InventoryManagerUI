@@ -385,3 +385,58 @@ test("B-11 applyOperation stamps the CALLER and the server clock even if a doc t
     assert.equal(doc.actorUid, "u-real");
     assert.equal(doc.timestamp, NOW_ISO);
 });
+
+// ------------------------------------------------------------------ PR #197 sweep 2: the caps hold on the STORED text
+
+const stockDb = (stock) => strictDb({ [T + "inventory/p1"]: { productId: "p1", name: "Tomato", stock: stock } });
+const feedRows = (db) => Object.keys(db.store).filter((k) => k.indexOf("activity_log/") >= 0).map((k) => db.store[k]);
+
+test("B-12 (sweep 2) the subtitle cap holds AFTER the stock token is filled: 100 tokens x a 16-digit stock is refused with no trace", async () => {
+    const sub = TOKEN.repeat(100);                       // 1000 chars: a legal template
+    validated(body(restockOps({ activity: activityOp({ subtitle: sub }) })));
+    let db = stockDb(1e15);                              // 1e15 + 5 = 16 digits -> 1600 chars stored (found by probe)
+    let r = await run(db, body(restockOps({ activity: activityOp({ subtitle: sub }) })));
+    assert.deepEqual([r.ok, r.status, r.error, r.opIndex], [false, 400, "invalid-activity", 4]);
+    assert.deepEqual(db.writes, []);
+    db = stockDb(10);                                    // 15 = 2 digits -> 200 chars stored: same template, accepted
+    r = await run(db, body(restockOps({ activity: activityOp({ subtitle: sub }) })));
+    assert.equal(r.ok, true);
+    assert.equal(feedRows(db).length, 1);
+    assert.equal(feedRows(db)[0].subtitle.length, 200);
+});
+
+test("B-13 (sweep 2) the cap is inclusive: a stored subtitle of exactly 1000 chars is kept, 1001 is refused", async () => {
+    const sub = TOKEN + "x".repeat(990);                 // 1000-char template
+    let db = stockDb(1000000000);                        // +5 = 1000000005: 10 digits, the 10-char token keeps its length
+    let r = await run(db, body(restockOps({ activity: activityOp({ subtitle: sub }) })));
+    assert.equal(r.ok, true);
+    assert.equal(feedRows(db)[0].subtitle.length, 1000);
+    db = stockDb(10000000000);                           // 11 digits: 1001 chars stored
+    r = await run(db, body(restockOps({ activity: activityOp({ subtitle: sub }) })));
+    assert.deepEqual([r.ok, r.error, r.opIndex], [false, "invalid-activity", 4]);
+    assert.deepEqual(db.writes, []);
+});
+
+test("B-14 (sweep 2) the title cap holds after the mint phase turns {{batch}} into a longer id", async () => {
+    let db = baseDb();
+    let r = await run(db, body(restockOps({ activity: activityOp({ title: "{{batch}}" }) })));
+    assert.equal(r.ok, true);
+    assert.ok(feedRows(db)[0].title.length > "{{batch}}".length, "a minted id is longer than its braces, or this case proves nothing");
+    const n = Math.floor(200 / "{{batch}}".length);      // 22 x 9 = 198 chars: a legal template
+    db = baseDb();
+    r = await run(db, body(restockOps({ activity: activityOp({ title: "{{batch}}".repeat(n) }) })));
+    assert.deepEqual([r.ok, r.error, r.opIndex], [false, "invalid-activity", 4]);
+    assert.deepEqual(db.writes, []);
+});
+
+test("B-15 (sweep 2) a doc that skipped validation, with no doc or a non-string title / subtitle, is refused and never thrown on", async () => {
+    const params = (ops) => ({ tenantId: "t1", actorUid: "u", actorRole: "owner", requestId: "restock:r", opType: "restock", ops, clientTimestamp: "c", serverTimestamp: TS, now: NOW });
+    const bad = [null, {}, activityDoc({ id: "act-p1", title: 5 }), activityDoc({ id: "act-p1", subtitle: null }), activityDoc({ id: "act-p1", title: undefined })];
+    for (const after of bad) {
+        const op = { kind: "mutation", entity: "activity", entityId: "act-p1", action: "create", before: null, after, collection: "activity_log" };
+        const db = baseDb();
+        const r = await OL.applyOperation(db, params([op]));
+        assert.deepEqual([r.ok, r.status, r.error, r.opIndex], [false, 400, "invalid-activity", 0], JSON.stringify(after));
+        assert.equal(db.writes.length, 0);
+    }
+});

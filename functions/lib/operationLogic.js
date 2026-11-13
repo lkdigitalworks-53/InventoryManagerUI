@@ -256,6 +256,8 @@ function checkActivityOp(v, index, earlier) {
 // the same product, and the caller's uid and the server clock stamped on. The time is an ISO string, the format
 // ActivityLog.record always used, so the feed's orderBy("timestamp") never mixes value types.
 function stampActivity(after, params, results) {
+    // A doc that skipped validation (applyOperation is callable on its own) must be refused, not thrown on inside the transaction.
+    if (!after || typeof after.title !== "string" || typeof after.subtitle !== "string") return { error: "invalid-activity" };
     let subtitle = after.subtitle;
     if (subtitle.indexOf(STOCK_TOKEN) >= 0) {
         let stock;
@@ -264,6 +266,10 @@ function stampActivity(after, params, results) {
         if (stock === undefined) return { error: "activity-stock-missing" };
         subtitle = subtitle.split(STOCK_TOKEN).join(String(stock));
     }
+    // PR #197 sweep 2: checkActivityOp proved the caps on the TEMPLATE. The stock token can stand many times and a stock
+    // can be long, and the {{batch}} ids the mint phase put into title and subtitle are longer than their braces, so
+    // the caps are proved again on the text that is STORED (probe: 100 tokens x a 16-digit stock stored 1600 chars).
+    if (after.title.length > MAX_ACTIVITY_TITLE || subtitle.length > MAX_ACTIVITY_SUBTITLE) return { error: "invalid-activity" };
     return { doc: Object.assign({}, after, { subtitle: subtitle, actorUid: params.actorUid,
                                              timestamp: new Date(params.now || Date.now()).toISOString() }) };
 }
