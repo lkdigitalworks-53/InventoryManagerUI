@@ -1010,7 +1010,7 @@ After a hand edit in the Firestore console (a changed `quantity`, an extra field
 1. ~~Every member can read the raw ledger, cost values included.~~ CLOSED 2026-11-11 (follow-up PR slice 3): `stock_movements` read is `isLedgerReader` (owner, admin, manager), equal to `REGISTER_ROLES`; a guard test parses both. Needs the rules deploy (the merge deploy step ships `firestore:rules` together with functions). CI is the only oracle for the emulator cases.
 2. **The register reads the whole ledger on every request and Firestore bills each row.** About one read per row; capped at 250 000 rows (413 `ledger-too-large` past it, for every period). Fine for dev and a few opens a month; S4b must fetch on demand only. Fix when volume arrives: a running per-product balance written in the same transaction as the rows (design section 5). Not started; needs its own design because it touches every write path.
 3. **`reconciles` is advisory, not transactional.** The ledger and the inventory are read separately; a write landing between them can flag one product for one answer. The register's balances never use the inventory doc, so they are not affected.
-4. **Period boundaries are the client's job.** The endpoint wants offset-aware instants and treats `to` as exclusive. S4b must send local midnights with the phone's offset (and the end of a month as the first instant of the next one), not `23:59:59`.
+4. **Period boundaries are the client's job.** The endpoint wants offset-aware instants and treats `to` as exclusive. S4b must send local midnights with the phone's offset (and the end of a month as the first instant of the next one), not `23:59:59`. **Amended 2026-11-12 (S4b-1, decision D2): the client sends fixed IST (+05:30) midnights, not the phone's offset, so a phone set to another zone cannot move a statutory boundary.** See the S4b-1 section below, item 2.
 5. **Column layout of the printed register is undecided** (which kinds count as receipts, supplies, returns; P1 design section 8). The endpoint returns IN and OUT per kind and the layout is a presentation choice, to confirm with the CA before S4c.
 6. **`valueAtCost` is not in the register** until S2e writes real values (SR-D11).
 7. **Imported-order completion still counts as `adjustment`** (S2d-2 open), so the register's `sale` OUT understates supplies for imported orders until S2d-2 lands. Visible as `adjustment.out`.
@@ -1033,3 +1033,20 @@ After a hand edit in the Firestore console (a changed `quantity`, an extra field
 23. **PR #195 review, note: the last three commits on the branch (`519f2ba`, `298988d`, `fe3a997`) carry the old `lkdwtaher@gmail.com` as the last message line** (they came from a parallel session). The current rule is `allibaas52@gmail.com`. History was NOT rewritten (a force-push on an open PR breaks the reviewer's view); the review-sweep commit carries the right one. Squash-merge, or accept.
 
 **Scheduled:** items 1, 13, 14 and 16 are planned as ONE PR (four commits) in `docs/superpowers/plans/2026-11-11-p1-s4a-followups-one-pr-plan.md`, to be taken right after PR #193 merges. Items 15, 17 and 18 are deliberately not in it (reasons in the plan).
+
+## P1 S4b-1 stock register client engine (2026-11-12): findings and limits, open unless marked
+
+Built: `StockRegisterModel.js` (pure) + `StockRegisterService.qml` (dormant). Design `specs/2026-11-12-p1-s4b-register-client-design.md`, test plan `test-plans/2026-11-12-p1-s4b1-register-client-engine-test-plan.md`.
+
+1. **Nothing is visible yet.** No page and no entry point until S4b-2; the service is pinned dormant by `SRS-04`.
+2. **Register and Analysis can disagree on "this month".** The register uses fixed IST (D2); `BreakdownMath.periodWindow` (Analysis) uses the phone's local time. Identical for a phone set to India, different near midnight for any other zone. Every register window prints "(IST)". There is no tenant time-zone setting.
+3. **A running period's window ends at the period end, not now (D4).** "This month" says "to 30 Nov" on 12 Nov. Closing equals the balance now because nothing is later. The page must show "as of" from `readAt` so it is not read as a month-end figure.
+4. **A 401 may repeat.** On 401 the service calls `ensureFreshToken()` (the one silent door), which refreshes only when the local clock says the token is near expiry. A token the server rejects but the clock trusts (revoked, clock skew) keeps answering 401 on every tap until the session recheck runs. Unverified on a device; it is the cost of not adding a second refresh path (D12).
+5. **Up to about two minutes of waiting.** Client timeout 125 s (D10). The page needs a Cancel button; Cancel frees the screen but the server keeps scanning and billing.
+6. **The cache is memory only (D9).** An app restart loses it, so the first Load after a cold start always scans the ledger.
+7. **The QML test `tests/tst_StockRegisterModel.qml` has not run in the real engine.** Shim-run in Node (13/13). CI is the oracle; a reserved word or builtin difference can only show there (Skill 153 rule 6).
+8. **No cross-product totals (D6).** Units differ. A value total waits for `valueAtCost` (S2e) and the CA's layout (S4c).
+9. **No emulator e2e from QML to the endpoint yet** (S4a item 9 said S4b adds one): moved to S4b-2, where there is a caller.
+10. **`CHECKPOINT.md` on `main` still showed step 7 of the S4a follow-ups unticked although #195 is merged.** Archived with the previous checkpoint; no action.
+11. **Dependabot now reports 22 vulnerabilities (1 critical, 10 high, 6 moderate, 5 low)** on the default branch (push response, 2026-11-12; item 18 above said 20). Out of scope here and still not looked at. Open the Security tab; the open PR #178 bumps npm groups.
+

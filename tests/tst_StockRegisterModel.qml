@@ -2,8 +2,8 @@ import QtQuick
 import QtTest
 import "../qml/helper/StockRegisterModel.js" as M
 
-// Headless tests for the stock register's pure helper (P1 S4b-1). The full contract (about 400 assertions, 3000
-// random instants, 80 hand mutants) runs in Node in .github/scripts/__tests__/stockRegisterModel.test.js; this
+// Headless tests for the stock register's pure helper (P1 S4b-1). The full contract (about 350 checks, 3000
+// random instants, 81 hand mutants) runs in Node in .github/scripts/__tests__/stockRegisterModel.test.js; this
 // file proves the main cases in the real Qt JS engine (the one place a reserved word or a missing builtin shows).
 // Design: docs/superpowers/specs/2026-11-12-p1-s4b-register-client-design.md
 // Test plan: docs/superpowers/test-plans/2026-11-12-p1-s4b1-register-client-engine-test-plan.md

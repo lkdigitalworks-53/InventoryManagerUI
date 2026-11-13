@@ -12,13 +12,17 @@ Done: S1a/S1b server rows, S2a-c cleanup + inventory lock, S2d-1 typed kinds, S2
 
 ## Steps
 - [x] 0. Read memory, AGENTS rules, CHECKPOINT, S4a design, skills 153/156/161/163, AnalysisService/LockManager XHR pattern; repo cloned, branch cut, identity set.
-- [ ] 1. Design doc + decisions (D1..D10).
+- [x] 1. Design doc + decisions D1..D12 (`specs/2026-11-12-p1-s4b-register-client-design.md`).
 - [x] 2. `qml/helper/StockRegisterModel.js` (pure): IST presets, custom range, classify, validateAnswer, buildView, detailLines. `.github/scripts/__tests__/stockRegisterModel.test.js` SRM-01..07 green in Node (battery, TZ independence, 3000+1500 monkey, real-server contract, guards, hand mutants).
 - [x] 2b. `qml/model/StockRegisterService.qml` written + qmldir entry (tests: step 4).
-- [ ] 3. Node tests + QML test for the model.
-- [ ] 4. `qml/model/StockRegisterService.qml` + qmldir + Node behaviour/wiring/guard tests.
-- [ ] 5. Docs: test plan, KNOWN-ISSUES, Skill 167 + index, README, AGENTS.
-- [ ] 6. Push, read CI, done / pending / next.
+- [x] 3. `tests/tst_StockRegisterModel.qml` (13 functions, shim-run 13/13 in Node; CI is the oracle).
+- [x] 4. Service tests `stockRegisterService.test.js` SRS-01..05 (fake XHR, monkey, wiring, dormancy, 52 mutants). 401 uses `ensureFreshToken` (sessionRecheckWiring caught `refreshIdToken(true)`).
+- [x] 5. Docs: test plan + index row, KNOWN-ISSUES (S4b-1 section, S4a item 4 amended), Skill 167 + SKILLS-INDEX, README, AGENTS.
+- [ ] 6. Push (done after this edit), read CI, report done / pending / next.
+
+## Suites at last run (sandbox)
+Script suite 1061/1061, functions 1671/1671. QML not run here (no Qt by rule): CI decides.
 
 ## NEXT (if this session stops)
-Continue at the first unchecked step. Slice is dormant: nothing calls the service until S4b-2, so a red step can be reverted alone.
+Read CI for the branch head; fix red if any. Then S4b-2 (page): design in `specs/2026-11-12-p1-s4b-register-client-design.md` section 5. Pending Taher decisions: veto D2..D12, answer the CA question (P1 design section 8) for S4c, merge order with PR #196 (Skill number 167 assumes #196 merges first).
+If resuming mid-slice: continue at the first unchecked step. Slice is dormant: nothing calls the service until S4b-2, so a red step can be reverted alone.
