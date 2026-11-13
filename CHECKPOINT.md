@@ -13,7 +13,8 @@ Done: S1a/S1b server rows, S2a-c cleanup + inventory lock, S2d-1 typed kinds, S2
 ## Steps
 - [x] 0. Read memory, AGENTS rules, CHECKPOINT, S4a design, skills 153/156/161/163, AnalysisService/LockManager XHR pattern; repo cloned, branch cut, identity set.
 - [ ] 1. Design doc + decisions (D1..D10).
-- [ ] 2. `qml/helper/StockRegisterModel.js` (pure).
+- [x] 2. `qml/helper/StockRegisterModel.js` (pure): IST presets, custom range, classify, validateAnswer, buildView, detailLines. `.github/scripts/__tests__/stockRegisterModel.test.js` SRM-01..07 green in Node (battery, TZ independence, 3000+1500 monkey, real-server contract, guards, hand mutants).
+- [x] 2b. `qml/model/StockRegisterService.qml` written + qmldir entry (tests: step 4).
 - [ ] 3. Node tests + QML test for the model.
 - [ ] 4. `qml/model/StockRegisterService.qml` + qmldir + Node behaviour/wiring/guard tests.
 - [ ] 5. Docs: test plan, KNOWN-ISSUES, Skill 167 + index, README, AGENTS.
