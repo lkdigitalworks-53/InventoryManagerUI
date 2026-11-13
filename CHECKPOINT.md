@@ -16,10 +16,12 @@
 - [x] 0. Clone, memory + STATUS + CHECKPOINT + KNOWN-ISSUES read, baseline 1720/1720, branch cut, identity set.
 - [x] 1. Evidence read: `addProduct` (7 independent writes), `RestockPlan`, `operationLogic`, `counterRegistry`, `movementLogic` (create derives a `receipt` row), no role gate on `recordOperation` (same as `recordMutation`), drift guard, e2e twin pattern.
 - [x] 2. Design doc written (this commit).
-- [ ] 3. SERVER: `product` counter, `addProduct` opType, activity kind tied to opType, `checkActivityOp(opType)`.
-- [ ] 4. TESTS: `operationLogic.addProduct.test.js`, guard rows + mutants, widened source pin, dormancy guard, e2e emulator case (CI only).
-- [ ] 5. DOCS: test plan, README, AGENTS, SKILLS 168 + index, STATUS section 14, KNOWN-ISSUES, test-plans README row.
+- [x] 3. SERVER: `product` counter, `addProduct` opType, activity kind tied to opType, `checkActivityOp(opType)` (commit 704d761).
+- [x] 4. TESTS: 32 new + guard rows/5 mutants + 2 handler + 3 emulator (CI only) + 4 flipped pins. Functions 1720 -> 1754 green, 100% line/branch/func on both files, 16/16 hand mutants killed.
+- [x] 5. DOCS: test plan, README, AGENTS, SKILLS 168 + index, STATUS section 14, KNOWN-ISSUES 34-39, test-plans README row.
 - [ ] 6. Push, open PR, read CI.
+
+## Out-of-scope findings (documented, NOT fixed here): KNOWN-ISSUES 34 (inventory doc shape not validated: non-numeric stock gets no ledger row), 35 (opening stock is a `receipt`), 36 (duplicate name/SKU), 37 (dialog inline supplier still old path, AP3), 38 (offline add), 39 (Skill 167 claimed by two other branches).
 
 ## NEXT (if this session stops)
 Continue at the first unchecked step. Each commit is independent. Never force-push this branch.

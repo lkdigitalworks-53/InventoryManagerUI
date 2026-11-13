@@ -5008,3 +5008,20 @@ Rules:
 13. (PR #197 sweep 2, 2026-11-13) A cap proved on a TEMPLATE is not a cap on the STORED text: any token the server expands (`{{$stock}}`, minted `{{batch}}` ids) can grow the string after validation. Prove the cap again where the text is finalised, and test both sides of the boundary (exactly the cap kept, cap + 1 refused). Probe with the largest legal template and the longest legal value. A helper that is callable without validation (`applyOperation` alone) must refuse a bad doc, not throw inside the transaction.
 
 **The check:** for a derived row, answer (a) what happens if the app dies right after the answer, (b) what a replay writes, (c) who decides actor and time, (d) which other endpoint can now reach the collection.
+
+## Skill 168: Split a client-and-server feature so the SERVER half merges and deploys first, dormant, then every client slice is device-testable while its own PR is open
+
+**Why:** PR #197 (R5b) carried a server half and a client half in one PR. Functions deploy only from `main` after merge, so Taher's device test of the open PR ran the new client against the OLD server and got a terminal 400 `unsupported-entity`, shown as "The server cannot accept this request" (KNOWN-ISSUES 33). Nothing was wrong with the code; the sequence was impossible.
+
+**Rules:**
+1. A feature that needs a new server capability is cut in slices whose FIRST slice is the server alone, additive and dormant: nothing in the app sends the new request, so the deploy cannot change behaviour, a revert is safe, and the approval can be given at once.
+2. Prove "dormant" with a test, not a sentence: a guard reads every QML and helper file and fails if the new op type's name appears (AP1 G-1). The slice that wires the client DELETES that guard in its own diff, which makes the switch-on visible in review.
+3. The ops the server accepts and the ops the client plans are checked against each other in Node: the client planner runs against the REAL server validator, so "the client plans what the server accepts" is a test. The server slice therefore needs no per-op-type shape check (D-AP-6): a second source of truth deployed in lock-step is a second place to drift.
+4. Tie every per-opType allowance to ONE table and derive the lists from it (`ACTIVITY_KIND_BY_OPTYPE`, `opTypes: Object.keys(...)`). Two lists that must agree will one day not.
+5. A rule that WIDENS an older rule (the feed row may now be written by two op types) leaves the older rule byte-identical and pins it with a regression case (V-12), and the old assertions that said "restock only" are flipped in the same commit with a name that says why.
+6. Reuse the engine, do not extend it: the `product` counter is ONE registry entry; the id substitution, the collision probe, the heal, the replay marker, the rollback-without-a-trace and the ledger derivation were all proven by earlier slices and are re-proved here only through the new shape (B-1..B-15).
+7. When two writers share a counter doc (the server mint and the client's single and bulk mints), extend the drift guard to pin BOTH client minters and mutation-test the guard (5 new mutants).
+8. A known hole that is not this slice's job is written as a test that pins today's behaviour and says so (K-1: a non-numeric stock leaves no ledger row; `recordMutation` has the same hole), so the day it is fixed the test flips on purpose.
+9. Deploy order is part of the design: server first, client later, and the PR says which slice a device test belongs to.
+
+**The check:** can the server half be merged and deployed with the app untouched, and would a revert change nothing a user can see? If not, the slice is too big.
