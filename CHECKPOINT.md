@@ -52,3 +52,25 @@ Continue at the first unchecked step. Deploy order when merged: functions first,
 
 ## NEXT (if this session stops)
 Continue at the first unchecked R-step. Each commit is independent and revertable. Never force-push this branch.
+
+---
+
+# REVIEW SWEEP 3 of PR #197 (2026-11-13, one chat turn, NO parallel agents): device report "restock Confirm shows: server cannot accept this request" - resume here
+
+**Who/how:** session prompt of 2026-11-13 (device test). Commit identity `tsadmin@gmail.com` as git user AND last line of every commit message. Fixes go ON this branch (the PR IS the branch); never force-push. PAT per command via `git -c http.extraHeader`, remote URL clean. Skills read: `systematic-debugging`, `qt-qml`, `qt-ui-design` (N/A, no UI change), `ponytail-audit`. No build, no run, no Qt in the sandbox.
+**Report (Taher):** on device, Restock -> Confirm shows the toast "The server cannot accept this request. This is an app problem, please report it". The text in brackets after it was NOT given, so the exact code is unconfirmed.
+
+## Steps
+- [x] S0. Clone, checkout PR head `6ddf4de`, baseline functions 1720/1720.
+- [x] S1. ROOT CAUSE by evidence (Phase 1-3 of systematic-debugging, no fix before it):
+  - The toast text is `FailureCause._bug(code)`: only a code on the "app built it wrongly" list reaches it (`qml/helper/FailureCause.js`).
+  - MAIN client + MAIN server, every supplier shape (none, known, new, id string), through `RestockFlow.makeInput` -> `RestockPlan.build` -> `validateOperationRequest`: all ACCEPTED. Fractional stock also accepted. So `main` itself is not broken. (Only a stock stored as a STRING in Firestore gives `movement-qty-mismatch`; the app writes `parseInt`, so only a hand-edited doc can do it.)
+  - This branch's client plan is `mint, stock_batch, delta, transaction, ACTIVITY`. Run against MAIN's server: **REJECT 400 `unsupported-entity` at opIndex 4**. Against this branch's server: ACCEPT. Reproduces the exact toast with `(unsupported-entity)`.
+  - Deployed server: `deployed-main` tag = `66d3f8d` (main, #195), deploy job green (GitHub API, 2026-11-13). Deploys run only from `main` after a one-tap approval, so this branch's server half CANNOT be on the server while the PR is open.
+  - Conclusion (high confidence, unconfirmed on the phone): the phone runs a build of THIS branch against the server of main. The documented order (test plan section 7, "Deploy functions BEFORE installing the client") cannot be followed from an unmerged PR. Data is safe: a terminal 4xx writes nothing.
+- [x] S2. Re-read this PR's client diff (RestockPlan, reflect, adopt, hooks, FailureCause, RestockFlow, TransactionStore removal; no `recordPurchase` caller left, feed doc keys equal `ActivityLog.record`'s). No new defect found by reading. KNOWN-ISSUES 33 written. Functions 1720/1720.
+- [ ] S3 (NEXT): Taher answers the two questions in the chat reply (the code in brackets; which build was on the phone) and picks A / C (see KNOWN-ISSUES 33). Then act on the choice.
+- [ ] S4 (NEXT SESSION): read CI on this head; rest of the full re-review not done this turn: QML twins and e2e files line by line, `tests/tst_ActivityLog.qml`, docs consistency, KNOWN-ISSUES 31 (adopt vs stale fetch) fix PR if wanted, R6 device run.
+
+## NEXT (if this session stops)
+Continue at S3. Do NOT add a client fallback for an old server (AGENTS rule 4) unless Taher decides option D in KNOWN-ISSUES 33.
