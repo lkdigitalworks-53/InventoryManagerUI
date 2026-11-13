@@ -356,11 +356,11 @@ test("G-1 ENTITY_COLLECTIONS has no activity entry and every other endpoint refu
     }
 });
 
-test("G-2 source pins: the entity is named in operationLogic.js only, for the restock op type only", () => {
+test("G-2 source pins: the entity is named in operationLogic.js only, for the restock and addProduct op types only (AP1 widened it)", () => {
     const lib = path.join(__dirname, "..", "lib");
     const hits = fs.readdirSync(lib).filter((f) => /activity_log/.test(fs.readFileSync(path.join(lib, f), "utf8")));
     assert.deepEqual(hits, ["operationLogic.js"]);
-    assert.deepEqual(OL.OPERATION_ONLY_ENTITIES, { activity: { collection: "activity_log", opTypes: ["restock"] } });
+    assert.deepEqual(OL.OPERATION_ONLY_ENTITIES, { activity: { collection: "activity_log", opTypes: ["restock", "addProduct"] } });
     assert.equal(Object.isFrozen(OL.OPERATION_ONLY_ENTITIES), false, "plain object: the guard above is the contract");
 });
 

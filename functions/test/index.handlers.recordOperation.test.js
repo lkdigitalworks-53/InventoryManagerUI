@@ -213,7 +213,7 @@ test("recordOperation: a restock operation with mint ops passes validation and i
 
 test("recordOperation: invalid mint requests are 400 with the op index (0 survives) and never reach applyOperation", async () => {
     for (const c of [
-        { ops: [mintOp("product", "p")], error: "unknown-counter", opIndex: 0 },
+        { ops: [mintOp("order", "p")], error: "unknown-counter", opIndex: 0 },
         { ops: [mintOp("supplier", "a"), mintOp("supplier", "a")], error: "duplicate-bind-name", opIndex: 1 },
         { ops: [mintOp("supplier", "a")], error: "unused-mint", opIndex: 0 },
         { ops: [mintOp("supplier", "a"), { kind: "mutation", entity: "stock_batch", entityId: "{{a}}", action: "create", before: null, after: {} }],
@@ -241,4 +241,37 @@ test("recordOperation: mint-exhausted is forwarded as 409 with its op index", as
     assert.equal(res.statusCode, 409);
     assert.equal(jsonBody(res).error, "mint-exhausted");
     assert.equal(jsonBody(res).opIndex, 0);
+});
+
+// ---- addProduct (AP1): the real validator in front of the mocked applyOperation ----
+
+const addProductOps = (activityOver) => [
+    mintOp("product", "p"),
+    { kind: "mutation", entity: "inventory", entityId: "{{p}}", action: "create", before: null, after: { productId: "{{p}}", name: "Tomato", stock: 0 } },
+    { kind: "mutation", entity: "activity", entityId: "act-{{p}}", action: "create", before: null,
+      after: Object.assign({ id: "act-{{p}}", kind: "product_added", title: "Product added: Tomato", subtitle: "stock 0", entityId: "{{p}}", read: false, dismissed: false }, activityOver || {}) }
+];
+const addProductBody = (ops) => ({ env: "test", requestId: "addProduct:dev1-1", opType: "addProduct", clientTimestamp: 1, ops: ops });
+
+test("recordOperation: an addProduct operation passes validation and its product mint result is forwarded", async () => {
+    seedHappyPathAuth(mockState);
+    const results = [{ kind: "mint", counter: "product", bind: "p", id: "PRD-007" },
+                     { entity: "inventory", entityId: "PRD-007", kind: "mutation", after: { productId: "PRD-007" } }];
+    mockState.applyOperationResult = { ok: true, results: results };
+    const res = mockRes();
+    await handlers.recordOperation(mockReq({ body: addProductBody(addProductOps()) }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res), { ok: true, entryId: "addProduct:dev1-1", results: results, idempotentReplay: false });
+});
+
+test("recordOperation: an addProduct with a restock-kind feed row, or a row about another product, is 400 invalid-activity at the row and never reaches applyOperation", async () => {
+    for (const over of [{ kind: "product_restocked" }, { entityId: "PRD-999" }, { subtitle: "now {{$stock}}" }]) {
+        seedHappyPathAuth(mockState);
+        mockState.applyOperationResult = { ok: true, results: [] };
+        const res = mockRes();
+        await handlers.recordOperation(mockReq({ body: addProductBody(addProductOps(over)) }), res);
+        assert.equal(res.statusCode, 400, JSON.stringify(over));
+        assert.equal(jsonBody(res).error, "invalid-activity");
+        assert.equal(jsonBody(res).opIndex, 2);
+    }
 });

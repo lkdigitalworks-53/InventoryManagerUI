@@ -29,6 +29,7 @@ function everyCreateUses(src, entity, idExpr) {
 function expectations(year) {
     const sup = R.describe("supplier", year);
     const bat = R.describe("stock_batch", year);
+    const prd = R.describe("product", year);
     return [
         { file: "SupplierStore.qml", label: "supplier counter name", re: new RegExp('mintCounterValue\\("counters/' + sup.counterName + '"') },
         { file: "SupplierStore.qml", label: "supplier id format", re: new RegExp("callback\\(ok \\? \\('" + sup.prefix + "' \\+ String\\(value\\)\\.padStart\\(3, '0'\\)\\)") },
@@ -36,19 +37,25 @@ function expectations(year) {
         { file: "StockBatchStore.qml", label: "batch counter name per year", re: /mintCounterValue\("counters\/stockBatches-" \+ year,/ },
         { file: "StockBatchStore.qml", label: "batch id prefix per year", re: /return "BAT-" \+ year \+ "-"/ },
         { file: "StockBatchStore.qml", label: "batch id padding", re: /callback\(ok \? \(prefix \+ String\(value\)\.padStart\(3, '0'\)\) : ""\)/ },
-        { file: "StockBatchStore.qml", label: "batch doc id = batchId", test: (src) => everyCreateUses(src, "stock_batch", "doc.batchId") }
+        { file: "StockBatchStore.qml", label: "batch doc id = batchId", test: (src) => everyCreateUses(src, "stock_batch", "doc.batchId") },
+        // AP1: the product id. Two client minters write the SAME counter doc (single add, bulk import) and both must format like the server.
+        { file: "InventoryStore.qml", label: "product counter name (single mint)", re: new RegExp('mintCounterValue\\("counters/' + prd.counterName + '"') },
+        { file: "InventoryStore.qml", label: "product counter name (import mint)", re: new RegExp('mintCounterBatch\\("counters/' + prd.counterName + '"') },
+        { file: "InventoryStore.qml", label: "product id format (single mint)", re: new RegExp("callback\\(ok \\? \\('" + prd.prefix + "' \\+ String\\(value\\)\\.padStart\\(3, '0'\\)\\)") },
+        { file: "InventoryStore.qml", label: "product id format (import mint)", re: new RegExp("return '" + prd.prefix + "' \\+ String\\(prodStart \\+ mintedProductIdx\\)\\.padStart\\(3, '0'\\)") },
+        { file: "InventoryStore.qml", label: "product doc id = the minted id", test: (src) => everyCreateUses(src, "inventory", "id") }
     ];
 }
 function failures(sources, year) {
     return expectations(year).filter((e) => !(e.test ? e.test(sources[e.file]) : e.re.test(sources[e.file]))).map((e) => e.file + ": " + e.label);
 }
-const sources = () => ({ "SupplierStore.qml": read("SupplierStore.qml"), "StockBatchStore.qml": read("StockBatchStore.qml") });
+const sources = () => ({ "SupplierStore.qml": read("SupplierStore.qml"), "StockBatchStore.qml": read("StockBatchStore.qml"), "InventoryStore.qml": read("InventoryStore.qml") });
 
-test("guard: the QML stores still mint supplier and batch ids exactly as the server registry does", () => {
+test("guard: the QML stores still mint supplier, batch and product ids exactly as the server registry does", () => {
     assert.deepEqual(failures(sources(), "2026"), []);
 });
 
-test("guard: a changed counter name, prefix, padding or doc id in QML is caught (the guard itself is mutation-tested)", () => {
+test("guard: a changed counter name, prefix, padding or doc id in QML is caught (the guard itself is mutation-tested: 12 source mutants)", () => {
     const base = sources();
     const mutants = [
         ["SupplierStore.qml", "counters/suppliers", "counters/supplier"],
@@ -57,7 +64,12 @@ test("guard: a changed counter name, prefix, padding or doc id in QML is caught 
         ["StockBatchStore.qml", "\"counters/stockBatches-\" + year", "\"counters/batches-\" + year"],
         ["StockBatchStore.qml", "return \"BAT-\" + year + \"-\"", "return \"BATCH-\" + year + \"-\""],
         ["StockBatchStore.qml", "prefix + String(value).padStart(3, '0')", "prefix + String(value)"],
-        ["StockBatchStore.qml", "Gateway.recordMutation(\"stock_batch\", doc.batchId, \"create\"", "Gateway.recordMutation(\"stock_batch\", doc.id, \"create\""]
+        ["StockBatchStore.qml", "Gateway.recordMutation(\"stock_batch\", doc.batchId, \"create\"", "Gateway.recordMutation(\"stock_batch\", doc.id, \"create\""],
+        ["InventoryStore.qml", "mintCounterValue(\"counters/products\"", "mintCounterValue(\"counters/product\""],
+        ["InventoryStore.qml", "mintCounterBatch(\"counters/products\"", "mintCounterBatch(\"counters/items\""],
+        ["InventoryStore.qml", "callback(ok ? ('PRD-' + String(value).padStart(3, '0'))", "callback(ok ? ('PROD-' + String(value).padStart(3, '0'))"],
+        ["InventoryStore.qml", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0')", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(4, '0')"],
+        ["InventoryStore.qml", "Gateway.recordMutation(\"inventory\", id, \"create\"", "Gateway.recordMutation(\"inventory\", doc.sku, \"create\""]
     ];
     for (const [file, from, to] of mutants) {
         assert.ok(base[file].indexOf(from) >= 0, "mutant target not found: " + from);
@@ -70,8 +82,10 @@ test("guard: a changed counter name, prefix, padding or doc id in QML is caught 
 test("guard: registry facts the client relies on", () => {
     assert.equal(R.describe("supplier", "2026").collection, "suppliers");
     assert.equal(R.describe("stock_batch", "2026").collection, "stock_batches");
+    assert.equal(R.describe("product", "2026").collection, "inventory");
     // gatewayLogic's entity map is where the client's Gateway.recordMutation("supplier"/"stock_batch") lands
     const { ENTITY_COLLECTIONS } = require("../lib/gatewayLogic");
     assert.equal(ENTITY_COLLECTIONS.supplier, R.describe("supplier", "2026").collection);
     assert.equal(ENTITY_COLLECTIONS.stock_batch, R.describe("stock_batch", "2026").collection);
+    assert.equal(ENTITY_COLLECTIONS.inventory, R.describe("product", "2026").collection);
 });

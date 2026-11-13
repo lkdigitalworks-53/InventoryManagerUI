@@ -38,16 +38,20 @@ const MAX_OPS = 200;
 // "restock" (R2, design M9) is accepted here so the server is deployed before the client that sends it.
 // Like completeOrder it carries no per-opType shape check (D5); a restock stock delta must name its
 // `receipt` movement explicitly, otherwise the server derives `adjustment`.
-const OP_TYPES = ["completeOrder", "restock"];
+// "addProduct" (AP1, design 2026-11-13-add-product-atomic-operation-design.md D-AP-2) likewise: no per-opType shape
+// check (D-AP-6); the opening-stock `receipt` row is derived from the inventory create like any other create.
+const OP_TYPES = ["completeOrder", "restock", "addProduct"];
 
 // R5b (design 2026-11-12-r5b-activity-in-operation-design.md): the feed row of a restock is written INSIDE the
 // operation. The entity is named here and NOT in gatewayLogic's ENTITY_COLLECTIONS: lockLogic, batchMutationLogic
 // and every single-record endpoint read that map, so listing it there would open the feed to all of them
 // (pinned by a guard test). Create-only, opType-restricted, one fixed shape; the server stamps who and when.
+// AP1 D-AP-5: the one kind each operation type may write. The opTypes list below is derived from this table, so an
+// op type cannot be allowed to write the feed without also naming its kind.
+const ACTIVITY_KIND_BY_OPTYPE = { restock: "product_restocked", addProduct: "product_added" };
 const OPERATION_ONLY_ENTITIES = {
-    activity: { collection: "activity_log", opTypes: ["restock"] }
+    activity: { collection: "activity_log", opTypes: Object.keys(ACTIVITY_KIND_BY_OPTYPE) }
 };
-const ACTIVITY_KINDS = ["product_restocked"];
 const ACTIVITY_KEYS = ["id", "kind", "title", "subtitle", "entityId", "read", "dismissed"];
 const MAX_ACTIVITY_TITLE = 200;
 const MAX_ACTIVITY_SUBTITLE = 1000;
@@ -190,7 +194,7 @@ function validateOperationRequest(body) {
             return { ok: false, status: 400, error: "cascade-delete-not-allowed", opIndex: i };
         }
         if (only) {
-            const badActivity = checkActivityOp(v, i, ops);
+            const badActivity = checkActivityOp(v, i, ops, opType);
             if (badActivity) return badActivity;
         }
         // Placeholders exist only in an operation that has a mint op; without one nothing below runs,
@@ -226,14 +230,15 @@ function validateOperationRequest(body) {
 
 // Shape rules for the one activity row an operation may create (R5b D-R5b-2/5/6; one row, product and title: PR #197
 // review F1-F3). `earlier` = the ops already accepted. The client sends seven keys and nothing else: who and when are stamped by applyOperation.
-function checkActivityOp(v, index, earlier) {
+// `opType` is one of OPERATION_ONLY_ENTITIES.activity.opTypes (the caller refused every other), and decides the kind (AP1 D-AP-5).
+function checkActivityOp(v, index, earlier, opType) {
     const bad = (error) => ({ ok: false, status: 400, error: error, opIndex: index });
     const a = v.after;
     if (v.action !== "create" || v.before !== null) return bad("invalid-activity");
     if (!a || Object.prototype.toString.call(a) !== "[object Object]") return bad("invalid-activity");
     if (Object.keys(a).length !== ACTIVITY_KEYS.length || !ACTIVITY_KEYS.every((k) => has(a, k))) return bad("invalid-activity");
     if (v.entityId.indexOf("act-") !== 0 || a.id !== v.entityId) return bad("invalid-activity");
-    if (ACTIVITY_KINDS.indexOf(a.kind) < 0) return bad("invalid-activity");
+    if (a.kind !== ACTIVITY_KIND_BY_OPTYPE[opType]) return bad("invalid-activity");
     if (typeof a.title !== "string" || a.title.length === 0 || a.title.length > MAX_ACTIVITY_TITLE) return bad("invalid-activity");
     if (typeof a.subtitle !== "string" || a.subtitle.length > MAX_ACTIVITY_SUBTITLE) return bad("invalid-activity");
     if (typeof a.entityId !== "string" || a.entityId.length === 0 || a.entityId.length > MAX_ID_LENGTH) return bad("invalid-activity");
@@ -243,6 +248,14 @@ function checkActivityOp(v, index, earlier) {
     if (earlier.some((o) => o.entity === "activity")) return bad("invalid-activity");
     // F3: the token is filled in the subtitle only. In the title it would be stored as the literal text.
     if (a.title.indexOf(STOCK_TOKEN) >= 0) return bad("invalid-activity");
+    // AP1 D-AP-5: an added product's row names a product THIS operation creates (an earlier inventory create for the
+    // same id, compared before substitution so `{{prd}}` equals `{{prd}}`). The client knows the opening stock, so the
+    // token has no meaning here and is refused rather than stored as text.
+    if (opType === "addProduct") {
+        if (a.subtitle.indexOf(STOCK_TOKEN) >= 0) return bad("invalid-activity");
+        const created = earlier.some((o) => o.kind === "mutation" && o.entity === "inventory" && o.action === "create" && o.entityId === a.entityId);
+        return created ? null : bad("invalid-activity");
+    }
     // F2: the row names a product THIS operation changed (an earlier inventory delta for it), token or not. A row about
     // another product would put "Restocked: B" in the feed for a restock of A.
     const hasToken = a.subtitle.indexOf(STOCK_TOKEN) >= 0;

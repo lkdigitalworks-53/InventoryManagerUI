@@ -8,8 +8,8 @@
 // (FirebaseService.mintCounterValue), so the formats below must match the stores byte for byte;
 // test/counterRegistry.guard.test.js reads the QML sources and fails on drift.
 //
-// Only the counters restock needs are registered (M1). A later consumer adds one entry here and
-// one row in the guard test. Pure: no Firebase dependency.
+// Only the counters a consumer needs are registered (M1): restock (supplier, stock_batch), add product (product).
+// A later consumer adds one entry here and one row in the guard test. Pure: no Firebase dependency.
 
 // M3: the app is INR / en-IN throughout, so the year in a batch id is the calendar year in India.
 const COUNTER_TIME_ZONE = "Asia/Kolkata";
@@ -34,6 +34,14 @@ const REGISTRY = {
         collection: "stock_batches",
         counterName: function (year) { return "stockBatches-" + year; },
         prefix: function (year) { return "BAT-" + year + "-"; }
+    },
+    // AP1 (design 2026-11-13-add-product-atomic-operation-design.md D-AP-3): InventoryStore.nextProductId mints
+    // `counters/products` and writes 'PRD-' + the number padded to 3 digits. The id is the inventory doc id.
+    product: {
+        entity: "inventory",
+        collection: "inventory",
+        counterName: function () { return "products"; },
+        prefix: function () { return "PRD-"; }
     }
 };
 

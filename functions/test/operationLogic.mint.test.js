@@ -60,8 +60,8 @@ test("validate: restock is an op type; its request id must start with restock:",
     assert.equal(invalid({ requestId: "restock:x", opType: "restockk", ops: restockOps() }).error, "unsupported-op-type");
 });
 
-test("validate: unknown counter, product/order/staff are not registered yet (M1)", () => {
-    for (const c of ["product", "order", "staff", "", "toString", undefined, 7]) {
+test("validate: unknown counter, order/staff/inventory are not registered (M1; product joined in AP1)", () => {
+    for (const c of ["order", "staff", "inventory", "", "toString", undefined, 7]) {
         const r = invalid(body([mint(c, "x"), create("supplier", "{{x}}", {})]));
         assert.equal(r.error, "unknown-counter", String(c));
         assert.equal(r.opIndex, 0);
